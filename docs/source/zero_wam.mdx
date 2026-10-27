@@ -104,7 +104,7 @@ uv run python examples/zero_wam/encode_human_videos.py \
   --pairs outputs/recorded_prompt.jsonl --output-dir outputs/prompt_latents
 ```
 
-Use the `latent_path` from `outputs/prompt_latents/prompts.jsonl` as `--policy.icl_latent_path`. Each entry records the source video, caption, crop bounds and frame cap. The cap samples across the complete demonstration rather than taking its first frames. For a newly recorded physical demonstration, supply `--prompt-text` when its instruction differs from the recorded episode's task label. Physical recording and execution use your robot/teleoperator integration and calibrated connection settings.
+Use the `latent_path` from `outputs/prompt_latents/prompts.jsonl` as `--policy.icl_latent_path`, joining relative paths to the index's directory. For example, a `demo.pth` entry here becomes `outputs/prompt_latents/demo.pth`. Each entry records the source video, caption, crop bounds and frame cap. The cap samples across the complete demonstration rather than taking its first frames. For a newly recorded physical demonstration, supply `--prompt-text` when its instruction differs from the recorded episode's task label. Physical recording and execution use your robot/teleoperator integration and calibrated connection settings.
 
 The same preparation tool accepts a JSONL pairing index with `target_episode`, `target_from_frame`, `target_to_frame`, `prompt_episode`, `prompt_from_frame`, `prompt_to_frame`, `detail_raw` (the prompt caption), and `split`. Episode IDs must be source dataset IDs. For example:
 
@@ -178,6 +178,14 @@ uv run python examples/zero_wam/encode_human_videos.py \
 The encoder fetches the keyframe-aligned byte range for each prompt interval and decodes only its selected frames. It does not localize full source containers. A supplied streaming index avoids parsing source headers again; without one, a small file-index cache is used. Remote prompts require explicit finite start/end times. `--max-prompt-video-mb` defaults to 512 and rejects oversized synthesized clips before payload fetching. The prepared frame cap samples across the full demonstration.
 
 The optional text cache is produced by `precompute_text_embeddings.py` and must contain every exact prompt instruction. It avoids loading UMT5 and re-encoding repeated instructions during video preparation. Cache identity includes the pinned video revision, crop, caption, encoder settings and text-cache checksum; changing the text cache produces new latent files.
+
+### Reuse a prompt cache across runs and machines
+
+The encoder writes `latent_path` relative to each output manifest. Both fixed pairs and compact pools resolve these references from the manifest's directory, so the complete cache folder can be moved or saved as a separate dataset repository. Previously encoded absolute paths remain supported. Keep source revisions, episode splits and encoding settings alongside the cache, and pin the repository revision used for each run. Stage the prompt cache locally for training; target observations can still use LeRobot streaming.
+
+Add `--share-text-embeddings` to store each distinct padded demonstration caption once in `text_embeddings/`. The video files then contain a relative `text_emb_path` instead of an inline `text_emb`. Preserve that subdirectory when copying the cache. The policy loads both formats and keeps a bounded CPU cache of shared text. Missing shared captions raise an error instead of silently using the target instruction. The normalized video latents, nonzero empty-caption embedding and full text padding are unchanged.
+
+For example, an 81-frame 320×480 prompt has 1,209,600 bytes of BF16 video latents. Its 512×4096 padded text tensor adds 4,194,304 bytes when embedded in every file. With blank demonstration captions, 6,430 such prompts need approximately 7.78 GB of tensor payload plus one shared 4.19 MB caption, rather than 34.75 GB of repeated video/text tensors. Serialization and metadata add overhead. This is a storage calculation, not a full-dataset benchmark; different frame caps or resolutions change it. The flag changes cache identity, so inline and shared-caption files can coexist.
 
 ## Streaming inference
 

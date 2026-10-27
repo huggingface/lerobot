@@ -39,6 +39,7 @@ from lerobot.policies.factory import (  # noqa: E402
 )
 from lerobot.policies.zero_wam.configuration_zero_wam import ZeroWAMConfig  # noqa: E402
 from lerobot.policies.zero_wam.modeling_zero_wam import ZeroWAMPolicy, read_video_at_fps  # noqa: E402
+from lerobot.policies.zero_wam.prompt_cache import load_prompt_text  # noqa: E402
 from lerobot.policies.zero_wam.transformer import ICL_CACHE_TYPE  # noqa: E402
 from lerobot.utils.constants import ACTION  # noqa: E402
 
@@ -726,7 +727,8 @@ def test_streamed_prompt_matches_local_crop_without_fetching_the_container(tmp_p
     assert prompt_video.prompt_source_identity(uri)["revision"] == "a" * 40
 
 
-def test_prompt_encoder_uses_and_invalidates_the_exact_text_cache(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("share_text", [False, True])
+def test_prompt_encoder_uses_and_invalidates_the_exact_text_cache(tmp_path, monkeypatch, share_text) -> None:
     example = Path(__file__).resolve().parents[3] / "examples/zero_wam/encode_human_videos.py"
     main = runpy.run_path(str(example))["main"]
     scope = main.__globals__
@@ -765,18 +767,22 @@ def test_prompt_encoder_uses_and_invalidates_the_exact_text_cache(tmp_path, monk
             "8",
             "--text-embedding-cache",
             str(cache),
+            *(["--share-text-embeddings"] if share_text else []),
         ],
     )
     main()
     first = json.loads((output / "prompts.jsonl").read_text())["latent_path"]
-    encoded = torch.load(first, weights_only=True)
-    torch.testing.assert_close(encoded["text_emb"][:2], embedding)
-    assert torch.count_nonzero(encoded["text_emb"][2:]) == 0
+    assert not Path(first).is_absolute()
+    encoded = torch.load(output / first, weights_only=True)
+    text = load_prompt_text(encoded, output / first)
+    torch.testing.assert_close(text[:2], embedding)
+    assert torch.count_nonzero(text[2:]) == 0
     torch.save({"fold": embedding + 1}, cache)
     main()
     second = json.loads((output / "prompts.jsonl").read_text())["latent_path"]
     assert first != second
-    torch.testing.assert_close(torch.load(second, weights_only=True)["text_emb"][:2], embedding + 1)
+    changed = torch.load(output / second, weights_only=True)
+    torch.testing.assert_close(load_prompt_text(changed, output / second)[:2], embedding + 1)
     torch.save({"different exact task": embedding}, cache)
     with pytest.raises(ValueError, match="every prompt's exact instruction"):
         main()
@@ -843,8 +849,133 @@ def test_encoder_writes_distinct_crops_and_standalone_prompt_index(tmp_path, mon
     assert len({p["latent_path"] for p in prompts}) == 2
     assert train[0]["episode_index"] == 7
     for p in prompts:
-        encoded = torch.load(p["latent_path"], weights_only=True)
+        encoded = torch.load(output / p["latent_path"], weights_only=True)
         assert encoded["source_start_s"] == p["start_time_s"]
+
+
+def test_shared_prompt_cache_relocates_and_matches_inline_training(tmp_path, monkeypatch) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/encode_human_videos.py"
+    main = runpy.run_path(str(example))["main"]
+    scope = main.__globals__
+    vae = FakeVAE()
+    monkeypatch.setitem(scope, "load_vae", lambda *a, **k: vae)
+    monkeypatch.setitem(
+        scope, "read_video_at_fps", lambda *a, **k: torch.full((5, 3, 48, 64), k["start_time_s"] / 4)
+    )
+    source = tmp_path / "video.mp4"
+    source.touch()
+    inputs = tmp_path / "input.jsonl"
+    inputs.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "prompt_video": str(source),
+                    "prompt_text": "" if episode < 2 else "fold",
+                    "prompt_start_s": episode,
+                    "prompt_end_s": episode + 1,
+                    "pool_id": f"task-{episode // 2}",
+                    "dataset": "abc",
+                    "split": "train",
+                    "prompt_episode_index": episode,
+                    "prompt_start_frame": 0,
+                    "prompt_end_frame": 100,
+                    "episode_index": episode ^ 1,
+                    "start_frame": 0,
+                    "end_frame": 100,
+                }
+            )
+            + "\n"
+            for episode in range(4)
+        )
+    )
+    cache = tmp_path / "text.pt"
+    captions = {"": torch.full((1, TEXT_DIM), 2.0), "fold": torch.full((3, TEXT_DIM), 4.0)}
+    torch.save(captions, cache)
+
+    def encode(output, share_text):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                str(example),
+                "--pairs",
+                str(inputs),
+                "--output-dir",
+                str(output),
+                "--device",
+                "cpu",
+                "--height",
+                "32",
+                "--width",
+                "64",
+                "--max-sequence-length",
+                "8",
+                "--text-embedding-cache",
+                str(cache),
+                *(["--share-text-embeddings"] if share_text else []),
+            ],
+        )
+        main()
+
+    inline, compact = tmp_path / "inline", tmp_path / "compact"
+    encode(inline, False)
+    encode(compact, True)
+    shared = list((compact / "text_embeddings").glob("*.pth"))
+    assert len(shared) == 2  # Four videos, two captions, including a nonzero empty-caption embedding.
+    for entry in compact.glob("*.pth"):
+        payload = torch.load(entry, weights_only=True)
+        assert "text_emb" not in payload
+        caption = torch.load(compact / payload["text_emb_path"], weights_only=True)
+        expected = captions[payload["text"]].to(torch.bfloat16)
+        torch.testing.assert_close(caption[: len(expected)], expected, rtol=0, atol=0)
+        assert caption.shape == (8, TEXT_DIM) and not caption[len(expected) :].count_nonzero()
+
+    # Recover a missing caption without paying for video decoding/VAE encoding again.
+    shared[0].unlink()
+
+    def unexpected_decode(*args, **kwargs):
+        raise AssertionError("Resume must repair shared text without decoding completed videos")
+
+    monkeypatch.setitem(scope, "read_video_at_fps", unexpected_decode)
+    encode(compact, True)
+    assert shared[0].is_file()
+    source.unlink()
+    moved = tmp_path / "relocated"
+    moved.mkdir()
+    inline = inline.rename(moved / "inline")
+    compact = compact.rename(moved / "compact")
+    monkeypatch.chdir(tmp_path)
+    policies = [
+        make_policy(tiny_config(icl_pools_path=str(root / "pools.jsonl"), drop_icl=0.0, droptext_target=1.0))
+        for root in [inline, compact]
+    ]
+    for episode in range(4):
+        latents, texts = [], []
+        for root, policy in zip([inline, compact], policies, strict=True):
+            path = policy._find_icl_latent(episode, 10)
+            assert Path(path).parent == root
+            latent, text = policy._load_icl_latent(path)
+            latents.append(latent)
+            texts.append(text)
+            # Fixed pairing manifests use the same portable-path contract as pools.
+            fixed = make_policy(tiny_config(icl_pairs_path=str(root / "pairs.jsonl")))
+            assert fixed._find_icl_latent(episode, 10) == path
+        torch.testing.assert_close(latents[0], latents[1], rtol=0, atol=0)
+        torch.testing.assert_close(texts[0], texts[1], rtol=0, atol=0)
+
+    batch = training_batch(policies[0].config, batch_size=4)
+    batch["episode_index"] = torch.arange(4)
+    losses, gradients = [], []
+    for policy in policies:
+        torch.manual_seed(20)
+        loss, _ = policy(batch)
+        loss.backward()
+        losses.append(loss)
+        gradients.append({name: p.grad for name, p in policy.named_parameters() if p.grad is not None})
+    torch.testing.assert_close(losses[0], losses[1], rtol=0, atol=0)
+    assert gradients[0].keys() == gradients[1].keys()
+    for name in gradients[0]:
+        torch.testing.assert_close(gradients[0][name], gradients[1][name], rtol=0, atol=0, msg=name)
 
 
 def test_pool_preparation_and_encoding_preserve_compact_members(tmp_path) -> None:

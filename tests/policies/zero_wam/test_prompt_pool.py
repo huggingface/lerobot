@@ -44,7 +44,9 @@ def test_samples_other_episodes_and_all_alternatives(tmp_path):
         (2, {"episode-0.pth", "self-2.pth", "episode-5.pth"}),
         (5, {"episode-0.pth", "self-2.pth", "episode-2.pth"}),
     ]:
-        assert {sampler.sample(target, 10, 90) for _ in range(128)} == expected
+        assert {sampler.sample(target, 10, 90) for _ in range(128)} == {
+            str(tmp_path / name) for name in expected
+        }
 
 
 def test_checks_full_target_window_and_filters_split(tmp_path):
@@ -53,7 +55,7 @@ def test_checks_full_target_window_and_filters_split(tmp_path):
         pool([member(20), member(21)], split="validation"),
     ]
     sampler = ICLPromptPools(write_pools(tmp_path, rows))
-    assert sampler.sample(0, 10, 30) == "episode-1.pth"
+    assert sampler.sample(0, 10, 30) == str(tmp_path / "episode-1.pth")
     assert sampler.sample(0, 11, 31) is None
     assert sampler.sample(0, 9, 20) is None
     assert sampler.sample(20, 10, 30) is None

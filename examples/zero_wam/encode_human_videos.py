@@ -30,7 +30,6 @@ video/crop/caption is encoded once. Outputs are normalized Wan latents and UMT5 
 import argparse
 import hashlib
 import json
-import uuid
 from pathlib import Path
 
 import torch
@@ -39,6 +38,7 @@ from tqdm import tqdm
 
 from lerobot.policies.lingbot_va.utils import clean_prompt, load_text_encoder, load_tokenizer, load_vae
 from lerobot.policies.zero_wam.modeling_zero_wam import read_video_at_fps
+from lerobot.policies.zero_wam.prompt_cache import atomic_torch_save, save_shared_prompt_text
 from lerobot.policies.zero_wam.prompt_video import (
     PromptVideoReader,
     canonical_prompt_video,
@@ -101,6 +101,9 @@ def main() -> None:
     parser.add_argument(
         "--text-embedding-cache", type=Path, help="Reuse precompute_text_embeddings.py output"
     )
+    parser.add_argument(
+        "--share-text-embeddings", action="store_true", help="Store repeated padded captions once per cache"
+    )
     args = parser.parse_args()
     args.output_dir = args.output_dir.resolve()
 
@@ -144,7 +147,31 @@ def main() -> None:
     mean = torch.tensor(vae.config.latents_mean, device=args.device).view(1, -1, 1, 1, 1)
     inv_std = 1.0 / torch.tensor(vae.config.latents_std, device=args.device).view(1, -1, 1, 1, 1)
 
+    def encode_text(text: str) -> torch.Tensor:
+        if cached_text is not None:
+            embedding = cached_text[text].to(args.device, torch.bfloat16)
+            padded = embedding.new_zeros(args.max_sequence_length, embedding.shape[1])
+            padded[: len(embedding)] = embedding
+        else:
+            tokens = tokenizer(
+                [clean_prompt(text)],
+                padding="max_length",
+                max_length=args.max_sequence_length,
+                truncation=True,
+                add_special_tokens=True,
+                return_attention_mask=True,
+                return_tensors="pt",
+            )
+            hidden = encoder(
+                tokens.input_ids.to(args.device), tokens.attention_mask.to(args.device)
+            ).last_hidden_state
+            length = int(tokens.attention_mask.gt(0).sum())
+            padded = torch.zeros_like(hidden[0])
+            padded[:length] = hidden[0, :length]
+        return padded.to(torch.bfloat16).cpu()
+
     latent_paths = {}
+    shared_text_paths = {}
     with (
         torch.no_grad(),
         PromptVideoReader(
@@ -168,11 +195,15 @@ def main() -> None:
                     "width": args.width,
                     "max_sequence_length": args.max_sequence_length,
                     "frozen_components_path": args.frozen_components_path,
+                    **({"text_storage": "shared-v1"} if args.share_text_embeddings else {}),
                 },
                 sort_keys=True,
             )
             out = args.output_dir / f"{hashlib.sha256(identity.encode()).hexdigest()[:24]}.pth"
-            latent_paths[key] = str(out)
+            latent_paths[key] = out.name
+            # Also repair a deleted shared caption during resume, without re-encoding video.
+            if args.share_text_embeddings and text not in shared_text_paths:
+                shared_text_paths[text] = save_shared_prompt_text(encode_text(text), args.output_dir)
             if out.exists():
                 continue
             decode = reader.read if StorageLocation.parse(video).is_remote else read_video_at_fps
@@ -189,34 +220,12 @@ def main() -> None:
             clip = (frames.permute(1, 0, 2, 3)[None].contiguous() * 2.0 - 1.0).to(args.device, torch.bfloat16)
             mu = vae.encode(clip).latent_dist.mean
             latent = ((mu.float() - mean) * inv_std)[0]  # [48, F, H, W]
-            if cached_text is not None:
-                embedding = cached_text[text].to(args.device, torch.bfloat16)
-                text_emb = embedding.new_zeros(args.max_sequence_length, embedding.shape[1])
-                text_emb[: len(embedding)] = embedding
-            else:
-                tokens = tokenizer(
-                    [clean_prompt(text)],
-                    padding="max_length",
-                    max_length=args.max_sequence_length,
-                    truncation=True,
-                    add_special_tokens=True,
-                    return_attention_mask=True,
-                    return_tensors="pt",
-                )
-                hidden = encoder(
-                    tokens.input_ids.to(args.device), tokens.attention_mask.to(args.device)
-                ).last_hidden_state
-                length = int(tokens.attention_mask.gt(0).sum())
-                text_emb = torch.zeros_like(hidden[0])
-                text_emb[:length] = hidden[0, :length]
             _, f, h, w = latent.shape
-            temporary = out.with_name(f".{out.name}.{uuid.uuid4().hex}.tmp")
             payload = {
                 "latent": latent.permute(1, 2, 3, 0).reshape(f * h * w, -1).to(torch.bfloat16).cpu(),
                 "latent_num_frames": f,
                 "latent_height": h,
                 "latent_width": w,
-                "text_emb": text_emb.to(torch.bfloat16).cpu(),
                 "text": text,
                 "fps": args.fps,
                 "source_video": video,
@@ -224,11 +233,11 @@ def main() -> None:
                 "source_end_s": spec["end_time_s"],
                 "source_max_frames": spec["max_frames"],
             }
-            try:
-                torch.save(payload, temporary)
-                temporary.replace(out)
-            finally:
-                temporary.unlink(missing_ok=True)
+            if args.share_text_embeddings:
+                payload["text_emb_path"] = shared_text_paths[text]
+            else:
+                payload["text_emb"] = encode_text(text)
+            atomic_torch_save(payload, out)
 
     pairs_out = args.output_dir / "pairs.jsonl"
     with pairs_out.open("w") as f:

@@ -16,6 +16,8 @@ from pathlib import Path
 
 import torch
 
+from .prompt_cache import resolve_prompt_path
+
 
 @dataclass(frozen=True)
 class PromptMember:
@@ -85,7 +87,7 @@ class ICLPromptPools:
                     latent_path = item.get("latent_path")
                     if not isinstance(latent_path, str) or not latent_path:
                         raise ValueError("Encode every prompt pool member before training")
-                    members.append(PromptMember(episode, start, end, latent_path))
+                    members.append(PromptMember(episode, start, end, resolve_prompt_path(latent_path, path)))
                 if row_split != split:
                     continue
                 pool_id = row.get("pool_id")

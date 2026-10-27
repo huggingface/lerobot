@@ -53,6 +53,7 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
 from .configuration_zero_wam import VAE_SPATIAL_DOWNSAMPLE, ZeroWAMConfig
+from .prompt_cache import load_prompt_text, resolve_prompt_path
 from .prompt_pool import ICLPromptPools
 from .transformer import (
     ICL_CACHE_TYPE,
@@ -395,6 +396,9 @@ class ZeroWAMPolicy(PreTrainedPolicy):
                     for line in pairs_file:
                         if line.strip():
                             pair = json.loads(line)
+                            pair["latent_path"] = resolve_prompt_path(
+                                pair["latent_path"], self.config.icl_pairs_path
+                            )
                             self._icl_pairs.setdefault(int(pair["episode_index"]), []).append(pair)
         return self._icl_pairs
 
@@ -424,8 +428,8 @@ class ZeroWAMPolicy(PreTrainedPolicy):
             latent = latent.view(f, h, w, -1).permute(3, 0, 1, 2)
         if latent.ndim == 4:
             latent = latent.unsqueeze(0)
-        text_emb = item.get("text_emb")
-        if torch.is_tensor(text_emb) and text_emb.ndim == 2:
+        text_emb = load_prompt_text(item, latent_path)
+        if isinstance(text_emb, Tensor) and text_emb.ndim == 2:
             text_emb = text_emb.unsqueeze(0)
         return latent.to(self.config.device, self.dtype), text_emb
 
