@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Torch-free feature declarations and bounded wire values."""
+"""Versioned message envelopes, their bounded codec, and request/reply helpers shared by LeRobot services."""

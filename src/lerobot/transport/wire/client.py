@@ -39,12 +39,12 @@ def query_reply(
     encoder: Callable[[Envelope], bytes] = encode_message,
     check_instance: bool = True,
     check_session: bool = True,
-    cancelled: Callable[[], bool] | None = None,
     **query_options: Any,
 ) -> Envelope:
-    """Issue one query without retries, requiring one correlated, validated response."""
-    if cancelled is not None:
-        query_options["cancelled"] = cancelled
+    """Issue one query without retries, requiring one correlated, validated response.
+
+    ``query_options`` go to ``transport.query``, e.g. ``cancelled`` or ``congestion_control``.
+    """
     replies = transport.query(key, encoder(request), timeout, **query_options)
     if len(replies) != 1:
         raise TimeoutError("Expected one reply within its deadline")
