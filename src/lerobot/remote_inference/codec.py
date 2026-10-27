@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Torch adaptation over the shared bounded NumPy codec (wire-compatible)."""
+"""Remote inference codec: the shared NumPy codec, also accepting torch tensors."""
 
 from typing import Any
 
