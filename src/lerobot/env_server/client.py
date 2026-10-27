@@ -156,12 +156,13 @@ class EnvClient:
                 body["operation"] = operation
             try:
                 timeout = self.setup_timeout_s if operation == "reset" else self.timeout_s
-                result = self._query(key, MessageType.CONTROL, body, timeout)
-                if "result" in result:
-                    validate_result(decode_step_result(result["result"]), descriptor, self.num_envs)
-                if "generation" in result:
-                    self.generation = result["generation"]
-                return result
+                reply = self._query(key, MessageType.CONTROL, body, timeout)
+                if "result" in reply:
+                    reply["result"] = decode_step_result(reply["result"])
+                    validate_result(reply["result"], descriptor, self.num_envs)
+                if "generation" in reply:
+                    self.generation = reply["generation"]
+                return reply
             except Exception:
                 # A timed-out mutation may have executed. Never continue with ambiguous environment state.
                 self.failed = True
@@ -247,8 +248,8 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             return True
         return False
 
-    def _result(self, body):
-        self._latest = decode_step_result(body["result"])
+    def _result(self, reply):
+        self._latest = reply["result"]
         return self._latest
 
     def reset(self, *, seed=None, options=None):

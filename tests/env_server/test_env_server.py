@@ -66,19 +66,17 @@ def test_batch_terminal_freeze_and_seed_parity(server, use_async_envs):
         with_client.open(2, use_async_envs=use_async_envs)
         first = with_client.request("reset", seeds=[10, 20])["result"]
         second = with_client.request("reset", seeds=[10, 20])["result"]
-        np.testing.assert_array_equal(first["obs"]["observation.state"], second["obs"]["observation.state"])
+        np.testing.assert_array_equal(first.obs["observation.state"], second.obs["observation.state"])
         ended = with_client.request("step", actions=np.array([[2, 0], [0, 0]], np.float32))["result"]
-        assert ended["is_success"].tolist() == [True, False]
-        assert ended["reward"].tolist() == [1.0, 0.0]
-        frozen = ended["obs"]["observation.state"][0].copy()
+        assert ended.is_success.tolist() == [True, False]
+        assert ended.reward.tolist() == [1.0, 0.0]
+        frozen = ended.obs["observation.state"][0].copy()
         for _ in range(5):
             result = with_client.request("step", actions=np.ones((2, 2), np.float32) * 0.1)["result"]
-        np.testing.assert_array_equal(result["obs"]["observation.state"][0], frozen)
-        assert (
-            result["reward"][0] == 0.0
-        )  # The terminal reward is earned once, as with the old freeze wrapper.
-        assert result["elapsed_steps"].tolist() == [1, 5]
-        assert result["truncated"].tolist() == [False, True]
+        np.testing.assert_array_equal(result.obs["observation.state"][0], frozen)
+        assert result.reward[0] == 0.0  # The terminal reward is earned once, as with the old freeze wrapper.
+        assert result.elapsed_steps.tolist() == [1, 5]
+        assert result.truncated.tolist() == [False, True]
         frames = with_client.request("render")["frames"]
         assert len(frames) == 2 and frames[0].shape == (8, 8, 3)
     finally:
