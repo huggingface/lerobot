@@ -25,6 +25,7 @@ from torch import Tensor
 from lerobot.configs import PreTrainedConfig
 from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.checkpoint import SafetensorsCheckpoint
+from lerobot.policies.common.export_utils import is_non_strict_exporting
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE, PREDICTION
 from lerobot.utils.import_utils import require_package
@@ -309,9 +310,15 @@ class FastWAMPolicy(PreTrainedPolicy):
         Args:
             batch (dict[str, Tensor]): Inference batch with `input_image` or
                 image observation keys, plus `context/context_mask` or `prompt`.
+                A precomputed context is used instead of `task`. torch.export needs
+                `context/context_mask`, and keeps a string input such as `task` as a constant, so
+                leave `task` out of the exported inputs. To match eager inference on a task, build them with
+                `policy.model.encode_prompt(policy.config.prompt_template.format(task=task))`.
             noise (Tensor | None): Optional starting action sample of shape
                 `[B, action_horizon, action_dim]`. When None, each sample draws it with
                 the seed in `batch["seed"]`, or `config.inference_seed` if the batch has none.
+                torch.export needs it, so the exported program takes its noise as an input. Only
+                non-strict export checks this; strict export without it fails inside the generator.
 
         Returns:
             Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
@@ -332,8 +339,13 @@ class FastWAMPolicy(PreTrainedPolicy):
         # Encode the task once per episode and reuse it (LingBot-VA parity): swap the raw `prompt`
         # for the cached `context`/`context_mask` so `infer_action` skips `encode_prompt`. Skipped
         # when the caller supplies its own precomputed `context` (the two are mutually exclusive
-        # downstream).
-        if infer_kwargs.get("context") is None and infer_kwargs.get("prompt") is not None:
+        # downstream). Skipped under torch.export too: a cached context would become a constant of
+        # the exported program, so export takes `context`/`context_mask` as inputs.
+        if (
+            infer_kwargs.get("context") is None
+            and infer_kwargs.get("prompt") is not None
+            and not is_non_strict_exporting()
+        ):
             context, context_mask = self._encode_prompt_cached(infer_kwargs["prompt"])
             infer_kwargs["prompt"] = None
             infer_kwargs["context"] = context
@@ -487,8 +499,11 @@ def _scalar(value: Any) -> Any:
 
 
 def _batch_to_infer_kwargs(batch: dict[str, Tensor], config: FastWAMConfig) -> dict[str, Any]:
+    # LeRobot batches always carry `task`; a precomputed context takes its place. An explicit `prompt` is
+    # kept, so a prompt next to a context still raises in `infer_action`.
+    has_context = batch.get("context") is not None or batch.get("context_mask") is not None
     return {
-        "prompt": _prompt_from_batch(batch=batch, config=config),
+        "prompt": batch.get("prompt") if has_context else _prompt_from_batch(batch=batch, config=config),
         "input_image": _input_image_from_batch(batch, config),
         "action_horizon": config.action_horizon,
         "proprio": batch.get("proprio", batch.get(OBS_STATE)),

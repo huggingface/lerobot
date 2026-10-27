@@ -14,7 +14,9 @@ Copied files:
 
 - `model.py` (was `wan/modules/model.py`), trimmed: the flash-attention path
   (the vendored `attention.py` and the block/model `forward`s) was removed.
-  FastWAM's DiT uses SDPA instead (see `video_dit.py`).
+  FastWAM's DiT uses SDPA instead (see `video_dit.py`). `rope_apply` and
+  `unpatchify` take the grid sizes as a list of `(f, h, w)` tuples instead of a
+  `[B, 3]` tensor, so torch.export does not read them back from a tensor.
 - `get_sampling_sigmas` in `video_dit.py` (was `wan/utils/fm_solvers.py`), inlined
   next to its only caller.
 
