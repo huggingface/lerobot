@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Torch-free simulator serving and clients."""
+"""Simulator server and its clients; simulator images import it without torch."""
