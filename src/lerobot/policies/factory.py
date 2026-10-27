@@ -334,8 +334,20 @@ def make_policy(
         features = {rename_map.get(key, key): feature for key, feature in features.items()}
 
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    if not cfg.input_features:
-        cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+    features_from_env_or_dataset = {
+        key: ft for key, ft in features.items() if key not in cfg.output_features
+    }
+    if cfg.input_features != features_from_env_or_dataset:
+        if cfg.input_features:
+            logging.warning(
+                "Policy config carries input_features that differ from the features of the provided "
+                "dataset/environment. This usually happens when fine-tuning from a checkpoint whose "
+                "config embeds stale input_features (e.g. the base model was trained with a different "
+                "robot or environment). Refreshing them from the dataset/environment.\n"
+                f"  Stale input_features: {cfg.input_features}\n"
+                f"  Refreshed input_features: {features_from_env_or_dataset}"
+            )
+        cfg.input_features = features_from_env_or_dataset
 
     # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
