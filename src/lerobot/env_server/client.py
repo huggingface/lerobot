@@ -254,6 +254,8 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
 
     def reset(self, *, seed=None, options=None):
         """Reset every served environment with explicit seeds."""
+        if options:
+            raise ValueError("This environment does not define reset options")
         if isinstance(seed, int):
             seed = [seed + i for i in range(self.num_envs)]
         if not self._open_session(seed):

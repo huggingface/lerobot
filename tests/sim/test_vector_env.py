@@ -65,6 +65,17 @@ def test_environments_in_separate_processes_match_sequential_environments():
         assert parallel.task == sequential.task
 
 
+@pytest.mark.parametrize("where", ["local", "served"])
+def test_reset_options_are_rejected_locally_and_served(where, request):
+    endpoint = request.getfixturevalue("server")[1] if where == "served" else None
+    env = ToyEnvConfig(endpoint=endpoint).create_env()
+    try:
+        with pytest.raises(ValueError, match="does not define reset options"):
+            env.reset(options={"task_id": 1})
+    finally:
+        env.close()
+
+
 def test_env_config_builds_each_simulator_once():
     # Some simulators (Isaac Sim) start only once per process: the environments built to read the
     # description are the ones used.
