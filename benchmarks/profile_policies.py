@@ -10,6 +10,7 @@ uv run python benchmarks/profile_policies.py --policy.type=act \
     --batch_size=1 --policy.device=cuda --output_dir=profiling-results/act
 """
 
+import faulthandler
 import hashlib
 import json
 import math
@@ -356,15 +357,32 @@ def main(cfg: ProfileConfig) -> None:
                     policy.reset()
                     batch = preprocess(deepcopy(raw_batch))
                     step = make_training_step(cfg, policy, dataset, preprocess, accelerator)
-                row[mode] = measure(
-                    step,
-                    batch,
-                    device,
-                    cfg.warmup,
-                    cfg.iterations,
-                    cfg.output_dir / f"{mode}.trace.json" if cfg.trace else None,
-                    label=mode,
+                diagnose = (
+                    cfg.policy.type == "lingbot_va"
+                    and mode == "inference"
+                    and os.environ.get("PROFILE_DIAGNOSTICS") == "true"
                 )
+                if diagnose:
+                    print(
+                        f"LingBot diagnostics: CPU threads={torch.get_num_threads()}, "
+                        f"text encoder device={cfg.policy.text_encoder_device}, "
+                        f"dtype={cfg.policy.dtype}, max prompt length={cfg.policy.max_sequence_length}",
+                        flush=True,
+                    )
+                    faulthandler.dump_traceback_later(30, repeat=True)
+                try:
+                    row[mode] = measure(
+                        step,
+                        batch,
+                        device,
+                        cfg.warmup,
+                        cfg.iterations,
+                        cfg.output_dir / f"{mode}.trace.json" if cfg.trace else None,
+                        label=mode,
+                    )
+                finally:
+                    if diagnose:
+                        faulthandler.cancel_dump_traceback_later()
             except Exception as exc:
                 traceback.print_exc()
                 row[mode] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
