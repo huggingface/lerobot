@@ -234,17 +234,8 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             "autoreset_mode": gym.vector.AutoresetMode.DISABLED,
         }
         self.render_mode = "rgb_array"
-        self.single_observation_space = gym.spaces.Dict(
-            {
-                f.name: gym.spaces.Box(0, 255, f.shape, np.uint8)
-                if f.kind == "rgb"
-                else gym.spaces.Box(-np.inf, np.inf, f.shape, np.dtype(f.dtype))
-                for f in self.descriptor.features
-            }
-        )
-        self.single_action_space = gym.spaces.Box(
-            -np.inf, np.inf, self.descriptor.action_feature.shape, np.float32
-        )
+        self.single_observation_space = self.descriptor.observation_space()
+        self.single_action_space = self.descriptor.action_space()
         self.observation_space = batch_space(self.single_observation_space, num_envs)
         self.action_space = batch_space(self.single_action_space, num_envs)
         self._latest: StepResult | None = None
@@ -276,7 +267,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             seed = [seed + i for i in range(self.num_envs)]
         if not self._open_session(seed):
             self._result(self.client.request("reset", seeds=seed))
-        return self.latest.obs, self._info(self.latest)
+        return self.latest.obs, self.latest.info()
 
     def step(self, actions):
         """Advance every unfinished served environment once."""
@@ -287,17 +278,8 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             result.reward,
             result.terminated,
             result.truncated,
-            self._info(result),
+            result.info(),
         )
-
-    @staticmethod
-    def _info(result: StepResult) -> dict[str, object]:
-        return {
-            "is_success": result.is_success,
-            "task": result.task,
-            "elapsed_steps": result.elapsed_steps,
-            "sim_time": result.sim_time,
-        }
 
     def call(self, name, *args, **kwargs):
         """Return a supported per-environment attribute."""

@@ -214,17 +214,8 @@ class VectorEnv(gym.vector.VectorEnv):
         except BaseException:
             self._close_envs()
             raise
-        self.single_observation_space = spaces.Dict(
-            {
-                f.name: spaces.Box(0, 255, f.shape, np.uint8)
-                if f.kind == "rgb"
-                else spaces.Box(-np.inf, np.inf, f.shape, np.dtype(f.dtype))
-                for f in self.descriptor.features
-            }
-        )
-        self.single_action_space = spaces.Box(
-            -np.inf, np.inf, self.descriptor.action_feature.shape, np.float32
-        )
+        self.single_observation_space = self.descriptor.observation_space()
+        self.single_action_space = self.descriptor.action_space()
         self.observation_space = batch_space(self.single_observation_space, num_envs)
         self.action_space = batch_space(self.single_action_space, num_envs)
         self.metadata = {"render_fps": config.fps, "autoreset_mode": gym.vector.AutoresetMode.DISABLED}
@@ -315,7 +306,7 @@ class VectorEnv(gym.vector.VectorEnv):
         self._elapsed_steps[:] = 0
         self._sim_time = 0.0
         result = self._snapshot()
-        return result.obs, self._info(result)
+        return result.obs, result.info()
 
     def step(
         self, actions: np.ndarray
@@ -352,7 +343,7 @@ class VectorEnv(gym.vector.VectorEnv):
             )
         self._sim_time += 1 / self.config.fps
         result = self._snapshot()
-        return result.obs, result.reward, result.terminated, result.truncated, self._info(result)
+        return result.obs, result.reward, result.terminated, result.truncated, result.info()
 
     def _snapshot(self) -> StepResult:
         obs = {key: np.stack([last[0][key] for last in self._last]) for key in self._last[0][0]}
@@ -377,15 +368,6 @@ class VectorEnv(gym.vector.VectorEnv):
         if self._latest is None:
             raise RuntimeError("Reset before reading the environment")
         return self._latest
-
-    @staticmethod
-    def _info(result: StepResult) -> dict[str, Any]:
-        return {
-            "is_success": result.is_success,
-            "task": result.task,
-            "elapsed_steps": result.elapsed_steps,
-            "sim_time": result.sim_time,
-        }
 
     def render(self) -> list[np.ndarray]:
         """Return the latest RGB frame of every environment, terminal frames included, without rendering."""

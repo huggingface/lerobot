@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+from gymnasium import spaces
 
 from lerobot.utils.feature_spec import FeatureSpec
 
@@ -49,6 +50,21 @@ class EnvDescriptor:
             raise ValueError("Actions require ordered component names")
         if len({feature.name for feature in self.features}) != len(self.features):
             raise ValueError("Duplicate observation features")
+
+    def observation_space(self) -> spaces.Dict:
+        """One environment's observation space: RGB images as uint8, other features unbounded."""
+        return spaces.Dict(
+            {
+                f.name: spaces.Box(0, 255, f.shape, np.uint8)
+                if f.kind == "rgb"
+                else spaces.Box(-np.inf, np.inf, f.shape, np.dtype(f.dtype))
+                for f in self.features
+            }
+        )
+
+    def action_space(self) -> spaces.Box:
+        """One environment's action space."""
+        return spaces.Box(-np.inf, np.inf, self.action_feature.shape, np.float32)
 
     def validate_checkpoint(self, config: Any, rename_map: dict[str, str]) -> None:
         """Reject a checkpoint whose inputs or action do not fit this environment.
@@ -95,3 +111,12 @@ class StepResult:
     is_success: np.ndarray
     sim_time: float
     elapsed_steps: np.ndarray
+
+    def info(self) -> dict[str, Any]:
+        """The Gymnasium ``info`` of this step."""
+        return {
+            "is_success": self.is_success,
+            "task": self.task,
+            "elapsed_steps": self.elapsed_steps,
+            "sim_time": self.sim_time,
+        }
