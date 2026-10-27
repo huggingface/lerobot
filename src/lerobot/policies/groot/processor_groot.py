@@ -2082,10 +2082,10 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             return sample_images
 
         video_t = video if torch.is_tensor(video) else torch.from_numpy(np.ascontiguousarray(video))
-        # (B, T, V, H, W, C) uint8 -> (B, T, V, C, H, W)
-        video_t = video_t.permute(0, 1, 2, 5, 3, 4).contiguous()
         if target_device is not None and video_t.device != target_device:
             video_t = video_t.to(target_device, non_blocking=(target_device.type == "cuda"))
+        # (B, T, V, H, W, C) uint8 -> (B, T, V, C, H, W)
+        video_t = video_t.permute(0, 1, 2, 5, 3, 4).contiguous()
 
         frames_per_sample: list[list[Any]] = []
         for batch_idx in range(batch_size):
