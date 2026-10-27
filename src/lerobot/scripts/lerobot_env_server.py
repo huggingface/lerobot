@@ -53,7 +53,7 @@ ENVHUB_CONFIG: dict[str, Any] = {
         "type": "envhub",
         "task": "",
         "fps": None,
-        "control": None,
+        "control_mode": None,
         "semantics": None,
         "kwargs": {"hub_path": "", "trust_remote_code": False, "make_env_kwargs": {}},
         "state_names": None,

@@ -38,7 +38,7 @@ class SimConfig:
     type: str
     task: str
     fps: float = 30
-    control: str = "position"
+    control_mode: str = "position"
     semantics: str = ""
     kwargs: dict[str, Any] = field(default_factory=dict)
     state_names: tuple[str, ...] = ()
@@ -50,13 +50,13 @@ class SimConfig:
         self.state_names = tuple(self.state_names)
         self.action_names = tuple(self.action_names)
         if (
-            self.control not in {"position", "delta", "eef_pose"}
+            self.control_mode not in {"position", "delta", "eef_pose"}
             or not np.isfinite(self.fps)
             or self.fps <= 0
         ):
             raise ValueError("A simulator requires a known controller and a positive FPS")
         if not self.semantics:
-            self.semantics = f"{self.type}-{self.control.replace('_', '-')}-v1"
+            self.semantics = f"{self.type}-{self.control_mode.replace('_', '-')}-v1"
 
     @classmethod
     def resolve(cls, settings: dict[str, Any]) -> "SimConfig":
@@ -79,7 +79,7 @@ class EnvDescriptor:
     semantics: str
     features: tuple[FeatureSpec, ...]
     action_feature: FeatureSpec
-    control: str
+    control_mode: str
     fps: float
     tasks: dict[str, list[str]]
     max_episode_steps: int
@@ -88,7 +88,7 @@ class EnvDescriptor:
 
     def __post_init__(self) -> None:
         """Reject invalid environment metadata."""
-        if self.control not in {"position", "delta", "eef_pose"}:
+        if self.control_mode not in {"position", "delta", "eef_pose"}:
             raise ValueError("Unknown controller convention")
         if not np.isfinite(self.fps) or self.fps <= 0 or self.max_episode_steps <= 0:
             raise ValueError("FPS and episode limit must be positive")

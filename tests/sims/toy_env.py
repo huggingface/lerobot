@@ -100,7 +100,7 @@ class ToyEnvConfig(EnvConfig):
             "type": "toy",
             "task": "reach",
             "fps": self.fps,
-            "control": "delta",
+            "control_mode": "delta",
             "semantics": "toy-delta-v1",
             "robot_type": self.robot_type,
         }

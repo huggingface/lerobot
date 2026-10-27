@@ -78,7 +78,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     def sim_settings(self) -> dict[str, Any]:
         """The simulator this config describes, as a server YAML's ``sim`` section.
 
-        Settings left out (fps, control, semantics, component names) follow the simulator's conventions.
+        Settings left out (fps, control_mode, semantics, component names) follow the simulator's conventions.
         By default, the environment Gymnasium registers as ``gym_id``, built with ``gym_kwargs`` and
         commanded with deltas; override it to declare other conventions.
         """
@@ -86,7 +86,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             "type": "gym",
             "task": self.task,
             "fps": self.fps,
-            "control": "delta",
+            "control_mode": "delta",
             "semantics": f"{self.type}-delta-v1",
             "kwargs": {"gym_id": self.gym_id, "gym_kwargs": self.gym_kwargs},
         }
@@ -292,7 +292,7 @@ def _gym_settings(config: EnvConfig, state_names: tuple[str, ...]) -> dict[str, 
         "type": "gym",
         "task": config.task,
         "fps": config.fps,
-        "control": "position",
+        "control_mode": "position",
         "semantics": f"{config.type}-position-v1",
         "state_names": state_names,
         "action_names": state_names,

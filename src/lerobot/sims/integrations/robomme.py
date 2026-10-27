@@ -291,7 +291,7 @@ def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     joint_actions = kwargs.get("action_space_type", "joint_angle") == "joint_angle"
     return {
         "fps": 10,
-        "control": "position" if joint_actions else "eef_pose",
+        "control_mode": "position" if joint_actions else "eef_pose",
         "state_names": joints,
         "action_names": joints if joint_actions else (),
     }

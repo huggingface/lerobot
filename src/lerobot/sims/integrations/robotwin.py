@@ -649,7 +649,7 @@ def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     # Joint mode commands and observes the 14 joints; ee mode commands 16-D poses, left unnamed.
     return {
         "fps": 25,
-        "control": "position",
+        "control_mode": "position",
         "state_names": joints,
         "action_names": joints if kwargs.get("action_mode", "joint") == "joint" else (),
         "robot_type": "aloha_agilex",

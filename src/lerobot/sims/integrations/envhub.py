@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # defaults used when neither the server configuration nor the repository sets them.
 SIM_DEFAULTS: dict[str, Any] = {
     "fps": 30,
-    "control": "position",
+    "control_mode": "position",
     "semantics": "envhub-v1",
     "state_names": [],
     "action_names": [],

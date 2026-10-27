@@ -102,13 +102,13 @@ def test_robomme_settings_name_the_cameras_and_action_space():
 
 
 @pytest.mark.parametrize(
-    ("action_space", "control", "names"), [("joint_angle", "position", 8), ("ee_pose", "eef_pose", 0)]
+    ("action_space", "control_mode", "names"), [("joint_angle", "position", 8), ("ee_pose", "eef_pose", 0)]
 )
-def test_robomme_conventions_follow_the_action_space(action_space, control, names):
+def test_robomme_conventions_follow_the_action_space(action_space, control_mode, names):
     from lerobot.envs.configs import RoboMMEEnv
 
     sim = RoboMMEEnv(action_space=action_space).sim_config()
-    assert sim.control == control and len(sim.action_names) == names
+    assert sim.control_mode == control_mode and len(sim.action_names) == names
 
 
 # ---------------------------------------------------------------------------

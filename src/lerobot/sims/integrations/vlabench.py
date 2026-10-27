@@ -585,4 +585,4 @@ create_envs = create_vlabench_envs
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     """VLABench's control rate, controller and component names."""
     names = ("eef.x", "eef.y", "eef.z", "eef.euler.x", "eef.euler.y", "eef.euler.z", "gripper.opening")
-    return {"fps": 10, "control": "eef_pose", "state_names": names, "action_names": names}
+    return {"fps": 10, "control_mode": "eef_pose", "state_names": names, "action_names": names}

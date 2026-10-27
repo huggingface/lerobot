@@ -334,7 +334,7 @@ def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     """Meta-World's control rate, controller, component names and simulated body."""
     return {
         "fps": 80,
-        "control": "delta",
+        "control_mode": "delta",
         "state_names": ("eef.x", "eef.y", "eef.z", "gripper.opening"),
         "action_names": ("eef.delta.x", "eef.delta.y", "eef.delta.z", "gripper.command"),
         "robot_type": "sawyer",

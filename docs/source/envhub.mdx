@@ -29,7 +29,7 @@ By default, a returned vector env must be an unwrapped `SyncVectorEnv` or `Async
 
 For provider-owned vector wrappers or GPU-native batches, use `--env.use_native_batch=true`. This keeps the repository's vector environment intact for local batched evaluation, including its preprocessing requirements. It cannot be combined with an endpoint or `SimRobot`. The string API (`make_env("user/repo")`) also keeps the provider's environment intact.
 
-`env.py` may also define an optional `LEROBOT_SIM` dictionary describing the environment (fps, control, component names; see [EnvHub and the simulator server](#envhub-and-the-simulator-server)). It applies locally and when served.
+`env.py` may also define an optional `LEROBOT_SIM` dictionary describing the environment (fps, control_mode, component names; see [EnvHub and the simulator server](#envhub-and-the-simulator-server)). It applies locally and when served.
 
 ## Quick Start
 
@@ -80,7 +80,7 @@ To make your environment loadable from the Hub, your repository must contain at 
 | Key            | Meaning                                                        | Default                               |
 | -------------- | -------------------------------------------------------------- | ------------------------------------- |
 | `fps`          | Control rate of one `step()`                                   | `30`                                  |
-| `control`      | Action convention: `position`, `delta` or `eef_pose`           | `"position"`                          |
+| `control_mode` | Action convention: `position`, `delta` or `eef_pose`           | `"position"`                          |
 | `semantics`    | Name of the observation/action conventions                     | `"envhub-v1"`                         |
 | `state_names`  | Names of the `observation.state` components, in order          | generic `state_0`, `state_1`, ...     |
 | `action_names` | Names of the action components, in order                       | generic `command_0`, `command_1`, ... |
@@ -119,7 +119,7 @@ Create an `env.py` file with a `make_env` function:
 import gymnasium as gym
 
 # Optional: describes the environment to the simulator server (see "Optional Files").
-LEROBOT_SIM = {"fps": 50, "control": "position"}
+LEROBOT_SIM = {"fps": 50, "control_mode": "position"}
 
 def make_env(n_envs: int = 1, use_async_envs: bool = False):
     """

@@ -554,7 +554,7 @@ def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     """LIBERO's control rate, controller, component names and simulated body."""
     return {
         "fps": 20,
-        "control": "delta",
+        "control_mode": "delta",
         "state_names": (
             "eef.x",
             "eef.y",

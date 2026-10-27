@@ -132,5 +132,5 @@ def test_build_and_stop_require_docker(monkeypatch):
 )
 def test_server_configs_take_their_conventions_from_the_simulator(path, monkeypatch):
     sim = resolve_without_simulator(load_config(path, [])["sim"], monkeypatch)
-    assert sim.semantics == f"{sim.type}-{sim.control.replace('_', '-')}-v1"
+    assert sim.semantics == f"{sim.type}-{sim.control_mode.replace('_', '-')}-v1"
     assert sim.action_names

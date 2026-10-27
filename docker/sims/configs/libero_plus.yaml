@@ -1,4 +1,4 @@
-# Settings left out (fps, control, semantics, component names) come from the integration's conventions().
+# Settings left out (fps, control_mode, semantics, component names) come from the integration's conventions().
 deployment: libero_plus
 sim:
   type: libero_plus

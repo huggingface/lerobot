@@ -433,7 +433,7 @@ def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     """RoboCasa's control rate, controller, component names and simulated body."""
     return {
         "fps": 20,
-        "control": "delta",
+        "control_mode": "delta",
         "state_names": (
             *(f"base.position.{a}" for a in "xyz"),
             *(f"base.quaternion.{a}" for a in "xyzw"),

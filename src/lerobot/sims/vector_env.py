@@ -278,7 +278,7 @@ class VectorEnv(gym.vector.VectorEnv):
             config.semantics,
             tuple(features),
             FeatureSpec("action", (dim,), "float32", names=action_names, semantics=config.semantics),
-            config.control,
+            config.control_mode,
             config.fps,
             self.tasks,
             self._max_steps[0],
