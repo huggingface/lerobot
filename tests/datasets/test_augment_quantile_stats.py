@@ -150,8 +150,15 @@ class FakeHFDataset:
         return {key: values[index] for key, values in self._columns.items()}
 
 
+class FakeDatasetBase:
+    hf_dataset: FakeHFDataset
+
+    def select_columns(self, keys: list[str]) -> FakeHFDataset:
+        return self.hf_dataset.select_columns(keys)
+
+
 def test_compute_quantile_stats_skips_language_features():
-    class FakeDataset:
+    class FakeDataset(FakeDatasetBase):
         num_episodes = 1
         features = {
             "action": {"dtype": "float32"},
@@ -174,7 +181,7 @@ def test_compute_quantile_stats_skips_language_features():
 
 
 def test_compute_quantile_stats_skip_images_avoids_decoding():
-    class FakeDataset:
+    class FakeDataset(FakeDatasetBase):
         num_episodes = 1
         features = {
             "action": {"dtype": "float32"},
@@ -192,7 +199,7 @@ def test_compute_quantile_stats_skip_images_avoids_decoding():
 
 
 def test_compute_quantile_stats_handles_single_frame():
-    class FakeDataset:
+    class FakeDataset(FakeDatasetBase):
         num_episodes = 1
         features = {"action": {"dtype": "float32"}}
         meta = SimpleNamespace(episodes=[{"dataset_from_index": 0, "dataset_to_index": 1}])
@@ -228,7 +235,7 @@ def test_compute_quantile_stats_image_count_uses_frames():
 def test_compute_quantile_stats_accumulates_across_episodes():
     values = [[float(value)] for value in range(100)] + [[float(value)] for value in range(1000, 1010)]
 
-    class FakeDataset:
+    class FakeDataset(FakeDatasetBase):
         num_episodes = 2
         features = {"action": {"dtype": "float32"}}
         meta = SimpleNamespace(
