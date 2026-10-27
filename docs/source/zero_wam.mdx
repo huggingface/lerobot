@@ -158,6 +158,8 @@ Use one source dataset per file and split recordings before building pools. The 
 
 Set `dataset.episodes` to the target episodes in the same training split. `icl_pools_split` selects demonstration pools; it does not filter the target dataset or compute train-only normalization statistics.
 
+For LeRobot streaming, set `--dataset.streaming=true`. If `dataset.root` contains local metadata with train-only statistics, also set `--dataset.streaming_data_root=hf://datasets/OWNER/DATASET@COMMIT_SHA` so payloads stream from the pinned source. Without that override, an explicit local root selects local payload files too. Streaming maintains bounded episode buffers; it does not require downloading the whole video dataset. Encoded demonstration latents are prepared separately.
+
 ## Streaming inference
 
 ```bash

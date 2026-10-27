@@ -21,6 +21,7 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.datasets import factory
 from lerobot.datasets.storage import is_bucket_root
 from lerobot.datasets.streaming_dataset import DEFAULT_STREAMING_SEED, StreamingLeRobotDataset
+from lerobot.datasets.streaming_sidecar import streaming_data_root
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 
@@ -84,7 +85,7 @@ def test_factory_wires_production_streaming_settings(
     assert captured["args"] == ("owner/dataset",)
     assert captured["kwargs"]["repo_type"] == expected_repo_type
     assert captured["kwargs"]["root"] is None
-    assert "data_root" not in captured["kwargs"]
+    assert captured["kwargs"]["data_root"] is None
     assert captured["metadata_repo_id"] == "owner/dataset"
     assert captured["metadata_kwargs"]["repo_type"] == expected_repo_type
     assert captured["metadata_kwargs"]["root"] is None
@@ -103,6 +104,44 @@ def test_factory_wires_production_streaming_settings(
     assert captured["kwargs"]["return_uint8"] is True
     assert captured["kwargs"]["repeat"] is True
     assert captured["kwargs"]["seed"] == 123
+
+
+def test_streaming_keeps_local_statistics_and_remote_payload_separate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = "hf://datasets/owner/dataset@" + "a" * 40
+    captured = {}
+
+    class DummyStreamingDataset:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+            self.meta = SimpleNamespace(camera_keys=[], depth_keys=[], stats={})
+
+    monkeypatch.setattr(
+        factory,
+        "load_dataset_metadata",
+        lambda *a, **kw: SimpleNamespace(storage_format="lerobot", total_episodes=1),
+    )
+    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *a, **kw: None)
+    monkeypatch.setattr(factory, "StreamingLeRobotDataset", DummyStreamingDataset)
+    cfg = SimpleNamespace(
+        dataset=DatasetConfig(
+            repo_id="owner/dataset", root=str(tmp_path), streaming=True, streaming_data_root=payload
+        ),
+        trainable_config=object(),
+        seed=7,
+        num_workers=0,
+        tolerance_s=1e-4,
+        rename_map={},
+    )
+    factory.make_dataset(cfg)
+    assert captured["root"] == str(tmp_path) and captured["data_root"] == payload
+    assert (
+        streaming_data_root(
+            SimpleNamespace(), requested_root=captured["root"], configured_data_root=captured["data_root"]
+        )
+        == payload
+    )
 
 
 def _streaming_cfg(root: Path | None, seed: int | None) -> SimpleNamespace:
