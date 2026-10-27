@@ -83,7 +83,7 @@ def test_other_tasks_build_their_simulators_on_first_use():
     from lerobot.sims.vector_env import VectorEnv
 
     config = ToyEnvConfig()
-    first = config.create_env(num_envs=2)
+    first = config.create_env(n_envs=2)
     env = VectorEnv(config.sim_config(), 2, descriptor=first.descriptor)
     try:
         assert not env._envs

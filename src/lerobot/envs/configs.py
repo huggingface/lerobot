@@ -117,11 +117,11 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         self,
         task_group: str | None = None,
         task_id: int = 0,
-        num_envs: int = 1,
+        n_envs: int = 1,
         use_async_envs: bool = False,
     ) -> VectorEnv | RemoteVectorEnv:
         """Create one local or served environment for a specific task."""
-        descriptor, make = self._environment_factory(num_envs, use_async_envs)
+        descriptor, make = self._environment_factory(n_envs, use_async_envs)
         group = task_group or next(iter(descriptor.tasks))
         if group not in descriptor.tasks:
             raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")

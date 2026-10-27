@@ -294,7 +294,7 @@ def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
 
 
 def _episode(config: ToyEnvConfig) -> list[tuple]:
-    env = config.create_env("reach", 0, num_envs=2)
+    env = config.create_env("reach", 0, n_envs=2)
     try:
         obs, info = env.reset(seed=[10, 20])
         results = [(obs, np.zeros(2, np.float32), np.zeros(2, bool), np.zeros(2, bool), info)]
