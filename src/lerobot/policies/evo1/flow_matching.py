@@ -20,6 +20,7 @@ import math
 import torch
 import torch.nn as nn
 
+from ..common.export_utils import is_non_strict_exporting
 from ..common.flow_matching import (
     FlowConvention,
     euler_integrate,
@@ -95,8 +96,17 @@ class CategorySpecificLinear(nn.Module):
                 raise ValueError(
                     f"category_id length {category_id.numel()} does not match flattened batch {x_flat.size(0)}"
                 )
-            weight_selected = self.weight[category_id]
-            bias_selected = self.bias[category_id]
+            if is_non_strict_exporting():
+                # Export skips the range check, so the lookup must reject bad ids. Inductor wraps negative ids
+                # instead of rejecting them, so they are moved past the end first.
+                category_id = torch.where(category_id < 0, self.num_categories, category_id)
+                weight_selected = self.weight.index_select(0, category_id)
+                bias_selected = self.bias.index_select(0, category_id)
+            else:
+                # Indexing keeps the CUDA backward deterministic. The only caller,
+                # FlowmatchingActionHead._prepare_context, already rejected out-of-range ids.
+                weight_selected = self.weight[category_id]
+                bias_selected = self.bias[category_id]
             out = torch.bmm(x_flat.unsqueeze(1), weight_selected).squeeze(1) + bias_selected
         out_shape = orig_shape[:-1] + (out.shape[-1],)
         return out.view(out_shape)
@@ -305,8 +315,14 @@ class FlowmatchingActionHead(nn.Module):
         device = fused_tokens.device
         if embodiment_id is None:
             embodiment_id = torch.zeros(batch_size, dtype=torch.long, device=device)
-        elif self.num_categories > 1 and (
-            int(embodiment_id.min()) < 0 or int(embodiment_id.max()) >= self.num_categories
+        elif (
+            self.num_categories > 1
+            # torch.export cannot read the ids. Eager calls raise this ValueError for an out-of-range id; an
+            # exported program fails in CategorySpecificLinear's lookup instead: IndexError on CPU
+            # (RuntimeError once compiled with Inductor), and on CUDA a device-side assert that leaves the
+            # CUDA context unusable.
+            and not is_non_strict_exporting()
+            and (int(embodiment_id.min()) < 0 or int(embodiment_id.max()) >= self.num_categories)
         ):
             raise ValueError(
                 f"embodiment ids must be in [0, num_categories={self.num_categories}), "
