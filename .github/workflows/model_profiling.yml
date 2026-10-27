@@ -131,6 +131,7 @@ jobs:
           HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
           PROFILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           python3 scripts/ci/model_profiling.py init --policy "$POLICY"
           test -d /mnt/cache
           mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$HF_LEROBOT_HOME" "$TORCH_HOME" "$UV_CACHE_DIR"
