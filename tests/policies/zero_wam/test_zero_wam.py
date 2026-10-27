@@ -244,6 +244,45 @@ def test_icl_pair_requires_the_entire_training_window(stride) -> None:
     assert policy._find_icl_latent(8, 100) is None
 
 
+def test_training_from_compact_prompt_pool(tmp_path, monkeypatch) -> None:
+    latent = write_icl_latent(tmp_path, "other-episode.pth")
+    pools = tmp_path / "pools.jsonl"
+    pools.write_text(
+        json.dumps(
+            {
+                "pool_id": "task",
+                "dataset": "abc",
+                "split": "train",
+                "members": [
+                    {
+                        "episode_index": 0,
+                        "start_frame": 0,
+                        "end_frame": 50,
+                        "latent_path": "must-not-load.pth",
+                    },
+                    {"episode_index": 1, "start_frame": 0, "end_frame": 50, "latent_path": str(latent)},
+                ],
+            }
+        )
+        + "\n"
+    )
+    policy = make_policy(tiny_config(icl_pools_path=str(pools), drop_icl=0.0, droptext_target=0.0))
+    loaded = []
+    original = policy._load_icl_latent
+
+    def capture(path):
+        loaded.append(path)
+        return original(path)
+
+    monkeypatch.setattr(policy, "_load_icl_latent", capture)
+    loss, _ = policy(training_batch(policy.config))
+    loss.backward()
+    assert loaded == [str(latent)]
+    assert torch.isfinite(loss) and policy.transformer.action_embedder.weight.grad.abs().sum() > 0
+    with pytest.raises(ValueError, match="only one of icl_pairs_path and icl_pools_path"):
+        tiny_config(icl_pairs_path="pairs.jsonl", icl_pools_path="pools.jsonl")
+
+
 def test_processor_quantiles_survive_save_reload(tmp_path) -> None:
     config = tiny_config()
     q01 = torch.arange(14, dtype=torch.float32)
@@ -602,6 +641,40 @@ def test_encoder_writes_distinct_crops_and_standalone_prompt_index(tmp_path, mon
     for p in prompts:
         encoded = torch.load(p["latent_path"], weights_only=True)
         assert encoded["source_start_s"] == p["start_time_s"]
+
+
+def test_pool_preparation_and_encoding_preserve_compact_members(tmp_path) -> None:
+    base = Path(__file__).resolve().parents[3] / "examples/zero_wam"
+    flatten = runpy.run_path(str(base / "prepare_episode_prompts.py"))["pool_member_rows"]
+    encode = runpy.run_path(str(base / "encode_human_videos.py"))["encoded_pools"]
+    import io
+
+    raw = {
+        "pool_id": "fold",
+        "dataset": "abc",
+        "split": "train",
+        "text": "fold the shirt",
+        "members": [
+            {"episode_index": 5, "start_frame": 10, "end_frame": 100},
+            {"episode_index": 8, "start_frame": 0, "end_frame": 120},
+            {"episode_index": 12, "start_frame": 0, "end_frame": 140},
+        ],
+    }
+    rows = list(flatten(io.StringIO(json.dumps(raw)), "abc", "train"))
+    assert len(rows) == 3  # Three source members represent six possible directed assignments.
+    resolved = [
+        {
+            **r,
+            "prompt_episode_index": r["prompt_episode"],
+            "prompt_start_frame": r["prompt_from_frame"],
+            "prompt_end_frame": r["prompt_to_frame"],
+        }
+        for r in rows
+    ]
+    result = encode(resolved, ["5", "8", "12"], {"5": "5.pth", "8": "8.pth", "12": "12.pth"})
+    assert len(result) == 1 and len(result[0]["members"]) == 3
+    assert result[0]["split"] == "train" and result[0]["dataset"] == "abc"
+    assert result[0]["members"][0] == {**raw["members"][0], "latent_path": "5.pth"}
 
 
 def test_precomputed_text_embeddings_skip_text_encoder(tmp_path) -> None:

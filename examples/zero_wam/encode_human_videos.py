@@ -30,6 +30,7 @@ video/crop/caption is encoded once. Outputs are normalized Wan latents and UMT5 
 import argparse
 import hashlib
 import json
+import uuid
 from pathlib import Path
 
 import torch
@@ -54,6 +55,28 @@ def prompt_spec(pair: dict, max_frames: int | None = None) -> dict:
     }
 
 
+def encoded_pools(pairs: list[dict], pair_keys: list[str], latent_paths: dict[str, str]) -> list[dict]:
+    """Attach encoded member paths while retaining compact pool and split identities."""
+    pools = {}
+    for pair, key in zip(pairs, pair_keys, strict=True):
+        if "pool_id" not in pair:
+            continue
+        identity = (pair["pool_id"], pair["dataset"], pair["split"])
+        pool = pools.setdefault(
+            identity,
+            {"pool_id": pair["pool_id"], "dataset": pair["dataset"], "split": pair["split"], "members": []},
+        )
+        pool["members"].append(
+            {
+                "episode_index": pair["prompt_episode_index"],
+                "start_frame": pair["prompt_start_frame"],
+                "end_frame": pair["prompt_end_frame"],
+                "latent_path": latent_paths[key],
+            }
+        )
+    return list(pools.values())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -68,8 +91,10 @@ def main() -> None:
     parser.add_argument("--max-video-frames", type=int, default=None)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
+    args.output_dir = args.output_dir.resolve()
 
-    pairs = [json.loads(line) for line in args.pairs.read_text().splitlines() if line.strip()]
+    with args.pairs.open() as source:
+        pairs = [json.loads(line) for line in source if line.strip()]
     pair_keys = [json.dumps(prompt_spec(p, args.max_video_frames), sort_keys=True) for p in pairs]
     videos = {key: json.loads(key) for key in pair_keys}
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -135,22 +160,25 @@ def main() -> None:
             text_emb = torch.zeros_like(hidden[0])
             text_emb[:length] = hidden[0, :length]
             _, f, h, w = latent.shape
-            torch.save(
-                {
-                    "latent": latent.permute(1, 2, 3, 0).reshape(f * h * w, -1).to(torch.bfloat16).cpu(),
-                    "latent_num_frames": f,
-                    "latent_height": h,
-                    "latent_width": w,
-                    "text_emb": text_emb.to(torch.bfloat16).cpu(),
-                    "text": text,
-                    "fps": args.fps,
-                    "source_video": video,
-                    "source_start_s": spec["start_time_s"],
-                    "source_end_s": spec["end_time_s"],
-                    "source_max_frames": spec["max_frames"],
-                },
-                out,
-            )
+            temporary = out.with_name(f".{out.name}.{uuid.uuid4().hex}.tmp")
+            payload = {
+                "latent": latent.permute(1, 2, 3, 0).reshape(f * h * w, -1).to(torch.bfloat16).cpu(),
+                "latent_num_frames": f,
+                "latent_height": h,
+                "latent_width": w,
+                "text_emb": text_emb.to(torch.bfloat16).cpu(),
+                "text": text,
+                "fps": args.fps,
+                "source_video": video,
+                "source_start_s": spec["start_time_s"],
+                "source_end_s": spec["end_time_s"],
+                "source_max_frames": spec["max_frames"],
+            }
+            try:
+                torch.save(payload, temporary)
+                temporary.replace(out)
+            finally:
+                temporary.unlink(missing_ok=True)
 
     pairs_out = args.output_dir / "pairs.jsonl"
     with pairs_out.open("w") as f:
@@ -161,6 +189,13 @@ def main() -> None:
     with prompts_out.open("w") as f:
         for key, spec in videos.items():
             f.write(json.dumps({**spec, "latent_path": latent_paths[key]}) + "\n")
+    pools = encoded_pools(pairs, pair_keys, latent_paths)
+    if pools:
+        pools_out = args.output_dir / "pools.jsonl"
+        with pools_out.open("w") as f:
+            for pool in pools:
+                f.write(json.dumps(pool) + "\n")
+        print(f"Wrote {len(pools)} compact prompt pools to {pools_out}")
     num_pairs = sum("episode_index" in pair for pair in pairs)
     print(f"Encoded {len(latent_paths)} prompts; wrote {num_pairs} training pairs to {pairs_out}")
     print(f"Prompt latent paths: {prompts_out}")

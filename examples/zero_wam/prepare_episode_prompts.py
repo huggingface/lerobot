@@ -12,15 +12,17 @@
 
 """Resolve LeRobot v3 episode/segment prompts without copying concatenated video files.
 
-Use --pairs for same-dataset target/prompt rows, or --episode-index to prepare one recorded
-physical demonstration for rollout. Encode the output with encode_human_videos.py. That encoder
-writes training pairs.jsonl and a prompts.jsonl containing each demonstration's latent_path.
+Use --pairs for same-dataset target/prompt rows, --pools for compact episode groups, or
+--episode-index to prepare one recorded physical demonstration for rollout. Encode the output
+with encode_human_videos.py to write pairs.jsonl or pools.jsonl and a prompts.jsonl index.
 """
 
 import argparse
 import json
 import math
+from collections.abc import Iterator
 from pathlib import Path
+from typing import TextIO
 
 from lerobot.datasets.io_utils import load_episodes
 
@@ -53,12 +55,37 @@ def episode_video_spec(root: Path, info: dict, episode: dict, camera: str, start
     }
 
 
+def pool_member_rows(source: TextIO, dataset_id: str | None, split: str) -> Iterator[dict]:
+    """Flatten compact pools for video encoding without creating episode-pair combinations."""
+    for line in source:
+        if not line.strip():
+            continue
+        pool = json.loads(line)
+        if not dataset_id:
+            raise ValueError("--dataset-id is required for prompt pools")
+        if pool["dataset"] != dataset_id or pool["split"] != split:
+            continue
+        if len({int(m["episode_index"]) for m in pool["members"]}) < 2:
+            raise ValueError("A prompt pool requires at least two distinct episodes")
+        for member in pool["members"]:
+            yield {
+                "pool_id": pool["pool_id"],
+                "dataset": pool["dataset"],
+                "split": pool["split"],
+                "prompt_episode": member["episode_index"],
+                "prompt_from_frame": member["start_frame"],
+                "prompt_to_frame": member["end_frame"],
+                "detail_raw": pool["text"],
+            }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path, required=True)
     parser.add_argument("--camera", required=True)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--pairs", type=Path)
+    source.add_argument("--pools", type=Path)
     source.add_argument("--episode-index", type=int)
     parser.add_argument("--dataset-id", help="Filter a multi-dataset candidate manifest by this dataset ID")
     parser.add_argument("--split", default="train")
@@ -94,8 +121,12 @@ def main() -> None:
                 ]
                 source_file = None
             else:
-                source_file = args.pairs.open()
-                rows = (json.loads(line) for line in source_file if line.strip())
+                source_file = (args.pools or args.pairs).open()
+                rows = (
+                    pool_member_rows(source_file, args.dataset_id, args.split)
+                    if args.pools
+                    else (json.loads(line) for line in source_file if line.strip())
+                )
             try:
                 for pair in rows:
                     if args.pairs is not None:

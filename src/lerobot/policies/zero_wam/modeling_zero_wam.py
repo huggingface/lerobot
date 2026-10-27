@@ -52,6 +52,7 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
 from .configuration_zero_wam import VAE_SPATIAL_DOWNSAMPLE, ZeroWAMConfig
+from .prompt_pool import ICLPromptPools
 from .transformer import (
     ICL_CACHE_TYPE,
     OBSERVATION_CACHE_TYPE,
@@ -230,6 +231,7 @@ class ZeroWAMPolicy(PreTrainedPolicy):
         self._text_cache: dict[str, Tensor] = {}
         self._precomputed_text: dict[str, Tensor] = {}
         self._icl_pairs: dict[int, list[dict]] | None = None
+        self._icl_pools: ICLPromptPools | None = None
         self._train_schedulers: dict[str, FlowMatchScheduler] = {}
         self.reset()
 
@@ -392,6 +394,10 @@ class ZeroWAMPolicy(PreTrainedPolicy):
         """Choose a demonstration whose matched target segment contains the whole training clip."""
         # The final camera frame follows (F - 1) latent intervals. Actions end one frame earlier.
         last_frame = frame_index + (self.config.train_num_latent_frames - 1) * self.config.action_per_frame
+        if self.config.icl_pools_path:
+            if self._icl_pools is None:
+                self._icl_pools = ICLPromptPools(self.config.icl_pools_path, self.config.icl_pools_split)
+            return self._icl_pools.sample(episode_index, frame_index, last_frame)
         candidates = [
             p
             for p in self._load_icl_pairs().get(episode_index, [])

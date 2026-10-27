@@ -148,6 +148,10 @@ class ZeroWAMConfig(PreTrainedConfig):
     # JSONL of {"episode_index", "start_frame", "end_frame", "latent_path"} human-video pairings
     # used as ICL context during training. Samples without a pairing train text-only.
     icl_pairs_path: str | None = None
+    # Compact pools of encoded episode/segment demonstrations, sampled at each training forward.
+    # Mutually exclusive with icl_pairs_path. Pools must contain only one source dataset.
+    icl_pools_path: str | None = None
+    icl_pools_split: str = "train"
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -190,6 +194,10 @@ class ZeroWAMConfig(PreTrainedConfig):
             raise ValueError("The released Zero-WAM layout requires patch_size=(1, 2, 2)")
         if self.icl_latent_path and self.icl_video_path:
             raise ValueError("Set only one of icl_latent_path and icl_video_path")
+        if self.icl_pairs_path and self.icl_pools_path:
+            raise ValueError("Set only one of icl_pairs_path and icl_pools_path")
+        if not self.icl_pools_split:
+            raise ValueError("icl_pools_split must be nonempty")
         if self.attention_backend not in ("flex", "sdpa"):
             raise ValueError(f"attention_backend must be 'flex' or 'sdpa', got {self.attention_backend!r}")
         if self.train_num_latent_frames < 2:

@@ -122,6 +122,42 @@ Select the split before creating prompt/target pairs and use distinct episodes. 
 
 For training, set `--policy.icl_pairs_path=outputs/abc_prompt_latents/pairs.jsonl`. Each crop/caption has its own encoding identity, so shared MP4 containers and alternative captions do not overwrite one another. The encoder also accepts ordinary `prompt_video` / `prompt_text` entries and legacy `human_video` / `human_text` entries. Samples without a matching pair train with text context only.
 
+### Sample from all available prompt episodes
+
+For large datasets, compact pools avoid expanding every target/prompt combination. An unencoded pool contains one member per source episode or segment:
+
+```json
+{
+  "pool_id": "fold-shirts",
+  "dataset": "abc",
+  "split": "train",
+  "text": "fold and stack the t-shirts",
+  "members": [
+    { "episode_index": 0, "start_frame": 0, "end_frame": 300 },
+    { "episode_index": 7, "start_frame": 10, "end_frame": 340 },
+    { "episode_index": 12, "start_frame": 0, "end_frame": 280 }
+  ]
+}
+```
+
+Prepare and encode each member once:
+
+```bash
+uv run python examples/zero_wam/prepare_episode_prompts.py \
+  --dataset-root /path/to/abc --camera observation.images.top \
+  --pools abc_training_pools.jsonl --dataset-id abc --split train \
+  --output outputs/abc_pool_members.jsonl
+
+uv run python examples/zero_wam/encode_human_videos.py \
+  --pairs outputs/abc_pool_members.jsonl --output-dir outputs/abc_prompt_latents
+```
+
+Train with `--policy.icl_pools_path=outputs/abc_prompt_latents/pools.jsonl` and `--policy.icl_pools_split=train`. Choose pools or fixed pairs; `icl_pools_path` and `icl_pairs_path` are mutually exclusive. Encoded pools add `latent_path` to each member. A training forward selects a matching pool, then a different episode and one of its segments. The full target window must fit a member interval. Multiple segments from the target episode are all excluded as prompts. Pool storage and the episode index grow with member count rather than pair count.
+
+Use one source dataset per file and split recordings before building pools. The loader rejects a declared episode appearing across splits, duplicate member intervals and missing encoded paths. It does not establish that different episode IDs come from independent source sessions. Prompt-cache files are written atomically so interrupted encoding can resume without treating a partial file as a completed latent.
+
+Set `dataset.episodes` to the target episodes in the same training split. `icl_pools_split` selects demonstration pools; it does not filter the target dataset or compute train-only normalization statistics.
+
 ## Streaming inference
 
 ```bash
@@ -142,4 +178,6 @@ Streaming inference supports **one environment** through `select_action()`. Call
 
 The focused CPU tests execute a small real transformer with deterministic fake frozen encoders. They cover training/backward/update, gradient-checkpointing recomputation, serialization, conversion with and without MCP, normalization persistence, task preservation, and multi-chunk streaming with and without demonstration context. Run `uv run pytest tests/policies/zero_wam -q`.
 
-Full released-checkpoint numerical parity, CUDA flex-attention validation, RoboTwin task-success evaluation, and real-YAM deployment remain to be established for this integration. No benchmark success rate or YAM transfer result is claimed. Known numerical differences from the upstream inference server include full-precision RoPE tables and standard LeRobot quantile denominators (epsilon is applied to constant dimensions rather than added to every dimension). These must be accounted for in checkpoint parity checks.
+A full-weight H100 check executed the released 10.8B transformer using CUDA flex attention, BF16, MCP heads and synthetic prepared inputs, with demonstration context on and off. All tested outputs matched the pinned upstream implementation exactly after aligning its rotary tables to the full precision used here. With upstream's default BF16 rotary tables, maximum absolute output differences were 0.09375 for video and 0.03125 for actions. This comparison isolates transformer execution; it does not validate preprocessing, denoising or task success.
+
+VAE/text preprocessing, full-size backward/save/resume, distributed training, RoboTwin task-success evaluation, and real-YAM deployment remain to be established. No benchmark success rate or YAM transfer result is claimed. Standard LeRobot quantile denominators also differ from upstream: epsilon is applied to constant dimensions rather than added to every dimension. Account for that difference when checking action scaling.
