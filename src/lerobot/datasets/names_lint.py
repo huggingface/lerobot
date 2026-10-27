@@ -38,15 +38,16 @@ _VISUAL_DTYPES = frozenset({"image", "video"})
 _REPORT_NAME = "names_lint.json"
 
 
-def _flatten_names(names: Any) -> list[str] | None:
+def _flatten_names(names: Any) -> tuple[list[str], bool] | None:
     """Flatten flat, nested, grouped and name-to-index representations.
 
+    Return flattened names and whether any came from an explicit index map.
     Return None for an unrecognized representation, without rejecting a dataset.
     Empty declarations are classified by the caller before flattening.
     """
     values: Iterable[Any]
     if isinstance(names, str):
-        return [names]
+        return [names], False
     if isinstance(names, Mapping):
         if names and all(isinstance(value, int) and not isinstance(value, bool) for value in names.values()):
             indexed = sorted(names.items(), key=lambda pair: pair[1])
@@ -54,7 +55,7 @@ def _flatten_names(names: Any) -> list[str] | None:
                 return None
             if not all(isinstance(name, str) for name, _ in indexed):
                 return None
-            return [name for name, _ in indexed]
+            return [name for name, _ in indexed], True
         values = names.values()
     elif isinstance(names, Sequence) and not isinstance(names, (str, bytes, bytearray)):
         values = names
@@ -62,12 +63,15 @@ def _flatten_names(names: Any) -> list[str] | None:
         return None
 
     flattened: list[str] = []
+    has_index_mapping = False
     for value in values:
         nested = _flatten_names(value)
         if nested is None:
             return None
-        flattened.extend(nested)
-    return flattened
+        nested_names, nested_has_index_mapping = nested
+        flattened.extend(nested_names)
+        has_index_mapping |= nested_has_index_mapping
+    return flattened, has_index_mapping
 
 
 def _shape_size(shape: Any) -> int | None:
@@ -100,7 +104,8 @@ def lint_feature_names(features: Mapping[str, Any]) -> dict[str, Any]:
     The scalar-name count check applies to 1D numeric data. Image/video
     names describe axes, and higher-dimensional arrays may describe axes or
     only the last dimension, so these cases are classified but not linted.
-    A singleton name on a larger 1D array may be a whole-vector label.
+    A singleton name on a larger 1D array may be a whole-vector label, unless
+    it comes from an explicit name-to-index mapping.
 
     Args:
         features (`Mapping[str, Any]`):
@@ -146,8 +151,8 @@ def lint_feature_names(features: Mapping[str, Any]) -> dict[str, Any]:
             warn("empty_declaration", feature_name, "Channel names are declared but empty.")
             continue
 
-        names = _flatten_names(raw_names)
-        if names is None:
+        flattened = _flatten_names(raw_names)
+        if flattened is None:
             feature_classes[feature_name] = "unsupported"
             warn(
                 "unsupported_names",
@@ -155,7 +160,8 @@ def lint_feature_names(features: Mapping[str, Any]) -> dict[str, Any]:
                 "Feature names are not a supported flat or grouped structure.",
             )
             continue
-        if len(names) == 1 and size > 1:
+        names, has_index_mapping = flattened
+        if len(names) == 1 and size > 1 and not has_index_mapping:
             # e.g. LIBERO state=[8], names=["state"], or Metaworld ["keypoints"].
             # Do not classify these as a definite error: their granularity may be vector-wide.
             feature_classes[feature_name] = "possible_whole_vector"

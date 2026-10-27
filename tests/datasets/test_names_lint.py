@@ -96,6 +96,26 @@ def test_indexed_mapping_support_and_gap_warning():
     assert report["issues"][0]["feature"] == "state"
 
 
+@pytest.mark.parametrize("names", [{"delta_x": 0}, {"axes": {"delta_x": 0}}, [{"delta_x": 0}]])
+@pytest.mark.parametrize("size", [1, 4])
+def test_singleton_index_mapping_preserves_channel_semantics(names, size):
+    report = lint_feature_names({"action": _feature([size], names)})
+    if size == 1:
+        assert report["feature_classes"] == {"action": "count_match"}
+        assert report["issue_count"] == 0
+    else:
+        assert report["feature_classes"] == {"action": "mismatch"}
+        assert report["warnings_by_code"] == {"name_shape_mismatch": 1}
+        assert report["issues"][0]["details"] == {"expected": 4, "actual": 1, "shape": [4]}
+
+
+@pytest.mark.parametrize("names", [{"delta_x": 1}, {"delta_x": True}])
+def test_invalid_singleton_index_mapping_remains_unsupported(names):
+    report = lint_feature_names({"action": _feature([4], names)})
+    assert report["feature_classes"] == {"action": "unsupported"}
+    assert _codes(report) == ["unsupported_names"]
+
+
 def test_empty_name_list_does_not_pass_shape_check():
     assert _codes(lint_feature_names({"action": _feature((2,), [])})) == ["empty_declaration"]
 
@@ -135,13 +155,30 @@ def test_cli_emits_json_and_exits_zero_with_warnings(tmp_path):
     assert set(_codes(report)) == {"duplicate_name", "placeholder_names"}
 
 
+@pytest.mark.parametrize("names", [{"delta_x": 0}, {"axes": {"delta_x": 0}}])
+def test_cli_singleton_index_mapping_warns_without_rejecting_dataset(tmp_path, names):
+    info_file = tmp_path / "info.json"
+    original = json.dumps({"features": {"action": _feature([4], names)}})
+    info_file.write_text(original, encoding="utf-8")
+    cli = Path(__file__).resolve().parents[2] / "src" / "lerobot" / "datasets" / "names_lint.py"
+    completed = subprocess.run(
+        [sys.executable, str(cli), str(info_file)], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads((tmp_path / "names_lint.json").read_text(encoding="utf-8"))
+    assert report["feature_classes"] == {"action": "mismatch"}
+    assert report["warnings_by_code"] == {"name_shape_mismatch": 1}
+    assert info_file.read_text(encoding="utf-8") == original
+
+
 @pytest.mark.parametrize("names", [["left", "right"], {"arms": {"left": ["left"], "right": ["right"]}}])
 def test_nested_and_flat_names_both_supported(names):
     assert lint_feature_names({"action": _feature((2,), names)})["issue_count"] == 0
 
 
-def test_libero_whole_vector_label_is_not_a_count_error():
-    report = lint_feature_names({"observation.state": _feature([8], ["state"])})
+@pytest.mark.parametrize("names", ["state", ["state"], {"axes": ["state"]}])
+def test_libero_whole_vector_label_is_not_a_count_error(names):
+    report = lint_feature_names({"observation.state": _feature([8], names)})
     assert report["feature_classes"]["observation.state"] == "possible_whole_vector"
     assert report["issue_count"] == 0
 

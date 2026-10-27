@@ -23,9 +23,11 @@ scalar channel names. Multidimensional arrays can use axis names or last-axis
 names; they are classified as out of scope, avoiding misleading warnings.
 A single label on a larger vector can denote the _whole vector_ rather than
 an incomplete list; it is reported as `possible_whole_vector` rather than an
-error. Name-to-index mappings and nested group/list representations are
-supported. A `count_match` only means that the _number_ of names matches the
-shape; it does not prove that the names are semantically correct.
+error. Explicit name-to-index mappings (including nested mappings) identify
+individual channels, so an incomplete singleton map is a `mismatch`.
+Name-to-index mappings and nested group/list representations are supported.
+A `count_match` only means that the _number_ of names matches the shape; it
+does not prove that the names are semantically correct.
 
 The command exits successfully even with warnings. It never rewrites
 `meta/info.json`, rejects existing datasets, changes dataset loading, or blocks
