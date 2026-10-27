@@ -154,9 +154,7 @@ class EnvClient:
             descriptor = self.descriptor
             if not self.session or descriptor is None:
                 raise RuntimeError("Simulator session is not open")
-            key = self.prefix + (f"/{operation}" if operation in {"reset", "step"} else "/control")
-            if operation not in {"reset", "step"}:
-                body["operation"] = operation
+            key = f"{self.prefix}/{operation}"
             try:
                 timeout = self.setup_timeout_s if operation == "reset" else self.timeout_s
                 reply = self._query(key, MessageType.CONTROL, body, timeout)

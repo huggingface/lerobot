@@ -105,6 +105,20 @@ def test_admission_and_stale_generation(server):
         other.close()
 
 
+def test_malformed_actions_are_rejected_without_failing_the_simulator(server):
+    client = EnvClient(server[1])
+    try:
+        client.open(1)
+        with pytest.raises(ProtocolError) as error:
+            client.request("step", actions=np.zeros((1, 3), np.float32))
+        assert error.value.code == ErrorCode.INCOMPATIBLE
+        # The client stops after any error; the session on the server still steps.
+        client.failed = False
+        assert client.request("step", actions=np.zeros((1, 2), np.float32))["result"].elapsed_steps[0] == 1
+    finally:
+        client.close()
+
+
 def test_jpeg_observations_match_raw(server):
     from lerobot.env_server.client import RemoteVectorEnv
 

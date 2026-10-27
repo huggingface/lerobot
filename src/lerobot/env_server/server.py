@@ -14,6 +14,7 @@
 
 """Serve simulator environments; one thread owns and steps them."""
 
+import contextlib
 import logging
 import time
 import uuid
@@ -46,10 +47,12 @@ from .contracts import (
     encode_step_result,
     instance_prefix,
     session_prefix,
-    validate_result,
 )
 
 logger = logging.getLogger(__name__)
+
+# Room in a reply for what is not observations: rewards, flags, task text and the envelope.
+_REPLY_HEADROOM_BYTES = 64 * 1024
 
 
 @dataclass
@@ -66,7 +69,7 @@ class ServerConfig:
 
 
 class _Session:
-    """One served batch of environments, stepped only on request, alive while its client's presence is."""
+    """One client's batch of environments; closed when the client's presence is lost."""
 
     def __init__(
         self,
@@ -77,27 +80,26 @@ class _Session:
         encoding: str,
         jpeg_quality: int,
     ):
-        self.descriptor = server.descriptor
         self.env = env
-        self.generation = 0
-        self.fault: str | None = None
-        try:
-            self.env.reset(seed=seeds)
-            self.opened = self.env.latest
-            validate_result(self.opened, self.env.descriptor, env.num_envs)
-        except BaseException:
-            self.env.close()
-            raise
         self.prefix = prefix
         self.encoding = encoding
         self.jpeg_quality = jpeg_quality
-        self.rgb = {f.name for f in self.descriptor.features if f.kind == "rgb"}
+        self.rgb = {f.name for f in env.descriptor.features if f.kind == "rgb"}
+        # A reset counts a generation: requests sent before it are rejected as stale.
+        self.generation = 0
+        # Set when the simulator fails: the session then refuses every operation.
+        self.fault: str | None = None
         self.opened_at = time.monotonic()
         self.seen_client = False
-        self.presence: BoundedSubscriber[PresenceEvent] = server.transport.subscribe_liveliness(
-            prefix + "/client_alive"
-        )
-        self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
+        with contextlib.ExitStack() as cleanup:
+            cleanup.callback(env.close)
+            env.reset(seed=seeds)
+            self.presence: BoundedSubscriber[PresenceEvent] = server.transport.subscribe_liveliness(
+                prefix + "/client_alive"
+            )
+            cleanup.callback(self.presence.close)
+            self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
+            cleanup.pop_all()
 
     def handle(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
         """Reset or step the owned environments."""
@@ -108,14 +110,17 @@ class _Session:
                 self.env.reset(seed=body.get("seeds"))
             except Exception as exc:
                 self.fault = f"Simulator reset failed: {exc}"
+                logger.exception(self.fault)
                 raise
             self.generation += 1
             return {"generation": self.generation, "result": encode_step_result(self.env.latest)}
         if operation == "step":
+            actions = self.actions(body.get("actions"))
             try:
-                self.env.step(self.actions(body.get("actions")))
+                self.env.step(actions)
             except Exception as exc:
                 self.fault = f"Simulator step failed: {exc}"
+                logger.exception(self.fault)
                 raise
             return {"result": encode_step_result(self.env.latest)}
         raise ProtocolError(ErrorCode.UNSUPPORTED, f"Unsupported operation: {operation}")
@@ -123,7 +128,7 @@ class _Session:
     def actions(self, value: Any) -> np.ndarray:
         """Validate a batch of actions against the environment contract."""
         try:
-            validate_array(value, self.descriptor.action_feature, leading_shape=(self.env.num_envs,))
+            validate_array(value, self.env.descriptor.action_feature, leading_shape=(self.env.num_envs,))
         except ValueError as exc:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Action shape, dtype or values invalid") from exc
         return cast(np.ndarray, value)
@@ -147,7 +152,7 @@ class _Session:
 
 
 class EnvServer:
-    """Serve explicit environment operations from one owner thread."""
+    """Serve one simulator's environments to clients; a single thread owns and steps them."""
 
     def __init__(self, config: ServerConfig):
         """Create the transport; simulators are built when serving starts."""
@@ -157,20 +162,21 @@ class EnvServer:
         self.instance = uuid.uuid4().hex
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
-        self._probe: VectorEnv | None = None
+        # Built at startup to describe the simulator, then handed to the first matching session.
+        self._startup_env: VectorEnv | None = None
         self.ready = Event()
         self.stop = Event()
         self.descriptor: EnvDescriptor
 
     def serve(self) -> None:
-        """Pump bounded requests until stopped."""
+        """Answer requests until stopped; every simulator call happens on this thread."""
         try:
             # Listen first: clients connecting while a slow simulator starts wait instead of failing.
             self.transport.open()
-            # Simulators are built here, on the thread that later steps them. The environment built to read the
-            # description serves the first session: some simulators (Isaac Sim) start only once per process.
-            self._probe = VectorEnv(self.config.sim)
-            self.descriptor = self._probe.descriptor
+            # Built on the thread that later steps it, and kept for the first session: some simulators
+            # (Isaac Sim) start only once per process.
+            self._startup_env = VectorEnv(self.config.sim)
+            self.descriptor = self._startup_env.descriptor
             root = deployment_prefix(self.config.deployment)
             instance = instance_prefix(self.config.deployment, self.instance)
             describe = self.transport.declare_queryable(
@@ -209,8 +215,8 @@ class EnvServer:
                     self._close_session(session_id)
                 except Exception:
                     logger.exception("Failed to close simulator session %s", session_id)
-            if self._probe is not None:
-                self._probe.close()
+            if self._startup_env is not None:
+                self._startup_env.close()
             self.transport.close()
 
     @staticmethod
@@ -232,6 +238,7 @@ class EnvServer:
             reply = message.reply(MessageType.ACK if message.session_id else MessageType.ACCEPTED, body)
         except Exception as exc:
             code = exc.code if isinstance(exc, ProtocolError) else ErrorCode.EXECUTION
+            # A request that cannot be decoded has no envelope to answer; reply with an empty one.
             reply = (message or Envelope(MessageType.DESCRIBE)).error(code, str(exc))
             logger.debug("Simulator request failed", exc_info=True)
         self._send(pending, reply)
@@ -253,25 +260,20 @@ class EnvServer:
         if message.generation != session.generation:
             raise ProtocolError(ErrorCode.STALE, "Environment generation changed")
         operation = key.rsplit("/", 1)[-1]
-        body = message.body
-        if operation == "control":
-            operation = body.get("operation", "")
         if operation == "close":
             self._close_session(message.session_id)
             return {}
-        return session.encode(session.handle(operation, body))
+        return session.encode(session.handle(operation, message.body))
 
-    def _open(self, body: dict) -> dict:
+    def _open(self, body: dict[str, Any]) -> dict[str, Any]:
         count = body.get("num_envs", 1)
-        use_async_envs = body.get("use_async_envs", False)
+        use_async_envs = bool(body.get("use_async_envs", False))
         encoding = body.get("encoding", "raw")
         jpeg_quality = body.get("jpeg_quality", 90)
         if type(count) is not int or not 1 <= count <= self.config.max_envs:
             raise ProtocolError(
                 ErrorCode.INCOMPATIBLE, f"Batch size {count!r} is not between 1 and {self.config.max_envs}"
             )
-        if type(use_async_envs) is not bool:
-            raise ProtocolError(ErrorCode.MALFORMED, "use_async_envs must be a boolean")
         if encoding not in {"raw", "jpeg"} or type(jpeg_quality) is not int or not 1 <= jpeg_quality <= 100:
             raise ProtocolError(
                 ErrorCode.UNSUPPORTED, "Image encoding must be raw or jpeg, quality in [1, 100]"
@@ -285,23 +287,11 @@ class EnvServer:
             if encoding == "raw"
             else CodecLimits().max_decoded_bytes
         )
-        if batch_bytes + 65536 > budget:
+        if batch_bytes + _REPLY_HEADROOM_BYTES > budget:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Observation batch exceeds transport payload budget")
         if len(self.sessions) >= self.config.max_sessions:
             raise ProtocolError(ErrorCode.BUSY, "Simulator capacity is owned by another session")
-        task_group, task_id = body.get("task_group"), body.get("task_id", 0)
-        probe, self._probe = self._probe, None
-        if probe is not None and (count, task_group or probe.task_group, task_id, use_async_envs) == (
-            probe.num_envs,
-            probe.task_group,
-            probe.task_id,
-            probe.use_async_envs,
-        ):
-            env = probe
-        else:
-            if probe is not None:
-                probe.close()
-            env = VectorEnv(self.config.sim, count, task_group, task_id, use_async_envs)
+        env = self._session_env(count, body.get("task_group"), body.get("task_id", 0), use_async_envs)
         session_id = uuid.uuid4().hex
         session = _Session(
             self,
@@ -315,11 +305,23 @@ class EnvServer:
         return session.encode(
             {
                 "session": session_id,
-                "result": encode_step_result(session.opened),
+                "result": encode_step_result(env.latest),
                 "generation": 0,
-                "descriptor": encode_descriptor(session.env.descriptor),
+                "descriptor": encode_descriptor(env.descriptor),
             }
         )
+
+    def _session_env(
+        self, count: int, task_group: str | None, task_id: int, use_async_envs: bool
+    ) -> VectorEnv:
+        """The startup environment when the session asks for it, else a new one."""
+        env, self._startup_env = self._startup_env, None
+        if env is not None:
+            asked = (count, task_group or env.task_group, task_id, use_async_envs)
+            if asked == (env.num_envs, env.task_group, env.task_id, env.use_async_envs):
+                return env
+            env.close()
+        return VectorEnv(self.config.sim, count, task_group, task_id, use_async_envs)
 
     def _reap_sessions(self) -> None:
         now = time.monotonic()
