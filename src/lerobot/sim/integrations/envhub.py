@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""EnvHub environments: the torch-free Hub loader and the simulator-server backend."""
+"""EnvHub environments: load a Hub repository's ``env.py`` and build its environments, without torch."""
 
 import importlib.util
 import logging
@@ -158,11 +158,14 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: Any | No
         raise AttributeError(
             f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
         )
-    entry_fn = module.make_env
     if cfg is not None:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg, **kwargs)
-    else:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
+        kwargs["cfg"] = cfg
+    return module.make_env(n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
+
+
+def _suite_name(env: Any) -> str:
+    """The env's registered Gymnasium id, else ``hub_env``."""
+    return getattr(getattr(env, "spec", None), "id", None) or "hub_env"
 
 
 def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
@@ -178,13 +181,10 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
         return result
 
     if isinstance(result, gym.vector.VectorEnv):
-        suite_name = getattr(result, "spec", None) and getattr(result.spec, "id", None) or "hub_env"
-        return {suite_name: {0: result}}
+        return {_suite_name(result): {0: result}}
 
     if isinstance(result, gym.Env):
-        vec = gym.vector.SyncVectorEnv([lambda: result])
-        suite_name = getattr(result, "spec", None) and getattr(result.spec, "id", None) or "hub_env"
-        return {suite_name: {0: vec}}
+        return {_suite_name(result): {0: gym.vector.SyncVectorEnv([lambda: result])}}
 
     raise ValueError(
         "Hub `make_env` must return either a mapping {suite: {task_id: vec_env}}, "
@@ -193,7 +193,11 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
 
 
 def _env_factories(vec: Any, n_envs: int) -> list:
-    """Take a vector env's per-environment factories, then close it for lazy server construction."""
+    """Keep a vector env's per-environment factories and close it.
+
+    Gymnasium builds a vector env's environments when it is created; ``VectorEnv`` builds them again
+    from these factories, on first use.
+    """
     try:
         if type(vec) not in {gym.vector.SyncVectorEnv, gym.vector.AsyncVectorEnv}:
             raise ValueError(
@@ -217,7 +221,7 @@ def create_envs(
     hub_cache_dir: str | None = None,
     make_env_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, dict[int, Any]]:
-    """Serve environments from a Hub repository's ``make_env``, called with ``make_env_kwargs``.
+    """Environments from a Hub repository's ``make_env``, called with ``make_env_kwargs``.
 
     ``task`` is unused: suites and task ids come from the repository, and clients select them.
     """
@@ -226,10 +230,10 @@ def create_envs(
     result = _call_make_env(module, n_envs=n_envs, use_async_envs=False, cfg=None, **options)
     if isinstance(result, gym.Env):
         # A single env has no reusable factory, so each environment calls make_env again.
-        suite = getattr(result.spec, "id", None) if result.spec else None
+        suite = _suite_name(result)
         result.close()
         fns = [lambda: _call_make_env(module, n_envs=1, use_async_envs=False, cfg=None, **options)] * n_envs
-        return {suite or "hub_env": {0: env_cls(fns)}}
+        return {suite: {0: env_cls(fns)}}
     return {
         suite: {task_id: env_cls(_env_factories(vec, n_envs)) for task_id, vec in tasks.items()}
         for suite, tasks in _normalize_hub_result(result).items()
