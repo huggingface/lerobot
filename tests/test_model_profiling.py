@@ -310,6 +310,9 @@ def test_timeout_keeps_completed_inference_and_marks_training(tmp_path):
     assert row["inference"]["median_ms"] == 12.5
     assert row["training"]["status"] == "failed"
     assert ci.metric_label(row, "training", {"median_ms": None}) == "Time limit"
+    ci.summary(tmp_path, ["lingbot_va"])
+    payload = json.loads((tmp_path / "slack.json").read_text())
+    assert "LingBot inference reuses its episode prompt" in json.dumps(payload)
 
 
 def test_timeout_during_setup_marks_both_operations(tmp_path):

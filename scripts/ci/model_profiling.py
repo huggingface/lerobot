@@ -292,6 +292,8 @@ def summary(
         "Baseline: nearest run to 28 days before each measurement (±3 days), with matching GPU and configuration. "
         "* after a policy means gradient checkpointing is on."
     )
+    if any(row.get("inference_context") == "cached_episode_prompt" for row in rows):
+        note += " LingBot inference reuses its episode prompt."
     source_note = (
         "Latest archived measurements from multiple source runs; setups and source dates are retained in results.json."
         if latest
