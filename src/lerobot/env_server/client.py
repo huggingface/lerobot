@@ -258,7 +258,6 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         return self._latest
 
     def _open_session(self, seeds=None):
-        # Not `_ensure`: lerobot-eval prefetches through `_ensure`, and opening resets the environments.
         if not self.client.session:
             self._latest = self.client.open(
                 self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs

@@ -227,7 +227,7 @@ class VectorEnv(gym.vector.VectorEnv):
         self.metadata = {"render_fps": config.fps, "autoreset_mode": gym.vector.AutoresetMode.DISABLED}
         self.render_mode = "rgb_array"
 
-    def _ensure(self) -> None:
+    def build(self) -> None:
         """Build the simulators unless already built; ``lerobot-eval`` calls it to prefetch the next task."""
         if self._envs:
             return
@@ -254,7 +254,7 @@ class VectorEnv(gym.vector.VectorEnv):
 
     def _describe(self) -> EnvDescriptor:
         """Describe the canonical observations and actions of the built environments."""
-        self._ensure()
+        self.build()
         env = self._envs[0]
         if not isinstance(env.observation_space, spaces.Dict):
             raise ValueError(
@@ -301,7 +301,7 @@ class VectorEnv(gym.vector.VectorEnv):
             seeds = list(seed) if seed is not None else [None] * self.num_envs
         if len(seeds) != self.num_envs:
             raise ValueError("Seed count must match the batch size")
-        self._ensure()
+        self.build()
         if self.use_async_envs:
             for env, env_seed in zip(self._envs, seeds, strict=True):
                 env.send("reset", env_seed)
@@ -398,7 +398,7 @@ class VectorEnv(gym.vector.VectorEnv):
         if args or kwargs:
             raise TypeError("Environment attributes do not take arguments")
         if name == "_max_episode_steps":
-            self._ensure()
+            self.build()
             return (self._max_steps[0],) * self.num_envs
         if name == "task":
             return (self.task_group,) * self.num_envs

@@ -79,7 +79,7 @@ def test_env_config_builds_each_simulator_once():
 
 
 def test_other_tasks_build_their_simulators_on_first_use():
-    # lerobot-eval creates every task's environment up front, then prefetches the next one with _ensure.
+    # lerobot-eval creates every task's environment up front, then prefetches the next one with build().
     from lerobot.sims.vector_env import VectorEnv
 
     config = ToyEnvConfig()

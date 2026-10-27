@@ -85,6 +85,7 @@ from lerobot.envs import (
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
+from lerobot.sims.vector_env import VectorEnv
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.eval_stats import success_summary
@@ -1135,8 +1136,8 @@ def eval_policy_all(
                     # GPU memory overlap between consecutive tasks.
                     if i + 1 < len(tasks):
                         next_env = tasks[i + 1][2]
-                        if hasattr(next_env, "_ensure"):
-                            prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
+                        if isinstance(next_env, VectorEnv):
+                            prefetch_thread = threading.Thread(target=next_env.build, daemon=True)
                             prefetch_thread.start()
         else:
             with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:

@@ -280,9 +280,6 @@ def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
 
     monkeypatch.setattr(ToyEnv, "reset", reset)
     env = RemoteVectorEnv(EnvClient(server[1]))
-    # eval_policy_all prefetches the next task through `_ensure`; a prefetched open
-    # would add an unseeded reset before the rollout's seeded one.
-    assert not hasattr(env, "_ensure")
     try:
         env.reset(seed=123)
         served = server[0].sessions[env.client.session].env
