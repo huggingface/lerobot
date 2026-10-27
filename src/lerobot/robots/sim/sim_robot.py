@@ -24,7 +24,7 @@ from lerobot.robots.robot import Robot
 from lerobot.sims.types import EnvDescriptor, StepResult
 from lerobot.utils.feature_spec import FeatureSpec
 
-from .configuration_sim import SimRobotConfig
+from .config_sim import SimRobotConfig
 
 if TYPE_CHECKING:
     from lerobot.env_server.client import BatchedEnv
