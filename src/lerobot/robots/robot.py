@@ -52,10 +52,6 @@ class Robot(abc.ABC):
     # Opt-in for a robot-specific hold(), used instead of position hold.
     supports_command_hold: bool = False
 
-    def hold(self) -> None:
-        """Keep the robot safe while waiting for an action (robots with supports_command_hold)."""
-        raise NotImplementedError(f"{self.name} does not implement hold()")
-
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name
         self.id = config.id
@@ -233,6 +229,14 @@ class Robot(abc.ABC):
                 safety limits on velocity.
         """
         pass
+
+    def hold(self) -> None:
+        """
+        Keep the robot safe while no new action arrives, e.g. while the policy computes.
+
+        Only for robots that set ``supports_command_hold``; the others rely on position hold, if supported.
+        """
+        raise NotImplementedError(f"{self.name} does not implement hold()")
 
     @abc.abstractmethod
     def disconnect(self) -> None:
