@@ -72,9 +72,9 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         return f"{self.package_name}/{self.task}"
 
     @property
-    @abc.abstractmethod
     def gym_kwargs(self) -> dict:
-        raise NotImplementedError()
+        """Keyword arguments for the simulator's environments; none by default."""
+        return {}
 
     def sim_settings(self) -> dict[str, Any]:
         """The simulator this config describes, as a server YAML's ``sim`` section.
@@ -83,14 +83,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         By default, the environment Gymnasium registers as ``gym_id``, built with ``gym_kwargs`` and
         commanded with deltas; override it to declare other conventions.
         """
-        return {
-            "type": "gym",
-            "task": self.task,
-            "fps": self.fps,
-            "control_mode": "delta",
-            "semantics": f"{self.type}-delta-v1",
-            "kwargs": {"gym_id": self.gym_id, "gym_kwargs": self.gym_kwargs},
-        }
+        return _gym_settings(self, "delta")
 
     def sim_config(self) -> SimConfig:
         """The resolved simulator settings, as the env server and local environments run them."""
@@ -267,11 +260,6 @@ class HubEnvConfig(EnvConfig):
 
         return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
 
-    @property
-    def gym_kwargs(self) -> dict:
-        # Not used for hub environments - the hub's make_env handles everything
-        return {}
-
     def sim_settings(self) -> dict[str, Any]:
         if self.use_native_batch:
             raise ValueError("use_native_batch is for batched evaluation, not SimRobot or the env server")
@@ -289,17 +277,26 @@ class HubEnvConfig(EnvConfig):
         }
 
 
-def _gym_settings(config: EnvConfig, state_names: tuple[str, ...]) -> dict[str, Any]:
-    """An environment ``gym.make`` builds, commanded with absolute positions of its observed state."""
+def _gym_settings(
+    config: EnvConfig,
+    control_mode: str,
+    state_names: tuple[str, ...] = (),
+    action_names: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """An environment ``gym.make`` builds from ``config.gym_id``, with the given conventions."""
     return {
         "type": "gym",
         "task": config.task,
         "fps": config.fps,
-        "control_mode": "position",
-        "semantics": f"{config.type}-position-v1",
+        "control_mode": control_mode,
+        "semantics": f"{config.type}-{control_mode.replace('_', '-')}-v1",
         "state_names": state_names,
-        "action_names": state_names,
-        "kwargs": {"gym_id": config.gym_id, "gym_kwargs": config.gym_kwargs},
+        "action_names": action_names,
+        "kwargs": {
+            "gym_id": config.gym_id,
+            "gym_kwargs": config.gym_kwargs,
+            "disable_env_checker": config.disable_env_checker,
+        },
     }
 
 
@@ -321,7 +318,8 @@ class AlohaEnv(EnvConfig):
         }
 
     def sim_settings(self) -> dict[str, Any]:
-        return {**_gym_settings(self, tuple(f"joint_{i}.pos" for i in range(14))), "robot_type": "aloha"}
+        joints = tuple(f"joint_{i}.pos" for i in range(14))
+        return {**_gym_settings(self, "position", joints, joints), "robot_type": "aloha"}
 
 
 @EnvConfig.register_subclass("pusht")
@@ -346,7 +344,7 @@ class PushtEnv(EnvConfig):
         }
 
     def sim_settings(self) -> dict[str, Any]:
-        return _gym_settings(self, ("agent.x", "agent.y"))
+        return _gym_settings(self, "position", ("agent.x", "agent.y"), ("agent.x", "agent.y"))
 
 
 @dataclass
@@ -427,28 +425,11 @@ class HILSerlRobotEnvConfig(EnvConfig):
 
     name: str = "real_robot"
 
-    @property
-    def gym_kwargs(self) -> dict:
-        return {}
-
     def sim_settings(self) -> dict[str, Any]:
         raise NotImplementedError("gym_manipulator wraps a robot for RL; it does not describe a simulator")
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        """Refuse to build a vectorized environment: this one drives a physical robot.
-
-        `make_env` and `lerobot-eval` build simulated environments, which this config does not describe.
-        The real-robot environment is built by `lerobot.rl.gym_manipulator.make_robot_env` instead.
-
-        Args:
-            n_envs (`int`):
-                Ignored.
-            use_async_envs (`bool`, *optional*, defaults to `False`):
-                Ignored.
-
-        Raises:
-            NotImplementedError: Always, with the commands to use instead.
-        """
+        """Refuse: this config drives a physical robot, which `make_env` and `lerobot-eval` cannot build."""
         raise NotImplementedError(
             "'gym_manipulator' is a real-robot environment: make_env and lerobot-eval cannot build it. "
             "Run it with `python -m lerobot.rl.gym_manipulator --config_path <config.json>`, and evaluate a "
@@ -627,6 +608,8 @@ class VLABenchEnv(EnvConfig):
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):
     hub_path: str = "nvidia/isaaclab-arena-envs"
+    # The repository's own vector environment runs locally, through EnvHub's native-batch path.
+    use_native_batch: bool = True
     episode_length: int = 300
     num_envs: int = 1
     embodiment: str | None = "gr1_pink"
@@ -658,6 +641,8 @@ class IsaaclabArenaEnv(HubEnvConfig):
     kwargs: dict | None = None
 
     def __post_init__(self):
+        if self.make_env_kwargs:
+            raise ValueError(f"--env.type={self.type} is configured by its own options, not make_env_kwargs")
         if self.kwargs:
             # dynamically convert kwargs to fields in the dataclass
             # NOTE! the new fields will not bee seen by the dataclass repr
@@ -685,22 +670,6 @@ class IsaaclabArenaEnv(HubEnvConfig):
                         shape=(self.camera_height, self.camera_width, 3),
                     )
                     self.features_map[cam_key] = f"{OBS_IMAGES}.{cam_key}"
-
-    @property
-    def gym_kwargs(self) -> dict:
-        return {}
-
-    def sim_settings(self) -> dict[str, Any]:
-        raise NotImplementedError(f"--env.type={self.type} runs through its repository's make_env only")
-
-    def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        from .factory import make_hub_envs
-
-        if self.endpoint is not None:
-            raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
-        if self.make_env_kwargs:
-            raise ValueError(f"--env.type={self.type} is configured by its own options, not make_env_kwargs")
-        return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
 
     def get_env_processors(self):
         state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
@@ -745,12 +714,16 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
     """
 
     hub_path: str = "lerobot/unitree-g1-mujoco"
+    # The repository's own vector environment runs locally, through EnvHub's native-batch path.
+    use_native_batch: bool = True
     end_effector: G1EndEffector = G1EndEffector.DEX1
     publish_images: bool = True
     camera_port: int = 5555
     onscreen: bool | None = None
 
     def __post_init__(self) -> None:
+        if self.make_env_kwargs:
+            raise ValueError(f"--env.type={self.type} is configured by its own options, not make_env_kwargs")
         self.end_effector = G1EndEffector(self.end_effector)
         if self.onscreen is None:
             self.onscreen = not self.publish_images
@@ -760,18 +733,6 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
                 "process. Set publish_images=False to watch the window, or onscreen=False "
                 "to take the image stream."
             )
-
-    def sim_settings(self) -> dict[str, Any]:
-        raise NotImplementedError(f"--env.type={self.type} runs through its repository's make_env only")
-
-    def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        from .factory import make_hub_envs
-
-        if self.endpoint is not None:
-            raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
-        if self.make_env_kwargs:
-            raise ValueError(f"--env.type={self.type} is configured by its own options, not make_env_kwargs")
-        return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
 
 
 @EnvConfig.register_subclass("libero_plus")
@@ -837,10 +798,6 @@ class RoboTwinEnvConfig(EnvConfig):
     # (for world-model policies like LingBot-VA that predict per-arm xyz+quaternion+gripper poses).
     action_mode: str = "joint"
 
-    @property
-    def gym_kwargs(self) -> dict:
-        return {}
-
     def sim_settings(self) -> dict[str, Any]:
         return {
             "type": "robotwin",
@@ -880,10 +837,6 @@ class RoboMMEEnv(EnvConfig):
     def __post_init__(self):
         if self.front_camera_name == self.wrist_camera_name:
             raise ValueError("RoboMME front and wrist camera names must be distinct.")
-
-    @property
-    def gym_kwargs(self) -> dict:
-        return {}
 
     def sim_settings(self) -> dict[str, Any]:
         return {

@@ -26,11 +26,11 @@ from .utils import canonical_observation
 __all__ = ["canonical_observation", "create_envs"]
 
 
-def _make(gym_id: str, gym_kwargs: dict[str, Any]) -> gym.Env:
+def _make(gym_id: str, gym_kwargs: dict[str, Any], disable_env_checker: bool) -> gym.Env:
     if gym_id not in gym.registry:
         # The package named before the slash registers its environments on import.
         importlib.import_module(gym_id.split("/")[0])
-    return gym.make(gym_id, disable_env_checker=True, **gym_kwargs)
+    return gym.make(gym_id, disable_env_checker=disable_env_checker, **gym_kwargs)
 
 
 def create_envs(
@@ -39,7 +39,8 @@ def create_envs(
     env_cls: Callable,
     gym_id: str,
     gym_kwargs: dict[str, Any] | None = None,
+    disable_env_checker: bool = True,
 ) -> dict[str, dict[int, Any]]:
     """One suite and task with ``n_envs`` environments made by ``gym.make(gym_id)``."""
-    make = partial(_make, gym_id, dict(gym_kwargs or {}))
+    make = partial(_make, gym_id, dict(gym_kwargs or {}), disable_env_checker)
     return {task: {0: env_cls([make] * n_envs)}}
