@@ -23,6 +23,8 @@ from gymnasium import spaces
 from lerobot.utils.feature_spec import FeatureSpec
 
 _EMPTY_CAMERA_PREFIX = "observation.images.empty_camera_"
+# Joint targets, end-effector deltas, or end-effector poses.
+CONTROL_MODES = ("position", "delta", "eef_pose")
 
 
 @dataclass(frozen=True)
@@ -42,8 +44,8 @@ class EnvDescriptor:
 
     def __post_init__(self) -> None:
         """Reject invalid environment metadata."""
-        if self.control_mode not in {"position", "delta", "eef_pose"}:
-            raise ValueError("Unknown controller convention")
+        if self.control_mode not in CONTROL_MODES:
+            raise ValueError(f"Unknown control_mode {self.control_mode!r}; expected one of {CONTROL_MODES}")
         if not np.isfinite(self.fps) or self.fps <= 0 or self.max_episode_steps <= 0:
             raise ValueError("FPS and episode limit must be positive")
         if len(self.action_feature.shape) != 1 or not self.action_feature.names:

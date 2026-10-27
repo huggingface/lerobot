@@ -78,7 +78,7 @@ def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
                     result = env.step(argument)
                 elif command == "spaces":
                     result = (env.observation_space, env.action_space)
-                else:
+                else:  # "attrs"
                     result = {name: getattr(env, name) for name in _ENV_ATTRS if hasattr(env, name)}
                     result["_max_episode_steps"] = _max_episode_steps(env)
                 pipe.send((True, result))
@@ -208,7 +208,6 @@ class VectorEnv(gym.vector.VectorEnv):
         self._max_steps: list[int] = []
         self._sim_time = 0.0
         self._latest: StepResult | None = None
-        self.closed = False
         try:
             self.descriptor = descriptor or self._describe()
         except BaseException:
@@ -401,4 +400,3 @@ class VectorEnv(gym.vector.VectorEnv):
     def close_extras(self, **kwargs: Any) -> None:
         """Release simulator resources."""
         self._close_envs()
-        self.closed = True

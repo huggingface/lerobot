@@ -231,7 +231,6 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         self.observation_space = batch_space(self.single_observation_space, num_envs)
         self.action_space = batch_space(self.single_action_space, num_envs)
         self._latest: StepResult | None = None
-        self.closed = False
 
     @property
     def latest(self) -> StepResult:

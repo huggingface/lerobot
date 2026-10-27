@@ -15,12 +15,12 @@
 """The simulator an environment runs, as its integration resolves it."""
 
 import importlib
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
-
 from lerobot.sim.integrations import simulator_required
+from lerobot.sim.types import CONTROL_MODES
 
 
 @dataclass
@@ -46,12 +46,10 @@ class SimConfig:
         """Normalize component order and reject invalid controller declarations."""
         self.state_names = tuple(self.state_names)
         self.action_names = tuple(self.action_names)
-        if (
-            self.control_mode not in {"position", "delta", "eef_pose"}
-            or not np.isfinite(self.fps)
-            or self.fps <= 0
-        ):
-            raise ValueError("A simulator requires a known controller and a positive FPS")
+        if self.control_mode not in CONTROL_MODES:
+            raise ValueError(f"Unknown control_mode {self.control_mode!r}; expected one of {CONTROL_MODES}")
+        if not math.isfinite(self.fps) or self.fps <= 0:
+            raise ValueError(f"A simulator needs a positive fps, got {self.fps}")
         if not self.semantics:
             self.semantics = f"{self.type}-{self.control_mode.replace('_', '-')}-v1"
 
