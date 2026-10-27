@@ -11,8 +11,15 @@ def send_action_checked_with_approval(robot_wrapper, action):
         )
 
     dispatch = getattr(robot_wrapper, "send_action_checked", None)
+
+    # The real SOFollower exposes send_action(), not
+    # send_action_checked(). Approval must be checked before either path.
+    if not callable(dispatch):
+        dispatch = getattr(robot_wrapper, "send_action", None)
+
     if not callable(dispatch):
         raise RuntimeError(
-            "SO101 safety gate: checked dispatch unavailable"
+            "SO101 safety gate: action dispatch unavailable"
         )
+
     return dispatch(action)

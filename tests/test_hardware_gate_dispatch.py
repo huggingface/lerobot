@@ -76,3 +76,49 @@ def test_episodic_action_dispatch_uses_hardware_gate():
         "ctx.hardware.robot_wrapper, robot_action)"
     ) in source
     assert "robot.send_action(robot_action)" not in source
+
+
+
+# SOFOLLOWER_SEND_ACTION_REGRESSION_TESTS
+
+def test_real_sofollower_interface_fallback_requires_approval(monkeypatch):
+    monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
+
+    class FakeSOFollower:
+        def __init__(self):
+            self.actions = []
+
+        def send_action(self, action):
+            self.actions.append(action)
+            return {"sent": action}
+
+    robot = FakeSOFollower()
+    action = {"joint": 1}
+
+    result = send_action_checked_with_approval(robot, action)
+
+    assert result == {"sent": action}
+    assert robot.actions == [action]
+
+
+def test_real_sofollower_interface_fallback_rejects_without_approval(
+    monkeypatch,
+):
+    monkeypatch.delenv("SO101_HARDWARE_APPROVED", raising=False)
+
+    class FakeSOFollower:
+        def __init__(self):
+            self.actions = []
+
+        def send_action(self, action):
+            self.actions.append(action)
+            return {"sent": action}
+
+    robot = FakeSOFollower()
+
+    with pytest.raises(
+        RuntimeError, match="hardware dispatch disabled"
+    ):
+        send_action_checked_with_approval(robot, {"joint": 1})
+
+    assert robot.actions == []
