@@ -177,6 +177,8 @@ uv run python examples/zero_wam/encode_human_videos.py \
 
 The encoder fetches the keyframe-aligned byte range for each prompt interval and decodes only its selected frames. It does not localize full source containers. A supplied streaming index avoids parsing source headers again; without one, a small file-index cache is used. Remote prompts require explicit finite start/end times. `--max-prompt-video-mb` defaults to 512 and rejects oversized synthesized clips before payload fetching. The prepared frame cap samples across the full demonstration.
 
+Keep Hub authentication available when relocating caches with `HF_HOME`; `HF_TOKEN_PATH` can point to your existing login token file. Native HTTP reads honor `RateLimit` and `Retry-After` reset windows before bounded retries. If rate limiting persists, reduce encoding concurrency and rerun the same command to resume completed prompt files.
+
 The optional text cache is produced by `precompute_text_embeddings.py` and must contain every exact prompt instruction. It avoids loading UMT5 and re-encoding repeated instructions during video preparation. Cache identity includes the pinned video revision, crop, caption, encoder settings and text-cache checksum; changing the text cache produces new latent files.
 
 ### Reuse a prompt cache across runs and machines
@@ -186,6 +188,51 @@ The encoder writes `latent_path` relative to each output manifest. Both fixed pa
 Add `--share-text-embeddings` to store each distinct padded demonstration caption once in `text_embeddings/`. The video files then contain a relative `text_emb_path` instead of an inline `text_emb`. Preserve that subdirectory when copying the cache. The policy loads both formats and keeps a bounded CPU cache of shared text. Missing shared captions raise an error instead of silently using the target instruction. The normalized video latents, nonzero empty-caption embedding and full text padding are unchanged.
 
 For example, an 81-frame 320×480 prompt has 1,209,600 bytes of BF16 video latents. Its 512×4096 padded text tensor adds 4,194,304 bytes when embedded in every file. With blank demonstration captions, 6,430 such prompts need approximately 7.78 GB of tensor payload plus one shared 4.19 MB caption, rather than 34.75 GB of repeated video/text tensors. Serialization and metadata add overhead. This is a storage calculation, not a full-dataset benchmark; different frame caps or resolutions change it. The flag changes cache identity, so inline and shared-caption files can coexist.
+
+### Compare video context on held-out clips
+
+`examples/zero_wam/evaluate_video_prompts.py` compares correct, contrasting and absent demonstration context on streamed held-out target clips. It uses empty target text and requires the exact padded empty-caption embedding in both demonstration files. Correct and contrasting video latents must have identical shapes. Each target/noise seed is prepared once, including MCP targets, and reused across all three conditions.
+
+Create a cases JSONL with one comparison per target episode. For example:
+
+```json
+{
+  "dataset_repo_id": "OWNER/DATASET",
+  "revision": "COMMIT_SHA",
+  "split": "validation",
+  "pool_dataset": "abc",
+  "target_episode": 20,
+  "target_task": "load the cups into the dish rack",
+  "correct_prompt_episode": 0,
+  "contrasting_prompt_episode": 7,
+  "correct_pool_id": "load-cups",
+  "contrasting_pool_id": "unload-cups"
+}
+```
+
+The episode-split JSON must contain the same `revision` and disjoint `train`, `validation` and `test` episode-ID lists. Targets must belong to the requested held-out split; both prompts must be distinct training episodes. Pool IDs and source episode IDs resolve to existing encoded files in the training pools manifest. The tool checks task membership against dataset metadata: the correct prompt shares the target label, and the contrasting prompt excludes it. Inspect the demonstrations as well; labels alone do not establish behavioral equivalence or independent source recordings.
+
+Use a local native checkpoint with its saved processors and exported safetensors. If the training checkpoint uses DCP, convert it first with the existing `lerobot-convert-dcp` command:
+
+```bash
+uv run lerobot-convert-dcp --checkpoint_dir=/path/to/checkpoints/005000
+
+uv run python examples/zero_wam/evaluate_video_prompts.py \
+  --policy /path/to/checkpoints/005000/pretrained_model \
+  --train-config /path/to/train_config.json \
+  --cases outputs/validation_cases.jsonl \
+  --prompt-pools outputs/abc_prompt_latents/pools.jsonl \
+  --episode-splits outputs/episode_splits.json \
+  --text-embedding-cache outputs/text_embeddings.pt \
+  --split validation --device cuda --amp bfloat16 \
+  --clips-per-episode 1 --noise-seeds 0 1 2 \
+  --chunk-size 2 --window-size 16 --max-scanned-clips 10000 \
+  --output outputs/validation_prompt_diagnostic.jsonl
+```
+
+The supplied training configuration must use native LeRobot streaming and a pinned dataset revision. The tool selects only the declared target episodes, disables image augmentation, reuses the checkpoint's normalization processors, skips padded windows and stops at the scan limit. Target payloads stream through the configured reader. It runs in one process and needs memory for the exported model and frozen components.
+
+Each completed noise draw records native flow-matching losses for all three conditions and the change in predicted action velocity over valid future action elements. Action velocity is the model's flow prediction; these values are not denoised action error or task success. In particular, a nonzero sensitivity score does not establish that the model follows the demonstration. Completed runs also write a `.summary.json` with input-manifest hashes and diagnostic settings. Incomplete runs retain completed JSONL rows but do not write a completed summary, and existing outputs are never overwritten.
 
 ## Streaming inference
 

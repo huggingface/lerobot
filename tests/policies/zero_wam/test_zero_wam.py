@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import copy
+import io
 import json
 import runpy
 import sys
@@ -1010,6 +1012,360 @@ def test_pool_preparation_and_encoding_preserve_compact_members(tmp_path) -> Non
     assert len(result) == 1 and len(result[0]["members"]) == 3
     assert result[0]["split"] == "train" and result[0]["dataset"] == "abc"
     assert result[0]["members"][0] == {**raw["members"][0], "latent_path": "5.pth"}
+
+
+def diagnostic_fixture(tmp_path):
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/evaluate_video_prompts.py"
+    scope = runpy.run_path(str(example))["main"].__globals__
+    policy = make_policy(tiny_config())
+    caption = policy._encode_text("")[0].clone()
+    paths = []
+    for name, offset in [("correct", 0), ("contrasting", 2)]:
+        path = tmp_path / f"{name}.pth"
+        torch.save({"latent": torch.randn(1, Z_DIM, 3, 2, 4) + offset, "text_emb": caption, "text": ""}, path)
+        paths.append(str(path))
+    return scope, policy, paths
+
+
+def test_video_prompt_diagnostic_reuses_noise_and_loads_heldout_prompts(tmp_path, monkeypatch):
+    scope, policy, paths = diagnostic_fixture(tmp_path)
+    compare = scope["compare_video_prompts"]
+    batch = training_batch(policy.config)
+    batch["episode_index"] = torch.tensor([999])  # Not a member of any training prompt pool.
+    prepared = []
+    original = policy._sample_loss
+
+    def observe(inputs):
+        prepared.append(copy.deepcopy(inputs))
+        return original(inputs)
+
+    monkeypatch.setattr(policy, "_sample_loss", observe)
+    loaded = []
+    load = policy._load_icl_latent
+
+    def observe_load(path):
+        loaded.append(path)
+        return load(path)
+
+    monkeypatch.setattr(policy, "_load_icl_latent", observe_load)
+    rng = torch.get_rng_state().clone()
+    config = {
+        k: getattr(policy.config, k)
+        for k in ["drop_icl", "droptext_target", "train_frame_chunk_size", "train_attn_window"]
+    }
+    weights = {name: p.detach().clone() for name, p in policy.named_parameters()}
+    result = compare(policy, batch, *paths, seed=21, window_size=4)
+    assert loaded == paths and len(prepared) == 3
+    assert [p["icl_latent_dict"] is not None for p in prepared] == [True, True, False]
+    for name in ["latent_dict", "action_dict"]:
+        for key, expected in prepared[0][name].items():
+            if isinstance(expected, torch.Tensor):
+                for candidate in prepared[1:]:
+                    torch.testing.assert_close(candidate[name][key], expected, rtol=0, atol=0)
+    for index, mcp in enumerate(prepared[0]["mcp_latent_dicts"]):
+        for key, expected in mcp.items():
+            if isinstance(expected, torch.Tensor):
+                for candidate in prepared[1:]:
+                    torch.testing.assert_close(
+                        candidate["mcp_latent_dicts"][index][key], expected, rtol=0, atol=0
+                    )
+    for inputs in prepared:
+        assert inputs["chunk_size"] == 2 and inputs["window_size"] == 4
+        empty = policy._encode_text("")
+        length = policy.config.max_sequence_length
+        torch.testing.assert_close(inputs["text_emb"][:, :length], empty, rtol=0, atol=0)
+        if inputs["icl_latent_dict"] is not None:
+            torch.testing.assert_close(inputs["text_emb"][:, length:], empty, rtol=0, atol=0)
+    assert result["correct_vs_contrasting_action_velocity_rmse"] > 0
+    assert result["future_action_velocity_elements"] == len(policy.config.action_delta_indices) * 14
+    assert torch.equal(torch.get_rng_state(), rng) and policy.training
+    assert {k: getattr(policy.config, k) for k in config} == config
+    for name, p in policy.named_parameters():
+        torch.testing.assert_close(p, weights[name], rtol=0, atol=0)
+        assert p.grad is None
+
+
+def test_video_prompt_diagnostic_null_control_and_cold_warm_seed_parity(tmp_path, monkeypatch):
+    scope, policy, paths = diagnostic_fixture(tmp_path)
+    frozen = policy._frozen
+    policy._frozen = {}
+    policy._text_cache.clear()
+
+    def lazy_loading():
+        if not policy._frozen:
+            torch.rand(13)  # Simulate random initialization during a first frozen-weight load.
+            policy._frozen = frozen
+
+    monkeypatch.setattr(policy, "_ensure_frozen_modules", lazy_loading)
+    batch = training_batch(policy.config)
+    a = scope["compare_video_prompts"](policy, batch, paths[0], paths[0], seed=3, window_size=4)
+    b = scope["compare_video_prompts"](policy, batch, paths[0], paths[0], seed=3, window_size=4)
+    assert a == b
+    assert a["conditions"]["correct"] == a["conditions"]["contrasting"]
+    assert a["correct_vs_contrasting_action_velocity_rmse"] == 0
+
+
+@pytest.mark.parametrize("invalid", ["caption", "missing_caption", "shape"])
+def test_video_prompt_diagnostic_rejects_confounded_context_and_restores_state(tmp_path, invalid):
+    scope, policy, paths = diagnostic_fixture(tmp_path)
+    item = torch.load(paths[1], weights_only=True)
+    if invalid == "caption":
+        item["text_emb"] = item["text_emb"] + 1
+    elif invalid == "missing_caption":
+        del item["text_emb"]
+    else:
+        item["latent"] = item["latent"][:, :, :2]
+    torch.save(item, paths[1])
+    previous = policy.config.drop_icl, policy.config.droptext_target
+    batch = training_batch(policy.config)
+    rng = torch.get_rng_state().clone()
+    with pytest.raises(ValueError, match="empty-caption|same latent shape"):
+        scope["compare_video_prompts"](policy, batch, *paths, seed=3, window_size=4)
+    assert policy.training and (policy.config.drop_icl, policy.config.droptext_target) == previous
+    assert torch.equal(torch.get_rng_state(), rng)
+    assert not policy.transformer._forward_hooks
+
+
+def diagnostic_manifests(tmp_path):
+    revision = "a" * 40
+    pools, cases, splits = (tmp_path / name for name in ["pools.jsonl", "cases.jsonl", "splits.json"])
+    pools.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "pool_id": name,
+                    "dataset": "tiny",
+                    "split": "train",
+                    "members": [
+                        {
+                            "episode_index": episode,
+                            "start_frame": 0,
+                            "end_frame": 100,
+                            "latent_path": f"{name}.pth",
+                        }
+                    ],
+                }
+            )
+            + "\n"
+            for episode, name in [(0, "correct"), (1, "contrasting")]
+        )
+    )
+    cases.write_text(
+        json.dumps(
+            {
+                "dataset_repo_id": "owner/data",
+                "revision": revision,
+                "split": "validation",
+                "pool_dataset": "tiny",
+                "target_episode": 7,
+                "target_task": "load",
+                "correct_prompt_episode": 0,
+                "contrasting_prompt_episode": 1,
+                "correct_pool_id": "correct",
+                "contrasting_pool_id": "contrasting",
+            }
+        )
+        + "\n"
+    )
+    splits.write_text(json.dumps({"revision": revision, "train": [0, 1], "validation": [7], "test": [8]}))
+    return pools, cases, splits, revision
+
+
+def test_diagnostic_cases_reject_split_and_source_confounds(tmp_path):
+    scope, _, paths = diagnostic_fixture(tmp_path)
+    pools, cases, splits, revision = diagnostic_manifests(tmp_path)
+    parsed = scope["load_cases"](cases, pools, splits, "owner/data", revision, "validation")
+    assert parsed[7].correct_latent == paths[0] and parsed[7].contrasting_latent == paths[1]
+    row = json.loads(cases.read_text())
+    row["correct_prompt_episode"] = 7
+    cases.write_text(json.dumps(row) + "\n")
+    with pytest.raises(ValueError, match="held-out target"):
+        scope["load_cases"](cases, pools, splits, "owner/data", revision, "validation")
+    row["correct_prompt_episode"] = 0
+    row["revision"] = "b" * 40
+    cases.write_text(json.dumps(row) + "\n")
+    with pytest.raises(ValueError, match="same source dataset"):
+        scope["load_cases"](cases, pools, splits, "owner/data", revision, "validation")
+
+
+def test_diagnostic_cli_loads_native_checkpoint_and_saved_processors(tmp_path, monkeypatch):
+    import draccus
+
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.configs.train import TrainPipelineConfig
+
+    scope, policy, _ = diagnostic_fixture(tmp_path)
+    pools, cases, splits, revision = diagnostic_manifests(tmp_path)
+    checkpoint = tmp_path / "checkpoint"
+    policy.save_pretrained(checkpoint)
+    pre, post = make_pre_post_processors(
+        policy.config, dataset_stats={ACTION: {"q01": -torch.ones(14), "q99": torch.ones(14)}}
+    )
+    pre.save_pretrained(checkpoint)
+    post.save_pretrained(checkpoint)
+    cfg = TrainPipelineConfig(
+        policy=policy.config,
+        dataset=DatasetConfig(repo_id="owner/data", revision=revision, streaming=True, episodes=[0, 1]),
+        output_dir=tmp_path / "unused",
+    )
+    cfg.dataset.image_transforms.enable = True
+    config_path = tmp_path / "train_config.json"
+    config_path.write_text(json.dumps(draccus.encode(cfg)))
+    sample_batch = training_batch(policy.config)
+    sample = {key: value[0] for key, value in sample_batch.items()}
+    sample["episode_index"] = torch.tensor(7)
+    sample["task"] = "load"
+    for camera in CAMERAS:
+        sample[camera] = (sample[camera] * 255).byte()
+
+    class Dataset:
+        meta = SimpleNamespace(
+            camera_keys=CAMERAS,
+            episodes=[
+                {"episode_index": 0, "tasks": ["load"]},
+                {"episode_index": 1, "tasks": ["unload"]},
+                {"episode_index": 7, "tasks": ["load"]},
+                {"episode_index": 8, "tasks": ["unload"]},
+            ],
+        )
+        closed = False
+        requested = 0
+
+        def __iter__(self):
+            try:
+                self.requested += 1
+                yield {**sample, f"{ACTION}_is_pad": torch.ones_like(sample[f"{ACTION}_is_pad"])}
+                self.requested += 1
+                yield sample
+                raise AssertionError("The completed diagnostic must not fetch another target")
+            finally:
+                self.closed = True
+
+    dataset = Dataset()
+
+    def source(config):
+        assert config.dataset.streaming and config.dataset.episodes == [7]
+        assert not config.dataset.image_transforms.enable and config.num_workers == 0
+        return dataset
+
+    frozen = policy._frozen
+    monkeypatch.setitem(scope, "make_dataset", source)
+    monkeypatch.setattr(
+        ZeroWAMPolicy, "_ensure_frozen_modules", lambda self: setattr(self, "_frozen", frozen)
+    )
+    output = tmp_path / "results.jsonl"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "diagnostic",
+            "--policy",
+            str(checkpoint),
+            "--train-config",
+            str(config_path),
+            "--cases",
+            str(cases),
+            "--prompt-pools",
+            str(pools),
+            "--episode-splits",
+            str(splits),
+            "--device",
+            "cpu",
+            "--amp",
+            "none",
+            "--noise-seeds",
+            "2",
+            "3",
+            "--window-size",
+            "4",
+            "--output",
+            str(output),
+        ],
+    )
+    scope["main"]()
+    records = [json.loads(line) for line in output.read_text().splitlines()]
+    assert len(records) == 2 and all(r["target_episode"] == 7 for r in records)
+    assert all(r["conditions"]["correct"]["icl_video_tokens"] == 6 for r in records)
+    assert all(r["conditions"]["absent"]["icl_video_tokens"] == 0 for r in records)
+    assert dataset.closed and dataset.requested == 2
+    assert json.loads(config_path.read_text())["dataset"]["image_transforms"]["enable"]
+    summary = json.loads(output.with_suffix(".jsonl.summary.json").read_text())
+    assert summary["target_clips"] == 1 and summary["noise_draws"] == 2
+
+
+def test_diagnostic_stream_scan_limit_closes_incomplete_source(tmp_path):
+    scope, policy, _ = diagnostic_fixture(tmp_path)
+    pools, cases_path, splits, revision = diagnostic_manifests(tmp_path)
+    cases = scope["load_cases"](cases_path, pools, splits, "owner/data", revision, "validation")
+    batch = training_batch(policy.config)
+    sample = {key: value[0] for key, value in batch.items()}
+    sample["episode_index"] = torch.tensor(7)
+    sample[f"{ACTION}_is_pad"] = torch.ones_like(sample[f"{ACTION}_is_pad"])
+
+    class Dataset:
+        meta = SimpleNamespace(
+            camera_keys=CAMERAS,
+            episodes=[
+                {"episode_index": 0, "tasks": ["load"]},
+                {"episode_index": 1, "tasks": ["unload"]},
+                {"episode_index": 7, "tasks": ["load"]},
+            ],
+        )
+        requested = 0
+        closed = False
+
+        def __iter__(self):
+            try:
+                while True:
+                    self.requested += 1
+                    yield sample
+            finally:
+                self.closed = True
+
+    dataset = Dataset()
+    with pytest.raises(ValueError, match="Not enough complete clips"):
+        scope["run_comparisons"](
+            policy,
+            lambda batch: batch,
+            dataset,
+            cases,
+            clips_per_episode=1,
+            seeds=[0],
+            max_scanned=2,
+            rename_map={},
+            chunk_size=2,
+            window_size=4,
+            amp_dtype=None,
+            output=io.StringIO(),
+        )
+    assert dataset.requested == 2 and dataset.closed
+
+
+def test_video_prompt_diagnostic_restores_state_after_forward_failure(tmp_path, monkeypatch):
+    scope, policy, paths = diagnostic_fixture(tmp_path)
+    batch = training_batch(policy.config)
+    before = (
+        policy.config.drop_icl,
+        policy.config.droptext_target,
+        policy.config.train_frame_chunk_size,
+        policy.config.train_attn_window,
+    )
+    rng = torch.get_rng_state().clone()
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("forward failed")
+
+    monkeypatch.setattr(policy.transformer, "forward", fail)
+    with pytest.raises(RuntimeError, match="forward failed"):
+        scope["compare_video_prompts"](policy, batch, *paths, seed=3, window_size=4)
+    assert not policy.transformer._forward_hooks and policy.training
+    assert (
+        policy.config.drop_icl,
+        policy.config.droptext_target,
+        policy.config.train_frame_chunk_size,
+        policy.config.train_attn_window,
+    ) == before
+    assert torch.equal(torch.get_rng_state(), rng)
 
 
 def test_precomputed_text_embeddings_skip_text_encoder(tmp_path) -> None:
