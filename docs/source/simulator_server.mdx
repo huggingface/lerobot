@@ -63,7 +63,7 @@ lerobot-rollout \
 - `--robot.env.*` takes the same options as `--env.*` in evaluation. `--robot.task_id` picks the one task the robot runs, where evaluation runs every task of the suite or those in `--env.task_ids`. EnvHub environments are `--robot.env.type=envhub --robot.env.hub_path=<user/repo> --robot.env.trust_remote_code=true`.
 - `--robot.env.endpoint=tcp/...` drives the environment on an env server instead, as `--env.endpoint` does for a batched env. The robot checks that the server runs that environment.
 - Each `send_action()` advances the environment exactly once. Observation reads, policy inference, and waiting do not advance simulation; the existing control loop owns wall-clock pacing.
-- `--fps` must equal the environment's control rate; rollout refuses to start otherwise.
+- `--fps` must equal the environment's control rate, divided by `--interpolation_multiplier` when interpolating, since every command advances the environment once. When recording, `--dataset.fps` must equal `--fps`. Rollout refuses to start otherwise.
 
 A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. `lerobot-record` stores the body the environment declares as the dataset's `robot_type` (`panda` for LIBERO), or `sim` when it declares none.
 

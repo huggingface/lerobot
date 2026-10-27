@@ -591,6 +591,14 @@ def test_rollout_config_enforces_strategy_declarations():
 
         cfg = make(strategy=RecorderConfig(), teleop=MockTeleopConfig(), dataset=dataset)
         assert cfg.dataset.streaming_encoding is True
+        # One frame is recorded per control cycle, so the dataset runs at --fps.
+        with pytest.raises(ValueError, match="pass --dataset.fps=50"):
+            make(
+                strategy=RecorderConfig(),
+                teleop=MockTeleopConfig(),
+                dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+                fps=50,
+            )
 
         # requires_streaming_encoding() is a method so it can depend on the config's fields.
         dagger = make(
