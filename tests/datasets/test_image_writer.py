@@ -30,6 +30,8 @@ from lerobot.datasets.image_writer import (
 )
 from tests.fixtures.constants import DUMMY_HWC
 
+pytestmark = pytest.mark.dataset
+
 DUMMY_IMAGE = "test_image.png"
 
 

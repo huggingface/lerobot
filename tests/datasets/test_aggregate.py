@@ -40,6 +40,8 @@ from tests.fixtures.constants import (
     DUMMY_REPO_ID,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def assert_data_shards_one_row_group_per_episode(root):
     """Every aggregated DATA shard must have exactly one parquet row group per episode."""

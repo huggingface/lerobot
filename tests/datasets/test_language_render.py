@@ -14,6 +14,8 @@ from lerobot.datasets.language_render import (  # noqa: E402
 )
 from lerobot.datasets.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 def persistent_row(role, content, style, timestamp, tool_calls=None, camera=None):
     return {

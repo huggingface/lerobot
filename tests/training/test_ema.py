@@ -28,6 +28,8 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
 
+pytestmark = pytest.mark.dataset
+
 DUMMY_REPO_ID = "dummy/repo"
 DUMMY_STATE_DIM = 6
 DUMMY_ACTION_DIM = 6

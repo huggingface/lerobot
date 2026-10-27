@@ -45,6 +45,8 @@ from lerobot.utils.feature_utils import (  # noqa: E402
     hw_to_dataset_features,
 )
 
+pytestmark = pytest.mark.dataset
+
 # ---------------------------------------------------------------------------
 # The two orders under test
 # ---------------------------------------------------------------------------

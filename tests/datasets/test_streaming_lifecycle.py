@@ -21,6 +21,8 @@ from lerobot.streaming import episode_cache
 from lerobot.streaming.range_fetch import ThreadLocalRangeFetcher
 from tests.datasets.test_episode_video_streaming import _open_decoder
 
+pytestmark = pytest.mark.dataset
+
 
 def bare_dataset() -> StreamingLeRobotDataset:
     dataset = object.__new__(StreamingLeRobotDataset)

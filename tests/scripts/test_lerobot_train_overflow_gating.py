@@ -34,6 +34,8 @@ from lerobot.scripts.lerobot_train import update_policy  # noqa: E402
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker  # noqa: E402
 from tests.fixtures.dummy_checkpoint_policy import make_dummy_policy  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 class StubAccelerator:
     """The `update_policy` surface, with the scaler outcome under the test's control."""

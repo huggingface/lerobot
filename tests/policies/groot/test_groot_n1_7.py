@@ -2263,6 +2263,7 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
     assert decode_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
 
 
+@pytest.mark.dataset
 def test_groot_n1_7_relative_action_processors_compute_stats_from_runtime_dataset_meta(monkeypatch, tmp_path):
     pytest.importorskip("datasets")
 
