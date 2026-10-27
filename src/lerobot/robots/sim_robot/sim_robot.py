@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from lerobot.robots.robot import Robot
 from lerobot.sim.types import EnvDescriptor, StepResult
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.feature_spec import FeatureSpec
 
+from ..robot import Robot
 from .config_sim_robot import SimRobotConfig
 
 if TYPE_CHECKING:
@@ -43,31 +44,30 @@ class SimRobot(Robot):
 
     config_class = SimRobotConfig
     name = "sim"
+    # hold() is a no-op: the simulation advances only on send_action().
+    supports_command_hold = True
 
     def __init__(self, config: SimRobotConfig):
         super().__init__(config)
         self.config = config
-        self._env_config = config.env
         # The env's suite, when it names exactly one; otherwise the simulator's first.
         task = config.env.task
         self._task_group = task if task and "," not in task else None
         self._connected = False
         self.latest: StepResult | None = None
-        self._env: VectorEnv | RemoteVectorEnv | None = self._make_env()
+        # Built before connect(): scripts read the features and the descriptor first.
+        self._env: VectorEnv | RemoteVectorEnv = self._make_env()
 
     def _make_env(self) -> "VectorEnv | RemoteVectorEnv":
-        env = self._env_config.create_env(self._task_group, self.config.task_id)
+        env = self.config.env.create_env(self._task_group, self.config.task_id)
         descriptor = env.descriptor
         self.robot_type = descriptor.robot_type or self.name
-        # Holding is a no-op, see hold().
-        self.supports_position_hold = False
-        self.supports_command_hold = True
         state = next(
             (feature for feature in descriptor.features if feature.name == "observation.state"), None
         )
         if state is None or not state.names:
             env.close()
-            raise ValueError("Robot face requires explicit state component names")
+            raise ValueError("A sim robot needs an observation.state feature with component names")
         self._state: FeatureSpec = state
         self._camera_keys: dict[str, str] = {
             feature.name: feature.name.removeprefix("observation.images.").removeprefix("observation.")
@@ -88,8 +88,8 @@ class SimRobot(Robot):
 
     @property
     def cameras(self) -> dict[str, str]:
-        """Camera names keyed by observation feature; recording sizes its image writers from them."""
-        return {f"observation.images.{camera}": camera for camera in self._camera_keys.values()}
+        """Each camera's observation feature, keyed by camera name like a real robot's cameras."""
+        return {camera: f"observation.images.{camera}" for camera in self._camera_keys.values()}
 
     def feature_names(self, rename_map: dict[str, str]) -> dict[str, str]:
         """Map each descriptor feature to its policy key with ``rename_map``, as for any robot."""
@@ -124,10 +124,9 @@ class SimRobot(Robot):
     def configure(self) -> None:
         pass
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self._connected:
-            raise RuntimeError("Sim robot is already connected")
-        if self._env is None:
+        if self._env.closed:
             self._env = self._make_env()
         # Connecting starts the first episode, so the robot has a state to observe.
         self._connected = True
@@ -137,9 +136,8 @@ class SimRobot(Robot):
             self.disconnect()
             raise
 
+    @check_if_not_connected
     def get_observation(self) -> dict[str, Any]:
-        if not self._connected or self._env is None:
-            raise RuntimeError("Connect before reading the environment")
         result = self._env.latest
         return {
             **{
@@ -149,6 +147,7 @@ class SimRobot(Robot):
             **{camera: result.obs[name][0] for name, camera in self._camera_keys.items()},
         }
 
+    @check_if_not_connected
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         names = self.descriptor.action_feature.names
         if set(action) != set(names):
@@ -158,8 +157,6 @@ class SimRobot(Robot):
                 "teleoperator must send the simulated robot's action names, as for the real follower."
             )
         values = np.asarray([[action[name] for name in names]], dtype=np.float32)
-        if not self._connected or self._env is None:
-            raise RuntimeError("Connect before sending an action")
         if self.episode_ended:
             self.start_episode()
         else:
@@ -167,9 +164,8 @@ class SimRobot(Robot):
             self.latest = self._env.latest
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
 
+    @check_if_not_connected
     def start_episode(self, seed: int | None = None) -> None:
-        if not self._connected or self._env is None:
-            raise RuntimeError("Connect before starting an episode")
         self._env.reset(seed=seed)
         self.latest = self._env.latest
 
@@ -181,9 +177,8 @@ class SimRobot(Robot):
         """Nothing to do: the simulation advances only on send_action()."""
 
     def disconnect(self) -> None:
-        if self._env is not None:
-            self._env.close()
-            self._env = None
+        # Not decorated: it also closes an environment built but never connected.
+        self._env.close()
         self._connected = False
 
 
