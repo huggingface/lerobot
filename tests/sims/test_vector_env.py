@@ -61,7 +61,7 @@ def test_environments_in_separate_processes_match_sequential_environments():
     for sequential, parallel in zip(*results, strict=True):
         np.testing.assert_array_equal(parallel.obs["observation.state"], sequential.obs["observation.state"])
         np.testing.assert_array_equal(parallel.terminated, sequential.terminated)
-        np.testing.assert_array_equal(parallel.step, sequential.step)
+        np.testing.assert_array_equal(parallel.elapsed_steps, sequential.elapsed_steps)
         assert parallel.task == sequential.task
 
 

@@ -141,4 +141,4 @@ class StepResult:
     truncated: np.ndarray
     is_success: np.ndarray
     sim_time: float
-    step: np.ndarray
+    elapsed_steps: np.ndarray

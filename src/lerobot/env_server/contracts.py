@@ -80,7 +80,7 @@ def validate_result(result: StepResult, descriptor: EnvDescriptor, num_envs: int
         validate_array(result.obs[feature.name], feature, leading_shape=(num_envs,))
     if len(result.task) != num_envs or any(not isinstance(task, str) for task in result.task):
         raise ValueError("Simulator task descriptions must match the batch")
-    for name in ("reward", "terminated", "truncated", "is_success", "step"):
+    for name in ("reward", "terminated", "truncated", "is_success", "elapsed_steps"):
         array = getattr(result, name)
         if not isinstance(array, np.ndarray) or array.shape != (num_envs,):
             raise ValueError(f"Simulator transition batch mismatch: {name}")
@@ -88,7 +88,7 @@ def validate_result(result: StepResult, descriptor: EnvDescriptor, num_envs: int
             "bool"
             if name in {"terminated", "truncated", "is_success"}
             else "int64"
-            if name == "step"
+            if name == "elapsed_steps"
             else "float32"
         )
         if array.dtype.name != expected:
@@ -97,6 +97,6 @@ def validate_result(result: StepResult, descriptor: EnvDescriptor, num_envs: int
         not np.isfinite(result.reward).all()
         or not np.isfinite(result.sim_time)
         or result.sim_time < 0
-        or (result.step < 0).any()
+        or (result.elapsed_steps < 0).any()
     ):
         raise ValueError("Invalid simulator reward/time/step values")

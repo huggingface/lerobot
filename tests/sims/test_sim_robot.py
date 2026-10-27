@@ -70,7 +70,7 @@ def test_sim_robot_registration(server, tmp_path):
         robot.connect()
         action = dict.fromkeys(robot.action_features, 0.0)
         assert robot.send_action(action) == action
-        assert robot.latest.step[0] == 1
+        assert robot.latest.elapsed_steps[0] == 1
     finally:
         robot.disconnect()
 
@@ -87,16 +87,16 @@ def test_sim_robot_advances_once_per_action(where, request, tmp_path):
         robot.connect()
         action = dict.fromkeys(robot.action_features, 0.1)
         assert robot.send_action(action) == pytest.approx(action)
-        assert robot.latest.step[0] == 1
+        assert robot.latest.elapsed_steps[0] == 1
         state = [name for name, kind in robot.observation_features.items() if kind is float]
         before = robot.get_observation()
         time.sleep(0.1)
         robot.hold()
         after = robot.get_observation()
         assert [after[name] for name in state] == [before[name] for name in state]
-        assert robot.latest.step[0] == 1
+        assert robot.latest.elapsed_steps[0] == 1
         robot.send_action(action)
-        assert robot.latest.step[0] == 2
+        assert robot.latest.elapsed_steps[0] == 2
     finally:
         robot.disconnect()
 
@@ -113,9 +113,9 @@ def test_robot_hold_does_not_advance_environment(server, tmp_path):
         robot.connect()
         assert len(wrapper.get_observation()) == 3
         wrapper.send_action({"command_0": 0.5, "command_1": 0})
-        step = robot.latest.step[0]
+        step = robot.latest.elapsed_steps[0]
         wrapper.hold()
-        assert robot.latest.step[0] == step
+        assert robot.latest.elapsed_steps[0] == step
     finally:
         robot.disconnect()
 
@@ -134,7 +134,7 @@ def test_a_finished_sim_world_starts_the_next_episode(where, request, tmp_path):
         # It truncates after 5 steps: the 5th step starts the next episode too.
         for _ in range(5):
             robot.send_action({"command_0": 0.0, "command_1": 0.0})
-        assert robot.latest.truncated[0] and robot.latest.step[0] == 5
+        assert robot.latest.truncated[0] and robot.latest.elapsed_steps[0] == 5
         assert robot.get_observation()["state_0"] < 1
     finally:
         robot.disconnect()

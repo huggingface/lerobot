@@ -296,7 +296,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         return {
             "is_success": result.is_success,
             "task": result.task,
-            "step": result.step,
+            "elapsed_steps": result.elapsed_steps,
             "sim_time": result.sim_time,
         }
 

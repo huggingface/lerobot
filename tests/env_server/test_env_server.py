@@ -77,7 +77,7 @@ def test_batch_terminal_freeze_and_seed_parity(server, use_async_envs):
         assert (
             result["reward"][0] == 0.0
         )  # The terminal reward is earned once, as with the old freeze wrapper.
-        assert result["step"].tolist() == [1, 5]
+        assert result["elapsed_steps"].tolist() == [1, 5]
         assert result["truncated"].tolist() == [False, True]
         frames = with_client.request("render")["frames"]
         assert len(frames) == 2 and frames[0].shape == (8, 8, 3)
@@ -313,7 +313,7 @@ def test_local_environment_matches_the_server(server):
             np.testing.assert_array_equal(actual_array, expected_array)
         for name, value in expected[0].items():
             np.testing.assert_array_equal(actual[0][name], value)
-        for key in ("is_success", "step"):
+        for key in ("is_success", "elapsed_steps"):
             np.testing.assert_array_equal(actual[4][key], expected[4][key])
         assert tuple(actual[4]["task"]) == tuple(expected[4]["task"])
 

@@ -201,7 +201,7 @@ class VectorEnv(gym.vector.VectorEnv):
         self._env_fns: list[Callable[[], Any]] = [partial(_build_env, config.type, fn) for fn in env_fns]
         self._envs: list[Any] = []
         self._last: list[tuple[dict[str, np.ndarray], float, bool, bool, bool]] = []
-        self._steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)
+        self._elapsed_steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)
         self._max_steps: list[int] = []
         self._sim_time = 0.0
         self._latest: StepResult | None = None
@@ -309,7 +309,7 @@ class VectorEnv(gym.vector.VectorEnv):
         else:
             results = [env.reset(seed=env_seed) for env, env_seed in zip(self._envs, seeds, strict=True)]
         self._last = [(self._canonical_observation(obs), 0.0, False, False, False) for obs, _ in results]
-        self._steps[:] = 0
+        self._elapsed_steps[:] = 0
         self._sim_time = 0.0
         result = self._snapshot()
         return result.obs, self._info(result)
@@ -338,8 +338,8 @@ class VectorEnv(gym.vector.VectorEnv):
             obs, reward, terminated, truncated, info = (
                 env.receive() if self.use_async_envs else env.step(actions[i])
             )
-            self._steps[i] += 1
-            truncated = bool(truncated or self._steps[i] >= self._max_steps[i])
+            self._elapsed_steps[i] += 1
+            truncated = bool(truncated or self._elapsed_steps[i] >= self._max_steps[i])
             self._last[i] = (
                 self._canonical_observation(obs),
                 float(reward),
@@ -364,7 +364,7 @@ class VectorEnv(gym.vector.VectorEnv):
             np.array([last[3] for last in self._last]),
             np.array([last[4] for last in self._last]),
             self._sim_time,
-            self._steps.copy(),
+            self._elapsed_steps.copy(),
         )
         return self._latest
 
@@ -380,7 +380,7 @@ class VectorEnv(gym.vector.VectorEnv):
         return {
             "is_success": result.is_success,
             "task": result.task,
-            "step": result.step,
+            "elapsed_steps": result.elapsed_steps,
             "sim_time": result.sim_time,
         }
 
