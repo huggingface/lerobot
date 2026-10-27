@@ -320,6 +320,7 @@ def _disconnect_setup_hardware(robot: Robot, teleop: Teleoperator | None) -> Non
     """Release each connected device without masking the original setup failure."""
     for name, resource in (("teleoperator", teleop), ("robot", robot)):
         try:
+            # A sim robot holds its simulator from construction, so it is closed even if never connected.
             if resource is not None and (resource.is_connected or isinstance(resource, SimRobot)):
                 resource.disconnect()
         except Exception:
@@ -330,7 +331,7 @@ def _connect_rollout_hardware(
     cfg: RolloutConfig,
     *,
     require_hold: bool = False,
-    simulator_admission: Callable[[SimRobot], None] | None = None,
+    validate_simulator: Callable[[SimRobot], None] | None = None,
 ) -> HardwareContext:
     """Connect devices and capture the initial pose after policy/descriptor validation."""
     if cfg.robot is None:
@@ -341,8 +342,8 @@ def _connect_rollout_hardware(
     try:
         check_control_rate(robot, cfg.fps, "--fps", cfg.interpolation_multiplier)
         if isinstance(robot, SimRobot):
-            if simulator_admission is not None:
-                simulator_admission(robot)
+            if validate_simulator is not None:
+                validate_simulator(robot)
             elif cfg.policy is not None:
                 robot.descriptor.validate_checkpoint(cfg.policy, cfg.rename_map)
         if require_hold:
@@ -527,12 +528,13 @@ def build_rollout_context(
 
     try:
         # Retain position and base-velocity channels for mobile manipulators, plus cameras.
+        # A sim robot's state and action components are all policy inputs, whatever their names.
+        keep_all = isinstance(robot, SimRobot)
         all_obs_features = robot.observation_features
         observation_features_hw: dict[str, type | tuple] = {
             k: v
             for k, v in all_obs_features.items()
-            if isinstance(v, tuple)
-            or (v is float and (isinstance(robot, SimRobot) or k.endswith((".pos", ".vel"))))
+            if isinstance(v, tuple) or (v is float and (keep_all or k.endswith((".pos", ".vel"))))
         }
         policy_action_names = getattr(policy_config, "action_feature_names", None)
         checkpoint_order = list(policy_action_names) if policy_action_names else None
@@ -540,9 +542,7 @@ def build_rollout_context(
             observation_features_hw, checkpoint_order, what="state"
         )
         action_features_hw = {
-            k: v
-            for k, v in robot.action_features.items()
-            if isinstance(robot, SimRobot) or k.endswith((".pos", ".vel"))
+            k: v for k, v in robot.action_features.items() if keep_all or k.endswith((".pos", ".vel"))
         }
         action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
 
@@ -758,7 +758,7 @@ def build_remote_rollout_context(
                 if replace(actual, name=feature.name) != feature:
                     raise ValueError("Remote observation declaration differs from simulator declaration")
 
-        hardware = _connect_rollout_hardware(cfg, require_hold=True, simulator_admission=validate_simulator)
+        hardware = _connect_rollout_hardware(cfg, require_hold=True, validate_simulator=validate_simulator)
         wrapper = hardware.robot_wrapper
         robot = wrapper.inner
 
