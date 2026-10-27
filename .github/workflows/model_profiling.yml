@@ -105,7 +105,8 @@ jobs:
       TORCH_HOME: /mnt/cache/.cache/torch
       UV_CACHE_DIR: /mnt/cache/.cache/uv
       UV_PROJECT_ENVIRONMENT: /tmp/venv
-    timeout-minutes: 90
+    # LingBot's CPU text encoder makes fresh-action samples substantially slower.
+    timeout-minutes: ${{ matrix.policy == 'lingbot_va' && 180 || 90 }}
     strategy:
       fail-fast: false
       max-parallel: 4
