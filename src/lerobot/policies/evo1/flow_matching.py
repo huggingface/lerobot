@@ -305,13 +305,18 @@ class FlowmatchingActionHead(nn.Module):
         device = fused_tokens.device
         if embodiment_id is None:
             embodiment_id = torch.zeros(batch_size, dtype=torch.long, device=device)
-        elif self.num_categories > 1 and (
-            int(embodiment_id.min()) < 0 or int(embodiment_id.max()) >= self.num_categories
-        ):
-            raise ValueError(
-                f"embodiment ids must be in [0, num_categories={self.num_categories}), "
-                f"got range [{int(embodiment_id.min())}, {int(embodiment_id.max())}]"
-            )
+        elif self.num_categories > 1:
+            low, high = embodiment_id.min().item(), embodiment_id.max().item()
+
+            def message() -> str:
+                return (
+                    f"embodiment ids must be in [0, num_categories={self.num_categories}), "
+                    f"got range [{low}, {high}]"
+                )
+
+            # Unlike `if`, torch._check_value keeps the check in an exported program as a runtime assert.
+            torch._check_value(low >= 0, message)
+            torch._check_value(high < self.num_categories, message)
 
         context_tokens = fused_tokens
         if context_tokens.dim() == 2:
