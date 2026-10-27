@@ -207,6 +207,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           HF_TOKEN: ${{ secrets.MODEL_PROFILING_HF_TOKEN || secrets.LEROBOT_HF_USER }}
           PROFILE_SPACE: ${{ vars.MODEL_PROFILING_SPACE || 'lerobot/health-dashboard' }}
+          GRADIENT_CHECKPOINTING: ${{ inputs.gradient_checkpointing || 'false' }}
         run: |
           report=$(python3 scripts/ci/model_profiling.py archive)
           uvx --from huggingface-hub==1.24.0 hf upload "$PROFILE_SPACE" "$report" \

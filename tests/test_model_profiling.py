@@ -267,6 +267,7 @@ def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch,
         "GITHUB_RUN_ATTEMPT": "2",
         "GITHUB_REPOSITORY": "huggingface/lerobot",
         "GITHUB_TOKEN": "test",
+        "GRADIENT_CHECKPOINTING": "true",
     }.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(ci, "urlopen", lambda *args, **kwargs: io.BytesIO(json.dumps(run).encode()))
@@ -279,6 +280,7 @@ def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch,
     metadata = json.loads((folder / "run.json").read_text())
     assert metadata["key"] == "123-2"
     assert metadata["conclusion"] == "failure"
+    assert metadata["profiling_variant"] == "checkpointing_trial"
     assert metadata["created_at"] == run["created_at"]
     assert metadata["run_started_at"] == run["run_started_at"]
     with zipfile.ZipFile(folder / "report.zip") as report:

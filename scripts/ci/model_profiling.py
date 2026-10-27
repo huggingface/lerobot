@@ -418,6 +418,9 @@ def archive(output_dir: Path) -> Path:
         run_attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]),
         status="completed",
         conclusion="success" if all(row["status"] == "success" for row in rows) else "failure",
+        profiling_variant=(
+            "checkpointing_trial" if os.environ.get("GRADIENT_CHECKPOINTING") == "true" else "baseline"
+        ),
     )
     folder = output_dir / "dashboard"
     folder.mkdir(exist_ok=True)
