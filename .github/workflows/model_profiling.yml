@@ -75,11 +75,11 @@ jobs:
         shell: bash
     env:
       HOME: /tmp
-      HF_HOME: /mnt/cache/lerobot-model-profiling/huggingface
-      HF_HUB_CACHE: /mnt/cache/lerobot-model-profiling/huggingface/hub
-      HF_LEROBOT_HOME: /mnt/cache/lerobot-model-profiling/huggingface/lerobot
-      TORCH_HOME: /mnt/cache/lerobot-model-profiling/torch
-      UV_CACHE_DIR: /mnt/cache/lerobot-model-profiling/uv
+      HF_HOME: /mnt/cache/.cache/huggingface
+      HF_HUB_CACHE: /mnt/cache/.cache/huggingface/hub
+      HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
+      TORCH_HOME: /mnt/cache/.cache/torch
+      UV_CACHE_DIR: /mnt/cache/.cache/uv
       UV_PROJECT_ENVIRONMENT: /tmp/venv
     timeout-minutes: 90
     strategy:
@@ -89,6 +89,8 @@ jobs:
     steps:
       - name: Inspect GPU and cache mounts
         run: |
+          id
+          ls -ld /mnt/cache /mnt/cache/.cache /mnt/hf_cache 2>/dev/null || true
           nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
           findmnt --real --output TARGET,FSTYPE || true
           df -h / /mnt /mnt/cache /cache 2>/dev/null || true
