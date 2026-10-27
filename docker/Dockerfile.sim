@@ -16,7 +16,7 @@
 # Simulator server images, one per backend, selected with the SIM build argument:
 #   docker build -f docker/Dockerfile.sim --build-arg SIM=libero -t lerobot-sim-libero .
 # Each `<sim>_native` stage pins its simulator in its own venv; the final stage adds the
-# torch-free LeRobot server (`--no-deps` + docker/sims/requirements.txt). BuildKit only builds
+# torch-free LeRobot server (`--no-deps` + docker/sim/requirements.txt). BuildKit only builds
 # the stages the selected SIM needs.
 ARG SIM=libero
 
@@ -33,7 +33,7 @@ WORKDIR /lerobot
 ENV VIRTUAL_ENV=/home/user_lerobot/venv PATH="/home/user_lerobot/venv/bin:${PATH}" \
     MUJOCO_GL=egl PYOPENGL_PLATFORM=egl NVIDIA_DRIVER_CAPABILITIES=all
 RUN uv venv "$VIRTUAL_ENV" --python python3
-COPY --chown=user_lerobot:user_lerobot docker/sims/requirements.txt /tmp/sim-requirements.txt
+COPY --chown=user_lerobot:user_lerobot docker/sim/requirements.txt /tmp/sim-requirements.txt
 RUN uv pip install -r /tmp/sim-requirements.txt
 
 # ---------------------------------------------------------------------------- LIBERO family
@@ -304,7 +304,7 @@ COPY --chown=user_lerobot:user_lerobot src/lerobot/transport /lerobot/src/lerobo
 COPY --chown=user_lerobot:user_lerobot src/lerobot/utils /lerobot/src/lerobot/utils
 COPY --chown=user_lerobot:user_lerobot src/lerobot/scripts/lerobot_env_server.py /lerobot/src/lerobot/scripts/
 COPY --chown=user_lerobot:user_lerobot scripts/ci/convert_sim_assets.py scripts/ci/patch_sim_runtime.py scripts/ci/check_sim_parity.py /lerobot/scripts/ci/
-COPY --chown=user_lerobot:user_lerobot docker/sims /lerobot/docker/sims
+COPY --chown=user_lerobot:user_lerobot docker/sim /lerobot/docker/sim
 RUN uv pip install --no-cache --no-deps -e .
 # LIBERO family: convert trusted torch init states to NumPy with a temporary CPU torch.
 RUN case "${SIM}" in libero|robocerebra|libero_plus) \
@@ -331,4 +331,4 @@ pytorch3d, trimesh; warp.torch; from curobo.types.math import Pose" ;; \
 # The server runs where its simulator expects: RoboTwin reads its assets relative to the working directory.
 ENV SIM_WORKDIR=${SIM_WORKDIR:-/lerobot}
 WORKDIR ${SIM_WORKDIR}
-CMD ["sh", "-c", "exec lerobot-env-server --config /lerobot/docker/sims/configs/${SIM}.yaml"]
+CMD ["sh", "-c", "exec lerobot-env-server --config /lerobot/docker/sim/configs/${SIM}.yaml"]

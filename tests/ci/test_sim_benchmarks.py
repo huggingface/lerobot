@@ -93,8 +93,8 @@ def test_libero_policy_server_example_matches_simulator_config(monkeypatch):
     from lerobot.remote_inference.configs import ServerConfig
     from tests.utils import resolve_without_simulator
 
-    policy = draccus.parse(ServerConfig, config_path=str(ROOT / "docker/sims/policy_libero.yaml"), args=[])
-    settings = yaml.safe_load((ROOT / "docker/sims/configs/libero.yaml").read_text())["sim"]
+    policy = draccus.parse(ServerConfig, config_path=str(ROOT / "docker/sim/policy_libero.yaml"), args=[])
+    settings = yaml.safe_load((ROOT / "docker/sim/configs/libero.yaml").read_text())["sim"]
     sim = resolve_without_simulator(settings, monkeypatch)
     assert policy.semantics == sim.semantics
     assert tuple(policy.action_feature.names) == sim.action_names

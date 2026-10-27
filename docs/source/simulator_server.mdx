@@ -25,7 +25,7 @@ lerobot-eval \
 Served: start the server with the same environment (see [Serve an environment](#serve-an-environment)), and add its endpoint:
 
 ```bash
-lerobot-env-server --docker --config=docker/sims/configs/libero.yaml
+lerobot-env-server --docker --config=docker/sim/configs/libero.yaml
 lerobot-eval ... --env.endpoint=tcp/127.0.0.1:7448
 ```
 
@@ -81,7 +81,7 @@ For remote inference, keep the same `--robot.*` options and replace the local po
 --inference.semantics=libero-delta-v1
 ```
 
-Start the policy server separately using [remote inference setup](./remote_inference). Its schema must match the robot's observations after `--rename_map`. `docker/sims/policy_libero.yaml` provides the LIBERO policy-server configuration. Omit `--policy.path` from the rollout command because the policy server loads the checkpoint. For local RTC, use `--inference.type=rtc` with the policy's RTC settings.
+Start the policy server separately using [remote inference setup](./remote_inference). Its schema must match the robot's observations after `--rename_map`. `docker/sim/policy_libero.yaml` provides the LIBERO policy-server configuration. Omit `--policy.path` from the rollout command because the policy server loads the checkpoint. For local RTC, use `--inference.type=rtc` with the policy's RTC settings.
 
 Holding an explicitly stepped simulator does not advance physics. Simulator failures propagate to rollout shutdown.
 
@@ -90,22 +90,22 @@ Holding an explicitly stepped simulator does not advance physics. Simulator fail
 From a LeRobot source checkout (the image is built from it), run from the repository root:
 
 ```bash
-lerobot-env-server --docker --config=docker/sims/configs/libero.yaml
+lerobot-env-server --docker --config=docker/sim/configs/libero.yaml
 ```
 
-`--docker` uses `docker/sims/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another simulator. Each simulator's control rate, action convention and component names come from its integration's `conventions()`, so a YAML only names the task and the simulator's options.
+`--docker` uses `docker/sim/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another simulator. Each simulator's control rate, action convention and component names come from its integration's `conventions()`, so a YAML only names the task and the simulator's options.
 
 `--set` overrides keys of the YAML (values parsed as YAML) and leaves the file unchanged:
 
 ```bash
-lerobot-env-server --docker --config=docker/sims/configs/libero.yaml \
+lerobot-env-server --docker --config=docker/sim/configs/libero.yaml \
   --set sim.kwargs.gym_kwargs.observation_height=256 \
   --set sim.kwargs.gym_kwargs.observation_width=256
 ```
 
 The effective configuration is kept in a temporary cache for container restarts; rerun the command after a host reboot. Switching configuration recreates the server and ends active sessions. The image is built when missing; add `--build` to rebuild it after changing the simulator or LeRobot source, or `--stop` to shut down the server. The container requires Docker GPU access for EGL rendering. [EnvHub](./envhub) repositories are served with `--envhub=<user/repo>`; see [EnvHub and the simulator server](./envhub#envhub-and-the-simulator-server).
 
-Without `--docker`, the same command runs the server in the current environment: install the simulator's native dependencies in an isolated environment, install LeRobot with `--no-deps`, and install `docker/sims/requirements.txt`.
+Without `--docker`, the same command runs the server in the current environment: install the simulator's native dependencies in an isolated environment, install LeRobot with `--no-deps`, and install `docker/sim/requirements.txt`.
 
 LIBERO runtime images use converted NumPy initial-state files. The image build converts trusted upstream assets with `scripts/ci/convert_sim_assets.py`; the server rejects missing converted files. RoboTwin and RoboMME require their own torch for native planning and ManiSkill, respectively; their torch installations are isolated from the policy environment.
 

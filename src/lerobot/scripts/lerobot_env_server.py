@@ -14,9 +14,9 @@
 
 """Run a simulator server from a YAML configuration or an EnvHub repository.
 
-lerobot-env-server --docker --config=docker/sims/configs/libero.yaml   # in its Docker image, on :7448
+lerobot-env-server --docker --config=docker/sim/configs/libero.yaml   # in its Docker image, on :7448
 lerobot-env-server --docker --envhub=<user/repo[@revision]>            # serve an EnvHub repository
-lerobot-env-server --config=docker/sims/configs/metaworld.yaml         # in this environment
+lerobot-env-server --config=docker/sim/configs/metaworld.yaml         # in this environment
 """
 
 import argparse
@@ -40,7 +40,7 @@ from lerobot.env_server.server import EnvServer, ServerConfig
 from lerobot.sim.config import SimConfig
 from lerobot.transport.zenoh import ZenohConfig
 
-COMPOSE_FILE = "docker/sims/compose.server.yaml"
+COMPOSE_FILE = "docker/sim/compose.server.yaml"
 DOCKERFILE = "docker/Dockerfile.sim"
 # Where the EnvHub stage of the Dockerfile copies the repository.
 ENVHUB_IMAGE_DIR = "/envhub"

@@ -130,7 +130,7 @@ def test_build_and_stop_require_docker(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "path", sorted((Path(__file__).resolve().parents[2] / "docker/sims/configs").glob("*.yaml")), ids=str
+    "path", sorted((Path(__file__).resolve().parents[2] / "docker/sim/configs").glob("*.yaml")), ids=str
 )
 def test_server_configs_take_their_conventions_from_the_simulator(path, monkeypatch):
     sim = resolve_without_simulator(load_config(path, [])["sim"], monkeypatch)
@@ -139,7 +139,7 @@ def test_server_configs_take_their_conventions_from_the_simulator(path, monkeypa
 
 
 @pytest.mark.parametrize(
-    "path", sorted((Path(__file__).resolve().parents[2] / "docker/sims/configs").glob("*.yaml")), ids=str
+    "path", sorted((Path(__file__).resolve().parents[2] / "docker/sim/configs").glob("*.yaml")), ids=str
 )
 def test_server_configs_serve_what_their_env_options_describe(path, monkeypatch):
     # `--env.type=<sim> --env.task=<task> --env.endpoint=...` against the shipped image passes the client's check.

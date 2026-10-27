@@ -26,7 +26,7 @@ def image_hash(root: Path, entry: dict) -> str:
     digest = hashlib.sha256()
     paths = [
         root / entry["dockerfile"],
-        root / "docker/sims/requirements.txt",
+        root / "docker/sim/requirements.txt",
         root / entry["sim_config"],
         root / "scripts/ci/convert_sim_assets.py",
         root / "scripts/ci/patch_sim_runtime.py",
@@ -47,7 +47,7 @@ def image_hash(root: Path, entry: dict) -> str:
     ):
         paths.extend((root / directory).rglob("*.py"))
     paths.append(root / "src/lerobot/sim/integrations/metaworld_config.json")
-    paths.extend(path for path in (root / "docker/sims").rglob("*") if path.is_file())
+    paths.extend(path for path in (root / "docker/sim").rglob("*") if path.is_file())
     for path in sorted(set(paths)):
         digest.update(str(path.relative_to(root)).encode())
         digest.update(path.read_bytes())
@@ -60,7 +60,7 @@ def with_defaults(entry: dict) -> dict:
     name = entry["name"]
     defaults = {
         "policy": f"lerobot/smolvla_{name}",
-        "sim_config": f"docker/sims/configs/{name}.yaml",
+        "sim_config": f"docker/sim/configs/{name}.yaml",
         # Simulator camera key -> checkpoint camera key, as for any robot.
         "rename_map": {},
         "dockerfile": "docker/Dockerfile.sim",
