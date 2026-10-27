@@ -10,7 +10,6 @@ uv run python benchmarks/profile_policies.py --policy.type=act \
     --batch_size=1 --policy.device=cuda --output_dir=profiling-results/act
 """
 
-import faulthandler
 import hashlib
 import json
 import math
@@ -271,17 +270,6 @@ def main(cfg: ProfileConfig) -> None:
         raise ValueError(
             "Profiling uses a single device and a fixed, non-streaming batch without PEFT/resume"
         )
-    if cfg.policy.type == "lingbot_va" and os.environ.get("PROFILE_DIAGNOSTICS") == "true":
-        threads = int(os.environ.get("LINGBOT_CPU_THREADS", "0"))
-        affinity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
-        print(
-            f"LingBot diagnostics: initial CPU threads={torch.get_num_threads()}, CPU affinity={affinity}, "
-            f"OMP_NUM_THREADS={os.environ.get('OMP_NUM_THREADS')}, "
-            f"MKL_NUM_THREADS={os.environ.get('MKL_NUM_THREADS')}",
-            flush=True,
-        )
-        if threads:
-            torch.set_num_threads(threads)
     cfg.output_dir.mkdir(parents=True)
     device = torch.device(cfg.policy.device)
     row: dict[str, Any] = {
@@ -368,32 +356,15 @@ def main(cfg: ProfileConfig) -> None:
                     policy.reset()
                     batch = preprocess(deepcopy(raw_batch))
                     step = make_training_step(cfg, policy, dataset, preprocess, accelerator)
-                diagnose = (
-                    cfg.policy.type == "lingbot_va"
-                    and mode == "inference"
-                    and os.environ.get("PROFILE_DIAGNOSTICS") == "true"
+                row[mode] = measure(
+                    step,
+                    batch,
+                    device,
+                    cfg.warmup,
+                    cfg.iterations,
+                    cfg.output_dir / f"{mode}.trace.json" if cfg.trace else None,
+                    label=mode,
                 )
-                if diagnose:
-                    print(
-                        f"LingBot diagnostics: CPU threads={torch.get_num_threads()}, "
-                        f"text encoder device={cfg.policy.text_encoder_device}, "
-                        f"dtype={cfg.policy.dtype}, max prompt length={cfg.policy.max_sequence_length}",
-                        flush=True,
-                    )
-                    faulthandler.dump_traceback_later(30, repeat=True)
-                try:
-                    row[mode] = measure(
-                        step,
-                        batch,
-                        device,
-                        cfg.warmup,
-                        cfg.iterations,
-                        cfg.output_dir / f"{mode}.trace.json" if cfg.trace else None,
-                        label=mode,
-                    )
-                finally:
-                    if diagnose:
-                        faulthandler.cancel_dump_traceback_later()
             except Exception as exc:
                 traceback.print_exc()
                 row[mode] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
