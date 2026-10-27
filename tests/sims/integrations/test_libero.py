@@ -44,3 +44,18 @@ def test_libero_numpy_adapter_parity(monkeypatch):
         actual["observation.images.camera1"],
         (expected["observation.images.camera1"][0].permute(1, 2, 0).numpy() * 255).astype(np.uint8),
     )
+
+
+def test_libero_declares_the_control_mode_it_runs(monkeypatch):
+    from lerobot.envs.configs import LiberoEnv
+    from tests.utils import resolve_without_simulator
+
+    relative = resolve_without_simulator(LiberoEnv(task="libero_spatial").sim_settings(), monkeypatch)
+    assert (relative.control_mode, relative.semantics) == ("delta", "libero-delta-v1")
+    assert relative.action_names[0] == "eef.delta.x"
+    # LIBERO's absolute mode commands end-effector poses, not deltas.
+    absolute = resolve_without_simulator(
+        LiberoEnv(task="libero_spatial", control_mode="absolute").sim_settings(), monkeypatch
+    )
+    assert (absolute.control_mode, absolute.semantics) == ("eef_pose", "libero-eef-pose-v1")
+    assert absolute.action_names[0] == "eef.x"

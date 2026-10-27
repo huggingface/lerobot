@@ -551,28 +551,17 @@ create_envs = create_libero_envs
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """LIBERO's control rate, controller, component names and simulated body."""
+    """LIBERO's control rate, controller, component names and simulated body.
+
+    LIBERO's own ``control_mode`` commands end-effector deltas (``relative``) or poses (``absolute``).
+    """
+    pose = ("eef.x", "eef.y", "eef.z", "eef.axis_angle.x", "eef.axis_angle.y", "eef.axis_angle.z")
+    absolute = kwargs.get("control_mode", "relative") == "absolute"
+    commanded = pose if absolute else tuple(name.replace("eef.", "eef.delta.") for name in pose)
     return {
         "fps": 20,
-        "control_mode": "delta",
-        "state_names": (
-            "eef.x",
-            "eef.y",
-            "eef.z",
-            "eef.axis_angle.x",
-            "eef.axis_angle.y",
-            "eef.axis_angle.z",
-            "gripper.left.pos",
-            "gripper.right.pos",
-        ),
-        "action_names": (
-            "eef.delta.x",
-            "eef.delta.y",
-            "eef.delta.z",
-            "eef.delta.axis_angle.x",
-            "eef.delta.axis_angle.y",
-            "eef.delta.axis_angle.z",
-            "gripper.command",
-        ),
+        "control_mode": "eef_pose" if absolute else "delta",
+        "state_names": (*pose, "gripper.left.pos", "gripper.right.pos"),
+        "action_names": (*commanded, "gripper.command"),
         "robot_type": "panda",
     }
