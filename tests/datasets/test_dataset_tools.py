@@ -74,8 +74,8 @@ def sample_dataset(tmp_path, empty_lerobot_dataset_factory):
     return dataset
 
 
-def _make_packed_video_dataset(root, dataset_factory, vcodec):
-    """Encode episodes separately, then pack them into one video file."""
+def _make_packed_video_dataset(root, dataset_factory):
+    """Encode H.264 episodes separately, then pack them into one video file."""
     features = {
         "action": {"dtype": "float32", "shape": (6,), "names": None},
         "observation.images.top": {"dtype": "video", "shape": (64, 64, 3), "names": None},
@@ -87,7 +87,7 @@ def _make_packed_video_dataset(root, dataset_factory, vcodec):
         use_videos=True,
         # A short GOP puts several keyframes inside each episode, so a mid-GOP boundary is
         # reachable for the negative case.
-        rgb_encoder=RGBEncoderConfig(vcodec=vcodec, pix_fmt="yuv420p", g=6, crf=30),
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=6, crf=30),
     )
 
     for _ in range(5):
@@ -1043,7 +1043,7 @@ def test_delete_episodes_packed_videos(stream_copy, tmp_path, empty_lerobot_data
     """Both video paths retain the selected episodes and a continuous output timeline."""
     import av
 
-    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory, "h264")
+    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory)
     output_dir = tmp_path / "filtered"
     video_key = src_dataset.meta.video_keys[0]
 
@@ -1100,7 +1100,7 @@ def test_delete_episodes_packed_videos(stream_copy, tmp_path, empty_lerobot_data
 @require_h264
 def test_stream_copy_declines_when_boundaries_are_not_gop_aligned(tmp_path, empty_lerobot_dataset_factory):
     """A range starting mid-GOP is refused so the caller can re-encode instead."""
-    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory, "h264")
+    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory)
     video_key = src_dataset.meta.video_keys[0]
     src_video_path = src_dataset.root / src_dataset.meta.get_video_file_path(0, video_key)
     output_path = tmp_path / "declined.mp4"
