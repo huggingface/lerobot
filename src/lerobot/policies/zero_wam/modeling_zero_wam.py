@@ -223,8 +223,15 @@ class ZeroWAMPolicy(PreTrainedPolicy):
             mcp_hidden_collect_layers=tuple(config.mcp_hidden_collect_layers),
         ).to(self.dtype)
         self.transformer.gradient_checkpointing = config.gradient_checkpointing
-        # Kept only so released checkpoints load strictly; never used, so it would get no optimizer state.
+        # Retain unused released layers for strict loading, but exclude them from Adam.
+        # DCP restore otherwise requests optimizer entries that no backward pass created.
         self.transformer.patch_embedding.requires_grad_(False)
+        self.transformer.condition_embedder_action.text_embedder.requires_grad_(False)
+        for group in getattr(self.transformer, "mcp_blocks", ()):
+            if group:
+                # Only video outputs from the final MCP block contribute to its loss.
+                group[-1].attn2.action_to_out.requires_grad_(False)
+                group[-1].action_ffn.requires_grad_(False)
 
         # Frozen VAE / text encoder live outside the module registry: they are neither saved in
         # model.safetensors nor moved by ``.to()``, and load lazily on first use.

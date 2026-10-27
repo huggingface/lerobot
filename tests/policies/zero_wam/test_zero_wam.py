@@ -192,7 +192,8 @@ def test_invalid_channels_raise() -> None:
 
 
 @pytest.mark.parametrize("with_icl", [False, True])
-def test_training_loss_backward(tmp_path, with_icl: bool) -> None:
+@pytest.mark.parametrize("mcp_blocks_per_group", [1, 2])
+def test_training_loss_backward(tmp_path, with_icl: bool, mcp_blocks_per_group: int) -> None:
     overrides = {"drop_icl": 0.0, "droptext_target": 0.0}
     if with_icl:
         latent = write_icl_latent(tmp_path)
@@ -202,17 +203,26 @@ def test_training_loss_backward(tmp_path, with_icl: bool) -> None:
             + "\n"
         )
         overrides["icl_pairs_path"] = str(pairs)
-    policy = make_policy(tiny_config(**overrides))
+    policy = make_policy(tiny_config(mcp_blocks_per_group=mcp_blocks_per_group, **overrides))
     policy.train()
     loss, logs = policy.forward(training_batch(policy.config, batch_size=2))
     assert torch.isfinite(loss)
     assert set(logs) == {"latent_loss", "action_loss", "mcp_loss"}
     loss.backward()
-    grads = [p.grad for p in policy.get_optim_params() if p.grad is not None]
-    assert grads and all(torch.isfinite(g).all() for g in grads)
+    trainable = {name: p for name, p in policy.named_parameters() if p.requires_grad}
+    # DCP initializes state for every trainable optimizer parameter on restart.
+    # Unused released layers would be absent from the checkpoint's Adam state.
+    assert not [name for name, p in trainable.items() if p.grad is None]
+    assert all(torch.isfinite(p.grad).all() for p in trainable.values())
+    if mcp_blocks_per_group > 1:
+        first_mcp_block = policy.transformer.mcp_blocks[0][0]
+        assert first_mcp_block.attn2.action_to_out[0].weight.grad.abs().sum() > 0
+        assert first_mcp_block.action_ffn.net[0].proj.weight.grad.abs().sum() > 0
     assert policy.transformer.action_embedder.weight.grad.abs().sum() > 0
     before = policy.transformer.action_embedder.weight.detach().clone()
-    torch.optim.AdamW(policy.get_optim_params(), lr=1e-3).step()
+    optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=1e-3)
+    optimizer.step()
+    assert len(optimizer.state) == len(trainable)
     assert not torch.equal(before, policy.transformer.action_embedder.weight)
 
 
