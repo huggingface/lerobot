@@ -32,6 +32,7 @@ from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as 
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .lawam.configuration_lawam import LaWAMConfig as LaWAMConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig as LingBotVAConfig
+from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config as LingbotVLAV2Config
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config as MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config as PI0Config
@@ -50,6 +51,7 @@ from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
 from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig as VLAJEPAConfig
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
+from .wall_oss_05.configuration_wall_oss_05 import WallOSS05Config as WallOSS05Config
 from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
 from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
 
@@ -71,6 +73,7 @@ __all__ = [
     "GrootConfig",
     "LaWAMConfig",
     "LingBotVAConfig",
+    "LingbotVLAV2Config",
     "MolmoAct2Config",
     "MultiTaskDiTConfig",
     "PI0Config",
@@ -81,6 +84,7 @@ __all__ = [
     "VLAJEPAConfig",
     "VQBeTConfig",
     "WallXConfig",
+    "WallOSS05Config",
     "XVLAConfig",
     # Chunk execution contracts
     "ChunkPolicySpec",

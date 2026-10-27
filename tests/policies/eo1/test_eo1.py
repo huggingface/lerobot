@@ -325,6 +325,7 @@ def test_eo1_default_processor_owns_runtime_prompt_rendering(monkeypatch):
     assert not hasattr(EO1Policy, "prepare_runtime_action_batch")
 
 
+@pytest.mark.dataset
 def test_eo1_recipe_processor_builds_sparse_joint_labels():
     pytest.importorskip("datasets", reason="language recipes require lerobot[dataset]")
     config = make_eo1_config()

@@ -30,6 +30,8 @@ from lerobot.remote_inference.client import RemoteClient
 from tests.inference.policy_helpers import observation
 from tests.remote_inference.helpers import admit
 
+pytestmark = pytest.mark.dataset
+
 ACTION_NAMES = ("shoulder.pos", "elbow.pos", "gripper.pos")
 BLEND_COMPONENTS = ACTION_NAMES[:2]
 

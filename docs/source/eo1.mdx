@@ -83,13 +83,13 @@ policy.path=your-org/your-eo1-checkpoint
 ### Text generation and interactive control
 
 EO-1 exposes the Qwen backbone through the shared policy text contract. Runtime
-adds `query_kind` and `text`, then runs the normal EO-1 input processor:
+adds `query_kind` and `query_text`, then runs the normal EO-1 input processor:
 
 ```python
 request = {
     **observation,
     "query_kind": "vqa",
-    "text": "Which object is closest to the gripper?",
+    "query_text": "Which object is closest to the gripper?",
 }
 processed_batch = preprocessor(request)
 answer = policy.generate_text(processed_batch)
@@ -103,9 +103,13 @@ With the interactive language runtime, EO-1 can generate a subtask and rebuild
 its action prompt from that current subtask:
 
 ```bash
+# Use the robot, port and cameras your checkpoint was trained with
 lerobot-rollout \
   --policy.path=your-org/your-eo1-checkpoint \
   --policy.device=cuda \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
   --task="clear the table" \
   --interactive=true
 ```

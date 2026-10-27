@@ -25,6 +25,8 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.streaming.episode_parquet import EpisodeParquetReader
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize("window", [False, True])
 def test_prepared_numeric_rows_are_independent(

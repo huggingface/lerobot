@@ -16,6 +16,7 @@
 """CPU tests of the flux3 policy: registration, config, processors, the packing contract, a tiny end-to-end
 model with a fake video VAE and the mock text encoder, checkpoint round trips and the key remap."""
 
+import functools
 import json
 import math
 import sys
@@ -80,6 +81,16 @@ def fake_vae(monkeypatch, fake_text_encoder):
 
 
 def droid_batch(b: int = 2, frames: int | None = None, pad_second: bool = False) -> dict:
+    # The batch is seeded, so build it once per arguments and hand out copies: the camera frames are
+    # large enough that generating them dominated several tests.
+    return {
+        k: v.clone() if isinstance(v, torch.Tensor) else list(v)
+        for k, v in _droid_batch(b, frames, pad_second).items()
+    }
+
+
+@functools.cache
+def _droid_batch(b: int, frames: int | None, pad_second: bool) -> dict:
     t = frames or 1
     gen = torch.Generator().manual_seed(1)
     batch = {}
@@ -167,8 +178,14 @@ def test_shared_peft_recipe_preserves_checkpoint_contract(tmp_path, monkeypatch,
     train = parse_recipe()
     assert str(train.policy.pretrained_path) == str(checkpoint)
     for key in vars(original):
-        if key not in overrides and key not in runtime_overrides and key != "pretrained_path":
+        # `use_peft` is derived from the recipe's `peft` section by `validate()`.
+        if (
+            key not in overrides
+            and key not in runtime_overrides
+            and key not in ("pretrained_path", "use_peft")
+        ):
             assert getattr(train.policy, key) == getattr(original, key), key
+    assert train.policy.use_peft
     for key, value in runtime_overrides.items():
         assert getattr(train.policy, key) == value
     assert train.dataset.repo_id == f"test/{robot}-task" and train.dataset.eval_split == 0.2
@@ -1005,7 +1022,8 @@ def _tiny_trunks(tmp_path):
 
 
 def _lean_config(**overrides) -> Flux3Config:
-    return droid_config(augment=False, caption_dropout=0.0, **overrides)
+    # One denoising step already runs every trunk weight, which is all the equivalence checks compare.
+    return droid_config(augment=False, caption_dropout=0.0, num_inference_steps=1, **overrides)
 
 
 def _with_full_streams(policy: Flux3Policy) -> Flux3Policy:

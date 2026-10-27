@@ -26,7 +26,7 @@ By following these steps, you'll be able to replicate tasks, such as picking up 
 
 This tutorial isn’t tied to a specific robot: we walk you through the commands and API snippets you can adapt for any supported platform.
 
-During data collection, you’ll use a “teloperation” device, such as a leader arm or keyboard to teleoperate the robot and record its motion trajectories.
+During data collection, you’ll use a “teleoperation” device, such as a leader arm or keyboard to teleoperate the robot and record its motion trajectories.
 
 Once you’ve gathered enough trajectories, you’ll train a neural network to imitate these trajectories and deploy the trained model so your robot can perform the task autonomously.
 
@@ -40,7 +40,7 @@ Want to quickly get the right commands for your setup? The [quickstart notebook]
 
 ## Set up and Calibrate
 
-If you haven't yet set up and calibrated your robot and teleop device, please do so by following the robot-specific tutorial.
+If you haven't yet set up and calibrated your robot and teleop device, please do so by following the tutorial for your robot, for example [SO-101](./so101), [OpenArm](./openarm), [Koch](./koch) or [LeKiwi](./lekiwi). All supported robots are listed under **Robots** in the sidebar.
 
 ## Teleoperate
 
@@ -102,16 +102,16 @@ To add cameras to your setup, follow this [Guide](./cameras).
 
 ## Teleoperate with cameras
 
-With `rerun`, you can teleoperate again while simultaneously visualizing the camera feeds and joint positions. In this example, we’re using the Koch arm.
+With `rerun`, you can teleoperate again while simultaneously visualizing the camera feeds and joint positions. This example uses two cameras, `wrist` and `top`; we keep the same camera setup for the rest of the tutorial.
 
-<hfoptions id="teleoperate_koch_camera">
+<hfoptions id="teleoperate_so101_camera">
 <hfoption id="Command">
 ```bash
 lerobot-teleoperate \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem5AB90687491 \
     --robot.id=my_follower_arm \
-    --robot.cameras="{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --robot.cameras="{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
     --teleop.type=so101_leader \
     --teleop.port=/dev/tty.usbmodem5AB90689011 \
     --teleop.id=my_leader_arm \
@@ -199,6 +199,7 @@ lerobot-record \
     --robot.port=/dev/tty.usbmodem585A0076841 \
     --robot.id=my_awesome_follower_arm \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --robot.cameras="{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
     --teleop.type=so101_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \
     --teleop.id=my_awesome_leader_arm \
@@ -341,27 +342,35 @@ if __name__ == "__main__":
 </hfoption>
 </hfoptions>
 
+The camera names you choose (here `wrist` and `top`) become the dataset keys `observation.images.wrist` and `observation.images.top`. A policy trained on this dataset expects the same camera names and resolution when you deploy it, so reuse the same `--robot.cameras` value in every step of this tutorial. If the names have to differ, see [Rename Map](./rename_map).
+
+<Tip warning={true}>
+
+`lerobot-record` adds the date and time of the session to the end of `--dataset.repo_id`, so every recording gets a unique name: `${HF_USER}/record-test` is saved as `${HF_USER}/record-test_YYYYMMDD_HHMMSS` (for example `record-test_20260929_143012`). Find the full name on your Hugging Face profile or with `ls ~/.cache/huggingface/lerobot/${HF_USER}`, and use it wherever the commands below say `record-test_YYYYMMDD_HHMMSS`. To keep the exact name you passed, add `--dataset.no_stamp=true`.
+
+</Tip>
+
 #### Dataset upload
 
-Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. `https://huggingface.co/datasets/${HF_USER}/record-test`) that you can obtain by running:
+Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. `https://huggingface.co/datasets/${HF_USER}/record-test_YYYYMMDD_HHMMSS`) that you can obtain by running:
 
 ```bash
-echo https://huggingface.co/datasets/${HF_USER}/record-test
+echo https://huggingface.co/datasets/${HF_USER}/record-test_YYYYMMDD_HHMMSS
 ```
 
-Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
+Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags, for example `--dataset.tags='["tutorial"]'`.
 
 You can look for other LeRobot datasets on the hub by searching for `LeRobot` [tags](https://huggingface.co/datasets?other=LeRobot).
 
 You can also push your local dataset to the Hub manually, running:
 
 ```bash
-hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-type dataset
+hf upload ${HF_USER}/record-test_YYYYMMDD_HHMMSS ~/.cache/huggingface/lerobot/${HF_USER}/record-test_YYYYMMDD_HHMMSS --repo-type dataset
 ```
 
 #### Record function
 
-The `record` function provides a suite of tools for capturing and managing data during robot operation:
+`lerobot-record` provides a suite of tools for capturing and managing data during robot operation:
 
 ##### 1. Data Storage
 
@@ -372,8 +381,8 @@ The `record` function provides a suite of tools for capturing and managing data 
 ##### 2. Checkpointing and Resuming
 
 - Checkpoints are automatically created during recording.
-- If an issue occurs or you want to record additional episodes in the same dataset, you can resume by re-running the same command with `--resume=true`. When resuming a recording, `--dataset.num_episodes` must be set to the **number of additional episodes to be recorded**, and not to the targeted total number of episodes in the dataset! Make sure that you also set `--dataset.root="local_path"`, it's a local path to save the new part of the dataset and is required to resume.
-- To start recording from scratch, **manually delete** the dataset directory.
+- If an issue occurs or you want to record additional episodes in the same dataset, you can resume by re-running the same command with `--resume=true`. Pass the full dataset name, including its timestamp (`--dataset.repo_id=${HF_USER}/record-test_YYYYMMDD_HHMMSS`). When resuming a recording, `--dataset.num_episodes` must be set to the **number of additional episodes to be recorded**, and not to the targeted total number of episodes in the dataset! Make sure that you also set `--dataset.root="local_path"`, it's a local path to save the new part of the dataset and is required to resume.
+- Re-running the command without `--resume=true` starts a new dataset with a new timestamp. If you use `--dataset.no_stamp=true`, delete the existing dataset directory first.
 
 ##### 3. Recording Parameters
 
@@ -404,7 +413,7 @@ This applies to the recording control flow only. Keyboard **teleoperation** (dri
 
 #### Tips for gathering data
 
-Once you're comfortable with data recording, you can create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings. Also make sure the object you are manipulating is visible on the camera's. A good rule of thumb is you should be able to do the task yourself by only looking at the camera images.
+Once you're comfortable with data recording, you can create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings. Also make sure the object you are manipulating is visible on the cameras. A good rule of thumb is you should be able to do the task yourself by only looking at the camera images.
 
 In the following sections, you’ll train your neural network. After achieving reliable grasping performance, you can start introducing more variations during data collection, such as additional grasp locations, different grasping techniques, and altering camera positions.
 
@@ -444,7 +453,7 @@ The reset phases between episodes are paced the same way but are deliberately no
 Your dataset is uploaded to the Hub by default (unless you passed `--dataset.push_to_hub=False`), so you can open it in the [LeRobot Dataset Visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset) right away: enter your repo id on its home page, or go straight to the first episode with the link this prints:
 
 ```bash
-echo "https://huggingface.co/spaces/lerobot/visualize_dataset?path=/${HF_USER}/record-test/episode_0"
+echo "https://huggingface.co/spaces/lerobot/visualize_dataset?path=/${HF_USER}/record-test_YYYYMMDD_HHMMSS/episode_0"
 ```
 
 Sign in on the visualizer to open a private dataset. See [Explore a Dataset in the Browser](./using_dataset_tools#explore-a-dataset-in-the-browser) for a walkthrough.
@@ -462,7 +471,7 @@ lerobot-replay \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=my_awesome_follower_arm \
-    --dataset.repo_id=${HF_USER}/record-test \
+    --dataset.repo_id=${HF_USER}/record-test_YYYYMMDD_HHMMSS \
     --dataset.episode=0 # choose the episode you want to replay
 ```
 </hfoption>
@@ -473,15 +482,15 @@ lerobot-replay \
 import time
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 episode_idx = 0
 
-robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem5AB90687491", id="my_follower_arm")
+robot_config = SO101FollowerConfig(port="/dev/tty.usbmodem5AB90687491", id="my_follower_arm")
 
-robot = SO100Follower(robot_config)
+robot = SO101Follower(robot_config)
 robot.connect()
 
 dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[episode_idx])
@@ -505,7 +514,7 @@ robot.disconnect()
 </hfoption>
 </hfoptions>
 
-Your robot should replicate movements similar to those you recorded. For example, check out [this video](https://x.com/RemiCadene/status/1793654950905680090) where we use `replay` on a Aloha robot from [Trossen Robotics](https://www.trossenrobotics.com).
+Your robot should replicate movements similar to those you recorded. For example, check out [this video](https://x.com/RemiCadene/status/1793654950905680090) where we use `replay` on an ALOHA robot from [Trossen Robotics](https://www.trossenrobotics.com).
 
 ## Train a policy
 
@@ -513,7 +522,7 @@ To train a policy to control your robot, use the [`lerobot-train`](https://githu
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=${HF_USER}/record-test \
+  --dataset.repo_id=${HF_USER}/record-test_YYYYMMDD_HHMMSS \
   --policy.type=act \
   --output_dir=outputs/train/act_so101_test \
   --job_name=act_so101_test \
@@ -524,10 +533,11 @@ lerobot-train \
 
 Let's explain the command:
 
-1. We provided the dataset recorded earlier as argument with `--dataset.repo_id=${HF_USER}/record-test`.
-2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
+1. We provided the dataset recorded earlier as argument with `--dataset.repo_id=${HF_USER}/record-test_YYYYMMDD_HHMMSS` (use your dataset's full name, including the timestamp).
+2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `wrist` and `top`) which have been saved in your dataset.
 3. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
 4. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
+5. We did not set `--steps`, so training runs for the default 100,000 steps. That is usually more than a small dataset needs: imitation learning typically converges within 5–10 epochs over the data. See the [Compute & Hardware Guide](./hardware_guide#training-time) to turn epochs into a `--steps` value for your dataset size and batch size.
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_so101_test/checkpoints`.
 
@@ -547,7 +557,7 @@ lerobot-train --config_path=${HF_USER}/my_policy --resume=true
 
 If you do not want to push your model to the hub after training use `--policy.push_to_hub=false`.
 
-Additionally you can provide extra `tags` or specify a `license` for your model or make the model repo `private` by adding this: `--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
+Additionally you can provide extra `tags` or specify a `license` for your model or make the model repo `private` by adding this: `--policy.private=true --policy.tags=\[so101,tutorial\] --policy.license=mit`
 
 #### Train using Google Colab
 
@@ -555,13 +565,13 @@ If your local computer doesn't have a powerful GPU you could utilize Google Cola
 
 #### Train using Hugging Face Jobs
 
-Hugging Face jobs let's you easily select hardware and run the training in the cloud. So if you don't have a powerful GPU or you need more VRAM or just want to train a model much faster use HF Jobs! It's pay as you go and you simply pay for each second of use, you can see the pricing and additional information [here](https://huggingface.co/docs/hub/jobs).
+Hugging Face Jobs lets you easily select hardware and run the training in the cloud. So if you don't have a powerful GPU or you need more VRAM or just want to train a model much faster use HF Jobs! It's pay as you go and you simply pay for each second of use, you can see the pricing and additional information [here](https://huggingface.co/docs/hub/jobs).
 
 `lerobot-train` runs locally by default. To run on a HuggingFace GPU, pass `--job.target` with a hardware flavor name:
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=${HF_USER}/record-test \
+  --dataset.repo_id=${HF_USER}/record-test_YYYYMMDD_HHMMSS \
   --policy.type=act \
   --policy.repo_id=${HF_USER}/my_policy \
   --job.target=a10g-small
@@ -619,7 +629,9 @@ hf upload ${HF_USER}/act_so101_test${CKPT} \
 
 ## Run inference and evaluate your policy
 
-Use `lerobot-rollout` to deploy a trained policy on your robot. You can choose different strategies depending on your needs:
+Use `lerobot-rollout` to deploy a trained policy on your robot. You can choose different strategies depending on your needs.
+
+Use the same `--robot.id` (so the calibration is found), the same `--robot.cameras` and the same task description as in your recorded dataset. Datasets recorded by `lerobot-rollout` must have a name that starts with `rollout_`, and like `lerobot-record` it adds a timestamp to that name.
 
 The examples below load the model from `--policy.path`. To pin a specific pushed version — useful once `--save_checkpoint_to_hub=true` has committed several checkpoints — add `--policy.pretrained_revision` with a commit hash, branch, or tag. Each pushed checkpoint is tagged with its step (e.g. `--policy.pretrained_revision=010000`), so you can recover a checkpoint by step without looking up its commit sha.
 
@@ -629,10 +641,11 @@ The examples below load the model from `--policy.path`. To pin a specific pushed
 lerobot-rollout \
   --strategy.type=base \
   --policy.path=${HF_USER}/my_policy \
-  --robot.type=so100_follower \
-  --robot.port=/dev/ttyACM1 \
-  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
-  --task="Put lego brick into the transparent box" \
+  --robot.type=so101_follower \
+  --robot.port=/dev/tty.usbmodem5AB90687491 \
+  --robot.id=my_follower_arm \
+  --robot.cameras="{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+  --task="Grab the black cube" \
   --duration=60
 ```
 </hfoption>
@@ -642,11 +655,12 @@ lerobot-rollout \
   --strategy.type=sentry \
   --strategy.upload_every_n_episodes=5 \
   --policy.path=${HF_USER}/my_policy \
-  --robot.type=so100_follower \
-  --robot.port=/dev/ttyACM1 \
-  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
-  --dataset.repo_id=${HF_USER}/eval_so100 \
-  --dataset.single_task="Put lego brick into the transparent box" \
+  --robot.type=so101_follower \
+  --robot.port=/dev/tty.usbmodem5AB90687491 \
+  --robot.id=my_follower_arm \
+  --robot.cameras="{ wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+  --dataset.repo_id=${HF_USER}/rollout_so101_test \
+  --dataset.single_task="Grab the black cube" \
   --duration=600
 ```
 </hfoption>
@@ -660,4 +674,4 @@ The `--strategy.type` flag selects the execution mode:
 - `dagger`: Human-in-the-loop data collection (see [HIL Data Collection](./hil_data_collection))
 - `episodic`: Episode-oriented policy recording with reset phases between episodes
 
-All strategies support `--inference.type=rtc` for smooth execution with slow VLA models (Pi0, Pi0.5, SmolVLA).
+All strategies support `--inference.type=rtc` for smooth execution with slow VLA models (Pi0, Pi0.5, SmolVLA). See [Policy Deployment](./inference) for every strategy and its flags.

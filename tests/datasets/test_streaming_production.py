@@ -25,6 +25,8 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset, _balance
 from lerobot.utils.utils import cycle
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 
 def _indices(dataset: StreamingLeRobotDataset) -> list[int]:
     return [int(item["index"]) for item in dataset]

@@ -91,7 +91,7 @@ def _language_deployment(tmp_path, monkeypatch, *, recipe_kind="none"):
     return server, policy, calls
 
 
-@pytest.mark.parametrize("recipe_kind", ["none", "missing_target"])
+@pytest.mark.parametrize("recipe_kind", ["none", pytest.param("missing_target", marks=pytest.mark.dataset)])
 def test_language_warmup_skips_only_unsupported_saved_subtask_prompt(
     tmp_path, monkeypatch, caplog, recipe_kind
 ):
@@ -106,6 +106,7 @@ def test_language_warmup_skips_only_unsupported_saved_subtask_prompt(
     assert runner.predict(observation()).canonical_actions.shape == (3, 3)
 
 
+@pytest.mark.dataset
 def test_language_warmup_runs_supported_saved_subtask_prompt(tmp_path, monkeypatch, caplog):
     server, policy, calls = _language_deployment(tmp_path, monkeypatch, recipe_kind="supported")
     load_deployment(server)

@@ -30,6 +30,8 @@ CAMERA = "observation.images.camera"
 IMAGE_CAMERA = "observation.images.image"
 DEPTH_CAMERA = "observation.images.depth"
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize("flags,enabled", [([], True), (["--no-display-compressed-videos"], False)])
 def test_compressed_video_cli_default_and_opt_out(monkeypatch, flags, enabled):

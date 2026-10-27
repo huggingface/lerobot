@@ -63,12 +63,12 @@ For a private or gated dataset, authenticate first with `hf auth login`, or set 
 automatically; no token argument is needed.
 
 **From a local folder:**
-Add the `--root` option and set `--mode local`. For example, to search in `./my_local_data_dir/lerobot/pusht`:
+Add the `--root` option and set `--mode local`. `--root` is the dataset folder itself. For example, for a dataset stored in `./my_local_data_dir/lerobot/pusht`:
 
 ```bash
 lerobot-dataset-viz \
     --repo-id lerobot/pusht \
-    --root ./my_local_data_dir \
+    --root ./my_local_data_dir/lerobot/pusht \
     --mode local \
     --episode-index 0
 ```
@@ -80,7 +80,7 @@ Images, depth, and unsupported datasets retain individual-frame display. Use
 `--no-display-compressed-videos` if your viewer cannot play the source codec.
 Only the selected episode's video is embedded. Videos that cannot be trimmed safely use frame display.
 
-To use [Foxglove](https://foxglove.dev) instead of Rerun, install the extra add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
+To use [Foxglove](https://foxglove.dev) instead of Rerun, install the `viz` extra (it includes `foxglove-sdk`) and add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
 
 For advanced usage—including visualizing datasets stored on a remote server—run:
 
@@ -107,7 +107,7 @@ An example script detailing how to use the tools API is available in `examples/d
 
 ## Command-Line Tool: lerobot-edit-dataset
 
-`lerobot-edit-dataset` is a command-line script for editing datasets. It can be used to delete episodes, split datasets, merge datasets, add features, remove features, and convert image datasets to video format.
+`lerobot-edit-dataset` is a command-line script for editing datasets. It can be used to delete episodes, split datasets, merge datasets, remove features, modify tasks, convert image datasets to video format, re-encode videos, recompute stats and show dataset info. Adding features is only available through the Python API (`lerobot.datasets.dataset_tools`).
 
 Run `lerobot-edit-dataset --help` for more information on the configuration of each operation.
 
@@ -159,7 +159,7 @@ Combine multiple datasets into a single dataset.
 ```bash
 # Merge train and validation splits back into one dataset
 lerobot-edit-dataset \
-    --repo_id lerobot/pusht_merged \
+    --new_repo_id lerobot/pusht_merged \
     --operation.type merge \
     --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 ```
@@ -283,7 +283,7 @@ lerobot-edit-dataset \
 # For memory-constrained systems, users can now specify limits:
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
-    --operation.type convert_to_video \
+    --operation.type convert_image_to_video \
     --operation.max_episodes_per_batch 50 \
     --operation.max_frames_per_batch 10000
 ```
@@ -300,7 +300,7 @@ lerobot-edit-dataset \
 
 #### Re-encode Videos
 
-Re-encode the videos of an existing video dataset with different encoder settings, without going back to raw frames. RGB videos use the `rgb_encoder` and depth videos use the `depth_encoder`. Provide only the encoder(s) you want to re-encode; the other stream type is left untouched.
+Re-encode the videos of an existing video dataset with different encoder settings, without going back to raw frames. RGB videos use the `rgb_encoder` and depth videos use the `depth_encoder`. On the command line both encoders always have settings (the defaults, unless you change them), so a stream type you don't configure is re-encoded with the default settings unless it already uses them.
 
 ```bash
 # Re-encode all RGB videos with new settings (saves to lerobot/pusht_reencoded by default)
@@ -321,8 +321,11 @@ lerobot-edit-dataset \
 
 **Parameters:**
 
-- `rgb_encoder`: Encoder settings applied to every RGB video. Omit to skip re-encoding RGB videos.
-- `depth_encoder`: Encoder settings applied to every depth video. Omit to skip re-encoding depth videos.
+- `rgb_encoder`: Encoder settings applied to every RGB video.
+- `depth_encoder`: Encoder settings applied to every depth video.
+
+To re-encode only one stream type and leave the other untouched, use the Python API and pass `None` for the other encoder, e.g. `reencode_dataset(dataset, rgb_encoder=..., depth_encoder=None)`.
+
 - `num_workers`: Number of parallel workers for processing.
 
 > [!NOTE]
@@ -338,7 +341,7 @@ No change will be made to the dataset
 # Show dataset information without feature details
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
-    --operation.type info \
+    --operation.type info
 
 # Show dataset information with feature details
 lerobot-edit-dataset \
@@ -350,7 +353,7 @@ lerobot-edit-dataset \
 
 **Parameters:**
 
-- `parameters`: The flag to control show or no show dataset information with feature details.(default=false)
+- `show_features`: Whether to also show the feature details (default: `false`).
 
 ### Push to Hub
 

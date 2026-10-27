@@ -163,7 +163,7 @@ Where the robot supports the rollout position hold, a pause refreshes the last p
 
 | Flag                                 | Description                                                                                                                                                    |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--strategy.num_episodes`            | Number of correction episodes to record (default: 10)                                                                                                          |
+| `--strategy.num_episodes`            | Number of correction episodes to record (default: `--dataset.num_episodes`)                                                                                    |
 | `--strategy.record_autonomous`       | Record autonomous frames too (default: false)                                                                                                                  |
 | `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)                                                                                                                      |
 | `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard)                                                                                                        |
@@ -182,7 +182,7 @@ lerobot-rollout \
     --robot.port=/dev/ttyACM0 \
     --teleop.type=so100_leader \
     --teleop.port=/dev/ttyACM1 \
-    --dataset.repo_id=${HF_USER}/my_eval_data \
+    --dataset.repo_id=${HF_USER}/rollout_eval_data \
     --dataset.num_episodes=20 \
     --dataset.episode_time_s=30 \
     --dataset.reset_time_s=10 \

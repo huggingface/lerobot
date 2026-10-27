@@ -36,6 +36,8 @@ from lerobot.jobs.hf import (
     submit_to_hf,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def test_follow_job_detach_returns_without_watching(monkeypatch):
     """`detach` must short-circuit before any polling or log streaming starts."""

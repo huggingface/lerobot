@@ -21,6 +21,8 @@ from lerobot.datasets.video_utils import (  # noqa: E402
     normalize_rgb_frames,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.fixture(scope="module")
 def b_frame_video(tmp_path_factory):
