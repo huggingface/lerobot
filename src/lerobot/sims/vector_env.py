@@ -177,7 +177,7 @@ class VectorEnv(gym.vector.VectorEnv):
         config: SimConfig,
         num_envs: int = 1,
         task_group: str | None = None,
-        task_id: int = 0,
+        task_id: int | None = None,
         use_async_envs: bool = False,
         descriptor: EnvDescriptor | None = None,
     ) -> None:
@@ -194,12 +194,14 @@ class VectorEnv(gym.vector.VectorEnv):
         self.use_async_envs = use_async_envs
         self.tasks = {group: [str(task) for task in tasks] for group, tasks in factories.items()}
         self.task_group = task_group or next(iter(factories))
-        self.task_id = task_id
-        try:
-            env_fns = factories[self.task_group][task_id]
-        except KeyError as exc:
-            raise ValueError(f"Unknown task: {self.task_group}/{task_id}") from exc
-        self._env_fns: list[Callable[[], Any]] = [partial(_build_env, config.type, fn) for fn in env_fns]
+        tasks = factories.get(self.task_group, {})
+        # The suite's first task unless one is named: a suite may be filtered (LIBERO's task_ids).
+        self.task_id: int = next(iter(tasks), 0) if task_id is None else task_id
+        if self.task_id not in tasks:
+            raise ValueError(f"Unknown task: {self.task_group}/{self.task_id}")
+        self._env_fns: list[Callable[[], Any]] = [
+            partial(_build_env, config.type, fn) for fn in tasks[self.task_id]
+        ]
         self._envs: list[Any] = []
         self._last: list[tuple[dict[str, np.ndarray], float, bool, bool, bool]] = []
         self._elapsed_steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)

@@ -73,12 +73,13 @@ def create_envs(
     task: str,
     n_envs: int,
     env_cls: Callable[[list[Callable[[], Any]]], Any],
+    task_ids: tuple[int, ...] = (0,),
     **_: Any,
 ) -> dict[str, dict[int, Any]]:
     """Create the toy environments, as a simulator integration does."""
     if task != "reach":
         raise ValueError(f"Unknown toy task: {task!r}")
-    return {"reach": {0: env_cls([ToyEnv for _ in range(n_envs)])}}
+    return {"reach": {task_id: env_cls([ToyEnv for _ in range(n_envs)]) for task_id in task_ids}}
 
 
 # Simulator integrations are imported as `lerobot.sims.integrations.<type>`; the toy is registered there for tests.
@@ -90,6 +91,8 @@ sys.modules.setdefault("lerobot.sims.integrations.toy", sys.modules[__name__])
 class ToyEnvConfig(EnvConfig):
     fps: int = 20
     robot_type: str | None = None
+    # The suite's task ids, as LIBERO's --env.task_ids selects them.
+    task_ids: tuple[int, ...] = (0,)
 
     @property
     def gym_kwargs(self) -> dict:
@@ -103,4 +106,5 @@ class ToyEnvConfig(EnvConfig):
             "control_mode": "delta",
             "semantics": "toy-delta-v1",
             "robot_type": self.robot_type,
+            "kwargs": {"task_ids": list(self.task_ids)},
         }

@@ -122,7 +122,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         use_async_envs: bool = False,
     ) -> VectorEnv | RemoteVectorEnv:
         """Create one local or served environment for a specific task."""
-        descriptor, make = self._environment_factory(n_envs, use_async_envs)
+        descriptor, make = self._environment_factory(n_envs, use_async_envs, task_group, task_id)
         group = task_group or next(iter(descriptor.tasks))
         if group not in descriptor.tasks:
             raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
@@ -135,6 +135,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         self,
         n_envs: int,
         use_async_envs: bool,
+        task_group: str | None = None,
+        task_id: int | None = None,
     ) -> tuple[EnvDescriptor, Callable[[str, int], VectorEnv | RemoteVectorEnv]]:
         from lerobot.sims.vector_env import VectorEnv
 
@@ -172,7 +174,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             parallel = use_async_envs and n_envs > 1
             # The environment built to read the description is handed out, not built again: some simulators
             # (Isaac Sim) start only once per process.
-            first = [VectorEnv(sim, n_envs, use_async_envs=parallel)]
+            first = [VectorEnv(sim, n_envs, task_group, task_id, parallel)]
             descriptor = first[0].descriptor
 
             def make(group: str, task_id: int) -> VectorEnv | RemoteVectorEnv:

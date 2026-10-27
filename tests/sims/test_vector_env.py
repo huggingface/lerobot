@@ -78,6 +78,27 @@ def test_env_config_builds_each_simulator_once():
         env.close()
 
 
+def test_a_named_task_builds_its_simulators_once():
+    # A sim robot runs one named task: the environment built to read the description must be that task's.
+    before = ToyEnv.builds
+    env = ToyEnvConfig(task_ids=(0, 3)).create_env(task_id=3)
+    try:
+        env.reset(seed=1)
+        assert env.task_id == 3 and ToyEnv.builds - before == 1
+    finally:
+        env.close()
+
+
+def test_a_filtered_suite_starts_with_its_first_task():
+    # LIBERO's --env.task_ids may leave out task 0.
+    envs = ToyEnvConfig(task_ids=(3, 5)).create_envs(n_envs=1)["reach"]
+    try:
+        assert list(envs) == [3, 5] and envs[3].task_id == 3
+    finally:
+        for env in envs.values():
+            env.close()
+
+
 def test_other_tasks_build_their_simulators_on_first_use():
     # lerobot-eval creates every task's environment up front, then prefetches the next one with build().
     from lerobot.sims.vector_env import VectorEnv
