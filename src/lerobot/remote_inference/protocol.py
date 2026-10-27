@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Inference addressing and admission errors over the shared wire contract."""
+"""Remote inference key addresses and admission errors; the message envelope lives in lerobot.transport.wire."""
 
 import math
 from typing import Any
