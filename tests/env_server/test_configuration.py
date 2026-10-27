@@ -50,6 +50,7 @@ def test_docker_launch_selects_backend_from_overridden_config(tmp_path, monkeypa
         return types.SimpleNamespace(returncode=0 if image_exists else 1)
 
     monkeypatch.setattr(lerobot_env_server.subprocess, "run", run)
+    monkeypatch.setattr(lerobot_env_server, "HF_LEROBOT_HOME", tmp_path)
     argv = ["lerobot-env-server", "--docker", f"--config={config}", "--set", "sim.task=libero_goal"]
     monkeypatch.setattr(sys, "argv", argv)
     lerobot_env_server.main()
@@ -85,7 +86,7 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
         return str(snapshot)
 
     monkeypatch.setattr(lerobot_env_server, "snapshot_download", download)
-    monkeypatch.setattr(lerobot_env_server.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(lerobot_env_server, "HF_LEROBOT_HOME", tmp_path)
     argv = ["lerobot-env-server", "--docker", "--envhub=User/My-Env@v1", "--set", "sim.fps=50", "--build"]
     argv[-1:-1] = ["--set", "sim.kwargs.make_env_kwargs={episode_length: 900}"]
     monkeypatch.setattr(sys, "argv", argv)

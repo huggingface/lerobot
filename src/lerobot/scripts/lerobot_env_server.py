@@ -22,13 +22,11 @@ lerobot-env-server --config=docker/sim/configs/metaworld.yaml         # in this 
 import argparse
 import copy
 import hashlib
-import logging
 import os
 import re
 import shutil
 import signal
 import subprocess  # nosec B404
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +37,8 @@ import lerobot
 from lerobot.env_server.server import EnvServer, ServerConfig
 from lerobot.sim.config import SimConfig
 from lerobot.transport.zenoh import ZenohConfig
+from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.utils import init_logging
 
 COMPOSE_FILE = "docker/sim/compose.server.yaml"
 DOCKERFILE = "docker/Dockerfile.sim"
@@ -133,8 +133,8 @@ def run_in_docker(data: dict[str, Any], build: bool = False, stop: bool = False)
     supported = set(re.findall(r"^FROM \S+ AS (\w+)_native$", dockerfile, flags=re.MULTILINE))
     if backend not in supported:
         raise ValueError(f"Unsupported backend {backend!r}; choose from {sorted(supported)}")
-    directory = Path(tempfile.gettempdir()) / f"lerobot-sim-{os.getuid()}"
-    directory.mkdir(mode=0o700, exist_ok=True)
+    directory = HF_LEROBOT_HOME / "sim"
+    directory.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "SIM": backend}
     if backend == "envhub":
         # The image bakes in the repository at ENVHUB_IMAGE_DIR, so each repository gets its own tag.
@@ -205,8 +205,7 @@ def main() -> None:
         except (RuntimeError, ValueError) as error:
             parser.error(str(error))
         return
-    # force: an imported module may already have installed a WARNING-level root handler.
-    logging.basicConfig(level=logging.INFO, force=True)
+    init_logging()
     # Settings left null come from the simulator's conventions (an EnvHub repository's LEROBOT_SIM).
     data["sim"] = SimConfig.resolve(data["sim"])
     if "zenoh" in data:
