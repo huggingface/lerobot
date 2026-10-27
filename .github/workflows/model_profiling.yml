@@ -25,7 +25,7 @@ on:
         type: boolean
         default: false
       runner_group:
-        description: Runner group (empty uses MODEL_PROFILING_RUNNER_GROUP or the L4 default)
+        description: Runner group (empty uses MODEL_PROFILING_RUNNER_GROUP or the cached L40S default)
         type: string
         default: ""
       gradient_checkpointing:
@@ -45,7 +45,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: model-profiling-${{ github.ref }}-${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6-4xlarge-plus' }}-${{ inputs.gradient_checkpointing || false }}-${{ inputs.publish_latest && 'publish' || 'profile' }}
+  group: model-profiling-${{ github.ref }}-${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6e-4xlarge-cache' }}-${{ inputs.gradient_checkpointing || false }}-${{ inputs.publish_latest && 'publish' || 'profile' }}
   cancel-in-progress: false
 
 jobs:
@@ -66,13 +66,18 @@ jobs:
     if: ${{ !inputs.publish_latest }}
     needs: matrix
     runs-on:
-      group: ${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6-4xlarge-plus' }}
+      group: ${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6e-4xlarge-cache' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix: ${{ fromJSON(needs.matrix.outputs.policies) }}
     steps:
+      - name: Inspect GPU and cache mounts
+        run: |
+          nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+          findmnt --real --output TARGET,FSTYPE
+          df -h / /mnt /mnt/cache /cache 2>/dev/null || true
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
