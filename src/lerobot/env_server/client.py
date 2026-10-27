@@ -27,7 +27,7 @@ from lerobot.transport.wire.client import query_reply
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import PresenceToken, ZenohConfig, ZenohTransport
 
-from .contracts import (
+from .protocol import (
     ANY_DEPLOYMENT_DESCRIBE,
     decode_descriptor,
     decode_step_result,

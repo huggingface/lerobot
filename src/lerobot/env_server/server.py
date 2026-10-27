@@ -40,7 +40,7 @@ from lerobot.transport.zenoh import (
 )
 from lerobot.utils.feature_spec import validate_array
 
-from .contracts import (
+from .protocol import (
     ANY_DEPLOYMENT_DESCRIBE,
     deployment_prefix,
     encode_descriptor,

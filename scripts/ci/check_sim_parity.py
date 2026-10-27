@@ -26,7 +26,7 @@ import numpy as np
 import yaml
 
 from lerobot.env_server.client import EnvClient
-from lerobot.env_server.contracts import decode_step_result
+from lerobot.env_server.protocol import decode_step_result
 from lerobot.sim.config import SimConfig
 from lerobot.sim.vector_env import VectorEnv
 from lerobot.utils import init_logging

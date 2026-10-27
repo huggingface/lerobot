@@ -191,7 +191,7 @@ def test_sim_robot_actions_follow_controller_order(server, tmp_path):
 
 
 def test_sim_robot_records_the_body_its_env_declares(server, tmp_path):
-    from lerobot.env_server.contracts import decode_descriptor, encode_descriptor
+    from lerobot.env_server.protocol import decode_descriptor, encode_descriptor
 
     for declared, expected in ((None, "sim"), ("so_follower", "so_follower")):
         robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(robot_type=declared), calibration_dir=tmp_path))
