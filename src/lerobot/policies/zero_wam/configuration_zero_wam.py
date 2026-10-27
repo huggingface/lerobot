@@ -194,6 +194,10 @@ class ZeroWAMConfig(PreTrainedConfig):
             raise ValueError(f"attention_backend must be 'flex' or 'sdpa', got {self.attention_backend!r}")
         if self.train_num_latent_frames < 2:
             raise ValueError("train_num_latent_frames must be at least 2")
+        if self.frame_chunk_size < 2:
+            raise ValueError(
+                "frame_chunk_size must be at least 2 to predict actions after the conditioning frame"
+            )
         if len(self.mcp_loss_weights) != self.num_mcp_modules:
             raise ValueError("mcp_loss_weights must have one entry per MCP module")
         if not self.used_action_channel_ids or any(

@@ -32,7 +32,7 @@ Conversion rejects duplicate, missing, unexpected, and mismatched tensors. `conv
 
 Cameras in `obs_cam_keys` are resized to `height` × `width` (default 224 × 288), encoded independently, and concatenated along latent width. Camera order is part of the saved configuration. Do not swap left/right views between training and deployment.
 
-One latent frame covers four video frames. Video is sampled every `video_frame_stride` dataset frames, giving `action_per_frame = 4 * video_frame_stride`. With the default two latent frames per chunk, the first chunk yields one latent frame's actions; later chunks yield two. At 30 Hz with stride 2, this is 8 actions initially and 16 thereafter. The policy buffers observations while those actions execute and feeds them back before predicting again.
+One latent frame covers four video frames. Video is sampled every `video_frame_stride` dataset frames, giving `action_per_frame = 4 * video_frame_stride`. With the default two latent frames per chunk, the first chunk yields one latent frame's actions; later chunks yield two. At 30 Hz with stride 2, this is 8 actions initially and 16 thereafter. The policy buffers observations while those actions execute and feeds them back before predicting again. Inference requires `frame_chunk_size >= 2`, since its first latent frame conditions on the current observation.
 
 `used_action_channel_ids` maps the dataset's ordered action vector into the model's 30 channels:
 

@@ -687,6 +687,8 @@ class ZeroWAMPolicy(PreTrainedPolicy):
             noise = rearrange(noise, "1 (f n) c -> 1 c f n 1", f=fc)
             actions = self._infer_action_scheduler.step(noise, timestep, actions, return_dict=False)
         actions[:, ~action_mask] = 0
+        # Feedback must describe the actions select_action actually dispatches.
+        actions = actions.clamp(-cfg.action_clip, cfg.action_clip)
         history = actions.clone()
         if first:
             history[:, :, 0] = 0

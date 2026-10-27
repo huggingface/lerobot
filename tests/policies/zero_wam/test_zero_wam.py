@@ -425,3 +425,19 @@ def test_instruction_change_applies_next_chunk() -> None:
     for _ in range(policy.config.action_per_frame):
         policy.select_action(obs)
     assert policy._prompt == "pick up the blue block"
+
+
+def test_feedback_cache_matches_clipped_actions() -> None:
+    policy = make_policy(tiny_config(action_clip=0.01))
+    obs = {k: torch.rand(1, 3, 48, 64) for k in CAMERAS}
+    obs["task"] = ["move the cup"]
+    first_action = policy.select_action(obs)
+    dispatched = torch.cat([first_action, torch.stack(list(policy._action_queue))])
+    cached = policy._last_actions[0, policy.config.used_action_channel_ids, 1:].flatten(1).T
+    assert dispatched.abs().max() <= policy.config.action_clip
+    torch.testing.assert_close(cached, dispatched)
+
+
+def test_inference_chunk_needs_a_future_frame() -> None:
+    with pytest.raises(ValueError, match="frame_chunk_size must be at least 2"):
+        tiny_config(frame_chunk_size=1)
