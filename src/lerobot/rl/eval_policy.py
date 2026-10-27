@@ -19,6 +19,7 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.policies import make_policy
+from lerobot.processor import policy_output_to_transition, transition_to_policy_action
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
@@ -41,7 +42,7 @@ def eval_policy(env, policy, n_episodes):
         obs, _ = env.reset()
         episode_reward = 0.0
         while True:
-            action = policy.select_action(obs)
+            action = transition_to_policy_action(policy_output_to_transition(policy.select_action(obs)))
             obs, reward, terminated, truncated, _ = env.step(action)
             episode_reward += reward
             if terminated or truncated:
