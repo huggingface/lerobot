@@ -16,6 +16,8 @@ from lerobot.processor.render_messages_processor import (  # noqa: E402
     _select_batch_indices,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def test_render_messages_step_renders_task_fallback_without_language_columns():
     """No language columns + a task string → low-level task fallback render,

@@ -26,6 +26,8 @@ pytest.importorskip("rerun", reason="rerun-sdk is required (install lerobot[viz]
 from lerobot.lerobot_types import TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
+pytestmark = pytest.mark.viz
+
 
 @pytest.fixture
 def mock_rerun(monkeypatch):

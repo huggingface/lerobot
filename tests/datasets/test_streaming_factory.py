@@ -23,6 +23,8 @@ from lerobot.datasets.storage import is_bucket_root
 from lerobot.datasets.streaming_dataset import DEFAULT_STREAMING_SEED, StreamingLeRobotDataset
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize(
     ("repo_type", "root", "expected_repo_type"),

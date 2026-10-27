@@ -41,6 +41,8 @@ from lerobot.scripts.lerobot_train import make_dataloaders, train
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.policies.flux3.helpers import TaskVideoVAE, rich_task_config, single_config, task_config
 
+pytestmark = pytest.mark.dataset
+
 
 def reference_range(x, config, stream, *, inverse=False):
     stats = config.normalization_stats[stream]

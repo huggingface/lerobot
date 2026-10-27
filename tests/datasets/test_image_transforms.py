@@ -51,6 +51,8 @@ from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.image_transforms.save_image_transforms_to_safetensors import ARTIFACT_DIR
 from tests.utils import require_x86_64_kernel
 
+pytestmark = pytest.mark.dataset
+
 CPU = torch.device("cpu")
 
 

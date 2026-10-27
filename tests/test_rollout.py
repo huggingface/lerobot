@@ -34,6 +34,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 # above already guards everything below it.
 from lerobot.utils.cycle_timer import CycleTimer  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 # ---------------------------------------------------------------------------
 # Import smoke tests
 # ---------------------------------------------------------------------------

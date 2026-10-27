@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from lerobot.scripts.lerobot_info import get_package_version, get_sys_info
 
 
@@ -28,6 +30,7 @@ def test_get_package_version_installed_but_import_fails(monkeypatch, tmp_path):
     assert get_package_version("lerobot_broken_test_pkg") == "Installed (import failed: RuntimeError)"
 
 
+@pytest.mark.gpu
 def test_get_sys_info_survives_broken_package(monkeypatch):
     import lerobot.scripts.lerobot_info as lerobot_info
 
