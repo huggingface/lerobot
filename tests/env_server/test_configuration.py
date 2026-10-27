@@ -14,11 +14,13 @@
 
 import sys
 import types
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 import yaml
 
+from lerobot.envs.configs import EnvConfig, check_served
 from lerobot.scripts import lerobot_env_server
 from lerobot.scripts.lerobot_env_server import load_config
 from tests.utils import resolve_without_simulator
@@ -134,3 +136,14 @@ def test_server_configs_take_their_conventions_from_the_simulator(path, monkeypa
     sim = resolve_without_simulator(load_config(path, [])["sim"], monkeypatch)
     assert sim.semantics == f"{sim.type}-{sim.control_mode.replace('_', '-')}-v1"
     assert sim.action_names
+
+
+@pytest.mark.parametrize(
+    "path", sorted((Path(__file__).resolve().parents[2] / "docker/sims/configs").glob("*.yaml")), ids=str
+)
+def test_server_configs_serve_what_their_env_options_describe(path, monkeypatch):
+    # `--env.type=<sim> --env.task=<task> --env.endpoint=...` against the shipped image passes the client's check.
+    sim = load_config(path, [])["sim"]
+    served = asdict(resolve_without_simulator(sim, monkeypatch))
+    expected = EnvConfig.get_choice_class(sim["type"])(task=sim["task"]).sim_settings()
+    check_served(served, expected, str(path))
