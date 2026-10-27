@@ -19,8 +19,14 @@ from typing import Any
 
 import gymnasium as gym
 
+from lerobot.sim.integrations.envhub import (
+    _call_make_env,
+    _download_hub_file,
+    _import_hub_module,
+    _normalize_hub_result,
+)
+
 from .configs import EnvConfig, HubEnvConfig
-from .utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -67,6 +73,8 @@ def make_hub_envs(
     # _download_hub_file raises unless trust_remote_code is set.
     repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)
     module = _import_hub_module(local_file, repo_id)
+    # A plain EnvHub config passes its make_env_kwargs; provider configs (Isaac Lab Arena, Unitree G1)
+    # subclass it and pass themselves, since their options are config fields.
     options = cfg.make_env_kwargs if isinstance(cfg, HubEnvConfig) else {}
     provider_cfg = None if type(cfg) is HubEnvConfig else cfg
     raw_result = _call_make_env(
