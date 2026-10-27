@@ -271,6 +271,17 @@ def main(cfg: ProfileConfig) -> None:
         raise ValueError(
             "Profiling uses a single device and a fixed, non-streaming batch without PEFT/resume"
         )
+    if cfg.policy.type == "lingbot_va" and os.environ.get("PROFILE_DIAGNOSTICS") == "true":
+        threads = int(os.environ.get("LINGBOT_CPU_THREADS", "0"))
+        affinity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
+        print(
+            f"LingBot diagnostics: initial CPU threads={torch.get_num_threads()}, CPU affinity={affinity}, "
+            f"OMP_NUM_THREADS={os.environ.get('OMP_NUM_THREADS')}, "
+            f"MKL_NUM_THREADS={os.environ.get('MKL_NUM_THREADS')}",
+            flush=True,
+        )
+        if threads:
+            torch.set_num_threads(threads)
     cfg.output_dir.mkdir(parents=True)
     device = torch.device(cfg.policy.device)
     row: dict[str, Any] = {

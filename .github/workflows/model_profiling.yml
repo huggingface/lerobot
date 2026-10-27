@@ -28,6 +28,11 @@ on:
         description: Log CPU configuration and periodic stacks during LingBot inference warmup
         type: boolean
         default: false
+      lingbot_cpu_threads:
+        description: CPU threads for LingBot diagnostics (0 keeps the default)
+        type: choice
+        options: ['0', '8']
+        default: '0'
       runner_group:
         description: Runner group (empty uses MODEL_PROFILING_RUNNER_GROUP or the cached L40S default)
         type: string
@@ -133,6 +138,7 @@ jobs:
           TRACE: ${{ inputs.trace || 'false' }}
           GRADIENT_CHECKPOINTING: ${{ inputs.gradient_checkpointing || 'false' }}
           PROFILE_DIAGNOSTICS: ${{ inputs.lingbot_diagnostics || 'false' }}
+          LINGBOT_CPU_THREADS: ${{ inputs.lingbot_cpu_threads || '0' }}
           HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
           PROFILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
