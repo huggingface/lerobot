@@ -28,6 +28,7 @@ from lerobot_robot_openarm_gripette import (
     OpenArmGripetteFollower,
     OpenArmGripetteFollowerConfig,
 )
+from lerobot_robot_openarm_gripette.manual_start import prepare_manual_start
 
 
 def main() -> None:
@@ -64,21 +65,9 @@ def main() -> None:
                 motor.recv_id,
                 motor.motor_type_str.lower().removeprefix("dm"),
             )
-        arm.bus.disable_torque()
-
-        input("Arm torque is OFF. Support and position the arm, then press ENTER to hold that pose...")
-        observation = arm.get_observation()
-        hold_action = {
-            f"joint_{index}.pos": float(observation[f"joint_{index}.pos"])
-            for index in range(1, 8)
-        }
-        target = np.array(list(hold_action.values()))
+        target = prepare_manual_start(robot, np.ones(7))
+        hold_action = {f"joint_{index}.pos": float(value) for index, value in enumerate(target, start=1)}
         print("Target joints (deg):", np.round(target, 2))
-
-        arm.send_action(hold_action)
-        arm.bus.enable_torque()
-        arm.bus.configure_motors()
-        arm.send_action(hold_action)
 
         def wait_for_stop() -> None:
             input("Torque is ON. Support the arm, then press ENTER to disable torque and exit...")
