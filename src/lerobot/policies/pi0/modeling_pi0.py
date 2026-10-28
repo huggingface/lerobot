@@ -1160,6 +1160,12 @@ class PI0Policy(PreTrainedPolicy):
         # Padded steps repeat the episode's last action; keep them out of the loss.
         actions_is_pad = batch.get("action_is_pad")
         if actions_is_pad is not None:
+            actions_is_pad = torch.as_tensor(actions_is_pad, dtype=torch.bool, device=losses.device)
+            if actions_is_pad.shape != losses.shape[:2]:
+                raise ValueError(
+                    f"action_is_pad must have shape {tuple(losses.shape[:2])}, "
+                    f"got {tuple(actions_is_pad.shape)}"
+                )
             losses = losses * (~actions_is_pad).unsqueeze(-1)
 
         if reduction == "none":

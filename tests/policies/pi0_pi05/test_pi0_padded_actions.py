@@ -127,3 +127,30 @@ def test_fully_padded_batch_gives_zero_loss():
 
     torch.testing.assert_close(loss, torch.tensor(0.0))
     torch.testing.assert_close(per_sample_loss, torch.zeros(BATCH))
+
+
+def test_float_padding_mask_is_treated_as_bool():
+    # A 0/1 float mask gives the same loss as the bool one.
+    policy = _LossHarness(_losses())
+
+    loss, _ = policy.forward(_batch(_tail_padded().float()))
+
+    torch.testing.assert_close(loss, torch.tensor(26.0 / 12.0))
+
+
+# (CHUNK,) would otherwise broadcast over the batch without any error.
+@pytest.mark.parametrize("shape", [(CHUNK,), (BATCH,), (BATCH, CHUNK + 1), (BATCH, CHUNK, 1)])
+def test_padding_mask_with_wrong_shape_raises(shape: tuple[int, ...]):
+    policy = _LossHarness(_losses())
+
+    with pytest.raises(ValueError, match="action_is_pad must have shape"):
+        policy.forward(_batch(torch.zeros(shape, dtype=torch.bool)))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_cpu_padding_mask_with_cuda_losses():
+    policy = _LossHarness(_losses().cuda())
+
+    loss, _ = policy.forward(_batch(_tail_padded()))
+
+    torch.testing.assert_close(loss.cpu(), torch.tensor(26.0 / 12.0))
