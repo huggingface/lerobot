@@ -22,11 +22,9 @@ import pytest
 import torch
 from torch import Tensor
 
-pytest.importorskip("transformers")
-
-from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
-from lerobot.policies.pi0.modeling_pi0 import PI0Policy  # noqa: E402
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS  # noqa: E402
+from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.pi0.modeling_pi0 import PI0Policy
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
 BATCH, CHUNK, ACTION_DIM, MAX_ACTION_DIM = 2, 4, 2, 3
 
