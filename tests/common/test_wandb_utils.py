@@ -28,6 +28,7 @@ def test_wandb_config_console_defaults():
     cfg = WandBConfig()
 
     assert cfg.resume is None
+    assert cfg.disable_artifact is True
     assert cfg.console == "wrap"
     assert cfg.console_multipart is False
     assert cfg.console_chunk_max_seconds == 0
