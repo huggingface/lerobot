@@ -1603,6 +1603,12 @@ class PI05Policy(PreTrainedPolicy):
         loss_mask = prefix_mask
         actions_is_pad = batch.get("action_is_pad")
         if actions_is_pad is not None:
+            actions_is_pad = torch.as_tensor(actions_is_pad, dtype=torch.bool, device=losses.device)
+            if actions_is_pad.shape != losses.shape[:2]:
+                raise ValueError(
+                    f"action_is_pad must have shape {tuple(losses.shape[:2])}, "
+                    f"got {tuple(actions_is_pad.shape)}"
+                )
             loss_mask = actions_is_pad if loss_mask is None else loss_mask | actions_is_pad
 
         if loss_mask is None:
