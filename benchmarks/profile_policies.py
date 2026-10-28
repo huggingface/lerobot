@@ -130,6 +130,15 @@ def write_result(path: Path, row: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def profile_sample_indices(policy_cfg: Any, batch_size: int) -> list[int]:
+    # FLUX3 history includes the command preceding the first observation. At frame zero
+    # that command is padded and FLUX3 intentionally returns a zero-loss no-op.
+    start = (
+        policy_cfg.n_obs_steps if policy_cfg.type == "flux3" and policy_cfg.conditioning == "history" else 0
+    )
+    return list(range(start, start + batch_size))
+
+
 def current_observation(batch: dict[str, Any], policy_cfg: Any) -> dict[str, Any]:
     """Select timestamp zero from raw training windows before inference preprocessing."""
     observation = {k: v for k, v in batch.items() if k != "action" and not k.startswith("action_")}
@@ -254,9 +263,12 @@ def make_training_step(
     )
 
     def train_step(batch: dict[str, Any]) -> Any:
-        return update_policy(
+        result = update_policy(
             tracker, policy, batch, optimizer, cfg.optimizer.grad_clip_norm, accelerator, scheduler
         )
+        if cfg.policy.type == "flux3" and (result[1] or {}).get("n_valid_windows", 0) == 0:
+            raise ValueError("FLUX3 training batch has no valid unpadded windows")
+        return result
 
     return train_step
 
@@ -343,7 +355,10 @@ def main(cfg: ProfileConfig) -> None:
                     batch[key] = batch[key].float() / 255
             return preprocessor(rename_batch_keys(batch, cfg.rename_map))
 
-        raw_batch = default_collate([dataset[i] for i in range(cfg.batch_size)])
+        indices = profile_sample_indices(cfg.policy, cfg.batch_size)
+        if cfg.policy.type == "flux3":
+            row["sample_indices"] = indices
+        raw_batch = default_collate([dataset[i] for i in indices])
         for mode in ("inference", "training"):
             if cfg.profile_mode not in (mode, "both"):
                 continue

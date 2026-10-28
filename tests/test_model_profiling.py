@@ -262,6 +262,15 @@ def test_different_recorded_cpu_thread_counts_are_not_compared(measured_policy):
     assert ci.comparison(measured_policy, "inference", [history_point(old)], now)["baseline"] is not None
 
 
+def test_different_sample_indices_are_not_compared(measured_policy):
+    old = deepcopy(measured_policy)
+    old["sample_indices"] = [1]
+    now = datetime(2026, 10, 26, 1, tzinfo=UTC)
+    assert ci.comparison(measured_policy, "training", [history_point(old)], now)["baseline"] is None
+    measured_policy["sample_indices"] = [1]
+    assert ci.comparison(measured_policy, "training", [history_point(old)], now)["baseline"] is not None
+
+
 def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch, tmp_path):
     run = {
         "id": 123,
@@ -357,6 +366,14 @@ def benchmark():
     from benchmarks import profile_policies
 
     return profile_policies
+
+
+def test_flux3_profiles_after_the_padded_action_history(benchmark):
+    cfg = SimpleNamespace(type="flux3", conditioning="history", n_obs_steps=1)
+    assert benchmark.profile_sample_indices(cfg, 1) == [1]
+    cfg.conditioning = "frame"
+    assert benchmark.profile_sample_indices(cfg, 1) == [0]
+    assert benchmark.profile_sample_indices(SimpleNamespace(type="act"), 2) == [0, 1]
 
 
 def test_lingbot_inference_resets_chunk_but_reuses_episode_prompt(benchmark):

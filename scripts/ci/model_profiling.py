@@ -204,6 +204,8 @@ def comparison(row: dict, mode: str, points: list[dict], started_at: datetime) -
             continue
         if old.get("cpu_threads") != row.get("cpu_threads"):
             continue
+        if old.get("sample_indices") != row.get("sample_indices"):
+            continue
         if any(key not in old or old[key] != row[key] for key in SETUP_FIELDS):
             continue
         date = run.get("run_started_at") or run.get("created_at")
