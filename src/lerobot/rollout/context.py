@@ -28,7 +28,6 @@ from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass, field, replace
 from threading import Event
-from typing import TYPE_CHECKING
 
 import torch
 
@@ -51,11 +50,10 @@ from lerobot.inference import (
 )
 from lerobot.policies import (
     PreTrainedPolicy,
-    get_policy_class,
     make_pre_post_processors,
     validate_trained_rtc_horizon,
 )
-from lerobot.policies.factory import has_peft_adapter_config
+from lerobot.policies.factory import load_pretrained_policy
 from lerobot.processor import (
     PolicyProcessorPipeline,
     RenderRuntimeMessagesStep,
@@ -73,18 +71,11 @@ from lerobot.robots.utils import check_control_rate
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
-from lerobot.utils.import_utils import _peft_available, require_package
 from lerobot.utils.robot_utils import align_to_checkpoint_order, policy_features
 
 from .configs import RolloutConfig
 from .planner import PlannerConfig, VlmPlanner, training_vocabulary
 from .robot_wrapper import ThreadSafeRobot
-
-if TYPE_CHECKING or _peft_available:
-    from peft import PeftConfig, PeftModel
-else:
-    PeftConfig = None
-    PeftModel = None
 
 logger = logging.getLogger(__name__)
 
@@ -241,38 +232,6 @@ class RolloutContext:
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
-
-
-def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy:
-    """Load policy weights, keeping adapter and base-model revisions independent."""
-    pretrained_path = policy_config.pretrained_path
-    if pretrained_path is None:
-        raise ValueError("--policy.path is required for rollout")
-    pretrained_revision = policy_config.pretrained_revision
-    policy_class = get_policy_class(policy_config.type)
-
-    # A `use_peft=True` config can still point at a base model (see `has_peft_adapter_config`).
-    if not (policy_config.use_peft and has_peft_adapter_config(pretrained_path, pretrained_revision)):
-        return policy_class.from_pretrained(
-            pretrained_path,
-            config=policy_config,
-            revision=pretrained_revision,
-        )
-
-    require_package("peft", extra="peft")
-
-    peft_config = PeftConfig.from_pretrained(pretrained_path, revision=pretrained_revision)
-    policy = policy_class.from_pretrained(
-        pretrained_name_or_path=peft_config.base_model_name_or_path,
-        config=policy_config,
-        revision=peft_config.revision,
-    )
-    return PeftModel.from_pretrained(
-        policy,
-        pretrained_path,
-        config=peft_config,
-        revision=pretrained_revision,
-    )
 
 
 def _resolve_robot_processors(
@@ -484,7 +443,7 @@ def build_rollout_context(
             "Please use `cpu` or `cuda` backend."
         )
 
-    policy = _load_pretrained_policy(policy_config)
+    policy = load_pretrained_policy(policy_config)
 
     if is_rtc:
         validate_local_chunk_policy(policy)

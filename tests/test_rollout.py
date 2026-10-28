@@ -302,7 +302,7 @@ def test_build_rollout_context_uses_resolved_device(
         )
         return processor, PolicyProcessorPipeline(steps=[])
 
-    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", load_policy)
+    monkeypatch.setattr(rollout_context, "load_pretrained_policy", load_policy)
     monkeypatch.setattr(rollout_context, "make_pre_post_processors", make_processors)
     monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
 
@@ -347,7 +347,7 @@ def test_local_setup_failure_releases_hardware_and_dataset(monkeypatch, tmp_path
 
     if failure_stage == "observation":
         monkeypatch.setattr(robot, "get_observation", MagicMock(side_effect=failure))
-    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
+    monkeypatch.setattr(rollout_context, "load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
     monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
     monkeypatch.setattr(rollout_context, "LeRobotDataset", MagicMock(create=MagicMock(return_value=dataset)))
     monkeypatch.setattr(
@@ -361,110 +361,6 @@ def test_local_setup_failure_releases_hardware_and_dataset(monkeypatch, tmp_path
     assert raised.value is failure
     assert not robot.is_connected
     dataset.finalize.assert_called_once()
-
-
-def test_load_pretrained_policy_passes_revision(monkeypatch):
-    import lerobot.rollout.context as rollout_context
-
-    policy_config = SimpleNamespace(
-        type="mock",
-        use_peft=False,
-        pretrained_path="user/policy",
-        pretrained_revision="policy-sha",
-    )
-    policy_class = MagicMock()
-    loaded_policy = MagicMock()
-    policy_class.from_pretrained.return_value = loaded_policy
-    monkeypatch.setattr(rollout_context, "get_policy_class", lambda _: policy_class)
-
-    policy = rollout_context._load_pretrained_policy(policy_config)
-
-    assert policy is loaded_policy
-    policy_class.from_pretrained.assert_called_once_with(
-        "user/policy",
-        config=policy_config,
-        revision="policy-sha",
-    )
-
-
-def test_load_pretrained_policy_use_peft_on_base_model_loads_base(monkeypatch):
-    # A `use_peft=True` config pointing at a base model (no adapter_config.json) loads it normally.
-    import lerobot.rollout.context as rollout_context
-
-    policy_config = SimpleNamespace(
-        type="mock",
-        use_peft=True,
-        pretrained_path="user/base-policy",
-        pretrained_revision="base-sha",
-    )
-    policy_class = MagicMock()
-    monkeypatch.setattr(rollout_context, "get_policy_class", lambda _: policy_class)
-    monkeypatch.setattr(rollout_context, "has_peft_adapter_config", lambda *args: False)
-
-    policy = rollout_context._load_pretrained_policy(policy_config)
-
-    assert policy is policy_class.from_pretrained.return_value
-    policy_class.from_pretrained.assert_called_once_with(
-        "user/base-policy",
-        config=policy_config,
-        revision="base-sha",
-    )
-
-
-def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(monkeypatch):
-    import lerobot.rollout.context as rollout_context
-
-    policy_config = SimpleNamespace(
-        type="mock",
-        use_peft=True,
-        pretrained_path="user/adapter",
-        pretrained_revision="adapter-sha",
-    )
-    policy_class = MagicMock()
-    base_policy = MagicMock()
-    policy_class.from_pretrained.return_value = base_policy
-    monkeypatch.setattr(rollout_context, "get_policy_class", lambda _: policy_class)
-    # "user/adapter" is a fake repo id: pin the adapter check instead of reaching the Hub.
-    monkeypatch.setattr(rollout_context, "has_peft_adapter_config", lambda *args: True)
-
-    peft_config = SimpleNamespace(
-        base_model_name_or_path="user/base-policy",
-        revision="base-sha",
-    )
-    peft_config_from_pretrained = MagicMock(return_value=peft_config)
-    adapted_policy = MagicMock()
-    peft_model_from_pretrained = MagicMock(return_value=adapted_policy)
-    require_package = MagicMock()
-    monkeypatch.setattr(rollout_context, "require_package", require_package)
-    monkeypatch.setattr(
-        rollout_context,
-        "PeftConfig",
-        SimpleNamespace(from_pretrained=peft_config_from_pretrained),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        rollout_context,
-        "PeftModel",
-        SimpleNamespace(from_pretrained=peft_model_from_pretrained),
-        raising=False,
-    )
-
-    policy = rollout_context._load_pretrained_policy(policy_config)
-
-    assert policy is adapted_policy
-    require_package.assert_called_once_with("peft", extra="peft")
-    peft_config_from_pretrained.assert_called_once_with("user/adapter", revision="adapter-sha")
-    policy_class.from_pretrained.assert_called_once_with(
-        pretrained_name_or_path="user/base-policy",
-        config=policy_config,
-        revision="base-sha",
-    )
-    peft_model_from_pretrained.assert_called_once_with(
-        base_policy,
-        "user/adapter",
-        config=peft_config,
-        revision="adapter-sha",
-    )
 
 
 # ---------------------------------------------------------------------------

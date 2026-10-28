@@ -253,6 +253,48 @@ def has_peft_adapter_config(
     return True
 
 
+def load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy:
+    """Load a trained policy for inference, or the base policy with its PEFT adapter applied.
+
+    The adapter and the base model keep their own revisions.
+    """
+    pretrained_path = policy_config.pretrained_path
+    if pretrained_path is None:
+        raise ValueError("No checkpoint to load: pass --policy.path (pretrained_path in the policy config).")
+    pretrained_revision = policy_config.pretrained_revision
+    policy_class = get_policy_class(policy_config.type)
+
+    # A `use_peft=True` config can still point at a base model (see `has_peft_adapter_config`).
+    if not (policy_config.use_peft and has_peft_adapter_config(pretrained_path, pretrained_revision)):
+        return policy_class.from_pretrained(
+            pretrained_path,
+            config=policy_config,
+            revision=pretrained_revision,
+        )
+
+    require_package("peft", extra="peft")
+
+    # The config stores a `Path`, and PEFT reads a Hub repo id only as a `str`.
+    adapter_path = str(pretrained_path)
+    peft_config = PeftConfig.from_pretrained(adapter_path, revision=pretrained_revision)
+    if not peft_config.base_model_name_or_path:
+        raise ValueError(
+            "No pretrained model name found in adapter config. Can't instantiate the pre-trained policy on which "
+            "the adapter was trained."
+        )
+    policy = policy_class.from_pretrained(
+        pretrained_name_or_path=peft_config.base_model_name_or_path,
+        config=policy_config,
+        revision=peft_config.revision,
+    )
+    return PeftModel.from_pretrained(
+        policy,
+        adapter_path,
+        config=peft_config,
+        revision=pretrained_revision,
+    )
+
+
 def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
