@@ -333,7 +333,8 @@ def make_policy(
     if rename_map:
         features = {rename_map.get(key, key): feature for key, feature in features.items()}
 
-    cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    if ds_meta is not None or not cfg.output_features:
+        cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
