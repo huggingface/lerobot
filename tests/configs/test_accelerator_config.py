@@ -65,6 +65,17 @@ class TestFieldValidation:
         with pytest.raises(ValueError, match=f"grad_scaler.{field}"):
             GradScalerConfig(**{field: value})
 
+    @pytest.mark.parametrize(
+        "mixed_precision, policy, match",
+        [
+            ("bf16", MixedPrecisionPolicyConfig(cast_forward_inputs=False), "param_dtype"),
+            ("no", MixedPrecisionPolicyConfig(param_dtype=torch.float16), "float16"),
+        ],
+    )
+    def test_mixed_precision_policy_matches_mixed_precision(self, mixed_precision, policy, match):
+        with pytest.raises(ValueError, match=match):
+            AcceleratorConfig(mixed_precision=mixed_precision, fsdp=FSDPConfig(mixed_precision_policy=policy))
+
 
 class TestDraccusRoundTrip:
     @pytest.mark.parametrize(

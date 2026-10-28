@@ -101,7 +101,7 @@ Other sharding settings:
 - `--accelerator.fsdp.reshard_after_forward`: whether to keep each unit's parameters resident after forward.
 - `--accelerator.fsdp.cpu_offload`: keeps parameters, gradients and optimizer states on CPU.
 - `--accelerator.fsdp.ignored_modules`: a regex of module paths to keep unsharded.
-- `--accelerator.fsdp.mixed_precision_policy.{param_dtype,reduce_dtype,output_dtype,cast_forward_inputs}`: the fields of PyTorch's `MixedPrecisionPolicy`, applied to every FSDP unit.
+- `--accelerator.fsdp.mixed_precision_policy.{param_dtype,reduce_dtype,output_dtype,cast_forward_inputs}`: the fields of PyTorch's `MixedPrecisionPolicy`, applied to every FSDP unit. Once any field is set, the policy is built from these fields alone and replaces the one derived from `--accelerator.mixed_precision`, so set `param_dtype` too. `float16` needs `--accelerator.mixed_precision=fp16`, which builds the loss scaler.
 
 ### HSDP
 

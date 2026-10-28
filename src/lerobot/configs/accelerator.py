@@ -315,14 +315,37 @@ class AcceleratorConfig:
     )
 
     def __post_init__(self) -> None:
-        """Validate the accelerate-facing scalar fields.
+        """Validate the accelerate-facing scalar fields and the FSDP2 policy against `mixed_precision`.
 
         Raises:
-            ValueError: If ``mixed_precision`` is not one of ``"no"``, ``"fp16"``, ``"bf16"``.
+            ValueError: If ``mixed_precision`` is not one of ``"no"``, ``"fp16"``, ``"bf16"``, if
+                ``fsdp.mixed_precision_policy`` is set without ``param_dtype`` while
+                ``mixed_precision`` is not ``"no"``, or if the policy uses float16 while
+                ``mixed_precision`` is not ``"fp16"``.
         """
         if self.mixed_precision not in ("no", "fp16", "bf16"):
             raise ValueError(
                 f"mixed_precision must be one of 'no', 'fp16', 'bf16', got {self.mixed_precision!r}."
+            )
+        policy = self.fsdp.mixed_precision_policy
+        if (
+            self.mixed_precision != "no"
+            and policy != MixedPrecisionPolicyConfig()
+            and policy.param_dtype is None
+        ):
+            raise ValueError(
+                "fsdp.mixed_precision_policy replaces the policy derived from "
+                f"mixed_precision={self.mixed_precision!r}, so it needs a param_dtype "
+                "(bfloat16, or float32 to keep the FSDP units in full precision)."
+            )
+        if self.mixed_precision != "fp16" and torch.float16 in (
+            policy.param_dtype,
+            policy.reduce_dtype,
+            policy.output_dtype,
+        ):
+            raise ValueError(
+                "fsdp.mixed_precision_policy uses float16, which needs mixed_precision='fp16' "
+                "for the loss scaler."
             )
 
     def build(self, parallelism: ParallelismConfig, *, cpu: bool = False) -> "Accelerator":
