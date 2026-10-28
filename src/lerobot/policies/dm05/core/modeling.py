@@ -51,7 +51,12 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 from transformers.utils import is_torch_flex_attn_available
 
-from .utils import IGNORE_INDEX, build_action_prefix_mask, validate_action_prefill_pair
+from .utils import (
+    HISTORY_TOKENS_PER_IMAGE,
+    IGNORE_INDEX,
+    build_action_prefix_mask,
+    validate_action_prefill_pair,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -525,9 +530,12 @@ def compute_dm05_prefix_cache(
     position_ids: torch.LongTensor | None = None,
     pixel_values: torch.Tensor | None = None,
     token_type_ids: torch.LongTensor | None = None,
+    history_pixel_values: torch.Tensor | None = None,
+    history_mask: torch.BoolTensor | None = None,
     cache_cls: type[Cache],
 ) -> tuple[Cache, int]:
     kv_cache = cache_cls(config=language_model_config)
+    inputs_embeds = prepare_dm05_history_embeds(vlm_model, input_ids, history_pixel_values, history_mask)
 
     prefix_position_ids = build_prefix_position_ids(
         input_ids=input_ids,
@@ -537,16 +545,53 @@ def compute_dm05_prefix_cache(
 
     # Use Gemma3Model.forward() for image embeddings, positions, and token types.
     vlm_model(
-        input_ids=input_ids,
+        input_ids=None if inputs_embeds is not None else input_ids,
         attention_mask=attention_mask,
         position_ids=prefix_position_ids,
         past_key_values=kv_cache,
+        inputs_embeds=inputs_embeds,
         pixel_values=pixel_values,
         token_type_ids=token_type_ids,
         use_cache=True,
     )
 
     return kv_cache, kv_cache.get_seq_length()
+
+
+def prepare_dm05_history_embeds(
+    vlm_model: Any,
+    input_ids: torch.LongTensor,
+    history_pixel_values: torch.Tensor | None,
+    history_mask: torch.BoolTensor | None,
+    inputs_embeds: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+    """Insert OpenDM's pooled history features into Gemma token embeddings."""
+    if history_mask is None or not bool(history_mask.any()):
+        return inputs_embeds
+    if history_pixel_values is None:
+        raise ValueError("DM05-MEM history_mask requires history_pixel_values.")
+    expected_pixels = int(history_mask.sum()) // HISTORY_TOKENS_PER_IMAGE
+    if int(history_mask.sum()) != expected_pixels * HISTORY_TOKENS_PER_IMAGE:
+        raise ValueError("DM05-MEM history tokens must form complete image slots.")
+    if history_pixel_values.shape[0] != expected_pixels:
+        raise ValueError("DM05-MEM history pixel and token counts differ.")
+    if inputs_embeds is None:
+        inputs_embeds = vlm_model.get_input_embeddings()(input_ids)
+    pixels = history_pixel_values.to(
+        device=inputs_embeds.device,
+        dtype=next(vlm_model.vision_tower.parameters()).dtype,
+    )
+    features = vlm_model.get_image_features(pixels, return_dict=True).pooler_output
+    spatial = math.isqrt(int(features.shape[1]))
+    pool_size = math.isqrt(HISTORY_TOKENS_PER_IMAGE)
+    if spatial * spatial != features.shape[1] or pool_size * pool_size != HISTORY_TOKENS_PER_IMAGE:
+        raise ValueError("DM05-MEM requires square vision and history token grids.")
+    hidden = features.shape[-1]
+    grid = features.reshape(-1, spatial, spatial, hidden).permute(0, 3, 1, 2)
+    grid = torch_nn_functional.adaptive_avg_pool2d(grid, (pool_size, pool_size))
+    features = grid.permute(0, 2, 3, 1).reshape(-1, HISTORY_TOKENS_PER_IMAGE, hidden)
+    mask = history_mask.unsqueeze(-1).expand_as(inputs_embeds)
+    return inputs_embeds.masked_scatter(mask, features.to(dtype=inputs_embeds.dtype))
 
 
 def is_flash_attention_2_available():
@@ -1485,6 +1530,8 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
         actions: torch.FloatTensor | None = None,
         action_dim_mask: torch.BoolTensor | None = None,
         action_is_pad: torch.BoolTensor | None = None,
+        history_pixel_values: torch.Tensor | None = None,
+        history_mask: torch.BoolTensor | None = None,
         prefill_actions: torch.FloatTensor | None = None,
         action_prefill_len: torch.LongTensor | None = None,
         **kwargs,
@@ -1498,6 +1545,9 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
         # labels are kept for suffix alignment and masking.
         kv_cache = VLADynamicCache(config=self.model.language_model.config)
 
+        inputs_embeds = prepare_dm05_history_embeds(
+            self.model.vlm.model, input_ids, history_pixel_values, history_mask, inputs_embeds
+        )
         prefix_position_ids = build_prefix_position_ids(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -1665,6 +1715,8 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
         position_ids: torch.LongTensor | None = None,
         pixel_values: torch.Tensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
+        history_pixel_values: torch.Tensor | None = None,
+        history_mask: torch.BoolTensor | None = None,
         states: torch.FloatTensor | None = None,
         image_masks: torch.BoolTensor | None = None,
         diffusion_steps: int = 10,
@@ -1699,6 +1751,8 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
                 attention_mask=attention_mask,
                 pixel_values=pixel_values,
                 token_type_ids=token_type_ids,
+                history_pixel_values=history_pixel_values,
+                history_mask=history_mask,
                 diffusion_steps=diffusion_steps,
                 past_key_values=past_key_values,
                 prefill_actions=prefill_actions,
@@ -1729,6 +1783,8 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
                 position_ids=position_ids,
                 pixel_values=pixel_values,
                 token_type_ids=token_type_ids,
+                history_pixel_values=history_pixel_values,
+                history_mask=history_mask,
                 cache_cls=DynamicCache,
             )
         else:
@@ -1792,6 +1848,8 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
         attention_mask: torch.Tensor | None,
         pixel_values: torch.Tensor | None,
         token_type_ids: torch.LongTensor | None,
+        history_pixel_values: torch.Tensor | None,
+        history_mask: torch.BoolTensor | None,
         diffusion_steps: int,
         past_key_values: DynamicCache | None,
         prefill_actions: torch.FloatTensor | None,
@@ -1829,6 +1887,8 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
             position_ids=None,
             pixel_values=pixel_values,
             token_type_ids=token_type_ids,
+            history_pixel_values=history_pixel_values,
+            history_mask=history_mask,
             cache_cls=VLADynamicCache,
         )
         prefix_cache_keys, prefix_cache_values = extract_prefix_cache_tensors(

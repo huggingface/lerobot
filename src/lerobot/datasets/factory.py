@@ -64,6 +64,7 @@ def resolve_delta_timestamps(
     image_indices = (
         explicit_image_indices if explicit_image_indices is not None else cfg.observation_delta_indices
     )
+    image_indices_by_key = getattr(cfg, "image_observation_delta_indices_by_key", None)
     explicit_state_indices = getattr(cfg, "state_observation_delta_indices", None)
     state_indices = (
         explicit_state_indices if explicit_state_indices is not None else cfg.observation_delta_indices
@@ -81,7 +82,9 @@ def resolve_delta_timestamps(
         # conventions; matching `OBS_IMAGES` alone would silently give singular-key
         # datasets no image history at all.
         if policy_key.startswith(OBS_IMAGE):
-            indices = image_indices
+            indices = (
+                image_indices_by_key.get(policy_key) if image_indices_by_key is not None else image_indices
+            )
             matched_image_keys.append(key)
         elif policy_key == OBS_STATE:
             indices = state_indices
@@ -98,6 +101,11 @@ def resolve_delta_timestamps(
             f"dataset feature maps to an image key. Dataset features: {sorted(ds_meta.features)}. "
             "Image keys must be named `observation.image*` after applying `--rename_map`."
         )
+
+    if image_indices_by_key is not None:
+        missing = set(image_indices_by_key) - {(rename_map or {}).get(key, key) for key in matched_image_keys}
+        if missing:
+            raise ValueError(f"Image history requested for missing dataset features: {sorted(missing)}.")
 
     if len(delta_timestamps) == 0:
         return None

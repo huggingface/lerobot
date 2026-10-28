@@ -35,12 +35,14 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
 from ..common.vla_utils import pad_vector
+from ..pi05.memory import sample_observation_history
 from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
 from .configuration_dm05 import DM05Config
 from .core.adapter import (
     flatten_feature_names,
     import_dm05_core,
 )
+from .core.tokenization import fill_memory_slots
 from .core.utils import build_action_prefix_mask, validate_action_prefill_pair
 from .processor_dm05 import MODEL_INPUT_PREFIX
 
@@ -86,7 +88,12 @@ def prepare_compiled_suffix_inputs(
         if pad_token_id is None:
             raise ValueError("Unable to resolve DM05 pad token id for compiled suffix padding.")
         pad_token_id = int(pad_token_id)
-        for key, value in {"input_ids": pad_token_id, "attention_mask": 0, "token_type_ids": 0}.items():
+        for key, value in {
+            "input_ids": pad_token_id,
+            "attention_mask": 0,
+            "token_type_ids": 0,
+            "history_mask": False,
+        }.items():
             tensor = call_inputs.get(key)
             if tensor is None:
                 continue
@@ -195,6 +202,9 @@ class DM05Policy(PreTrainedPolicy):
 
     config_class = DM05Config
     name = "dm05"
+    # The action expert accesses its decoder-layer weights directly, so its own
+    # forward is the FSDP gather boundary; VLM decoder layers use their forwards.
+    _fsdp_wrap_modules = ["PatchedGemma3DecoderLayer", "DM05ActionExpert"]
 
     def __init__(
         self,
@@ -378,8 +388,12 @@ class DM05Policy(PreTrainedPolicy):
         return policy
 
     def reset(self):
-        """Reset the rollout action queue."""
+        """Reset action and optional visual-memory queues at an episode boundary."""
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
+        if self.config.use_memory:
+            self._memory_queue = deque(maxlen=self.config.memory_frames * self.config.memory_stride + 1)
+            self._memory_steps_seen = 0
+            self._memory_batch_size = None
 
     def to(self, *args, **kwargs):
         """Move the policy and keep the config device in sync."""
@@ -400,6 +414,15 @@ class DM05Policy(PreTrainedPolicy):
             for key, value in batch.items()
             if key.startswith(MODEL_INPUT_PREFIX)
         }
+        for key in (
+            "history_slot_mask",
+            "history_separator_mask",
+            "history_token_id",
+            "history_separator_id",
+            "history_pad_id",
+            "history_current_pixel_values",
+        ):
+            model_inputs.pop(key, None)
         if "input_ids" not in model_inputs:
             raise ValueError(
                 f"DM05 requires a batch produced by its preprocessor pipeline; no {MODEL_INPUT_PREFIX}* "
@@ -528,6 +551,48 @@ class DM05Policy(PreTrainedPolicy):
     ) -> Tensor:
         """Predict a full action chunk for one processed observation batch."""
         self.eval()
+        return self._predict_action_chunk(self._remember_batch(batch), **kwargs)
+
+    def _remember_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Build MEM inputs from every online observation, including action-queue steps."""
+        current_key = f"{MODEL_INPUT_PREFIX}history_current_pixel_values"
+        if not self.config.use_memory or current_key not in batch:
+            return batch
+        current = batch[current_key].detach().cpu()
+        batch_size = int(current.shape[0])
+        if self._memory_batch_size is None:
+            self._memory_batch_size = batch_size
+        elif self._memory_batch_size != batch_size:
+            raise ValueError("DM05-MEM batch size changed without policy.reset().")
+        if not self._memory_queue:
+            self._memory_queue.extend([current.clone()] * self._memory_queue.maxlen)
+        else:
+            self._memory_queue.append(current.clone())
+        self._memory_steps_seen += 1
+        frames, padding = sample_observation_history(
+            list(self._memory_queue),
+            num_frames=self.config.memory_frames + 1,
+            stride=self.config.memory_stride,
+            steps_seen=self._memory_steps_seen,
+        )
+        valid = ~padding[:, :-1]
+        history_pixels = frames[:, :-1][valid]
+        model_inputs = {
+            key.removeprefix(MODEL_INPUT_PREFIX): value
+            for key, value in batch.items()
+            if key.startswith(MODEL_INPUT_PREFIX)
+        }
+        filled = fill_memory_slots(
+            model_inputs, valid.to(model_inputs["history_slot_mask"].device), history_pixels
+        )
+        return {
+            **batch,
+            **{f"{MODEL_INPUT_PREFIX}{key}": value for key, value in filled.items() if value is not None},
+        }
+
+    def _predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[DM05ActionSelectKwargs]
+    ) -> Tensor:
         model_inputs = self._prepare_model_inputs(batch, include_actions=False)
         diffusion_steps = kwargs.get("diffusion_steps", self.config.diffusion_steps)
         if diffusion_steps <= 0:
@@ -565,7 +630,8 @@ class DM05Policy(PreTrainedPolicy):
     def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Return the next queued action slice for online DM05 inference."""
         self.eval()
+        batch = self._remember_batch(batch)
         if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
+            actions = self._predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
             self._queues[ACTION].extend(actions.transpose(0, 1))
         return self._queues[ACTION].popleft()

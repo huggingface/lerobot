@@ -63,6 +63,12 @@ class DM05Config(PreTrainedConfig):
     # Internal processor source. Normal training should rely on the checkpoint.
     processor_name_or_path: str | None = None
     image_keys: list[str] | None = None
+    robot_type: str | None = None
+    # OpenDM DM05-MEM uses past frames from one main camera, sampled at 1 FPS.
+    use_memory: bool = False
+    memory_image_key: str | None = None
+    memory_frames: int = 20  # Past frames; the current image stays in the normal camera prompt.
+    memory_stride: int = 25  # Dataset frames between history slots (25 for 25 FPS data).
     license: str | None = "gemma"
 
     n_bins: int = 256
@@ -170,6 +176,11 @@ class DM05Config(PreTrainedConfig):
             raise ValueError(f"DM05 uses exactly {DM05_STATE_BINS} state bins, got {self.n_bins}")
         if self.diffusion_steps <= 0:
             raise ValueError(f"diffusion_steps must be positive, got {self.diffusion_steps}")
+        if self.use_memory:
+            if not self.memory_image_key or not self.memory_image_key.startswith("observation.image"):
+                raise ValueError("DM05-MEM requires memory_image_key naming a LeRobot image feature.")
+            if self.memory_frames < 1 or self.memory_stride < 1:
+                raise ValueError("memory_frames and memory_stride must be positive.")
 
     def _validate_core_action_dim(self, core_action_dim: int | None) -> None:
         """Require the LeRobot adapter action dimension to match the core model."""
@@ -211,6 +222,8 @@ class DM05Config(PreTrainedConfig):
             )
         core_action_dim = self.core_config.get("action_dim") if isinstance(self.core_config, dict) else None
         self._validate_core_action_dim(core_action_dim)
+        if self.use_memory and self.memory_image_key not in self.input_features:
+            raise ValueError(f"DM05-MEM camera {self.memory_image_key!r} is absent from input_features.")
 
         if self.use_relative_actions:
             if state_shape[-1] != action_shape[-1]:
@@ -271,6 +284,18 @@ class DM05Config(PreTrainedConfig):
     def action_delta_indices(self) -> list[int]:
         """Return the action timestep offsets used for chunked training."""
         return list(range(self.chunk_size))
+
+    @property
+    def image_observation_delta_indices_by_key(self) -> dict[str, list[int]] | None:
+        """Ask LeRobotDataset for history only on the MEM main camera."""
+        if not self.use_memory:
+            return None
+        assert self.memory_image_key is not None
+        return {
+            self.memory_image_key: list(
+                range(-self.memory_frames * self.memory_stride, 1, self.memory_stride)
+            )
+        }
 
     @property
     def reward_delta_indices(self) -> None:

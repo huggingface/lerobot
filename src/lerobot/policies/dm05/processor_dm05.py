@@ -50,7 +50,7 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_dm05 import DM05Config
 from .core.adapter import build_meta, normalize_task_batch
-from .core.tokenization import DM05Tokenization, action_to_bin_tokens
+from .core.tokenization import DM05Tokenization, action_to_bin_tokens, fill_memory_slots
 from .core.utils import DM05_STATE_BINS
 
 if TYPE_CHECKING or _transformers_available:
@@ -147,6 +147,9 @@ class DM05TokenizerProcessorStep(ObservationProcessorStep):
     tokenizer_max_length: int | None = None
     add_state: bool = True
     image_keys: list[str] | None = None
+    robot_type: str | None = None
+    memory_image_key: str | None = None
+    memory_frames: int = 0
     default_task: str = "Execute the robot action."
 
     # Injectable so a caller can hand over an already-loaded processor; never serialized.
@@ -171,6 +174,7 @@ class DM05TokenizerProcessorStep(ObservationProcessorStep):
                 processor=self._load_processor(),
                 max_length=self.tokenizer_max_length,
                 add_state=self.add_state,
+                memory_frames=self.memory_frames,
             )
         return self._tokenization
 
@@ -195,25 +199,47 @@ class DM05TokenizerProcessorStep(ObservationProcessorStep):
             present = sorted(key for key in observation if key.startswith(OBS_IMAGES))
             raise ValueError(f"DM05 expects images at {missing}; the observation has {present}.")
         image_batches = []
+        history_images = None
+        valid_history = None
+        remember_current_image = False
+
+        def letterbox(images: torch.Tensor) -> torch.Tensor:
+            images = images.float().div(255) if not images.is_floating_point() else images
+            height, width = images.shape[-2:]
+            side = max(height, width)
+            top, left = (side - height) // 2, (side - width) // 2
+            return torch.nn.functional.pad(images, (left, side - width - left, top, side - height - top))
+
         for key in image_keys:
             images = observation[key]
             if not torch.is_tensor(images):
                 raise TypeError(f"DM05 expects tensor images at {key!r}, got {type(images).__name__}.")
             if images.ndim == 3:
                 images = images.unsqueeze(0)
+            if self.memory_frames and key == self.memory_image_key:
+                if images.ndim == 4 and state.shape[0] == 1 and images.shape[0] == self.memory_frames + 1:
+                    images = images.unsqueeze(0)
+                    if (pad := observation.get(f"{key}_is_pad")) is not None and pad.ndim == 1:
+                        observation[f"{key}_is_pad"] = pad.unsqueeze(0)
+                if images.ndim == 5:
+                    if images.shape[1] != self.memory_frames + 1:
+                        raise ValueError("DM05-MEM dataset history length differs from memory_frames.")
+                    pad = observation.get(f"{key}_is_pad")
+                    if pad is None or tuple(pad.shape) != tuple(images.shape[:2]):
+                        raise ValueError("DM05-MEM dataset history requires a matching _is_pad mask.")
+                    valid_history = ~pad[:, :-1].to(torch.bool)
+                    history_images = letterbox(images[:, :-1][valid_history])
+                    images = images[:, -1]
+                elif images.ndim == 4:
+                    remember_current_image = True
+                else:
+                    raise ValueError("DM05-MEM expects its main camera as [B,T,C,H,W] or [B,C,H,W].")
             if images.ndim != 4 or images.shape[0] != state.shape[0]:
                 raise ValueError(
                     f"DM05 expects images [B,C,H,W] with B={state.shape[0]} at {key!r}, "
                     f"got {tuple(images.shape)}."
                 )
-            images = images.float().div(255) if not images.is_floating_point() else images
-            # Letterbox to a centred square, as OpenDM does before resizing, so the Gemma3 processor's
-            # square resize does not stretch non-square cameras.
-            height, width = images.shape[-2:]
-            side = max(height, width)
-            top, left = (side - height) // 2, (side - width) // 2
-            pad = (left, side - width - left, top, side - height - top)
-            image_batches.append(torch.nn.functional.pad(images, pad))
+            image_batches.append(letterbox(images))
 
         batch_size = int(state.shape[0])
         complementary_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
@@ -222,6 +248,8 @@ class DM05TokenizerProcessorStep(ObservationProcessorStep):
             raise ValueError("DM05 state bins are missing or do not match the batch size.")
         tasks = normalize_task_batch(complementary_data.get("task"), batch_size, self.default_task)
         meta = build_meta(image_keys)
+        if self.robot_type is not None:
+            meta["robot_type"] = self.robot_type
         samples = [
             {
                 "prompt": tasks[index],
@@ -232,10 +260,32 @@ class DM05TokenizerProcessorStep(ObservationProcessorStep):
             for index in range(batch_size)
         ]
         tokenized = self.tokenization.tokenize_robot_batch(samples)
+        if self.memory_frames:
+            history_pixels = None
+            if history_images is not None and history_images.shape[0]:
+                history_pixels = self._load_processor().image_processor(
+                    images=list(history_images), return_tensors="pt", do_rescale=False
+                )["pixel_values"]
+            if valid_history is not None:
+                tokenized = fill_memory_slots(
+                    tokenized, valid_history.to(device=tokenized["input_ids"].device), history_pixels
+                )
+            if remember_current_image:
+                pixels = tokenized["pixel_values"]
+                if pixels.shape[0] != batch_size * len(image_keys):
+                    raise ValueError("DM05-MEM requires one preprocessed image per camera and frame.")
+                camera_index = image_keys.index(self.memory_image_key)
+                tokenized["history_current_pixel_values"] = pixels[camera_index :: len(image_keys)]
         device = image_batches[0].device
         return {
             **observation,
-            **{f"{MODEL_INPUT_PREFIX}{key}": value.to(device) for key, value in tokenized.items()},
+            **{
+                f"{MODEL_INPUT_PREFIX}{key}": (
+                    value if key == "history_current_pixel_values" else value.to(device)
+                )
+                for key, value in tokenized.items()
+                if value is not None
+            },
         }
 
     def get_config(self) -> dict[str, Any]:
@@ -245,6 +295,9 @@ class DM05TokenizerProcessorStep(ObservationProcessorStep):
             "tokenizer_max_length": self.tokenizer_max_length,
             "add_state": self.add_state,
             "image_keys": list(self.image_keys) if self.image_keys else None,
+            "robot_type": self.robot_type,
+            "memory_image_key": self.memory_image_key,
+            "memory_frames": self.memory_frames,
             "default_task": self.default_task,
         }
 
@@ -315,6 +368,8 @@ def dm05_image_keys(config: DM05Config) -> list[str]:
     )
     if unknown := [key for key in image_keys if key not in input_features]:
         raise ValueError(f"DM05 image_keys are not declared in input_features: {unknown}.")
+    if config.use_memory and config.memory_image_key not in image_keys:
+        raise ValueError("DM05-MEM memory_image_key must be included in image_keys.")
     return image_keys
 
 
@@ -389,6 +444,9 @@ def make_dm05_pre_post_processors(
                 tokenizer_max_length=config.tokenizer_max_length,
                 add_state=config.add_state,
                 image_keys=image_keys,
+                robot_type=config.robot_type,
+                memory_image_key=config.memory_image_key if config.use_memory else None,
+                memory_frames=config.memory_frames if config.use_memory else 0,
             ),
         ],
         output_steps=[
@@ -430,8 +488,11 @@ def make_dm05_pre_post_processors_from_pretrained(
     config_overrides: dict[str, dict[str, Any]] = {
         "dm05_tokenizer_processor": {
             "image_keys": dm05_image_keys(config),
+            "robot_type": config.robot_type,
             "add_state": config.add_state,
             "tokenizer_max_length": config.tokenizer_max_length,
+            "memory_image_key": config.memory_image_key if config.use_memory else None,
+            "memory_frames": config.memory_frames if config.use_memory else 0,
         },
         "dm05_clip_normalized_processor": dm05_clip_flags(config),
     }

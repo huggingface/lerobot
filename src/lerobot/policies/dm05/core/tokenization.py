@@ -21,6 +21,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from .utils import HISTORY_TOKENS_PER_IMAGE
+
 # Legacy OpenDM dataset camera keys used by DM05 prompt rendering.
 OPENDM_CAMERA_LABELS = {
     "images_1": "Head image: ",
@@ -125,10 +127,25 @@ class DM05Tokenization:
         processor,
         max_length: int | None = None,
         add_state: bool = True,
+        memory_frames: int = 0,
     ):
         self.processor = processor
         self.max_length = max_length
         self.add_state = bool(add_state)
+        self.memory_frames = memory_frames
+        if memory_frames:
+            tokenizer = processor.tokenizer
+            self.history_token_id = tokenizer.convert_tokens_to_ids("<unused0>")
+            self.history_pad_token_id = tokenizer.convert_tokens_to_ids("<unused1>")
+            newline_ids = tokenizer.encode("\n", add_special_tokens=False)
+            if len(newline_ids) != 1:
+                raise ValueError("DM05-MEM requires a single-token history image separator.")
+            self.history_separator_id = newline_ids[0]
+            if (
+                self.history_token_id == self.history_pad_token_id
+                or self.history_token_id == tokenizer.unk_token_id
+            ):
+                raise ValueError("DM05-MEM requires Gemma3 <unused0> and <unused1> tokens.")
 
     def _build_user_content(
         self,
@@ -144,6 +161,8 @@ class DM05Tokenization:
         text += f"Overall speed: {speed_text or '0.5'}\n"
         prompt = prompt.strip()
         text += f"Task: {prompt}{'' if prompt.endswith('.') else '.'}\n"
+        if self.memory_frames:
+            text += "History images: " + ("<unused1>" * HISTORY_TOKENS_PER_IMAGE + "\n") * self.memory_frames
         if not images:
             raise ValueError("Expected at least one robot image")
 
@@ -197,4 +216,64 @@ class DM05Tokenization:
                 f"Robot batch contains {int(lengths.max())} tokens; "
                 f"tokenizer_max_length={self.max_length}. Shorten the task prompt or increase the limit."
             )
+        if self.memory_frames:
+            slot_mask = inputs["input_ids"] == self.history_pad_token_id
+            expected = self.memory_frames * HISTORY_TOKENS_PER_IMAGE
+            if not torch.all(slot_mask.sum(dim=1) == expected):
+                raise ValueError(f"DM05-MEM expected {expected} history placeholder tokens per sample.")
+            positions = slot_mask.nonzero(as_tuple=False)[:, 1].reshape(slot_mask.shape[0], expected)
+            separator_positions = positions[:, HISTORY_TOKENS_PER_IMAGE - 1 :: HISTORY_TOKENS_PER_IMAGE] + 1
+            separator_mask = torch.zeros_like(slot_mask).scatter_(1, separator_positions, True)
+            if not torch.all(inputs["input_ids"][separator_mask] == self.history_separator_id):
+                raise ValueError("DM05-MEM history image separators differ from the Gemma newline token.")
+            inputs["history_slot_mask"] = slot_mask
+            inputs["history_separator_mask"] = separator_mask
+            inputs["history_mask"] = torch.zeros_like(slot_mask)
+            inputs["history_token_id"] = inputs["input_ids"].new_tensor(self.history_token_id)
+            inputs["history_separator_id"] = inputs["input_ids"].new_tensor(self.history_separator_id)
+            inputs["history_pad_id"] = inputs["input_ids"].new_tensor(self.processor.tokenizer.pad_token_id)
+            inputs["input_ids"] = inputs["input_ids"].masked_fill(
+                slot_mask | separator_mask, self.processor.tokenizer.pad_token_id
+            )
+            inputs["attention_mask"] = inputs["attention_mask"].masked_fill(slot_mask | separator_mask, 0)
+            inputs["token_type_ids"] = inputs["token_type_ids"].masked_fill(slot_mask | separator_mask, 0)
         return inputs
+
+
+def fill_memory_slots(
+    inputs: dict[str, torch.Tensor], valid_frames: torch.Tensor, history_pixels: torch.Tensor | None
+) -> dict[str, torch.Tensor]:
+    """Fill the fixed OpenDM history slots without rerunning the Gemma chat processor."""
+    slot_mask = inputs["history_slot_mask"]
+    batch_size, frame_count = valid_frames.shape
+    if (
+        slot_mask.shape[0] != batch_size
+        or (slot_mask.sum(dim=1) != frame_count * HISTORY_TOKENS_PER_IMAGE).any()
+    ):
+        raise ValueError("DM05-MEM history slots do not match the supplied frames.")
+    if history_pixels is None and valid_frames.any():
+        raise ValueError("DM05-MEM valid history frames require image pixels.")
+    if history_pixels is not None and history_pixels.shape[0] != int(valid_frames.sum()):
+        raise ValueError("DM05-MEM history pixel count does not match the valid frame count.")
+    valid_tokens = valid_frames.repeat_interleave(HISTORY_TOKENS_PER_IMAGE, dim=1)
+    result = dict(inputs)
+    result["input_ids"] = inputs["input_ids"].clone()
+    result["attention_mask"] = inputs["attention_mask"].clone()
+    result["token_type_ids"] = inputs["token_type_ids"].clone()
+    result["history_mask"] = torch.zeros_like(slot_mask)
+    result["input_ids"][slot_mask] = torch.where(
+        valid_tokens.reshape(-1), inputs["history_token_id"], inputs["history_pad_id"]
+    )
+    result["attention_mask"][slot_mask] = valid_tokens.reshape(-1).to(result["attention_mask"].dtype)
+    result["token_type_ids"][slot_mask] = valid_tokens.reshape(-1).to(result["token_type_ids"].dtype)
+    result["history_mask"][slot_mask] = valid_tokens.reshape(-1)
+    if (separator_mask := inputs.get("history_separator_mask")) is not None:
+        if int(separator_mask.sum()) != int(valid_frames.numel()):
+            raise ValueError("DM05-MEM history separator count does not match the frame count.")
+        result["input_ids"][separator_mask] = torch.where(
+            valid_frames.reshape(-1), inputs["history_separator_id"], inputs["history_pad_id"]
+        )
+        result["attention_mask"][separator_mask] = valid_frames.reshape(-1).to(result["attention_mask"].dtype)
+    if history_pixels is not None:
+        result["history_pixel_values"] = history_pixels
+    return result

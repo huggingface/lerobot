@@ -113,6 +113,91 @@ MUJOCO_GL=egl lerobot-eval \
 
 This is a 200-episode reproduction check, not the 2,000-episode LIBERO benchmark protocol.
 
+## RoboDojo MEM SFT
+
+Train DM05-MEM on RoboDojo `cover_blocks` with effective batch 64, then evaluate
+the saved checkpoint on 50 layouts.
+
+### Training
+
+Install `pip install -e '.[training,dm05]'`. Set `BASE_MODEL` to a complete LeRobot
+conversion of [Dexmal/DM05-MEM](https://huggingface.co/Dexmal/DM05-MEM), including
+`core_config`, processor assets and policy weights (not the raw release), and `DATASET_ROOT`
+to the official RoboDojo `cover_blocks` subset: 100 episodes, 54,296 frames at 25 FPS,
+three 640x480 cameras, and 14-dimensional state and absolute joint actions.
+Create the subset with LeRobot's dataset editor, retaining source episodes 300--399
+and aggregating their statistics into the subset's `meta/stats.json`. Do not use
+full-benchmark statistics with an episode filter.
+
+```bash
+torchrun --standalone --nproc_per_node=8 -m lerobot.scripts.lerobot_train \
+  --dataset.repo_id=local/robodojo-cover-blocks --dataset.root="$DATASET_ROOT" \
+  --dataset.video_backend=pyav \
+  --policy.type=dm05 --policy.pretrained_name_or_path="$BASE_MODEL" \
+  --policy.push_to_hub=false --policy.use_memory=true \
+  --policy.memory_image_key=observation.images.cam_high \
+  --policy.memory_frames=20 --policy.memory_stride=25 --policy.robot_type=Aloha \
+  --policy.image_keys='["observation.images.cam_high","observation.images.cam_left_wrist","observation.images.cam_right_wrist"]' \
+  --policy.chunk_size=25 --policy.n_action_steps=25 --policy.tokenizer_max_length=1536 \
+  --policy.use_relative_actions=false --policy.norm_clip=false --policy.device=cuda \
+  --policy.llm_attn_implementation=sdpa --policy.vision_attn_implementation=sdpa \
+  --policy.scheduler_warmup_steps=600 --policy.scheduler_decay_steps=30000 \
+  --batch_size=8 --parallelism.dp_shard=8 --accelerator.mixed_precision=bf16 \
+  --steps=40000 --save_freq=5000 --log_freq=25 --num_workers=4 --seed=1000 \
+  --output_dir=outputs/train/dm05-mem-cover
+```
+
+Eight Pro6K GPUs, batch 8 per GPU and accumulation 1 give effective batch **64**.
+All 100 trajectories are used with shuffled-frame sampling; no trajectory holdout.
+Train for 40,000 optimizer updates and save every 5,000 updates. Warm up for 600
+updates, decay to `2.5e-6` by 30,000 updates, and keep that learning rate to 40,000.
+
+### Evaluation
+
+Install [RoboDojo](https://github.com/RoboDojo-Benchmark/RoboDojo) and its XPolicyLab
+dependencies in the simulator environment, and install this LeRobot checkout in the
+policy environment. Evaluation requires a RoboDojo-side `LeRobotDM05` adapter,
+which is not included in this repository. It must load the saved LeRobot processors,
+update MEM history on every simulation frame, and reset the policy at episode boundaries.
+Create `$ROBODOJO/XPolicyLab/policy/LeRobotDM05/deploy.yml`:
+
+```yaml
+policy_name: LeRobotDM05
+protocol: ws
+host: localhost
+port: 9000
+bench_name: RoboDojo
+task_name: cover_blocks
+env_cfg_type: arx_x5
+action_type: joint
+eval_batch: false
+seed: 0
+device: cuda
+model_path: /absolute/path/to/checkpoints/040000/pretrained_model
+```
+
+From `$ROBODOJO`, start the policy server in the policy environment:
+
+```bash
+PYTHONPATH="$ROBODOJO:$ROBODOJO/XPolicyLab" python XPolicyLab/setup_policy_server.py \
+  --config_path XPolicyLab/policy/LeRobotDM05/deploy.yml
+```
+
+Then run the simulator client in its environment:
+
+```bash
+EVAL_NUM=50 bash scripts/eval_policy.sh --task_name cover_blocks --env_cfg_type arx_x5 \
+  --device_id 0 --policy_name LeRobotDM05 --port 9000 --protocol ws --host localhost \
+  --root_dir "$ROBODOJO" --eval_batch false --seed 0 --additional_info action_type=joint
+```
+
+Use one environment per policy process and layouts 0--49. Set the simulator's
+evaluation count to 50 and verify that `_result.json` contains all 50 layout IDs.
+Report success rate as successful layouts divided by 50. The adapter loads the saved
+pre/postprocessors and updates the observation history on every simulation frame.
+
+Best measured success rate: **92% (46/50 layouts)**.
+
 ## Checkpoint layout
 
 Use the complete checkpoint directory, which contains policy weights, config, and processor state. A standalone
