@@ -381,31 +381,6 @@ def _aggregate_rollout_features(
             use_videos=use_videos,
         ),
     )
-    # Keep both joint-position (.pos) and base-velocity (.vel) action features so
-    # mobile manipulators command the base too (e.g. LeKiwi: 6 arm .pos +
-    # x/y/theta.vel = 9-dim action). Pure-arm robots have no .vel keys, so this is
-    # a no-op for them. Without the .vel keys the base velocities are silently
-    # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
-    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
-    policy_action_features = _policy_action_features(action_features_hw, checkpoint_order)
-
-    # The action side is always needed: sync inference reads action names from
-    # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
-    action_dataset_features = aggregate_pipeline_dataset_features(
-        pipeline=teleop_action_processor,
-        initial_features=create_initial_features(action=policy_action_features),
-        use_videos=cfg.dataset.video if cfg.dataset else True,
-    )
-    # Observation-side aggregation is needed because of build_dataset_frame
-    observation_dataset_features = aggregate_pipeline_dataset_features(
-        pipeline=robot_observation_processor,
-        initial_features=create_initial_features(observation=observation_features_hw),
-        use_videos=cfg.dataset.video if cfg.dataset else True,
-    )
-    dataset_features = combine_feature_dicts(action_dataset_features, observation_dataset_features)
-    hw_features = hw_to_dataset_features(observation_features_hw, "observation")
-    ordered_action_keys = list(policy_action_features)
-    _assert_state_matches_action_order(dataset_features, ordered_action_keys)
 
 def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: dict) -> LeRobotDataset | None:
     """Create the local recording destination independently of policy placement."""
@@ -558,16 +533,16 @@ def build_rollout_context(
         )
         action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
         action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
+        policy_action_features = _policy_action_features(action_features_hw, checkpoint_order)
 
         dataset_features = _aggregate_rollout_features(
             processors,
-            action_features_hw,
+            policy_action_features,
             observation_features_hw,
             use_videos=cfg.dataset.video if cfg.dataset else True,
         )
         hw_features = hw_to_dataset_features(observation_features_hw, "observation")
-        # ``action_features_hw`` is already in checkpoint order, so it *is* the dispatch order.
-        ordered_action_keys = list(action_features_hw)
+        ordered_action_keys = list(policy_action_features)
         _assert_state_matches_action_order(dataset_features, ordered_action_keys)
 
         # Validate visual features if no rename_map is active
