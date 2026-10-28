@@ -344,6 +344,10 @@ def _apply_dynamics(model: mujoco.MjModel, dynamics: DynamicsParams) -> None:
         model.dof_frictionloss[dof] *= dynamics.frictionloss_scale[i]
 
 
+# Rolling resistance of mesh objects, in meters (contact torque per unit normal force).
+ROLLING_FRICTION = 0.003
+
+
 def _add_object(spec: mujoco.MjSpec, obj: ObjectParams, meshes: dict[str, MeshAsset]) -> None:
     half_height = obj.half_size[-1]
     body = spec.worldbody.add_body(
@@ -364,6 +368,8 @@ def _add_object(spec: mujoco.MjSpec, obj: ObjectParams, meshes: dict[str, MeshAs
     elif obj.shape == "cylinder":
         body.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=obj.half_size, mass=obj.mass, **common)
     elif obj.shape == "mesh":
+        # Scanned fruit and vegetables are round: without rolling friction they roll away for good.
+        common.update(condim=6, friction=[obj.friction, 0.02, ROLLING_FRICTION])
         meshes[obj.mesh].add_to(spec, body, obj, common)
     else:
         raise ValueError(f"Unknown object shape {obj.shape!r}")

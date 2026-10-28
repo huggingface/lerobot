@@ -19,6 +19,9 @@
 - Mesh objects: a curated subset of Google Scanned Objects in kevinzakka/mujoco_scanned_objects's MJCF,
   the models listed in ``gso_subset.json`` at a pinned commit. Google Scanned Objects are CC-BY-4.0
   (Google LLC).
+- Everyday objects (fruit, vegetables, cans, cups, cutlery...): a curated subset of RoboCasa's Objaverse
+  objects (robocasa/robocasa-assets, CC-BY-4.0), listed in ``robocasa_subset.json``. Only those are read
+  from the pinned archive, by ranged requests, so the 2 GB archive is never downloaded whole.
 - Environments: indoor HDRI panoramas (rooms, workshops, offices) shown as the skybox, and photographed
   surfaces for the table, from Poly Haven (CC0), listed with their checksums in ``polyhaven_subset.json``.
 """
@@ -26,9 +29,11 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess  # nosec B404
 import tempfile
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -44,6 +49,10 @@ if TYPE_CHECKING:
 GSO_REPO = "https://github.com/kevinzakka/mujoco_scanned_objects.git"
 GSO_SHA = "6ff8d275cebfd5b47e49685e3cfbe64b20e49a3c"
 SUBSET_FILE = Path(__file__).parent / "gso_subset.json"
+ROBOCASA_REPO = "robocasa/robocasa-assets"
+ROBOCASA_REVISION = "1b92c3d02ca4354984fec961357db0bff7b32166"
+ROBOCASA_ARCHIVE = "objaverse.zip"
+ROBOCASA_FILE = Path(__file__).parent / "robocasa_subset.json"
 POLYHAVEN_FILE = Path(__file__).parent / "polyhaven_subset.json"
 # Poly Haven refuses requests without a user agent of their own.
 USER_AGENT = "lerobot-so101-datagen"
@@ -131,8 +140,129 @@ def gso_dir(names: list[str]) -> Path:
     return root
 
 
-def load_meshes(subset_file: Path = SUBSET_FILE) -> dict[str, MeshAsset]:
-    """The curated scanned objects, fetched if needed, by model name."""
+@dataclass
+class MjcfAsset(MeshAsset):
+    """One object in RoboCasa's MJCF layout: visual meshes with their materials, and convex collision parts.
+
+    Its meshes, textures and materials are copied into the scene under the object's name, and its geoms
+    into the object's body, so the object stays one body; MuJoCo applies the meshes' own scale and
+    orientation. ``lower`` and ``upper`` come from the subset file, measured once at curation.
+    """
+
+    xml: Path = Path()
+
+    def add_to(self, spec: mujoco.MjSpec, body: mujoco.MjsBody, obj: "ObjectParams", common: dict) -> None:
+        source = mujoco.MjSpec.from_file(str(self.xml))
+        prefix, s = f"{obj.name}_", obj.scale
+        for texture in source.textures:
+            spec.add_texture(
+                name=prefix + texture.name, type=texture.type, file=str(self.root / texture.file)
+            )
+        rgb = mujoco.mjtTextureRole.mjTEXROLE_RGB
+        for material in source.materials:
+            copy = spec.add_material(
+                name=prefix + material.name,
+                rgba=material.rgba,
+                specular=material.specular,
+                shininess=material.shininess,
+            )
+            if material.textures[rgb]:
+                copy.textures[rgb] = prefix + material.textures[rgb]
+        files = {}
+        for mesh in source.meshes:
+            files[mesh.name] = mesh.file
+            spec.add_mesh(
+                name=prefix + mesh.name,
+                file=str(self.root / mesh.file),
+                scale=(np.asarray(mesh.scale) * s).tolist(),
+                refquat=mesh.refquat,
+            )
+        offset = -self.center * s
+        collision = {key: value for key, value in common.items() if key != "material"}
+        geoms = [g for g in source.geoms if g.type == mujoco.mjtGeom.mjGEOM_MESH]
+        parts = {id(g) for g in geoms if files[g.meshname].startswith("collision")}
+        for geom in geoms:
+            placement = {
+                "meshname": prefix + geom.meshname,
+                "pos": (offset + np.asarray(geom.pos) * s).tolist(),
+            }
+            if id(geom) in parts:
+                body.add_geom(
+                    type=mujoco.mjtGeom.mjGEOM_MESH,
+                    group=3,
+                    mass=obj.mass / len(parts),
+                    **placement,
+                    **collision,
+                )
+            else:
+                body.add_geom(
+                    type=mujoco.mjtGeom.mjGEOM_MESH,
+                    material=prefix + geom.material if geom.material else "",
+                    contype=0,
+                    conaffinity=0,
+                    group=2,
+                    mass=0,
+                    **placement,
+                )
+
+
+def robocasa_dir(names: list[str]) -> Path:
+    """The RoboCasa objects ``names`` (archive paths such as ``objaverse/apple/apple_3``), extracted if needed.
+
+    Reads the pinned archive from the local Hugging Face cache when it is there, else only the members
+    needed, by ranged requests. ``LEROBOT_ROBOCASA_DIR`` points at an existing extraction instead.
+    """
+    if os.environ.get("LEROBOT_ROBOCASA_DIR"):
+        return Path(os.environ["LEROBOT_ROBOCASA_DIR"]).expanduser()
+    root = Path.home() / ".cache" / "lerobot" / "robocasa" / ROBOCASA_REVISION
+    missing = [name for name in names if not (root / name / "model.xml").is_file()]
+    if missing:
+        from huggingface_hub import HfFileSystem, try_to_load_from_cache
+
+        local = try_to_load_from_cache(
+            ROBOCASA_REPO, ROBOCASA_ARCHIVE, revision=ROBOCASA_REVISION, repo_type="dataset"
+        )
+        if isinstance(local, str):
+            archive = open(local, "rb")  # noqa: SIM115
+        else:
+            path = f"datasets/{ROBOCASA_REPO}@{ROBOCASA_REVISION}/{ROBOCASA_ARCHIVE}"
+            archive = HfFileSystem().open(path, "rb", block_size=2**20)
+        root.mkdir(parents=True, exist_ok=True)
+        with archive, zipfile.ZipFile(archive) as zf:
+            members = zf.namelist()
+            for name in missing:
+                # Extracted beside the target and renamed into place, like every other fetch.
+                with tempfile.TemporaryDirectory(dir=root) as tmp:
+                    for member in members:
+                        if member.startswith(name + "/") and not member.endswith("/"):
+                            zf.extract(member, tmp)
+                    (root / name).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.rmtree(root / name, ignore_errors=True)
+                    os.replace(Path(tmp) / name, root / name)
+    return root
+
+
+def load_meshes(subset_file: Path = SUBSET_FILE, robocasa_file: Path = ROBOCASA_FILE) -> dict[str, MeshAsset]:
+    """The curated mesh objects, scanned and everyday ones, fetched if needed, by model name."""
+    meshes = _load_gso(subset_file)
+    if robocasa_file.is_file():
+        subset = json.loads(robocasa_file.read_text())
+        root = robocasa_dir(sorted(subset))
+        for name, entry in subset.items():
+            meshes[name] = MjcfAsset(
+                name=name,
+                label=entry["label"],
+                root=root / name,
+                lower=np.asarray(entry["lower"]),
+                upper=np.asarray(entry["upper"]),
+                collision_parts=0,
+                scale=tuple(entry["scale"]),
+                xml=root / name / "model.xml",
+            )
+    return meshes
+
+
+def _load_gso(subset_file: Path) -> dict[str, MeshAsset]:
     subset = json.loads(subset_file.read_text())
     if not subset:
         return {}

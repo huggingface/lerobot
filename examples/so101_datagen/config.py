@@ -29,7 +29,7 @@ class ObjectsConfig:
     # Graspable objects on the table, the task's own included.
     count: tuple[int, int] = (2, 4)
     # Probability that an object is a Google Scanned Objects mesh rather than a primitive.
-    mesh_prob: float = 0.3
+    mesh_prob: float = 0.5
     # Width across the jaws and height of primitives.
     width: Range = (0.022, 0.045)
     height: Range = (0.02, 0.06)
