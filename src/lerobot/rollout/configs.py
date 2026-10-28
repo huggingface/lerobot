@@ -316,6 +316,8 @@ class RolloutConfig:
     # recording stay at ``fps`` Hz.
     interpolation_multiplier: int = 1
     device: str | None = None
+    # TF32 in float32 matmuls and cuDNN convolutions on Ampere and newer GPUs.
+    tf32: bool | None = True
     task: str = ""
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
