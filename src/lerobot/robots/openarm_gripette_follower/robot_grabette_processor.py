@@ -14,17 +14,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Processor steps running Grabette (handheld) Cartesian policies on the OpenArm Gripette follower."""
+
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from gripette.grasp_projection import GraspProjection
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import RobotAction, RobotObservation, TransitionKey
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import ObservationProcessorStep, ProcessorStepRegistry, RobotActionProcessorStep
+from lerobot.utils.import_utils import _gripette_available, require_package
+
+if TYPE_CHECKING or _gripette_available:
+    from gripette.grasp_projection import GraspProjection
+else:
+    GraspProjection: Any = None
 
 ROBOT_JOINTS = [f"joint_{i}" for i in range(1, 8)]
 POSITION_NAMES = ["x", "y", "z"]
@@ -34,10 +42,17 @@ GRIPPER_NAMES = ["strategy", "closure"]
 logger = logging.getLogger(__name__)
 
 
+def _default_projection() -> "GraspProjection":
+    require_package("gripette", extra="gripette")
+    return GraspProjection()
+
+
 @ProcessorStepRegistry.register("gripette_policy_observation")
 @dataclass
 class GripettePolicyObservation(ObservationProcessorStep):
-    projection: GraspProjection = field(default_factory=GraspProjection)
+    """Replace joint and Gripette motor positions with the policy's (strategy, closure) grasp state."""
+
+    projection: "GraspProjection" = field(default_factory=_default_projection)
 
     def observation(self, observation: RobotObservation) -> RobotObservation:
         strategy, closure = self.projection.encode(
@@ -63,6 +78,12 @@ class GripettePolicyObservation(ObservationProcessorStep):
 @ProcessorStepRegistry.register("grabette_relative_pose_to_joints")
 @dataclass
 class GrabetteRelativePoseToJoints(RobotActionProcessorStep):
+    """Solve chunk-relative ``oak_l`` camera poses (rot6d) to joint targets and decode the Gripette motors.
+
+    Each chunk is anchored at the commanded pose when it starts, so call ``bind_action_queue`` with the
+    policy's queue so chunk starts can be detected.
+    """
+
     kinematics: RobotKinematics
     joint_signs: tuple[float, ...] = (1.0,) * 7
     max_joint_step: float = 5.0
@@ -70,7 +91,7 @@ class GrabetteRelativePoseToJoints(RobotActionProcessorStep):
     orientation_weight: float = 10.0
     max_iters: int = 30
     resync_on_chunk_start: bool = False
-    projection: GraspProjection = field(default_factory=GraspProjection)
+    projection: "GraspProjection" = field(default_factory=_default_projection)
     _q_cmd: np.ndarray | None = field(default=None, init=False, repr=False)
     _anchor: np.ndarray | None = field(default=None, init=False, repr=False)
     _count_queued_actions: Callable[[], int] | None = field(default=None, init=False, repr=False)

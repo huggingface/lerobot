@@ -190,9 +190,15 @@ robstride = ["lerobot[can-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]", "lerobot[motorbridge-dep]"]
-# OpenArm + Pollen Gripette gripper. The `gripette` package is not on PyPI; install it from
-# git (see docs/source/openarm.mdx). This extra provides the arm backend and the gRPC runtime.
-gripette = ["lerobot[openarms]", "lerobot[grpcio-dep]"]
+# OpenArm + Pollen Gripette gripper. `gripette` (client) and `openarm-gripette-model` (URDF) are not on
+# PyPI, so they are installed from GitHub.
+gripette = [
+    "lerobot[openarms]",
+    "lerobot[grpcio-dep]",
+    "protobuf>=6.33.5,<8.0.0",
+    "gripette @ git+https://github.com/pollen-robotics/grabette.git@a209c431ef8f9aa1be09e9fc1bfaf16e3baafca9#subdirectory=packages/gripette",
+    "openarm-gripette-model @ git+https://github.com/pollen-robotics/grabette-policy.git@c0e997b15b7b50a485577fa6d059875cfc62e849#subdirectory=robots/openarm/openarm_gripette_model",
+]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]
@@ -410,6 +416,13 @@ lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
 lerobot-policy-server="lerobot.scripts.lerobot_policy_server:main"
 
 # ---------------- Tool Configurations ----------------
+
+[tool.uv]
+# gripette needs protobuf>=6.33.5, reachy2-sdk caps it at 6.32.0.
+conflicts = [
+    [{ extra = "gripette" }, { extra = "reachy2" }],
+    [{ extra = "gripette" }, { extra = "all" }],
+]
 
 # cu128 wheels keep broad hardware reach; the driver floor is 570.86.
 # To use a different CUDA variant, reinstall torch with an explicit index, e.g.:

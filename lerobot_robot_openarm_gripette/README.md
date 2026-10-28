@@ -45,7 +45,7 @@ drives the arm only until a gripper mapping is added.
 
 ## Running a Grabette policy
 
-`examples/run_grabette_policy.py` runs policies trained on handheld Grabette data with Cartesian
+LeRobot's `examples/openarm_gripette/rollout.py` runs policies trained on handheld Grabette data with Cartesian
 pose-relative actions (LeRobot's `feat/cartesian-relative-actions`), e.g.
 [CarolinePascal/grabette-pick-and-place-texture-act](https://huggingface.co/CarolinePascal/grabette-pick-and-place-texture-act).
 Each 50-step chunk of `oak_l` camera poses is anchored at the arm's current pose and solved with
@@ -53,14 +53,15 @@ placo IK on Pollen's OpenArm + Gripette URDF; the predicted (strategy, closure) 
 two Gripette motors with `gripette.grasp_projection`.
 
 ```bash
-pip install -e "lerobot_robot_openarm_gripette[policy]"
-python lerobot_robot_openarm_gripette/examples/run_grabette_rollout.py \
-    --port can0 --gripette 172.18.7.107:50051 \
+pip install -e ".[gripette,kinematics,dataset,viz]"
+python examples/openarm_gripette/rollout.py \
+    --gripette 172.18.7.107:50051 \
     --fps 10 --n_action_steps 10 --display_data --dry_run
 ```
 
-- `run_grabette_rollout.py` uses LeRobot's standard synchronous rollout engine and robot processors.
-  `--display_data` opens Rerun with the camera, policy commands, and robot state.
+- The script uses LeRobot's standard synchronous rollout engine. The Grabette
+  observation/IK processors live in `lerobot.robots.openarm_gripette_follower.robot_grabette_processor`;
+  the manual start lives in the script. `--display_data` opens Rerun with the camera, policy commands, and robot state.
 - Start with `--dry_run`: it runs the policy and IK on live camera frames without moving anything.
   Remove it only after checking the targets in Rerun.
 - After connecting, the runner disables only the arm torque. Support the arm, place the Gripette
@@ -75,11 +76,6 @@ python lerobot_robot_openarm_gripette/examples/run_grabette_rollout.py \
 - Match the demonstrations' distance and view of the scene: the policy reproduces demo-scale
   motions relative to wherever the arm starts.
 - The run aborts if IK moves any joint more than `--max_joint_step` degrees in one tick.
-- Predictions are flushed to a timestamped JSONL file under `outputs/openarm_gripette_policy`.
-  Each action records the raw policy output, chunk/action indices, IK and gripper targets, and
-  whether it was sent to the robot. Cartesian, strategy, and closure commands are also printed live
-  in the terminal. Override the directory with `--log_dir`. This JSONL logging remains available in
-  the legacy `run_grabette_policy.py` runner.
 
 ## Tests
 
