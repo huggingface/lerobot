@@ -123,9 +123,9 @@ class DynamicsConfig:
 class StartPoseConfig:
     # Weights of the start modes: the rest pose, the parked pose real recordings start from (the
     # episode then lifts off to rest), a random collision-free pose, a pose mid-task.
-    rest: float = 0.3
-    parked: float = 0.3
-    random_free: float = 0.25
+    rest: float = 0.35
+    parked: float = 0.35
+    random_free: float = 0.15
     mid_task: float = 0.15
     rest_jitter: float = 5.0
     # Per joint, within the spread of real first frames; more fold puts the jaws into the table.
@@ -137,13 +137,33 @@ class MotionConfig:
     # Episode-wide speed factor, then per segment.
     speed: Range = (0.7, 1.3)
     segment_speed: Range = (0.85, 1.15)
-    # Average speeds; minimum-jerk peaks are about twice as fast. The STS3215 tops out near 250 deg/s.
+    # Average speeds; minimum-jerk peaks are about twice as fast.
     linear_speed: Range = (0.05, 0.12)
-    joint_speed: Range = (35.0, 75.0)
+    joint_speed: Range = (30.0, 65.0)
+    # Peak command speed per joint (deg/s, gripper in %/s): slower segments are stretched to stay under.
+    # Careful real SO-101 teleoperation pans under about 60 deg/s and moves the other joints under 110.
+    max_joint_speed: tuple[float, ...] = (70.0, 100.0, 100.0, 110.0, 110.0, 150.0)
+    # Asymmetry of each move's speed profile: below 1 the hand speeds up quickly and settles slowly.
+    time_skew: Range = (0.8, 1.2)
+    # Transits bend through random control points, each joint off the straight path by up to this share
+    # of its travel, plus up to via_jitter degrees: usually one arc, sometimes an S (s_curve_prob).
+    via_spread: float = 0.25
+    via_jitter: float = 6.0
+    s_curve_prob: float = 0.3
+    # Consecutive moves overlap by this share of the shorter one, so the arm flows from one into the
+    # next instead of stopping; pausing and the gripper break the flow. A pause before descending onto
+    # an object happens with pause_prob.
+    blend: Range = (0.4, 0.7)
+    pause_prob: float = 0.25
     approach_height: Range = (0.05, 0.11)
     lift_height: Range = (0.06, 0.13)
-    # Approach tilt from vertical, outwards from the robot.
-    tilt: Range = (0.0, 25.0)
+    # Approach tilt from vertical, outwards from the robot: mostly near vertical, sometimes steeply angled.
+    # A 5-DoF arm keeps its approach in the plane of its pan, so tilts are always radial; horizontal
+    # grasps would put the gripper's body into the table. Steep ones are only reachable far from the
+    # base and, for boxes, from one side: the planner falls back to the nearest reachable tilt.
+    tilt: Range = (0.0, 30.0)
+    steep_tilt: Range = (30.0, 55.0)
+    steep_tilt_prob: float = 0.5
     # Spread of the jaw axis around its preferred direction, for round objects.
     jaw_yaw_jitter: float = 25.0
     # Extra jaw opening around the object before closing.
@@ -151,24 +171,30 @@ class MotionConfig:
     grasp_offset: float = 0.004
     dwell: Range = (0.05, 0.35)
     # Height of the via point that bends transit moves.
-    via_height: Range = (0.0, 0.06)
+    via_height: Range = (0.0, 0.08)
+    # Approaches and placements come in from up to this far off the approach axis, then curve onto it.
+    approach_offset: float = 0.035
     return_rest_prob: float = 0.5
 
 
 @dataclass
 class NoiseConfig:
     # Commands: a slow Ornstein-Uhlenbeck drift per joint, and rare short jerks. Both are executed.
-    drift_std: float = 0.6
-    drift_tau: float = 0.3
-    jerk_rate: float = 0.2
-    jerk_amplitude: Range = (2.0, 4.0)
-    jerk_frames: tuple[int, int] = (2, 5)
+    drift_std: float = 0.4
+    drift_tau: float = 0.4
+    jerk_rate: float = 0.06
+    jerk_amplitude: Range = (0.8, 2.0)
+    jerk_frames: tuple[int, int] = (4, 9)
+    # Gear play per arm joint, in degrees, sampled per episode: on reversing, the joint lags behind the
+    # servo until the play is taken up. On the robot side, so it shows between action and state.
+    backlash: Range = (1.0, 3.0)
 
 
 @dataclass
 class CalibrationConfig:
-    # Spread of a calibration's joint range ends (the user's range sweep), per joint.
-    range_end_std: float = 4.0
+    # Spread of a calibration's joint range ends (the user's range sweep), per arm joint: each joint then
+    # reads off by about 0.7x this. Real arms disagree most on shoulder_pan.
+    range_end_std: tuple[float, ...] = (10.0, 4.0, 4.0, 4.0, 4.0)
     # Spread of the homing pose, which sets the zero of full-turn joints (wrist_roll).
     homing_std: float = 6.0
     # Gripper closed and open ends, around the simulated gripper limits.
@@ -180,8 +206,9 @@ class CalibrationConfig:
 
 @dataclass
 class AnnotationConfig:
-    # VQA pairs per second, alternating cameras. Keep sparse: VQA frames train only the language head.
-    vqa_hz: float = 0.25
+    # VQA pairs per second, alternating cameras. VQA frames train only the language head, but ground
+    # truth costs one segmentation render (about 3 ms) each.
+    vqa_hz: float = 1.0
     question_weights: dict[str, float] = field(
         default_factory=lambda: {
             "bbox": 0.4,

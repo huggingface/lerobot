@@ -39,8 +39,9 @@ SETTLE_FRAMES = 10
 # How far an object the task doesn't act on may be pushed, in meters.
 DISTURBANCE = 0.015
 # Bounds of random collision-free start poses, in degrees.
-FREE_POSE_LOW = np.array([-90.0, -100.0, -40.0, -80.0, -120.0, 0.0])
-FREE_POSE_HIGH = np.array([90.0, 20.0, 95.0, 95.0, 120.0, 70.0])
+# Poses a person might leave the arm in: raised over the table, wrist pointing down-ish, not twisted.
+FREE_POSE_LOW = np.array([-45.0, -100.0, 20.0, 20.0, -30.0, 0.0])
+FREE_POSE_HIGH = np.array([45.0, -30.0, 95.0, 95.0, 30.0, 40.0])
 
 
 @dataclass
@@ -97,8 +98,9 @@ def prepare(seed: int, cfg: GenerationConfig, meshes: dict[str, MeshAsset]) -> E
     start_mode, start = sample_start(model, arm, cfg, rng)
     planner = Planner(arm, start, cfg.fps, cfg.motion, rng, workspace=cfg.layout.radius)
     try:
-        if start_mode == "parked":
-            # Lifting straight off first keeps the jaws from dragging over the table.
+        if start_mode in ("parked", "random_free"):
+            # Back to a neutral pose first: lifting off from parked keeps the jaws off the table, and from
+            # an odd pose a person would straighten the arm out before reaching.
             planner.transit(REST + rng.uniform(-3, 3, 6) * [1, 1, 1, 1, 1, 0])
         task.script(instance, scene, planner, rng)
     except PlanningError as e:
@@ -164,10 +166,12 @@ def simulate(
     task: Task,
     fps: int,
     command_filter: Callable[[np.ndarray], np.ndarray] | None = None,
+    actuation: Callable[[np.ndarray], np.ndarray] | None = None,
 ) -> None:
     """Run the plan with physics only, recording states and commands; raise ``EpisodeError`` on failure.
 
-    ``command_filter`` turns each planned command into the executed one (the teleop-side processors).
+    ``command_filter`` turns each planned command into the recorded one (the teleop-side processors), and
+    ``actuation`` turns that into what the servos execute (the robot's mechanics), recorded nowhere.
     """
     model, arm, plan = episode.model, episode.arm, episode.plan
     data = mujoco.MjData(model)
@@ -188,7 +192,8 @@ def simulate(
         qpos[t] = data.qpos
         command = plan.commands[t] if command_filter is None else command_filter(plan.commands[t])
         commands[t] = command
-        data.ctrl[arm.actuators] = arm.to_ctrl(command)
+        executed = command if actuation is None else actuation(command)
+        data.ctrl[arm.actuators] = arm.to_ctrl(executed)
         mujoco.mj_step(model, data, nstep=substeps)
     # Let the scene come to rest before judging it.
     mujoco.mj_step(model, data, nstep=5 * substeps)

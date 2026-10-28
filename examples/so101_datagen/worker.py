@@ -52,6 +52,7 @@ from .assets import load_meshes  # noqa: E402
 from .config import GenerationConfig  # noqa: E402
 from .episode import Episode, EpisodeError, prepare, simulate  # noqa: E402
 from .processors import (  # noqa: E402
+    make_actuation_pipeline,
     make_command_pipeline,
     make_recording_pipelines,
     start_episode,
@@ -190,6 +191,7 @@ def run_shard(job: ShardJob) -> dict:
         video_files_size_in_mb=job.encoding.video_files_size_in_mb,
     )
     command_pipeline = make_command_pipeline(cfg.noise, cfg.fps)
+    actuation_pipeline = make_actuation_pipeline(cfg.noise)
     observation_pipeline, action_pipeline, calibration = make_recording_pipelines(cfg.calibration)
     camera_keys = tuple(f"{OBS_STR}.images.{name}" for name in CAMERAS)
 
@@ -211,12 +213,13 @@ def run_shard(job: ShardJob) -> dict:
         try:
             episode = prepare(seed, cfg, meshes)
             t1 = time.perf_counter()
-            start_episode(rng, command_pipeline)
+            start_episode(rng, command_pipeline, actuation_pipeline)
             simulate(
                 episode,
                 TASKS[episode.task],
                 cfg.fps,
                 command_filter=lambda q: to_vector(command_pipeline((to_dict(q), {}))),
+                actuation=lambda q: to_vector(actuation_pipeline((to_dict(q), {}))),
             )
         except EpisodeError as e:
             failures[e.reason] += 1

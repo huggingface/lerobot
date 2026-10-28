@@ -18,7 +18,9 @@
 
 - Teleop side (``make_command_pipeline``): what the scripted "operator" commands, before it is executed.
   ``CommandDrift`` and ``CommandJerk`` make the hand less steady; the simulated arm executes the result.
-- Robot side (``make_recording_pipelines``): how a real follower would report states and commands.
+- Robot side, mechanics (``make_actuation_pipeline``): what the follower's servos actually execute.
+  ``JointBacklash`` adds gear play; it runs after the action is recorded, so it shows in the state only.
+- Robot side, readings (``make_recording_pipelines``): how a real follower would report states and commands.
   ``CalibratedJointReadings``/``CalibratedJointCommands`` map them through a ``VirtualCalibration``,
   sampled per episode the way a person calibrates an SO-101; ``JointReadingNoise`` adds encoder noise.
 
@@ -92,8 +94,9 @@ class VirtualCalibration:
         cfg = self.cfg
         limits = np.array(JOINT_LIMITS_DEG)
         self.homing = rng.normal(0, cfg.homing_std, len(JOINTS))
-        self.low = limits[:, 0] + rng.normal(0, cfg.range_end_std, len(JOINTS))
-        self.high = limits[:, 1] + rng.normal(0, cfg.range_end_std, len(JOINTS))
+        spread = np.append(cfg.range_end_std, 0.0)  # the gripper's ends are sampled below
+        self.low = limits[:, 0] + rng.normal(0, spread)
+        self.high = limits[:, 1] + rng.normal(0, spread)
         self.low[GRIPPER] = GRIPPER_RANGE_DEG[0] + rng.normal(0, cfg.gripper_closed_std)
         self.high[GRIPPER] = GRIPPER_RANGE_DEG[1] + rng.normal(0, cfg.gripper_open_std)
         self._update_ranges()
@@ -260,6 +263,48 @@ class CommandJerk(RobotActionProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+
+@ProcessorStepRegistry.register("so101_datagen_joint_backlash")
+@dataclass
+class JointBacklash(RobotActionProcessorStep):
+    """Gear play on every arm joint: the executed command only moves once the input has crossed the
+    play, so after a reversal the joint lags behind by up to the play's width."""
+
+    width: tuple[float, float] = (1.0, 3.0)
+    _play: np.ndarray = field(default_factory=lambda: np.zeros(ARM_JOINTS), init=False, repr=False)
+    _out: np.ndarray | None = field(default=None, init=False, repr=False)
+
+    def start_episode(self, rng: np.random.Generator) -> None:
+        self._play = rng.uniform(*self.width, ARM_JOINTS)
+        self._out = None
+
+    def action(self, action: RobotAction) -> RobotAction:
+        q = to_vector(action)
+        if self._out is None:
+            self._out = q[:ARM_JOINTS].copy()
+        half = self._play / 2
+        self._out = np.clip(self._out, q[:ARM_JOINTS] - half, q[:ARM_JOINTS] + half)
+        q[:ARM_JOINTS] = self._out
+        return to_dict(q, action)
+
+    def get_config(self) -> dict[str, Any]:
+        return {"width": list(self.width)}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+def make_actuation_pipeline(cfg: NoiseConfig) -> RobotProcessorPipeline:
+    """Robot side, mechanics: recorded command to what the servos execute."""
+    return RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
+        steps=[JointBacklash(width=cfg.backlash)],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+        name="so101_datagen_actuation",
+    )
 
 
 def make_command_pipeline(cfg: NoiseConfig, fps: int) -> RobotProcessorPipeline:

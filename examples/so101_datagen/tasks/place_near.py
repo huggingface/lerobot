@@ -38,8 +38,10 @@ TEMPLATES = [
     "put the {obj} by the {target}",
 ]
 # Gap between the two footprints when placed, and how far off counts as "next to".
-GAP = (0.01, 0.035)
+GAP = (0.005, 0.02)
 NEAR = 0.05
+# The spot is on the side the object came from, within this many degrees, as a person would put it.
+SIDE_SPREAD = 40.0
 
 
 @register
@@ -75,10 +77,16 @@ class PlaceNear(Task):
 
     @staticmethod
     def _free_spot(scene: SceneParams, obj, target, radius, rng: np.random.Generator) -> np.ndarray:
-        """A spot next to ``target`` that is reachable and clear of everything else."""
+        """A spot next to ``target`` that is reachable and clear of everything else.
+
+        Preferably on the side ``obj`` comes from; only when that side is full anywhere around ``target``.
+        """
         others = [o for o in scene.objects if o.name not in (obj.name, target.name)]
-        for _ in range(40):
-            angle = rng.uniform(-np.pi, np.pi)
+        offset = np.asarray(obj.pos) - np.asarray(target.pos)
+        side = np.arctan2(offset[1], offset[0])
+        for attempt in range(60):
+            spread = np.deg2rad(SIDE_SPREAD) if attempt < 40 else np.pi
+            angle = side + rng.uniform(-spread, spread)
             distance = footprint(obj) + footprint(target) + rng.uniform(*GAP)
             spot = np.asarray(target.pos) + distance * np.array([np.cos(angle), np.sin(angle)])
             if not radius[0] <= np.linalg.norm(spot) <= radius[1]:

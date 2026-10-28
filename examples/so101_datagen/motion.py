@@ -16,11 +16,17 @@
 
 """Scripted, human-like joint trajectories: minimum-jerk segments with randomized timing and paths.
 
+Paths are near the ideal one rather than on it: transits arc through random control points, approaches
+come in off-axis and curve onto it, and each move's speed profile is skewed a little. Consecutive moves
+overlap, so the arm flows from one into the next; only pauses and the gripper bring it to rest. Every
+move is slowed down until no joint exceeds its peak speed.
+
 A ``Planner`` appends one joint command per control step. Tasks compose its moves (``transit``,
 ``linear_move``, ``gripper``, ``dwell``, and the composite ``grasp``/``place``) and name the subtask
 each command belongs to.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -33,6 +39,10 @@ from .so101 import ARM_JOINTS, GRIPPER, WRIST_ROLL, Arm
 DOWN = np.array([0.0, 0.0, -1.0])
 # A command that misses its Cartesian target by more than this is unreachable.
 IK_TOLERANCE = 0.004
+# Shoulder lift, elbow and wrist flex of the poses IK restarts from, turned towards the target.
+TURNED_POSES = ((-20.0, 40.0, 70.0), (0.0, 30.0, 30.0))
+# How much each joint bends in transit arcs: the ones that move the gripper visibly, never the roll.
+BEND_WEIGHTS = np.array([1.0, 0.6, 0.6, 0.4, 0.0, 0.0])
 
 
 class PlanningError(Exception):
@@ -92,6 +102,8 @@ class Planner:
         self.subtask_ids: list[int] = []
         self.subtasks: list[str] = []
         self.marks: dict[str, int] = {}
+        # Frames of the last move that the next one may overlap; zero after a pause or the gripper.
+        self._blendable = 0
 
     def subtask(self, label: str) -> None:
         """Commands from now on belong to a new subtask."""
@@ -119,37 +131,100 @@ class Planner:
     def _segment_speed(self) -> float:
         return self.speed * uniform(self.rng, self.cfg.segment_speed)
 
+    def _segment(self, seconds: float, path: Callable[[np.ndarray], np.ndarray], blend: bool = True) -> None:
+        """Emit ``path`` (joint values at progress values in [0, 1]) over ``seconds``, or longer.
+
+        The progress follows a skewed minimum-jerk profile; the segment is stretched until no joint
+        command moves faster than its peak speed. With ``blend``, its start overlaps the end of the
+        previous move: there, the new move's displacement is added onto the old one's, which rounds the
+        corner between them instead of stopping at it.
+        """
+        skew = uniform(self.rng, self.cfg.time_skew)
+        limit = np.asarray(self.cfg.max_joint_speed)
+        n = self._steps(seconds)
+        for _ in range(4):
+            frames = path(min_jerk((np.arange(1, n + 1) / n) ** skew))
+            steps = np.diff(np.vstack([self.q, frames]), axis=0)
+            ratio = float(np.max(np.abs(steps) * self.fps / limit))
+            if ratio <= 1.0:
+                break
+            # Far too fast is a jump in the path (an IK branch switch), not a speed to slow down.
+            if ratio > 4.0:
+                raise PlanningError(f"Path jumps ({ratio:.0f}x the speed limit)")
+            n = int(np.ceil(n * ratio * 1.05))
+        overlap = 0
+        if blend and self._blendable:
+            overlap = min(int(min(self._blendable, n) * uniform(self.rng, self.cfg.blend)), n - 1)
+        # Overlapping moves add their speeds: shorten the overlap until the sum respects the limits too.
+        while overlap:
+            end = self.q
+            tail = np.array(self.frames[-overlap - 1 :])
+            tail[1:] += frames[:overlap] - end
+            blended = np.vstack([tail, frames[overlap : overlap + 1]])
+            if np.max(np.abs(np.diff(blended, axis=0)) * self.fps / limit) <= 1.0:
+                for k in range(overlap):
+                    self.frames[k - overlap] = tail[k + 1]
+                self.q = self.frames[-1].copy()
+                break
+            overlap //= 2
+        for q in frames[overlap:]:
+            self._emit(q)
+        self._blendable = len(frames) if blend else 0
+
     # Primitive moves.
 
     def dwell(self, seconds: float | None = None) -> None:
         seconds = uniform(self.rng, self.cfg.dwell) if seconds is None else seconds
-        for _ in range(int(round(seconds * self.fps))):
+        steps = int(round(seconds * self.fps))
+        for _ in range(steps):
             self._emit(self.q)
+        if steps:
+            self._blendable = 0
 
-    def gripper(self, value: float) -> None:
-        """Open or close the gripper, the arm held still."""
-        start = self.q[GRIPPER]
-        n = self._steps(self.rng.uniform(0.3, 0.7) / self.speed)
-        for s in min_jerk(np.arange(1, n + 1) / n):
-            q = self.q.copy()
-            q[GRIPPER] = start + s * (value - start)
-            self._emit(q)
+    def gripper(self, value: float, overlap: bool = False) -> None:
+        """Open or close the gripper, the arm held still. With ``overlap``, the next move may start
+        before the jaws finish, as when backing away from a released object."""
+        before = len(self.frames)
+        start = self.q.copy()
+
+        def path(s: np.ndarray) -> np.ndarray:
+            q = np.repeat(start[None], len(s), axis=0)
+            q[:, GRIPPER] = start[GRIPPER] + s * (value - start[GRIPPER])
+            return q
+
+        self._segment(self.rng.uniform(0.3, 0.7) / self.speed, path, blend=False)
+        if overlap:
+            self._blendable = len(self.frames) - before
 
     def transit(self, target: np.ndarray, gripper: float | None = None) -> None:
-        """Joint-space minimum-jerk move to ``target``, its path bent upwards through a random via point."""
+        """Joint-space move to ``target`` along a cubic curve: raised through a random via point and bent
+        by random control points, the way a hand never takes the straight path."""
         start = self.q.copy()
         target = np.array(target, dtype=np.float64)
         target[GRIPPER] = start[GRIPPER] if gripper is None else gripper
-        distance = np.max(np.abs(target[:ARM_JOINTS] - start[:ARM_JOINTS]))
+        travel = target - start
+        distance = np.max(np.abs(travel[:ARM_JOINTS]))
         seconds = max(0.5, distance / (uniform(self.rng, self.cfg.joint_speed) * self._segment_speed()))
-        n = self._steps(seconds)
-        # A quadratic Bezier passes through (start + 2 control + target) / 4 halfway: aim that at the via.
+        # A cubic Bezier with controls at the thirds plus ``d`` passes 3/4 d off the line halfway.
         middle = (start + target) / 2
-        control = 2 * self._via(middle) - middle
-        for s in min_jerk(np.arange(1, n + 1) / n):
-            q = (1 - s) ** 2 * start + 2 * s * (1 - s) * control + s**2 * target
-            q[GRIPPER] = start[GRIPPER] + s * (target[GRIPPER] - start[GRIPPER])
-            self._emit(q)
+        lift = 4 / 3 * (self._via(middle) - middle)
+        # One arc (both controls bent the same way), or sometimes an S.
+        bend = (
+            self.rng.uniform(-1, 1, len(start))
+            * BEND_WEIGHTS
+            * (self.cfg.via_spread * np.abs(travel) + self.cfg.via_jitter)
+        )
+        second = -1.0 if self.rng.random() < self.cfg.s_curve_prob else 1.0
+        p1 = start + travel / 3 + lift + bend
+        p2 = start + 2 * travel / 3 + lift + second * bend
+
+        def path(s: np.ndarray) -> np.ndarray:
+            s = s[:, None]
+            q = (1 - s) ** 3 * start + 3 * s * (1 - s) ** 2 * p1 + 3 * s**2 * (1 - s) * p2 + s**3 * target
+            q[:, GRIPPER] = start[GRIPPER] + s[:, 0] * travel[GRIPPER]
+            return q
+
+        self._segment(seconds, path)
 
     def _via(self, middle: np.ndarray) -> np.ndarray:
         """``middle`` with the gripper raised by a random height, or unchanged when that is unreachable."""
@@ -158,18 +233,42 @@ class Planner:
         q, err = self.arm.ik(raised, rot[:, 0], None, middle)
         return q if err < 0.01 else middle
 
-    def linear_move(self, pos: np.ndarray, approach: np.ndarray, jaw: np.ndarray | None) -> None:
-        """Move the gripper site along a straight line, solving IK at every step."""
+    def linear_move(
+        self,
+        pos: np.ndarray,
+        approach: np.ndarray,
+        jaw: np.ndarray | None,
+        via: np.ndarray | None = None,
+        keep_roll: bool = False,
+    ) -> None:
+        """Move the gripper site to ``pos`` in Cartesian space, solving IK along the way.
+
+        The path is straight, or a quadratic curve through ``via``: aimed at a point on the approach axis,
+        it arrives along the axis from wherever it started.
+        """
         start, _ = self.arm.tcp_pose(self.q)
         distance = float(np.linalg.norm(pos - start))
         seconds = max(0.3, distance / (uniform(self.rng, self.cfg.linear_speed) * self._segment_speed()))
-        n = self._steps(seconds)
-        q = self.q.copy()
-        for s in min_jerk(np.arange(1, n + 1) / n):
-            q, err = self.arm.ik(start + s * (pos - start), approach, jaw, q)
-            if err > IK_TOLERANCE:
-                raise PlanningError(f"Linear move out of reach by {err * 1000:.1f} mm")
-            self._emit(q)
+        control = (start + pos) / 2 if via is None else via
+        arm, q0 = self.arm, self.q.copy()
+        hold = float(q0[WRIST_ROLL]) if keep_roll else None
+
+        def path(s: np.ndarray) -> np.ndarray:
+            q, frames = q0, []
+            for t in s:
+                point = (1 - t) ** 2 * start + 2 * t * (1 - t) * control + t**2 * pos
+                q, err = arm.ik(point, approach, jaw, q, roll=hold)
+                if err > IK_TOLERANCE:
+                    raise PlanningError(f"Linear move out of reach by {err * 1000:.1f} mm")
+                frames.append(q)
+            return np.array(frames)
+
+        self._segment(seconds, path)
+
+    def _off_axis(self, approach: np.ndarray) -> np.ndarray:
+        """A random offset across ``approach``, so the gripper comes in a little off-axis."""
+        side = np.cross(approach, self.rng.normal(size=3))
+        return side / np.linalg.norm(side) * self.rng.uniform(0, self.cfg.approach_offset)
 
     def solve(
         self,
@@ -178,20 +277,30 @@ class Planner:
         jaw: np.ndarray | None,
         init: np.ndarray | None = None,
         roll: float | None = None,
+        keep_roll: bool = False,
     ) -> np.ndarray:
         """Joint values (degrees) that put the gripper site at ``pos``, or raise ``PlanningError``.
 
-        Tries from ``init`` (the current pose by default), then from a pose turned towards ``pos`` with
-        the wrist pre-rolled, since damped least squares only finds the nearest solution.
+        Tries from ``init`` (the current pose by default) and keeps that solution when it is good enough,
+        since it is the nearest one: without a jaw direction the wrist roll is free, and a solution from
+        elsewhere can turn the wrist half a turn for nothing. Otherwise, damped least squares only finding
+        the nearest solution, it tries from poses turned towards ``pos`` with the wrist pre-rolled.
         """
-        turned = np.array([np.rad2deg(np.arctan2(pos[1], pos[0])), -20.0, 40.0, 70.0, 0.0, self.q[GRIPPER]])
-        if roll is not None:
-            turned[WRIST_ROLL] = roll
+        here = self.q if init is None else init
+        pan = np.rad2deg(np.arctan2(pos[1], pos[0]))
+        rolled = here[WRIST_ROLL] if roll is None else roll
+        # Turned towards ``pos``: the wrist bent for steep-down approaches, then flatter for tilted ones.
+        turned = [
+            np.array([pan, lift, elbow, flex, rolled, self.q[GRIPPER]]) for lift, elbow, flex in TURNED_POSES
+        ]
         best_q, best_err = None, np.inf
-        for start in (self.q if init is None else init, turned):
-            q, err = self.arm.ik(pos, approach, jaw, start, iters=150)
+        hold = float(self.q[WRIST_ROLL]) if keep_roll else None
+        for start in (here, *turned):
+            q, err = self.arm.ik(pos, approach, jaw, start, iters=150, roll=hold)
             if err < best_err:
                 best_q, best_err = q, err
+            if best_err <= IK_TOLERANCE:
+                break
         if best_err > IK_TOLERANCE:
             raise PlanningError(f"Pose out of reach by {best_err * 1000:.1f} mm")
         return best_q
@@ -209,12 +318,16 @@ class Planner:
         offset = rng.uniform(0.0, cfg.grasp_offset)
         sampled_height = uniform(rng, cfg.approach_height)
         sampled_lift = uniform(rng, cfg.lift_height)
-        for tilt in candidate_tilts(uniform(rng, cfg.tilt)):
-            grasp = grasp_for(self.arm, obj, tilt, jitter, offset)
+        steep = rng.random() < cfg.steep_tilt_prob
+        for tilt in candidate_tilts(uniform(rng, cfg.steep_tilt if steep else cfg.tilt)):
+            grasp = grasp_for(self.arm, obj, tilt, jitter, offset, current_roll=self.q[WRIST_ROLL])
             try:
                 q_grasp = self.solve(grasp.pos, grasp.approach, grasp.jaw, roll=grasp.roll)
                 # Close to the base the arm can't reach high: come in and leave lower there.
-                height, q_pre = self._highest(grasp.pos, grasp.approach, grasp.jaw, q_grasp, sampled_height)
+                entry = self._off_axis(grasp.approach)
+                height, q_pre = self._highest(
+                    grasp.pos, grasp.approach, grasp.jaw, q_grasp, sampled_height, offset=entry
+                )
                 lift_height, _ = self._highest(grasp.pos, DOWN, None, q_grasp, sampled_lift, grasp)
                 break
             except PlanningError:
@@ -227,13 +340,14 @@ class Planner:
             self.arm.opening_for_width(grasp.width + 2 * grasp.clearance + uniform(rng, cfg.open_margin)),
         )
         self.transit(q_pre, gripper=opening)
-        self.dwell()
-        self.linear_move(grasp.pos, grasp.approach, grasp.jaw)
+        if rng.random() < cfg.pause_prob:
+            self.dwell()
+        self.linear_move(grasp.pos, grasp.approach, grasp.jaw, via=grasp.pos - grasp.approach * height / 2)
         # Let the servos catch up with the last commands before closing.
-        self.dwell(rng.uniform(0.2, 0.45))
+        self.dwell(rng.uniform(0.15, 0.3))
         # Squeeze: command past the object's width so the servo keeps holding it.
         self.gripper(max(0.0, self.arm.opening_for_width(grasp.width) - rng.uniform(15, 25)))
-        self.dwell(rng.uniform(0.1, 0.3))
+        self.dwell(rng.uniform(0.05, 0.2))
         self.mark("grasped")
         self.linear_move(lift, grasp.approach, grasp.jaw)
         self.mark("lifted")
@@ -245,29 +359,33 @@ class Planner:
         sampled_height = uniform(rng, self.cfg.approach_height)
         for candidate in candidate_tilts(tilt):
             approach = tilted_approach(pos, candidate)
+            # Carried: the jaw direction may follow, but the wrist keeps its roll.
             try:
-                q_release = self.solve(pos, approach, None)
-                height, q_above = self._highest(pos, approach, None, q_release, sampled_height)
+                q_release = self.solve(pos, approach, None, keep_roll=True)
+                entry = self._off_axis(approach)
+                height, q_above = self._highest(
+                    pos, approach, None, q_release, sampled_height, offset=entry, keep_roll=True
+                )
                 break
             except PlanningError:
                 continue
         else:
             raise PlanningError("No reachable release pose")
         self.transit(q_above)
-        self.dwell(rng.uniform(0.0, 0.2))
-        self.linear_move(pos, approach, None)
+        if rng.random() < self.cfg.pause_prob:
+            self.dwell()
+        self.linear_move(pos, approach, None, via=pos - approach * height / 2, keep_roll=True)
         self.dwell(rng.uniform(0.0, 0.2))
         self.mark("release")
-        self.gripper(min(100.0, self.q[GRIPPER] + rng.uniform(25, 45)))
-        self.dwell(rng.uniform(0.1, 0.3))
-        self.linear_move(pos - approach * height, approach, None)
+        self.gripper(min(100.0, self.q[GRIPPER] + rng.uniform(25, 45)), overlap=True)
+        self.linear_move(pos - approach * height, approach, None, keep_roll=True)
         self.mark("released")
 
     def reach(self, pos: np.ndarray, tilt: float) -> None:
         """Move the gripper site to ``pos`` through joint space, at the reachable tilt nearest ``tilt``."""
         for candidate in candidate_tilts(tilt):
             try:
-                q = self.solve(pos, tilted_approach(pos, candidate), None)
+                q = self.solve(pos, tilted_approach(pos, candidate), None, keep_roll=True)
                 break
             except PlanningError:
                 continue
@@ -283,18 +401,22 @@ class Planner:
         q_at: np.ndarray,
         sampled: float,
         grasp: Grasp | None = None,
+        offset: np.ndarray | None = None,
+        keep_roll: bool = False,
     ) -> tuple[float, np.ndarray]:
         """The largest reachable distance up to ``sampled`` back along ``approach`` from ``pos``.
 
-        With ``grasp``, the offset is a vertical lift keeping the grasp's orientation.
+        With ``grasp``, the offset is a vertical lift keeping the grasp's orientation. ``offset`` moves
+        the point off the axis, scaled down with the height so low approaches stay close to it.
         """
         for height in (sampled, 0.75 * sampled, 0.5 * sampled, 0.03):
+            side = 0.0 if offset is None else offset * height / sampled
             if grasp is None:
-                target, a, j = pos - approach * height, approach, jaw
+                target, a, j = pos - approach * height + side, approach, jaw
             else:
                 target, a, j = pos + np.array([0.0, 0.0, height]), grasp.approach, grasp.jaw
             try:
-                return height, self.solve(target, a, j, init=q_at)
+                return height, self.solve(target, a, j, init=q_at, keep_roll=keep_roll)
             except PlanningError:
                 continue
         raise PlanningError("Nothing reachable above the target")
@@ -313,27 +435,35 @@ def tilted_approach(pos: np.ndarray, tilt: float) -> np.ndarray:
     return DOWN * np.cos(t) + radial * np.sin(t)
 
 
-def grasp_for(arm: Arm, obj: ObjectParams, tilt: float, jaw_jitter: float, offset: float) -> Grasp:
+def grasp_for(
+    arm: Arm,
+    obj: ObjectParams,
+    tilt: float,
+    jaw_jitter: float,
+    offset: float,
+    current_roll: float = 0.0,
+) -> Grasp:
     """A grasp of a resting object from above, tilted outwards, closing across its narrow side.
 
-    The jaw direction's sign picks which side the fixed jaw takes; the one needing the smaller wrist
-    roll wins, as a person would turn their wrist the short way.
+    The jaw direction's sign picks which side the fixed jaw takes; the one nearest the wrist's
+    ``current_roll`` (degrees) wins, as a person turns their wrist the short way from where it is.
     """
     center = np.array([obj.pos[0], obj.pos[1], obj.half_size[-1]])
     approach = tilted_approach(center, tilt)
     reach = np.arctan2(center[1], center[0])
     if obj.shape == "cylinder":
-        # Round: any direction, preferably along the reach.
-        yaw, width = reach + jaw_jitter, 2 * obj.half_size[0]
+        # Round: any direction, preferably as the wrist already is.
+        yaw, width = reach + np.deg2rad(np.clip(current_roll, -90, 90)) + jaw_jitter, 2 * obj.half_size[0]
     elif obj.half_size[0] <= obj.half_size[1]:
         yaw, width = obj.yaw, 2 * obj.half_size[0]
     else:
         yaw, width = obj.yaw + np.pi / 2, 2 * obj.half_size[1]
-    # At zero roll the jaws close along the reach: roll by the angle between the two, the short way.
-    roll = float(np.angle(np.exp(1j * (yaw - reach))))
-    if abs(roll) > np.pi / 2:
-        yaw += np.pi
-        roll = float(np.angle(np.exp(1j * (yaw - reach))))
+    # At zero roll the jaws close along the reach: roll by the angle between the two. Both jaw sides
+    # hold the object, so take the one whose roll is nearest the current one (within the joint's range).
+    sides = [yaw, yaw + np.pi]
+    rolls = [float(np.angle(np.exp(1j * (side - reach)))) for side in sides]
+    best = int(np.argmin([abs(np.rad2deg(r) - current_roll) for r in rolls]))
+    yaw, roll = sides[best], rolls[best]
     horizontal = np.array([np.cos(yaw), np.sin(yaw), 0.0])
     jaw = horizontal - approach * np.dot(horizontal, approach)
     jaw /= np.linalg.norm(jaw)

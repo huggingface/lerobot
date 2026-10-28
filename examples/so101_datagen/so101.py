@@ -160,11 +160,14 @@ class Arm:
         init: np.ndarray,
         iters: int = 60,
         tol: float = 5e-4,
+        roll: float | None = None,
     ) -> tuple[np.ndarray, float]:
         """Damped least squares on the five arm joints.
 
         Reaches ``pos`` with the gripper's approach axis (site x) along ``approach`` and, when given,
-        its jaw axis (site z, from the fixed towards the moving jaw) along ``jaw``. Starts from
+        its jaw axis (site z, from the fixed towards the moving jaw) along ``jaw``. ``roll`` (degrees)
+        weakly pulls the wrist roll there instead, at the cost of a slightly looser approach: position
+        and approach alone leave only a few solutions, some with the wrist half a turn away. Starts from
         ``init`` (degrees, gripper kept) and returns the solution with its position error in meters.
         """
         model, data = self.model, self._scratch
@@ -189,10 +192,13 @@ class Arm:
             if jaw is not None:
                 residuals.append(0.15 * (jaw - z))
                 jacobians.append(0.15 * -_skew(z) @ w)
+            if roll is not None:
+                residuals.append(np.array([0.1 * (np.deg2rad(roll) - q[WRIST_ROLL])]))
+                jacobians.append(0.1 * np.eye(ARM_JOINTS)[WRIST_ROLL][None])
             e = np.concatenate(residuals)
             jac = np.concatenate(jacobians)
             err = float(np.linalg.norm(pos - p))
-            if err < tol and np.linalg.norm(e[3:]) < 2e-3:
+            if err < tol and np.linalg.norm(e[3:6]) < 2e-3 and (jaw is None or np.linalg.norm(e[6:9]) < 2e-3):
                 break
             dq = jac.T @ np.linalg.solve(jac @ jac.T + 1e-4 * np.eye(len(e)), e)
             q[:ARM_JOINTS] = np.clip(q[:ARM_JOINTS] + dq, self.lo[:ARM_JOINTS], self.hi[:ARM_JOINTS])

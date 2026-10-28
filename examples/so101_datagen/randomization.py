@@ -71,6 +71,7 @@ CONFUSABLE = {
 # No channel goes darker, so even black objects keep some shading in shadow.
 MIN_CHANNEL = 0.05
 TEXTURE_KINDS = ("grain", "noise")
+CAMERA_TRIES = 30
 CONTAINER_NOUNS = ("box", "bin", "container")
 TRAY_NOUNS = ("tray", "box")
 
@@ -126,12 +127,20 @@ def sample_scene(
         obj.pos = spot
         objects.append(obj)
 
+    # The front camera must see every object and container whole.
+    corners = np.concatenate([_corners(item) for item in [*objects, *container_params]])
+    for _ in range(CAMERA_TRIES):
+        camera = _sample_front_camera(rng, cfg)
+        if _in_view(camera, corners, cfg.width / cfg.height):
+            break
+    else:
+        return None
     return SceneParams(
         objects=objects,
         containers=container_params,
         lights=_sample_lights(rng, cfg),
         background=_sample_background(rng, cfg),
-        front_camera=_sample_front_camera(rng, cfg),
+        front_camera=camera,
         wrist_offset=(rng.uniform(-1, 1, 3) * cfg.wrist_camera.pos_jitter).tolist(),
         wrist_rotvec=np.deg2rad(rng.uniform(-1, 1, 3) * cfg.wrist_camera.rot_jitter).tolist(),
         wrist_fovy=uniform(rng, cfg.wrist_camera.fovy),
@@ -142,6 +151,35 @@ def sample_scene(
             arm_rgba=[*ARM_COLORS[rng.integers(len(ARM_COLORS))], 1.0],
         ),
     )
+
+
+def _corners(item: ObjectParams | ContainerParams) -> np.ndarray:
+    """Corners of a placed item's bounding box, ignoring its yaw (the box around any yaw)."""
+    if isinstance(item, ContainerParams):
+        half = item.inner_half + item.thickness
+        size = np.array([half, half, item.wall_height + item.thickness])
+    else:
+        h = item.half_size
+        reach = float(np.hypot(h[0], h[1])) if item.shape != "cylinder" else h[0]
+        size = np.array([reach, reach, 2 * h[-1]])
+    x, y = item.pos
+    return np.array(
+        [[x + sx * size[0], y + sy * size[1], z] for sx in (-1, 1) for sy in (-1, 1) for z in (0.0, size[2])]
+    )
+
+
+def _in_view(camera: CameraParams, points: np.ndarray, aspect: float, margin: float = 0.04) -> bool:
+    """Whether every point projects inside the camera's image, ``margin`` away from its edges."""
+    rot = np.zeros(9)
+    mujoco.mju_quat2Mat(rot, np.asarray(camera.quat, dtype=np.float64))
+    local = (points - np.asarray(camera.pos)) @ rot.reshape(3, 3)
+    depth = -local[:, 2]  # MuJoCo cameras look along their -z
+    if np.any(depth <= 0.05):
+        return False
+    t = np.tan(np.deg2rad(camera.fovy) / 2)
+    u = local[:, 0] / depth / (t * aspect)
+    v = local[:, 1] / depth / t
+    return bool(np.all(np.abs(u) <= 1 - 2 * margin) and np.all(np.abs(v) <= 1 - 2 * margin))
 
 
 def _place(rng: np.random.Generator, cfg: GenerationConfig, placed: list[Footprint], radius: float):
