@@ -199,6 +199,117 @@ def precompute_freqs_cis(dim: int, end: int = 1024, theta: float = 10000.0):
     return rope_params(end, dim, theta)
 
 
+def _rope_pair_axis_counts(c: int) -> tuple[int, int, int]:
+    """Mirror `rope_apply`'s frequency split into (temporal, height, width) pair counts.
+
+    `rope_apply` splits the head's `c = head_dim / 2` pair columns as
+    `[c - 2*(c//3), c//3, c//3]`; the de-rotation below must use the exact same split.
+    """
+    return c - 2 * (c // 3), c // 3, c // 3
+
+
+def retract_video_rope(
+    keys: torch.Tensor,
+    video_freqs: torch.Tensor,
+    grid_sizes: torch.Tensor,
+    action_freqs: torch.Tensor | None = None,
+    temporal_positions: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Retracted 1D-RoPE for video keys handed to the action expert (Faster-WAM,
+    arXiv 2608.02365, Eq. 3 / Appx. B.4).
+
+    Computes ``k_v->a(p) = R_a(t_p) R_v(p)^T k(p)`` for every video token ``p``:
+
+    1. De-rotation: apply the exact inverse of the 3D rotary transform ``rope_apply``
+       applied in the video backbone. The angles are derived from the SAME ``video_freqs``
+       tensor, the same axis split (``_rope_pair_axis_counts``) and the same
+       t-major/y-then-x grid expansion ``rope_apply`` uses, so the roundtrip
+       ``rope_apply`` -> `retract_video_rope` is the identity. This intentionally follows
+       this backbone's sliced-grid convention rather than the paper's per-axis frequency
+       formula, because the de-rotation must undo the rotation actually applied.
+    2. Reapplication: rotate each pair by the action expert's 1D temporal transform at
+       the token's temporal position ``t_p`` (``action_freqs`` rows). Faster-WAM
+       conditions on the observed frame at ``t_p = 0`` where ``R_a(0) = I``, so the
+       runtime path is pure de-rotation; ``temporal_positions`` supports the general form.
+
+    Args:
+        keys: [B, S, H*D] fused (or per-layer) video keys, heads flattened last.
+        video_freqs: complex [max_seq, c] unit rotators as used by ``rope_apply``.
+        grid_sizes: [B, 3] per-sample (frames f, grid height h, grid width w); the first
+            f*h*w tokens of each sample carry the 3D rotation, remaining tokens are
+            unrotated padding and are passed through unchanged.
+        action_freqs: complex [max_seq, c] action 1D rotators (``ActionDiT.freqs``).
+            Optional; ``None`` skips reapplication (pure de-rotation).
+        temporal_positions: optional [B, S] int temporal positions ``t_p`` on the action
+            scale for reapplication; defaults to all zeros (the observed frame).
+
+    Returns:
+        [B, S, H*D] keys with the video rotation removed (and the action 1D rotation
+        applied when ``action_freqs`` is given). Values are not touched by callers:
+        RoPE applies to keys only.
+    """
+    if keys.ndim != 3:
+        raise ValueError(f"`keys` must be 3D [B, S, H*D], got shape {tuple(keys.shape)}")
+    if video_freqs.ndim != 2:
+        raise ValueError(
+            f"`video_freqs` must be the 2D [max_seq, num_pairs] rope grid, got shape {tuple(video_freqs.shape)}"
+        )
+    if action_freqs is not None and action_freqs.ndim != 2:
+        raise ValueError(
+            f"`action_freqs` must be the 2D [max_seq, num_pairs] rope grid, got shape {tuple(action_freqs.shape)}"
+        )
+    if grid_sizes.ndim != 2 or grid_sizes.shape[1] != 3:
+        raise ValueError(f"`grid_sizes` must be [B, 3], got shape {tuple(grid_sizes.shape)}")
+    if grid_sizes.shape[0] != keys.shape[0]:
+        raise ValueError(
+            f"`grid_sizes` batch {grid_sizes.shape[0]} does not match keys batch {keys.shape[0]}"
+        )
+    c_t, c_h, c_w = _rope_pair_axis_counts(video_freqs.shape[1])
+    if c_t + c_h + c_w != video_freqs.shape[1]:
+        raise ValueError("`video_freqs` pair count does not match its axis split.")
+
+    batch_size, seq_len, width = keys.shape
+    c = c_t + c_h + c_w
+    pools = video_freqs.split([c_t, c_h, c_w], dim=1)
+    out = keys.clone()
+    for i, (f, h, w) in enumerate(grid_sizes.tolist()):
+        seq_len_i = int(f) * int(h) * int(w)
+        if seq_len_i > seq_len:
+            raise ValueError(
+                f"`grid_sizes[{i}]` expands to {seq_len_i} tokens, more than the {seq_len} provided."
+            )
+        # Token coordinates in `rope_apply`'s t-major, y-then-x expansion order.
+        t = torch.arange(int(f), device=keys.device).repeat_interleave(int(h) * int(w))
+        rem = torch.arange(seq_len_i, device=keys.device) % (int(h) * int(w))
+        y = rem.div(int(w), rounding_mode="floor")
+        x = rem % int(w)
+        coords = (t, y, x)
+        counts = (c_t, c_h, c_w)
+        multiplier = torch.ones(seq_len_i, c, dtype=torch.complex128, device=keys.device)
+        start = 0
+        for axis_coord, axis_count, axis_pool in zip(coords, counts, pools, strict=True):
+            # Pair p of this axis was rotated by row `axis_coord` of its frequency pool;
+            # de-rotation multiplies by the conjugate of that rotator. Reapplication (when
+            # enabled) multiplies pair p by the action rotator at the token's temporal
+            # position t_p: exp(i * t_p * nu_p), i.e. row t_p of the action grid.
+            multiplier[:, start : start + axis_count] = axis_pool[axis_coord].to(torch.complex128).conj()
+            if action_freqs is not None:
+                if temporal_positions is None:
+                    tau = torch.zeros(seq_len_i, dtype=torch.long, device=keys.device)
+                else:
+                    tau = temporal_positions[i, :seq_len_i].to(dtype=torch.long, device=keys.device)
+                multiplier[:, start : start + axis_count] = (
+                    multiplier[:, start : start + axis_count] * action_freqs[tau, start : start + axis_count]
+                )
+            start += axis_count
+        keys_i = keys[i, :seq_len_i].to(torch.float64)
+        # [S_i, H, c] complex rotary pairs (heads dim -1, mirroring rope_apply's reshape)
+        pairs = torch.view_as_complex(keys_i.reshape(seq_len_i, -1, c, 2))
+        pairs = pairs * multiplier.unsqueeze(1)
+        out[i, :seq_len_i] = torch.view_as_real(pairs).flatten(1).to(keys.dtype)
+    return out
+
+
 def apply_dense_rope(x: torch.Tensor, freqs: torch.Tensor, num_heads: int) -> torch.Tensor:
     x = rearrange(x, "b s (n d) -> b s n d", n=num_heads)
     x_out = torch.view_as_complex(x.to(torch.float32).reshape(x.shape[0], x.shape[1], x.shape[2], -1, 2))
@@ -259,7 +370,9 @@ class FastWAMAttentionBlock(WanAttentionBlock):
         ffn_dim: int,
         eps: float = 1e-6,
         fp32_attention: bool = True,
+        use_text_cross_attention: bool = True,
     ):
+        self.use_text_cross_attention = bool(use_text_cross_attention)
         attention_dim = attn_head_dim * num_heads
         if hidden_dim == attention_dim:
             super().__init__(
@@ -270,18 +383,29 @@ class FastWAMAttentionBlock(WanAttentionBlock):
                 cross_attn_norm=True,
                 eps=eps,
             )
+            if not self.use_text_cross_attention:
+                del self.norm3
+                del self.cross_attn
         else:
             nn.Module.__init__(self)
             self.dim = hidden_dim
             self.ffn_dim = ffn_dim
             self.num_heads = num_heads
             self.qk_norm = True
-            self.cross_attn_norm = True
+            self.cross_attn_norm = self.use_text_cross_attention
             self.eps = eps
             self.norm1 = WanLayerNorm(hidden_dim, eps)
             self.self_attn = _FastWAMProjectedAttention(hidden_dim, attention_dim, num_heads, eps)
-            self.norm3 = WanLayerNorm(hidden_dim, eps, elementwise_affine=True)
-            self.cross_attn = _FastWAMProjectedAttention(hidden_dim, attention_dim, num_heads, eps)
+            self.norm3 = (
+                WanLayerNorm(hidden_dim, eps, elementwise_affine=True)
+                if self.use_text_cross_attention
+                else None
+            )
+            self.cross_attn = (
+                _FastWAMProjectedAttention(hidden_dim, attention_dim, num_heads, eps)
+                if self.use_text_cross_attention
+                else None
+            )
             self.norm2 = WanLayerNorm(hidden_dim, eps)
             self.ffn = nn.Sequential(
                 nn.Linear(hidden_dim, ffn_dim),
@@ -338,6 +462,10 @@ class FastWAMAttentionBlock(WanAttentionBlock):
     def apply_cross_attention(
         self, x: torch.Tensor, context: torch.Tensor, context_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
+        if not self.use_text_cross_attention:
+            raise ValueError(
+                "This block was built without text cross-attention (`use_text_cross_attention=False`)."
+            )
         if context_mask is not None and context_mask.dim() == 3:
             context_mask = context_mask.unsqueeze(1)
         attn = self.cross_attn
@@ -379,6 +507,11 @@ class FastWAMAttentionBlock(WanAttentionBlock):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.split_modulation(self, t_mod)
         residual_x = x
         attn_input = modulate(self.apply_norm1(x), shift_msa, scale_msa)
+        if context is not None and not self.use_text_cross_attention:
+            raise ValueError(
+                "Text context was passed to a block built without text cross-attention "
+                "(`use_text_cross_attention=False`)."
+            )
         q, k, v = self.project_self_attention(attn_input, freqs)
         y = fastwam_masked_attention(
             q=q,

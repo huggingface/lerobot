@@ -56,7 +56,7 @@ SARM is trained through its processor (`src/lerobot/rewards/sarm/processor_sarm.
 At minimum, each training sample needs:
 
 - `task` (string): task description
-- `policy.image_key` images and `policy.state_key` states from the dataset
+- `reward_model.image_key` images and `reward_model.state_key` states from the dataset
 
 ---
 
@@ -271,15 +271,15 @@ Train with **no annotations** - uses linear progress from 0 to 1:
 ```bash
 lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
-  --policy.type=sarm \
-  --policy.annotation_mode=single_stage \
-  --policy.image_key=observation.images.base \
+  --reward_model.type=sarm \
+  --reward_model.annotation_mode=single_stage \
+  --reward_model.image_key=observation.images.base \
   --output_dir=outputs/train/sarm_single \
   --batch_size=32 \
   --steps=5000 \
   --wandb.enable=true \
   --wandb.project=sarm \
-  --policy.repo_id=your-username/your-model-name
+  --reward_model.repo_id=your-username/your-model-name
 ```
 
 </hfoption>
@@ -290,15 +290,15 @@ Train with **dense annotations only** (sparse auto-generated):
 ```bash
 lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
-  --policy.type=sarm \
-  --policy.annotation_mode=dense_only \
-  --policy.image_key=observation.images.base \
+  --reward_model.type=sarm \
+  --reward_model.annotation_mode=dense_only \
+  --reward_model.image_key=observation.images.base \
   --output_dir=outputs/train/sarm_dense \
   --batch_size=32 \
   --steps=5000 \
   --wandb.enable=true \
   --wandb.project=sarm \
-  --policy.repo_id=your-username/your-model-name
+  --reward_model.repo_id=your-username/your-model-name
 ```
 
 </hfoption>
@@ -309,15 +309,15 @@ Train with **both sparse and dense annotations**:
 ```bash
 lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
-  --policy.type=sarm \
-  --policy.annotation_mode=dual \
-  --policy.image_key=observation.images.base \
+  --reward_model.type=sarm \
+  --reward_model.annotation_mode=dual \
+  --reward_model.image_key=observation.images.base \
   --output_dir=outputs/train/sarm_dual \
   --batch_size=32 \
   --steps=5000 \
   --wandb.enable=true \
   --wandb.project=sarm \
-  --policy.repo_id=your-username/your-model-name
+  --reward_model.repo_id=your-username/your-model-name
 ```
 
 </hfoption>
@@ -329,13 +329,13 @@ Add `accelerate launch --multi_gpu --num_processes=4` to use multiple GPUs for t
 
 ### Training Arguments
 
-| Argument                   | Description                                                       | Default                  |
-| -------------------------- | ----------------------------------------------------------------- | ------------------------ |
-| `--policy.annotation_mode` | `single_stage`, `dense_only`, or `dual`                           | `single_stage`           |
-| `--policy.image_key`       | Camera key for images                                             | `observation.images.top` |
-| `--policy.state_key`       | Key for joint states                                              | `observation.state`      |
-| `--policy.n_obs_steps`     | Observation history steps (total obs frames = `n_obs_steps + 1`)  | `8`                      |
-| `--policy.frame_gap`       | Gap (in frames) between sampled observations (at 30 fps: 30 ≈ 1s) | `30`                     |
+| Argument                         | Description                                                       | Default                  |
+| -------------------------------- | ----------------------------------------------------------------- | ------------------------ |
+| `--reward_model.annotation_mode` | `single_stage`, `dense_only`, or `dual`                           | `single_stage`           |
+| `--reward_model.image_key`       | Camera key for images                                             | `observation.images.top` |
+| `--reward_model.state_key`       | Key for joint states                                              | `observation.state`      |
+| `--reward_model.n_obs_steps`     | Observation history steps (total obs frames = `n_obs_steps + 1`)  | `8`                      |
+| `--reward_model.frame_gap`       | Gap (in frames) between sampled observations (at 30 fps: 30 ≈ 1s) | `30`                     |
 
 ---
 

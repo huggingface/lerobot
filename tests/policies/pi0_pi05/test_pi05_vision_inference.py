@@ -188,7 +188,8 @@ def test_autocast_is_enabled_for_bfloat16_inference_on_cuda():
 @require_cuda
 def test_batched_and_looped_embeddings_match_on_the_real_vision_tower():
     torch.manual_seed(0)
-    model = PI05Pytorch(PI05Config(paligemma_variant="gemma_300m")).to("cuda").eval()
+    with torch.device("cuda"):  # initializing the weights on the CPU takes ~30s
+        model = PI05Pytorch(PI05Config(paligemma_variant="gemma_300m")).eval()
     images = [torch.rand(1, 3, 224, 224, device="cuda") for _ in range(3)]
     masks = [torch.ones(1, dtype=torch.bool, device="cuda") for _ in images]
 

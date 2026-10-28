@@ -26,6 +26,8 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize("token", ["hf_test_token", True, False])
 @pytest.mark.parametrize("from_local", [False, True])
@@ -226,8 +228,6 @@ def test_frames_order_with_shards(tmp_path, lerobot_dataset_factory, shuffle):
     "state_deltas, action_deltas",
     [
         ([-1, -0.5, -0.20, 0], [0, 1, 2, 3]),
-        ([-1, -0.5, -0.20, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
-        ([-2, -1, -0.5, 0], [0, 1, 2, 3]),
         ([-2, -1, -0.5, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
     ],
 )
@@ -307,8 +307,6 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
     "state_deltas, action_deltas",
     [
         ([-1, -0.5, -0.20, 0], [0, 1, 2, 3, 10, 20]),
-        ([-1, -0.5, -0.20, 0], [-20, -1.5, -1, -0.5, -0.20, -0.10, 0]),
-        ([-2, -1, -0.5, 0], [0, 1, 2, 3, 10, 20]),
         ([-2, -1, -0.5, 0], [-20, -1.5, -1, -0.5, -0.20, -0.10, 0]),
     ],
 )

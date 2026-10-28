@@ -977,6 +977,7 @@ def test_device_detection_no_tensors():
     assert attention_mask.device.type == "cpu"
 
 
+@pytest.mark.gpu
 @skip_if_package_missing("transformers")
 def test_device_detection_mixed_devices():
     """Test device detection when tensors are on different devices (uses first found)."""

@@ -76,7 +76,7 @@ If your local computer doesn't have a powerful GPU, you can utilize Google Colab
 
 ## Evaluating ACT
 
-Once training is complete, you can evaluate your ACT policy using the `lerobot-record` command with your trained policy. This will run inference and record evaluation episodes:
+Once training is complete, you can evaluate your ACT policy on your robot with `lerobot-rollout`. The command below runs the policy for 60 seconds without recording anything (`--task` can be skipped for ACT). See [Policy Deployment](./inference) for strategies that record evaluation episodes.
 
 ```bash
 lerobot-rollout \
@@ -86,6 +86,6 @@ lerobot-rollout \
   --robot.port=/dev/ttyACM0 \
   --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
   --display_data=true \
-  --task="Your task description" \ # can be skipped for ACT
+  --task="Your task description" \
   --duration=60
 ```

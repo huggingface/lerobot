@@ -180,7 +180,7 @@ LeRobot provides **feature-scoped extras** that map to common workflows. If you 
 | `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | Loading & creating datasets         |
 | `training` | `dataset` + `accelerate`, `wandb`           | Training policies                   |
 | `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
-| `viz`      | `rerun-sdk`                                 | Visualization during recording/eval |
+| `viz`      | `rerun-sdk`, `foxglove-sdk`                 | Visualization during recording/eval |
 
 **Composite Extras** combine feature extras for common CLI scripts:
 
@@ -276,7 +276,7 @@ LeRobot provides optional extras for specific functionalities. Multiple extras c
 
 ### Simulations
 
-Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht)).
+Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht)), [`libero`](./libero) (Linux only) or [`metaworld`](./metaworld).
 These automatically include the `dataset` extra.
 
 ```bash
@@ -299,4 +299,9 @@ Weights and Biases is included in the `training` extra. To use [Weights and Bias
 wandb login
 ```
 
-You can now assemble your robot if it's not ready yet, look for your robot type on the left. Then follow the link below to use Lerobot with your robot.
+## Next steps
+
+- **Have a robot?** Assemble and calibrate it by following its page under **Robots** in the sidebar (for example [SO-101](./so101)), then record a dataset and train your first policy with the [imitation learning tutorial](./il_robots).
+- **No hardware yet?** Train and evaluate a policy in simulation with [LIBERO](./libero), or try the [Colab notebooks](./notebooks).
+- **Want to contribute?** Read the [contributing guide](./contributing).
+- Keep the [cheat sheet](./cheat-sheet) at hand: it lists every LeRobot command in one place.

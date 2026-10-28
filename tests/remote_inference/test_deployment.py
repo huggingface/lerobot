@@ -14,6 +14,7 @@
 
 """Deployment mode selection and portable artifact pins, without remote services."""
 
+import json
 from dataclasses import replace
 from pathlib import Path
 from shutil import copytree
@@ -82,6 +83,22 @@ def test_identical_checkpoint_pin_survives_host_path_and_transport_changes(deplo
     )
     _, moved = serving.load_deployment(relocated)
     assert moved == original
+
+
+def test_use_peft_checkpoint_without_adapter_loads_as_base_model(deployment, tmp_path):
+    # A `use_peft=True` config pointing at a base model (no adapter_config.json) loads it normally.
+    checkpoint = tmp_path / "checkpoint"
+    copytree(deployment.model.repo_or_path, checkpoint)
+    config_path = checkpoint / "config.json"
+    config = json.loads(config_path.read_text())
+    config["use_peft"] = True
+    config_path.write_text(json.dumps(config))
+
+    runner, _ = serving.load_deployment(
+        replace(deployment, model=replace(deployment.model, repo_or_path=str(checkpoint)))
+    )
+
+    assert isinstance(runner.policy, ACTPolicy)
 
 
 def test_requested_rtc_is_attached_without_a_saved_dataclass_field(deployment, monkeypatch):
