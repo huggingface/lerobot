@@ -221,7 +221,7 @@ jobs:
         run: gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input profiling-results/status.json > /dev/null
       - name: Post weekly results to Slack
         if: ${{ !cancelled() && steps.report.outcome == 'success' && (github.event_name == 'schedule' || inputs.notify_slack) }}
-        uses: slackapi/slack-github-action@6c661ce58804a1a20f6dc5fbee7f0381b469e001 # same action as hf-workflows/post-slack
+        uses: slackapi/slack-github-action@6c661ce58804a1a20f6dc5fbee7f0381b469e001 # v1.25.0
         with:
           channel-id: ${{ secrets.CI_SLACK_CHANNEL }}
           payload-file-path: profiling-results/slack.json
