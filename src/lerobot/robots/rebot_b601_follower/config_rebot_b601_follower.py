@@ -72,6 +72,11 @@ class RebotB601FollowerConfig:
     # Soft limits in public joint degrees.
     joint_limits: dict[str, tuple[float, float]] | None = None
 
+    # When True, expose `.vel` and `.torque` per motor in observation features.
+    # Off by default: enabling it changes observation.state from 7 to 21 dimensions,
+    # which is incompatible with datasets and checkpoints recorded without it.
+    use_velocity_and_torque: bool = False
+
     def __post_init__(self) -> None:
         self.motor_family = MotorFamily(self.motor_family)
         self.control_mode = ArmControlMode(self.control_mode)

@@ -97,11 +97,12 @@ class RebotB601Follower(Robot):
 
     @property
     def _motor_observation_ft(self) -> dict[str, type]:
-        return {
-            feature: float
-            for motor in self.motor_names
-            for feature in (f"{motor}.pos", f"{motor}.vel", f"{motor}.torque")
-        }
+        features: dict[str, type] = {f"{motor}.pos": float for motor in self.motor_names}
+        if self.config.use_velocity_and_torque:
+            for motor in self.motor_names:
+                features[f"{motor}.vel"] = float
+                features[f"{motor}.torque"] = float
+        return features
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -300,14 +301,15 @@ class RebotB601Follower(Robot):
     def get_observation(self) -> RobotObservation:
         start = time.perf_counter()
         states = self._read_feedback()
+        positions = self._present_pos(states)
         obs_dict: RobotObservation = {}
         for motor, state in states.items():
-            direction = self.profile.joint_directions[motor]
-            obs_dict[f"{motor}.pos"] = self._motor_to_public_position(motor, math.degrees(state.pos))
-            obs_dict[f"{motor}.vel"] = self._motor_to_public_position(motor, math.degrees(state.vel))
-            # Torque is a generalized force, so it follows the same sign change
-            # as position when converting from motor coordinates to public joints.
-            obs_dict[f"{motor}.torque"] = float(state.torq) * direction
+            obs_dict[f"{motor}.pos"] = positions[motor]
+            if self.config.use_velocity_and_torque:
+                obs_dict[f"{motor}.vel"] = self._motor_to_public_position(motor, math.degrees(state.vel))
+                # Torque is a generalized force, so it follows the same sign change
+                # as position when converting from motor coordinates to public joints.
+                obs_dict[f"{motor}.torque"] = float(state.torq) * self.profile.joint_directions[motor]
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
