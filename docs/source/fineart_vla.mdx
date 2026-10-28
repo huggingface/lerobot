@@ -40,7 +40,11 @@ pip install -e ".[fineart_vla]"
 The `fineart_vla` extra includes the PaliGemma/FAST dependencies. For the optional
 fused training kernels on Linux with a CUDA GPU, install `".[fineart_vla_kernels]"`
 instead. It adds `liger-kernel` and the Hugging Face `kernels` package used by the
-FlashRT backends. Liger is opt-in with `--policy.use_liger_kernels=true`: it patches
+FlashRT backends. The FlashRT kernels are published for PyTorch 2.11 and 2.12 on
+Linux x86_64 only. With other versions, including the default PyTorch 2.15,
+`policy.use_flashrt_adarms` logs a warning and uses the eager PyTorch norms, and
+`policy.use_manual_attention` uses its built-in attention, still compiled with
+`torch.compile`. Liger is opt-in with `--policy.use_liger_kernels=true`: it patches
 transformers' PaliGemma RoPE/GeGLU for the whole process, so other PaliGemma-based
 policies loaded in the same process also run with the fused kernels.
 
