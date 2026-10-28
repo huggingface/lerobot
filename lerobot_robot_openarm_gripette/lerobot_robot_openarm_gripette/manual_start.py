@@ -16,6 +16,7 @@
 
 import time
 from collections.abc import Callable
+from threading import Event, Thread
 
 import numpy as np
 
@@ -30,19 +31,40 @@ def prepare_manual_start(
     sleep_fn: Callable[[float], None] = time.sleep,
     engage_duration_s: float = 2.0,
     engage_frequency_hz: float = 20.0,
+    disable_frequency_hz: float = 10.0,
 ) -> np.ndarray:
     signs = np.asarray(signs, dtype=np.float64)
     if signs.shape != (7,) or not np.all(np.isin(signs, (-1.0, 1.0))):
         raise ValueError("signs must contain seven values, each +1 or -1")
-    if engage_duration_s <= 0 or engage_frequency_hz <= 0:
-        raise ValueError("engagement duration and frequency must be positive")
+    if engage_duration_s <= 0 or engage_frequency_hz <= 0 or disable_frequency_hz <= 0:
+        raise ValueError("engagement and disable frequencies and duration must be positive")
 
     robot.arm.bus.disable_torque()
     sleep_fn(0.05)
     robot.arm.bus.disable_torque()
     if gripper_action is not None:
         robot.send_action(gripper_action)
-    input_fn("Arm torque is OFF. Position and keep supporting the arm, then press ENTER...")
+    stop_disabling = Event()
+    disable_errors: list[BaseException] = []
+
+    def keep_torque_disabled() -> None:
+        while not stop_disabling.wait(1 / disable_frequency_hz):
+            try:
+                robot.arm.bus.disable_torque()
+            except BaseException as error:
+                disable_errors.append(error)
+                stop_disabling.set()
+
+    disable_thread = Thread(target=keep_torque_disabled, daemon=True)
+    disable_thread.start()
+    try:
+        input_fn("Arm torque is OFF. Position and keep supporting the arm, then press ENTER...")
+    finally:
+        stop_disabling.set()
+        disable_thread.join()
+    if disable_errors:
+        raise disable_errors[0]
+    robot.arm.bus.disable_torque()
 
     robot.arm.bus.configure_motors()
     observation = robot.arm.get_observation()
