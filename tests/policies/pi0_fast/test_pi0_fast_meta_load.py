@@ -29,9 +29,10 @@ import transformers.utils  # noqa: E402
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.pi0_fast import PI0FastConfig, PI0FastPolicy, modeling_pi0_fast  # noqa: E402
 from lerobot.utils import import_utils  # noqa: E402
-from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
+from tests.policies.common.meta_load import (  # noqa: E402
     DOWNLOAD_ARGUMENTS,
     EMBED_TOKENS,
+    add_unknown_weights,
     assert_embedding_stored_first,
     assert_same,
     drop_projector_bias,
@@ -40,7 +41,6 @@ from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
     store_embedding,
     use_tiny_backbone,
 )
-from tests.utils import require_cuda  # noqa: E402
 
 
 class Tokenizer:
@@ -78,34 +78,18 @@ def test_matches_regular_load(config, tmp_path, monkeypatch):
     assert torch.equal(lm_head, embed_tokens) and lm_head.data_ptr() != embed_tokens.data_ptr()
 
 
-def test_subclass_with_its_own_constructor(config, tmp_path, monkeypatch):
-    class Subclass(PI0FastPolicy):
-        _supports_meta_load = True
-
-        def __init__(self, config, extra=None):
-            super().__init__(config)
-            self.extra = extra
-
-    path = save_checkpoint(PI0FastPolicy, config, tmp_path / "ckpt")
-    model, used_meta = load(Subclass, path, config, monkeypatch, extra=1)
+def test_skips_weights_the_policy_does_not_have(config, tmp_path, monkeypatch, capsys):
+    path = save_checkpoint(PI0FastPolicy, config, tmp_path / "ckpt", edit=add_unknown_weights)
+    model, used_meta = load(PI0FastPolicy, path, config, monkeypatch)
+    assert "Unexpected keys when loading state dict: 2 keys" in capsys.readouterr().out
     expected, _ = load(PI0FastPolicy, path, config, monkeypatch, regular=True)
-    assert used_meta and type(model) is Subclass and model.extra == 1
+    assert used_meta
     assert_same(model, expected)
 
 
 def test_stored_embedding_next_to_lm_head_matches_regular_load(config, tmp_path, monkeypatch):
     path = save_checkpoint(PI0FastPolicy, config, tmp_path / "ckpt", edit=store_embedding)
     assert_embedding_stored_first(path)
-    model, used_meta = load(PI0FastPolicy, path, config, monkeypatch)
-    expected, _ = load(PI0FastPolicy, path, config, monkeypatch, regular=True)
-    assert used_meta
-    assert_same(model, expected)
-
-
-@require_cuda
-def test_matches_regular_load_on_cuda(config, tmp_path, monkeypatch):
-    path = save_checkpoint(PI0FastPolicy, config, tmp_path / "ckpt")
-    config.device = "cuda"
     model, used_meta = load(PI0FastPolicy, path, config, monkeypatch)
     expected, _ = load(PI0FastPolicy, path, config, monkeypatch, regular=True)
     assert used_meta

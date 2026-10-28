@@ -16,16 +16,87 @@
 
 """Checkpoint loading shared by the openpi-derived policies that remap keys (pi0, pi05, pi0_fast)."""
 
+import threading
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+
 import torch
 from safetensors import safe_open
+from torch import Tensor, nn
+from torch.nn.modules.module import register_module_parameter_registration_hook
+from torch.utils.weak import WeakIdKeyDictionary
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.policies.pretrained import (
-    T,
-    _load_state_dict_into_meta_model,
-    _parameters_on_meta,
-    _shares_parameters,
-)
+from lerobot.policies.pretrained import T
+
+_meta_init = threading.local()
+_hook_lock = threading.Lock()
+_hook_registered = False
+
+
+def _parameter_to_meta(module: nn.Module, name: str, param: nn.Parameter) -> nn.Parameter | None:
+    replacements = getattr(_meta_init, "replacements", None)
+    if replacements is None or param.is_meta:
+        return None
+    if param not in replacements:
+        replacements[param] = nn.Parameter(param.to("meta"), requires_grad=param.requires_grad)
+    return replacements[param]
+
+
+def _register_hook_once() -> None:
+    # Registered on first use rather than on import, since every policy import reaches this module, and
+    # never removed, so that later blocks do not change PyTorch's process-wide hook registry while another
+    # thread iterates it to register a parameter.
+    global _hook_registered
+    with _hook_lock:
+        if not _hook_registered:
+            register_module_parameter_registration_hook(_parameter_to_meta)
+            _hook_registered = True
+
+
+@contextmanager
+def _parameters_on_meta() -> Iterator[None]:
+    """Create the parameters of modules built inside this block on the meta device.
+
+    A meta tensor has a shape and a dtype but no memory. Modules like `nn.Linear` allocate a parameter and
+    register it before they initialize it, so building them here frees that memory at once and skips
+    randomly initializing weights that a checkpoint will replace; `nn.Parameter(torch.randn(n))` is still
+    drawn before it moves. Buffers and plain tensors are still computed, so values built from the config
+    (rotary tables, masks) stay correct, but one computed from a parameter ends up on meta. Only the thread
+    that entered the block is affected, and a parameter registered in two modules stays shared.
+    """
+    _register_hook_once()
+    previous = getattr(_meta_init, "replacements", None)
+    _meta_init.replacements = WeakIdKeyDictionary() if previous is None else previous
+    try:
+        yield
+    finally:
+        _meta_init.replacements = previous
+
+
+def _shares_parameters(model: nn.Module) -> bool:
+    return len(list(model.parameters())) != len(list(model.named_parameters(remove_duplicate=False)))
+
+
+def _load_state_dict_into_meta_model(
+    model: nn.Module, named_tensors: Iterable[tuple[str, Tensor]], device: str | None
+) -> None:
+    """Load a complete checkpoint into a model built under `_parameters_on_meta`.
+
+    `named_tensors` yields `(name, tensor)` pairs, can be a lazy iterator and must have exactly the model's
+    keys. Each tensor is copied, on the device it was read on, into the dtype the constructor gave the
+    matching parameter or buffer, then moved to `device`, so the constructor's precision choices are kept and
+    only one checkpoint tensor is held at a time. `load_complete_checkpoint` has already checked that the
+    model shares no parameter between modules, since `assign=True` would give each name its own tensor, and
+    that no buffer is on the meta device.
+    """
+    targets = model.state_dict(keep_vars=True)
+    tensors = {}
+    for name, tensor in named_tensors:
+        # A device copy straight from a memory-mapped file can keep every page it read as private memory
+        # until the file closes (measured on Jetson), a second copy of the weights; a CPU copy does not.
+        tensors[name] = tensor.to(dtype=targets[name].dtype, copy=True).to(device)
+    model.load_state_dict(tensors, strict=True, assign=True)
 
 
 def load_complete_checkpoint(
@@ -41,7 +112,8 @@ def load_complete_checkpoint(
     every other weight, then catches the error about the extra ones.
 
     Only a class that sets `_supports_meta_load` in its own body takes this path, so a subclass has to opt in.
-    That promises the constructor never reads, moves or holds on to a parameter, that
+    That promises the constructor never reads a parameter's values, moves it to another device or holds on to
+    it (changing its dtype is fine), that
     `_fix_pytorch_state_dict_keys` handles each key on its own and only renames, copies or drops values (this
     path calls it once per key and uses only names and shapes), and that `_prepare_pretrained_state_dict`,
     which this path skips, changes nothing in a complete checkpoint.
@@ -66,10 +138,10 @@ def load_complete_checkpoint(
         # keys in the order `load_file` returns them, offset order since safetensors 0.6, so that when two keys
         # fill one weight, such as a stored embedding and the lm_head copied into it, the same one is kept.
         keys = checkpoint.offset_keys() if hasattr(checkpoint, "offset_keys") else checkpoint.keys()
-        names = {key: remap(key, checkpoint.get_slice(key).get_shape()) for key in keys}
+        remapped = {key: remap(key, checkpoint.get_slice(key).get_shape()) for key in keys}
         expected = {name: tensor.shape for name, tensor in policy.state_dict().items()}
-        unexpected = sorted(name for fixed in names.values() for name in fixed if name not in expected)
-        names = {key: {n: s for n, s in fixed.items() if n in expected} for key, fixed in names.items()}
+        unexpected = sorted(name for fixed in remapped.values() for name in fixed if name not in expected)
+        names = {key: {n: s for n, s in fixed.items() if n in expected} for key, fixed in remapped.items()}
         shapes = {name: shape for fixed in names.values() for name, shape in fixed.items()}
         if shapes != expected:
             print("Not loading weights straight into the policy: the checkpoint does not fill it exactly.")

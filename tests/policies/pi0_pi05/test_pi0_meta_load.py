@@ -26,10 +26,10 @@ pytest.importorskip("transformers")
 import transformers.utils  # noqa: E402
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
+from lerobot.policies.common.openpi_checkpoint import _parameters_on_meta  # noqa: E402
 from lerobot.policies.pi0 import PI0Config, PI0Policy, modeling_pi0  # noqa: E402
-from lerobot.policies.pretrained import _parameters_on_meta  # noqa: E402
 from lerobot.utils import import_utils  # noqa: E402
-from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
+from tests.policies.common.meta_load import (  # noqa: E402
     DOWNLOAD_ARGUMENTS,
     EMBED_TOKENS,
     assert_embedding_stored_first,

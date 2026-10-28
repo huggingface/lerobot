@@ -110,13 +110,13 @@ def load(policy_cls, path, config, monkeypatch, regular=False, **kwargs):
     built_on_meta = []
     load_into_meta = openpi_checkpoint._load_state_dict_into_meta_model
 
-    def check_meta(model, state_dict, device):
+    def check_meta(model, named_tensors, device):
         if all(param.is_meta for param in model.parameters()):
             built_on_meta.append(model)
         # Each tensor goes to the policy's device as it is read, so the whole checkpoint is never on the CPU.
         assert device == config.device
-        assert not isinstance(state_dict, (list, tuple, dict))
-        load_into_meta(model, state_dict, device)
+        assert not isinstance(named_tensors, (list, tuple, dict))
+        load_into_meta(model, named_tensors, device)
 
     with monkeypatch.context() as patch:
         patch.setattr(openpi_checkpoint, "_load_state_dict_into_meta_model", check_meta)

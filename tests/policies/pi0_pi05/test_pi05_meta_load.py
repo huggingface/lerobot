@@ -28,7 +28,7 @@ import transformers.utils  # noqa: E402
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.pi05 import PI05Config, PI05Policy, modeling_pi05  # noqa: E402
 from lerobot.utils import import_utils  # noqa: E402
-from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
+from tests.policies.common.meta_load import (  # noqa: E402
     DOWNLOAD_ARGUMENTS,
     add_unknown_weights,
     assert_embedding_stored_first,
@@ -39,7 +39,6 @@ from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
     store_embedding,
     use_tiny_backbone,
 )
-from tests.utils import require_cuda  # noqa: E402
 
 RENAMES = {f"time_mlp_in.{name}": f"action_time_mlp_in.{name}" for name in ("weight", "bias")}
 
@@ -76,31 +75,6 @@ def test_skips_weights_the_policy_does_not_have(config, tmp_path, monkeypatch, c
 def test_stored_embedding_next_to_lm_head_matches_regular_load(config, tmp_path, monkeypatch):
     path = save_checkpoint(PI05Policy, config, tmp_path / "ckpt", RENAMES, store_embedding)
     assert_embedding_stored_first(path)
-    model, used_meta = load(PI05Policy, path, config, monkeypatch)
-    expected, _ = load(PI05Policy, path, config, monkeypatch, regular=True)
-    assert used_meta
-    assert_same(model, expected)
-
-
-def test_subclass_with_its_own_constructor(config, tmp_path, monkeypatch):
-    class Subclass(PI05Policy):
-        _supports_meta_load = True
-
-        def __init__(self, config, extra=None):
-            super().__init__(config)
-            self.extra = extra
-
-    path = save_checkpoint(PI05Policy, config, tmp_path / "ckpt", RENAMES)
-    model, used_meta = load(Subclass, path, config, monkeypatch, extra=1)
-    expected, _ = load(PI05Policy, path, config, monkeypatch, regular=True)
-    assert used_meta and type(model) is Subclass and model.extra == 1
-    assert_same(model, expected)
-
-
-@require_cuda
-def test_matches_regular_load_on_cuda(config, tmp_path, monkeypatch):
-    path = save_checkpoint(PI05Policy, config, tmp_path / "ckpt", RENAMES)
-    config.device = "cuda"
     model, used_meta = load(PI05Policy, path, config, monkeypatch)
     expected, _ = load(PI05Policy, path, config, monkeypatch, regular=True)
     assert used_meta

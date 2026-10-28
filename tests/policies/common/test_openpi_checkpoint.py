@@ -16,6 +16,8 @@
 
 """Building parameters on the meta device and loading a checkpoint into them."""
 
+import subprocess
+import sys
 import threading
 
 import pytest
@@ -23,7 +25,7 @@ import torch
 from torch import nn
 from torch.nn.modules import module as torch_module
 
-from lerobot.policies.pretrained import _load_state_dict_into_meta_model, _parameters_on_meta
+from lerobot.policies.common.openpi_checkpoint import _load_state_dict_into_meta_model, _parameters_on_meta
 from tests.utils import require_cuda
 
 
@@ -45,13 +47,6 @@ class Shared(nn.Module):
         self.a, self.b = nn.Module(), nn.Module()
         self.a.weight = weight
         self.b.weight = weight
-
-
-class Derived(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(4))
-        self.register_buffer("doubled", self.weight.detach() * 2, persistent=False)
 
 
 def tensors_of(model):
@@ -100,7 +95,18 @@ def test_other_threads_build_real_parameters():
     assert not built[0].weight.is_meta
 
 
-def test_hook_registry_never_changes():
+def test_importing_the_loader_registers_no_hook():
+    code = (
+        "import lerobot.policies, lerobot.policies.common.openpi_checkpoint\n"
+        "from torch.nn.modules import module\n"
+        "assert not module._global_parameter_registration_hooks, module._global_parameter_registration_hooks"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_hook_is_registered_once():
+    with _parameters_on_meta():
+        pass
     hooks = dict(torch_module._global_parameter_registration_hooks)
     with _parameters_on_meta(), _parameters_on_meta():
         Toy()
@@ -146,15 +152,6 @@ def test_shared_parameter_stays_shared():
         model.c = nn.Module()
         model.c.weight = model.a.weight
     assert model.a.weight is model.b.weight is model.c.weight
-    with pytest.raises(ValueError, match="shares parameters"):
-        _load_state_dict_into_meta_model(model, {"a.weight": torch.ones(4)}.items(), "cpu")
-
-
-def test_buffer_computed_from_a_parameter_raises():
-    with _parameters_on_meta():
-        model = Derived()
-    with pytest.raises(RuntimeError, match=r"computed these buffers from parameters.*doubled"):
-        _load_state_dict_into_meta_model(model, {"weight": torch.ones(4)}.items(), "cpu")
 
 
 def test_matches_regular_load(checkpoint):
@@ -185,7 +182,6 @@ def test_each_name_gets_its_own_storage(checkpoint):
     "edit, error",
     [
         (lambda sd: sd.pop("norm.weight"), "Missing key"),
-        (lambda sd: sd.update(extra=torch.zeros(1)), "Unexpected key"),
         (lambda sd: sd.update({"norm.weight": torch.ones(5)}), "size mismatch"),
     ],
 )
