@@ -49,6 +49,8 @@ from lerobot.utils.constants import (
 from lerobot.utils.import_utils import _datasets_available
 
 if TYPE_CHECKING or _datasets_available:
+    import datasets
+
     from lerobot.scripts.lerobot_train import make_dataloaders
 
 
@@ -199,13 +201,14 @@ def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
     class Dataset(torch.utils.data.Dataset):
         episodes = [0]
         absolute_to_relative_idx = None
+        supports_raw_reads = True
         meta = SimpleNamespace(
             episodes={"dataset_from_index": [0], "dataset_to_index": [frames]},
             has_language_columns=False,
         )
-        hf_dataset = SimpleNamespace(
-            data=SimpleNamespace(column=lambda name: SimpleNamespace(to_numpy=lambda: np.zeros(frames)))
-        )
+
+        def select_columns(self, column_names: str | list[str]) -> datasets.Dataset:
+            return datasets.Dataset.from_dict({"task_index": np.zeros(frames)}).select_columns(column_names)
 
         def __len__(self):
             return frames
