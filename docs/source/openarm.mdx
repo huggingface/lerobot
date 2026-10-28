@@ -258,12 +258,10 @@ lerobot-record \
 
 A [Pollen Gripette](https://github.com/pollen-robotics/grabette/tree/develop/packages/gripette) replaces the CAN gripper. The arm stays the 7-joint OpenArm follower. The Gripette's two servos and its camera are reached over gRPC on the gripper's own computer.
 
-The `gripette` package is not published on PyPI. Install the LeRobot extra, then the client. Its generated code needs `protobuf` 6.33.5 or newer:
+The `gripette` extra installs the Gripette client from GitHub. It needs `protobuf` 6.33.5 or newer, so it can't be combined with the `reachy2` or `all` extras:
 
 ```bash
 pip install -e ".[gripette]"
-pip install "protobuf>=6.33.5,<8.0.0"
-pip install "gripette @ git+https://github.com/pollen-robotics/grabette.git@a209c431ef8f9aa1be09e9fc1bfaf16e3baafca9#subdirectory=packages/gripette"
 ```
 
 ```bash
