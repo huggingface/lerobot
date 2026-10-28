@@ -56,6 +56,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
 )
 
+from ..common.export_utils import is_non_strict_exporting
 from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_with_pad_torch
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
@@ -613,8 +614,13 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         """
         Optimized autoregressive decoding for FAST tokens using KV Caching.
 
-        Greedy decoding stops once every sequence emits the end-of-action marker. The
-        returned tensor keeps its fixed shape, with positions not generated after the
+        Greedy decoding stops once every sequence emits the end-of-action marker. Under
+        non-strict torch.export, the only export mode supported, it runs to
+        ``max_decoding_steps``, because torch.export cannot trace a Python ``if`` on a tensor
+        value; ``detokenize_actions`` ignores the extra tokens. The exported loop is unrolled into
+        one decoder pass per step, so program size grows linearly with ``max_decoding_steps`` and
+        export time grows faster than that.
+        The returned tensor keeps its fixed shape, with positions not generated after the
         batch-wide stop left zero-filled. Stochastic decoding always runs to
         ``max_decoding_steps`` so early stopping does not change the RNG state used by
         subsequent calls.
@@ -631,7 +637,9 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # every sequence has emitted it. Keep stochastic decoding unchanged because
         # skipping multinomial calls would shift the RNG state for subsequent calls.
         end_of_action_token_id = tokenizer.convert_tokens_to_ids("|")
-        finished = torch.zeros(bsize, dtype=torch.bool, device=device) if temperature == 0 else None
+        # No finished flags, so no early stop, when sampling or while non-strict export traces the loop.
+        early_stop = temperature == 0 and not is_non_strict_exporting()
+        finished = torch.zeros(bsize, dtype=torch.bool, device=device) if early_stop else None
 
         # --- 1. PREFILL PHASE ---
         # Process Images + Text Prompt + BOS token once to populate the KV cache.
