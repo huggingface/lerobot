@@ -29,13 +29,12 @@ import statistics
 import sys
 import threading
 import time
-from typing import IO
+from typing import IO, TYPE_CHECKING
 
-import torch
+if TYPE_CHECKING:
+    from lerobot.inference import InferenceEngine
 
-from lerobot.inference import InferenceEngine
-
-from .robot_wrapper import ThreadSafeRobot
+    from .robot_wrapper import ThreadSafeRobot
 
 REFRESH_S = 0.25
 # Inference times older than this are not shown, so a stalled or finished policy does not look healthy.
@@ -72,7 +71,7 @@ class StatusLine:
         self._robot = robot
         self._engine = engine
         self._tick_hz = tick_hz
-        self._device = torch.device(device) if device is not None else None
+        self._device = device
         self._stream = stream or sys.stderr
         self._enabled = self._stream.isatty()
         # Reentrant: a signal handler that logs, such as Ctrl-C's, can interrupt a write on the same thread.
@@ -143,7 +142,11 @@ class StatusLine:
         rss = _process_rss_bytes()
         if rss:
             parts.append(f"process {rss / 2**30:4.2f} GiB")
-        if self._device is not None and self._device.type == "cuda" and torch.cuda.is_initialized():
-            free, total = torch.cuda.mem_get_info(self._device)
-            parts.append(f"GPU {(total - free) / 2**30:4.2f}/{total / 2**30:4.1f} GiB")
+        if self._device is not None and self._device.startswith("cuda"):
+            # Imported here, so that importing the status line does not load torch.
+            import torch
+
+            if torch.cuda.is_initialized():
+                free, total = torch.cuda.mem_get_info(self._device)
+                parts.append(f"GPU {(total - free) / 2**30:4.2f}/{total / 2**30:4.1f} GiB")
         return " · ".join(parts)
