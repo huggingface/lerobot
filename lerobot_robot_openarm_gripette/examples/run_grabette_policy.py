@@ -35,11 +35,11 @@ from gripette.grasp_projection import GraspProjection
 from huggingface_hub import snapshot_download
 from openarm_gripette_model import OPENARM_RIGHT_DIR
 
+from lerobot.cameras.gripette import GripetteCameraConfig
 from lerobot.configs import PreTrainedConfig
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.policies.utils import prepare_observation_for_inference
-from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
 from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot_robot_openarm_gripette import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
@@ -167,11 +167,18 @@ def main():
     robot = OpenArmGripetteFollower(
         OpenArmGripetteFollowerConfig(
             id=args.id,
-            arm_config=OpenArmFollowerConfigBase(port=args.port, side="right", max_relative_target=8.0),
+            port=args.port,
+            side="right",
+            max_relative_target=8.0,
+            cameras={
+                CAMERA: GripetteCameraConfig(
+                    addr=args.gripette,
+                    height=image_feature.shape[1],
+                    width=image_feature.shape[2],
+                    fps=10,
+                )
+            },
             gripette_addr=args.gripette,
-            gripper_camera_name=CAMERA,
-            gripper_camera_height=image_feature.shape[1],
-            gripper_camera_width=image_feature.shape[2],
         )
     )
     logger = PredictionLogger(args.log_dir)
@@ -181,7 +188,7 @@ def main():
         robot.connect()
         connected = True
         q_cmd = prepare_manual_start(robot, signs)
-        held = robot.arm.get_observation()
+        held = robot.get_observation()
         q_cmd = signs * np.array([held[f"{joint}.pos"] for joint in ROBOT_JOINTS])
         print("Held joints (URDF deg):", np.round(q_cmd, 1))
         print("Held oak_l position (m):", np.round(kin.forward_kinematics(q_cmd)[:3, 3], 3))

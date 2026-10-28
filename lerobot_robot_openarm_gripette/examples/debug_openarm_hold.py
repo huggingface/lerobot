@@ -23,11 +23,8 @@ import time
 import numpy as np
 from motorbridge import Controller
 
-from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
-from lerobot_robot_openarm_gripette import (
-    OpenArmGripetteFollower,
-    OpenArmGripetteFollowerConfig,
-)
+from lerobot.robots.openarm_follower import OpenArmFollower
+from lerobot_robot_openarm_gripette import OpenArmGripetteFollowerConfig
 from lerobot_robot_openarm_gripette.manual_start import prepare_manual_start
 
 
@@ -42,18 +39,10 @@ def main() -> None:
     if args.frequency <= 0:
         parser.error("--frequency must be positive")
 
-    robot = OpenArmGripetteFollower(
-        OpenArmGripetteFollowerConfig(
-            id=args.id,
-            arm_config=OpenArmFollowerConfigBase(
-                port=args.port,
-                side="right",
-                use_can_fd=args.can_fd,
-            ),
-            use_gripper_camera=False,
-        )
+    # Arm only: the Gripette is never connected, so drive the parent OpenArm class directly.
+    arm = OpenArmFollower(
+        OpenArmGripetteFollowerConfig(id=args.id, port=args.port, side="right", use_can_fd=args.can_fd)
     )
-    arm = robot.arm
     stop = threading.Event()
 
     try:
@@ -67,7 +56,7 @@ def main() -> None:
                 motor.motor_type_str.lower().removeprefix("dm"),
             )
         target = prepare_manual_start(
-            robot,
+            arm,
             np.ones(7),
             active_zero_torque=args.active_zero_torque,
             zero_torque_frequency_hz=args.frequency,
@@ -87,13 +76,8 @@ def main() -> None:
             arm.send_action(hold_action)
             if tick >= next_report:
                 current_observation = arm.get_observation()
-                current = np.array(
-                    [current_observation[f"joint_{index}.pos"] for index in range(1, 8)]
-                )
-                print(
-                    f"max error={np.max(np.abs(current - target)):.2f} deg "
-                    f"current={np.round(current, 1)}"
-                )
+                current = np.array([current_observation[f"joint_{index}.pos"] for index in range(1, 8)])
+                print(f"max error={np.max(np.abs(current - target)):.2f} deg current={np.round(current, 1)}")
                 next_report = tick + 1.0
             time.sleep(max(0.0, period - (time.monotonic() - tick)))
     finally:

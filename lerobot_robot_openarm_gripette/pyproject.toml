@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lerobot_robot_openarm_gripette"
 version = "0.1.0"
-description = "LeRobot plugin: OpenArm 7-joint follower with a networked Pollen Gripette gripper."
+description = "Grabette policy runners for LeRobot's built-in OpenArm Gripette follower."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
