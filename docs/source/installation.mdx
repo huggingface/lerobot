@@ -222,12 +222,12 @@ On Linux, the install path determines which CUDA wheel you get. macOS and Window
 
 `torch` and `torchvision` come from PyPI, whose Linux wheel bundles the **CUDA 13** runtime (driver floor **580.65**). Architecture coverage differs by host architecture, and these wheels ship no PTX, so a GPU with no compatible cubin cannot run at all:
 
-| host    | architectures in the default PyPI wheel                                             |
-| ------- | ----------------------------------------------------------------------------------- |
-| x86_64  | `sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`, `sm_100`, `sm_103`, `sm_120`, `sm_121` |
-| aarch64 | `sm_80`, `sm_90`, `sm_100`, `sm_103`, `sm_110`, `sm_120`, `sm_121`                  |
+| host    | architectures in the torch 2.15 PyPI wheel             |
+| ------- | ------------------------------------------------------ |
+| x86_64  | `sm_75`, `sm_80`, `sm_86`, `sm_90`, `sm_100`, `sm_120` |
+| aarch64 | `sm_80`, `sm_90`, `sm_100`, `sm_110`, `sm_120`         |
 
-On x86_64 that covers Turing through Blackwell and needs no action. On aarch64 there is no `sm_75`, `sm_86`, `sm_87` or `sm_89`, but a cubin runs on an equal-or-higher minor within the same major, so the `sm_80` cubin covers an A10 (`sm_86`), an L4 (`sm_89`) and a Jetson Orin (`sm_87`). One case is not covered: a T4 (`sm_75`) has no `sm_7x` cubin in any aarch64 wheel, on PyPI or on either CUDA 12 index, so it needs a torch built for the device.
+A cubin also runs on a GPU with the same major version and an equal-or-higher minor version. So on x86_64 the list covers Turing through Blackwell and needs no action: for example, an L4 (`sm_89`) uses the `sm_86` cubin. On aarch64 there is no `sm_75` or `sm_86`, but the `sm_80` cubin covers an A10 (`sm_86`), an L4 (`sm_89`) and a Jetson Orin (`sm_87`). One case is not covered: a T4 (`sm_75`) has no `sm_7x` cubin in any aarch64 wheel, on PyPI or on either CUDA 12 index, so it needs a torch built for the device.
 
 On a driver older than 580, or on a GPU older than Turing (`sm_50` to `sm_70`, which no default wheel carries), pin a CUDA 12 index in your own checkout. Both CUDA 12 variants have driver floor **525.60.13** and differ in which GPUs they carry:
 
