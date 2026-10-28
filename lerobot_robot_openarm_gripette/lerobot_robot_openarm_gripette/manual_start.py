@@ -46,6 +46,6 @@ def prepare_manual_start(
 
     robot.arm.send_action(hold_action)
     robot.arm.bus.enable_torque()
-    sleep_fn(0.05)
-    robot.arm.bus.enable_torque()
+    robot.arm.bus.configure_motors()
+    robot.arm.send_action(hold_action)
     return signs * measured
