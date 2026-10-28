@@ -25,41 +25,21 @@ Wan backbones come from Diffusers and the UMT5 text encoder from Transformers.
 
 ## Results
 
-Results below are reported in the [paper](https://arxiv.org/html/2610.10528v1),
-using its benchmark-specific checkpoints and evaluation protocols.
+Reported `lerobot-eval` results for the published LeRobot-native
+[IDM](https://huggingface.co/Efficient-Large-Model/Long-WAM-LIBERO-IDM-LeRobot/tree/92f09103e0393b09b06a439895c800a0a198ba57)
+and [COD](https://huggingface.co/Efficient-Large-Model/Long-WAM-LIBERO-COD-LeRobot/tree/8d5ff0fc4aabf926179ddecf1c57469867047272)
+checkpoints:
 
-### LIBERO
+| Suite          | IDM success rate | COD success rate | Episodes per model |
+| -------------- | ---------------: | ---------------: | -----------------: |
+| libero_spatial |            99.4% |            98.6% |                500 |
+| libero_object  |            99.8% |            99.6% |                500 |
+| libero_goal    |            97.8% |            98.2% |                500 |
+| libero_10      |            99.0% |            97.4% |                500 |
+| **Average**    |       **99.00%** |       **98.45%** |           **2000** |
 
-Success rate (%) as reported in Table 1:
-
-| Model          |  Spatial |    Object |     Goal |     Long |     Avg. |
-| -------------- | -------: | --------: | -------: | -------: | -------: |
-| Fast-WAM       |     98.2 |     100.0 |     97.0 |     95.2 |     97.6 |
-| Long-WAM (COD) |     98.6 |      99.8 |     96.8 |     95.8 |     97.8 |
-| Long-WAM (IDM) | **99.5** | **100.0** | **98.0** | **99.5** | **99.5** |
-
-In the context-scaling study, adding 2.4 s of history raises LIBERO-Long success
-from 94.5% to 99.5% with robot-domain AR pretraining (Figure 6).
-
-### Dynamic and long-horizon tasks
-
-| Benchmark     | Setting                          | Reported result                   |
-| ------------- | -------------------------------- | --------------------------------- |
-| RoboTwin 2.0  | IDM, Clean / Randomized          | 94.7% / 94.2% SR                  |
-| DOMINO        | Dynamic-data fine-tuning         | 34.9% SR, 45.1 manipulation score |
-| RoboCasa GR-1 | 19.2 s history                   | 78.7% SR                          |
-| RoboCasa365   | Long-WAM + GPT-6 Astra, 50 tasks | 54.4% SR                          |
-
-### Real-world deployment and efficiency
-
-- **Unitree G1:** 95% success on dynamic cup stacking (19/20 trials).
-- **YAM:** 81.7% mean success on three long-horizon manipulation tasks.
-- **Edge inference:** 107.4 ms on RTX 5090, 328.2 ms on DGX Spark, and
-  378.7 ms on Jetson AGX Thor per chunk, including future prediction and VAE computation.
-
-The edge timings use the paper's optimized V4/A4 runtime, available in the
-[upstream infrastructure](https://github.com/NVlabs/LongLive/tree/main/Long-WAM/infra).
-They are not timings of this LeRobot implementation.
+See [Evaluation](#evaluation) for example commands and episode limits.
+The commands were tested on NVIDIA GB200 with BF16 and synchronous inference.
 
 ## Install
 
