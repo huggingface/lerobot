@@ -8,6 +8,7 @@ LeRobot offers multiple options for video capture:
 | `ZMQCamera`       | Network-connected cameras           |
 | `RealSenseCamera` | Intel RealSense (with depth)        |
 | `Reachy2Camera`   | Reachy 2 robot cameras              |
+| `GripetteCamera`  | Pollen Gripette gripper camera      |
 
 > [!TIP]
 > For `OpenCVCamera` compatibility details, see the [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
@@ -43,7 +44,11 @@ Camera #0:
 > [!WARNING]
 > When using Intel RealSense cameras in `macOS`, you could get this [error](https://github.com/IntelRealSense/librealsense/issues/12307): `Error finding RealSense cameras: failed to set power state`, this can be solved by running the same command with `sudo` permissions. Note that using RealSense cameras in `macOS` is unstable.
 
-`ZMQCamera` and `Reachy2Camera` do not support auto-discovery. They must be configured manually by providing their network address and port or robot SDK settings.
+`ZMQCamera`, `Reachy2Camera`, and `GripetteCamera` do not support auto-discovery. Configure them with a network address (and, for Reachy 2, the camera name). A Gripette camera reads the gripper's gRPC JPEG stream:
+
+```bash
+--robot.cameras="{ gripette: {type: gripette, addr: 172.18.7.107:50051, width: 648, height: 486, fps: 10} }"
+```
 
 ## Camera placement and lighting
 

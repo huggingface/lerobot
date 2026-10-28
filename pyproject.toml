@@ -190,6 +190,9 @@ robstride = ["lerobot[can-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]", "lerobot[motorbridge-dep]"]
+# OpenArm + Pollen Gripette gripper. The `gripette` package is not on PyPI; install it from
+# git (see docs/source/openarm.mdx). This extra provides the arm backend and the gRPC runtime.
+gripette = ["lerobot[openarms]", "lerobot[grpcio-dep]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]

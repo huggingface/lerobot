@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib.machinery
 import sys
 import threading
 import types
@@ -51,9 +52,16 @@ class FakeGraspProjection:
         return closure * 2.0, strategy * 3.0
 
 
+def _fake_module(name: str) -> types.ModuleType:
+    module = types.ModuleType(name)
+    # find_spec() raises if a sys.modules entry has no spec. LeRobot probes `gripette` at import.
+    module.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
+    return module
+
+
 # The real gripette package is a git-only dependency; tests never talk to a Gripette server.
-sys.modules.setdefault("gripette", types.ModuleType("gripette"))
-sys.modules.setdefault("gripette.client", types.ModuleType("gripette.client"))
-sys.modules.setdefault("gripette.grasp_projection", types.ModuleType("gripette.grasp_projection"))
+sys.modules.setdefault("gripette", _fake_module("gripette"))
+sys.modules.setdefault("gripette.client", _fake_module("gripette.client"))
+sys.modules.setdefault("gripette.grasp_projection", _fake_module("gripette.grasp_projection"))
 sys.modules["gripette.client"].GripperClient = FakeGripperClient  # type: ignore[attr-defined]
 sys.modules["gripette.grasp_projection"].GraspProjection = FakeGraspProjection  # type: ignore[attr-defined]

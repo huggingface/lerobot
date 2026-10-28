@@ -24,7 +24,7 @@ import time
 
 import numpy as np
 
-from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
+from lerobot.cameras.gripette import GripetteCameraConfig
 from lerobot_robot_openarm_gripette import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
 
 JOINTS = [f"joint_{i}.pos" for i in range(1, 8)]
@@ -49,7 +49,10 @@ def main():
     robot = OpenArmGripetteFollower(
         OpenArmGripetteFollowerConfig(
             id=args.id,
-            arm_config=OpenArmFollowerConfigBase(port=args.port, side=args.side, max_relative_target=2.0),
+            port=args.port,
+            side=args.side,
+            max_relative_target=2.0,
+            cameras={"gripette": GripetteCameraConfig(addr=args.gripette, width=648, height=486, fps=10)},
             gripette_addr=args.gripette,
         )
     )

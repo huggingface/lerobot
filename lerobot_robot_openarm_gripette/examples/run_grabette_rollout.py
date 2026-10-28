@@ -25,6 +25,7 @@ from gripette.grasp_projection import GraspProjection
 from huggingface_hub import snapshot_download
 from openarm_gripette_model import OPENARM_RIGHT_DIR
 
+from lerobot.cameras.gripette import GripetteCameraConfig
 from lerobot.configs import DatasetRecordConfig, PreTrainedConfig
 from lerobot.inference import SyncInferenceConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
@@ -36,7 +37,6 @@ from lerobot.processor import (
     transition_to_observation,
     transition_to_robot_action,
 )
-from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
 from lerobot.rollout import (
     BaseStrategyConfig,
     EpisodicStrategyConfig,
@@ -197,11 +197,18 @@ def main() -> None:
 
     robot_config = OpenArmGripetteFollowerConfig(
         id=args.id,
-        arm_config=OpenArmFollowerConfigBase(port=args.port, side="right", max_relative_target=8.0),
+        port=args.port,
+        side="right",
+        max_relative_target=8.0,
+        cameras={
+            camera_name: GripetteCameraConfig(
+                addr=args.gripette,
+                height=image_feature.shape[1],
+                width=image_feature.shape[2],
+                fps=10,
+            )
+        },
         gripette_addr=args.gripette,
-        gripper_camera_name=camera_name,
-        gripper_camera_height=image_feature.shape[1],
-        gripper_camera_width=image_feature.shape[2],
     )
     dataset_config = (
         DatasetRecordConfig(
@@ -246,7 +253,7 @@ def main() -> None:
     robot = cast(OpenArmGripetteFollower, context.hardware.robot_wrapper.inner)
     signs = np.asarray(args.joint_signs)
     q_cmd = prepare_manual_start(robot, signs)
-    held = robot.arm.get_observation()
+    held = robot.get_observation()
     context.hardware.initial_position = {
         f"{joint}.pos": float(held[f"{joint}.pos"]) for joint in ROBOT_JOINTS
     }
