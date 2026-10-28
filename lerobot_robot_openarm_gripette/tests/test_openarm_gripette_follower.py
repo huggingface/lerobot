@@ -70,6 +70,7 @@ def test_prepare_manual_start_disables_torque_captures_pose_and_holds():
     events = []
     robot.arm.bus.disable_torque.side_effect = lambda: events.append("disable")
     robot.arm.bus.enable_torque.side_effect = lambda: events.append("enable")
+    robot.arm.bus.configure_motors.side_effect = lambda: events.append("configure")
     robot.send_action.side_effect = lambda _: events.append("open_gripper")
     robot.arm.send_action.side_effect = lambda _: events.append("hold")
     robot.arm.get_observation.return_value = {f"joint_{i}.pos": float(i) for i in range(1, 8)}
@@ -90,12 +91,13 @@ def test_prepare_manual_start_disables_torque_captures_pose_and_holds():
         "prompt",
         "hold",
         "enable",
-        "sleep",
-        "enable",
+        "configure",
+        "hold",
     ]
     assert result.tolist() == [1, -2, 3, -4, 5, -6, 7]
     robot.send_action.assert_called_once_with({"proximal.pos": 1.0, "distal.pos": 1.0})
-    robot.arm.send_action.assert_called_once_with({f"joint_{i}.pos": float(i) for i in range(1, 8)})
+    assert robot.arm.send_action.call_count == 2
+    robot.arm.send_action.assert_called_with({f"joint_{i}.pos": float(i) for i in range(1, 8)})
 
 
 def test_prediction_logger_writes_and_flushes_jsonl(tmp_path):
