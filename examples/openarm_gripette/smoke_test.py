@@ -16,7 +16,7 @@
 
 """Hardware smoke test: wiggle each OpenArm joint by a few degrees, then close/open the Gripette.
 
-python examples/smoke_test.py --port can0 --side right --gripette 172.18.7.107:50051
+python examples/openarm_gripette/smoke_test.py --port can0 --side right --gripette 172.18.7.107:50051
 """
 
 import argparse
@@ -25,7 +25,7 @@ import time
 import numpy as np
 
 from lerobot.cameras.gripette import GripetteCameraConfig
-from lerobot_robot_openarm_gripette import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
+from lerobot.robots.openarm_gripette_follower import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
 
 JOINTS = [f"joint_{i}.pos" for i in range(1, 8)]
 
