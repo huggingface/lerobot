@@ -138,6 +138,7 @@ jobs:
           timeout --signal=TERM --kill-after=5s 525s bash -euo pipefail <<'PROFILE' || status=$?
           test -d /mnt/cache
           mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$HF_LEROBOT_HOME" "$TORCH_HOME" "$UV_CACHE_DIR"
+          if [[ "$POLICY" == lingbot_va ]]; then export PROFILE_CPU_THREADS=16; fi
           extras=(--extra training)
           if [[ -n "$EXTRA" ]]; then extras+=(--extra "$EXTRA"); fi
           uv sync --locked "${extras[@]}"

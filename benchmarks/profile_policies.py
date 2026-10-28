@@ -270,6 +270,9 @@ def main(cfg: ProfileConfig) -> None:
         raise ValueError(
             "Profiling uses a single device and a fixed, non-streaming batch without PEFT/resume"
         )
+    cpu_threads = os.environ.get("PROFILE_CPU_THREADS")
+    if cpu_threads is not None:
+        torch.set_num_threads(int(cpu_threads))
     cfg.output_dir.mkdir(parents=True)
     device = torch.device(cfg.policy.device)
     row: dict[str, Any] = {
@@ -304,6 +307,8 @@ def main(cfg: ProfileConfig) -> None:
         "checkpoint_revision": cfg.policy.pretrained_revision,
         "run_url": os.environ.get("PROFILE_RUN_URL"),
     }
+    if cpu_threads is not None:
+        row["cpu_threads"] = torch.get_num_threads()
     if cfg.policy.type == "lingbot_va":
         row["inference_context"] = "cached_episode_prompt"
     try:
