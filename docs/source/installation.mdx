@@ -239,7 +239,7 @@ On a driver older than 580, or on a GPU older than Turing (`sm_50` to `sm_70`, w
 Prefer `cu126`. It publishes `torch` up to 2.14.1 (torch 2.15 has no CUDA 12 build) and a `torchcodec` that needs nothing beyond what its own `torch` supplies, so all three packages can come from one index. Choose `cu129` only if you need a GPU that `cu129` covers and `cu126` does not. It stops at torch 2.13, one release lower than `cu126`, so see the note below before you do.
 
 ```toml
-# pyproject.toml, in your own checkout
+# pyproject.toml, in your own checkout: replace the existing [tool.uv.sources] table
 [[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
@@ -287,13 +287,13 @@ The second command installs the remaining dependencies normally. Keeping the exp
 
 For a published LeRobot release, choose CUDA package versions within that release's bounds; the source-checkout pins above are not a promise for every release.
 
-**Using `uv` to install from PyPI**: one-liner via `--torch-backend` (uv ≥ 0.7):
+**Using `uv` to install from PyPI**: one-liner via `--torch-backend` (uv 0.6.9 or newer):
 
 ```bash
 uv pip install --torch-backend auto lerobot
 ```
 
-Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, `cu132`, plus various `rocm*` and `xpu`. Swap as needed for your driver. Each value has its own minimum uv: `cu128` from 0.7.0, `cu129` from ~0.9.0, `cu130` from 0.10.0, `rocm*`/`xpu` from 0.7.20, and `cu132` only from 0.11.29. The flag itself does not exist before ~0.6.9.
+Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, `cu132`, plus various `rocm*` and `xpu`. Swap as needed for your driver. Newer values need a newer uv: `cu132`, the CUDA build of torch 2.15, needs uv 0.11.29 or newer.
 
 </hfoption>
 </hfoptions>

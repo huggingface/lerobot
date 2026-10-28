@@ -19,8 +19,9 @@ From the LeRobot checkout, install the training, policy, PEFT and EMA dependenci
 pip install -e ".[training,flux3,peft,diffusion]"
 ```
 
-The Video VAE also requires a torch/CUDA-compatible **NATTEN** wheel from https://whl.natten.org.
-For torch 2.11 with CUDA 12.8:
+The Video VAE also requires a **NATTEN** wheel built for your exact torch and CUDA versions, from https://whl.natten.org.
+Prebuilt wheels stop at torch 2.13, while a default install now gets torch 2.15. Building NATTEN yourself does not help there: its build uses C++17, and the headers of torch 2.14 and newer require C++20. So run the VAE in an environment with torch 2.13 or older.
+For example, for torch 2.11 with CUDA 12.8:
 
 ```bash
 uv pip install natten==0.21.6+torch2110cu128 --find-links https://whl.natten.org

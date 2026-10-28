@@ -31,11 +31,11 @@ A lightweight image based on `python:3.12-slim`. Includes all Python dependencie
 
 ### `Dockerfile.internal` (GPU)
 
-A CUDA-enabled image based on `nvidia/cuda`. This is the image for training — mostly used for internal interactions with the GPU cluster.
+A CUDA-enabled image based on `nvidia/cuda`. This is the image for training — mostly used for internal interactions with the GPU cluster. It uses CUDA 13 builds of PyTorch, so the host needs an NVIDIA driver of 580.65 or newer.
 
 ### `Dockerfile.rocm` (AMD GPU)
 
-An image for AMD Instinct accelerators, based on a ROCm PyTorch image (`rocm/primus` by default, override with `--build-arg BASE_IMAGE=...`). The base image owns the PyTorch install: LeRobot pins `torch<2.12`, `torchvision<0.27` and `numpy<2.3`, all below what current ROCm images ship, and `[tool.uv.sources]` resolves torch from the CUDA `cu128` index — installing normally would swap in CUDA wheels and leave the GPUs unusable. Those packages are therefore pinned with `uv pip install --override`, the same approach `Dockerfile.benchmark.robomme` uses for its own irreconcilable pins, and the rest of the dependency tree resolves from `pyproject.toml` as usual.
+An image for AMD Instinct accelerators, based on a ROCm PyTorch image (`rocm/primus` by default, override with `--build-arg BASE_IMAGE=...`). The base image owns the PyTorch install: LeRobot's `torch`, `torchvision` and `numpy` bounds need not match what a ROCm image ships, and a normal install takes torch from PyPI, whose Linux wheels are CUDA builds, so installing normally would swap in CUDA wheels and leave the GPUs unusable. Those packages are therefore pinned with `uv pip install --override`, the same approach `Dockerfile.benchmark.robomme` uses for its own irreconcilable pins, and the rest of the dependency tree resolves from `pyproject.toml` as usual.
 
 The default base image is compiled for `gfx942`/`gfx950` (MI300X / MI308X / MI325X / MI350X). Other architectures need a base image built for them.
 

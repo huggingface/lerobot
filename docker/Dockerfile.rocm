@@ -13,10 +13,10 @@
 # limitations under the License.
 
 # GPU image for AMD Instinct accelerators. Unlike Dockerfile.internal, the base image
-# already ships a ROCm build of PyTorch, and that build is authoritative: lerobot pins
-# torch<2.12 / torchvision<0.27 / numpy<2.3, all below what current ROCm images carry,
-# and [tool.uv.sources] resolves torch from the CUDA cu128 index. Installing normally
-# would swap in CUDA wheels and leave the GPUs unusable.
+# already ships a ROCm build of PyTorch, and that build is authoritative: lerobot's
+# torch / torchvision / numpy bounds need not match what a ROCm image carries, and a
+# normal install takes torch from PyPI, whose Linux wheels are CUDA builds. Installing
+# normally would swap in CUDA wheels and leave the GPUs unusable.
 #
 # The fix follows the same pattern as Dockerfile.benchmark.robomme: pin the conflicting
 # packages with `uv pip install --override` so the rest of the tree resolves normally
