@@ -42,6 +42,9 @@ GAP = (0.005, 0.02)
 NEAR = 0.05
 # The spot is on the side the object came from, within this many degrees, as a person would put it.
 SIDE_SPREAD = 40.0
+# Minimum starting gap between the footprints, beyond what already counts as "next to", so that
+# every episode carries the object a visible distance.
+MIN_START_GAP = 0.08
 
 
 @register
@@ -50,9 +53,17 @@ class PlaceNear(Task):
     min_objects = 2
 
     def sample(self, scene: SceneParams, rng: np.random.Generator) -> TaskInstance | None:
-        if len(scene.objects) < 2:
+        pairs = [
+            (obj, target)
+            for obj in scene.objects
+            for target in scene.objects
+            if obj is not target
+            and np.linalg.norm(np.subtract(obj.pos[:2], target.pos[:2])) - footprint(obj) - footprint(target)
+            >= MIN_START_GAP
+        ]
+        if not pairs:
             return None
-        obj, target = (scene.objects[i] for i in rng.choice(len(scene.objects), 2, replace=False))
+        obj, target = pairs[rng.integers(len(pairs))]
         instruction, phrasings = phrase(TEMPLATES, rng, 10, obj=obj.label, target=target.label)
         return TaskInstance(
             task=self.name,
