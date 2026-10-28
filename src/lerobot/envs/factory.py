@@ -19,8 +19,14 @@ from typing import Any
 
 import gymnasium as gym
 
+from lerobot.sim.integrations.envhub import (
+    _call_make_env,
+    _download_hub_file,
+    _import_hub_module,
+    _normalize_hub_result,
+)
+
 from .configs import EnvConfig, HubEnvConfig
-from .utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -67,7 +73,13 @@ def make_hub_envs(
     # _download_hub_file raises unless trust_remote_code is set.
     repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)
     module = _import_hub_module(local_file, repo_id)
-    raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
+    # A plain EnvHub config passes its make_env_kwargs; provider configs (Isaac Lab Arena, Unitree G1)
+    # subclass it and pass themselves, since their options are config fields.
+    options = cfg.make_env_kwargs if isinstance(cfg, HubEnvConfig) else {}
+    provider_cfg = None if type(cfg) is HubEnvConfig else cfg
+    raw_result = _call_make_env(
+        module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=provider_cfg, **options
+    )
     return _normalize_hub_result(raw_result)
 
 
@@ -84,7 +96,7 @@ def make_env(
         cfg (EnvConfig | str): Either an `EnvConfig` object describing the environment, or a Hugging Face
             Hub repository identifier (e.g. `"username/repo"`), whose `env.py` builds the environments.
         n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
-        use_async_envs (bool, optional): Whether to step the worlds in parallel processes. Defaults to
+        use_async_envs (bool, optional): Whether to step environments in parallel processes. Defaults to
             False.
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.

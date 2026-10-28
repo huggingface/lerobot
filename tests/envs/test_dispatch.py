@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass, field
 
 import gymnasium as gym
-import numpy as np
 import pytest
 import torch
 from gymnasium.envs.registration import register, registry as gym_registry
@@ -16,21 +15,7 @@ from lerobot.envs.configs import EnvConfig, LiberoEnv
 from lerobot.envs.factory import make_env, make_env_config, make_env_pre_post_processors
 from lerobot.processor import LiberoProcessorStep
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_PREFIX, OBS_STATE
-
-
-class _DictObservationEnv(gym.Env):
-    """A Gymnasium env with the dict observations LeRobot environments provide."""
-
-    observation_space = gym.spaces.Dict({"agent_pos": gym.spaces.Box(-1, 1, (2,), np.float32)})
-    action_space = gym.spaces.Box(-1, 1, (2,), np.float32)
-
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        return {"agent_pos": np.zeros(2, np.float32)}, {}
-
-    def step(self, action):
-        return {"agent_pos": np.zeros(2, np.float32)}, 0.0, False, False, {}
-
+from tests.fixtures.toy_env import DictObservationEnv
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +127,7 @@ def test_base_create_envs():
     """Base class create_envs() should build a single-task VectorEnv via gym.make()."""
     gym_id = "_dispatch_test/CartPole-v99"
     if gym_id not in gym_registry:
-        register(id=gym_id, entry_point=_DictObservationEnv)
+        register(id=gym_id, entry_point=DictObservationEnv)
 
     @EnvConfig.register_subclass("_dispatch_base_test")
     @dataclass

@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compare seeded native and server transitions in the same simulator image."""
+"""Compare a simulator's seeded transitions run locally and served, inside its image."""
 
 import argparse
+import logging
 import subprocess
 import sys
 import tempfile
@@ -25,27 +26,31 @@ import numpy as np
 import yaml
 
 from lerobot.env_server.client import EnvClient
-from lerobot.env_server.contracts import StepResult
-from lerobot.sims.backend import Backend, BackendConfig
-from lerobot.sims.conventions import resolve
+from lerobot.sim.config import SimConfig
+from lerobot.sim.vector_env import VectorEnv
+from lerobot.utils import init_logging
 
 
 def check(config_path: Path, steps: int = 5):
     config = yaml.safe_load(config_path.read_text())
-    backend = Backend(BackendConfig(**resolve(config["sim"])))
+    env = VectorEnv(SimConfig.resolve(config["sim"]))
     try:
-        descriptor = backend.descriptor()
+        descriptor = env.descriptor
         actions = (
             np.random.default_rng(17)
             .uniform(-0.1, 0.1, (steps, 1, descriptor.action_feature.shape[0]))
             .astype(np.float32)
         )
-        expected = [backend.reset([123])]
-        expected.extend(backend.step(action) for action in actions)
+        env.reset(seed=[123])
+        expected = [env.latest]
+        for action in actions:
+            env.step(action)
+            expected.append(env.latest)
     finally:
-        backend.close()
+        env.close()
     config["zenoh"] = {"listen_endpoints": ["tcp/127.0.0.1:7458"]}
-    client = EnvClient("tcp/127.0.0.1:7458", config.get("deployment", "default"), timeout_s=1)
+    # Probe quickly while the server starts; reset and step keep the default timeout.
+    client = EnvClient("tcp/127.0.0.1:7458", config.get("deployment", "default"), handshake_timeout_s=1)
     with tempfile.TemporaryDirectory() as directory:
         server_config = Path(directory) / "server.yaml"
         server_config.write_text(yaml.safe_dump(config))
@@ -66,23 +71,19 @@ def check(config_path: Path, steps: int = 5):
                         if server.poll() is not None or time.monotonic() >= deadline:
                             log.seek(0)
                             raise RuntimeError("Simulator startup failed:\n" + log.read()) from None
-                client.timeout_s = client.setup_timeout_s = 120
-                actual = [client.open(1, "lockstep", seeds=[123])]
-                actual.extend(
-                    StepResult.from_dict(client.request("step", actions=action)["result"])
-                    for action in actions
-                )
+                actual = [client.open(1, seeds=[123])]
+                actual.extend(client.request("step", actions=action)["result"] for action in actions)
                 for reference, remote in zip(expected, actual, strict=True):
-                    assert reference.task == remote.task
+                    np.testing.assert_equal(remote.task, reference.task)
                     for key in reference.obs:
                         np.testing.assert_allclose(
                             reference.obs[key], remote.obs[key], rtol=0, atol=1e-6, err_msg=key
                         )
-                    for field in ("reward", "terminated", "truncated", "is_success", "step"):
+                    for field in ("reward", "terminated", "truncated", "is_success", "elapsed_steps"):
                         np.testing.assert_array_equal(
                             getattr(reference, field), getattr(remote, field), err_msg=field
                         )
-                print(f"Seeded native/server parity passed: {descriptor.sim_type}, {steps} steps")
+                logging.info("Seeded local/served parity passed: %s, %d steps", descriptor.sim_type, steps)
             finally:
                 client.close()
                 server.terminate()
@@ -98,6 +99,7 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=5)
     args = parser.parse_args()
+    init_logging()
     check(args.config, args.steps)
 
 

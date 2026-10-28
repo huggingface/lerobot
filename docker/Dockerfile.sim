@@ -16,7 +16,7 @@
 # Simulator server images, one per backend, selected with the SIM build argument:
 #   docker build -f docker/Dockerfile.sim --build-arg SIM=libero -t lerobot-sim-libero .
 # Each `<sim>_native` stage pins its simulator in its own venv; the final stage adds the
-# torch-free LeRobot server (`--no-deps` + docker/sims/requirements.txt). BuildKit only builds
+# torch-free LeRobot server (`--no-deps` + docker/sim/requirements.txt). BuildKit only builds
 # the stages the selected SIM needs.
 ARG SIM=libero
 
@@ -33,7 +33,7 @@ WORKDIR /lerobot
 ENV VIRTUAL_ENV=/home/user_lerobot/venv PATH="/home/user_lerobot/venv/bin:${PATH}" \
     MUJOCO_GL=egl PYOPENGL_PLATFORM=egl NVIDIA_DRIVER_CAPABILITIES=all
 RUN uv venv "$VIRTUAL_ENV" --python python3
-COPY --chown=user_lerobot:user_lerobot docker/sims/requirements.txt /tmp/sim-requirements.txt
+COPY --chown=user_lerobot:user_lerobot docker/sim/requirements.txt /tmp/sim-requirements.txt
 RUN uv pip install -r /tmp/sim-requirements.txt
 
 # ---------------------------------------------------------------------------- LIBERO family
@@ -41,6 +41,8 @@ FROM base AS libero_deps
 RUN uv pip install --no-deps "hf-libero==0.1.4" \
     && uv pip install "robosuite==1.4.0" "bddl==1.0.1" "easydict==1.13" \
        "hf-egl-probe==1.0.1" "hydra-core>=1.2,<1.4" "mujoco==3.3.1" scipy einops future cloudpickle matplotlib
+# Assets download at build time (runtime downloads time out in CI). LIBERO calls input() on import when
+# ~/.libero/config.yaml is missing, so the config is written here.
 RUN LIBERO_DIR=$(python -c \
       "import importlib.util, os; s=importlib.util.find_spec('libero'); \
        print(os.path.join(os.path.dirname(s.origin), 'libero'))") && \
@@ -62,12 +64,15 @@ FROM libero_deps AS libero_native
 FROM libero_deps AS robocerebra_native
 
 FROM base AS libero_plus_native
+# unzip for the 6.4 GB assets.zip; Wand (ImageMagick) and fontconfig are LIBERO-plus build-time extras.
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          unzip libexpat1 libfontconfig1-dev libmagickwand-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 USER user_lerobot
+# robosuite 1.4.1 is required: the fork uses `single_arm_env`, removed in 1.5. The rest are the fork's
+# runtime dependencies from its setup.py.
 RUN uv pip install --no-cache \
         "robosuite==1.4.1" \
         "bddl==1.0.1" \
@@ -86,6 +91,8 @@ RUN git clone https://github.com/sylvestf/LIBERO-plus.git /home/user_lerobot/lib
     && cd /home/user_lerobot/libero-plus && uv pip install --no-cache --no-deps -e "." \
     && (uv pip uninstall hf-libero 2>/dev/null || true)
 ENV PYTHONPATH="/home/user_lerobot/libero-plus"
+# bddl_base_domain.py resolves scene XMLs relative to the package (DIR_PATH/../assets), ignoring
+# ~/.libero/config.yaml, so assets.zip is unpacked inside the clone.
 RUN python -c "\
 from huggingface_hub import hf_hub_download; \
 hf_hub_download(repo_id='Sylvest/LIBERO-plus', repo_type='dataset', \
@@ -94,6 +101,7 @@ hf_hub_download(repo_id='Sylvest/LIBERO-plus', repo_type='dataset', \
     && ASSETS_DIR=$(find /tmp/libero-plus-dl/extract -type d -name assets | head -1) \
     && mv "${ASSETS_DIR}" ${LIBERO_PLUS_ROOT}/assets \
     && rm -rf /tmp/libero-plus-dl
+# LIBERO calls input() on import when ~/.libero/config.yaml is missing.
 RUN mkdir -p /home/user_lerobot/.libero \
     && printf "assets: ${LIBERO_PLUS_ROOT}/assets\nbddl_files: ${LIBERO_PLUS_ROOT}/bddl_files\ndatasets: ${LIBERO_PLUS_ROOT}/../datasets\ninit_states: ${LIBERO_PLUS_ROOT}/init_files\n" \
        > /home/user_lerobot/.libero/config.yaml
@@ -105,14 +113,11 @@ FROM base AS metaworld_native
 RUN uv pip install "metaworld==3.0.0" "mujoco==3.15.0"
 
 # ---------------------------------------------------------------------------- EnvHub
-# Any EnvHub repository (user/repo[@revision][:env.py]). The launcher passes the repository's optional
-# packages.txt (apt, as in Hugging Face Spaces) and requirements.txt as base64 build arguments, so these
-# layers are cached by their content: a new commit that only changes env.py rebuilds the last layer.
-# Requirements resolve across indexes as pip does. The repository is cached where the Hub loader reads it.
+# Any EnvHub repository (user/repo[@revision][:env.py]), from the `envhub` build context that
+# `lerobot-env-server --docker --envhub` downloads on the host. Each layer is rebuilt only when the files it
+# copies change: apt packages (packages.txt, as in Hugging Face Spaces), Python requirements (resolved across
+# indexes as pip does), then the rest of the repository.
 FROM base AS envhub_native
-# The repository's files, from the `envhub` build context that `lerobot-env-server --docker --envhub` downloads
-# on the host. Each layer is rebuilt only when the files it copies change: apt packages (packages.txt, as in
-# Hugging Face Spaces), Python requirements, then the rest of the repository.
 USER root
 COPY --from=envhub packages.tx[t] /tmp/envhub/
 RUN if [ -f /tmp/envhub/packages.txt ]; then apt-get update \
@@ -128,7 +133,9 @@ COPY --chown=user_lerobot:user_lerobot --from=envhub . /envhub
 FROM base AS robocasa_native
 ARG ROBOCASA_SHA=56e355ccc64389dfc1b8a61a33b9127b975ba681
 ARG ROBOSUITE_SHA=aaa8b9b214ce8e77e82926d677b4d61d55e577ab
-# robocasa's setup.py pins lerobot==0.3.3, so it is installed without dependencies.
+# Editable clones: installing robocasa from git omits data files download_kitchen_assets needs
+# (box_links_assets.json is not in package_data). Its setup.py pins lerobot==0.3.3, so it is installed
+# without dependencies and its runtime dependencies are listed here.
 RUN git clone https://github.com/robocasa/robocasa.git ~/robocasa && \
     git -C ~/robocasa checkout ${ROBOCASA_SHA} && \
     git clone https://github.com/ARISE-Initiative/robosuite.git ~/robosuite && \
@@ -141,12 +148,16 @@ RUN git clone https://github.com/robocasa/robocasa.git ~/robocasa && \
       "pyyaml==6.0.3" "pynput==1.8.1" "tqdm==4.67.3" "termcolor==3.3.0" \
       "imageio==2.37.3" "h5py==3.16.0" "lxml==6.0.4" "hidapi==0.14.0.post4" \
       "gymnasium==1.2.3"
+# Kitchen assets: tex, tex_generative (fixture XMLs reference generative textures unconditionally, so a reset
+# fails without them), and the lightwheel fixtures and objects. The objaverse/aigen packs (~30 GB) are
+# skipped: the configs sample obj_registries=[lightwheel]. The script prompts, hence `yes y`.
 RUN python -m robocasa.scripts.setup_macros && \
     yes y | python -m robocasa.scripts.download_kitchen_assets \
       --type tex tex_generative fixtures_lw objs_lw
 
 # ---------------------------------------------------------------------------- RoboMME
 FROM base AS robomme_native
+# ManiSkill/SAPIEN render with Vulkan: install the loader and point it at the NVIDIA driver.
 ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
 USER root
 RUN apt-get update \
@@ -166,6 +177,7 @@ RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\nscipy==1.15.3\n' > /tmp/robomme_ov
 
 # ---------------------------------------------------------------------------- RoboTwin
 FROM base AS robotwin_native
+# CuRobo's editable install compiles with nvcc, and SAPIEN renders with Vulkan.
 ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
     ROBOTWIN_ROOT=/opt/robotwin
 USER root
@@ -194,16 +206,19 @@ RUN uv pip install --no-cache \
         "sapien==3.0.0b1" "mplib==0.2.1" "transforms3d==0.4.2" "trimesh==4.4.3" \
         "opencv-python-headless==4.10.0.84" \
         "open3d==0.19.0" "imageio==2.34.2" termcolor zarr pydantic h5py
+# pytorch3d has no universal wheel: it builds from source (~10 min).
 RUN uv pip install --no-cache --no-build-isolation \
         "git+https://github.com/facebookresearch/pytorch3d.git@stable"
-# CuRobo v0.7.8 uses warp.torch, which warp-lang 1.13 removed.
+# RoboTwin's installer pins CuRobo v0.7.8, which still has the v1 API (curobo.types.math) RoboTwin imports;
+# it uses warp.torch, which warp-lang 1.13 removed. Its build aborts without TORCH_CUDA_ARCH_LIST.
 ARG CUROBO_REF=v0.7.8
 RUN cd ${ROBOTWIN_ROOT}/envs \
     && git clone --branch ${CUROBO_REF} --depth 1 https://github.com/NVlabs/curobo.git \
     && cd curobo \
     && TORCH_CUDA_ARCH_LIST="${CUROBO_CUDA_ARCHS}" \
        uv pip install -e . "warp-lang==1.12.1" --no-build-isolation --no-cache
-# Upstream fixes RoboTwin relies on: mplib collision check and sapien SRDF loading.
+# Upstream fixes RoboTwin relies on, as its script/_install.sh applies them: mplib collision check and sapien
+# SRDF loading. They target mplib 0.2.1 and sapien 3.0.0b1; re-check when upgrading.
 RUN python - <<'EOF'
 import pathlib, re, site
 for d in site.getsitepackages():
@@ -219,6 +234,7 @@ for d in site.getsitepackages():
         p.write_text(src)
         print(f"sapien patch applied: {p}")
 EOF
+# Embodiments (~220 MB) and objects (~3.7 GB); the ~11 GB background textures are skipped.
 RUN python - <<'EOF'
 import os, pathlib, zipfile
 from huggingface_hub import hf_hub_download
@@ -240,6 +256,8 @@ WORKDIR ${ROBOTWIN_ROOT}
 RUN python script/update_embodiment_config_path.py
 ENV PYTHONPATH="${ROBOTWIN_ROOT}" \
     SIM_WORKDIR="${ROBOTWIN_ROOT}"
+# Fail early if CuRobo's package layout changes. The planner itself is not imported: CuRobo builds CUDA
+# defaults at import, and a build has no GPU driver.
 RUN python - <<'EOF'
 from pathlib import Path
 from curobo.types.math import Pose
@@ -252,7 +270,9 @@ EOF
 FROM base AS vlabench_native
 ARG VLABENCH_SHA=cf588fe60c0c7282174fe979f5913170cfe69017
 ARG RRT_ALGORITHMS_SHA=e51d95ee489a225220d6ae2a764c4111f6ba7d85
-# constant.py lists asset subdirectories at import time; tolerate them being absent.
+# Editable installs: VLABench/utils and rrt-algorithms' rrt/ have no __init__.py, so wheels would omit them.
+# Submodules are not cloned (they are SSH-only). constant.py lists asset subdirectories at import time;
+# tolerate them being absent.
 RUN git clone https://github.com/OpenMOSS/VLABench.git ~/VLABench && \
     git -C ~/VLABench checkout ${VLABENCH_SHA} && \
     git clone https://github.com/motion-planning/rrt-algorithms.git ~/rrt-algorithms && \
@@ -267,6 +287,9 @@ p.write_text(t.replace( \
     uv pip install --no-cache -e ~/VLABench -e ~/rrt-algorithms \
       mujoco==3.2.2 dm-control==1.0.22 "opencv-python==4.13.0.92" \
       open3d colorlog scikit-learn openai gdown
+# Task configs sample object meshes; with none, the task builder fails with IndexError (random.choice([])).
+# The Hub mirror (VLABENCH_ASSETS_REPO) is the reliable source, as Google Drive often answers HTTP 429, and
+# the build fails on empty asset directories instead of at evaluation.
 ARG VLABENCH_ASSETS_REPO=""
 RUN ASSETS_DIR="$HOME/VLABench/VLABench/assets" && \
     if [ -n "${VLABENCH_ASSETS_REPO}" ]; then \
@@ -299,18 +322,18 @@ WORKDIR /lerobot
 COPY --chown=user_lerobot:user_lerobot pyproject.toml setup.py README.md MANIFEST.in /lerobot/
 COPY --chown=user_lerobot:user_lerobot src/lerobot/__init__.py src/lerobot/__version__.py /lerobot/src/lerobot/
 COPY --chown=user_lerobot:user_lerobot src/lerobot/env_server /lerobot/src/lerobot/env_server
-COPY --chown=user_lerobot:user_lerobot src/lerobot/sims /lerobot/src/lerobot/sims
+COPY --chown=user_lerobot:user_lerobot src/lerobot/sim /lerobot/src/lerobot/sim
 COPY --chown=user_lerobot:user_lerobot src/lerobot/transport /lerobot/src/lerobot/transport
 COPY --chown=user_lerobot:user_lerobot src/lerobot/utils /lerobot/src/lerobot/utils
 COPY --chown=user_lerobot:user_lerobot src/lerobot/scripts/lerobot_env_server.py /lerobot/src/lerobot/scripts/
-COPY --chown=user_lerobot:user_lerobot scripts/ci/convert_sim_assets.py scripts/ci/patch_sim_runtime.py scripts/ci/check_sim_parity.py /lerobot/scripts/ci/
-COPY --chown=user_lerobot:user_lerobot docker/sims /lerobot/docker/sims
+COPY --chown=user_lerobot:user_lerobot scripts/ci/convert_libero_init_states.py scripts/ci/patch_libero_runtime.py scripts/ci/check_sim_parity.py /lerobot/scripts/ci/
+COPY --chown=user_lerobot:user_lerobot docker/sim /lerobot/docker/sim
 RUN uv pip install --no-cache --no-deps -e .
 # LIBERO family: convert trusted torch init states to NumPy with a temporary CPU torch.
 RUN case "${SIM}" in libero|robocerebra|libero_plus) \
         uv pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cpu \
-        && python scripts/ci/convert_sim_assets.py /home/user_lerobot \
-        && python scripts/ci/patch_sim_runtime.py /home/user_lerobot \
+        && python scripts/ci/convert_libero_init_states.py /home/user_lerobot \
+        && python scripts/ci/patch_libero_runtime.py /home/user_lerobot \
         && uv pip uninstall torch torchvision ;; \
     esac
 # The server must import without torch, except in images whose simulator ships its own.
@@ -320,8 +343,8 @@ RUN case "${SIM}" in \
         *) module=${SIM} ;; \
     esac \
     && if [ -n "$module" ]; then python -c "import sys; sys.modules['torch'] = None; \
-import lerobot.env_server.server; import lerobot.sims.native.$module"; fi
-# Simulators with their own torch import their world dependencies lazily; import those here. A build has
+import lerobot.scripts.lerobot_env_server; import lerobot.sim.integrations.$module"; fi
+# Simulators with their own torch import environment dependencies lazily; import those here. A build has
 # no GPU driver, so RoboTwin's planner (CuRobo's motion generator) is only importable at runtime.
 RUN case "${SIM}" in \
         robomme) python -c "import lerobot.env_server.server, scipy.sparse, trimesh, mani_skill.utils.common" ;; \
@@ -331,4 +354,5 @@ pytorch3d, trimesh; warp.torch; from curobo.types.math import Pose" ;; \
 # The server runs where its simulator expects: RoboTwin reads its assets relative to the working directory.
 ENV SIM_WORKDIR=${SIM_WORKDIR:-/lerobot}
 WORKDIR ${SIM_WORKDIR}
-CMD ["sh", "-c", "exec lerobot-env-server --config /lerobot/docker/sims/configs/${SIM}.yaml"]
+# Inside its container the server listens on all interfaces; Docker decides what reaches it.
+CMD ["sh", "-c", "exec lerobot-env-server --config /lerobot/docker/sim/configs/${SIM}.yaml --listen tcp/0.0.0.0:7448"]

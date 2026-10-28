@@ -4,13 +4,13 @@ Environment processors transform an environment's observations before the policy
 
 ## Simulated environments need none
 
-Simulated environments reach the policy already canonical: images as `observation.images.<camera>` (or `observation.image`), the state as one flat `observation.state`, with each simulator's image orientation and state composition handled once, in `src/lerobot/sims/adapters.py`, for evaluation, rollout and recording alike, in-process or served (see [Simulation: in-process or served](./simulator_server)). For LIBERO, for example, the adapter flips both cameras and builds the 8-D state (end-effector position, axis-angle orientation, gripper joints), so its environment processors are identity.
+Simulated environments reach the policy already canonical: images as `observation.images.<camera>` (or `observation.image`), the state as one flat `observation.state`, with each simulator's image orientation and state composition handled once by its `src/lerobot/sim/integrations/<simulator>.py` integration, for evaluation, rollout and recording alike, locally or served (see [Simulation: local or served](./simulation)). For LIBERO, for example, its observation adapter flips both cameras and builds the 8-D state (end-effector position, axis-angle orientation, gripper joints), so its environment processors are identity.
 
-Put a new simulator's conventions in that adapter and in `src/lerobot/sims/conventions.py` rather than in an environment processor, so that a sim robot and a served environment get them too (see [Adding a benchmark](./adding_benchmarks)).
+Put a new simulator's observation mapping in its integration and its control conventions in that integration's `conventions()` rather than in an environment processor, so that a sim robot and a served environment get them too (see [Adding a benchmark](./adding_benchmarks)).
 
 ## When an environment processor is still the tool
 
-- **Environments outside the shared env core.** Isaac Lab Arena runs through its repository's own `make_env`, with batched torch observations; `IsaaclabArenaProcessorStep` selects and concatenates its state keys and converts its cameras.
+- **Environments outside `lerobot.sim`.** Isaac Lab Arena runs through its repository's own `make_env`, with batched torch observations; `IsaaclabArenaProcessorStep` selects and concatenates its state keys and converts its cameras.
 - **Policy-specific environment adaptations.** `make_env_pre_post_processors` lets a policy replace the environment's pair, as XVLA does for its LIBERO setup.
 
 The processing order during evaluation is:

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run the same simulator sidecar and driver locally and in benchmark CI."""
+"""Run one benchmark's simulator server and evaluation containers, the same way locally and in CI."""
 
 import argparse
 import json
@@ -80,7 +80,7 @@ def main():
             "import time; from lerobot.env_server.client import EnvClient\n"
             "deadline = time.monotonic() + 300\n"
             "while True:\n"
-            f"    c = EnvClient('tcp/sim:7448', {entry['name']!r}, 30)\n"
+            f"    c = EnvClient('tcp/sim:7448', {entry['name']!r}, handshake_timeout_s=30)\n"
             "    try:\n"
             "        c.describe(); break\n"
             "    except Exception:\n"
@@ -105,7 +105,7 @@ def main():
             "HF_HUB_DOWNLOAD_TIMEOUT=300",
         ]
         run(common + ["--rm", args.policy_image, "python", "-c", probe])
-        if entry["name"] in {"libero", "metaworld"}:
+        if entry["parity"]:
             with (args.artifacts / "transition-parity.log").open("w") as stream:
                 subprocess.run(
                     [
@@ -154,6 +154,17 @@ def main():
                 entry["task"],
                 "--policy",
                 entry["policy"],
+                "--policy-revision",
+                entry["revision"],
+                "--sim-tag",
+                entry["sim_tag"],
+                # The tested commit, set by GitHub Actions; local runs leave it out.
+                *(["--commit", os.environ["GITHUB_SHA"]] if "GITHUB_SHA" in os.environ else []),
+                *(
+                    ["--max-episode-steps", str(entry["max_episode_steps"])]
+                    if entry["max_episode_steps"] is not None
+                    else []
+                ),
             ]
         )
         if entry["train_smoke"]:

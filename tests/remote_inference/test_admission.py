@@ -14,10 +14,13 @@
 
 """A refused open explains itself to the operator; later BUSY replies stay ordinary protocol errors."""
 
+from dataclasses import replace
+
 import pytest
 
 pytest.importorskip("msgpack")
 
+from lerobot.remote_inference.client import _compare_feature
 from lerobot.remote_inference.codec import decode_message, encode_message
 from lerobot.remote_inference.protocol import (
     AdmissionDeniedError,
@@ -26,6 +29,7 @@ from lerobot.remote_inference.protocol import (
     MessageType,
     ProtocolError,
 )
+from lerobot.utils.feature_spec import FeatureSpec
 from tests.remote_inference import helpers
 
 
@@ -54,3 +58,28 @@ def test_busy_open_is_distinct_from_busy_during_an_admitted_session(chunk_worker
         client._query("control", request, 1, MessageType.ACK)
     assert type(busy_control.value) is ProtocolError
     assert busy_control.value.code is ErrorCode.BUSY
+
+
+# A server whose schema differs is refused with the first field that differs, not a schema dump.
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"name": "other"},
+        {"shape": (3,), "names": ()},
+        {"dtype": "float64"},
+        {"names": ("y", "x")},
+        {"semantics": "position-v1"},
+    ],
+)
+def test_feature_comparison_identifies_incompatible_fields(changes):
+    expected = FeatureSpec("action", (2,), "float32", names=("x", "y"), semantics="delta-v1")
+    _compare_feature(expected, expected)
+    with pytest.raises(ProtocolError, match=f"field '{next(iter(changes))}' differs") as error:
+        _compare_feature(replace(expected, **changes), expected)
+    assert error.value.code is ErrorCode.INCOMPATIBLE
+
+
+def test_feature_comparison_checks_modality():
+    expected = FeatureSpec("image", (2, 2, 3), "uint8", kind="rgb", semantics="rgb-v1")
+    with pytest.raises(ProtocolError, match="field 'kind' differs"):
+        _compare_feature(replace(expected, kind="tensor"), expected)

@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Torch adaptation over the shared bounded NumPy codec (wire-compatible)."""
+"""Remote inference codec: the shared NumPy codec, also accepting torch tensors."""
 
 from typing import Any
 
 import torch
 
-from lerobot.transport.wire.codec import (
+from lerobot.transport.protocol.codec import (
     CodecLimits,
     RGBImage,
     decode_message,
     encode_message as _encode_message,
     peek_envelope,
 )
-from lerobot.transport.wire.protocol import Envelope, ErrorCode, ProtocolError
+from lerobot.transport.protocol.envelope import Envelope, ErrorCode, ProtocolError
 
 __all__ = ["CodecLimits", "RGBImage", "decode_message", "encode_message", "peek_envelope"]
 

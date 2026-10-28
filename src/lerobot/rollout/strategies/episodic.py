@@ -40,6 +40,7 @@ from lerobot.common.control_utils import (
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.robots.sim_robot import episode_ended, start_episode
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -141,7 +142,9 @@ class EpisodicStrategy(RolloutStrategy):
                     if ctx.runtime.shutdown_event.is_set():
                         break
 
-                    # Reset policy state at episode start (discard leftover hidden state / queue)
+                    # Start the episode (a sim robot restarts its world) with fresh policy state
+                    # (no leftover hidden state or action queue).
+                    start_episode(robot.inner)
                     engine.reset()
                     interpolator.reset()
                     # A reset interpolator re-primes over two consecutive inference
@@ -287,6 +290,10 @@ class EpisodicStrategy(RolloutStrategy):
                         dataset.add_frame(
                             {**obs_frame, **action_frame, "task": self._require_engine().dispatched_task}
                         )
+
+            # A sim robot's own episode end (success, failure or step limit) ends this one.
+            if episode_ended(robot.inner):
+                break
 
             self._require_engine().pump_query(obs_processed)
             timer.wait()

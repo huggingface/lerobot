@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 def make_robot_from_config(config: RobotConfig) -> Robot:
     # TODO(Steven): Consider just using the make_device_from_device_class for all types
     if config.type == "sim":
-        from .sim import SimRobot
+        from .sim_robot import SimRobot
 
         return SimRobot(config)
     elif config.type == "koch_follower":

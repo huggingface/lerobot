@@ -82,9 +82,11 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
+from lerobot.envs.utils import prepare_canonical_observation
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
+from lerobot.sim.vector_env import VectorEnv
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.eval_stats import success_summary
@@ -279,6 +281,12 @@ def rollout(
     max_steps = env.call("_max_episode_steps")[0]
     if max_episode_steps is not None:
         max_steps = min(max_steps, max_episode_steps)
+    # Simulator integrations return canonical observations; other envs return their own format.
+    prepare_observation = (
+        prepare_canonical_observation
+        if getattr(env, "canonical_observations", False)
+        else preprocess_observation
+    )
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
@@ -289,12 +297,7 @@ def rollout(
     try:
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-            if getattr(env, "canonical_observations", False):
-                from lerobot.envs.batched import prepare_canonical_observation
-
-                observation = prepare_canonical_observation(observation)
-            else:
-                observation = preprocess_observation(observation)
+            observation = prepare_observation(observation)
             if return_observations:
                 all_observations.append(deepcopy(observation))
 
@@ -308,7 +311,7 @@ def rollout(
                 except (AttributeError, NotImplementedError):
                     observation["task"] = [""] * env.num_envs
 
-            # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
+            # Apply environment-specific preprocessing (e.g., IsaaclabArenaProcessorStep for Isaac Lab Arena)
             observation = env_preprocessor(observation)
 
             observation = preprocessor(observation)
@@ -412,12 +415,7 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        if getattr(env, "canonical_observations", False):
-            from lerobot.envs.batched import prepare_canonical_observation
-
-            observation = prepare_canonical_observation(observation)
-        else:
-            observation = preprocess_observation(observation)
+        observation = prepare_observation(observation)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
@@ -805,10 +803,11 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         trust_remote_code=cfg.trust_remote_code,
     )
 
-    if getattr(cfg.env, "descriptor", None) is not None:
-        from lerobot.env_server.admission import validate_checkpoint
-
-        validate_checkpoint(cfg.env.descriptor, cfg.policy, cfg.rename_map)
+    # Hub-only and native-batch environments carry no descriptor.
+    first_env = next(env for tasks in envs.values() for env in tasks.values())
+    descriptor = getattr(first_env, "descriptor", None)
+    if descriptor is not None:
+        descriptor.validate_checkpoint(cfg.policy, cfg.rename_map)
 
     logging.info("Making policy.")
     policy = make_policy(
@@ -878,6 +877,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     # Close all vec envs
     close_envs(envs)
 
+    # Each task's language instruction, saved next to the metrics (the benchmark CI report reads it).
     descriptions = {
         f"{group}_{task_id}": env.latest.task[0]
         for group, tasks in envs.items()
@@ -1135,8 +1135,8 @@ def eval_policy_all(
                     # GPU memory overlap between consecutive tasks.
                     if i + 1 < len(tasks):
                         next_env = tasks[i + 1][2]
-                        if hasattr(next_env, "_ensure"):
-                            prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
+                        if isinstance(next_env, VectorEnv):
+                            prefetch_thread = threading.Thread(target=next_env.build, daemon=True)
                             prefetch_thread.start()
         else:
             with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:

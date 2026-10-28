@@ -129,11 +129,11 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
-    sim,
+    sim_robot,
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.robots.sim import check_control_rate, check_teleop_clock
+from lerobot.robots.sim_robot import check_control_rate, episode_ended, start_episode
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -379,6 +379,10 @@ def record_loop(
                     compress_images=display_compressed_images,
                 )
 
+        # A sim robot's own episode end (success, failure or step limit) ends the recorded episode.
+        if dataset is not None and episode_ended(robot):
+            break
+
         timer.wait()
 
         timestamp = time.perf_counter() - start_episode_t
@@ -403,9 +407,8 @@ def record(
         else cfg.display_compressed_images
     )
 
-    check_teleop_clock(cfg.robot, cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
-    check_control_rate(robot, cfg.dataset.fps)
+    check_control_rate(robot, cfg.dataset.fps, "--dataset.fps")
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     # Fall back to identity pipelines when the caller doesn't supply processors.
@@ -504,6 +507,7 @@ def record(
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 episode_index = dataset.num_episodes
+                start_episode(robot)
                 log_say(f"Recording episode {episode_index}", cfg.play_sounds)
                 record_loop(
                     robot=robot,

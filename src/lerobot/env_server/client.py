@@ -12,23 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explicit, non-retrying simulator RPC client."""
+"""Client of a simulator server, and the vector environment it backs."""
 
 import uuid
 from threading import RLock
 from typing import Any
 
-from lerobot.transport.wire.client import query_reply
-from lerobot.transport.wire.features import feature_mismatch
-from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
+import gymnasium as gym
+import numpy as np
+from gymnasium.vector.utils import batch_space
+
+from lerobot.sim.types import EnvDescriptor, StepResult
+from lerobot.transport.protocol.client import query_reply
+from lerobot.transport.protocol.envelope import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import PresenceToken, ZenohConfig, ZenohTransport
 
-from .contracts import EnvDescriptor, ExecutionFeedback, StepResult, validate_result
-from .protocol import any_deployment_describe, deployment_prefix, instance_prefix, session_prefix
+from .protocol import (
+    ANY_DEPLOYMENT_DESCRIBE,
+    decode_descriptor,
+    decode_step_result,
+    deployment_prefix,
+    instance_prefix,
+    session_prefix,
+    validate_result,
+)
 
 
 class EnvClient:
-    """Own one explicitly negotiated simulator session without replaying mutations."""
+    """One session with a simulator server; operations are never retried."""
 
     def __init__(
         self,
@@ -38,20 +49,32 @@ class EnvClient:
         setup_timeout_s: float | None = None,
         encoding: str = "raw",
         jpeg_quality: int = 90,
+        handshake_timeout_s: float = 10.0,
+        zenoh_config_path: str | None = None,
     ):
-        """Initialize owned resources without advancing simulation time.
+        """Configure the connection; nothing is opened before ``describe`` or ``open``.
 
-        ``timeout_s`` bounds per-tick operations; ``setup_timeout_s`` (default: the same)
-        bounds describe/open/reset, which may build or rebuild native simulators. Without a
-        ``deployment``, the client uses whichever deployment the endpoint serves. ``encoding="jpeg"``
-        asks the server to send camera frames as JPEG at ``jpeg_quality``, a bandwidth for fidelity tradeoff.
+        ``handshake_timeout_s`` bounds connecting and describing, so an absent server is reported quickly.
+        ``timeout_s`` bounds per-tick operations; ``setup_timeout_s`` (default: the same) bounds open and
+        reset, which may build or rebuild native simulators. Without a ``deployment``, the client uses
+        whichever deployment the endpoint serves. ``encoding="jpeg"`` asks the server to send camera frames
+        as JPEG at ``jpeg_quality``, a bandwidth for fidelity tradeoff. ``zenoh_config_path`` is a Zenoh
+        JSON5 file with TLS and access-control settings, as for remote inference.
         """
         if encoding not in {"raw", "jpeg"} or not 1 <= jpeg_quality <= 100:
             raise ValueError("Image encoding must be raw or jpeg, with jpeg_quality in [1, 100]")
         self.encoding = encoding
         self.jpeg_quality = jpeg_quality
-        self.transport = ZenohTransport(ZenohConfig(connect_endpoints=[endpoint]))
-        self.deployment = deployment
+        self.endpoint = endpoint
+        self.transport = ZenohTransport(
+            ZenohConfig(
+                connect_endpoints=[endpoint],
+                config_file=zenoh_config_path,
+                open_timeout_s=handshake_timeout_s,
+            )
+        )
+        self.handshake_timeout_s = handshake_timeout_s
+        self.deployment = deployment or ""
         self.timeout_s = timeout_s
         self.setup_timeout_s = max(timeout_s, setup_timeout_s or timeout_s)
         self.instance = ""
@@ -62,80 +85,90 @@ class EnvClient:
         self.lock = RLock()
         self.failed = False
         self.num_envs = 0
-        self.execution: ExecutionFeedback | None = None
 
     def describe(self) -> EnvDescriptor:
-        """Discover the simulator boot and canonical schema without opening a world session."""
+        """Ask the server which environment it runs, without opening a session."""
         with self.lock:
-            self.transport.open()
-            body = self._query(
-                deployment_prefix(self.deployment) + "/describe"
-                if self.deployment
-                else any_deployment_describe(),
-                MessageType.DESCRIBE,
-                {},
-                self.setup_timeout_s,
-            )
+            try:
+                self.transport.open()
+            except Exception as error:  # Zenoh reports an unreachable endpoint with its own error type.
+                raise ConnectionError(
+                    f"Could not connect to an env server at {self.endpoint} ({error}): start one with "
+                    "lerobot-env-server, or check the endpoint"
+                ) from error
+            if self.deployment:
+                try:
+                    body = self._query(
+                        deployment_prefix(self.deployment) + "/describe",
+                        MessageType.DESCRIBE,
+                        {},
+                        self.handshake_timeout_s,
+                    )
+                except TimeoutError:
+                    raise self._wrong_deployment() from None
+            else:
+                body = self._query(
+                    ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s
+                )
             self.deployment = body["deployment"]
             self.instance = body["instance"]
-            self.descriptor = EnvDescriptor.from_dict(body["descriptor"])
+            self.descriptor = decode_descriptor(body["descriptor"])
             return self.descriptor
+
+    def _wrong_deployment(self) -> Exception:
+        """The deployment did not answer: name the one this endpoint serves, if any answers."""
+        try:
+            body = self._query(ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s)
+        except (TimeoutError, ProtocolError):
+            return TimeoutError(
+                f"No env server answered at {self.endpoint} within {self.handshake_timeout_s:g} s"
+            )
+        return ProtocolError(
+            ErrorCode.INCOMPATIBLE,
+            f"The env server at {self.endpoint} serves deployment {body['deployment']!r}, not "
+            f"{self.deployment!r}: set --env.deployment={body['deployment']} "
+            "(--robot.env.deployment for a sim robot)",
+        )
 
     @property
     def prefix(self) -> str:
-        """Return the address of the currently owned world session."""
-        if not self.session or self.deployment is None:
+        """The address of the open session."""
+        if not self.session:
             raise RuntimeError("Simulator session is not open")
         return session_prefix(self.deployment, self.instance, self.session)
 
     def open(
         self,
         num_envs: int,
-        clock: str,
         task_group: str | None = None,
         task_id: int = 0,
         seeds: list[int | None] | None = None,
-        async_worlds: bool = False,
+        use_async_envs: bool = False,
     ) -> StepResult:
-        """Admit an exclusive environment batch with the requested clock.
+        """Open a session with ``num_envs`` environments of one task and return its first result.
 
-        ``async_worlds`` asks the server to run each world in its own process, so the batch steps in parallel.
+        ``use_async_envs`` asks the server to run each environment in its own process.
         """
         with self.lock:
             if self.session:
                 raise RuntimeError("Simulator session already open")
-            if self.descriptor is None:
-                self.describe()
-            assert self.deployment is not None
+            descriptor = self.descriptor or self.describe()
             body = self._query(
                 instance_prefix(self.deployment, self.instance) + "/open",
                 MessageType.OPEN,
                 {
                     "num_envs": num_envs,
-                    "clock": clock,
                     "task_group": task_group,
                     "task_id": task_id,
                     "seeds": seeds,
-                    "async_worlds": async_worlds,
+                    "use_async_envs": use_async_envs,
                     "encoding": self.encoding,
                     "jpeg_quality": self.jpeg_quality,
                 },
                 self.setup_timeout_s,
             )
-            assert self.descriptor is not None
-            opened_descriptor = EnvDescriptor.from_dict(body["descriptor"])
-            if (
-                tuple(f.name for f in opened_descriptor.features)
-                != tuple(f.name for f in self.descriptor.features)
-                or any(
-                    feature_mismatch(actual, expected)
-                    for actual, expected in zip(
-                        opened_descriptor.features, self.descriptor.features, strict=True
-                    )
-                )
-                or feature_mismatch(opened_descriptor.action_feature, self.descriptor.action_feature)
-                or opened_descriptor.semantics != self.descriptor.semantics
-            ):
+            opened_descriptor = decode_descriptor(body["descriptor"])
+            if not opened_descriptor.same_schema(descriptor):
                 self.transport.close()
                 raise ProtocolError(
                     ErrorCode.INCOMPATIBLE, "Selected task differs from the negotiated simulator schema"
@@ -145,30 +178,33 @@ class EnvClient:
             self.generation = body["generation"]
             self.token = self.transport.declare_token(self.prefix + "/client_alive")
             self.num_envs = num_envs
-            result = StepResult.from_dict(body["result"])
+            result = decode_step_result(body["result"])
             validate_result(result, self.descriptor, num_envs)
             return result
 
     def request(self, operation: str, **body: Any) -> dict[str, Any]:
-        """Issue one correlated world operation and fail on an ambiguous result."""
+        """Send one operation on the open session and return its reply, ``result`` decoded and validated.
+
+        A failed or timed-out operation fails the session, since it may have run.
+        """
         with self.lock:
             if self.failed:
                 raise RuntimeError("Simulator session failed; close and reopen before continuing")
-            key = self.prefix + (f"/{operation}" if operation in {"reset", "step"} else "/control")
-            if operation not in {"reset", "step"}:
-                body["operation"] = operation
+            descriptor = self.descriptor
+            if not self.session or descriptor is None:
+                raise RuntimeError("Simulator session is not open")
+            key = f"{self.prefix}/{operation}"
             try:
                 timeout = self.setup_timeout_s if operation == "reset" else self.timeout_s
-                result = self._query(key, MessageType.CONTROL, body, timeout)
-                # Execution feedback already validated its paired result in _query.
-                if "result" in result and "execution" not in result:
-                    assert self.descriptor is not None
-                    validate_result(StepResult.from_dict(result["result"]), self.descriptor, self.num_envs)
-                if "generation" in result:
-                    self.generation = result["generation"]
-                return result
+                reply = self._query(key, MessageType.CONTROL, body, timeout)
+                if "result" in reply:
+                    reply["result"] = decode_step_result(reply["result"])
+                    validate_result(reply["result"], descriptor, self.num_envs)
+                if "generation" in reply:
+                    self.generation = reply["generation"]
+                return reply
             except Exception:
-                # A timed-out mutation may have executed. Never continue on an ambiguous world.
+                # A timed-out mutation may have executed. Never continue with ambiguous environment state.
                 self.failed = True
                 raise
 
@@ -186,26 +222,10 @@ class EnvClient:
             # Mutations are never retried, so a reply dropped under congestion is fatal: block instead.
             congestion_control="block",
         )
-        if "execution" in response.body:
-            assert self.descriptor is not None
-            execution = ExecutionFeedback.from_dict(
-                response.body["execution"], StepResult.from_dict(response.body["result"])
-            )
-            execution.validate(self.descriptor, self.num_envs)
-            if execution.generation != message.generation or (
-                body.get("operation", key.rsplit("/", 1)[-1]) in {"apply", "step"}
-                and execution.request_id != message.request_id
-            ):
-                raise ProtocolError(ErrorCode.STALE, "Execution differs from the active command")
-            if self.execution is not None and execution.sequence < self.execution.sequence:
-                raise ProtocolError(ErrorCode.STALE, "Execution sequence moved backwards")
-            self.execution = execution
-        elif "generation" in response.body:
-            self.execution = None
         return response.body
 
     def close(self) -> None:
-        """Release owned simulator resources and transport declarations."""
+        """Close the session and the connection."""
         with self.lock:
             try:
                 if self.session and not self.failed:
@@ -217,4 +237,111 @@ class EnvClient:
                 self.instance = ""
                 self.descriptor = None
                 self.failed = False
-                self.execution = None
+
+
+class RemoteVectorEnv(gym.vector.VectorEnv):
+    """``num_envs`` served environments of one task, stepped explicitly."""
+
+    canonical_observations = True
+
+    def __init__(
+        self,
+        client: EnvClient,
+        num_envs: int = 1,
+        task_group: str | None = None,
+        task_id: int = 0,
+        descriptor: EnvDescriptor | None = None,
+        use_async_envs: bool = False,
+    ):
+        """Describe the served task; its session opens on the first reset or step."""
+        self.client = client
+        self.use_async_envs = use_async_envs
+        self.descriptor = descriptor or self.client.describe()
+        self.num_envs = num_envs
+        self.task_group = task_group or next(iter(self.descriptor.tasks))
+        self.task_id = task_id
+        self.metadata = {
+            "render_fps": self.descriptor.fps,
+            "autoreset_mode": gym.vector.AutoresetMode.DISABLED,
+        }
+        self.render_mode = "rgb_array"
+        self.single_observation_space = self.descriptor.observation_space()
+        self.single_action_space = self.descriptor.action_space()
+        self.observation_space = batch_space(self.single_observation_space, num_envs)
+        self.action_space = batch_space(self.single_action_space, num_envs)
+        self._latest: StepResult | None = None
+
+    @property
+    def latest(self) -> StepResult:
+        """The result of the last reset or step."""
+        if self._latest is None:
+            raise RuntimeError("Reset before reading the environment")
+        return self._latest
+
+    def _open_session(self, seeds: list[int | None] | None = None) -> bool:
+        if not self.client.session:
+            self._latest = self.client.open(
+                self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
+            )
+            self.descriptor = self.client.descriptor or self.descriptor
+            return True
+        return False
+
+    def _result(self, reply: dict[str, Any]) -> StepResult:
+        self._latest = reply["result"]
+        return self._latest
+
+    def reset(
+        self,
+        *,
+        seed: int | list[int | None] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        """Reset every served environment with explicit seeds."""
+        if options:
+            raise ValueError("This environment does not define reset options")
+        seeds: list[int | None] | None = (
+            [seed + i for i in range(self.num_envs)] if isinstance(seed, int) else seed
+        )
+        if not self._open_session(seeds):
+            self._result(self.client.request("reset", seeds=seeds))
+        return self.latest.obs, self.latest.info()
+
+    def step(
+        self, actions: np.ndarray
+    ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+        """Advance every unfinished served environment once."""
+        self._open_session()
+        result = self._result(self.client.request("step", actions=np.asarray(actions, dtype=np.float32)))
+        return (
+            result.obs,
+            result.reward,
+            result.terminated,
+            result.truncated,
+            result.info(),
+        )
+
+    def call(self, name: str, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        """Return a supported per-environment attribute."""
+        if name == "_max_episode_steps":
+            return (self.descriptor.max_episode_steps,) * self.num_envs
+        if name == "task":
+            return (self.task_group,) * self.num_envs
+        self._open_session()
+        if name == "task_description":
+            return self.latest.task
+        if name == "render":
+            return tuple(self.render())
+        raise AttributeError(f"Simulator vector attribute is not exposed: {name}")
+
+    def get_attr(self, name: str) -> tuple[Any, ...]:
+        """Return a supported per-environment attribute."""
+        return self.call(name)
+
+    def render(self) -> list[np.ndarray]:
+        """Return the latest RGB frame of every served environment, terminal frames included."""
+        return self.latest.frames()
+
+    def close_extras(self, **kwargs: Any) -> None:
+        """Close the served session."""
+        self.client.close()

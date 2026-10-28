@@ -23,13 +23,13 @@ import yaml
 
 
 def image_hash(root: Path, entry: dict) -> str:
+    """Content identity of a simulator image: what Dockerfile.sim copies in (keep in sync) and its build args."""
     digest = hashlib.sha256()
     paths = [
         root / entry["dockerfile"],
-        root / "docker/sims/requirements.txt",
         root / entry["sim_config"],
-        root / "scripts/ci/convert_sim_assets.py",
-        root / "scripts/ci/patch_sim_runtime.py",
+        root / "scripts/ci/convert_libero_init_states.py",
+        root / "scripts/ci/patch_libero_runtime.py",
         root / "scripts/ci/check_sim_parity.py",
         root / "pyproject.toml",
         root / "setup.py",
@@ -41,13 +41,13 @@ def image_hash(root: Path, entry: dict) -> str:
     ]
     for directory in (
         "src/lerobot/env_server",
-        "src/lerobot/sims",
+        "src/lerobot/sim",
         "src/lerobot/transport",
         "src/lerobot/utils",
     ):
         paths.extend((root / directory).rglob("*.py"))
-    paths.append(root / "src/lerobot/sims/native/metaworld_config.json")
-    paths.extend(path for path in (root / "docker/sims").rglob("*") if path.is_file())
+    paths.append(root / "src/lerobot/sim/integrations/metaworld_config.json")
+    paths.extend(path for path in (root / "docker/sim").rglob("*") if path.is_file())
     for path in sorted(set(paths)):
         digest.update(str(path.relative_to(root)).encode())
         digest.update(path.read_bytes())
@@ -60,7 +60,7 @@ def with_defaults(entry: dict) -> dict:
     name = entry["name"]
     defaults = {
         "policy": f"lerobot/smolvla_{name}",
-        "sim_config": f"docker/sims/configs/{name}.yaml",
+        "sim_config": f"docker/sim/configs/{name}.yaml",
         # Simulator camera key -> checkpoint camera key, as for any robot.
         "rename_map": {},
         "dockerfile": "docker/Dockerfile.sim",
@@ -70,6 +70,8 @@ def with_defaults(entry: dict) -> dict:
         # An end-to-end check, not a success-rate measure: short rollouts are enough.
         "max_episode_steps": 30,
         "train_smoke": False,
+        # Compare seeded local and served transitions; only deterministic simulators match exactly.
+        "parity": False,
     }
     merged = {**defaults, **entry}
     # The shared multi-stage Dockerfile selects the backend stage with SIM.
