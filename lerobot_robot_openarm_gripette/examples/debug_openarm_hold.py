@@ -37,6 +37,7 @@ def main() -> None:
     parser.add_argument("--id", default="my_follower")
     parser.add_argument("--can-fd", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--frequency", type=float, default=50.0)
+    parser.add_argument("--active-zero-torque", action="store_true")
     args = parser.parse_args()
     if args.frequency <= 0:
         parser.error("--frequency must be positive")
@@ -65,7 +66,12 @@ def main() -> None:
                 motor.recv_id,
                 motor.motor_type_str.lower().removeprefix("dm"),
             )
-        target = prepare_manual_start(robot, np.ones(7))
+        target = prepare_manual_start(
+            robot,
+            np.ones(7),
+            active_zero_torque=args.active_zero_torque,
+            zero_torque_frequency_hz=args.frequency,
+        )
         hold_action = {f"joint_{index}.pos": float(value) for index, value in enumerate(target, start=1)}
         print("Target joints (deg):", np.round(target, 2))
 
