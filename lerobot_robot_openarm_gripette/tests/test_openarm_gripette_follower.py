@@ -89,9 +89,9 @@ def test_prepare_manual_start_disables_torque_captures_pose_and_holds():
         "disable",
         "open_gripper",
         "prompt",
+        "configure",
         "hold",
         "enable",
-        "configure",
         "hold",
     ]
     assert result.tolist() == [1, -2, 3, -4, 5, -6, 7]

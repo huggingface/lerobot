@@ -40,12 +40,12 @@ def prepare_manual_start(
         robot.send_action(gripper_action)
     input_fn("Arm torque is OFF. Support and place the arm, then press ENTER...")
 
+    robot.arm.bus.configure_motors()
     observation = robot.arm.get_observation()
     measured = np.array([observation[f"joint_{i}.pos"] for i in range(1, 8)], dtype=np.float64)
     hold_action = {f"joint_{i}.pos": float(value) for i, value in enumerate(measured, start=1)}
 
     robot.arm.send_action(hold_action)
     robot.arm.bus.enable_torque()
-    robot.arm.bus.configure_motors()
     robot.arm.send_action(hold_action)
     return signs * measured
