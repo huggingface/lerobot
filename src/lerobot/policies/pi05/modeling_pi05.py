@@ -144,21 +144,21 @@ def _sample_training_rtc_prefix_mask(
 
 def _reduce_training_rtc_loss(
     losses: Tensor,
-    prefix_mask: Tensor | None,
+    loss_mask: Tensor | None,
     reduction: str,
 ) -> Tensor:
-    """Average flow loss over actions not in `prefix_mask` (clean RTC prefix and padded steps)."""
+    """Average flow loss over actions not in `loss_mask` (clean RTC prefix and padded steps)."""
     if reduction not in {"mean", "none"}:
         raise ValueError(f"Unsupported loss reduction: {reduction!r}")
-    if prefix_mask is None:
+    if loss_mask is None:
         return losses.mean() if reduction == "mean" else losses.mean(dim=(1, 2))
 
-    postfix_mask = (~prefix_mask).unsqueeze(-1).expand_as(losses)
+    valid_mask = (~loss_mask).unsqueeze(-1).expand_as(losses)
     if reduction == "none":
-        numerator = (losses * postfix_mask).sum(dim=(1, 2))
-        denominator = postfix_mask.sum(dim=(1, 2))
+        numerator = (losses * valid_mask).sum(dim=(1, 2))
+        denominator = valid_mask.sum(dim=(1, 2))
         return numerator / denominator.clamp(min=1)
-    return (losses * postfix_mask).sum() / postfix_mask.sum().clamp(min=1)
+    return (losses * valid_mask).sum() / valid_mask.sum().clamp(min=1)
 
 
 def _no_grad_if(enabled: bool):
@@ -1608,8 +1608,8 @@ class PI05Policy(PreTrainedPolicy):
         if loss_mask is None:
             loss_per_dim = losses.mean(dim=(0, 1))
         else:
-            postfix_mask = (~loss_mask).unsqueeze(-1).expand_as(losses)
-            loss_per_dim = (losses * postfix_mask).sum(dim=(0, 1)) / postfix_mask.sum(dim=(0, 1)).clamp(min=1)
+            valid_mask = (~loss_mask).unsqueeze(-1).expand_as(losses)
+            loss_per_dim = (losses * valid_mask).sum(dim=(0, 1)) / valid_mask.sum(dim=(0, 1)).clamp(min=1)
         loss_dict = {"loss_per_dim": loss_per_dim.detach().cpu().numpy().tolist()}
 
         if reduction == "none":
