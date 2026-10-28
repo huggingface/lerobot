@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from .damiao import DamiaoMotorsBus
+from .motorbridge_bus import MotorBridgeDamiaoBus
 from .tables import *  # noqa: F403 — hardware constant tables
 
-__all__ = ["DamiaoMotorsBus"]
+__all__ = ["DamiaoMotorsBus", "MotorBridgeDamiaoBus"]

@@ -162,6 +162,14 @@ def _align_to_checkpoint_order(
     return reordered
 
 
+def _policy_action_features(
+    hardware_features: dict[str, type | tuple], policy_action_names: list[str] | None
+) -> dict[str, type | tuple]:
+    if not policy_action_names or set(hardware_features) == set(policy_action_names):
+        return _align_to_checkpoint_order(hardware_features, policy_action_names, what="action")
+    return dict.fromkeys(policy_action_names, float)
+
+
 def _assert_state_matches_action_order(dataset_features: dict, ordered_action_keys: list[str]) -> None:
     """Reject a state layout that is a permutation of the action dispatch order.
 
@@ -374,7 +382,6 @@ def _aggregate_rollout_features(
         ),
     )
 
-
 def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: dict) -> LeRobotDataset | None:
     """Create the local recording destination independently of policy placement."""
     dataset = None
@@ -526,16 +533,16 @@ def build_rollout_context(
         )
         action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
         action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
+        policy_action_features = _policy_action_features(action_features_hw, checkpoint_order)
 
         dataset_features = _aggregate_rollout_features(
             processors,
-            action_features_hw,
+            policy_action_features,
             observation_features_hw,
             use_videos=cfg.dataset.video if cfg.dataset else True,
         )
         hw_features = hw_to_dataset_features(observation_features_hw, "observation")
-        # ``action_features_hw`` is already in checkpoint order, so it *is* the dispatch order.
-        ordered_action_keys = list(action_features_hw)
+        ordered_action_keys = list(policy_action_features)
         _assert_state_matches_action_order(dataset_features, ordered_action_keys)
 
         # Validate visual features if no rename_map is active

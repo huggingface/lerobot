@@ -1,0 +1,405 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Run a Cartesian-relative Grabette policy through LeRobot's rollout engine."""
+
+import argparse
+import time
+from pathlib import Path
+from threading import Event, Thread
+from typing import cast
+
+import numpy as np
+from gripette.grasp_projection import GraspProjection
+from huggingface_hub import snapshot_download
+from openarm_gripette_model import OPENARM_RIGHT_DIR
+
+from lerobot.cameras.gripette import GripetteCameraConfig
+from lerobot.configs import DatasetRecordConfig, PreTrainedConfig
+from lerobot.inference import SyncInferenceConfig
+from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.processor import (
+    RobotProcessorPipeline,
+    observation_to_transition,
+    robot_action_observation_to_transition,
+    transition_to_observation,
+    transition_to_robot_action,
+)
+from lerobot.robots.openarm_gripette_follower import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
+from lerobot.robots.openarm_gripette_follower.robot_grabette_processor import (
+    ROBOT_JOINTS,
+    GrabetteRelativePoseToJoints,
+    GripettePolicyObservation,
+)
+from lerobot.rollout import (
+    BaseStrategyConfig,
+    EpisodicStrategyConfig,
+    RolloutConfig,
+    build_rollout_context,
+    create_strategy,
+)
+from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+from lerobot.rollout.strategies import EpisodicStrategy
+from lerobot.utils.device_utils import auto_select_torch_device
+from lerobot.utils.process import ProcessSignalHandler
+from lerobot.utils.utils import init_logging
+from lerobot.utils.visualization_utils import init_visualization, shutdown_visualization
+
+URDF_JOINTS = [
+    "r_arm_pitch",
+    "r_arm_roll",
+    "r_arm_yaw",
+    "r_elbow",
+    "r_wrist_yaw",
+    "r_wrist_roll",
+    "r_wrist_pitch",
+]
+
+
+def prepare_manual_start(
+    robot: OpenArmGripetteFollower,
+    signs: np.ndarray,
+    gripper_action: RobotAction | None = None,
+    engage_duration_s: float = 1.0,
+    engage_frequency_hz: float = 20.0,
+    disable_frequency_hz: float = 10.0,
+    active_zero_torque: bool = True,
+    zero_torque_frequency_hz: float = 50.0,
+) -> np.ndarray:
+    signs = np.asarray(signs, dtype=np.float64)
+    if signs.shape != (7,) or not np.all(np.isin(signs, (-1.0, 1.0))):
+        raise ValueError("signs must contain seven values, each +1 or -1")
+
+    robot.bus.disable_torque()
+    time.sleep(0.05)
+    robot.bus.disable_torque()
+    if gripper_action is not None:
+        robot.send_action(gripper_action)
+    stop_positioning = Event()
+    positioning_errors: list[BaseException] = []
+    zero_torque_action: dict[str, float] = {}
+    zero_gains = dict.fromkeys(ROBOT_JOINTS, 0.0)
+    if active_zero_torque:
+        robot.bus.configure_motors()
+        observation = robot.get_observation()
+        zero_torque_action = {f"{joint}.pos": float(observation[f"{joint}.pos"]) for joint in ROBOT_JOINTS}
+        robot.send_action(zero_torque_action, custom_kp=zero_gains, custom_kd=zero_gains)
+        robot.bus.enable_torque()
+
+    def maintain_positioning_mode() -> None:
+        frequency = zero_torque_frequency_hz if active_zero_torque else disable_frequency_hz
+        while not stop_positioning.wait(1 / frequency):
+            try:
+                if active_zero_torque:
+                    robot.send_action(zero_torque_action, custom_kp=zero_gains, custom_kd=zero_gains)
+                else:
+                    robot.bus.disable_torque()
+            except BaseException as error:
+                positioning_errors.append(error)
+                stop_positioning.set()
+
+    positioning_thread = Thread(target=maintain_positioning_mode, daemon=True)
+    positioning_thread.start()
+    mode = "ACTIVE ZERO TORQUE" if active_zero_torque else "torque is OFF"
+    try:
+        input(f"Arm {mode}. Position and keep supporting the arm, then press ENTER...")
+    finally:
+        stop_positioning.set()
+        positioning_thread.join()
+    if positioning_errors:
+        raise positioning_errors[0]
+    robot.bus.disable_torque()
+
+    robot.bus.configure_motors()
+    observation = robot.get_observation()
+    measured = np.array([observation[f"{joint}.pos"] for joint in ROBOT_JOINTS], dtype=np.float64)
+    hold_action = {f"{joint}.pos": float(value) for joint, value in zip(ROBOT_JOINTS, measured, strict=True)}
+    position_kp = dict(zip(ROBOT_JOINTS, robot.config.position_kp[:7], strict=True))
+    position_kd = dict(zip(ROBOT_JOINTS, robot.config.position_kd[:7], strict=True))
+
+    robot.send_action(hold_action, custom_kp=dict.fromkeys(ROBOT_JOINTS, 0.0), custom_kd=position_kd)
+    robot.bus.enable_torque()
+    ramp_steps = max(1, round(engage_duration_s * engage_frequency_hz))
+    for scale in np.linspace(1 / ramp_steps, 1.0, ramp_steps):
+        robot.send_action(
+            hold_action,
+            custom_kp={name: gain * scale for name, gain in position_kp.items()},
+            custom_kd=position_kd,
+        )
+        time.sleep(1 / engage_frequency_hz)
+    return signs * measured
+
+
+class DryRunRobotWrapper(ThreadSafeRobot):
+    def send_action(self, action):
+        return action
+
+
+class ManualResetEpisodicStrategy(EpisodicStrategy):
+    def __init__(
+        self,
+        config: EpisodicStrategyConfig,
+        action_step: GrabetteRelativePoseToJoints,
+        signs: np.ndarray,
+        gripper_action: RobotAction | None,
+        active_zero_torque: bool,
+    ) -> None:
+        super().__init__(config)
+        self._action_step = action_step
+        self._signs = signs
+        self._gripper_action = gripper_action
+        self._active_zero_torque = active_zero_torque
+
+    def _reset_loop(self, *, robot: ThreadSafeRobot, **_: object) -> None:
+        q_cmd = prepare_manual_start(
+            cast(OpenArmGripetteFollower, robot.inner),
+            self._signs,
+            gripper_action=self._gripper_action,
+            active_zero_torque=self._active_zero_torque,
+        )
+        self._action_step.reset()
+        print("Held joints (URDF deg):", np.round(q_cmd, 1))
+
+
+def resolve_policy(args: argparse.Namespace) -> PreTrainedConfig:
+    path = Path(args.policy)
+    if not path.is_dir():
+        subfolder = f"checkpoints/{args.checkpoint}/pretrained_model" if args.checkpoint else ""
+        root = snapshot_download(
+            args.policy, revision=args.revision, allow_patterns=f"{subfolder}/*" if subfolder else None
+        )
+        path = Path(root) / subfolder
+    config = PreTrainedConfig.from_pretrained(path)
+    if (
+        not config.use_relative_actions
+        or config.relative_action_mode != "pose"
+        or config.relative_reference_key is not None
+        or config.relative_pose_rotation_format != "rot6d"
+    ):
+        raise ValueError("Policy must use chunk-relative Cartesian poses with rot6d rotations")
+    config.pretrained_path = str(path)
+    config.n_action_steps = args.n_action_steps
+    return config
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--policy", default="CarolinePascal/grabette-pick-and-place-texture-act")
+    parser.add_argument("--checkpoint", default="070000")
+    parser.add_argument("--revision", default=None)
+    parser.add_argument("--port", default="peakusb:can0@1000000/5000000")
+    parser.add_argument("--gripette", default="172.18.7.107:50051")
+    parser.add_argument("--id", default="my_follower")
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--task", default="")
+    parser.add_argument("--fps", type=float, default=10.0)
+    parser.add_argument("--n_action_steps", type=int, default=10)
+    parser.add_argument("--interpolation_multiplier", type=int, default=1)
+    parser.add_argument("--duration", type=float, default=60.0)
+    parser.add_argument("--joint_signs", type=float, nargs=7, default=[1.0] * 7)
+    parser.add_argument("--max_joint_step", type=float, default=5.0)
+    parser.add_argument("--initial_gripper_strategy", type=float, default=None)
+    parser.add_argument("--initial_gripper_closure", type=float, default=None)
+    parser.add_argument("--display_data", action="store_true")
+    parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument("--active_zero_torque", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--record_repo_id", default=None)
+    parser.add_argument("--record_root", default=None)
+    parser.add_argument("--num_episodes", type=int, default=1)
+    parser.add_argument("--push_to_hub", action="store_true")
+    args = parser.parse_args()
+
+    for name in ("initial_gripper_strategy", "initial_gripper_closure"):
+        value = getattr(args, name)
+        if value is not None and not 0.0 <= value <= 1.0:
+            parser.error(f"--{name} must be between 0 and 1")
+
+    if args.record_repo_id:
+        if not args.record_repo_id.split("/", 1)[-1].startswith("rollout_"):
+            parser.error("--record_repo_id name must start with 'rollout_'")
+        if args.num_episodes < 1:
+            parser.error("--num_episodes must be at least 1")
+        if args.duration <= 0:
+            parser.error("--duration must be positive when recording")
+        if not args.fps.is_integer():
+            parser.error("--fps must be a whole number when recording")
+        if args.initial_gripper_strategy is None or args.initial_gripper_closure is None:
+            parser.error(
+                "--initial_gripper_strategy and --initial_gripper_closure are required when recording"
+            )
+    elif args.record_root or args.push_to_hub:
+        parser.error("--record_root and --push_to_hub require --record_repo_id")
+
+    init_logging()
+    policy_config = resolve_policy(args)
+    (image_key, image_feature), *others = policy_config.image_features.items()
+    if others:
+        raise ValueError(f"Expected a single camera input, got {list(policy_config.image_features)}")
+    camera_name = image_key.removeprefix("observation.images.")
+
+    kinematics = RobotKinematics(str(OPENARM_RIGHT_DIR), target_frame_name="oak_l", joint_names=URDF_JOINTS)
+    for dof in ("proximal", "distal", "r_wrist_roll_mimic"):
+        kinematics.solver.mask_dof(dof)
+    kinematics.solver.enable_joint_limits(True)
+    kinematics.solver.add_regularization_task(1e-4)
+
+    observation_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
+        steps=[GripettePolicyObservation()],
+        to_transition=observation_to_transition,
+        to_output=transition_to_observation,
+    )
+    action_step = GrabetteRelativePoseToJoints(
+        kinematics=kinematics,
+        joint_signs=tuple(args.joint_signs),
+        max_joint_step=args.max_joint_step,
+        resync_on_chunk_start=args.dry_run,
+    )
+    action_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
+        steps=[action_step],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
+
+    robot_config = OpenArmGripetteFollowerConfig(
+        id=args.id,
+        port=args.port,
+        side="right",
+        max_relative_target=8.0,
+        cameras={
+            camera_name: GripetteCameraConfig(
+                addr=args.gripette,
+                height=image_feature.shape[1],
+                width=image_feature.shape[2],
+                fps=10,
+            )
+        },
+        gripette_addr=args.gripette,
+    )
+    dataset_config = (
+        DatasetRecordConfig(
+            repo_id=args.record_repo_id,
+            single_task=args.task,
+            root=args.record_root,
+            fps=int(args.fps),
+            episode_time_s=args.duration,
+            reset_time_s=0,
+            num_episodes=args.num_episodes,
+            push_to_hub=args.push_to_hub,
+        )
+        if args.record_repo_id
+        else None
+    )
+    strategy_config = (
+        EpisodicStrategyConfig(reset_to_initial_position=False) if dataset_config else BaseStrategyConfig()
+    )
+    rollout_config = RolloutConfig(
+        robot=robot_config,
+        policy=policy_config,
+        strategy=strategy_config,
+        inference=SyncInferenceConfig(),
+        dataset=dataset_config,
+        fps=args.fps,
+        interpolation_multiplier=args.interpolation_multiplier,
+        duration=args.duration,
+        device=args.device or auto_select_torch_device().type,
+        task=args.task,
+        display_data=args.display_data,
+        return_to_initial_position=False,
+    )
+    signal_handler = ProcessSignalHandler(use_threads=True)
+    context = build_rollout_context(
+        rollout_config,
+        signal_handler.shutdown_event,
+        robot_action_processor=action_processor,
+        robot_observation_processor=observation_processor,
+    )
+    action_step.bind_action_queue(context.policy.policy.count_queued_actions, args.n_action_steps)
+
+    robot = cast(OpenArmGripetteFollower, context.hardware.robot_wrapper.inner)
+    signs = np.asarray(args.joint_signs)
+    q_cmd = prepare_manual_start(robot, signs, active_zero_torque=args.active_zero_torque)
+    held = robot.get_observation()
+    context.hardware.initial_position = {
+        f"{joint}.pos": float(held[f"{joint}.pos"]) for joint in ROBOT_JOINTS
+    }
+    print("Held joints (URDF deg):", np.round(q_cmd, 1))
+    print("Held oak_l position (m):", np.round(kinematics.forward_kinematics(q_cmd)[:3, 3], 3))
+
+    initial_gripper_action = None
+    if args.initial_gripper_strategy is not None or args.initial_gripper_closure is not None:
+        observation = robot.get_observation()
+        projection = GraspProjection()
+        measured_strategy, measured_closure = projection.encode(
+            observation["proximal.pos"], observation["distal.pos"]
+        )
+        strategy = (
+            measured_strategy if args.initial_gripper_strategy is None else args.initial_gripper_strategy
+        )
+        closure = measured_closure if args.initial_gripper_closure is None else args.initial_gripper_closure
+        proximal, distal = projection.decode(strategy, closure)
+        initial_gripper_action = {"proximal.pos": proximal, "distal.pos": distal}
+        print(
+            f"{'DRY RUN: ' if args.dry_run else ''}Initial gripper: "
+            f"strategy={strategy:.2f} closure={closure:.2f}"
+        )
+        if not args.dry_run:
+            robot.send_action(
+                {
+                    **{
+                        f"{joint}.pos": sign * target
+                        for joint, sign, target in zip(ROBOT_JOINTS, signs, q_cmd, strict=True)
+                    },
+                    **initial_gripper_action,
+                }
+            )
+
+    if args.dry_run:
+        context.hardware.robot_wrapper = DryRunRobotWrapper(robot)
+    input(f"{'DRY RUN: the robot will not move. ' if args.dry_run else ''}Press ENTER to start...")
+
+    strategy_runner = (
+        ManualResetEpisodicStrategy(
+            cast(EpisodicStrategyConfig, rollout_config.strategy),
+            action_step,
+            signs,
+            None if args.dry_run else initial_gripper_action,
+            args.active_zero_torque,
+        )
+        if dataset_config
+        else create_strategy(rollout_config.strategy)
+    )
+    if rollout_config.display_data:
+        init_visualization(
+            rollout_config.display_mode,
+            session_name="openarm_gripette_rollout",
+            ip=rollout_config.display_ip,
+            port=rollout_config.display_port,
+        )
+    try:
+        strategy_runner.setup(context)
+        strategy_runner.run(context)
+    finally:
+        try:
+            input("Support the arm, then press ENTER to disable torque and disconnect...")
+            strategy_runner.teardown(context)
+        finally:
+            if rollout_config.display_data:
+                shutdown_visualization(rollout_config.display_mode)
+
+
+if __name__ == "__main__":
+    main()

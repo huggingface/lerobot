@@ -33,6 +33,7 @@ from pprint import pformat
 
 import draccus
 
+from lerobot.cameras.gripette import GripetteCameraConfig  # noqa: F401
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.robots import (  # noqa: F401
@@ -47,6 +48,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     omx_follower,
     openarm_follower,
+    openarm_gripette_follower,
     rebot_b601_follower,
     so_follower,
 )
