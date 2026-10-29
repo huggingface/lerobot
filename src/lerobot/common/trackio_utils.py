@@ -69,7 +69,7 @@ class TrackioLogger:
         # fresh Space, a wiped cache), where "must" would crash.
         generated = self.cfg.run_name is None
         if generated:
-            if cfg.resume:
+            if cfg.resume and self.cfg.resume != "must":
                 logging.warning(
                     "The resumed checkpoint has no Trackio run name, starting a new run. Pass "
                     "`--trackio.run_name=<previous run>` to reattach to an existing one."
