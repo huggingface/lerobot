@@ -23,8 +23,15 @@ from copy import copy
 
 import torch
 
+from lerobot.lerobot_types import EnvTransition
 from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import (
+    PolicyProcessorPipeline,
+    create_transition,
+    policy_output_to_transition,
+    transition_to_policy_action,
+    transition_to_prediction,
+)
 from lerobot.utils import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -84,8 +91,11 @@ class SyncInferenceEngine(InferenceEngine):
         # The policy was just reset, so a pending task change has nothing stale to flush.
         self._discard_task_change()
 
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
+    def get_action(self, obs_frame: dict | None) -> torch.Tensor | EnvTransition | None:
+        """Run the full inference pipeline on ``obs_frame`` and return an action tensor.
+
+        When the policy returned a prediction besides the action, returns it with it as a transition.
+        """
         if obs_frame is None:
             return None
         # Shallow copy is intentional: the caller (`send_next_action`) builds
@@ -109,8 +119,9 @@ class SyncInferenceEngine(InferenceEngine):
             runs_inference = self._policy.count_queued_actions() == 0
             observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
             observation = self._preprocessor(observation)
-            action = self._policy.select_action(observation)
-            action = self._postprocessor(action)
+            transition = policy_output_to_transition(self._policy.select_action(observation))
+            # Only the action goes through the postprocessor; the prediction travels beside it.
+            action = self._postprocessor(transition_to_policy_action(transition))
         action_tensor = action.squeeze(0).cpu()
         if runs_inference:
             end = time.perf_counter()
@@ -120,7 +131,9 @@ class SyncInferenceEngine(InferenceEngine):
         # not relabel this action.
         self._set_dispatched_task(task)
         # Policy's own dimension order — the order ``send_next_action`` labels it with.
-        return action_tensor
+        if not (prediction := transition_to_prediction(transition)):
+            return action_tensor
+        return create_transition(action=action_tensor, prediction=prediction)
 
     def dispatch_allowed(self) -> bool:
         """Permit dispatch unless an external planner has yet to issue its first instruction.

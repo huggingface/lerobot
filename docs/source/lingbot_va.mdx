@@ -98,6 +98,12 @@ Set `--policy.save_predicted_video=true` to additionally VAE-decode the predicte
 latents and write `pred_episode_*.mp4` next to the env-rendered `eval_episode_*.mp4` videos.
 The same flag works for the periodic eval during `lerobot-train`.
 
+### Watching the imagined video live
+
+Set `--policy.return_predicted_video=true` during `lerobot-rollout --display_data=true` to decode each
+chunk's predicted video and show, as each action executes, the imagined camera frames it belongs to
+(`prediction.images.<camera>`, next to each real camera). This costs one VAE decode per chunk.
+
 ## Training / fine-tuning
 
 `LingBotVAPolicy.forward(batch)` implements the dual-stream **flow-matching** loss
