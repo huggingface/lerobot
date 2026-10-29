@@ -19,7 +19,6 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -27,12 +26,9 @@ from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import RobotAction, RobotObservation, TransitionKey
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import ObservationProcessorStep, ProcessorStepRegistry, RobotActionProcessorStep
-from lerobot.utils.import_utils import _gripette_available, require_package
-
-if TYPE_CHECKING or _gripette_available:
-    from gripette.grasp_projection import GraspProjection
-else:
-    GraspProjection: Any = None
+# TODO(WARNING): local fork of grabette_dataset_tools.grasp_projection — keep in sync
+# with grabette-policy; do not quietly diverge the encode/decode map or limits.
+from lerobot.robots.openarm_gripette_follower.grasp_projection import GraspProjection
 
 ROBOT_JOINTS = [f"joint_{i}" for i in range(1, 8)]
 POSITION_NAMES = ["x", "y", "z"]
@@ -42,8 +38,7 @@ GRIPPER_NAMES = ["strategy", "closure"]
 logger = logging.getLogger(__name__)
 
 
-def _default_projection() -> "GraspProjection":
-    require_package("gripette", extra="gripette")
+def _default_projection() -> GraspProjection:
     return GraspProjection()
 
 
