@@ -16,7 +16,8 @@
 
 import builtins
 import logging
-from collections import deque
+import threading
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
@@ -186,6 +187,52 @@ class _ReadOnlyPrefixCache:
     def update(self, key_states: Tensor, value_states: Tensor, layer_idx: int, cache_kwargs=None):
         keys, values = self.kv[layer_idx]
         return torch.cat([keys, key_states], dim=-2), torch.cat([values, value_states], dim=-2)
+
+
+class _DenoiseGraph:
+    """``denoise_step`` captured in a CUDA graph for one batch size and prefix length.
+
+    Each chunk copies its prefix keys and values, suffix mask and position ids into the captured
+    buffers; each Euler step copies ``x_t`` and the timestep in and replays the graph. The buffers
+    are shared, so one model samples one chunk at a time, as ``select_action`` does.
+    """
+
+    def __init__(self, model: "PI05Pytorch", prefix_cache, suffix_attention, x_t: Tensor, timestep: Tensor):
+        self.device = x_t.device
+        self.cache = _ReadOnlyPrefixCache([(k.clone(), v.clone()) for k, v in prefix_cache.kv])
+        self.mask, self.position_ids = (t.clone() for t in suffix_attention)
+        self.x_t, self.timestep = x_t.clone(), timestep.clone()
+
+        def step():
+            return model.denoise_step(
+                None, self.cache, self.x_t, self.timestep, (self.mask, self.position_ids)
+            )
+
+        with torch.cuda.device(self.device):
+            # warm up on a side stream before capture, as torch.cuda.graph requires
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                for _ in range(2):
+                    step()
+            torch.cuda.current_stream().wait_stream(side)
+            self.graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(self.graph, stream=side):
+                self.out = step()
+
+    def load(self, prefix_cache: _ReadOnlyPrefixCache, suffix_attention: tuple[Tensor, Tensor]) -> None:
+        for (dst_k, dst_v), (k, v) in zip(self.cache.kv, prefix_cache.kv, strict=True):
+            dst_k.copy_(k)
+            dst_v.copy_(v)
+        self.mask.copy_(suffix_attention[0])
+        self.position_ids.copy_(suffix_attention[1])
+
+    def __call__(self, x_t: Tensor, timestep: Tensor) -> Tensor:
+        self.x_t.copy_(x_t)
+        self.timestep.copy_(timestep)
+        with torch.cuda.device(self.device):
+            self.graph.replay()
+        return self.out.clone()
 
 
 def _joint_attention(
@@ -666,6 +713,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     use_typed_attention_masks = False
     use_on_device_suffix_mask = False
     precompute_denoise_times = False
+    # captured denoise graphs kept per model (one per batch size and prefix length in use)
+    _MAX_DENOISE_GRAPHS = 4
 
     def __init__(self, config: PI05Config, rtc_processor: RTCProcessor | None = None):
         super().__init__()
@@ -1065,6 +1114,30 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     prefix_pad_masks, prefix_cache, input_x_t, current_timestep, suffix_attention
                 )
 
+            # the graph's timestep buffer is (batch,); trained RTC passes per-token times. Under
+            # torch.compile (compile_model) Inductor captures its own graphs, and nesting a
+            # capture in it fails, so a compiled call runs the plain loop.
+            if getattr(self.config, "denoise_cuda_graph", False) and noise.is_cuda:
+                if trained_prefix is not None or rtc_guided:
+                    if not self.__dict__.get("_warned_rtc_graph"):
+                        self.__dict__["_warned_rtc_graph"] = True
+                        logging.warning(
+                            "denoise_cuda_graph: RTC runs the denoise loop without the CUDA graph"
+                        )
+                elif not torch.compiler.is_compiling():
+                    # the graph's input buffers are shared: one chunk at a time per model
+                    with self.__dict__.setdefault("_denoise_graph_lock", threading.Lock()):
+                        denoise = self._denoise_graph(prefix_cache, suffix_attention, noise)
+                        actions = self._integrate(denoise, noise, num_steps, rtc_guided, None, None, kwargs)
+                        # replays are async: finish before another stream may reuse the buffers
+                        torch.cuda.current_stream(noise.device).synchronize()
+                        return actions
+
+        return self._integrate(
+            denoise, noise, num_steps, rtc_guided, trained_prefix, trained_prefix_mask, kwargs
+        )
+
+    def _integrate(self, denoise, noise, num_steps, rtc_guided, hard_prefix, hard_prefix_mask, kwargs):
         return euler_integrate(
             denoise,
             noise,
@@ -1074,8 +1147,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             inference_delay=kwargs.get("inference_delay"),
             prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
             execution_horizon=kwargs.get("execution_horizon"),
-            hard_prefix=trained_prefix,
-            hard_prefix_mask=trained_prefix_mask,
+            hard_prefix=hard_prefix,
+            hard_prefix_mask=hard_prefix_mask,
             precompute_times=self.precompute_denoise_times,
         )
 
@@ -1113,6 +1186,49 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
         return self.action_out_proj(suffix_out)
+
+    def _denoise_graph(
+        self, prefix_cache: _ReadOnlyPrefixCache, suffix_attention: tuple[Tensor, Tensor], noise: Tensor
+    ) -> _DenoiseGraph:
+        """The captured denoise step for this chunk's batch size and prefix length, loaded with
+        the chunk's prefix. Captured on first use and kept for the ``_MAX_DENOISE_GRAPHS`` most
+        recent shapes; see ``reset_denoise_graphs`` for when to drop them."""
+        graphs = self.__dict__.setdefault("_denoise_graphs", OrderedDict())
+        # buffers made under inference_mode can't be written outside it, and autocast changes kernels
+        key = (
+            tuple(noise.shape),
+            prefix_cache.prefix_len,
+            noise.dtype,
+            noise.device,
+            torch.is_inference_mode_enabled(),
+            torch.get_autocast_dtype(noise.device.type)
+            if torch.is_autocast_enabled(noise.device.type)
+            else None,
+        )
+        graph = graphs.get(key)
+        if graph is None:
+            timestep = torch.ones(noise.shape[0], dtype=torch.float32, device=noise.device)
+            graph = graphs[key] = _DenoiseGraph(self, prefix_cache, suffix_attention, noise, timestep)
+            while len(graphs) > self._MAX_DENOISE_GRAPHS:
+                graphs.popitem(last=False)
+        graphs.move_to_end(key)
+        graph.load(prefix_cache, suffix_attention)
+        return graph
+
+    def reset_denoise_graphs(self) -> None:
+        """Drop the captured denoise graphs; the next chunk captures again.
+
+        A graph replays against the parameter storage it was captured with. Loading weights in
+        place (``load_state_dict`` with the default ``assign=False``) keeps that storage, and
+        ``.to()``/``.cuda()`` reset the graphs themselves. Call this after anything that replaces
+        parameter tensors instead: ``load_state_dict(assign=True)``, swapping submodules, or
+        attaching or merging adapters.
+        """
+        self.__dict__.pop("_denoise_graphs", None)
+
+    def _apply(self, fn, recurse=True):
+        self.reset_denoise_graphs()
+        return super()._apply(fn, recurse)
 
 
 class PI05Policy(PreTrainedPolicy):

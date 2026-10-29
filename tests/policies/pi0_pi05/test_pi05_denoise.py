@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PI0.5's denoise loop with one read-only prefix cache shared by its steps."""
+"""PI0.5's denoise loop: the shared read-only prefix cache and the CUDA-graph replay."""
 
 import pytest
 import torch
@@ -108,8 +108,47 @@ def _reference_sample_actions(model, images, img_masks, tokens, masks, noise, nu
 
 @torch.no_grad()
 def test_the_read_only_prefix_cache_matches_the_cloned_cache(model):
+    model.config.denoise_cuda_graph = False
     kw = _inputs(model.config, batch_size=2, seed=1)
     assert torch.equal(model.sample_actions(**kw), _reference_sample_actions(model, **kw))
+
+
+@torch.no_grad()
+def test_the_cuda_graph_matches_eager_across_chunks_and_batch_sizes(model):
+    model.__dict__.pop("_denoise_graphs", None)
+    try:
+        # the first two share a graph but differ in images, tokens, padding and noise
+        for batch_size, seed, real_tokens in [(1, 2, 9), (1, 3, 5), (2, 4, 9)]:
+            kw = _inputs(model.config, batch_size, seed, real_tokens)
+            model.config.denoise_cuda_graph = False
+            eager = model.sample_actions(**kw)
+            model.config.denoise_cuda_graph = True
+            graphed = model.sample_actions(**kw)
+            torch.testing.assert_close(graphed, eager, rtol=0, atol=1e-5)
+        # one capture per batch size, reused across chunks
+        assert len(model._denoise_graphs) == 2
+    finally:
+        model.config.denoise_cuda_graph = False
+
+
+@torch.no_grad()
+def test_the_cuda_graph_follows_the_noise_and_can_be_reset(model):
+    model.__dict__.pop("_denoise_graphs", None)
+    model.config.denoise_cuda_graph = True
+    try:
+        kw = _inputs(model.config, batch_size=1, seed=7)
+        first = model.sample_actions(**kw)
+        # same observation, other noise: a replay that kept the captured noise would repeat itself
+        other = torch.randn(
+            kw["noise"].shape, device="cuda", generator=torch.Generator(device="cuda").manual_seed(8)
+        )
+        second = model.sample_actions(**{**kw, "noise": other})
+        assert not torch.equal(first, second)
+        assert len(model._denoise_graphs) == 1
+        model.reset_denoise_graphs()
+        assert not model.__dict__.get("_denoise_graphs")
+    finally:
+        model.config.denoise_cuda_graph = False
 
 
 class _OwnDenoiseStep(PI05Pytorch):
@@ -125,5 +164,16 @@ class _OwnDenoiseStep(PI05Pytorch):
 def test_a_subclass_with_its_own_denoise_step_keeps_its_contract(model):
     sub = _OwnDenoiseStep(model.config).cuda().eval()
     sub.load_state_dict(model.state_dict())
-    kw = _inputs(model.config, batch_size=1, seed=6)
-    assert torch.equal(sub.sample_actions(**kw), _reference_sample_actions(model, **kw))
+    sub.config.denoise_cuda_graph = True
+    try:
+        kw = _inputs(model.config, batch_size=1, seed=6)
+        assert torch.equal(sub.sample_actions(**kw), _reference_sample_actions(model, **kw))
+        assert not sub.__dict__.get("_denoise_graphs")
+    finally:
+        sub.config.denoise_cuda_graph = False
+        model.config.denoise_cuda_graph = False
+
+
+def test_the_cuda_graph_and_compile_model_are_alternatives():
+    with pytest.raises(ValueError, match="denoise_cuda_graph and compile_model"):
+        PI05Config(denoise_cuda_graph=True, compile_model=True)
