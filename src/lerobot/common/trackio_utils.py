@@ -23,13 +23,17 @@ Space instead, which is the only option that survives a remote job.
 import logging
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from termcolor import colored
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _trackio_available, require_package
+
+if TYPE_CHECKING or _trackio_available:
+    import trackio
 
 TRACKIO_MODES = frozenset({"train", "eval"})
 
@@ -55,7 +59,6 @@ class TrackioLogger:
 
     def __init__(self, cfg: TrainPipelineConfig) -> None:
         require_package("trackio", "training")
-        import trackio
 
         self.cfg = cfg.trackio
         self._group = cfg_to_group(cfg)
@@ -83,7 +86,6 @@ class TrackioLogger:
             resume=resume,
             capture_console=self.cfg.capture_console,
         )
-        self._trackio = trackio
 
         # `run.url` is the resolved Space id (`user/space`, also for a bare name or TRACKIO_SPACE_ID),
         # a self-hosted server URL, or None for the local database.
@@ -114,7 +116,7 @@ class TrackioLogger:
     def _upload_policy_artifact(self, checkpoint_dir: Path) -> None:
         step_id = checkpoint_dir.name
         artifact_name = get_safe_artifact_name(f"{self._group}-{step_id}")
-        artifact = self._trackio.Artifact(artifact_name, type="model")
+        artifact = trackio.Artifact(artifact_name, type="model")
         pretrained_model_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
 
         # A PEFT checkpoint stores adapter files instead of model.safetensors.
@@ -139,7 +141,7 @@ class TrackioLogger:
             )
             return
 
-        self._trackio.log_artifact(artifact)
+        trackio.log_artifact(artifact)
 
     def log_dict(
         self, d: dict, step: int | None = None, mode: str = "train", custom_step_key: str | None = None
@@ -169,17 +171,17 @@ class TrackioLogger:
         if not batch_data:
             return
         if custom_step_key is not None:
-            self._trackio.log(batch_data)
+            trackio.log(batch_data)
         else:
-            self._trackio.log(batch_data, step=step)
+            trackio.log(batch_data, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train") -> None:
         """Logs a video file under ``<mode>/video``."""
         if mode not in TRACKIO_MODES:
             raise ValueError(mode)
-        video = self._trackio.Video(video_path, caption=f"{mode} step {step}")
-        self._trackio.log({f"{mode}/video": video}, step=step)
+        video = trackio.Video(video_path, caption=f"{mode} step {step}")
+        trackio.log({f"{mode}/video": video}, step=step)
 
     def finish(self) -> None:
         """Flushes pending logs and closes the run."""
-        self._trackio.finish()
+        trackio.finish()

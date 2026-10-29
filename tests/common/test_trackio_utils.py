@@ -22,7 +22,6 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
-from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, sentinel
@@ -39,16 +38,15 @@ from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 
 @pytest.fixture
 def trackio(monkeypatch):
-    """Fake ``trackio`` module, installed before the logger imports it.
+    """Fake ``trackio`` module, patched into the logger's module.
 
-    The fast CI tiers do not install the ``training`` extra, so the installed-package check is patched out
-    and the mock carries a real ``__spec__`` for ``importlib.util.find_spec``. ``init`` returns a local run
-    (``url`` is None) unless a test says otherwise.
+    The fast CI tiers do not install the ``training`` extra, so the module-level ``trackio`` name may be
+    missing and the installed-package check is patched out. ``init`` returns a local run (``url`` is None)
+    unless a test says otherwise.
     """
     module = MagicMock()
-    module.__spec__ = ModuleSpec("trackio", None)
     module.init.return_value.url = None
-    monkeypatch.setitem(sys.modules, "trackio", module)
+    monkeypatch.setattr("lerobot.common.trackio_utils.trackio", module, raising=False)
     monkeypatch.setattr("lerobot.common.trackio_utils.require_package", lambda *args, **kwargs: None)
     return module
 
