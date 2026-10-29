@@ -123,6 +123,32 @@ def test_add_frame_increments_buffer_size(tmp_path):
     assert dataset.writer.episode_buffer["size"] == 2
 
 
+@pytest.mark.parametrize("input_type", ["numpy", "torch"])
+def test_add_frame_snapshots_numeric_buffers(tmp_path, input_type):
+    """Reusing a sensor buffer must not overwrite previously recorded frames."""
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features={"state": SIMPLE_FEATURES["state"]},
+        root=tmp_path / "ds",
+        use_videos=False,
+    )
+    state = np.zeros(6, dtype=np.float32) if input_type == "numpy" else torch.zeros(6)
+    for value in range(3):
+        state[:] = value
+        dataset.add_frame({"state": state, "task": "Dummy task"})
+    state[:] = 99
+    dataset.save_episode()
+    dataset.finalize()
+
+    loaded = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=dataset.root, video_backend="pyav")
+    actual = torch.stack([loaded[i]["state"] for i in range(3)])
+    expected = torch.arange(3, dtype=torch.float32).unsqueeze(1).expand(-1, 6)
+    torch.testing.assert_close(actual, expected)
+    np.testing.assert_array_equal(loaded.meta.stats["state"]["min"], np.zeros(6))
+    np.testing.assert_array_equal(loaded.meta.stats["state"]["max"], np.full(6, 2))
+
+
 def test_add_frame_rejects_missing_feature(tmp_path):
     """add_frame() raises ValueError when a required feature is missing."""
     dataset = LeRobotDataset.create(
