@@ -602,3 +602,110 @@ def test_vqbet_discretize_keeps_buffers_on_device():
         "vq_layer.freeze_codebook was moved off the model device after discretize(). "
         "Use .fill_(True) instead of = torch.tensor(True) to keep the buffer on device."
     )
+
+
+def test_act_validate_features_state_only():
+    """Verify that ACTConfig accepts state-only input configurations (#4921)."""
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+        },
+        output_features={
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+        },
+    )
+    # Must not raise ValueError
+    config.validate_features()
+
+
+def test_act_validate_features_missing_all_raises():
+    """Verify that ACTConfig raises ValueError when none of visual, env state, or robot state are provided."""
+    config = ACTConfig(
+        input_features={},
+        output_features={
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+        },
+    )
+    with pytest.raises(
+        ValueError,
+        match="You must provide at least one image, environment state, or robot state among the inputs.",
+    ):
+        config.validate_features()
+
+
+def test_act_policy_state_only_forward_and_select_action():
+    """Verify that ACTPolicy forward pass and select_action run on state-only batches without KeyError (#4921)."""
+    from lerobot.policies.act.modeling_act import ACTPolicy
+
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+        },
+        output_features={
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+        },
+        dim_model=64,
+        n_encoder_layers=1,
+        n_decoder_layers=1,
+        chunk_size=10,
+        n_action_steps=10,
+    )
+    policy = ACTPolicy(config).to(DEVICE)
+    batch_size = 2
+    batch = {
+        OBS_STATE: torch.randn(batch_size, 6, device=DEVICE),
+        ACTION: torch.randn(batch_size, 10, 2, device=DEVICE),
+        "action_is_pad": torch.zeros(batch_size, 10, dtype=torch.bool, device=DEVICE),
+    }
+
+    # Training forward pass
+    loss, _ = policy.forward(batch)
+    assert loss is not None and torch.isfinite(loss)
+
+    # Evaluation select_action
+    policy.eval()
+    policy.reset()
+    action = policy.select_action(batch)
+    assert action.shape == (batch_size, 2)
+
+
+@pytest.mark.parametrize("use_vae", [False, True])
+def test_act_state_only_observation_deployment_and_gradients(use_vae):
+    from lerobot.policies.act.modeling_act import ACTPolicy
+
+    torch.manual_seed(0)
+    config = ACTConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
+        dim_model=32,
+        dim_feedforward=64,
+        n_encoder_layers=1,
+        n_decoder_layers=1,
+        n_vae_encoder_layers=1,
+        chunk_size=3,
+        n_action_steps=2,
+        dropout=0.0,
+        use_vae=use_vae,
+        device="cpu",
+    )
+    policy = ACTPolicy(config)
+    state = torch.randn(2, 6)
+    loss, _ = policy(
+        {OBS_STATE: state, ACTION: torch.randn(2, 3, 2), "action_is_pad": torch.zeros(2, 3, dtype=torch.bool)}
+    )
+    loss.backward()
+    grads = [p.grad for p in policy.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+    assert any(torch.count_nonzero(g) for g in grads)
+    policy.eval()
+    policy.reset()
+    # Deployment has observations only: no ground-truth action or padding mask.
+    with torch.no_grad():
+        chunk = policy.predict_action_chunk({OBS_STATE: state})
+        outputs = [policy.select_action({OBS_STATE: state}) for _ in range(5)]
+    assert chunk.shape == (2, 3, 2)
+    for i, output in enumerate(outputs):
+        assert torch.isfinite(output).all()
+        torch.testing.assert_close(output, chunk[:, i % 2])
+    policy.reset()
+    torch.testing.assert_close(policy.select_action({OBS_STATE: state}), chunk[:, 0])
