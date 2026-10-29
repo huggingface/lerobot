@@ -234,10 +234,10 @@ def test_sim_robot_actions_follow_controller_order(sim_server, tmp_path):
 def test_sim_robot_records_the_body_its_env_declares(sim_server, tmp_path):
     from lerobot.env_server.protocol import decode_descriptor, encode_descriptor
 
-    for declared, expected in ((None, "sim"), ("so_follower", "so_follower")):
+    for declared, expected in ((None, "sim_robot"), ("so_follower", "so_follower")):
         robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(robot_type=declared), calibration_dir=tmp_path))
         try:
-            assert (robot.name, robot.robot_type) == ("sim", expected)
+            assert (robot.name, robot.robot_type) == ("sim_robot", expected)
             # A newer server may declare more: this client keeps what it knows.
             wire = {**encode_descriptor(robot.descriptor), "joint_units": ["rad", "rad"]}
             assert decode_descriptor(wire).robot_type == robot.descriptor.robot_type

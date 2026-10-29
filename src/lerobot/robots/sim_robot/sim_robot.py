@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One simulated environment driven through the Robot interface, locally or served."""
+"""A sim env behind the ``Robot`` interface, run locally or on an env server."""
 
 import math
 from dataclasses import replace
@@ -37,22 +37,22 @@ class SimRobot(Robot):
 
     Each action advances the environment by one step. When an episode ends, the robot stays in its final state
     and ignores actions until ``start_episode`` is called; ``latest`` keeps the final reward, termination and
-    success. ``robot_type`` is the body the environment declares, or ``sim`` if it declares none.
+    success. ``robot_type`` is the body the environment declares, or ``sim_robot`` if it declares none.
     """
 
     config_class = SimRobotConfig
-    name = "sim"
+    name = "sim_robot"
     supports_command_hold = True
 
     def __init__(self, config: SimRobotConfig):
         super().__init__(config)
         self.config = config
-        # The env's suite, when it names exactly one; otherwise the simulator's first.
+        # Use the env's suite if ``task`` names exactly one; otherwise the sim's first suite.
         task = config.env.task
         self._task_group = task if task and "," not in task else None
         self._connected = False
         self.latest: StepResult | None = None
-        # Built before connect(): scripts read the features and the descriptor first.
+        # Build the env here, not in connect(): scripts read the features and descriptor before connecting.
         self._env: LocalVectorEnv | RemoteVectorEnv = self._make_env()
 
     def _make_env(self) -> "LocalVectorEnv | RemoteVectorEnv":
@@ -71,7 +71,7 @@ class SimRobot(Robot):
             for feature in descriptor.features
             if feature.kind == "rgb"
         }
-        # Robot cameras use the recorder's names; evaluation envs keep their benchmark names.
+        # Robot cameras use dataset names (observation.images.<camera>); eval envs keep benchmark names.
         self.descriptor: EnvDescriptor = replace(
             descriptor,
             features=tuple(
@@ -85,7 +85,7 @@ class SimRobot(Robot):
 
     @property
     def cameras(self) -> dict[str, str]:
-        """Each camera's observation feature, keyed by camera name like a real robot's cameras."""
+        """Map each camera name to its observation feature, keyed like a real robot's cameras."""
         return {camera: f"observation.images.{camera}" for camera in self._camera_keys.values()}
 
     def feature_names(self, rename_map: dict[str, str]) -> dict[str, str]:
@@ -125,7 +125,7 @@ class SimRobot(Robot):
     def connect(self, calibrate: bool = True) -> None:
         if self._env.closed:
             self._env = self._make_env()
-        # Connecting starts the first episode, so the robot has a state to observe.
+        # Start the first episode so the robot has a state to observe.
         self._connected = True
         try:
             self.start_episode()
@@ -172,18 +172,13 @@ class SimRobot(Robot):
         """Nothing to do: the simulation advances only on send_action()."""
 
     def disconnect(self) -> None:
-        # Not decorated: it also closes an environment built but never connected.
+        # Not decorated: it must also close an env that was built but never connected.
         self._env.close()
         self._connected = False
 
 
 def check_control_rate(robot: Robot, fps: float, flag: str | None = None, multiplier: int = 1) -> None:
-    """A sim robot ticks at its env's rate: a loop at another fps would play or record at the wrong speed.
-
-    Each command advances the simulation once, so with ``multiplier`` commands per loop cycle (rollout's action
-    interpolation) the loop must run at the rate divided by ``multiplier``. ``flag`` is the command-line option
-    that sets ``fps``, named in the error.
-    """
+    """Raise unless ``fps * multiplier`` commands per second match a sim robot's control rate."""
     if isinstance(robot, SimRobot) and not math.isclose(fps * multiplier, robot.descriptor.fps):
         rate = robot.descriptor.fps
         hint = f": pass {flag}={rate / multiplier:g}" if flag else ""
@@ -200,8 +195,5 @@ def start_episode(robot: Robot) -> None:
 
 
 def episode_ended(robot: Robot) -> bool:
-    """Whether a sim robot's own episode (success, failure or step limit) ended at the last action.
-
-    A real robot's episodes are timed by the caller.
-    """
+    """Return whether a sim robot's episode just ended; always False for a real robot."""
     return isinstance(robot, SimRobot) and robot.episode_ended

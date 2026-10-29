@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The simulator an environment runs, as its integration resolves it."""
+"""Config for the simulator an env runs."""
 
 import importlib
 import math
@@ -25,11 +25,9 @@ from lerobot.sim.types import CONTROL_MODES
 
 @dataclass
 class SimConfig:
-    """The simulator an environment runs: its integration, task, options and control conventions.
+    """The simulator an env runs: integration, task, options and control settings.
 
-    ``semantics`` defaults to ``<type>-<control>-v1``. ``robot_type`` is recorded as a sim robot's dataset
-    ``robot_type`` (the hardware robot's name when the body has one, e.g. ``so_follower``); left empty, a sim
-    robot records ``sim``.
+    ``robot_type`` is the body a sim robot records in its dataset; left empty, it records ``sim_robot``.
     """
 
     type: str
@@ -43,7 +41,7 @@ class SimConfig:
     robot_type: str = ""
 
     def __post_init__(self) -> None:
-        """Normalize component order and reject invalid controller declarations."""
+        """Check ``control_mode`` and ``fps``, and fill in the default ``semantics``."""
         self.state_names = tuple(self.state_names)
         self.action_names = tuple(self.action_names)
         if self.control_mode not in CONTROL_MODES:
@@ -55,10 +53,7 @@ class SimConfig:
 
     @classmethod
     def resolve(cls, settings: dict[str, Any]) -> "SimConfig":
-        """Build from ``settings``, filling those left out or null from the integration's ``conventions``.
-
-        Imports the integration, so it runs where the simulator is installed.
-        """
+        """Build a config from ``settings``, taking missing values from the integration's ``conventions``."""
         with simulator_required(settings["type"]):
             integration = importlib.import_module(f"lerobot.sim.integrations.{settings['type']}")
             conventions = getattr(integration, "conventions", None)

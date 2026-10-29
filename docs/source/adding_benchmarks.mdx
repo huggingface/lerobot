@@ -90,7 +90,7 @@ Any other array is passed as `observation.<key>`. Rename your simulator's output
 
 ### Conventions (`conventions()` in the integration)
 
-Return the simulator's control rate, controller and ordered component names from `conventions(kwargs)`, a function of the simulator's options (they can depend on an action mode, as for RoboTwin). They fill the settings a configuration leaves out, and name the state and action components for robots, datasets and checkpoints. `semantics` defaults to `<type>-<control>-v1`. `robot_type` names the simulated body, recorded by a sim robot: the type the real robot records when lerobot has a class for it (`so_follower`), else a short name (`panda`, `sawyer`); left out, datasets record `sim`.
+Return the simulator's control rate, controller and ordered component names from `conventions(kwargs)`, a function of the simulator's options (they can depend on an action mode, as for RoboTwin). They fill the settings a configuration leaves out, and name the state and action components for robots, datasets and checkpoints. `semantics` defaults to `<type>-<control>-v1`. `robot_type` names the simulated body, recorded by a sim robot: the type the real robot records when lerobot has a class for it (`so_follower`), else a short name (`panda`, `sawyer`); left out, datasets record `sim_robot`.
 
 ### The config (`src/lerobot/envs/configs.py`)
 
