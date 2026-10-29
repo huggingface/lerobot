@@ -2,12 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 import torch
-from PIL import Image
 from torch.nn import functional
-from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
@@ -29,6 +28,48 @@ from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PR
 from .configuration_longwam import LongWAMConfig
 
 FeatureMap = dict[PipelineFeatureType, dict[str, PolicyFeature]]
+
+# Pillow's 8-bit resampling keeps fixed-point weights with this many fractional bits.
+_PIL_PRECISION_BITS = 22
+
+
+@lru_cache
+def _pil_bilinear_weights(in_size: int, out_size: int) -> tuple[list[list[int]], list[list[int]]]:
+    """Source indices and fixed-point weights of Pillow's antialiased BILINEAR filter along one axis."""
+    scale = in_size / out_size
+    support = max(scale, 1.0)
+    indices, weights = [], []
+    for i in range(out_size):
+        center = (i + 0.5) * scale
+        start = max(int(center - support + 0.5), 0)
+        stop = min(int(center + support + 0.5), in_size)
+        taps = [max(1 - abs((j - center + 0.5) / support), 0.0) for j in range(start, stop)]
+        total = sum(taps)
+        indices.append(list(range(start, stop)))
+        weights.append([int(0.5 + tap / total * (1 << _PIL_PRECISION_BITS)) for tap in taps])
+    return indices, weights
+
+
+def _pil_resample_axis(image: torch.Tensor, out_size: int, dim: int) -> torch.Tensor:
+    """One Pillow resampling pass over `dim` of an integer image, rounded back to 8 bits."""
+    indices, weights = _pil_bilinear_weights(image.shape[dim], out_size)
+    taps = max(len(row) for row in indices)
+    index = torch.tensor([row + [row[-1]] * (taps - len(row)) for row in indices], device=image.device)
+    weight = torch.tensor([row + [0] * (taps - len(row)) for row in weights], device=image.device)
+    image = image.movedim(dim, -1)
+    gathered = image[..., index.flatten()].unflatten(-1, index.shape)
+    total = (gathered * weight).sum(-1) + (1 << (_PIL_PRECISION_BITS - 1))
+    return (total >> _PIL_PRECISION_BITS).clamp(0, 255).movedim(-1, dim)
+
+
+def _pil_bilinear_resize(image: torch.Tensor, height: int, width: int) -> torch.Tensor:
+    """Bit-exact `PIL.Image.resize(..., BILINEAR)` of uint8 `[..., H, W]` images, on their own device."""
+    image = image.long()
+    if image.shape[-1] != width:
+        image = _pil_resample_axis(image, width, -1)
+    if image.shape[-2] != height:
+        image = _pil_resample_axis(image, height, -2)
+    return image.to(torch.uint8)
 
 
 @ProcessorStepRegistry.register(name="longwam_observations")
@@ -55,15 +96,12 @@ class LongWAMObservations(ObservationProcessorStep):
             resized_height, resized_width = round(input_height * scale), round(input_width * scale)
             top, left = (resized_height - height) // 2, (resized_width - width) // 2
             if image.ndim == 4:
-                # Preserve released inference pixels, before the pipeline's device transfer.
-                frames = []
-                for frame in image:
-                    pil = to_pil_image(frame.mul(255).round().to(torch.uint8))
-                    pil = pil.resize((resized_width, resized_height), Image.Resampling.BILINEAR)
-                    frames.append(pil_to_tensor(pil.crop((left, top, left + width, top + height))))
-                observation[key] = (
-                    torch.stack(frames).to(getattr(torch, self.image_dtype)).mul(2 / 255).sub(1)
+                # Released inference resized uint8 frames with PIL; reproduce its pixels on the input device.
+                frames = _pil_bilinear_resize(
+                    image.mul(255).round().to(torch.uint8), resized_height, resized_width
                 )
+                frames = frames[..., top : top + height, left : left + width]
+                observation[key] = frames.to(getattr(torch, self.image_dtype)).mul(2 / 255).sub(1)
                 continue
             image = image.reshape(-1, *image.shape[-3:]).float()
             image = functional.interpolate(

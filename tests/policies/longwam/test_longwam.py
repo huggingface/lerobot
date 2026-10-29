@@ -6,6 +6,7 @@ import json
 
 import pytest
 import torch
+from PIL import Image
 
 pytest.importorskip("diffusers")
 pytest.importorskip("transformers")
@@ -13,11 +14,13 @@ pytest.importorskip("transformers")
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
+from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 from transformers import PreTrainedTokenizerFast
 
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.longwam.configuration_longwam import LongWAMConfig
 from lerobot.policies.longwam.modeling_longwam import LongWAMPolicy
+from lerobot.policies.longwam.processor_longwam import LongWAMObservations
 from lerobot.processor import NormalizerProcessorStep, TokenizerProcessorStep
 from lerobot.utils.constants import OBS_LANGUAGE_TOKENS
 
@@ -240,6 +243,33 @@ def test_training_and_inference_camera_geometry(config, input_size, camera_size)
         torch.testing.assert_close(training[key], expected, atol=2 / 255, rtol=0)
         if input_size in ((16, 32), (32, 16)):
             torch.testing.assert_close(training[key][0, 0], -torch.ones(3, *camera_size))
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("input_size", [(256, 256), (480, 640), (41, 23), (128, 96)])
+def test_inference_resize_matches_released_pil_pixels_on_device(device, input_size):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    torch.manual_seed(0)
+    images = torch.rand(2, 3, *input_size)
+    height, width = 224, 224
+    scale = max(width / input_size[1], height / input_size[0])
+    resized = (round(input_size[1] * scale), round(input_size[0] * scale))
+    left, top = (resized[0] - width) // 2, (resized[1] - height) // 2
+    expected = torch.stack(
+        [
+            pil_to_tensor(
+                to_pil_image(frame.mul(255).round().to(torch.uint8))
+                .resize(resized, Image.Resampling.BILINEAR)
+                .crop((left, top, left + width, top + height))
+            )
+            for frame in images
+        ]
+    ).to(torch.bfloat16)
+    step = LongWAMObservations(("cam",), (height, width), "bfloat16")
+    out = step.observation({"cam": images.to(device), "observation.state": torch.zeros(2, 8, device=device)})
+    assert out["cam"].device.type == device
+    assert torch.equal(out["cam"].cpu(), expected.mul(2 / 255).sub(1))
 
 
 @pytest.mark.parametrize("mode", ["idm", "cod"])
