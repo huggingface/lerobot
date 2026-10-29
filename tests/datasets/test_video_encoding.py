@@ -69,6 +69,22 @@ require_qsv = _require_encoder("h264_qsv")
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "encoded_videos"
 
 
+def _write_solid_clip(path: Path, value: int, num_frames: int = 3) -> None:
+    """Write a short solid-color MPEG-4 clip. ``value`` is the RGB level of every pixel."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with av.open(str(path), "w") as container:
+        stream = container.add_stream("mpeg4", rate=10)
+        stream.width = 16
+        stream.height = 16
+        stream.pix_fmt = "yuv420p"
+        for _ in range(num_frames):
+            frame = av.VideoFrame.from_ndarray(np.full((16, 16, 3), value, dtype=np.uint8), format="rgb24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
 def _write_color_frames(imgs_dir: Path, num_frames: int = 4, height: int = 64, width: int = 96) -> None:
     imgs_dir.mkdir(parents=True, exist_ok=True)
     for i in range(num_frames):
@@ -632,6 +648,27 @@ class TestConcatenateVideoFiles:
                 tmp_path / "out.mp4",
                 compatibility_check=True,
             )
+
+    @pytest.mark.parametrize("folder", ["clips", "space here", "owner's clips", "a'b'c"])
+    def test_concatenates_local_paths_with_spaces_or_apostrophes(self, tmp_path, folder):
+        """ffconcat quoting must keep paths that contain spaces or apostrophes."""
+        directory = tmp_path / folder
+        inputs = []
+        for index, value in enumerate((40, 200)):
+            path = directory / f"clip-{index}.mp4"
+            _write_solid_clip(path, value)
+            inputs.append(path)
+
+        output = directory / "combined.mp4"
+        concatenate_video_files(inputs, output)
+
+        with av.open(str(output)) as container:
+            frames = list(container.decode(video=0))
+        assert len(frames) == 6
+        means = [float(frame.to_ndarray(format="rgb24").mean()) for frame in frames]
+        # mpeg4's yuv420p conversion shifts the solid color, but the two clips stay apart.
+        assert all(mean < 80 for mean in means[:3])
+        assert all(mean > 160 for mean in means[3:])
 
 
 class TestEncoderConfigPersistence:
