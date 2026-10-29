@@ -587,6 +587,39 @@ def test_force_cache_sync_refreshes_remote_meta(video_dataset_roots):
     assert refreshed.meta.fps != 999  # re-materialized from the meta table
 
 
+def test_metadata_cache_identity_preserves_default_cache_path() -> None:
+    root = "hf://datasets/user/repo"
+    expected = "hf_datasets_user_repo_main"
+    for options in (None, {}, {"token": "rotated-token", "timeout": "60s"}):
+        assert lance_backend.metadata_cache_identity(root, "main", options) == expected
+        assert lance_backend.metadata_cache_identity(f"{root}/", "main", options) == expected
+
+
+def test_metadata_cache_identity_separates_sources_and_revisions() -> None:
+    root = "s3://shared-bucket/dataset"
+    options = {"aws_endpoint": "https://endpoint.example.com", "aws_region": "us-east-1"}
+    identity = lance_backend.metadata_cache_identity(root, "main", options)
+    original_options = options.copy()
+    rotated_options = {
+        **{key.upper(): value for key, value in reversed(options.items())},
+        "aws_access_key_id": "rotated-id",
+        "aws_secret_access_key": "rotated-secret",
+        "aws_session_token": "rotated-session",
+        "timeout": "60s",
+    }
+    assert lance_backend.metadata_cache_identity(root, "main", rotated_options) == identity
+    assert options == original_options
+    assert lance_backend.metadata_cache_identity(root, "other-revision", options) != identity
+    assert lance_backend.metadata_cache_identity(f"{root}-other", "main", options) != identity
+    for key, value in (
+        ("aws_endpoint", "https://other-endpoint.example.com"),
+        ("aws_region", "us-west-2"),
+        ("aws_virtual_hosted_style_request", "true"),
+        ("azure_storage_account_name", "other-account"),
+    ):
+        assert lance_backend.metadata_cache_identity(root, "main", {**options, key: value}) != identity
+
+
 @pytest.mark.parametrize("endpoint_key", ["endpoint", "aws_endpoint", "aws_endpoint_url"])
 def test_remote_metadata_cache_separates_endpoints(
     tmp_path, monkeypatch, lerobot_dataset_factory, tasks_factory, endpoint_key: str

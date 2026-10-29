@@ -71,6 +71,7 @@ from .lance_utils import (  # noqa: F401
     build_video_byte_index,
     lance_mp_context,
     localize_root,
+    metadata_cache_identity,
     resolve_lance_root,
     to_lance_column,
 )
