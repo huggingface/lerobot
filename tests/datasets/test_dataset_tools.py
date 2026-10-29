@@ -19,6 +19,7 @@ import shutil
 from unittest.mock import patch
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 import torch
 
@@ -617,6 +618,21 @@ def test_remove_camera_feature(sample_dataset, tmp_path):
 
     sample_item = dataset_without_camera[0]
     assert camera_to_remove not in sample_item
+
+    episode_columns = {
+        column
+        for path in (dataset_without_camera.root / "meta" / "episodes").glob("*/*.parquet")
+        for column in pq.read_schema(path).names
+    }
+    removed_metadata_prefixes = (f"stats/{camera_to_remove}/", f"videos/{camera_to_remove}/")
+    assert not any(column.startswith(removed_metadata_prefixes) for column in episode_columns)
+
+    dataset_after_delete = delete_episodes(
+        dataset_without_camera,
+        episode_indices=[0],
+        output_dir=tmp_path / "without_camera_after_delete",
+    )
+    assert dataset_after_delete.meta.total_episodes == sample_dataset.meta.total_episodes - 1
 
 
 def test_complex_workflow_integration(sample_dataset, tmp_path):
