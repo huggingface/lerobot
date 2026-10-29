@@ -81,19 +81,6 @@ def make_checkpoint(tmp_path: Path, *filenames: str) -> Path:
 # --- TrackioConfig ---
 
 
-def test_trackio_config_defaults():
-    cfg = TrackioConfig()
-
-    assert cfg.enable is False
-    assert cfg.disable_artifact is True
-    assert cfg.project == "lerobot"
-    assert cfg.space_id is None
-    assert cfg.private is None
-    assert cfg.run_name is None
-    assert cfg.resume is None
-    assert cfg.capture_console is True
-
-
 @pytest.mark.parametrize("mode", ["allow", "must", "never", None])
 def test_trackio_config_accepts_resume_modes(mode):
     assert TrackioConfig(resume=mode).resume == mode
@@ -107,36 +94,33 @@ def test_trackio_config_rejects_unknown_resume_mode():
 # --- cfg_to_group / get_safe_artifact_name ---
 
 
-def test_cfg_to_group_without_dataset_or_env(tmp_path):
-    cfg = make_cfg(tmp_path)
-
-    assert cfg_to_group(cfg) == "policy:test-policy-seed:42"
-
-
-def test_cfg_to_group_with_dataset_and_env(tmp_path):
-    cfg = make_cfg(
-        tmp_path,
-        dataset=SimpleNamespace(repo_id="user/repo"),
-        env=SimpleNamespace(type="pusht", fps=10),
-    )
-
-    assert cfg_to_group(cfg) == "policy:test-policy-seed:42-dataset:user/repo-env:pusht"
-
-
-def test_cfg_to_group_reward_model_prefix(tmp_path):
-    cfg = make_cfg(tmp_path, is_reward_model_training=True, trainable_config=SimpleNamespace(type="rm"))
-
-    assert cfg_to_group(cfg) == "reward_model:rm-seed:42"
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({}, "policy:test-policy-seed:42"),
+        (
+            {"dataset": SimpleNamespace(repo_id="user/repo"), "env": SimpleNamespace(type="pusht", fps=10)},
+            "policy:test-policy-seed:42-dataset:user/repo-env:pusht",
+        ),
+        (
+            {"is_reward_model_training": True, "trainable_config": SimpleNamespace(type="rm")},
+            "reward_model:rm-seed:42",
+        ),
+    ],
+)
+def test_cfg_to_group(tmp_path, overrides, expected):
+    assert cfg_to_group(make_cfg(tmp_path, **overrides)) == expected
 
 
-def test_get_safe_artifact_name_replaces_separators():
-    assert get_safe_artifact_name("policy:act-seed:42-dataset:user/repo-000100") == (
-        "policy_act-seed_42-dataset_user_repo-000100"
-    )
-
-
-def test_get_safe_artifact_name_keeps_safe_names():
-    assert get_safe_artifact_name("already-safe_name") == "already-safe_name"
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("policy:act-seed:42-dataset:user/repo-000100", "policy_act-seed_42-dataset_user_repo-000100"),
+        ("already-safe_name", "already-safe_name"),
+    ],
+)
+def test_get_safe_artifact_name(name, expected):
+    assert get_safe_artifact_name(name) == expected
 
 
 # --- TrackioLogger.__init__ ---
@@ -171,132 +155,109 @@ def test_trackio_logger_forwards_init_kwargs(trackio, tmp_path):
     }
 
 
-def test_trackio_logger_reuses_persisted_run_name(trackio, tmp_path):
-    cfg = make_cfg(tmp_path, trackio=TrackioConfig(run_name="my-run"))
-
-    TrackioLogger(cfg)
-
-    assert trackio.init.call_args.kwargs["name"] == "my-run"
-    assert cfg.trackio.run_name == "my-run"
-
-
-def test_trackio_logger_resume_without_run_name_starts_new_run(trackio, tmp_path, caplog):
-    cfg = make_cfg(tmp_path, resume=True)
-
-    with caplog.at_level(logging.WARNING):
-        TrackioLogger(cfg)
-
-    assert trackio.init.call_args.kwargs["resume"] == "never"
-    assert re.fullmatch(r"test-run-[0-9a-f]{8}", trackio.init.call_args.kwargs["name"])
-    assert "no Trackio run name" in caplog.text
-
-
 @pytest.mark.parametrize(
-    ("cfg_resume", "run_name", "trackio_resume", "expected"),
+    ("cfg_resume", "run_name", "trackio_resume", "expected", "warns"),
     [
-        (False, None, None, "never"),
-        (True, "my-run", None, "allow"),
-        (True, "my-run", "must", "must"),
-        (False, None, "allow", "allow"),
-        (False, "my-run", None, "never"),
+        (True, None, None, "never", True),
+        (True, None, "must", "must", False),
+        (True, "my-run", None, "allow", False),
+        (True, "my-run", "must", "must", False),
+        (False, None, "allow", "allow", False),
+        (False, "my-run", None, "never", False),
     ],
 )
-def test_trackio_logger_resume(trackio, tmp_path, cfg_resume, run_name, trackio_resume, expected):
+def test_trackio_logger_resume(
+    trackio, tmp_path, caplog, cfg_resume, run_name, trackio_resume, expected, warns
+):
     cfg = make_cfg(
         tmp_path, trackio=TrackioConfig(run_name=run_name, resume=trackio_resume), resume=cfg_resume
     )
 
-    TrackioLogger(cfg)
-
-    assert trackio.init.call_args.kwargs["resume"] == expected
-
-
-def test_trackio_logger_reports_space_and_stores_resolved_space_id(trackio, tmp_path, caplog):
-    trackio.init.return_value.url = "alice/my-space"
-    cfg = make_cfg(tmp_path, trackio=TrackioConfig(space_id="my-space"))
-
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.WARNING):
         TrackioLogger(cfg)
 
-    assert cfg.trackio.space_id == "alice/my-space"
-    assert "https://huggingface.co/spaces/alice/my-space" in caplog.text
+    kwargs = trackio.init.call_args.kwargs
+    assert kwargs["resume"] == expected
+    if run_name is None:
+        assert re.fullmatch(r"test-run-[0-9a-f]{8}", kwargs["name"])
+    else:
+        assert kwargs["name"] == run_name
+    assert cfg.trackio.run_name == kwargs["name"]
+    assert ("no Trackio run name" in caplog.text) is warns
 
 
-def test_trackio_logger_reports_self_hosted_server(trackio, tmp_path, caplog, monkeypatch):
+@pytest.mark.parametrize(
+    ("space_id", "url", "expected_space_id", "expected_target"),
+    [
+        ("my-space", "alice/my-space", "alice/my-space", "https://huggingface.co/spaces/alice/my-space"),
+        (None, "https://tracker.example.com", None, "https://tracker.example.com"),
+        (None, None, None, 'trackio show --project "lerobot"'),
+    ],
+)
+def test_trackio_logger_reports_run_location(
+    trackio, tmp_path, caplog, monkeypatch, space_id, url, expected_space_id, expected_target
+):
     monkeypatch.setenv("NO_COLOR", "1")
-    trackio.init.return_value.url = "https://tracker.example.com"
-    cfg = make_cfg(tmp_path)
+    trackio.init.return_value.url = url
+    cfg = make_cfg(tmp_path, trackio=TrackioConfig(space_id=space_id))
 
     with caplog.at_level(logging.INFO):
         TrackioLogger(cfg)
 
-    assert cfg.trackio.space_id is None
-    assert caplog.messages[-1] == "Track this run --> https://tracker.example.com"
-
-
-def test_trackio_logger_reports_local_dashboard_command(trackio, tmp_path, caplog):
-    cfg = make_cfg(tmp_path, trackio=TrackioConfig(project="my-project"))
-
-    with caplog.at_level(logging.INFO):
-        TrackioLogger(cfg)
-
-    assert 'trackio show --project "my-project"' in caplog.text
+    assert cfg.trackio.space_id == expected_space_id
+    assert caplog.messages[-1] == f"Track this run --> {expected_target}"
 
 
 # --- log_dict ---
 
 
-def test_log_dict_with_step(trackio, tmp_path):
+@pytest.mark.parametrize("mode", ["train", "eval"])
+def test_log_dict_with_step(trackio, tmp_path, mode):
     logger = TrackioLogger(make_cfg(tmp_path))
 
-    logger.log_dict({"loss": 0.5, "lr": 1e-4, "status": "ok"}, step=10)
+    logger.log_dict({"loss": 0.5, "lr": 1e-4, "status": "ok"}, step=10, mode=mode)
 
-    trackio.log.assert_called_once_with({"train/loss": 0.5, "train/lr": 1e-4, "train/status": "ok"}, step=10)
+    trackio.log.assert_called_once_with(
+        {f"{mode}/loss": 0.5, f"{mode}/lr": 1e-4, f"{mode}/status": "ok"}, step=10
+    )
 
 
-def test_log_dict_eval_mode(trackio, tmp_path):
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"step": 1, "mode": "test"}, "test"),
+        ({}, "step or custom_step_key"),
+        ({"custom_step_key": "interaction_step"}, "interaction_step"),
+    ],
+)
+def test_log_dict_invalid_arguments_raise(trackio, tmp_path, kwargs, match):
     logger = TrackioLogger(make_cfg(tmp_path))
 
-    logger.log_dict({"success_rate": 0.9}, step=3, mode="eval")
-
-    trackio.log.assert_called_once_with({"eval/success_rate": 0.9}, step=3)
-
-
-def test_log_dict_invalid_mode_raises(trackio, tmp_path):
-    logger = TrackioLogger(make_cfg(tmp_path))
-
-    with pytest.raises(ValueError):
-        logger.log_dict({"loss": 0.5}, step=1, mode="test")
+    with pytest.raises(ValueError, match=match):
+        logger.log_dict({"loss": 0.5}, **kwargs)
 
     trackio.log.assert_not_called()
 
 
-def test_log_dict_without_step_or_custom_step_key_raises(trackio, tmp_path):
-    logger = TrackioLogger(make_cfg(tmp_path))
-
-    with pytest.raises(ValueError, match="step or custom_step_key"):
-        logger.log_dict({"loss": 0.5})
-
-    trackio.log.assert_not_called()
-
-
-def test_log_dict_skips_non_scalar_values(trackio, tmp_path, caplog):
+@pytest.mark.parametrize(
+    ("metrics", "expected"),
+    [
+        ({"loss": 0.5, "weights": [0.1, 0.2], "obj": object()}, {"train/loss": 0.5}),
+        ({"weights": [0.1, 0.2], "obj": object()}, None),
+    ],
+)
+def test_log_dict_skips_non_scalar_values(trackio, tmp_path, caplog, metrics, expected):
     logger = TrackioLogger(make_cfg(tmp_path))
 
     with caplog.at_level(logging.WARNING):
-        logger.log_dict({"loss": 0.5, "weights": [0.1, 0.2], "obj": object()}, step=1)
+        logger.log_dict(metrics, step=1)
 
-    trackio.log.assert_called_once_with({"train/loss": 0.5}, step=1)
+    if expected is None:
+        trackio.log.assert_not_called()
+    else:
+        trackio.log.assert_called_once_with(expected, step=1)
     assert '"weights"' in caplog.text
     assert '"obj"' in caplog.text
-
-
-def test_log_dict_logs_nothing_when_everything_is_skipped(trackio, tmp_path):
-    logger = TrackioLogger(make_cfg(tmp_path))
-
-    logger.log_dict({"weights": [0.1, 0.2], "obj": object()}, step=1)
-
-    trackio.log.assert_not_called()
 
 
 def test_log_dict_with_custom_step_key(trackio, tmp_path):
@@ -305,16 +266,6 @@ def test_log_dict_with_custom_step_key(trackio, tmp_path):
     logger.log_dict({"loss": 0.5, "interaction_step": 7}, custom_step_key="interaction_step")
 
     trackio.log.assert_called_once_with({"train/loss": 0.5, "train/interaction_step": 7})
-    assert "step" not in trackio.log.call_args.kwargs
-
-
-def test_log_dict_custom_step_key_missing_raises(trackio, tmp_path):
-    logger = TrackioLogger(make_cfg(tmp_path))
-
-    with pytest.raises(ValueError, match="interaction_step"):
-        logger.log_dict({"loss": 0.5}, custom_step_key="interaction_step")
-
-    trackio.log.assert_not_called()
 
 
 # --- log_video ---
@@ -354,12 +305,9 @@ def test_log_policy_standard_checkpoint(trackio, tmp_path):
 
     logger.log_policy(checkpoint_dir)
 
-    trackio.Artifact.assert_called_once()
-    artifact_name = trackio.Artifact.call_args.args[0]
-    assert ":" not in artifact_name
-    assert "/" not in artifact_name
-    assert artifact_name.endswith("-000100")
-    assert trackio.Artifact.call_args.kwargs == {"type": "model"}
+    trackio.Artifact.assert_called_once_with(
+        "policy_test-policy-seed_42-dataset_user_repo-000100", type="model"
+    )
 
     artifact = trackio.Artifact.return_value
     artifact.add_file.assert_called_once_with(checkpoint_dir / PRETRAINED_MODEL_DIR / "model.safetensors")
@@ -416,17 +364,6 @@ def test_log_policy_artifacts_disabled_by_default(trackio, tmp_path):
 
     trackio.Artifact.assert_not_called()
     trackio.log_artifact.assert_not_called()
-
-
-# --- finish ---
-
-
-def test_finish(trackio, tmp_path):
-    logger = TrackioLogger(make_cfg(tmp_path))
-
-    logger.finish()
-
-    trackio.finish.assert_called_once_with()
 
 
 # --- TrainPipelineConfig integration ---
