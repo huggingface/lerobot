@@ -206,7 +206,7 @@ lerobot-train \
   --job_name=lerobot_training \
   --policy.device=cuda \
   --policy.repo_id=${HF_USER}/<policy_repo_id> \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 {% else %}### Train your own policy
 
@@ -218,7 +218,7 @@ lerobot-train \
   --job_name=lerobot_training \
   --policy.device=cuda \
   --policy.repo_id=${HF_USER}/<policy_repo_id> \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 {% endif %}
 _Writes checkpoints to `outputs/train/<policy_repo_id>/checkpoints/`._

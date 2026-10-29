@@ -82,7 +82,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     cfg.validate = lambda: None
     cfg.to_dict = lambda: {}
     cfg.parallelism = None
-    cfg.wandb = SimpleNamespace(enable=False)
+    cfg.trackio = SimpleNamespace(enable=False)
     cfg.seed = None
     cfg.cudnn_deterministic = False
     cfg.checkpoint_format = CheckpointFormat.SAFETENSORS

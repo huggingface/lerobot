@@ -36,7 +36,7 @@ from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
+from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
@@ -59,6 +59,30 @@ class CheckpointFormat(str, Enum):
     SAFETENSORS = "safetensors"
     DCP = "dcp"
     SAFETENSORS_DCP = "safetensors_dcp"
+
+
+def _migrate_legacy_wandb_section(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the payload with a pre-Trackio ``wandb`` section mapped onto ``trackio``, or None if absent.
+
+    Checkpoints and Hub repos saved before the switch to Trackio carry a top-level ``wandb`` block that
+    draccus would reject as an unknown field. The options with a Trackio counterpart carry over, the
+    wandb-only ones are dropped, and an explicit ``trackio`` section always wins.
+    """
+    if "wandb" not in config:
+        return None
+
+    migrated_config = dict(config)
+    wandb = migrated_config.pop("wandb")
+    carried: dict[str, Any] = {}
+    if migrated_config.get("trackio") is None and isinstance(wandb, dict):
+        carried = {key: wandb[key] for key in ("enable", "project", "disable_artifact") if key in wandb}
+        if carried:
+            migrated_config["trackio"] = carried
+    logging.warning(
+        f"Loaded a {TRAIN_CONFIG_NAME} with a legacy `wandb` section (LeRobot now tracks experiments with "
+        f"Trackio); carried {sorted(carried)} over to `trackio` and dropped the rest."
+    )
+    return migrated_config
 
 
 def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
@@ -156,7 +180,7 @@ class TrainPipelineConfig(HubMixin):
     eval: EvalConfig = field(default_factory=EvalConfig)
     # Maintain an EMA shadow of the policy weights during training (see EMAConfig).
     ema: EMAConfig = field(default_factory=EMAConfig)
-    wandb: WandBConfig = field(default_factory=WandBConfig)
+    trackio: TrackioConfig = field(default_factory=TrackioConfig)
     peft: PeftConfig | None = None
 
     # Where to run training (local default, or an HF Jobs flavor). See JobConfig.
@@ -466,15 +490,19 @@ class TrainPipelineConfig(HubMixin):
                 )
 
         cli_args = kwargs.pop("cli_args", [])
-        # Legacy RA-BC migration only applies to framework-saved checkpoints (always JSON).
-        # Hand-written YAML/TOML configs are expected to use the current sample_weighting schema.
+        # Legacy migrations (RA-BC fields, pre-Trackio `wandb` section) only apply to framework-saved
+        # checkpoints (always JSON). Hand-written YAML/TOML configs are expected to use the current schema.
         if config_file is not None and config_file.endswith(".json"):
             with open(config_file) as f:
                 config = json.load(f)
-            migrated_config = _migrate_legacy_rabc_fields(config)
-            if migrated_config is not None:
+            migrated = False
+            for migrate in (_migrate_legacy_rabc_fields, _migrate_legacy_wandb_section):
+                migrated_config = migrate(config)
+                if migrated_config is not None:
+                    config, migrated = migrated_config, True
+            if migrated:
                 with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
-                    json.dump(migrated_config, f)
+                    json.dump(config, f)
                     config_file = f.name
 
         with draccus.config_type("json"):
