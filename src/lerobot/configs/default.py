@@ -134,7 +134,7 @@ TRACKIO_RESUME_MODES = frozenset({"allow", "must", "never"})
 
 @dataclass
 class TrackioConfig:
-    """Experiment tracking with Trackio (https://huggingface.co/docs/trackio).
+    """Training run tracking with Trackio (https://huggingface.co/docs/trackio).
 
     Runs are stored in a local SQLite database under `~/.cache/huggingface/trackio` and viewed with
     `trackio show --project <project>`. Set `space_id` to sync the run to a Hugging Face Space instead.

@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Experiment tracking with Trackio (https://huggingface.co/docs/trackio).
+"""Training run tracking with Trackio (https://huggingface.co/docs/trackio).
 
 Runs live in a local SQLite database under ``~/.cache/huggingface/trackio`` and are viewed with
 ``trackio show --project <project>``. Setting ``--trackio.space_id`` syncs the run to a Hugging Face
