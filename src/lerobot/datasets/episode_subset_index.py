@@ -6,7 +6,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
-"""Compact frame mappings for episode subsets, shared by dataset readers."""
+"""Compact frame mappings for episode subsets in the Lance dataset reader."""
 
 from collections.abc import Iterator, Mapping
 
@@ -14,7 +14,7 @@ import numpy as np
 
 
 class _EpisodeSubsetIndexMapping(Mapping[int, int]):
-    """Map absolute frame indices to relative rows using selected episode intervals.
+    """Map absolute frame indices to relative Lance rows using selected episode intervals.
 
     Stores O(num_episodes) boundaries; both lookup directions use binary search.
     Keys follow storage order, and unselected frames raise KeyError.

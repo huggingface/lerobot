@@ -16,21 +16,16 @@
 """Contract tests for DatasetReader."""
 
 import json
-import pickle
 import sys
 import types
-from types import SimpleNamespace
 
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from datasets import Dataset
-
 from lerobot.datasets import LeRobotDataset, register_dataset_reader
 from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.episode_subset_index import _EpisodeSubsetIndexMapping
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.storage import _DATASET_READER_MODULES, DEFAULT_STORAGE_FORMAT, localize_remote_root
 from lerobot.utils.constants import LANGUAGE_EVENTS
@@ -126,60 +121,7 @@ def test_num_frames_with_episode_filter(tmp_path, lerobot_dataset_factory):
     # Filtered frames should be less than total
     assert dataset.reader.num_frames <= dataset.meta.total_frames
     assert dataset.reader.num_episodes == 2
-
-
-@pytest.mark.parametrize(
-    ("indices", "compact"),
-    [
-        pytest.param([0, 1, 2, 3, 4, 10, 11, 12, 13], True, id="complete-intervals"),
-        pytest.param([0, 1, 3, 4, 10, 11, 12, 13], False, id="missing-frame"),
-        pytest.param([0, 3, 2, 1, 4, 10, 11, 12, 13], False, id="reordered-frames"),
-        pytest.param([0, 1, 2, 3, 4, 10, 11, 12, 12], False, id="duplicate-frame"),
-    ],
-)
-def test_subset_mapping_matches_loaded_rows(indices: list[int], compact: bool) -> None:
-    reader = DatasetReader.__new__(DatasetReader)
-    reader.episodes = [2, 0, 2]
-    reader._meta = SimpleNamespace(
-        episodes=Dataset.from_dict({"dataset_from_index": [0, 5, 10], "dataset_to_index": [5, 10, 14]}),
-        ensure_readable=lambda: None,
-    )
-    reader.hf_dataset = Dataset.from_dict({"index": indices})
-
-    reader._build_index_mapping()
-
-    mapping = reader.absolute_to_relative_idx
-    assert isinstance(mapping, _EpisodeSubsetIndexMapping) == compact
-    assert mapping == dict(zip(indices, range(len(indices)), strict=True))
-
-
-def test_default_subset_mapping_survives_pickle_and_workers(tmp_path, lerobot_dataset_factory) -> None:
-    source = lerobot_dataset_factory(
-        root=tmp_path / "ds", total_episodes=3, total_frames=90, use_videos=False, camera_features={}
-    )
-    dataset = LeRobotDataset(source.repo_id, root=source.root, episodes=[2, 0, 2])
-    mapping = dataset.absolute_to_relative_idx
-    assert isinstance(mapping, _EpisodeSubsetIndexMapping)
-    expected_indices = [
-        index
-        for episode in [0, 2]
-        for index in range(
-            source.meta.episodes[episode]["dataset_from_index"],
-            source.meta.episodes[episode]["dataset_to_index"],
-        )
-    ]
-    assert list(mapping) == expected_indices
-    assert len(dataset) == len(mapping) == len(expected_indices)
-    restored = pickle.loads(pickle.dumps(dataset))
-    assert restored.absolute_to_relative_idx == mapping
-    assert restored[-1]["index"].item() == dataset[-1]["index"].item() == expected_indices[-1]
-
-    loader = torch.utils.data.DataLoader(
-        dataset, batch_size=8, num_workers=2, multiprocessing_context="spawn", shuffle=True
-    )
-    batch = next(iter(loader))
-    assert batch["state"].shape[0] == 8
-    assert set(batch["index"].tolist()).issubset(expected_indices)
+    assert isinstance(dataset.absolute_to_relative_idx, dict)
 
 
 # ── get_item ─────────────────────────────────────────────────────────
