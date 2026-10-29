@@ -1889,6 +1889,28 @@ def test_cuda_graph_managers_are_inference_only():
     assert policy.model.depth_decode_cuda_graph_manager.enabled is False
 
 
+def test_action_cuda_graph_is_not_replayed_while_exporting(monkeypatch):
+    action_model = SimpleNamespace(
+        training=False, _require_action_expert=lambda: SimpleNamespace(training=False)
+    )
+    inputs = SimpleNamespace(
+        trajectory=SimpleNamespace(device=torch.device("cuda")),
+        context=SimpleNamespace(
+            kv_contexts=[], cross_mask=None, self_mask=None, valid_action=None, rope_cache=None
+        ),
+        action_dim_is_pad=None,
+        modulations=[],
+    )
+    manager = hf_molmoact2_modeling.ActionCudaGraphManager(action_model)
+    assert manager.can_use_action_flow(inputs)
+
+    monkeypatch.setattr(torch.compiler, "is_exporting", lambda: True)
+    assert not manager.can_use_action_flow(inputs)
+    # Under torch.compile (which also reports exporting before torch 2.12), Dynamo breaks the graph at the replay.
+    monkeypatch.setattr(torch.compiler, "is_dynamo_compiling", lambda: True)
+    assert manager.can_use_action_flow(inputs)
+
+
 def test_lora_targets_exclude_action_expert():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
