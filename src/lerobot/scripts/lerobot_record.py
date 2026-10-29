@@ -454,6 +454,7 @@ def record(
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras
                 if num_cameras > 0
                 else 0,
+                image_writer_queue_maxsize=cfg.dataset.image_writer_queue_maxsize,
             )
             sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
         else:
@@ -475,6 +476,7 @@ def record(
                 use_videos=cfg.dataset.video,
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras,
+                image_writer_queue_maxsize=cfg.dataset.image_writer_queue_maxsize,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 rgb_encoder=cfg.dataset.rgb_encoder,
                 depth_encoder=cfg.dataset.depth_encoder,

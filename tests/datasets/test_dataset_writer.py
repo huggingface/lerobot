@@ -15,6 +15,8 @@
 # limitations under the License.
 """Contract tests for DatasetWriter."""
 
+import queue
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,6 +29,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.configs import VideoEncoderConfig
 from lerobot.datasets.dataset_writer import _encode_video_worker
+from lerobot.datasets.image_writer import write_image
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
@@ -131,6 +134,71 @@ def test_add_frame_rejects_missing_feature(tmp_path):
     with pytest.raises(ValueError, match="Missing features"):
         dataset.add_frame({"task": "Dummy task", "state": torch.randn(6)})
         # missing 'action'
+
+
+def test_image_writer_queue_limit_forwarded_on_create_and_resume(tmp_path):
+    image_features = {"image": {"dtype": "image", "shape": (8, 8, 3), "names": None}}
+    root = tmp_path / "ds"
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=image_features,
+        root=root,
+        use_videos=False,
+        image_writer_threads=1,
+        image_writer_queue_maxsize=2,
+    )
+    try:
+        assert dataset.writer.image_writer.queue.maxsize == 2
+    finally:
+        dataset.finalize()
+
+    resumed = LeRobotDataset.resume(
+        repo_id=DUMMY_REPO_ID,
+        root=root,
+        image_writer_threads=1,
+        image_writer_queue_maxsize=3,
+    )
+    try:
+        assert resumed.writer.image_writer.queue.maxsize == 3
+    finally:
+        resumed.finalize()
+
+
+def test_clear_episode_after_full_image_writer_queue(tmp_path):
+    image_features = {"image": {"dtype": "image", "shape": (8, 8, 3), "names": None}}
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_write(image, fpath, compress_level):
+        started.set()
+        assert release.wait(timeout=5)
+        write_image(image, fpath, compress_level)
+
+    with patch("lerobot.datasets.image_writer.write_image", side_effect=slow_write):
+        dataset = LeRobotDataset.create(
+            repo_id=DUMMY_REPO_ID,
+            fps=DEFAULT_FPS,
+            features=image_features,
+            root=tmp_path / "ds",
+            use_videos=False,
+            image_writer_threads=1,
+            image_writer_queue_maxsize=1,
+        )
+        try:
+            dataset.add_frame(_make_frame(image_features))
+            assert started.wait(timeout=5)
+            dataset.add_frame(_make_frame(image_features))
+            with pytest.raises(queue.Full):
+                dataset.add_frame(_make_frame(image_features))
+            release.set()
+            dataset.clear_episode_buffer()
+            dataset.add_frame(_make_frame(image_features))
+            dataset.save_episode()
+            assert dataset.meta.total_frames == 1
+        finally:
+            release.set()
+            dataset.finalize()
 
 
 # ── save_episode contracts ───────────────────────────────────────────

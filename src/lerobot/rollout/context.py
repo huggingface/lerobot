@@ -403,6 +403,7 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
                 * len(robot.cameras if hasattr(robot, "cameras") else []),
+                image_writer_queue_maxsize=cfg.dataset.image_writer_queue_maxsize,
             )
         else:
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
@@ -423,6 +424,7 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
                 * len(robot.cameras if hasattr(robot, "cameras") else []),
+                image_writer_queue_maxsize=cfg.dataset.image_writer_queue_maxsize,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 rgb_encoder=cfg.dataset.rgb_encoder,
                 depth_encoder=cfg.dataset.depth_encoder,
