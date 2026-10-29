@@ -17,7 +17,8 @@ import importlib
 import importlib.metadata
 import importlib.util
 import logging
-from typing import Any, Literal, overload
+from collections.abc import Iterable
+from typing import Any, Literal, get_args, overload
 
 from draccus.choice_types import ChoiceRegistry
 
@@ -246,23 +247,35 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     )
 
 
-def register_third_party_plugins() -> None:
+PluginKind = Literal["robot", "camera", "teleoperator", "policy", "env", "strategy"]
+PLUGIN_KINDS: tuple[PluginKind, ...] = get_args(PluginKind)
+DEVICE_PLUGIN_KINDS: tuple[PluginKind, ...] = ("robot", "camera", "teleoperator")
+# A sim robot (`--robot.type=sim`) takes its env from the EnvConfig registry when the command line is
+# parsed, so the commands that accept one also import env plugins.
+DEVICE_AND_ENV_PLUGIN_KINDS: tuple[PluginKind, ...] = (*DEVICE_PLUGIN_KINDS, "env")
+
+
+def register_third_party_plugins(kinds: Iterable[PluginKind] = PLUGIN_KINDS) -> None:
     """
     Discover and import third-party LeRobot plugins so they can register themselves.
 
     This function uses `importlib.metadata` to find packages installed in the environment
-    (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_' or 'lerobot_strategy_' and
-    imports them.
+    (including editable installs) named `lerobot_<kind>_...` for each of `kinds`, such as
+    `lerobot_robot_` or `lerobot_policy_`, and imports them.
+
+    Args:
+        kinds (`Iterable[PluginKind]`, *optional*, defaults to `('robot', 'camera', 'teleoperator', 'policy', 'env', 'strategy')`):
+            The plugin kinds to import, from `PLUGIN_KINDS`. Pass only the kinds the command uses, so
+            plugins of other kinds cannot slow it down or log unrelated import errors.
+
+    Raises:
+        ValueError: If `kinds` names a kind that is not in `PLUGIN_KINDS`.
     """
-    prefixes = (
-        "lerobot_robot_",
-        "lerobot_camera_",
-        "lerobot_teleoperator_",
-        "lerobot_policy_",
-        "lerobot_env_",
-        "lerobot_strategy_",
-    )
+    kinds = tuple(kinds)
+    unknown = set(kinds) - set(PLUGIN_KINDS)
+    if unknown:
+        raise ValueError(f"Unknown plugin kinds {sorted(unknown)}, expected some of {PLUGIN_KINDS}.")
+    prefixes = tuple(f"lerobot_{kind}_" for kind in kinds)
     imported: list[str] = []
     failed: list[str] = []
 

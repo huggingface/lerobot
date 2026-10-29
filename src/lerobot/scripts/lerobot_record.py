@@ -158,7 +158,7 @@ from lerobot.teleoperators.keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import DEVICE_AND_ENV_PLUGIN_KINDS, register_third_party_plugins
 from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.utils import (
     init_logging,
@@ -600,7 +600,7 @@ def record(
 
 
 def main():
-    register_third_party_plugins()
+    register_third_party_plugins(kinds=DEVICE_AND_ENV_PLUGIN_KINDS)
     record()
 
 
