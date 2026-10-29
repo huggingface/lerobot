@@ -245,34 +245,56 @@ VIDEOS_TABLE = "videos"
 META_TABLE = "meta"
 VIDEO_BLOB_COLUMN = "video_bytes"
 
-# Only connection routing belongs in the metadata cache identity. Credentials and
-# request tuning must not change cache paths or become part of the digest.
-_METADATA_ROUTING_OPTIONS = {
-    "endpoint",
-    "endpoint_url",
-    "region",
-    "default_region",
-    "virtual_hosted_style_request",
-    "aws_endpoint",
-    "aws_endpoint_url",
-    "aws_region",
-    "aws_default_region",
-    "aws_virtual_hosted_style_request",
-    "account_name",
-    "azure_storage_account_name",
-    "azure_storage_endpoint",
-    "azure_endpoint",
-    "oss_endpoint",
-    "oss_region",
-    "tos_endpoint",
-    "tos_region",
-    "cos_endpoint",
-    "cos_region",
-}
-
 
 def to_lance_column(key: str) -> str:
     return key.replace(".", "_")
+
+
+def metadata_cache_identity(
+    root: str | Path,
+    revision: str | None = None,
+    storage_options: dict[str, str] | None = None,
+) -> str:
+    """Return the Lance backend's filesystem-safe identity for materialized ``meta/``.
+
+    URI, revision and connection routing identify the metadata source. The routing
+    keys below are a Lance backend policy: credentials and request tuning do not
+    affect identity, so rotating credentials or changing timeouts reuses the cache.
+    Callers should treat the returned identity as opaque.
+
+    Keep the existing cache path when no explicit routing options are supplied.
+    """
+    db_uri = str(root).rstrip("/")
+    cache_key = f"{db_uri}@{revision}" if revision else db_uri
+    routing_keys = {
+        "endpoint",
+        "endpoint_url",
+        "region",
+        "default_region",
+        "virtual_hosted_style_request",
+        "aws_endpoint",
+        "aws_endpoint_url",
+        "aws_region",
+        "aws_default_region",
+        "aws_virtual_hosted_style_request",
+        "account_name",
+        "azure_storage_account_name",
+        "azure_storage_endpoint",
+        "azure_endpoint",
+        "oss_endpoint",
+        "oss_region",
+        "tos_endpoint",
+        "tos_region",
+        "cos_endpoint",
+        "cos_region",
+    }
+    routing_options = {
+        key.lower(): value for key, value in (storage_options or {}).items() if key.lower() in routing_keys
+    }
+    if routing_options:
+        identity = json.dumps(routing_options, sort_keys=True, separators=(",", ":"))
+        cache_key += "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
 
 
 def _storage_options(
@@ -381,20 +403,7 @@ def resolve_lance_root(
     """Resolve a Lance dataset to its connect URI and the local root holding ``meta/``"""
     if root is not None and is_remote_uri(root):
         db_uri = str(root).rstrip("/")
-        # Key the cache by revision too: an hf:// root at a non-default revision must not
-        # reuse (or overwrite) another revision's materialized meta.
-        cache_key = f"{db_uri}@{revision}" if revision else db_uri
-        # The same URI can name different datasets on different object stores.
-        # Preserve the existing path when no explicit routing options are set.
-        routing_options = {
-            key.lower(): value
-            for key, value in (storage_options or {}).items()
-            if key.lower() in _METADATA_ROUTING_OPTIONS
-        }
-        if routing_options:
-            identity = json.dumps(routing_options, sort_keys=True, separators=(",", ":"))
-            cache_key += "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
-        local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
+        local_root = HF_LEROBOT_HOME / "remote" / metadata_cache_identity(db_uri, revision, storage_options)
         if force_cache_sync:
             shutil.rmtree(local_root / "meta", ignore_errors=True)
         if not (local_root / "meta").exists():
