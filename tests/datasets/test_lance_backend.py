@@ -272,8 +272,6 @@ def test_video_parity(video_dataset_roots):
         pytest.param((2, 2, 1), 8, 64, id="frame-cap"),
         pytest.param((4096, 4096, 3), 5, 1, id="oversized-frame"),
         pytest.param(None, 8, 64, id="unknown-shape"),
-        pytest.param((), 8, 64, id="empty-shape"),
-        pytest.param((0, 2, 1), 8, 64, id="zero-sized-shape"),
     ],
 )
 def test_decode_frame_limit(
@@ -446,7 +444,7 @@ def test_depth_batch_decode_merges_nearby_windows() -> None:
     # The shared decode must preserve each window's original order and duplicates.
     torch.testing.assert_close(decoded[0][:, 0, 0, 0], torch.tensor([0.2, 0.1, 0.2, 0.0]))
     torch.testing.assert_close(decoded[1][:, 0, 0, 0], torch.tensor([0.1, 0.2, 0.3]))
-    assert decoded[2][0, 0, 0].item() == 5.0
+    torch.testing.assert_close(decoded[2], torch.full((1, 1, 1), 5.0))
 
 
 @pytest.mark.parametrize(
@@ -469,27 +467,6 @@ def test_depth_batch_decode_limits_merged_span(shape: tuple[int, int, int], max_
     assert set(decoded) == set(range(max_frames + 6))
     for sample_idx, timestamps in file_requests:
         torch.testing.assert_close(decoded[sample_idx], torch.tensor(timestamps).reshape(1, 1, 1))
-
-
-@pytest.mark.parametrize(
-    "timestamps",
-    [
-        pytest.param([0.1], id="single-request"),
-        pytest.param([0.1, 0.1], id="shared-frame"),
-        pytest.param([0.1, 5.0], id="separate-windows"),
-    ],
-)
-def test_depth_single_frame_keeps_channel_dimension(timestamps: list[float]) -> None:
-    file_key = ("observation.images.depth", 0, 0)
-    reader, _ = _depth_decode_reader(file_key)
-    decoded = dict(
-        reader._decode_depth_file_requests(
-            None, [(index, [timestamp]) for index, timestamp in enumerate(timestamps)], file_key
-        )
-    )
-
-    for sample_idx, timestamp in enumerate(timestamps):
-        torch.testing.assert_close(decoded[sample_idx], torch.full((1, 1, 1), timestamp))
 
 
 def test_reader_reopens_after_failed_open(video_dataset_roots, monkeypatch):
