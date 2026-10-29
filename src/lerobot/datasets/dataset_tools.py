@@ -25,6 +25,7 @@ This module provides utilities for:
 
 import logging
 import shutil
+from collections import Counter
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from copy import deepcopy
@@ -218,6 +219,9 @@ def split_dataset(
         if not episodes:
             raise ValueError(f"Split '{split_name}' has no episodes")
         episode_set = set(episodes)
+        if len(episode_set) != len(episodes):
+            duplicates = sorted(episode for episode, count in Counter(episodes).items() if count > 1)
+            raise ValueError(f"Split '{split_name}' lists episodes more than once: {duplicates}")
         if episode_set & all_episodes:
             raise ValueError("Episodes cannot appear in multiple splits")
         all_episodes.update(episode_set)

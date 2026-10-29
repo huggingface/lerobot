@@ -246,6 +246,19 @@ def test_split_overlapping_episodes(sample_dataset, tmp_path):
         split_dataset(sample_dataset, splits=splits, output_dir=tmp_path)
 
 
+def test_split_duplicate_episodes(sample_dataset, tmp_path):
+    """Test error when a split lists the same episode more than once."""
+    splits = {
+        "train": [0, 0, 1],
+        "val": [2, 3],
+    }
+
+    with pytest.raises(ValueError, match=r"Split 'train' lists episodes more than once: \[0\]"):
+        split_dataset(sample_dataset, splits=splits, output_dir=tmp_path)
+
+    assert not (tmp_path / "train").exists()
+
+
 def test_split_invalid_fractions(sample_dataset, tmp_path):
     """Test error when fractions sum to more than 1."""
     splits = {
