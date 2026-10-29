@@ -96,6 +96,15 @@ class RebotB601Follower(Robot):
         return {f"{motor}.pos": float for motor in self.motor_names}
 
     @property
+    def _motor_observation_ft(self) -> dict[str, type]:
+        features: dict[str, type] = {f"{motor}.pos": float for motor in self.motor_names}
+        if self.config.use_velocity_and_torque:
+            for motor in self.motor_names:
+                features[f"{motor}.vel"] = float
+                features[f"{motor}.torque"] = float
+        return features
+
+    @property
     def _cameras_ft(self) -> dict[str, tuple]:
         features: dict[str, tuple] = {}
         for cam in self.cameras:
@@ -108,7 +117,7 @@ class RebotB601Follower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._cameras_ft}
+        return {**self._motor_observation_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -291,7 +300,16 @@ class RebotB601Follower(Robot):
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         start = time.perf_counter()
-        obs_dict: RobotObservation = {f"{motor}.pos": pos for motor, pos in self._present_pos().items()}
+        states = self._read_feedback()
+        positions = self._present_pos(states)
+        obs_dict: RobotObservation = {}
+        for motor, state in states.items():
+            obs_dict[f"{motor}.pos"] = positions[motor]
+            if self.config.use_velocity_and_torque:
+                obs_dict[f"{motor}.vel"] = self._motor_to_public_position(motor, math.degrees(state.vel))
+                # Torque is a generalized force, so it follows the same sign change
+                # as position when converting from motor coordinates to public joints.
+                obs_dict[f"{motor}.torque"] = float(state.torq) * self.profile.joint_directions[motor]
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
