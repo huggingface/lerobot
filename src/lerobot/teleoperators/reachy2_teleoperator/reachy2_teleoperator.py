@@ -19,6 +19,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from lerobot.lerobot_types import RobotObservation
 from lerobot.utils.import_utils import _reachy2_sdk_available, require_package
 
 if TYPE_CHECKING or _reachy2_sdk_available:
@@ -147,7 +148,7 @@ class Reachy2Teleoperator(Teleoperator):
         pass
 
     @check_if_not_connected
-    def get_action(self) -> dict[str, float]:
+    def get_action(self, observation: RobotObservation | None = None) -> dict[str, float]:
         start = time.perf_counter()
         if self.reachy is None:
             raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")

@@ -17,6 +17,7 @@
 import logging
 import time
 
+from lerobot.lerobot_types import RobotObservation
 from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
@@ -124,7 +125,7 @@ class SOLeader(Teleoperator):
         self.bus.setup_motors()
 
     @check_if_not_connected
-    def get_action(self) -> dict[str, float]:
+    def get_action(self, observation: RobotObservation | None = None) -> dict[str, float]:
         start = time.perf_counter()
         action = self.bus.sync_read("Present_Position", num_retry=self.config.num_read_retries)
         action = {f"{motor}.pos": val for motor, val in action.items()}

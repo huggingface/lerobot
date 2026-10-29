@@ -195,18 +195,12 @@ def teleop_loop(
             loop_start = time.perf_counter()  # for the live readout below
 
             with timer.section("observe"):
-                # Get robot observation
-                # Not really needed for now other than for visualization
-                # teleop_action_processor can take None as an observation
-                # given that it is the identity processor as default
+                # Get robot observation, handed to the teleoperator, the processors and the display
                 obs = robot.get_observation()
-
-                if robot.name == "unitree_g1":
-                    teleop.send_feedback(obs)
 
             with timer.section("teleop"):
                 # Get teleop action
-                raw_action = teleop.get_action()
+                raw_action = teleop.get_action(observation=obs)
 
                 # Process teleop action through pipeline
                 teleop_action = teleop_action_processor((raw_action, obs))
