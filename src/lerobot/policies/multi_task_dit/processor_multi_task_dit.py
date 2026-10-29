@@ -63,6 +63,10 @@ class DedupTaskTokenizerProcessorStep(TokenizerProcessorStep):
             raise ValueError("Task cannot be None")
 
         unique = list(dict.fromkeys(task))
+        # "longest" pads each row to the longest task of its own batch, so rows cached
+        # from different batches would not stack: only fixed-width rows are reused.
+        if self.padding != "max_length":
+            self._token_cache.clear()
         missing = [t for t in unique if t not in self._token_cache]
         if missing:
             tokenized = self._tokenize_text(missing)
