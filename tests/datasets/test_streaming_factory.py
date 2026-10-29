@@ -70,6 +70,7 @@ def test_factory_wires_production_streaming_settings(
         streaming_native_http_connections=9,
         streaming_native_http_subranges=3,
         streaming_sidecar_lock_timeout_s=60,
+        storage_options={"endpoint": "https://storage.example.com"},
     )
     cfg = SimpleNamespace(
         dataset=dataset_config,
@@ -90,6 +91,8 @@ def test_factory_wires_production_streaming_settings(
     assert captured["metadata_repo_id"] == "owner/dataset"
     assert captured["metadata_kwargs"]["repo_type"] == expected_repo_type
     assert captured["metadata_kwargs"]["root"] is None
+    assert captured["metadata_kwargs"]["storage_options"] == dataset_config.storage_options
+    assert captured["kwargs"]["storage_options"] == dataset_config.storage_options
     assert captured["kwargs"]["episode_pool_size"] == 7
     assert captured["kwargs"]["sampling_strategy"] == "round_robin"
     assert captured["kwargs"]["prefetch_episodes"] == 3

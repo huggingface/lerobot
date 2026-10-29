@@ -39,6 +39,7 @@ def bare_dataset() -> StreamingLeRobotDataset:
     dataset._data_root = "/tmp"
     dataset._projected_columns = ["episode_index"]
     dataset._streaming_io_token = None
+    dataset._storage_options = {}
     dataset._rank_episodes = lambda: ([0, 1, 2, 3], 0, 1)
     dataset._episode_frame_count = lambda episode: 6
     dataset._make_video_cache = lambda *args: None
