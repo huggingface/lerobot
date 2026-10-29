@@ -55,6 +55,7 @@ from lerobot.utils import init_logging
 from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.process import ProcessSignalHandler
+from lerobot.utils.robot_utils import policy_features, return_to_position
 """
 
 
@@ -64,6 +65,18 @@ def test_drivers_and_loop_helpers_load_without_torch():
 
 # Only making a robot needs its motor library, so the import check above runs in every test tier.
 @pytest.mark.hardware
-def test_a_robot_is_made_without_torch():
+def test_a_robot_is_made_without_torch(tmp_path):
     pytest.importorskip("rustypot", reason="rustypot is required (install lerobot[serial-motors])")
-    assert_runs_without_torch(_IMPORTS + 'make_robot_from_config(SO101FollowerConfig(port="/dev/null"))\n')
+    assert_runs_without_torch(
+        _IMPORTS
+        + """
+import sys
+from pathlib import Path
+
+# Not the user's calibration files, which this test does not check.
+config = SO101FollowerConfig(port="/dev/null", calibration_dir=Path(sys.argv[1]))
+robot = make_robot_from_config(config)
+policy_features(robot, None)
+""",
+        str(tmp_path),
+    )

@@ -195,17 +195,17 @@ def _make_pipelines():
 
 def _build_features(*, align_state: bool, align_action: bool):
     """Reproduce ``build_rollout_context``'s feature reconciliation for one variant."""
-    from lerobot.rollout.context import _align_to_checkpoint_order
+    from lerobot.utils.robot_utils import align_to_checkpoint_order
 
     observation_features_hw = {**dict.fromkeys(HW_ORDER, float), **_CAMERAS}
     action_features_hw = dict.fromkeys(HW_ORDER, float)
 
     if align_state:
-        observation_features_hw = _align_to_checkpoint_order(
+        observation_features_hw = align_to_checkpoint_order(
             observation_features_hw, list(CKPT_ORDER), what="state"
         )
     if align_action:
-        action_features_hw = _align_to_checkpoint_order(action_features_hw, list(CKPT_ORDER), what="action")
+        action_features_hw = align_to_checkpoint_order(action_features_hw, list(CKPT_ORDER), what="action")
 
     dataset_features = combine_feature_dicts(
         hw_to_dataset_features(action_features_hw, "action"),
