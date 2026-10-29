@@ -167,7 +167,7 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
         if key in dataset.features:
             views.append(rrb.TimeSeriesView(origin=key, name=key))
     for key in get_extra_scalar_keys(dataset):
-        views.append(rrb.TimeSeriesView(origin=key, name=key))
+        views.append(rrb.TimeSeriesView(origin=f"custom/{key}", name=key))
 
     # Put the language instruction in a thin banner across the top rather than in the grid: it is a
     # single line of text, so a full grid cell would waste space and break up the camera layout.
@@ -316,7 +316,7 @@ def visualize_dataset(
 
             for key in extra_scalar_keys:
                 if key in batch:
-                    rr.log(key, rr.Scalars(batch[key][i].item()))
+                    rr.log(f"custom/{key}", rr.Scalars(batch[key][i].item()))
 
             # display the natural-language task (re-logged only when it changes)
             # Markdown renders it as a heading in the thin banner.

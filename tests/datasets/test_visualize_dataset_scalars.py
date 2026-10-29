@@ -35,6 +35,7 @@ def scalar_dataset(tmp_path: Path) -> LeRobotDataset:
     features = {
         "action": {"dtype": "float32", "shape": (2,), "names": ["joint", "gripper"]},
         "observation.state": {"dtype": "float32", "shape": (2,), "names": ["joint", "gripper"]},
+        "state": {"dtype": "float32", "shape": (1,), "names": None},
         "q_target": {"dtype": "float32", "shape": (1,), "names": None},
         "intervention": {"dtype": "bool", "shape": (1,), "names": None},
         "embedding": {"dtype": "float32", "shape": (2,), "names": None},
@@ -47,6 +48,7 @@ def scalar_dataset(tmp_path: Path) -> LeRobotDataset:
             {
                 "action": np.array([i, 0.5], dtype=np.float32),
                 "observation.state": np.array([i, 0.25], dtype=np.float32),
+                "state": np.array([100 + i], dtype=np.float32),
                 "q_target": np.array([i + 0.25], dtype=np.float32),
                 "intervention": np.array([bool(i)]),
                 "embedding": np.array([1, 2], dtype=np.float32),
@@ -62,7 +64,13 @@ def scalar_dataset(tmp_path: Path) -> LeRobotDataset:
 def test_custom_scalar_views_are_in_the_blueprint(scalar_dataset: LeRobotDataset) -> None:
     blueprint = build_blueprint_from_dataset(scalar_dataset)
     grid = blueprint.root_container.contents[1]
-    assert {str(view.origin) for view in grid.contents} == {"action", "state", "q_target", "intervention"}
+    assert {str(view.origin): view.name for view in grid.contents} == {
+        "action": "action",
+        "state": "state",
+        "custom/state": "state",
+        "custom/q_target": "q_target",
+        "custom/intervention": "intervention",
+    }
 
 
 def test_custom_scalar_values_are_logged_without_metadata_or_vectors(
@@ -81,7 +89,9 @@ def test_custom_scalar_values_are_logged_without_metadata_or_vectors(
         key, entity = call.args
         if isinstance(entity, rr.Scalars):
             values.setdefault(key, []).extend(entity.scalars.as_arrow_array().to_pylist())
-    assert set(values) == {"action", "state", "q_target", "intervention"}
-    assert values["q_target"] == [0.25, 1.25]
-    assert values["intervention"] == [0, 1]
+    assert set(values) == {"action", "state", "custom/state", "custom/q_target", "custom/intervention"}
+    assert values["custom/q_target"] == [0.25, 1.25]
+    assert values["custom/intervention"] == [0, 1]
     assert values["action"] == [0, 0.5, 1, 0.5]
+    assert values["state"] == [0, 0.25, 1, 0.25]
+    assert values["custom/state"] == [100, 101]
