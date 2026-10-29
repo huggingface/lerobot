@@ -40,12 +40,13 @@ from torch.optim.lr_scheduler import LRScheduler
 from lerobot.__version__ import __version__
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.rewards import RewardModelConfig
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.configs.types import PolicyFeature
 from lerobot.distributed.checkpoint import (
     is_sharded_module,
     load_sharded_model,
     load_sharded_optimizer,
+    save_peft_adapter,
     save_sharded_model,
     save_sharded_optimizer,
 )
@@ -219,6 +220,8 @@ def save_checkpoint(
     │   ├── config.json  # policy config
     │   ├── model.safetensors  # policy weights (checkpoint_format ∈ {safetensors, safetensors_dcp}, or any non-sharded run)
     │   ├── pytorch_model_fsdp_0/  # DCP model shards (checkpoint_format ∈ {dcp, safetensors_dcp})
+    │   ├── adapter_config.json  # PEFT runs: the adapter config, naming the base model
+    │   ├── adapter_model.safetensors  # PEFT runs: the adapter, in place of model.safetensors (the DCP shards hold the adapter only)
     │   ├── train_config.json  # train config
     │   ├── policy_preprocessor.json  # preprocessor config (if preprocessor provided)
     │   ├── policy_preprocessor_step_*.safetensors  # state of the stateful preprocessor steps
@@ -252,33 +255,28 @@ def save_checkpoint(
             channels. Defaults to None (plain single-process saves).
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
-    fmt = cfg.checkpoint_format
     policy_to_save = accelerator.unwrap_model(policy) if accelerator is not None else policy
     sharded = is_sharded_module(policy_to_save)
 
-    # -- model artifact(s): the two collective-capable calls ----------------------------------
-    if cfg.peft is not None:
-        # PeftModel.save_pretrained is an external API with no internal rank gate, and the
-        # adapters are replicated (PEFT x sharded is rejected at validation): main rank writes.
-        if is_main_process():
+    # model artifact(s): the two collective-capable calls
+    if (
+        cfg.checkpoint_format in (CheckpointFormat.SAFETENSORS, CheckpointFormat.SAFETENSORS_DCP)
+        or not sharded
+    ):
+        if cfg.peft is not None:
+            save_peft_adapter(policy_to_save, pretrained_dir)
+        else:
             policy_to_save.save_pretrained(pretrained_dir)
-    elif fmt.wants_safetensors or not sharded:
-        # Collective when sharded (full gather); writes happen on the main process only in all
-        # multi-rank layouts (the gate lives inside _save_pretrained, next to its collective gather).
-        policy_to_save.save_pretrained(pretrained_dir)
-    if fmt.wants_dcp and sharded:
+    if cfg.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP) and sharded:
         save_sharded_model(accelerator, policy_to_save, pretrained_dir)
 
-    # -- sidecar configs: ONE gate for the whole contiguous rank-0-only region ----------------
+    # sidecar configs: ONE gate for the whole contiguous rank-0-only region
     if is_main_process():
-        if fmt.wants_dcp and not fmt.wants_safetensors:
-            # save_pretrained did not run: keep the DCP-only checkpoint self-describing.
+        if cfg.checkpoint_format == CheckpointFormat.DCP or cfg.peft is not None:
             policy_to_save.config.save_pretrained(pretrained_dir)
+        if cfg.checkpoint_format == CheckpointFormat.DCP and cfg.peft is not None:
+            policy_to_save.active_peft_config.save_pretrained(pretrained_dir)
         cfg.save_pretrained(pretrained_dir)
-        if cfg.peft is not None:
-            # PEFT's save_pretrained writes only adapter weights + config; the policy config
-            # needed to reload the base model is written explicitly.
-            policy_to_save.config.save_pretrained(pretrained_dir)
         if preprocessor is not None:
             preprocessor.save_pretrained(pretrained_dir)
         if postprocessor is not None:
@@ -505,7 +503,7 @@ def resume_after_prepare(
     unwrapped = accelerator.unwrap_model(policy)
     sharded = is_sharded_module(unwrapped)
 
-    if cfg.checkpoint_format.wants_dcp:
+    if cfg.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP):
         from accelerate.utils.constants import FSDP_MODEL_NAME
 
         dcp_dir = pretrained_dir / f"{FSDP_MODEL_NAME}_0"
@@ -626,7 +624,8 @@ def publish_trained_model(
     """Publish the complete training bundle as a distributable model repo.
 
     Collective-safe: call on ALL ranks — the model commit gathers sharded weights through
-    `save_pretrained`; uploads happen on the main process only (gated inside
+    `save_pretrained` (the adapter through `save_peft_adapter` in the PEFT case); uploads happen
+    on the main process only (gated inside
     `HubMixin.push_to_hub` and here). Commits, in order: (1) the model (skipped for PEFT —
     adapters replace full weights), (2) the preprocessor, (3) the postprocessor, (4) the bundle
     sidecar: README.md model card + train_config.json (+ adapter weights and the wrapped
@@ -665,14 +664,15 @@ def publish_trained_model(
     if postprocessor is not None:
         postprocessor.push_to_hub(repo_id, private=model_cfg.private)
 
-    if is_main_process():
-        api = HfApi()
-        repo_id = api.create_repo(repo_id=repo_id, private=model_cfg.private, exist_ok=True).repo_id
-        with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            saved_path = Path(tmp) / repo_id
-            saved_path.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        saved_path = Path(tmp) / repo_id
+        saved_path.mkdir(parents=True, exist_ok=True)
+        if peft_model is not None:
+            save_peft_adapter(peft_model, saved_path)  # collective when sharded
+        if is_main_process():
+            api = HfApi()
+            repo_id = api.create_repo(repo_id=repo_id, private=model_cfg.private, exist_ok=True).repo_id
             if peft_model is not None:
-                peft_model.save_pretrained(saved_path)  # adapter weights + adapter config
                 model.config.save_pretrained(saved_path)  # PEFT cannot write the policy config
             card = generate_model_card(model_cfg, cfg=cfg, dataset_meta=dataset_meta)
             card.save(str(saved_path / "README.md"))
@@ -685,9 +685,9 @@ def publish_trained_model(
                 allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
                 ignore_patterns=ignore,
             )
-        # Contract: lerobot.jobs.hf.submit_to_hf watches for this exact "Model pushed to <url>"
-        # line to end a remote run early. Keep the wording and URL format in sync.
-        logging.info(f"Model pushed to {commit_info.repo_url.url}")
+            # Contract: lerobot.jobs.hf.submit_to_hf watches for this exact "Model pushed to <url>"
+            # line to end a remote run early. Keep the wording and URL format in sync.
+            logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
     if dist.is_initialized():
         dist.barrier()

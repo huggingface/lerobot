@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
+from lerobot.configs.train import CheckpointFormat
 from lerobot.policies import factory
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -84,7 +85,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     cfg.wandb = SimpleNamespace(enable=False)
     cfg.seed = None
     cfg.cudnn_deterministic = False
-    cfg.checkpoint_format = SimpleNamespace(wants_dcp=False)
+    cfg.checkpoint_format = CheckpointFormat.SAFETENSORS
     cfg.peft = None
     cfg.dataset = SimpleNamespace(image_transforms=ImageTransformsConfig())
     accelerator = SimpleNamespace(

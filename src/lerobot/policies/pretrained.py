@@ -76,7 +76,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     config_class: ClassVar[type[PreTrainedConfig]]
     name: ClassVar[str]
 
-    # --- declarative parallelism/acceleration surface ----------------------------------------
+    # declarative parallelism/acceleration surface
     # Module CLASS names forming the FSDP2 wrap units (and, once wired, the activation-
     # checkpointing units). Resolved onto the accelerate plugin right before
     # `accelerator.prepare()` by `lerobot.distributed.set_fsdp_wrap_modules`; sharded training
