@@ -93,6 +93,7 @@ def test_busy_admission_releases_connected_hardware_before_propagating(remote_se
         send_action=lambda *_: pytest.fail("admission rejection must not move the robot"),
     )
     teleop = SimpleNamespace(
+        name="test_teleop",
         is_connected=False,
         connect=lambda: setattr(teleop, "is_connected", True),
         disconnect=lambda: setattr(teleop, "is_connected", False),
