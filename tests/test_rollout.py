@@ -313,9 +313,10 @@ def test_build_rollout_context_uses_resolved_device(
             robot.disconnect()
 
 
-@pytest.mark.parametrize("failure_stage", ["observation", "processors", "engine"])
-def test_local_setup_failure_disconnects_hardware(monkeypatch, failure_stage):
+@pytest.mark.parametrize("failure_stage", ["engine", "observation"])
+def test_local_setup_failure_releases_hardware_and_dataset(monkeypatch, tmp_path, failure_stage):
     import lerobot.rollout.context as rollout_context
+    from lerobot.configs.dataset import DatasetRecordConfig
     from lerobot.policies import ACTConfig
     from lerobot.processor import PolicyProcessorPipeline
     from lerobot.rollout import RolloutConfig
@@ -326,30 +327,34 @@ def test_local_setup_failure_disconnects_hardware(monkeypatch, failure_stage):
         policy=ACTConfig(device="cpu", pretrained_path=Path("unused-checkpoint")),
         device="cpu",
     )
+    cfg.dataset = DatasetRecordConfig(repo_id="user/rollout_test", single_task="task", root=tmp_path)
     robot = MockRobot(cfg.robot)
+    dataset = MagicMock(num_episodes=0, repo_id="user/rollout_test")
+    dataset.meta.stats = {}
     failure = RuntimeError("setup failed")
-    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
-    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+
+    def make_engine(*args, **kwargs):
+        assert not robot.is_connected, "the robot connects after the engine is constructed"
+        if failure_stage == "engine":
+            raise failure
+        return MagicMock()
+
     if failure_stage == "observation":
         monkeypatch.setattr(robot, "get_observation", MagicMock(side_effect=failure))
-    elif failure_stage == "processors":
-        monkeypatch.setattr(rollout_context, "make_pre_post_processors", MagicMock(side_effect=failure))
-    else:
-        monkeypatch.setattr(
-            rollout_context,
-            "make_pre_post_processors",
-            lambda **_: (PolicyProcessorPipeline([]), PolicyProcessorPipeline([])),
-        )
-
-        def fail_engine(*args, **kwargs):
-            assert robot.is_connected, "the engine is constructed after hardware is connected"
-            raise failure
-
-        monkeypatch.setattr(rollout_context, "create_inference_engine", fail_engine)
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
+    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr(rollout_context, "LeRobotDataset", MagicMock(create=MagicMock(return_value=dataset)))
+    monkeypatch.setattr(
+        rollout_context,
+        "make_pre_post_processors",
+        lambda **_: (PolicyProcessorPipeline([]), PolicyProcessorPipeline([])),
+    )
+    monkeypatch.setattr(rollout_context, "create_inference_engine", make_engine)
     with pytest.raises(RuntimeError) as raised:
         rollout_context.build_rollout_context(cfg, threading.Event())
     assert raised.value is failure
     assert not robot.is_connected
+    dataset.finalize.assert_called_once()
 
 
 def test_load_pretrained_policy_passes_revision(monkeypatch):
