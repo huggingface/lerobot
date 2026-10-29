@@ -316,6 +316,66 @@ python -m lerobot.scripts.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_
 - Aggregates mp4 files: `episode_000000.mp4`, `episode_000001.mp4`, … → **`file-000.mp4`**, …
 - Updates `meta/episodes/*` (chunked Parquet) with per‑episode lengths, tasks, and byte/frame offsets.
 
+## Read the format directly (without `lerobot`)
+
+Everything above uses the `LeRobotDataset` class, but the on-disk format is plain Parquet, MP4 and
+JSON. Tools that audit or pre-analyze a dataset often read it directly with `pyarrow`, downloading
+only `meta/info.json` and the `data/` shards. This section documents the conventions such a reader
+must follow, and the two places where hub datasets historically diverge.
+
+### Episode segmentation and tasks
+
+- Episodes are delimited by the `episode_index` column in the data files, resolved against
+  `meta/episodes/` (row `i` of the episode metadata describes episode `i`, including `length` and
+  the `dataset_from_index` / `dataset_to_index` offsets into the global frame order).
+- **Task association is per frame.** The canonical way to associate a frame with a task is the
+  `task_index` column of the data Parquet, interpreted as the *row position* of
+  `meta/tasks.parquet` (row `i` ↔ `task_index == i`).
+- The task string column in `meta/tasks.parquet` may be stored as the pandas index rather than a
+  named column (it can appear as `__index_level_0__` with no `task` column). Read the first string
+  column positionally rather than by name.
+- The `tasks` column in the episode metadata is an optional **denormalization**: some datasets
+  (e.g. `lerobot/pusht`) list the task strings of each episode there, others (e.g. `lerobot/libero`)
+  do not and carry the association only through the per-frame `task_index`. Treat `tasks` as a
+  convenience, never as the authoritative source; join through `task_index` for consistent behavior
+  across datasets.
+
+```python
+import json
+
+import pyarrow.parquet as pq
+
+info = json.load(open("meta/info.json"))
+assert info["codebase_version"].startswith("v3")
+
+# task strings, read positionally — the string column may be unnamed
+def task_string(row):
+    if "task" in row:
+        return row["task"]
+    return next(v for v in row.values() if isinstance(v, str))
+
+tasks = pq.read_table("meta/tasks.parquet").to_pylist()
+task_strings = [task_string(row) for row in tasks]
+
+# frames of one episode, with their task strings
+data = pq.read_table("data/chunk-000/file-000.parquet").to_pylist()
+ep0 = [row for row in data if row["episode_index"] == 0]
+ep0_tasks = [task_strings[row["task_index"]] for row in ep0]
+```
+
+### Semantic roles of state channels (gripper, end-effector, …)
+
+The format declares feature **names, shapes and dtypes** in `meta/info.json`, but it does not
+currently declare the *semantic role* of individual channels — there is no field that says which
+channel of `observation.state` is a gripper, or whether the state is joint space or task space.
+The per-feature `names` entry may be semantic (`{"motors": ["motor_0", …]}`) or fully generic
+(`["state"]`), so it cannot be relied on either.
+
+Until an optional `role`/`semantic` annotation is added to the format
+([#4749](https://github.com/huggingface/lerobot/issues/4749)), downstream tooling that needs a
+gripper or end-effector channel must match on feature names and should **refuse to guess** when no
+name matches, rather than fall back to positional heuristics.
+
 ## Common Issues
 
 ### Always call `finalize()` before pushing
