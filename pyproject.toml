@@ -271,6 +271,7 @@ vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 wall_oss_05 = ["lerobot[transformers-dep]"]
+hy_vla = ["lerobot[transformers-dep]", "lerobot[dataset]", "lerobot[accelerate-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -352,6 +353,7 @@ all = [
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
     "lerobot[wall_oss_05]",
+    "lerobot[hy_vla]",
     "lerobot[pi]",
     "lerobot[dm05]",
     "lerobot[fineart_vla]",

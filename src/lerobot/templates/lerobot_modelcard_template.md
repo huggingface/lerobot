@@ -51,6 +51,8 @@ FLUX 3 Action (`flux3`) is Black Forest Labs' video-action model: the FLUX.3 vid
 [LingBot-VLA 2.0](https://github.com/Robbyant/lingbot-vla-v2) is a cross-embodiment Vision-Language-Action policy that pairs a Qwen3-VL-4B backbone with a sparse-MoE Qwen2 action expert, predicting action chunks via flow matching over a unified 55-D canonical state/action space.
 {% elif model_name == "lawam" %}
 [LaWAM](https://arxiv.org/abs/2606.15768) is a latent world action model that pairs a Qwen3-VL backbone with a latent action/world model and a flow-matching action head for dynamics-aware robot policies.
+{% elif model_name == "hy_vla" %}
+[Hy-Embodied-0.5-VLA](https://huggingface.co/Tencent-Hy-Embodied/Hy-Embodied-0.5-VLA) is Tencent's bimanual Vision-Language-Action policy with a Hunyuan vision-language backbone and a flow-matching action expert for UMI and RoboTwin.
 {% elif model_name == "dm05" %}
 [DM05](https://huggingface.co/Dexmal/DM05) is Dexmal's Vision-Language-Action model for robot control. It conditions on camera observations, robot state, and language instructions to predict continuous action chunks with a flow-matching action expert.
 {% elif model_name == "fineart_vla" %}
