@@ -72,6 +72,34 @@ def test_to_tensor_numpy_scalars():
     assert result.item() == pytest.approx(42.0)
 
 
+@pytest.mark.parametrize("numpy_dtype", [np.float64, np.float32, np.int16, np.uint8])
+def test_to_tensor_zero_dimensional_array_preserves_dtype(numpy_dtype: type) -> None:
+    array = np.array(42, dtype=numpy_dtype)
+    result = to_tensor(array, dtype=None, device="cpu")
+
+    assert result.shape == torch.Size([])
+    assert result.dtype == torch.from_numpy(array).dtype
+    assert result.item() == array.item()
+    assert result.device.type == "cpu"
+
+
+def test_to_tensor_zero_dimensional_array_preserves_float64_precision() -> None:
+    array = np.array(16_777_217.0, dtype=np.float64)
+
+    assert to_tensor(array, dtype=None).item() == array.item()
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.int64])
+def test_to_tensor_zero_dimensional_array_dtype_override(dtype: torch.dtype) -> None:
+    array = np.array(42, dtype=np.int16)
+    result = to_tensor(array, dtype=dtype)
+
+    assert result.shape == torch.Size([])
+    assert result.dtype == dtype
+    assert result.item() == 42
+    assert to_tensor(array).dtype == torch.float32
+
+
 def test_to_tensor_python_scalars():
     """Test to_tensor with Python scalars."""
     # Python int
