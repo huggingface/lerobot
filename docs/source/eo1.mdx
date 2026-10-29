@@ -176,8 +176,8 @@ to the rendered messages before Qwen formatting and tokenization.
 | `policy.dtype`                         | `bfloat16`                    | Backbone dtype request: a torch dtype name, e.g. `bfloat16`, `float32`  |
 | `policy.attn_implementation`           | `None`                        | Optional Qwen attention backend, such as `sdpa`                         |
 | `policy.gradient_checkpointing`        | `false`                       | Reduces memory usage during training                                    |
-| `policy.chunk_size`                    | `8`                           | Number of future actions predicted per chunk                            |
-| `policy.n_action_steps`                | `8`                           | Number of actions consumed from a sampled chunk                         |
+| `policy.chunk_size`                    | `16`                          | Number of future actions predicted per chunk                            |
+| `policy.n_action_steps`                | `16`                          | Number of actions consumed from a sampled chunk                         |
 | `policy.num_denoise_steps`             | `10`                          | Number of flow-matching denoising steps used during sampling            |
 | `policy.max_state_dim`                 | `32`                          | State padding dimension                                                 |
 | `policy.max_action_dim`                | `32`                          | Action padding dimension                                                |
