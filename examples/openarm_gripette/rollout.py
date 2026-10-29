@@ -23,7 +23,6 @@ from threading import Event, Thread
 from typing import cast
 
 import numpy as np
-from gripette.grasp_projection import GraspProjection
 from huggingface_hub import snapshot_download
 from openarm_gripette_model import OPENARM_RIGHT_DIR
 
@@ -40,6 +39,9 @@ from lerobot.processor import (
     transition_to_robot_action,
 )
 from lerobot.robots.openarm_gripette_follower import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
+# TODO(WARNING): local fork of grabette_dataset_tools.grasp_projection — keep in sync
+# with grabette-policy; do not quietly diverge the encode/decode map or limits.
+from lerobot.robots.openarm_gripette_follower.grasp_projection import GraspProjection
 from lerobot.robots.openarm_gripette_follower.robot_grabette_processor import (
     ROBOT_JOINTS,
     GrabetteRelativePoseToJoints,

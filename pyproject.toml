@@ -190,14 +190,16 @@ robstride = ["lerobot[can-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]", "lerobot[motorbridge-dep]"]
-# OpenArm + Pollen Gripette gripper. `gripette` (client) and `openarm-gripette-model` (URDF) are not on
-# PyPI, so they are installed from GitHub.
+# OpenArm + Pollen Gripette gripper. `gripette` (client) and `openarm-gripette-model`
+# (URDF) are not on PyPI; both track each repo's default branch (`develop`).
+# GraspProjection encode/decode lives in-tree (see openarm_gripette_follower/
+# grasp_projection.py) so this extra does not pull grabette-dataset-tools.
 gripette = [
     "lerobot[openarms]",
     "lerobot[grpcio-dep]",
     "protobuf>=6.33.5,<8.0.0",
-    "gripette @ git+https://github.com/pollen-robotics/grabette.git@a209c431ef8f9aa1be09e9fc1bfaf16e3baafca9#subdirectory=packages/gripette",
-    "openarm-gripette-model @ git+https://github.com/pollen-robotics/grabette-policy.git@c0e997b15b7b50a485577fa6d059875cfc62e849#subdirectory=robots/openarm/openarm_gripette_model",
+    "gripette @ git+https://github.com/pollen-robotics/grabette.git@develop#subdirectory=packages/gripette",
+    "openarm-gripette-model @ git+https://github.com/pollen-robotics/grabette-policy.git@develop#subdirectory=robots/openarm/openarm_gripette_model",
 ]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]

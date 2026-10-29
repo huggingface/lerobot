@@ -2012,7 +2012,7 @@ wheels = [
 [[package]]
 name = "gripette"
 version = "0.1.0"
-source = { git = "https://github.com/pollen-robotics/grabette.git?subdirectory=packages%2Fgripette&rev=a209c431ef8f9aa1be09e9fc1bfaf16e3baafca9#a209c431ef8f9aa1be09e9fc1bfaf16e3baafca9" }
+source = { git = "https://github.com/pollen-robotics/grabette.git?subdirectory=packages%2Fgripette&rev=develop#3eda3cdcab8eb6d1007e344756b7e9079c702572" }
 dependencies = [
     { name = "cryptography" },
     { name = "grpcio" },
@@ -3792,7 +3792,7 @@ requires-dist = [
     { name = "filelock", specifier = ">=3.12.0,<4.0.0" },
     { name = "foxglove-sdk", marker = "extra == 'viz'", specifier = ">=0.25.1,<0.26.0" },
     { name = "fsspec", specifier = ">=2023.5.0,<2027.0.0" },
-    { name = "gripette", marker = "extra == 'gripette'", git = "https://github.com/pollen-robotics/grabette.git?subdirectory=packages%2Fgripette&rev=a209c431ef8f9aa1be09e9fc1bfaf16e3baafca9" },
+    { name = "gripette", marker = "extra == 'gripette'", git = "https://github.com/pollen-robotics/grabette.git?subdirectory=packages%2Fgripette&rev=develop" },
     { name = "grpcio", marker = "extra == 'grpcio-dep'", specifier = ">=1.73.1,<2.0.0" },
     { name = "grpcio", marker = "extra == 'reachy2'", specifier = "<=1.73.1" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.73.1,<2.0.0" },
@@ -3977,7 +3977,7 @@ requires-dist = [
     { name = "onnx", marker = "extra == 'unitree-g1'", specifier = ">=1.16.0,<2.0.0" },
     { name = "onnxruntime", marker = "extra == 'unitree-g1'", specifier = ">=1.16.0,<2.0.0" },
     { name = "openai", marker = "extra == 'annotations'", specifier = ">=1.40,<2.0" },
-    { name = "openarm-gripette-model", marker = "extra == 'gripette'", git = "https://github.com/pollen-robotics/grabette-policy.git?subdirectory=robots%2Fopenarm%2Fopenarm_gripette_model&rev=c0e997b15b7b50a485577fa6d059875cfc62e849" },
+    { name = "openarm-gripette-model", marker = "extra == 'gripette'", git = "https://github.com/pollen-robotics/grabette-policy.git?subdirectory=robots%2Fopenarm%2Fopenarm_gripette_model&rev=develop" },
     { name = "opencv-python-headless", specifier = ">=4.9.0,<4.14.0" },
     { name = "packaging", specifier = ">=24.2,<26.0" },
     { name = "pandas", marker = "extra == 'dataset'", specifier = ">=2.0.0,<3.0.0" },
@@ -5375,7 +5375,7 @@ wheels = [
 [[package]]
 name = "openarm-gripette-model"
 version = "0.1.0"
-source = { git = "https://github.com/pollen-robotics/grabette-policy.git?subdirectory=robots%2Fopenarm%2Fopenarm_gripette_model&rev=c0e997b15b7b50a485577fa6d059875cfc62e849#c0e997b15b7b50a485577fa6d059875cfc62e849" }
+source = { git = "https://github.com/pollen-robotics/grabette-policy.git?subdirectory=robots%2Fopenarm%2Fopenarm_gripette_model&rev=develop#c0e997b15b7b50a485577fa6d059875cfc62e849" }
 
 [[package]]
 name = "opencv-python"
