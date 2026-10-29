@@ -7,6 +7,12 @@ A simulated environment can be driven in two ways:
 
 Either runs **locally**, through the environment API, or **served** by `lerobot-env-server`, usually in its own Docker image, so that the simulator's dependencies never meet the policy's. Setting an `endpoint` selects served execution; both paths expose the same canonical observations (HWC uint8 images, flat float32 state), episode ends, and control conventions.
 
+The code keeps three layers apart:
+
+- an **env** (`lerobot.envs`, `--env.type`) is what a LeRobot command runs, configured by an `EnvConfig`. Not every env is a simulator: `gym_manipulator` drives a real robot.
+- a **sim** (`lerobot.sim`) is the simulator behind a simulated env: a `SimConfig` naming its integration, stepped by `LocalVectorEnv`, without torch.
+- the **env server** (`lerobot.env_server`) serves a sim; `RemoteVectorEnv` drives it with the same API as `LocalVectorEnv`.
+
 ## Evaluate a checkpoint
 
 Locally, with the simulator installed next to LeRobot (see [LIBERO](./libero)):
