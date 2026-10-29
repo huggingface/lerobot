@@ -177,6 +177,7 @@ if TYPE_CHECKING or _transformers_available:
     from .molmoact2_hf_model.modeling_molmoact2 import (
         ActionExpertRMSNorm,
         MolmoAct2ForConditionalGeneration,
+        MolmoAct2Model,
         MolmoAct2RMSNorm,
         MolmoAct2RotaryEmbedding,
     )
@@ -186,6 +187,7 @@ else:
     ActionExpertRMSNorm = None
     HFMolmoAct2Config = None
     MolmoAct2ForConditionalGeneration = None
+    MolmoAct2Model = None
     MolmoAct2RMSNorm = None
     MolmoAct2RotaryEmbedding = None
 
@@ -427,33 +429,6 @@ def _sample_beta_timesteps(
     if scale == 0:
         return torch.full((batch_size,), time_offset, device=device, dtype=samples.dtype)
     return time_offset + scale * samples
-
-
-def _mask_discrete_action_spans(
-    *,
-    input_ids: Tensor,
-    mask: Tensor,
-    start_token_id: int | None,
-    end_token_id: int | None,
-) -> Tensor:
-    if start_token_id is None or end_token_id is None:
-        return mask
-    mask = mask.clone()
-    for batch_idx in range(input_ids.shape[0]):
-        row = input_ids[batch_idx]
-        starts = (row == int(start_token_id)).nonzero(as_tuple=False).flatten().tolist()
-        ends = (row == int(end_token_id)).nonzero(as_tuple=False).flatten().tolist()
-        end_ptr = 0
-        for start in starts:
-            while end_ptr < len(ends) and ends[end_ptr] < start:
-                end_ptr += 1
-            if end_ptr >= len(ends):
-                mask[batch_idx, start:] = False
-                break
-            end = int(ends[end_ptr])
-            mask[batch_idx, start : end + 1] = False
-            end_ptr += 1
-    return mask
 
 
 def _drop_trivial_attention_mask(model_inputs: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -1112,11 +1087,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
         eos_token_id = getattr(self.model.config, "eos_token_id", None)
         if eos_token_id is not None:
             mask &= input_ids != int(eos_token_id)
-        return _mask_discrete_action_spans(
-            input_ids=input_ids,
-            mask=mask,
-            start_token_id=getattr(self.model.config, "action_start_token_id", None),
-            end_token_id=getattr(self.model.config, "action_end_token_id", None),
+        return MolmoAct2Model._mask_discrete_output_spans(
+            input_ids,
+            mask,
+            getattr(self.model.config, "action_start_token_id", None),
+            getattr(self.model.config, "action_end_token_id", None),
         )
 
     def _load_discrete_action_tokenizer(self) -> Any:
