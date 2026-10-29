@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Per-tick action dispatch that honors the engine's permission and hold contract.
+"""Per-tick action dispatch for inference engines, including ones that return PyTorch policy outputs.
 
-A returned action is never dispatch permission on its own. Every autonomous motor
-tick, including interpolation ticks and ticks that send nothing, asks the engine
-before pulling an action, again before reading the interpolated target and once
-more immediately before the actuator write. A denial clears interpolation, applies
-the caller's local hold when one is configured and acknowledges it, so a worker can
-proceed or a terminal fault can reach shutdown.
+The permission, hold and interpolation sequence lives in :mod:`lerobot.utils.action_dispatch`, which
+does not import PyTorch. These wrappers add what a PyTorch engine needs: an engine may return the
+action with the policy's prediction (an ``EnvTransition``, see ``PreTrainedPolicy.select_action``);
+only the action is interpolated, and the prediction goes to the caller.
 
 ``lerobot-rollout`` builds its dispatch helper on these functions and adds dataset
 frames, robot-side processors and recording; a control loop outside the rollout
@@ -29,7 +27,7 @@ package calls :func:`dispatch_tick` directly.
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import nullcontext
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -40,29 +38,16 @@ from lerobot.processor import (
     transition_to_policy_action,
     transition_to_prediction,
 )
-from lerobot.utils.action_interpolator import ActionInterpolator
+from lerobot.utils import action_dispatch
+from lerobot.utils.action_dispatch import commit_action, dispatch_permitted
 from lerobot.utils.cycle_timer import CycleTimer
 
 from .base import InferenceEngine
 
+if TYPE_CHECKING:
+    from lerobot.utils.action_interpolator import ActionInterpolator
 
-def dispatch_permitted(
-    engine: InferenceEngine, interpolator: ActionInterpolator, hold: Callable[[], None] | None = None
-) -> bool:
-    """Ask the engine once; on denial clear interpolation, hold and acknowledge.
-
-    ``hold`` refreshes the robot's retained position target without a camera read or
-    inference. Pass ``None`` when the driver declares no local wait: the engine is
-    still acknowledged so a latched fault can progress to shutdown. A hold that
-    raises is never acknowledged.
-    """
-    if engine.dispatch_allowed():
-        return True
-    interpolator.reset()
-    if hold is not None:
-        hold()
-    engine.acknowledge_hold()
-    return False
+__all__ = ["commit_action", "dispatch_permitted", "dispatch_tick", "next_interpolated_action"]
 
 
 def next_interpolated_action(
@@ -76,56 +61,25 @@ def next_interpolated_action(
 ) -> torch.Tensor | np.ndarray | None:
     """Return the next interpolated target, pulling one policy action when needed.
 
-    ``obs_frame`` is the frame handed to ``engine.get_action`` or a zero-argument
-    factory for it. The factory runs only when the interpolator needs a new policy
-    action, so interpolation ticks pay nothing; asynchronous engines ignore the
-    frame. Returns ``None`` while denied or starved. A starved tick is counted on
-    ``timer`` when one is given, and the pull is timed as its ``infer`` step.
-
-    The engine may return the action with the policy's prediction (an ``EnvTransition``,
-    see ``PreTrainedPolicy.select_action``); only the action is interpolated, and a
-    non-empty prediction is handed to ``on_prediction`` on the tick that pulled it.
-    A NumPy action is returned bare, carries no prediction and is interpolated as it is.
+    See :func:`lerobot.utils.action_dispatch.next_interpolated_action`. A non-empty
+    prediction returned with the action is handed to ``on_prediction`` on the tick
+    that pulled it. A NumPy action is returned bare, carries no prediction and is
+    interpolated as it is.
     """
-    if not dispatch_permitted(engine, interpolator, hold):
-        return None
-    if interpolator.needs_new_action():
-        with timer.section("infer") if timer is not None else nullcontext():
-            frame = obs_frame() if callable(obs_frame) else obs_frame
-            result = engine.get_action(frame)
-        if isinstance(result, np.ndarray):
-            interpolator.add(result)
-        elif result is not None:
-            step = policy_output_to_transition(result)
-            interpolator.add(transition_to_policy_action(step).cpu())
-            if on_prediction is not None and (prediction := transition_to_prediction(step)):
-                on_prediction(prediction)
-    if not dispatch_permitted(engine, interpolator, hold):
-        return None
-    target = interpolator.get()
-    if target is None and timer is not None:
-        timer.note_starved_tick()
+    predictions: list[PolicyPrediction] = []
+    target = action_dispatch.next_interpolated_action(
+        engine,
+        interpolator,
+        obs_frame,
+        hold=hold,
+        timer=timer,
+        unpack=lambda result: _policy_action(result, None if on_prediction is None else predictions.append),
+    )
+    # Reported only now, so a prediction is never reported for an action the interpolator refused.
+    if on_prediction is not None:
+        for prediction in predictions:
+            on_prediction(prediction)
     return target
-
-
-def commit_action(
-    engine: InferenceEngine,
-    interpolator: ActionInterpolator,
-    send: Callable[[], None],
-    *,
-    hold: Callable[[], None] | None = None,
-) -> bool:
-    """Run the final gate immediately before ``send`` and record the dispatch after it.
-
-    ``send`` writes an already prepared target to the actuators. It runs only if the
-    engine still permits motion; the engine then learns that a policy command reached
-    the robot. Returns whether ``send`` ran.
-    """
-    if not dispatch_permitted(engine, interpolator, hold):
-        return False
-    send()
-    engine.record_dispatch()
-    return True
 
 
 def dispatch_tick(
@@ -139,14 +93,26 @@ def dispatch_tick(
 ) -> torch.Tensor | np.ndarray | None:
     """One complete autonomous motor tick: gate, pull, interpolate, gate, send, record.
 
-    ``send`` receives the canonical target in the engine's action order and must
-    apply it promptly; conversion to the driver's action format belongs inside it.
-    Returns the dispatched target, or ``None`` when the tick was held or starved.
+    See :func:`lerobot.utils.action_dispatch.dispatch_tick`.
     """
-    target = next_interpolated_action(engine, interpolator, obs_frame, hold=hold, timer=timer)
-    if target is None:
-        return None
-    with timer.section("send") if timer is not None else nullcontext():
-        if not commit_action(engine, interpolator, lambda: send(target), hold=hold):
-            return None
-    return target
+    return action_dispatch.dispatch_tick(
+        engine,
+        interpolator,
+        obs_frame,
+        send=send,
+        hold=hold,
+        timer=timer,
+        unpack=lambda result: _policy_action(result, None),
+    )
+
+
+def _policy_action(
+    result: Any, on_prediction: Callable[[PolicyPrediction], None] | None
+) -> torch.Tensor | np.ndarray:
+    if isinstance(result, np.ndarray):
+        return result
+    step = policy_output_to_transition(result)
+    action = transition_to_policy_action(step).cpu()
+    if on_prediction is not None and (prediction := transition_to_prediction(step)):
+        on_prediction(prediction)
+    return action

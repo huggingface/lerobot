@@ -180,3 +180,36 @@ def test_a_starved_tick_is_counted_and_sends_nothing():
     assert dispatch_tick(engine, ActionInterpolator(), None, send=robot.send, timer=timer) is None
     assert len(engine.frames) == 1 and timer.starved == 1 and timer.sections == ["infer"]
     assert robot.sent == [] and engine.acknowledged == 0 and engine.dispatched == 0
+
+
+def test_a_prediction_is_reported_only_for_an_action_that_converts(monkeypatch):
+    from lerobot.inference import dispatch
+
+    def refuse(step):
+        raise ValueError("no action")
+
+    monkeypatch.setattr(
+        dispatch, "transition_to_prediction", lambda step: {"language": {"subtask": ["pick"]}}
+    )
+    monkeypatch.setattr(dispatch, "transition_to_policy_action", refuse)
+    reported = []
+    with pytest.raises(ValueError, match="no action"):
+        dispatch._policy_action(torch.zeros(2), reported.append)
+    assert reported == []
+
+
+def test_a_prediction_is_not_reported_for_an_action_the_interpolator_refuses(monkeypatch):
+    from lerobot.inference import dispatch
+
+    monkeypatch.setattr(
+        dispatch, "transition_to_prediction", lambda step: {"language": {"subtask": ["pick"]}}
+    )
+    engine = GateEngine()
+    engine.actions = [torch.zeros(1)]
+    interpolator = ActionInterpolator(multiplier=1)
+    interpolator.add(np.zeros(1))  # a NumPy action, so the tensor that follows is refused
+    interpolator.get()
+    reported = []
+    with pytest.raises(TypeError):
+        dispatch.next_interpolated_action(engine, interpolator, None, on_prediction=reported.append)
+    assert reported == []

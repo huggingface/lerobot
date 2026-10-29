@@ -19,6 +19,40 @@ import pytest
 from tests.torch_free import assert_runs_without_torch
 
 
-@pytest.mark.parametrize("module", ["lerobot.utils.action_interpolator"])
+@pytest.mark.parametrize("module", ["lerobot.utils.action_interpolator", "lerobot.utils.action_dispatch"])
 def test_the_helper_loads_without_torch(module):
     assert_runs_without_torch(f"import {module}")
+
+
+def test_a_numpy_tick_runs_without_torch():
+    assert_runs_without_torch(
+        """
+        import numpy as np
+
+        from lerobot.utils.action_dispatch import dispatch_tick
+        from lerobot.utils.action_interpolator import ActionInterpolator
+
+        actions = [np.array([0.0]), np.array([2.0])]
+        sent = []
+
+
+        class Source:
+            def dispatch_allowed(self):
+                return True
+
+            def acknowledge_hold(self):
+                pass
+
+            def get_action(self, obs_frame):
+                return actions.pop(0) if actions else None
+
+            def record_dispatch(self):
+                pass
+
+
+        source, interpolator = Source(), ActionInterpolator(multiplier=2)
+        for _ in range(3):
+            dispatch_tick(source, interpolator, send=lambda target: sent.append(float(target[0])))
+        assert sent == [0.0, 1.0, 2.0], sent
+        """
+    )
