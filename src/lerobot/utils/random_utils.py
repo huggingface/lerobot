@@ -154,7 +154,7 @@ def load_rng_state(save_dir: Path) -> None:
 
 
 def get_rng_state() -> dict[str, Any]:
-    """Get the random state for `random`, `numpy`, and `torch`."""
+    """Get the random state for `random`, `numpy`, and `torch`, including available CUDA and MPS backends."""
     random_state_dict = {
         "random_state": random.getstate(),
         "numpy_random_state": np.random.get_state(),
@@ -162,6 +162,8 @@ def get_rng_state() -> dict[str, Any]:
     }
     if torch.cuda.is_available():
         random_state_dict["torch_cuda_random_state"] = torch.cuda.random.get_rng_state()
+    if torch.backends.mps.is_available():
+        random_state_dict["torch_mps_random_state"] = torch.mps.get_rng_state()
     return random_state_dict
 
 
@@ -176,6 +178,8 @@ def set_rng_state(random_state_dict: dict[str, Any]):
     torch.random.set_rng_state(random_state_dict["torch_random_state"])
     if torch.cuda.is_available():
         torch.cuda.random.set_rng_state(random_state_dict["torch_cuda_random_state"])
+    if torch.backends.mps.is_available() and "torch_mps_random_state" in random_state_dict:
+        torch.mps.set_rng_state(random_state_dict["torch_mps_random_state"])
 
 
 def set_seed(seed, accelerator: Callable | None = None) -> None:
