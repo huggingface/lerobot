@@ -753,8 +753,8 @@ def test_create_inference_engine_remote_explains_session_construction():
 
 
 def test_align_to_checkpoint_order_reorders_motors_and_preserves_cameras(caplog):
-    from lerobot.rollout.context import _align_to_checkpoint_order
     from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
+    from lerobot.utils.robot_utils import align_to_checkpoint_order
 
     features = {
         "wrist_camera": (480, 640, 3),
@@ -762,7 +762,7 @@ def test_align_to_checkpoint_order_reorders_motors_and_preserves_cameras(caplog)
         "joint_a.pos": float,
     }
 
-    aligned = _align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="state")
+    aligned = align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="state")
 
     assert list(aligned) == ["joint_a.pos", "joint_b.pos", "wrist_camera"]
     assert aligned["wrist_camera"] == (480, 640, 3)
@@ -779,11 +779,11 @@ def test_align_to_checkpoint_order_reorders_motors_and_preserves_cameras(caplog)
 
 def test_align_to_checkpoint_order_aligns_the_action_side_by_the_same_rule(caplog):
     """One primitive serves both sides; the action dict simply has no camera entries."""
-    from lerobot.rollout.context import _align_to_checkpoint_order
+    from lerobot.utils.robot_utils import align_to_checkpoint_order
 
     features = {"joint_b.pos": float, "joint_a.pos": float}
 
-    aligned = _align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="action")
+    aligned = align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="action")
 
     assert list(aligned) == ["joint_a.pos", "joint_b.pos"]
     assert "reordering action" in caplog.text
@@ -801,7 +801,7 @@ def test_align_to_checkpoint_order_aligns_the_action_side_by_the_same_rule(caplo
 )
 def test_align_to_checkpoint_order_is_noop_without_an_exact_name_match(policy_action_names, what):
     """A set mismatch means the two describe different things: keep the robot's own order."""
-    from lerobot.rollout.context import _align_to_checkpoint_order
+    from lerobot.utils.robot_utils import align_to_checkpoint_order
 
     features = {
         "joint_b.pos": float,
@@ -809,7 +809,7 @@ def test_align_to_checkpoint_order_is_noop_without_an_exact_name_match(policy_ac
         "wrist_camera": (480, 640, 3),
     }
 
-    aligned = _align_to_checkpoint_order(features, policy_action_names, what=what)
+    aligned = align_to_checkpoint_order(features, policy_action_names, what=what)
 
     assert aligned is features
     assert list(aligned) == ["joint_b.pos", "joint_a.pos", "wrist_camera"]

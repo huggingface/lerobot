@@ -58,6 +58,7 @@ import lerobot.teleoperators.so_leader.so_leader
 from lerobot.robots import make_robot_from_config
 from lerobot.robots.so_follower import SO101FollowerConfig
 from lerobot.utils.action_interpolator import ActionInterpolator
+from lerobot.utils.robot_utils import policy_hw_features, return_to_position
 """
 
 
@@ -74,7 +75,9 @@ import sys
 from pathlib import Path
 
 # Not the user's calibration files, which this test does not check.
-make_robot_from_config(SO101FollowerConfig(port="/dev/null", calibration_dir=Path(sys.argv[1])))
+config = SO101FollowerConfig(port="/dev/null", calibration_dir=Path(sys.argv[1]))
+robot = make_robot_from_config(config)
+policy_hw_features(robot, None)
 """,
         str(tmp_path),
     )
