@@ -25,7 +25,7 @@ import numpy as np
 from huggingface_hub import hf_hub_download
 
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.hardware_types import RobotAction, RobotObservation
 from lerobot.model import GravityCompensation
 from lerobot.motors import MotorCalibration
 from lerobot.utils import (

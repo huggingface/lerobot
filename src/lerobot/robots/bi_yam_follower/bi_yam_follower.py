@@ -21,7 +21,7 @@ from dataclasses import fields
 from functools import cached_property
 
 from lerobot.cameras import CameraConfig
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.hardware_types import RobotAction, RobotObservation
 from lerobot.utils import DeviceNotConnectedError, check_if_already_connected, check_if_not_connected
 from lerobot.utils.bimanual import BimanualMixin
 

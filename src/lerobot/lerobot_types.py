@@ -21,6 +21,10 @@ from typing import Any, Final, Literal, NotRequired, TypeAlias, TypedDict, final
 import numpy as np
 import torch
 
+# Re-exported so existing imports keep working. The drivers that load without PyTorch import them from
+# `lerobot.hardware_types`.
+from lerobot.hardware_types import RobotAction as RobotAction, RobotObservation as RobotObservation
+
 
 @final
 class TransitionKey:
@@ -38,9 +42,7 @@ class TransitionKey:
 
 # Kept as `TypeAlias` (not PEP 695 `type`): both are used in `isinstance()` checks.
 PolicyAction: TypeAlias = torch.Tensor  # noqa: UP040
-RobotAction = dict[str, Any]
 EnvAction: TypeAlias = np.ndarray  # noqa: UP040
-RobotObservation = dict[str, Any]
 BatchType = dict[str, Any]
 
 

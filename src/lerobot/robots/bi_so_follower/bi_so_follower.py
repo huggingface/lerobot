@@ -17,7 +17,7 @@
 import logging
 from functools import cached_property
 
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.hardware_types import RobotAction, RobotObservation
 from lerobot.utils.bimanual import BimanualMixin
 from lerobot.utils.decorators import check_if_not_connected
 
