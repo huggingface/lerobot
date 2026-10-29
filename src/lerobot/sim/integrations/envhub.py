@@ -18,6 +18,7 @@ import importlib.util
 import logging
 import os
 from collections.abc import Callable
+from difflib import get_close_matches
 from typing import Any
 
 import gymnasium as gym
@@ -246,10 +247,14 @@ def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
         kwargs["hub_path"], kwargs.get("trust_remote_code", False), kwargs.get("hub_cache_dir")
     )
     declared = getattr(module, "LEROBOT_SIM", {})
-    unknown = set(declared) - set(SIM_DEFAULTS)
+    unknown = sorted(set(declared) - set(SIM_DEFAULTS))
     if unknown:
+        keys = []
+        for key in unknown:
+            match = get_close_matches(key, SIM_DEFAULTS, n=1)
+            keys.append(f"{key!r} (did you mean {match[0]!r}?)" if match else repr(key))
         raise ValueError(
-            f"{repo_id} LEROBOT_SIM has unknown keys {sorted(unknown)}; expected {list(SIM_DEFAULTS)}"
+            f"{repo_id} LEROBOT_SIM has unknown keys {', '.join(keys)}; expected {list(SIM_DEFAULTS)}"
         )
     logger.info("EnvHub %s declares %s in LEROBOT_SIM", repo_id, sorted(declared))
     return {**SIM_DEFAULTS, **declared}

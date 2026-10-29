@@ -216,10 +216,16 @@ def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
     env_file.write_text(_ENVHUB_ENV)
     resolved = SimConfig.resolve(sim)
     assert (resolved.fps, resolved.control_mode, resolved.semantics) == (30, "position", "envhub-v1")
-    # A typo in LEROBOT_SIM is an error, not a silently ignored setting.
-    env_file.write_text(_ENVHUB_ENV + 'LEROBOT_SIM = {"fsp": 30}\n')
-    with pytest.raises(ValueError, match="unknown keys"):
+    # A typo or an old key in LEROBOT_SIM is an error naming the closest valid key, not an ignored setting.
+    env_file.write_text(
+        _ENVHUB_ENV + 'LEROBOT_SIM = {"fsp": 30, "control": "delta", "gripper_indices": [6]}\n'
+    )
+    with pytest.raises(ValueError) as error:
         SimConfig.resolve(sim)
+    message = str(error.value)
+    assert "'control' (did you mean 'control_mode'?)" in message
+    assert "'fsp' (did you mean 'fps'?)" in message
+    assert "'gripper_indices'; expected" in message
 
 
 def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it() -> None:
