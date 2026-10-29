@@ -19,6 +19,9 @@ import shutil
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import torch
 
@@ -159,6 +162,29 @@ def test_delete_empty_list(sample_dataset, tmp_path):
             episode_indices=[],
             output_dir=tmp_path / "filtered",
         )
+
+
+def test_delete_corrupt_kept_episode_raises_clear_error(sample_dataset, tmp_path):
+    """A kept episode whose rows lost their `episode_index` (NaN) is diagnosed with the
+    episode and its data file, instead of crashing with an opaque
+    `ValueError: cannot convert float NaN to integer` (#2302)."""
+    data_file = sample_dataset.meta.get_data_file_path(2)
+    source_path = sample_dataset.root / data_file
+    df = pd.read_parquet(source_path)
+    df.loc[df["episode_index"] == 2, "episode_index"] = np.nan
+    pq.write_table(pa.Table.from_pandas(df, schema=pq.read_schema(source_path)), source_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        delete_episodes(
+            sample_dataset,
+            episode_indices=[1],
+            output_dir=tmp_path / "filtered",
+        )
+
+    message = str(excinfo.value)
+    assert "2" in message
+    assert str(data_file) in message
+    assert "NaN" not in message
 
 
 def test_split_by_episodes(sample_dataset, tmp_path):
