@@ -824,19 +824,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return embs, pad_masks, att_masks
 
-    def embed_suffix(self, noisy_actions, timestep):
-        """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
-        att_masks = []
+    def embed_suffix(self, noisy_actions, timestep, adarms_cond=None):
+        """Embed noisy_actions, timestep to prepare for Expert Gemma processing.
 
-        # Embed timestep using sine-cosine positional encoding
-        time_emb = create_sinusoidal_pos_embedding(
-            timestep,
-            self.action_in_proj.out_features,
-            min_period=self.config.min_period,
-            max_period=self.config.max_period,
-            device=timestep.device,
-        )
-        time_emb = time_emb.type(dtype=timestep.dtype)
+        A caller that already holds the time conditioning for `timestep` passes it as `adarms_cond`, which skips
+        the time embedding and its MLP.
+        """
+        att_masks = []
 
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
@@ -850,8 +844,17 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             x = self.time_mlp_out(x)
             return F.silu(x)
 
-        time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
-        adarms_cond = time_emb
+        if adarms_cond is None:
+            # Embed timestep using sine-cosine positional encoding
+            time_emb = create_sinusoidal_pos_embedding(
+                timestep,
+                self.action_in_proj.out_features,
+                min_period=self.config.min_period,
+                max_period=self.config.max_period,
+                device=timestep.device,
+            )
+            time_emb = time_emb.type(dtype=timestep.dtype)
+            adarms_cond = self._apply_checkpoint(time_mlp_func, time_emb)
 
         bsize, action_time_dim = action_emb.shape[:2]
         pad_masks = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
@@ -1029,9 +1032,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         past_key_values,
         x_t,
         timestep,
+        adarms_cond=None,
     ):
-        """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep)
+        """Apply one denoising step of the noise `x_t` at a given timestep, or its time conditioning if given."""
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(
+            x_t, timestep, adarms_cond
+        )
 
         suffix_len = suffix_pad_masks.shape[1]
         batch_size = prefix_pad_masks.shape[0]
