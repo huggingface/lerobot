@@ -17,6 +17,8 @@
 """Tests for streaming video encoding."""
 
 import queue
+import subprocess
+import sys
 import threading
 
 import numpy as np
@@ -667,3 +669,18 @@ class TestStreamingEncoderIntegration:
         assert dataset.meta.total_frames == num_frames
 
         dataset.finalize()
+
+
+def test_start_episode_imports_compute_stats_before_starting_the_encoder_threads(tmp_path):
+    # A fresh interpreter, where nothing has imported compute_stats yet; the threads are recorded, not run.
+    code = f"""
+import sys
+from lerobot.datasets import video_utils
+seen = []
+video_utils._CameraEncoderThread.start = lambda self: seen.append("lerobot.datasets.compute_stats" in sys.modules)
+video_utils.StreamingVideoEncoder(fps=30).start_episode(["cam"], {str(tmp_path)!r})
+print(seen)
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "[True]"
