@@ -84,6 +84,7 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 - **`meta/episodes/`**: per‑episode records (lengths, tasks, offsets) stored as **chunked Parquet** for scalability.
 - **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
 - **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
+- **`audio/`** (optional): **FLAC** shards per audio feature, organized like `videos/`.
 
 ## Load a dataset for training
 
@@ -174,6 +175,55 @@ streaming concurrency, the MP4 sidecar index, memory settings, resume and troubl
     </figcaption>
   </figure>
 </div>
+
+## Audio
+
+Datasets can store audio next to the frames, for instance from a [microphone](./microphones). An audio
+feature declares its number of channels and its sample rate:
+
+```python
+import numpy as np
+from lerobot.datasets import LeRobotDataset
+
+features = {
+    "observation.state": {"dtype": "float32", "shape": (6,), "names": None},
+    "observation.audio.wrist": {
+        "dtype": "audio",
+        "shape": (2,),  # number of channels
+        "names": ["left", "right"],
+        "info": {"audio.sample_rate": 48000},
+    },
+}
+dataset = LeRobotDataset.create("user/my_dataset", fps=30, features=features)
+```
+
+Audio is not added frame by frame. The recording of each audio feature is added once per episode,
+before saving it, as float samples in `[-1, 1]` of shape `(num_samples, num_channels)` or as the path
+of an audio file (e.g. a WAV file written by a microphone). Samples outside `[-1, 1]` are clipped with a
+warning, and non-finite samples are rejected:
+
+```python
+for frame in frames:
+    dataset.add_frame(frame)
+dataset.add_episode_audio("observation.audio.wrist", samples, start_time_s=0.12)
+dataset.save_episode()
+```
+
+`start_time_s` is the time of the episode's first frame on the audio's timeline, measured from the first
+sample: here, the recording started 0.12 s before the first frame.
+
+When loading the dataset, each frame comes with the window of audio that ends at the frame's timestamp,
+of shape `(num_channels, round(audio_window_s * sample_rate))`, zero-padded where it extends past the
+episode's audio. With `delta_timestamps` on an audio feature, windows are stacked as for images:
+
+```python
+dataset = LeRobotDataset("user/my_dataset", audio_window_s=0.5)
+sample = dataset[100]
+print(sample["observation.audio.wrist"].shape)  # [2, 24000]
+```
+
+Audio is stored losslessly as 24-bit FLAC, so the samples read back are exactly aligned with the frames.
+Aggregating, editing (e.g. deleting episodes) and streaming datasets with audio are not supported yet.
 
 ## Image transforms
 
