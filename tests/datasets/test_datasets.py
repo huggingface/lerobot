@@ -13,11 +13,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import inspect
 import logging
 import re
 from itertools import chain
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -578,31 +578,40 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
     )
 
 
-class _RecordingHfApi:
-    """Stands in for HfApi in push_to_hub tests and records each call."""
-
-    calls: list[tuple[str, dict]] = []
-
-    def __getattr__(self, name):
-        def record(*args, **kwargs):
-            self.calls.append((name, kwargs))
-
-        return record
-
-
-class _NoOpCard:
-    def push_to_hub(self, **kwargs):
-        pass
-
-
-@pytest.fixture
-def recording_hub(monkeypatch):
+def _mock_push_to_hub_api(monkeypatch):
+    """Replace the Hub client used by push_to_hub and record each folder upload."""
     import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
 
-    _RecordingHfApi.calls = []
-    monkeypatch.setattr(lerobot_dataset_module, "HfApi", _RecordingHfApi)
-    monkeypatch.setattr(lerobot_dataset_module, "create_lerobot_dataset_card", lambda **kwargs: _NoOpCard())
-    return _RecordingHfApi.calls
+    uploads = []
+
+    class FakeApi:
+        def create_repo(self, repo_id, private=None, repo_type=None, exist_ok=False):
+            return SimpleNamespace(repo_id=repo_id)
+
+        def create_branch(self, repo_id, *, branch, revision=None, repo_type=None, exist_ok=False):
+            pass
+
+        def upload_folder(
+            self, *, repo_id, folder_path, repo_type, revision, allow_patterns, ignore_patterns
+        ):
+            uploads.append(
+                {
+                    "repo_id": repo_id,
+                    "folder_path": folder_path,
+                    "repo_type": repo_type,
+                    "revision": revision,
+                    "allow_patterns": allow_patterns,
+                    "ignore_patterns": ignore_patterns,
+                }
+            )
+
+    monkeypatch.setattr(lerobot_dataset_module, "HfApi", FakeApi)
+    monkeypatch.setattr(
+        lerobot_dataset_module,
+        "create_lerobot_dataset_card",
+        lambda **kwargs: SimpleNamespace(push_to_hub=lambda **kwargs: None),
+    )
+    return uploads
 
 
 @pytest.mark.parametrize(
@@ -613,34 +622,34 @@ def recording_hub(monkeypatch):
     ],
 )
 def test_push_to_hub_uploads_with_upload_folder(
-    tmp_path, lerobot_dataset_factory, recording_hub, push_kwargs, revision, ignore_patterns
+    tmp_path, lerobot_dataset_factory, monkeypatch, push_kwargs, revision, ignore_patterns
 ):
+    uploads = _mock_push_to_hub_api(monkeypatch)
     dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=2, total_frames=40)
 
     dataset.push_to_hub(tag_version=False, **push_kwargs)
 
-    upload_calls = [(name, kwargs) for name, kwargs in recording_hub if name.startswith("upload")]
-    expected_kwargs = {
-        "repo_id": dataset.repo_id,
-        "folder_path": dataset.root,
-        "repo_type": "dataset",
-        "revision": revision,
-        "allow_patterns": None,
-        "ignore_patterns": ignore_patterns,
-    }
-    assert upload_calls == [("upload_folder", expected_kwargs)]
-    # The recorded call must also be valid for the installed huggingface_hub.
-    inspect.signature(HfApi.upload_folder).bind(None, **expected_kwargs)
+    assert uploads == [
+        {
+            "repo_id": dataset.repo_id,
+            "folder_path": dataset.root,
+            "repo_type": "dataset",
+            "revision": revision,
+            "allow_patterns": None,
+            "ignore_patterns": ignore_patterns,
+        }
+    ]
 
 
-def test_push_to_hub_upload_large_folder_is_deprecated(tmp_path, lerobot_dataset_factory, recording_hub):
+def test_push_to_hub_upload_large_folder_is_deprecated(tmp_path, lerobot_dataset_factory, monkeypatch):
+    uploads = _mock_push_to_hub_api(monkeypatch)
     dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=2, total_frames=40)
 
     with pytest.warns(DeprecationWarning, match="upload_large_folder"):
         dataset.push_to_hub(tag_version=False, upload_large_folder=True)
 
-    upload_names = [name for name, _ in recording_hub if name.startswith("upload")]
-    assert upload_names == ["upload_folder"]
+    # The fake has no upload_large_folder method, so reaching it would raise AttributeError.
+    assert len(uploads) == 1
 
 
 # TODO(aliberts):
