@@ -26,7 +26,7 @@ from gymnasium import spaces
 from lerobot.envs.configs import EnvConfig
 from lerobot.sim.integrations.utils import canonical_observation
 
-__all__ = ["DictObservationEnv", "ToyEnv", "ToyEnvConfig", "canonical_observation", "create_envs"]
+__all__ = ["DictObservationEnv", "ToyEnv", "ToyEnvConfig", "canonical_observation", "env_fns"]
 
 
 class ToyEnv:
@@ -70,17 +70,16 @@ class ToyEnv:
         """Nothing to release."""
 
 
-def create_envs(
+def env_fns(
     task: str,
     n_envs: int,
-    env_cls: Callable[[list[Callable[[], Any]]], Any],
     task_ids: tuple[int, ...] = (0,),
     **_: Any,
-) -> dict[str, dict[int, Any]]:
-    """Create the toy environments, as a simulator integration does."""
+) -> dict[str, dict[int, list[Callable[[], Any]]]]:
+    """The toy environments' factories, as a simulator integration returns them."""
     if task != "reach":
         raise ValueError(f"Unknown toy task: {task!r}")
-    return {"reach": {task_id: env_cls([ToyEnv for _ in range(n_envs)]) for task_id in task_ids}}
+    return {"reach": {task_id: [ToyEnv] * n_envs for task_id in task_ids}}
 
 
 class DictObservationEnv(gym.Env):

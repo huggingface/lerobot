@@ -17,6 +17,7 @@
 import importlib.util
 import logging
 import os
+from collections.abc import Callable
 from typing import Any
 
 import gymnasium as gym
@@ -24,7 +25,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns"]
 
 logger = logging.getLogger(__name__)
 
@@ -192,10 +193,10 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
     )
 
 
-def _env_factories(vec: Any, n_envs: int) -> list:
+def _env_factories(vec: Any, n_envs: int) -> list[Callable[[], Any]]:
     """Keep a vector env's per-environment factories and close it.
 
-    Gymnasium builds a vector env's environments when it is created; ``VectorEnv`` builds them again
+    Gymnasium builds a vector env's environments when it is created; ``LocalVectorEnv`` builds them again
     from these factories, on first use.
     """
     try:
@@ -212,16 +213,15 @@ def _env_factories(vec: Any, n_envs: int) -> list:
         vec.close()
 
 
-def create_envs(
+def env_fns(
     task: str,
     n_envs: int,
-    env_cls: Any,
     hub_path: str,
     trust_remote_code: bool = False,
     hub_cache_dir: str | None = None,
     make_env_kwargs: dict[str, Any] | None = None,
-) -> dict[str, dict[int, Any]]:
-    """Environments from a Hub repository's ``make_env``, called with ``make_env_kwargs``.
+) -> dict[str, dict[int, list[Callable[[], Any]]]]:
+    """The factories of a Hub repository's environments, from its ``make_env`` called with ``make_env_kwargs``.
 
     ``task`` is unused: suites and task ids come from the repository, and clients select them.
     """
@@ -233,9 +233,9 @@ def create_envs(
         suite = _suite_name(result)
         result.close()
         fns = [lambda: _call_make_env(module, n_envs=1, use_async_envs=False, cfg=None, **options)] * n_envs
-        return {suite: {0: env_cls(fns)}}
+        return {suite: {0: fns}}
     return {
-        suite: {task_id: env_cls(_env_factories(vec, n_envs)) for task_id, vec in tasks.items()}
+        suite: {task_id: _env_factories(vec, n_envs) for task_id, vec in tasks.items()}
         for suite, tasks in _normalize_hub_result(result).items()
     }
 

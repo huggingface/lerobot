@@ -14,8 +14,7 @@
 
 """RoboMME environment wrapper for LeRobot evaluation.
 
-Wraps the RoboMME ``BenchmarkEnvBuilder`` into a Gymnasium-compatible
-``VectorEnv`` suitable for ``lerobot_eval``.
+Wraps the RoboMME ``BenchmarkEnvBuilder`` into a Gymnasium environment for LeRobot's simulation.
 
 RoboMME tasks:
   Counting:    BinFill, PickXtimes, SwingXtimes, StopCube
@@ -30,7 +29,7 @@ Benchmark: https://github.com/RoboMME/robomme_benchmark
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from functools import partial
 from typing import Any
 
@@ -40,7 +39,7 @@ from gymnasium import spaces
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns"]
 
 ROBOMME_TASKS = [
     "BinFill",
@@ -235,7 +234,7 @@ def _make_env_fns(
     return [partial(_make_one, task_id + i) for i in range(n_envs)]
 
 
-def create_robomme_envs(
+def env_fns(
     task: str,
     n_envs: int = 1,
     action_space_type: str = "joint_angle",
@@ -244,18 +243,13 @@ def create_robomme_envs(
     task_ids: list[int] | None = None,
     front_camera_name: str = "camera1",
     wrist_camera_name: str = "camera2",
-    env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
-) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """Create vectorized RoboMME environments for evaluation.
+) -> dict[str, dict[int, list[Callable[[], Any]]]]:
+    """The factories of ``n_envs`` RoboMME environments for each task: ``{suite: {task_id: [factory, ...]}}``.
 
     `task` may be a single RoboMME task name (e.g. "PickXtimes") or a
     comma-separated list (e.g. "PickXtimes,BinFill,StopCube"). Each task
     becomes its own suite in the returned mapping.
-
-    Returns {suite_name: {task_id: VectorEnv}} matching lerobot's expected format.
     """
-    if env_cls is None or not callable(env_cls):
-        raise ValueError("env_cls must be a callable that wraps a list of env factory callables.")
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
@@ -263,11 +257,9 @@ def create_robomme_envs(
         task_ids = [0]
 
     task_names = [t.strip() for t in task.split(",") if t.strip()]
-    out: dict[str, dict[int, gym.vector.VectorEnv]] = {}
-    for task_name in task_names:
-        envs_by_task: dict[int, gym.vector.VectorEnv] = {}
-        for task_id in task_ids:
-            fns = _make_env_fns(
+    return {
+        task_name: {
+            task_id: _make_env_fns(
                 task=task_name,
                 n_envs=n_envs,
                 action_space_type=action_space_type,
@@ -277,12 +269,10 @@ def create_robomme_envs(
                 front_camera_name=front_camera_name,
                 wrist_camera_name=wrist_camera_name,
             )
-            envs_by_task[task_id] = env_cls(fns)
-        out[task_name] = envs_by_task
-    return out
-
-
-create_envs = create_robomme_envs
+            for task_id in task_ids
+        }
+        for task_name in task_names
+    }
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:

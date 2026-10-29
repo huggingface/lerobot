@@ -14,13 +14,14 @@
 
 """LIBERO-plus integration using LIBERO's environment and observation conventions."""
 
+from collections.abc import Callable
 from typing import Any
 
-from .libero import canonical_observation, conventions, create_envs as _create_envs
+from .libero import canonical_observation, conventions, env_fns as _env_fns
 
-__all__ = ["canonical_observation", "conventions", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns"]
 
 
-def create_envs(**kwargs: Any) -> dict[str, dict[int, Any]]:
-    """Create LIBERO-plus environments through the shared LIBERO wrapper."""
-    return _create_envs(**{**kwargs, "is_libero_plus": True})
+def env_fns(**kwargs: Any) -> dict[str, dict[int, list[Callable[[], Any]]]]:
+    """LIBERO-plus environment factories, through the shared LIBERO wrapper."""
+    return _env_fns(**{**kwargs, "is_libero_plus": True})

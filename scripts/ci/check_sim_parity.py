@@ -27,13 +27,13 @@ import yaml
 
 from lerobot.env_server.client import EnvClient
 from lerobot.sim.config import SimConfig
-from lerobot.sim.vector_env import VectorEnv
+from lerobot.sim.vector_env import LocalVectorEnv
 from lerobot.utils import init_logging
 
 
 def check(config_path: Path, steps: int = 5):
     config = yaml.safe_load(config_path.read_text())
-    env = VectorEnv(SimConfig.resolve(config["sim"]))
+    env = LocalVectorEnv(SimConfig.resolve(config["sim"]))
     try:
         descriptor = env.descriptor
         actions = (

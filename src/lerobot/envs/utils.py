@@ -25,7 +25,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 
 # Still importable from here: envhub.mdx documents these helpers for testing an env.py locally, and
 # parse_camera_names was public in this module. They live in the simulator integrations now.
@@ -35,7 +35,8 @@ from lerobot.sim.integrations.envhub import (
     _normalize_hub_result as _normalize_hub_result,
 )
 from lerobot.sim.integrations.utils import parse_camera_names as parse_camera_names
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
+from lerobot.sim.types import EnvDescriptor
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 
 from .configs import EnvConfig
@@ -169,6 +170,41 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
         policy_features[policy_key] = feature
 
     return policy_features
+
+
+def validate_checkpoint(
+    descriptor: EnvDescriptor, config: PreTrainedConfig, rename_map: dict[str, str]
+) -> None:
+    """Reject a checkpoint whose inputs or action do not fit the simulator ``descriptor`` describes.
+
+    Simulator keys are renamed with ``rename_map``, as for any robot. RGB spatial dimensions are left to
+    policy preprocessing, which owns resizing, and the policy's placeholder cameras (``empty_cameras``) are
+    its own.
+    """
+    available = {rename_map.get(f.name, f.name): f for f in descriptor.features}
+    placeholders = {f"{OBS_IMAGES}.empty_camera_{i}" for i in range(getattr(config, "empty_cameras", 0))}
+    for name, expected in (config.input_features or {}).items():
+        if name in placeholders:
+            continue
+        if name not in available:
+            raise ValueError(f"Checkpoint feature missing from the simulator (check --rename_map): {name}")
+        actual = available[name]
+        shape: tuple[int, ...]
+        if actual.kind == "rgb":
+            compatible = len(expected.shape) == 3 and expected.shape[0] == actual.shape[2]
+            shape = (actual.shape[2], actual.shape[0], actual.shape[1])
+        else:
+            compatible = tuple(expected.shape) == actual.shape
+            shape = actual.shape
+        if not compatible:
+            raise ValueError(
+                f"Checkpoint feature shape mismatch for {name}: expected {expected.shape}, got {shape}"
+            )
+    action = (config.output_features or {}).get(ACTION)
+    if action is None:
+        raise ValueError("Checkpoint must declare the canonical action feature")
+    if tuple(action.shape) != descriptor.action_feature.shape:
+        raise ValueError("Checkpoint action dimension differs from the simulator")
 
 
 def _sub_env_has_attr(env: gym.vector.VectorEnv, attr: str) -> bool:

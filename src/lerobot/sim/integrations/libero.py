@@ -32,7 +32,7 @@ from libero.libero.envs import OffScreenRenderEnv
 
 from .utils import RobotObservation, canonical_observation as _canonical_observation, parse_camera_names
 
-__all__ = ["canonical_observation", "conventions", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns"]
 
 logger = logging.getLogger(__name__)
 
@@ -479,30 +479,24 @@ def _make_env_fns(
 # ---- Main API ----------------------------------------------------------------
 
 
-def create_libero_envs(
+def env_fns(
     task: str,
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
     camera_name: str | Sequence[str] = "agentview_image,robot0_eye_in_hand_image",
     init_states: bool = True,
-    env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
     control_mode: str = "relative",
     episode_length: int | None = None,
     camera_name_mapping: dict[str, str] | None = None,
     is_libero_plus: bool = False,
-) -> dict[str, dict[int, Any]]:
-    """Create vectorized LIBERO environments with a consistent return shape.
-
-    Returns:
-        dict[suite_name][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)
+) -> dict[str, dict[int, list[Callable[[], Any]]]]:
+    """The factories of ``n_envs`` LIBERO environments for each task: ``{suite: {task_id: [factory, ...]}}``.
 
     Notes:
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
         - `task` can be a single suite or a comma-separated list of suites.
         - You may pass `task_ids` (list[int]) inside `gym_kwargs` to restrict tasks per suite.
     """
-    if env_cls is None or not callable(env_cls):
-        raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
@@ -523,7 +517,7 @@ def create_libero_envs(
     if task_ids_filter is not None:
         logger.info("Restricting to task_ids=%s", task_ids_filter)
 
-    out: dict[str, dict[int, Any]] = defaultdict(dict)
+    out: dict[str, dict[int, list[Callable[[], Any]]]] = defaultdict(dict)
     for suite_name in suite_names:
         suite = _get_suite(suite_name)
         total = len(suite.tasks)
@@ -532,7 +526,7 @@ def create_libero_envs(
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 
         for tid in selected:
-            fns = _make_env_fns(
+            out[suite_name][tid] = _make_env_fns(
                 suite=suite,
                 episode_length=episode_length,
                 suite_name=suite_name,
@@ -545,13 +539,8 @@ def create_libero_envs(
                 camera_name_mapping=camera_name_mapping,
                 is_libero_plus=is_libero_plus,
             )
-            out[suite_name][tid] = env_cls(fns)
-            logger.info("Built vec env | suite=%s | task_id=%d | n_envs=%d", suite_name, tid, n_envs)
 
     return {suite: dict(task_map) for suite, task_map in out.items()}
-
-
-create_envs = create_libero_envs
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:

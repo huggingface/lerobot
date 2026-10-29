@@ -124,7 +124,7 @@ def test_libero_processor_flattens_state_to_raw_8_dim():
 
 
 def test_base_create_envs():
-    """Base class create_envs() should build a single-task VectorEnv via gym.make()."""
+    """Base class create_envs() should build a single-task LocalVectorEnv via gym.make()."""
     gym_id = "_dispatch_test/CartPole-v99"
     if gym_id not in gym_registry:
         register(id=gym_id, entry_point=DictObservationEnv)

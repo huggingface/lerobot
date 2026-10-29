@@ -27,7 +27,7 @@ import numpy as np
 
 from lerobot.sim.config import SimConfig
 from lerobot.sim.types import EnvDescriptor
-from lerobot.sim.vector_env import VectorEnv
+from lerobot.sim.vector_env import LocalVectorEnv
 from lerobot.transport.protocol.codec import CodecLimits, RGBImage, decode_message, encode_message
 from lerobot.transport.protocol.envelope import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import (
@@ -75,7 +75,7 @@ class _Session:
         self,
         server: "EnvServer",
         prefix: str,
-        env: VectorEnv,
+        env: LocalVectorEnv,
         seeds: list[int | None] | None,
         encoding: str,
         jpeg_quality: int,
@@ -163,7 +163,7 @@ class EnvServer:
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
         # Built at startup to describe the simulator, then handed to the first matching session.
-        self._startup_env: VectorEnv | None = None
+        self._startup_env: LocalVectorEnv | None = None
         self.ready = Event()
         self.stop = Event()
         self.descriptor: EnvDescriptor
@@ -173,9 +173,9 @@ class EnvServer:
         try:
             # Listen first: clients connecting while a slow simulator starts wait instead of failing.
             self.transport.open()
-            # Built on the thread that later steps it, and kept for the first session: some simulators
-            # (Isaac Sim) start only once per process.
-            self._startup_env = VectorEnv(self.config.sim)
+            # Built on the thread that later steps it; the first session asking for this batch reuses it
+            # instead of building another.
+            self._startup_env = LocalVectorEnv(self.config.sim)
             self.descriptor = self._startup_env.descriptor
             root = deployment_prefix(self.config.deployment)
             instance = instance_prefix(self.config.deployment, self.instance)
@@ -313,7 +313,7 @@ class EnvServer:
 
     def _session_env(
         self, count: int, task_group: str | None, task_id: int, use_async_envs: bool
-    ) -> VectorEnv:
+    ) -> LocalVectorEnv:
         """The startup environment when the session asks for it, else a new one."""
         env, self._startup_env = self._startup_env, None
         if env is not None:
@@ -321,7 +321,7 @@ class EnvServer:
             if asked == (env.num_envs, env.task_group, env.task_id, env.use_async_envs):
                 return env
             env.close()
-        return VectorEnv(self.config.sim, count, task_group, task_id, use_async_envs)
+        return LocalVectorEnv(self.config.sim, count, task_group, task_id, use_async_envs)
 
     def _reap_sessions(self) -> None:
         now = time.monotonic()

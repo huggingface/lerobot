@@ -16,7 +16,8 @@
 import json
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,7 @@ from gymnasium import spaces
 
 from .utils import RobotObservation, canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns"]
 
 logger = logging.getLogger(__name__)
 
@@ -282,24 +283,18 @@ class MetaworldEnv(gym.Env):
 # ---- Main API ----------------------------------------------------------------
 
 
-def create_metaworld_envs(
+def env_fns(
     task: str,
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
-    env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
-) -> dict[str, dict[int, Any]]:
-    """Create vectorized Meta-World environments with a consistent return shape.
-
-    Returns:
-        dict[task_group][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)
+) -> dict[str, dict[int, list[Callable[[], Any]]]]:
+    """The factories of ``n_envs`` Meta-World environments for each task: ``{group: {task_id: [factory, ...]}}``.
 
     Notes:
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
         - `task` can be a single difficulty group (e.g., "easy", "medium", "hard") or a comma-separated list.
         - If a task name is not in DIFFICULTY_TO_TASKS, we treat it as a single custom task.
     """
-    if env_cls is None or not callable(env_cls):
-        raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
@@ -310,25 +305,17 @@ def create_metaworld_envs(
 
     logger.info("Creating Meta-World envs | task_groups=%s | n_envs(per task)=%d", task_groups, n_envs)
 
-    out: dict[str, dict[int, Any]] = defaultdict(dict)
+    out: dict[str, dict[int, list[Callable[[], Any]]]] = defaultdict(dict)
 
     for group in task_groups:
         # if not in difficulty presets, treat it as a single custom task
         tasks = DIFFICULTY_TO_TASKS.get(group, [group])
 
         for tid, task_name in enumerate(tasks):
-            logger.info("Building vec env | group=%s | task_id=%d | task=%s", group, tid, task_name)
-
-            # build n_envs factories
-            fns = [(lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]
-
-            out[group][tid] = env_cls(fns)
+            out[group][tid] = [partial(MetaworldEnv, task=task_name, **gym_kwargs)] * n_envs
 
     # return a plain dict for consistency
     return {group: dict(task_map) for group, task_map in out.items()}
-
-
-create_envs = create_metaworld_envs
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:

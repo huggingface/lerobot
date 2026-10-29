@@ -90,7 +90,11 @@ def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
 
 
 class _ProcessEnv:
-    """One environment in its own process. A batch steps in parallel: send all, then receive all."""
+    """One environment in its own process. A batch steps in parallel: send all, then receive all.
+
+    Not Gymnasium's ``AsyncVectorEnv``: it steps every environment, finished ones included (robosuite raises
+    on them), and builds one in this process to read the spaces.
+    """
 
     def __init__(self, make: Callable[[], Any]):
         context = multiprocessing.get_context("forkserver")
@@ -161,7 +165,7 @@ class _ProcessEnv:
         self._pipe.close()
 
 
-class VectorEnv(gym.vector.VectorEnv):
+class LocalVectorEnv(gym.vector.VectorEnv):
     """``num_envs`` environments of one simulator task, stepped explicitly.
 
     The simulator integration ``lerobot.sim.integrations.<config.type>`` supplies the environments and their
@@ -189,10 +193,7 @@ class VectorEnv(gym.vector.VectorEnv):
         """
         with simulator_required(config.type):
             integration = importlib.import_module(f"lerobot.sim.integrations.{config.type}")
-            # env_cls=list returns each task's environment factories without building them.
-            factories = integration.create_envs(
-                task=config.task, n_envs=num_envs, env_cls=list, **config.kwargs
-            )
+            factories = integration.env_fns(task=config.task, n_envs=num_envs, **config.kwargs)
         self._canonical_observation = integration.canonical_observation
         self.config = config
         self.num_envs = num_envs
@@ -317,7 +318,7 @@ class VectorEnv(gym.vector.VectorEnv):
     ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
         """Advance each unfinished environment once; finished ones keep their terminal transition."""
         if not self._last:
-            raise ValueError("Reset before stepping")
+            raise RuntimeError("Reset before stepping")
         actions = np.asarray(actions, dtype=np.float32)
         expected = (self.num_envs, *self.descriptor.action_feature.shape)
         if actions.shape != expected or not np.isfinite(actions).all():

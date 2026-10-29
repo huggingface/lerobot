@@ -14,8 +14,8 @@
 
 """Simulator integrations, one module per simulator, imported by name only when selected.
 
-Each module defines ``create_envs(task, n_envs, env_cls, **kwargs)``, returning
-``{suite: {task_id: env_cls([factory, ...])}}``, and ``canonical_observation(obs)``, mapping a native
+Each module defines ``env_fns(task, n_envs, **kwargs)``, returning each task's ``n_envs`` environment
+factories as ``{suite: {task_id: [factory, ...]}}``, and ``canonical_observation(obs)``, mapping a native
 observation to canonical LeRobot names. It may define ``conventions(kwargs)``: its control rate, controller,
 ordered component names and simulated body, for the settings a configuration leaves out.
 """

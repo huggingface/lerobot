@@ -249,17 +249,19 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         client: EnvClient,
         num_envs: int = 1,
         task_group: str | None = None,
-        task_id: int = 0,
+        task_id: int | None = None,
         descriptor: EnvDescriptor | None = None,
         use_async_envs: bool = False,
     ):
-        """Describe the served task; its session opens on the first reset or step."""
+        """Describe the served task; its session opens on the first reset."""
         self.client = client
         self.use_async_envs = use_async_envs
         self.descriptor = descriptor or self.client.describe()
         self.num_envs = num_envs
         self.task_group = task_group or next(iter(self.descriptor.tasks))
-        self.task_id = task_id
+        tasks = self.descriptor.tasks.get(self.task_group, [])
+        # The suite's first task unless one is named, as for a local environment.
+        self.task_id: int = int(next(iter(tasks), 0)) if task_id is None else task_id
         self.metadata = {
             "render_fps": self.descriptor.fps,
             "autoreset_mode": gym.vector.AutoresetMode.DISABLED,
@@ -278,15 +280,6 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             raise RuntimeError("Reset before reading the environment")
         return self._latest
 
-    def _open_session(self, seeds: list[int | None] | None = None) -> bool:
-        if not self.client.session:
-            self._latest = self.client.open(
-                self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
-            )
-            self.descriptor = self.client.descriptor or self.descriptor
-            return True
-        return False
-
     def _result(self, reply: dict[str, Any]) -> StepResult:
         self._latest = reply["result"]
         return self._latest
@@ -303,15 +296,21 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         seeds: list[int | None] | None = (
             [seed + i for i in range(self.num_envs)] if isinstance(seed, int) else seed
         )
-        if not self._open_session(seeds):
+        if self.client.session:
             self._result(self.client.request("reset", seeds=seeds))
+        else:
+            self._latest = self.client.open(
+                self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
+            )
+            self.descriptor = self.client.descriptor or self.descriptor
         return self.latest.obs, self.latest.info()
 
     def step(
         self, actions: np.ndarray
     ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
         """Advance every unfinished served environment once."""
-        self._open_session()
+        if not self.client.session:
+            raise RuntimeError("Reset before stepping")
         result = self._result(self.client.request("step", actions=np.asarray(actions, dtype=np.float32)))
         return (
             result.obs,
@@ -323,11 +322,12 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
 
     def call(self, name: str, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
         """Return a supported per-environment attribute."""
+        if args or kwargs:
+            raise TypeError("Environment attributes do not take arguments")
         if name == "_max_episode_steps":
             return (self.descriptor.max_episode_steps,) * self.num_envs
         if name == "task":
             return (self.task_group,) * self.num_envs
-        self._open_session()
         if name == "task_description":
             return self.latest.task
         if name == "render":

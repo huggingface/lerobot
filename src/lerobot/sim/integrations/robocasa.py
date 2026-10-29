@@ -27,7 +27,7 @@ from gymnasium import spaces
 
 from .utils import RobotObservation, canonical_observation, parse_camera_names
 
-__all__ = ["canonical_observation", "conventions", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns"]
 
 
 logger = logging.getLogger(__name__)
@@ -353,19 +353,15 @@ def _make_env_fns(
     return [partial(_make_env, i) for i in range(n_envs)]
 
 
-def create_robocasa_envs(
+def env_fns(
     task: str,
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
     camera_name: str | Sequence[str] = ",".join(DEFAULT_CAMERAS),
-    env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
     episode_length: int | None = None,
     obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
-) -> dict[str, dict[int, Any]]:
-    """Create vectorized RoboCasa365 environments with a consistent return shape.
-
-    Returns:
-        dict[task_name][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)
+) -> dict[str, dict[int, list[Callable[[], Any]]]]:
+    """The factories of ``n_envs`` RoboCasa365 environments for each task: ``{task_name: {0: [factory, ...]}}``.
 
     `task` can be:
       - a single task name (e.g. `CloseFridge`)
@@ -375,8 +371,6 @@ def create_robocasa_envs(
         `pretrain300`), which auto-expands to the upstream task list and
         auto-sets the dataset `split` ("target" or "pretrain").
     """
-    if env_cls is None or not callable(env_cls):
-        raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
@@ -401,10 +395,10 @@ def create_robocasa_envs(
         n_envs,
     )
 
-    out: dict[str, dict[int, Any]] = defaultdict(dict)
+    out: dict[str, dict[int, list[Callable[[], Any]]]] = defaultdict(dict)
 
     for task_name in task_names:
-        fns = _make_env_fns(
+        out[task_name][0] = _make_env_fns(
             task=task_name,
             n_envs=n_envs,
             camera_names=camera_names,
@@ -419,13 +413,7 @@ def create_robocasa_envs(
             obj_registries=obj_registries,
         )
 
-        out[task_name][0] = env_cls(fns)
-        logger.info("Built vec env | task=%s | n_envs=%d", task_name, n_envs)
-
     return {name: dict(task_map) for name, task_map in out.items()}
-
-
-create_envs = create_robocasa_envs
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:

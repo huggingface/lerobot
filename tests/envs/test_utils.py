@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Environment descriptions: which checkpoints an environment admits."""
+"""Which checkpoints a simulator admits."""
 
 from types import SimpleNamespace
 
 import pytest
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.envs.utils import validate_checkpoint
 from tests.fixtures.toy_env import ToyEnvConfig
 
 
@@ -33,30 +34,34 @@ def test_checkpoint_admission():
         },
         output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
     )
-    descriptor.validate_checkpoint(config, {})
+    validate_checkpoint(descriptor, config, {})
     # Acquisition resolution is independent of policy-side image preparation.
     for shape in ((3, 256, 256), (3, 480, 640)):
         config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, shape)
-        descriptor.validate_checkpoint(config, {})
+        validate_checkpoint(descriptor, config, {})
     for shape in ((4, 256, 256), (256, 256)):
         config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, shape)
         with pytest.raises(ValueError, match="shape mismatch"):
-            descriptor.validate_checkpoint(config, {})
+            validate_checkpoint(descriptor, config, {})
     # A checkpoint camera named differently is admitted through --rename_map, as for any robot.
     del config.input_features["observation.image"]
     config.input_features["observation.images.front"] = PolicyFeature(FeatureType.VISUAL, (3, 8, 8))
     with pytest.raises(ValueError, match="missing from the simulator"):
-        descriptor.validate_checkpoint(config, {})
-    descriptor.validate_checkpoint(config, {"observation.image": "observation.images.front"})
-    # Checkpoint placeholder cameras are policy-owned: admission skips them whatever their shape.
+        validate_checkpoint(descriptor, config, {})
+    rename_map = {"observation.image": "observation.images.front"}
+    validate_checkpoint(descriptor, config, rename_map)
+    # Placeholder cameras are the policy's own (its empty_cameras setting): admission skips them.
     config.input_features["observation.images.empty_camera_0"] = PolicyFeature(
         FeatureType.VISUAL, (3, 480, 640)
     )
-    descriptor.validate_checkpoint(config, {"observation.image": "observation.images.front"})
+    with pytest.raises(ValueError, match="missing from the simulator"):
+        validate_checkpoint(descriptor, config, rename_map)
+    config.empty_cameras = 1
+    validate_checkpoint(descriptor, config, rename_map)
     config.input_features["observation.state"] = PolicyFeature(FeatureType.STATE, (3,))
     with pytest.raises(ValueError, match="shape mismatch"):
-        descriptor.validate_checkpoint(config, {"observation.image": "observation.images.front"})
+        validate_checkpoint(descriptor, config, rename_map)
     config.input_features["observation.state"] = PolicyFeature(FeatureType.STATE, (2,))
     config.output_features["action"] = PolicyFeature(FeatureType.ACTION, (7,))
     with pytest.raises(ValueError, match="action dimension"):
-        descriptor.validate_checkpoint(config, {"observation.image": "observation.images.front"})
+        validate_checkpoint(descriptor, config, rename_map)

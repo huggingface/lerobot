@@ -28,7 +28,8 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import cv2
@@ -39,7 +40,7 @@ from scipy.spatial.transform import Rotation
 
 from .utils import RobotObservation, canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns"]
 
 
 logger = logging.getLogger(__name__)
@@ -525,24 +526,18 @@ class VLABenchEnv(gym.Env):
 # ---- Main API ----------------------------------------------------------------
 
 
-def create_vlabench_envs(
+def env_fns(
     task: str,
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
-    env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
-) -> dict[str, dict[int, Any]]:
-    """Create vectorized VLABench environments with a consistent return shape.
-
-    Returns:
-        dict[suite_name][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)
+) -> dict[str, dict[int, list[Callable[[], Any]]]]:
+    """The factories of ``n_envs`` VLABench environments for each task: ``{suite: {task_id: [factory, ...]}}``.
 
     Notes:
         - n_envs is the number of rollouts *per task*.
         - `task` can be a suite name ("primitive", "composite"), a comma-separated list of
           suite names, or individual task names (e.g. "select_fruit,heat_food").
     """
-    if env_cls is None or not callable(env_cls):
-        raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
@@ -557,28 +552,16 @@ def create_vlabench_envs(
         n_envs,
     )
 
-    out: dict[str, dict[int, Any]] = defaultdict(dict)
+    out: dict[str, dict[int, list[Callable[[], Any]]]] = defaultdict(dict)
 
     for group in task_groups:
         # Check if it's a suite name, otherwise treat as individual task
         tasks = SUITE_TASKS.get(group, [group])
 
         for tid, task_name in enumerate(tasks):
-            logger.info(
-                "Building vec env | group=%s | task_id=%d | task=%s",
-                group,
-                tid,
-                task_name,
-            )
-
-            fns = [(lambda tn=task_name: VLABenchEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]
-
-            out[group][tid] = env_cls(fns)
+            out[group][tid] = [partial(VLABenchEnv, task=task_name, **gym_kwargs)] * n_envs
 
     return {group: dict(task_map) for group, task_map in out.items()}
-
-
-create_envs = create_vlabench_envs
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:

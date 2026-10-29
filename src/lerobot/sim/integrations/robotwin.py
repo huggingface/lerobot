@@ -33,7 +33,7 @@ from lerobot.utils.import_utils import _scipy_available
 
 from .utils import RobotObservation, canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns"]
 
 
 # scipy is only used for end-effector-pose composition (``--env.action_mode=ee``); guard it so this
@@ -577,34 +577,26 @@ def _make_env_fns(
     return [partial(_make_one, i) for i in range(n_envs)]
 
 
-def create_robotwin_envs(
+def env_fns(
     task: str,
     n_envs: int,
-    env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
     camera_names: Sequence[str] = ROBOTWIN_CAMERA_NAMES,
     observation_height: int = DEFAULT_CAMERA_H,
     observation_width: int = DEFAULT_CAMERA_W,
     episode_length: int = DEFAULT_EPISODE_LENGTH,
     action_mode: str = "joint",
-) -> dict[str, dict[int, Any]]:
-    """Create vectorized RoboTwin 2.0 environments.
-
-    Returns:
-        ``dict[task_name][0] -> VectorEnv`` — one entry per task, each wrapping
-        ``n_envs`` parallel rollouts.
+) -> dict[str, dict[int, list[Callable[[], Any]]]]:
+    """The factories of ``n_envs`` RoboTwin 2.0 environments for each task: ``{task_name: {0: [factory, ...]}}``.
 
     Args:
         task: Comma-separated list of task names (e.g. ``"beat_block_hammer"``
             or ``"beat_block_hammer,click_bell"``).
         n_envs: Number of parallel rollouts per task.
-        env_cls: Vector env constructor (e.g. ``gym.vector.AsyncVectorEnv``).
         camera_names: Cameras to include in observations.
         observation_height: Pixel height for all cameras.
         observation_width: Pixel width for all cameras.
         episode_length: Max steps before truncation.
     """
-    if env_cls is None or not callable(env_cls):
-        raise ValueError("env_cls must be callable (e.g. gym.vector.AsyncVectorEnv).")
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
@@ -622,9 +614,9 @@ def create_robotwin_envs(
         n_envs,
     )
 
-    out: dict[str, dict[int, Any]] = defaultdict(dict)
+    out: dict[str, dict[int, list[Callable[[], Any]]]] = defaultdict(dict)
     for task_name in task_names:
-        fns = _make_env_fns(
+        out[task_name][0] = _make_env_fns(
             task_name=task_name,
             n_envs=n_envs,
             camera_names=list(camera_names),
@@ -633,13 +625,8 @@ def create_robotwin_envs(
             episode_length=episode_length,
             action_mode=action_mode,
         )
-        out[task_name][0] = env_cls(fns)
-        logger.info("Built vec env | task=%s | n_envs=%d", task_name, n_envs)
 
     return {k: dict(v) for k, v in out.items()}
-
-
-create_envs = create_robotwin_envs
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:

@@ -228,58 +228,32 @@ def test_convert_obs_array_format():
 
 
 # ---------------------------------------------------------------------------
-# create_robomme_envs (mocked sim)
+# env_fns (mocked sim)
 # ---------------------------------------------------------------------------
 
 
-def test_create_robomme_envs_returns_correct_structure():
-    """Single task -> {task_name: {task_id: VectorEnv}} with one entry per task_id."""
+def test_robomme_env_fns_returns_correct_structure():
+    """Single task -> {task_name: {task_id: [factory, ...]}} with one entry per task_id."""
     _install_robomme_stub()
     try:
-        from lerobot.sim.integrations.robomme import create_robomme_envs
+        from lerobot.sim.integrations.robomme import env_fns
 
-        env_cls = MagicMock(return_value=MagicMock())
-        result = create_robomme_envs(
-            task="PickXtimes",
-            n_envs=1,
-            task_ids=[0, 1],
-            env_cls=env_cls,
-        )
+        result = env_fns(task="PickXtimes", n_envs=2, task_ids=[0, 1])
 
-        assert "PickXtimes" in result
-        assert 0 in result["PickXtimes"]
-        assert 1 in result["PickXtimes"]
-        assert env_cls.call_count == 2
+        assert list(result) == ["PickXtimes"] and list(result["PickXtimes"]) == [0, 1]
+        assert all(len(factories) == 2 for factories in result["PickXtimes"].values())
     finally:
         _uninstall_robomme_stub()
 
 
-def test_create_robomme_envs_multi_task():
+def test_robomme_env_fns_multi_task():
     """Comma-separated task list produces one suite per task."""
     _install_robomme_stub()
     try:
-        from lerobot.sim.integrations.robomme import create_robomme_envs
+        from lerobot.sim.integrations.robomme import env_fns
 
-        env_cls = MagicMock(return_value=MagicMock())
-        result = create_robomme_envs(
-            task="PickXtimes,BinFill,StopCube",
-            n_envs=1,
-            env_cls=env_cls,
-        )
+        result = env_fns(task="PickXtimes,BinFill,StopCube", n_envs=1)
 
         assert set(result.keys()) == {"PickXtimes", "BinFill", "StopCube"}
-    finally:
-        _uninstall_robomme_stub()
-
-
-def test_create_robomme_envs_raises_on_invalid_env_cls():
-    _install_robomme_stub()
-    try:
-        import pytest
-
-        from lerobot.sim.integrations.robomme import create_robomme_envs
-
-        with pytest.raises(ValueError, match="env_cls must be a callable"):
-            create_robomme_envs(task="PickXtimes", n_envs=1, env_cls=None)
     finally:
         _uninstall_robomme_stub()

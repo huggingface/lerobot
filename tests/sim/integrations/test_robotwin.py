@@ -25,7 +25,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
-import gymnasium as gym
 import numpy as np
 import pytest
 
@@ -34,7 +33,7 @@ from lerobot.sim.integrations.robotwin import (
     ROBOTWIN_CAMERA_NAMES,
     ROBOTWIN_TASKS,
     RoboTwinEnv,
-    create_robotwin_envs,
+    env_fns,
 )
 
 # ---------------------------------------------------------------------------
@@ -221,48 +220,31 @@ class TestRoboTwinEnv:
 
 
 # ---------------------------------------------------------------------------
-# create_robotwin_envs tests
+# env_fns tests
 # ---------------------------------------------------------------------------
 
 
-class TestCreateRoboTwinEnvs:
+class TestRoboTwinEnvFns:
     def test_returns_correct_structure(self):
         mock_task = _make_mock_task_env()
         with _patch_runtime(mock_task):
-            envs = create_robotwin_envs(
-                task="beat_block_hammer",
-                n_envs=1,
-                env_cls=gym.vector.SyncVectorEnv,
-            )
-        assert "beat_block_hammer" in envs
-        assert 0 in envs["beat_block_hammer"]
-        assert isinstance(envs["beat_block_hammer"][0], gym.vector.SyncVectorEnv)
+            envs = env_fns(task="beat_block_hammer", n_envs=1)
+            assert list(envs) == ["beat_block_hammer"] and len(envs["beat_block_hammer"][0]) == 1
+            assert isinstance(envs["beat_block_hammer"][0][0](), RoboTwinEnv)
 
     def test_multi_task(self):
         mock_task = _make_mock_task_env()
         with _patch_runtime(mock_task):
-            envs = create_robotwin_envs(
-                task="beat_block_hammer,click_bell",
-                n_envs=1,
-                env_cls=gym.vector.SyncVectorEnv,
-            )
+            envs = env_fns(task="beat_block_hammer,click_bell", n_envs=1)
         assert set(envs.keys()) == {"beat_block_hammer", "click_bell"}
 
     def test_unknown_task_raises(self):
         with pytest.raises(ValueError, match="Unknown RoboTwin tasks"):
-            create_robotwin_envs(
-                task="not_a_real_task",
-                n_envs=1,
-                env_cls=gym.vector.SyncVectorEnv,
-            )
+            env_fns(task="not_a_real_task", n_envs=1)
 
     def test_invalid_n_envs_raises(self):
         with pytest.raises(ValueError, match="n_envs must be a positive int"):
-            create_robotwin_envs(
-                task="beat_block_hammer",
-                n_envs=0,
-                env_cls=gym.vector.SyncVectorEnv,
-            )
+            env_fns(task="beat_block_hammer", n_envs=0)
 
 
 # ---------------------------------------------------------------------------

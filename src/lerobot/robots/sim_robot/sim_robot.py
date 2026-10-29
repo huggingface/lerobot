@@ -29,7 +29,7 @@ from .config_sim_robot import SimRobotConfig
 
 if TYPE_CHECKING:
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
 
 class SimRobot(Robot):
@@ -55,9 +55,9 @@ class SimRobot(Robot):
         self._connected = False
         self.latest: StepResult | None = None
         # Built before connect(): scripts read the features and the descriptor first.
-        self._env: VectorEnv | RemoteVectorEnv = self._make_env()
+        self._env: LocalVectorEnv | RemoteVectorEnv = self._make_env()
 
-    def _make_env(self) -> "VectorEnv | RemoteVectorEnv":
+    def _make_env(self) -> "LocalVectorEnv | RemoteVectorEnv":
         env = self.config.env.create_env(self._task_group, self.config.task_id)
         descriptor = env.descriptor
         self.robot_type = descriptor.robot_type or self.name

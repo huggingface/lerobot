@@ -14,6 +14,6 @@
 
 """RoboCerebra integration using LIBERO's environment and observation conventions."""
 
-from .libero import canonical_observation, conventions, create_envs
+from .libero import canonical_observation, conventions, env_fns
 
-__all__ = ["canonical_observation", "conventions", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns"]

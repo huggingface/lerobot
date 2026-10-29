@@ -22,6 +22,7 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
+from lerobot.envs.utils import validate_checkpoint
 from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
 from lerobot.transport.zenoh import ZenohConfig
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
@@ -515,14 +516,14 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
         },
         output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
     )
-    robot.descriptor.validate_checkpoint(checkpoint_config, {})
+    validate_checkpoint(robot.descriptor, checkpoint_config, {})
     # Native benchmark camera names remain unchanged.
     assert "observation.image" in env.features
     legacy_config = SimpleNamespace(
         input_features={"observation.image": checkpoint_config.input_features["observation.images.image"]},
         output_features=checkpoint_config.output_features,
     )
-    robot.descriptor.validate_checkpoint(legacy_config, {"observation.images.image": "observation.image"})
+    validate_checkpoint(robot.descriptor, legacy_config, {"observation.images.image": "observation.image"})
 
     pytest.importorskip("torchvision")
     from lerobot.policies.act.configuration_act import ACTConfig
@@ -555,7 +556,7 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
     checkpoint = tmp_path / "policy"
     policy.save_pretrained(checkpoint)
     policy = ACTPolicy.from_pretrained(checkpoint)
-    robot.descriptor.validate_checkpoint(policy.config, {})
+    validate_checkpoint(robot.descriptor, policy.config, {})
     try:
         robot.connect()
         for _ in range(5):

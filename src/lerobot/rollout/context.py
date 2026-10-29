@@ -38,6 +38,7 @@ from lerobot.datasets import (
     aggregate_pipeline_dataset_features,
     create_initial_features,
 )
+from lerobot.envs.utils import validate_checkpoint
 from lerobot.inference import (
     FeatureSpec,
     InferenceEngine,
@@ -345,7 +346,7 @@ def _connect_rollout_hardware(
             if validate_simulator is not None:
                 validate_simulator(robot)
             elif cfg.policy is not None:
-                robot.descriptor.validate_checkpoint(cfg.policy, cfg.rename_map)
+                validate_checkpoint(robot.descriptor, cfg.policy, cfg.rename_map)
         if require_hold:
             wrapper.configure_hold()
         logger.info("Connecting robot (%s)...", cfg.robot.type)

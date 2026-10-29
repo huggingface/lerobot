@@ -35,7 +35,7 @@ from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 if TYPE_CHECKING:
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         task_id: int = 0,
         n_envs: int = 1,
         use_async_envs: bool = False,
-    ) -> VectorEnv | RemoteVectorEnv:
+    ) -> LocalVectorEnv | RemoteVectorEnv:
         """Create one local or served environment for a specific task."""
         descriptor, make = self._environment_factory(n_envs, use_async_envs, task_group, task_id)
         group = task_group or next(iter(descriptor.tasks))
@@ -138,8 +138,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         use_async_envs: bool,
         task_group: str | None = None,
         task_id: int | None = None,
-    ) -> tuple[EnvDescriptor, Callable[[str, int], VectorEnv | RemoteVectorEnv]]:
-        from lerobot.sim.vector_env import VectorEnv
+    ) -> tuple[EnvDescriptor, Callable[[str, int], LocalVectorEnv | RemoteVectorEnv]]:
+        from lerobot.sim.vector_env import LocalVectorEnv
 
         settings = self.sim_settings()
         endpoint = self.endpoint
@@ -163,7 +163,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                 probe.close()
             check_served(descriptor.config, settings, endpoint)
 
-            def make(group: str, task_id: int) -> VectorEnv | RemoteVectorEnv:
+            def make(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
                 return RemoteVectorEnv(
                     connect(encoding=self.encoding, jpeg_quality=self.jpeg_quality),
                     n_envs,
@@ -175,19 +175,18 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         else:
             sim = self.sim_config()
             parallel = use_async_envs and n_envs > 1
-            # The environment built to read the description is handed out, not built again: some simulators
-            # (Isaac Sim) start only once per process.
-            first = [VectorEnv(sim, n_envs, task_group, task_id, parallel)]
+            # The environment built to read the description is handed out for its task, not built again.
+            first = [LocalVectorEnv(sim, n_envs, task_group, task_id, parallel)]
             descriptor = first[0].descriptor
 
-            def make(group: str, task_id: int) -> VectorEnv | RemoteVectorEnv:
+            def make(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
                 if first:
                     env = first.pop()
                     if (group, task_id) == (env.task_group, env.task_id):
                         return env
                     env.close()
                 # Given the descriptor, the other tasks build their simulators on first use.
-                return VectorEnv(sim, n_envs, group, task_id, parallel, descriptor)
+                return LocalVectorEnv(sim, n_envs, group, task_id, parallel, descriptor)
 
         self.fps = int(descriptor.fps)
         self.features = {

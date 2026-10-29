@@ -28,12 +28,12 @@ from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_env_config_creates_vector_envs_locally_or_served(where, request):
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     config = ToyEnvConfig(endpoint=request.getfixturevalue("sim_server")[1] if where == "served" else None)
     env = config.create_envs(n_envs=2)["reach"][0]
     try:
-        assert isinstance(env, RemoteVectorEnv if where == "served" else VectorEnv)
+        assert isinstance(env, RemoteVectorEnv if where == "served" else LocalVectorEnv)
         # Canonical observation names, as the server describes them.
         assert set(config.features) == {"observation.state", "observation.image", "action"}
         obs, _ = env.reset(seed=[1, 2])
@@ -46,11 +46,11 @@ def test_env_config_creates_vector_envs_locally_or_served(where, request):
 
 
 def test_environments_in_separate_processes_match_sequential_environments():
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     results = []
     for use_async_envs in (False, True):
-        env = VectorEnv(ToyEnvConfig().sim_config(), num_envs=3, use_async_envs=use_async_envs)
+        env = LocalVectorEnv(ToyEnvConfig().sim_config(), num_envs=3, use_async_envs=use_async_envs)
         try:
             env.reset(seed=[4, 5, 6])
             steps = [env.latest]
@@ -78,9 +78,32 @@ def test_reset_options_are_rejected_locally_and_served(where, request):
         env.close()
 
 
+@pytest.mark.parametrize("where", ["local", "served"])
+def test_stepping_or_reading_before_reset_fails_locally_and_served(where, request):
+    endpoint = request.getfixturevalue("sim_server")[1] if where == "served" else None
+    env = ToyEnvConfig(endpoint=endpoint).create_env()
+    try:
+        with pytest.raises(RuntimeError, match="Reset before stepping"):
+            env.step(np.zeros((1, 2), np.float32))
+        with pytest.raises(RuntimeError, match="Reset before reading"):
+            env.call("task_description")
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("where", ["local", "served"])
+def test_attributes_take_no_arguments_locally_and_served(where, request):
+    endpoint = request.getfixturevalue("sim_server")[1] if where == "served" else None
+    env = ToyEnvConfig(endpoint=endpoint).create_env()
+    try:
+        with pytest.raises(TypeError, match="do not take arguments"):
+            env.call("task", 0)
+    finally:
+        env.close()
+
+
 def test_env_config_builds_each_simulator_once():
-    # Some simulators (Isaac Sim) start only once per process: the environments built to read the
-    # description are the ones used.
+    # The environments built to read the description are the ones used, not built again.
     before = ToyEnv.builds
     env = ToyEnvConfig().create_envs(n_envs=2)["reach"][0]
     try:
@@ -112,13 +135,26 @@ def test_a_filtered_suite_starts_with_its_first_task():
             env.close()
 
 
+def test_local_and_served_environments_default_to_the_same_task():
+    from lerobot.env_server.client import EnvClient, RemoteVectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
+
+    local = LocalVectorEnv(ToyEnvConfig(task_ids=(3, 5)).sim_config())
+    try:
+        # Nothing is opened before the first reset, so no server is needed.
+        served = RemoteVectorEnv(EnvClient("tcp/127.0.0.1:7448"), descriptor=local.descriptor)
+        assert local.task_id == served.task_id == 3
+    finally:
+        local.close()
+
+
 def test_other_tasks_build_their_simulators_on_first_use():
     # lerobot-eval creates every task's environment up front, then prefetches the next one with build().
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     config = ToyEnvConfig()
     first = config.create_env(n_envs=2)
-    env = VectorEnv(config.sim_config(), 2, descriptor=first.descriptor)
+    env = LocalVectorEnv(config.sim_config(), 2, descriptor=first.descriptor)
     try:
         assert not env._envs
         env.reset(seed=[1, 2])
@@ -154,7 +190,7 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
 
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations.utils import canonical_observation
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     class Reach(gym.Env):
         observation_space = gym.spaces.Dict({"agent_pos": gym.spaces.Box(-1, 1, (2,), np.float32)})
@@ -166,15 +202,15 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
         def step(self, action):
             return {"agent_pos": np.zeros(2, np.float32)}, 0.0, False, False, {}
 
-    def create_envs(task, n_envs, env_cls, **kwargs):
+    def env_fns(task, n_envs, **kwargs):
         # TimeLimit sits under another wrapper, so it is not the outermost environment.
-        return {task: {0: env_cls([lambda: gym.wrappers.ClipAction(gym.wrappers.TimeLimit(Reach(), 1000))])}}
+        return {task: {0: [lambda: gym.wrappers.ClipAction(gym.wrappers.TimeLimit(Reach(), 1000))]}}
 
     integration = ModuleType("lerobot.sim.integrations.wrapped")
-    integration.create_envs = create_envs  # type: ignore[attr-defined]
+    integration.env_fns = env_fns  # type: ignore[attr-defined]
     integration.canonical_observation = canonical_observation  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "lerobot.sim.integrations.wrapped", integration)
-    env = VectorEnv(SimConfig(type="wrapped", task="reach"))
+    env = LocalVectorEnv(SimConfig(type="wrapped", task="reach"))
     try:
         assert env.call("_max_episode_steps") == (1000,)
         assert env.descriptor.max_episode_steps == 1000
@@ -202,7 +238,7 @@ def test_a_dead_environment_process_is_reported():
 
 def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
     from lerobot.sim.config import SimConfig
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     # LIBERO imports its simulator with the integration, and has an extra to install.
     monkeypatch.setitem(sys.modules, "libero", None)
@@ -215,14 +251,14 @@ def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
         raise ModuleNotFoundError("No module named 'some_simulator'", name="some_simulator")
 
     integration = types.ModuleType("lerobot.sim.integrations.some_sim")
-    integration.create_envs = lambda task, n_envs, env_cls: {task: {0: env_cls([build] * n_envs)}}
+    integration.env_fns = lambda task, n_envs: {task: {0: [build] * n_envs}}
     integration.canonical_observation = lambda obs: obs
     monkeypatch.setitem(sys.modules, integration.__name__, integration)
     expected = r"some_sim simulator is not installed \('some_simulator' is missing\): install it, or serve it"
     with pytest.raises(ModuleNotFoundError, match=expected):
-        VectorEnv(SimConfig(type="some_sim", task="reach"))
+        LocalVectorEnv(SimConfig(type="some_sim", task="reach"))
     with pytest.raises(RuntimeError, match=expected):
-        VectorEnv(SimConfig(type="some_sim", task="reach"), num_envs=2, use_async_envs=True)
+        LocalVectorEnv(SimConfig(type="some_sim", task="reach"), num_envs=2, use_async_envs=True)
 
 
 def test_vector_env_delegates_native_observation_conventions(monkeypatch) -> None:
@@ -232,7 +268,7 @@ def test_vector_env_delegates_native_observation_conventions(monkeypatch) -> Non
     from gymnasium import spaces
 
     from lerobot.sim.config import SimConfig
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     class NativeEnv:
         observation_space = spaces.Dict({"native_state": spaces.Box(-1, 1, (1,), np.float32)})
@@ -256,15 +292,15 @@ def test_vector_env_delegates_native_observation_conventions(monkeypatch) -> Non
         adapted.append(obs)
         return {"observation.state": np.asarray(obs["native_state"], dtype=np.float32)}
 
-    def create_envs(task, n_envs, env_cls, **kwargs):
-        return {task: {0: env_cls([NativeEnv] * n_envs)}}
+    def env_fns(task, n_envs, **kwargs):
+        return {task: {0: [NativeEnv] * n_envs}}
 
     # A new simulator is a module of these two functions; the shared environment never names it.
     integration = ModuleType("lerobot.sim.integrations.new_engine")
-    integration.create_envs = create_envs  # type: ignore[attr-defined]
+    integration.env_fns = env_fns  # type: ignore[attr-defined]
     integration.canonical_observation = canonical_observation  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "lerobot.sim.integrations.new_engine", integration)
-    env = VectorEnv(SimConfig(type="new_engine", task="pick", semantics="new-engine-v1"))
+    env = LocalVectorEnv(SimConfig(type="new_engine", task="pick", semantics="new-engine-v1"))
     try:
         assert env.single_observation_space["observation.state"].shape == (1,)
         obs, _ = env.reset(seed=[7])

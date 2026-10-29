@@ -6,7 +6,7 @@ A benchmark is a simulator that LeRobot drives in one place, `lerobot.sim`, so t
 
 | Component            | Location                                      | What to add                                                                                                                         |
 | -------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Integration          | `src/lerobot/sim/integrations/<benchmark>.py` | The `gym.Env`, `create_envs()` factory, `canonical_observation()` adapter and `conventions()` for that simulator                    |
+| Integration          | `src/lerobot/sim/integrations/<benchmark>.py` | The `gym.Env`, `env_fns()` factories, `canonical_observation()` adapter and `conventions()` for that simulator                      |
 | Config               | `src/lerobot/envs/configs.py`                 | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                                             |
 | Server configuration | `docker/sim/configs/<benchmark>.yaml`         | The task and factory kwargs the server and CI use                                                                                   |
 | Simulator image      | `docker/Dockerfile.sim`                       | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server                       |
@@ -39,19 +39,18 @@ Success comes from `info["is_success"]`, which your environment reports on every
 
 ### Environment structure
 
-The factory returns a nested dict of per-environment factories, wrapped by the `env_cls` it receives:
+`env_fns()` returns each task's environment factories, without building them:
 
 ```python
-def create_envs(
+def env_fns(
     task: str,
     n_envs: int,
     gym_kwargs: dict | None = None,
-    env_cls: Callable | None = None,
-) -> dict[str, dict[int, Any]]:
-    """{suite: {task_id: env_cls([make_single_env] * n_envs)}} for MyBenchmark."""
+) -> dict[str, dict[int, list[Callable[[], gym.Env]]]]:
+    """{suite: {task_id: [make_single_env] * n_envs}} for MyBenchmark."""
 ```
 
-A single-task benchmark returns `{"<task>": {0: ...}}`; a multi-task one (like LIBERO) returns `{"libero_spatial": {0: ..., 1: ..., ...}, ...}`. `VectorEnv` calls each `make_single_env` factory locally or on the server and, with `--eval.use_async_envs=true`, in a separate process per environment. Existing benchmark-specific factory names may remain as compatibility aliases, but the integration exports `create_envs()`.
+A single-task benchmark returns `{"<task>": {0: [...]}}`; a multi-task one (like LIBERO) returns `{"libero_spatial": {0: [...], 1: [...], ...}, ...}`. `LocalVectorEnv` calls each `make_single_env` factory on first use, locally or on the server and, with `--eval.use_async_envs=true`, in a separate process per environment.
 
 ### The gym.Env
 
@@ -95,7 +94,7 @@ Return the simulator's control rate, controller and ordered component names from
 
 ### The config (`src/lerobot/envs/configs.py`)
 
-Register a config so users can select your benchmark with `--env.type=<name>` (and `--robot.env.type=<name>`). Its `sim_settings()` describes the simulator as a server YAML's `sim` section; `VectorEnv` does the rest:
+Register a config so users can select your benchmark with `--env.type=<name>` (and `--robot.env.type=<name>`). Its `sim_settings()` describes the simulator as a server YAML's `sim` section; `LocalVectorEnv` does the rest:
 
 ```python
 @EnvConfig.register_subclass("<benchmark_name>")

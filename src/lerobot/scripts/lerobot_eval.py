@@ -82,11 +82,11 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
-from lerobot.envs.utils import prepare_canonical_observation
+from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoint
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
-from lerobot.sim.vector_env import VectorEnv
+from lerobot.sim.vector_env import LocalVectorEnv
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.eval_stats import success_summary
@@ -807,7 +807,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     first_env = next(env for tasks in envs.values() for env in tasks.values())
     descriptor = getattr(first_env, "descriptor", None)
     if descriptor is not None:
-        descriptor.validate_checkpoint(cfg.policy, cfg.rename_map)
+        validate_checkpoint(descriptor, cfg.policy, cfg.rename_map)
 
     logging.info("Making policy.")
     policy = make_policy(
@@ -1135,7 +1135,7 @@ def eval_policy_all(
                     # GPU memory overlap between consecutive tasks.
                     if i + 1 < len(tasks):
                         next_env = tasks[i + 1][2]
-                        if isinstance(next_env, VectorEnv):
+                        if isinstance(next_env, LocalVectorEnv):
                             prefetch_thread = threading.Thread(target=next_env.build, daemon=True)
                             prefetch_thread.start()
         else:

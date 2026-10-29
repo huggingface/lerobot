@@ -23,7 +23,7 @@ import gymnasium as gym
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "create_envs"]
+__all__ = ["canonical_observation", "env_fns"]
 
 
 def _make(gym_id: str, gym_kwargs: dict[str, Any], disable_env_checker: bool) -> gym.Env:
@@ -33,14 +33,13 @@ def _make(gym_id: str, gym_kwargs: dict[str, Any], disable_env_checker: bool) ->
     return gym.make(gym_id, disable_env_checker=disable_env_checker, **gym_kwargs)
 
 
-def create_envs(
+def env_fns(
     task: str,
     n_envs: int,
-    env_cls: Callable,
     gym_id: str,
     gym_kwargs: dict[str, Any] | None = None,
     disable_env_checker: bool = True,
-) -> dict[str, dict[int, Any]]:
+) -> dict[str, dict[int, list[Callable[[], gym.Env]]]]:
     """One suite and task with ``n_envs`` environments made by ``gym.make(gym_id)``."""
     make = partial(_make, gym_id, dict(gym_kwargs or {}), disable_env_checker)
-    return {task: {0: env_cls([make] * n_envs)}}
+    return {task: {0: [make] * n_envs}}

@@ -55,7 +55,7 @@ def make_env(n_envs=1, use_async_envs=False):
 def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     env_file = tmp_path / "env.py"
     env_file.write_text(_ENVHUB_ENV)
@@ -67,7 +67,7 @@ def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
         semantics="envhub-v1",
         kwargs={"hub_path": "user/reach", "trust_remote_code": True},
     )
-    env = VectorEnv(config, num_envs=2)
+    env = LocalVectorEnv(config, num_envs=2)
     try:
         assert env.tasks == {"reach_suite": ["0"]}
         assert {f.name: (f.shape, f.kind) for f in env.descriptor.features} == {
@@ -84,13 +84,13 @@ def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
     # Running remote code needs explicit consent.
     config.kwargs["trust_remote_code"] = False
     with pytest.raises(RuntimeError, match="Refusing"):
-        VectorEnv(config, num_envs=1)
+        LocalVectorEnv(config, num_envs=1)
 
 
 def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch):
     from lerobot.envs.configs import HubEnvConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     # The repository's make_env sizes its camera from an option of its own.
     env_file = tmp_path / "env.py"
@@ -113,7 +113,7 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
     )
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
     config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"size": 4})
-    env = VectorEnv(config.sim_config())
+    env = LocalVectorEnv(config.sim_config())
     try:
         shapes = {f.name: f.shape for f in env.descriptor.features}
         assert shapes["observation.images.front"] == (4, 4, 3)
@@ -124,7 +124,7 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
 def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     (tmp_path / "env.py").write_text(_ENVHUB_ENV)
 
@@ -132,7 +132,7 @@ def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
         raise AssertionError("A local directory is not downloaded")
 
     monkeypatch.setattr(envhub, "hf_hub_download", no_download)
-    env = VectorEnv(
+    env = LocalVectorEnv(
         SimConfig(
             type="envhub",
             task="",
@@ -151,7 +151,7 @@ def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
 
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     # A simulator app that can start only once per process (e.g. Isaac Sim) lives in module state.
     env_file = tmp_path / "env.py"
@@ -166,7 +166,7 @@ def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
     )
     # The probe and two sessions each build their environments.
     for _ in range(3):
-        env = VectorEnv(config)
+        env = LocalVectorEnv(config)
         env.reset(seed=[0])
         env.close()
     assert builtins.envhub_imports == 1
@@ -175,7 +175,7 @@ def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
 def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import VectorEnv
+    from lerobot.sim.vector_env import LocalVectorEnv
 
     env_file = tmp_path / "env.py"
     # A flat array observation, which local LeRobot execution does not accept either.
@@ -192,7 +192,7 @@ def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
         kwargs={"hub_path": "user/reach", "trust_remote_code": True},
     )
     with pytest.raises(ValueError, match="dict observations"):
-        VectorEnv(config)
+        LocalVectorEnv(config)
 
 
 def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
