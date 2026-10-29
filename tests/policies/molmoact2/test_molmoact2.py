@@ -58,6 +58,12 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
 from lerobot.policies.molmoact2.molmoact2_hf_model import (
     modeling_molmoact2 as hf_molmoact2_modeling,
 )
+from lerobot.policies.molmoact2.molmoact2_hf_model.configuration_molmoact2 import (
+    MolmoAct2ActionExpertConfig,
+    MolmoAct2AdapterConfig,
+    MolmoAct2TextConfig,
+    MolmoAct2VitConfig,
+)
 from lerobot.policies.molmoact2.molmoact2_hf_model.modeling_molmoact2 import (
     ActionExpert,
     ActionExpertModulation,
@@ -3194,6 +3200,318 @@ def test_both_action_expert_mask_retains_checkpoint_span_masking():
 
     assert torch.equal(mask, torch.tensor([[False, False, False, False, True]]))
     assert policy.model.model.calls == 1
+
+
+def test_discrete_output_span_mask_exports():
+    model = object.__new__(hf_molmoact2_modeling.MolmoAct2Model)
+    torch.nn.Module.__init__(model)
+    model.config = SimpleNamespace(
+        action_mode="both", eos_token_id=None, action_start_token_id=7, action_end_token_id=9
+    )
+
+    class EncoderAttentionMask(torch.nn.Module):
+        def forward(self, input_ids):
+            return model._get_encoder_attention_mask(input_ids, None)
+
+    input_ids = torch.tensor(
+        [
+            [1, 7, 2, 9, 3, 3],  # one span, both boundary tokens masked
+            [9, 1, 7, 2, 9, 3],  # an end token with no open span is ignored
+            [7, 7, 9, 1, 9, 3],  # a nested start extends the span to the next end
+            [1, 2, 7, 3, 3, 3],  # an unterminated span runs to the end
+        ]
+    )
+    program = torch.export.export(EncoderAttentionMask(), (input_ids,), strict=False)
+
+    expected = torch.tensor(
+        [
+            [True, False, False, False, True, True],
+            [True, True, False, False, False, True],
+            [False, False, False, False, False, True],
+            [True, True, False, False, False, False],
+        ]
+    )
+    assert torch.equal(program.module()(input_ids), expected)
+    # ExecuTorch releases up to 1.5 have no portable cummin kernel, so the program must not need it.
+    assert not any("cummin" in str(node.target) for node in program.graph.nodes)
+
+    # Longer random rows against the per-row loop this helper replaced. The last row takes its running minimum
+    # from 34 positions before its end, so it needs every doubling step.
+    rows = torch.randint(0, 4, (8, 40), generator=torch.Generator().manual_seed(0))
+    rows = torch.cat([torch.tensor([7, 9, 1, 1])[rows], torch.tensor([[9] * 6 + [7] + [1] * 33])])
+    reference = torch.ones_like(rows, dtype=torch.bool)
+    for row, keep in zip(rows, reference, strict=True):
+        starts = (row == 7).nonzero().flatten().tolist()
+        ends = (row == 9).nonzero().flatten().tolist()
+        end_ptr = 0
+        for start in starts:
+            while end_ptr < len(ends) and ends[end_ptr] < start:
+                end_ptr += 1
+            if end_ptr >= len(ends):
+                keep[start:] = False
+                break
+            keep[start : ends[end_ptr] + 1] = False
+            end_ptr += 1
+    assert torch.equal(model._get_encoder_attention_mask(rows, None), reference)
+
+    # A one-token row skips the doubling loop, so only the clamp caps its running minimum at 0.
+    assert torch.equal(model._get_encoder_attention_mask(torch.tensor([[7]]), None), torch.tensor([[False]]))
+
+    # A token that both opens and closes a span masks only itself.
+    mask = torch.ones_like(input_ids, dtype=torch.bool)
+    assert torch.equal(model._mask_discrete_output_spans(input_ids, mask, 7, 7), input_ids != 7)
+
+
+def _tiny_molmoact2_model(**config_kwargs):
+    """Return a tiny MolmoAct2 with random weights, image end token 5 and image patch token 6."""
+    torch.manual_seed(0)
+    config = hf_molmoact2_modeling.MolmoAct2Config(
+        vit_config=MolmoAct2VitConfig(
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            head_dim=4,
+            image_default_input_size=(28, 28),
+            image_num_pos=4,
+        ),
+        adapter_config=MolmoAct2AdapterConfig(
+            vit_layers=(-1,),
+            hidden_size=8,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            head_dim=4,
+            intermediate_size=16,
+            text_hidden_size=8,
+        ),
+        # With one text layer, the keys and values the action expert reads would not depend on token_type_ids.
+        text_config=MolmoAct2TextConfig(
+            vocab_size=16,
+            additional_vocab_size=None,
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=4,
+        ),
+        action_expert_config=MolmoAct2ActionExpertConfig(
+            hidden_size=8, num_layers=2, num_heads=2, timestep_embed_dim=8, ffn_multiple_of=8
+        ),
+        image_end_token_id=5,
+        image_patch_id=6,
+        max_action_dim=4,
+        max_action_horizon=2,
+        **config_kwargs,
+    )
+    model = hf_molmoact2_modeling.MolmoAct2Model(config).eval()
+    with torch.no_grad():
+        # With the model's own init the actions ignore the prompt, so these tests could not tell prompts apart.
+        for parameter in model.action_expert.parameters():
+            parameter.normal_(0, 0.5)
+    # The model's own init leaves the image features near 1e-9, too small for these tests to see.
+    for module in model.vision_backbone.modules():
+        if hasattr(module, "reset_parameters"):
+            module.reset_parameters()
+    return model
+
+
+def _two_image_example():
+    """Return one prompt with two images: image 0 has one crop of four patches, image 1 has two crops, and
+    each pools into two tokens."""
+    return (
+        torch.tensor([[1, 6, 6, 5, 6, 6, 5, 2]]),
+        torch.randn(3, 4, 14 * 14 * 3, generator=torch.Generator().manual_seed(0)),
+        torch.tensor([[0, 1], [2, -1], [0, 5], [7, -1]]),
+        torch.tensor([[1, 1, 1, 1], [1, 2, 0, 0]]),
+        torch.tensor([1, 2]),
+    )
+
+
+class _ImageEmbeddings(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids, pixel_values, image_token_pooling, image_grids, image_num_crops):
+        images, token_pooling = self.model.build_batched_images(
+            input_ids, pixel_values, image_token_pooling, image_grids, image_num_crops
+        )
+        return self.model.build_input_embeddings(input_ids, images, token_pooling)[0]
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")),
+    ],
+)
+def test_saved_both_checkpoint_continuous_inference_exports(device):
+    class PredictActionChunk(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            backbone = _tiny_molmoact2_model(eos_token_id=2, action_start_token_id=3, action_end_token_id=4)
+            policy = object.__new__(MolmoAct2Policy)
+            torch.nn.Module.__init__(policy)
+            policy.model = backbone
+            policy._backbone = lambda: backbone
+            policy.config = MolmoAct2Config(
+                action_mode="both",
+                inference_action_mode="continuous",
+                chunk_size=2,
+                n_action_steps=2,
+                num_inference_steps=2,
+                output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+            )
+            policy._checkpoint_action_mode = "both"
+            policy.rtc_processor = None
+            # As loading does: bfloat16, the default, stores most weights in bfloat16 and runs under autocast.
+            policy._apply_bfloat16_parameter_policy()
+            if device == "cuda":
+                # As MolmoAct2ForConditionalGeneration does: eager calls capture the flow loop in a CUDA graph.
+                backbone.action_cuda_graph_manager = hf_molmoact2_modeling.ActionCudaGraphManager(backbone)
+            self.policy = policy.to(device)
+
+        def forward(self, batch, noise):
+            return self.policy.predict_action_chunk(batch, noise=noise)
+
+    _, pixel_values, image_token_pooling, image_grids, image_num_crops = _two_image_example()
+    # The preprocessor pads prompts on the left (with 0 here) and adds position_ids that skip the padding.
+    with_span = torch.tensor([[0, 0, 0, 2, 3, 9, 4, 7, 6, 6, 5, 6, 6, 5]])
+    without_span = torch.tensor([[1, 8, 9, 10, 8, 9, 10, 7, 6, 6, 5, 6, 6, 5]])
+    # Each batch holds the keys the export docs list. The robot uses 3 of the model's 4 action dimensions, so
+    # eager inference zeroes the fourth.
+    prompts = [
+        (
+            {
+                "input_ids": input_ids,
+                "attention_mask": (input_ids != 0).long(),
+                "position_ids": _position_ids_from_attention_mask(input_ids != 0),
+                "token_type_ids": (input_ids == 5) | (input_ids == 6),
+                "pixel_values": pixel_values + i,
+                "image_token_pooling": image_token_pooling,
+                "image_grids": image_grids,
+                "image_num_crops": image_num_crops,
+                "action_dim_is_pad": torch.tensor([[False, False, False, True]]),
+            },
+            torch.randn(1, 2, 4) + i,
+        )
+        for i, input_ids in enumerate((with_span, without_span))
+    ]
+    prompts = [
+        ({key: value.to(device) for key, value in batch.items()}, noise.to(device))
+        for batch, noise in prompts
+    ]
+    module = PredictActionChunk()
+
+    expected = [PredictActionChunk()(*inputs) for inputs in prompts]
+    assert not torch.allclose(expected[0], expected[1])
+    # Export first, then run eagerly: the action expert's modulation cache must not keep traced tensors.
+    first = torch.export.export(module, prompts[0], strict=False)
+    eager_after = [module(*inputs) for inputs in prompts]
+    # Export after eager calls must not add constants: no cached modulation or CUDA graph output is baked in.
+    second = torch.export.export(module, prompts[0], strict=False)
+    assert second.constants.keys() == first.constants.keys()
+    for inputs, actions, actions_after in zip(prompts, expected, eager_after, strict=True):
+        assert torch.equal(actions_after, actions)
+        for program in (first, second):
+            torch.testing.assert_close(program.module()(*inputs), actions)
+
+
+def test_single_example_image_inputs_export(monkeypatch):
+    end_id, patch_id = 5, 6
+    model = _tiny_molmoact2_model()
+    embed = _ImageEmbeddings(model)
+    example = _two_image_example()
+
+    images, token_pooling = model.build_batched_images(*example)
+    assert torch.equal(images, example[1][None])
+    # The pooling rows of image 1 index past the four patches of image 0.
+    assert torch.equal(token_pooling, torch.tensor([[[0, 1], [2, -1], [4, 9], [11, -1]]]))
+    program = torch.export.export(embed, example, strict=False)
+
+    with torch.no_grad():
+        embeddings = embed(*example)
+        # Reference: each image feature added to its image patch token, in order.
+        expected = model.transformer.wte(example[0]).reshape(-1, 8)
+        expected[example[0].flatten() == patch_id] += model.vision_backbone(images, token_pooling)
+    assert torch.equal(embeddings, expected.reshape_as(embeddings))
+
+    exported = program.module()
+    # The default crop mode closes each image with two end tokens.
+    two_end_tokens = torch.tensor([[patch_id, patch_id, end_id, end_id, patch_id, patch_id, end_id, end_id]])
+    torch.testing.assert_close(exported(two_end_tokens, *example[1:]), embed(two_end_tokens, *example[1:]))
+    # A batch of two copies takes the general path, which must lay out each copy the same way. The last
+    # example's images pool into different numbers of rows (2 and 3).
+    unequal_rows = (
+        torch.tensor([[1, patch_id, patch_id, end_id, patch_id, patch_id, patch_id, end_id]]),
+        example[1],
+        torch.cat([example[2], torch.tensor([[3, 6]])]),
+        torch.tensor([[1, 1, 1, 1], [1, 2, 1, 1]]),
+        example[4],
+    )
+    for single in (example, (two_end_tokens, *example[1:]), unequal_rows):
+        pair = (single[0].repeat(2, 1), *(torch.cat([t, t]) for t in single[1:]))
+        for one, two in zip(
+            model.build_batched_images(*single), model.build_batched_images(*pair), strict=True
+        ):
+            assert torch.equal(two, one.expand_as(two))
+
+    # Counts that do not match must fail in the program, and under torch.compile with the eager error rather than
+    # the program's assert, even with transformers checks off.
+    missing_patch = example[0].clone()
+    missing_patch[0, 5] = 1
+    missing_end = example[0].clone()
+    missing_end[0, 3] = 1
+    bad_grids = torch.tensor([[1, 1, 1, 1], [1, 2, 1, 1]])
+    bad_inputs = (
+        ((missing_patch, *example[1:]), RuntimeError, "Image patch tokens", "expected 3 image patch"),
+        ((missing_end, *example[1:]), ValueError, "image end tokens", "end_tokens=1, image_grids=2"),
+        ((*example[:4], torch.tensor([1, 1])), AssertionError, "image_num_crops", "expected 2 crops"),
+        ((*example[:3], bad_grids, example[4]), AssertionError, "image_token_pooling", "expected 5 pooled"),
+    )
+    monkeypatch.setenv("TRANSFORMERS_DISABLE_TORCH_CHECK", "1")
+    compiled = torch.compile(embed, backend="eager")
+    for inputs, error, summary, details in bad_inputs:
+        with pytest.raises(RuntimeError, match=summary):
+            exported(*inputs)
+        with pytest.raises(error, match=details):
+            compiled(*inputs)
+    # One example rejects pooling indices that are not 2D, as the general path does.
+    with pytest.raises(ValueError, match="not enough values to unpack"):
+        model.build_batched_images(*example[:2], example[2][:, 0], *example[3:])
+
+    # Strided pixels must embed exactly like contiguous ones under bfloat16 autocast.
+    strided = example[1].transpose(-1, -2).contiguous().transpose(-1, -2)
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        contiguous_bf16 = embed(*example)
+        strided_bf16 = embed(example[0], strided, *example[2:])
+    assert torch.equal(strided_bf16, contiguous_bf16)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Checks the exported program on CUDA.")
+def test_single_example_image_inputs_export_on_cuda():
+    model = _tiny_molmoact2_model()
+    example = _two_image_example()
+    with torch.no_grad():
+        embeddings = _ImageEmbeddings(model)(*example)
+    # A model split across devices can pass the pixels and pooling indices on CUDA and the rest on CPU.
+    split = (example[0], example[1].cuda(), example[2].cuda(), *example[3:])
+    for on_cpu, on_cuda in zip(
+        model.build_batched_images(*example), model.build_batched_images(*split), strict=True
+    ):
+        assert torch.equal(on_cuda.cpu(), on_cpu)
+    cuda_example = tuple(t.cuda() for t in example)
+    program = torch.export.export(_ImageEmbeddings(model.cuda()), cuda_example, strict=False).module()
+    missing_patch = cuda_example[0].clone()
+    missing_patch[0, 5] = 1
+
+    # The program must raise the same way as on CPU and leave CUDA usable.
+    with pytest.raises(RuntimeError, match="Image patch tokens"):
+        program(missing_patch, *cuda_example[1:])
+    torch.testing.assert_close(program(*cuda_example).cpu(), embeddings)
 
 
 def test_rtc_generation_uses_previous_chunk_prefix():

@@ -69,10 +69,27 @@ from .inference import (
     _ActionFlowInputs,
     _cache_max_len_int,
     _cache_seq_len_int,
+    _is_non_strict_exporting,
     _iter_cache_key_values,
 )
 
 logger = logging.get_logger(__name__)
+
+
+def _check_image_inputs(
+    cond: torch.Tensor, summary: str, details: Callable[[], str], error_type: type[Exception]
+) -> None:
+    """Raise `error_type` if `cond` is not all true, or record a runtime assert under non-strict export."""
+    # Only non-strict export can record the assert. torch.compile and strict export run Dynamo, which breaks
+    # the graph at the branch below, so strict export fails here. The assert reads a CPU copy, because a failed
+    # CUDA assert breaks every later CUDA call in the process. `details` is a callable because formatting it
+    # during export fails.
+    # torch_compilable_check is not used: before torch 2.12 its check can be neither saved nor decomposed, and
+    # TRANSFORMERS_DISABLE_TORCH_CHECK=1 turns it off.
+    if _is_non_strict_exporting():
+        torch._assert_async(cond.all().cpu(), summary)
+    elif not cond.all():
+        raise error_type(f"{summary}: {details()}")
 
 
 def _cast_to_autocast_dtype(tensor: torch.Tensor) -> torch.Tensor:
@@ -792,7 +809,9 @@ class ActionExpert(nn.Module):
         *,
         cache_key: tuple[Any, ...] | None = None,
     ) -> Sequence[ActionExpertStepModulation]:
-        if self.training or cache_key is None:
+        # Export must not turn modulations cached by an eager call into constants of the program, and older
+        # torch releases leave traced tensors in the cache after export.
+        if self.training or cache_key is None or _is_non_strict_exporting():
             return self.prepare_modulation_cache(timesteps)
         if self._modulation_cache_key == cache_key and self._modulation_cache_value is not None:
             return self._modulation_cache_value
@@ -2825,28 +2844,31 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
         return kv_states
 
     @staticmethod
-    def _mask_discrete_output_span(
-        row_ids: torch.Tensor,
-        row_mask: torch.Tensor,
+    def _mask_discrete_output_spans(
+        input_ids: torch.Tensor,
+        mask: torch.Tensor,
         start_id: int | None,
         end_id: int | None,
-    ) -> None:
+    ) -> torch.Tensor:
         if start_id is None or end_id is None:
-            return
-        start_positions = (row_ids == start_id).nonzero(as_tuple=False).flatten().tolist()
-        if not start_positions:
-            return
-        end_positions = (row_ids == end_id).nonzero(as_tuple=False).flatten().tolist()
-        end_ptr = 0
-        for start_pos in start_positions:
-            while end_ptr < len(end_positions) and end_positions[end_ptr] < start_pos:
-                end_ptr += 1
-            if end_ptr >= len(end_positions):
-                row_mask[start_pos:] = False
-                break
-            end_pos = end_positions[end_ptr]
-            row_mask[start_pos : end_pos + 1] = False
-            end_ptr += 1
+            return mask
+        if start_id == end_id:
+            # Each such token would count as a start and an end, so the count below would mask nothing.
+            return mask & (input_ids != start_id)
+        # Count the spans open at each position. Subtracting the running minimum (capped at 0) drops an end
+        # that closes no span. It is built by doubling shifts, not cummin: ExecuTorch releases up to 1.5 have
+        # no cummin kernel and MPS has none before torch 2.8.
+        step = (input_ids == start_id).long() - (input_ids == end_id).long()
+        total = step.cumsum(-1)
+        running_min = total.clamp(max=0)
+        shift = 1
+        while shift < total.shape[-1]:
+            running_min = torch.minimum(running_min, F.pad(running_min[..., :-shift], (shift, 0)))
+            shift *= 2
+        depth = total - running_min
+        # Only the outermost span's end brings the count back to 0, so the count before it masks that end.
+        depth_before = F.pad(depth[..., :-1], (1, 0))
+        return mask & (depth == 0) & (depth_before == 0)
 
     def _get_encoder_attention_mask(
         self,
@@ -2864,14 +2886,12 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
         eos_id = getattr(self.config, "eos_token_id", None)
         if eos_id is not None:
             mask &= input_ids != int(eos_id)
-        for batch_idx in range(input_ids.shape[0]):
-            self._mask_discrete_output_span(
-                input_ids[batch_idx],
-                mask[batch_idx],
-                self.config.action_start_token_id,
-                self.config.action_end_token_id,
-            )
-        return mask
+        return self._mask_discrete_output_spans(
+            input_ids,
+            mask,
+            self.config.action_start_token_id,
+            self.config.action_end_token_id,
+        )
 
     def _get_depth_token_mask(
         self,
@@ -3178,6 +3198,59 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
             trajectory = self._run_action_flow_loop(flow_inputs, steps)
         return trajectory
 
+    @staticmethod
+    def _build_single_example_images(
+        end_token_counts: torch.Tensor,
+        pixel_values: torch.Tensor,
+        image_token_pooling: torch.Tensor,
+        image_grids: torch.Tensor,
+        image_num_crops: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Same result as the general path for one example, written so that torch.export can trace
+        # single-example inference. The general path reads the image counts as Python numbers, so they
+        # may come on another device than the pooling indices.
+        image_grids = image_grids.to(image_token_pooling.device)
+        image_num_crops = image_num_crops.to(image_token_pooling.device)
+        num_images = image_grids.size(0)
+        assert image_num_crops.size(0) == num_images, (
+            f"Expected {num_images} image num crops, but got {image_num_crops.size(0)}"
+        )
+        _check_image_inputs(
+            (end_token_counts == num_images) | (end_token_counts == 2 * num_images) | (num_images <= 0),
+            "Could not infer image counts from image end tokens",
+            lambda: f"end_tokens={int(end_token_counts.sum())}, image_grids={num_images}.",
+            ValueError,
+        )
+        n_crops, n_patches, _ = pixel_values.shape
+        _check_image_inputs(
+            image_num_crops.sum() == n_crops,
+            "image_num_crops does not match pixel_values",
+            lambda: f"expected {int(image_num_crops.sum())} crops, but got {n_crops}",
+            AssertionError,
+        )
+        num_pooled_patches_per_image = image_grids[:, :2].prod(dim=1) + image_grids[:, 2:].prod(dim=1)
+        num_pooled_patches, _ = image_token_pooling.shape
+        _check_image_inputs(
+            num_pooled_patches_per_image.sum() == num_pooled_patches,
+            "image_token_pooling does not match image_grids",
+            lambda: f"expected {int(num_pooled_patches_per_image.sum())} pooled patches, "
+            f"but got {num_pooled_patches}",
+            AssertionError,
+        )
+        # Pooling indices are relative to their own image: shift each row by the patches of the
+        # images before it.
+        patches_per_image = image_num_crops * n_patches
+        image_offsets = (patches_per_image.cumsum(0) - patches_per_image).to(image_token_pooling.dtype)
+        rows = torch.arange(num_pooled_patches, device=image_token_pooling.device)
+        image_of_row = (rows[:, None] >= num_pooled_patches_per_image.cumsum(0)[None, :]).sum(1)
+        token_pooling = torch.where(
+            image_token_pooling >= 0,
+            image_token_pooling + image_offsets[image_of_row][:, None],
+            image_token_pooling,
+        )
+        # Match the general path's contiguous batch: bfloat16 matmul rounding depends on memory layout.
+        return pixel_values.contiguous()[None], token_pooling[None]
+
     def build_batched_images(
         self,
         input_ids: torch.LongTensor,
@@ -3188,6 +3261,10 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # 1) Count the number of images in each example
         raw_counts = (input_ids == self.config.image_end_token_id).sum(1)  # [N]
+        if input_ids.size(0) == 1:
+            return self._build_single_example_images(
+                raw_counts, pixel_values, image_token_pooling, image_grids, image_num_crops
+            )
         total_images = int(image_grids.size(0))
         total_end_tokens = int(raw_counts.sum().item())
         if total_images <= 0:
@@ -3495,10 +3572,12 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
             # parameter storage and autocast can otherwise make them differ.
             image_features = self.vision_backbone(images, token_pooling).to(device=x.device, dtype=x.dtype)
             is_image_patch = input_ids.reshape(-1) == self.config.image_patch_id
-            if is_image_patch.sum() != len(image_features):
-                raise RuntimeError(
-                    f"Expected {int(is_image_patch.sum())} image patch embeddings, got {len(image_features)}."
-                )
+            _check_image_inputs(
+                is_image_patch.sum() == image_features.shape[0],
+                "Image patch tokens do not match image features",
+                lambda: f"expected {int(is_image_patch.sum())} image patch embeddings, got {len(image_features)}.",
+                RuntimeError,
+            )
             flat_x = x.reshape(-1, x.shape[-1]).clone()
             flat_x[is_image_patch] = flat_x[is_image_patch] + image_features
             x = flat_x.reshape_as(x)
