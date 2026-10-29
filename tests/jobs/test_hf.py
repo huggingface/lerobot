@@ -18,8 +18,8 @@ import threading
 from types import SimpleNamespace
 
 import draccus
-import httpx
 import pytest
+from huggingface_hub.utils import httpx
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 

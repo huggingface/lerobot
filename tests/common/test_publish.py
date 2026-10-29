@@ -19,9 +19,8 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 
-import httpx
 import pytest
-from huggingface_hub.utils import validate_repo_id
+from huggingface_hub.utils import httpx, validate_repo_id
 
 import lerobot.common.train_utils as train_utils
 import lerobot.utils.hub as hub

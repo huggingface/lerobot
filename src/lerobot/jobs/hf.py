@@ -32,7 +32,6 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import httpx
 from huggingface_hub import (
     HfApi,
     create_repo,
@@ -42,6 +41,7 @@ from huggingface_hub import (
     run_job,
     upload_file,
 )
+from huggingface_hub.utils import httpx
 
 from lerobot.common.train_utils import push_checkpoint_to_hub
 from lerobot.configs import parser
@@ -55,7 +55,8 @@ _SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 _TERMINAL_STAGES = {"COMPLETED", "CANCELED", "ERROR", "DELETED"}
 
-# huggingface_hub 1.x runs on httpx: transient HTTP/transport failures surface as
+# huggingface_hub runs on httpx (1.x) or httpx2 (2.x), exposed either way as
+# huggingface_hub.utils.httpx: transient HTTP/transport failures surface as
 # httpx.HTTPError and socket-level errors as OSError. Catching only these keeps real
 # bugs (TypeError, AttributeError, ...) from being silently retried or counted as
 # job failures.

@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import inspect
 import logging
 import re
 from itertools import chain
@@ -577,11 +578,75 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
     )
 
 
+class _RecordingHfApi:
+    """Stands in for HfApi in push_to_hub tests and records each call."""
+
+    calls: list[tuple[str, dict]] = []
+
+    def __getattr__(self, name):
+        def record(*args, **kwargs):
+            self.calls.append((name, kwargs))
+
+        return record
+
+
+class _NoOpCard:
+    def push_to_hub(self, **kwargs):
+        pass
+
+
+@pytest.fixture
+def recording_hub(monkeypatch):
+    import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
+
+    _RecordingHfApi.calls = []
+    monkeypatch.setattr(lerobot_dataset_module, "HfApi", _RecordingHfApi)
+    monkeypatch.setattr(lerobot_dataset_module, "create_lerobot_dataset_card", lambda **kwargs: _NoOpCard())
+    return _RecordingHfApi.calls
+
+
+@pytest.mark.parametrize(
+    "push_kwargs, revision, ignore_patterns",
+    [
+        ({}, None, ["images/"]),
+        ({"branch": "v1", "push_videos": False}, "v1", ["images/", "videos/"]),
+    ],
+)
+def test_push_to_hub_uploads_with_upload_folder(
+    tmp_path, lerobot_dataset_factory, recording_hub, push_kwargs, revision, ignore_patterns
+):
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=2, total_frames=40)
+
+    dataset.push_to_hub(tag_version=False, **push_kwargs)
+
+    upload_calls = [(name, kwargs) for name, kwargs in recording_hub if name.startswith("upload")]
+    expected_kwargs = {
+        "repo_id": dataset.repo_id,
+        "folder_path": dataset.root,
+        "repo_type": "dataset",
+        "revision": revision,
+        "allow_patterns": None,
+        "ignore_patterns": ignore_patterns,
+    }
+    assert upload_calls == [("upload_folder", expected_kwargs)]
+    # The recorded call must also be valid for the installed huggingface_hub.
+    inspect.signature(HfApi.upload_folder).bind(None, **expected_kwargs)
+
+
+def test_push_to_hub_upload_large_folder_is_deprecated(tmp_path, lerobot_dataset_factory, recording_hub):
+    dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=2, total_frames=40)
+
+    with pytest.warns(DeprecationWarning, match="upload_large_folder"):
+        dataset.push_to_hub(tag_version=False, upload_large_folder=True)
+
+    upload_names = [name for name, _ in recording_hub if name.startswith("upload")]
+    assert upload_names == ["upload_folder"]
+
+
 # TODO(aliberts):
 # - [ ] test various attributes & state from init and create
 # - [ ] test init with episodes and check num_frames
 # - [ ] test add_episode
-# - [ ] test push_to_hub
 # - [ ] test smaller methods
 
 # TODO(rcadene):
