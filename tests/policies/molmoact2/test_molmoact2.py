@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
+from safetensors.torch import save_file as save_safetensors_file
 
 pytest.importorskip("transformers")
 pytest.importorskip("scipy")
@@ -126,9 +127,26 @@ def test_molmoact2_checkpoint_loading_is_strict_by_default(monkeypatch, strict, 
         (
             MolmoAct2Policy,
             "/tmp/molmoact2-checkpoint",
-            {"strict": expected},
+            {"strict": expected, "_load_from_lerobot_checkpoint": True},
         )
     ]
+
+
+def test_molmoact2_checkpoint_weights_materialize_meta_model(tmp_path):
+    with torch.device("meta"):
+        model = torch.nn.Linear(2, 1)
+    state_dict = {
+        "weight": torch.tensor([[1.0, 2.0]]),
+        "bias": torch.tensor([3.0]),
+    }
+    model_file = tmp_path / "model.safetensors"
+    save_safetensors_file(state_dict, str(model_file))
+
+    MolmoAct2Policy._load_as_safetensor(model, str(model_file), "cpu", strict=True)
+
+    assert model.weight.device.type == "cpu"
+    assert torch.equal(model.weight, state_dict["weight"])
+    assert torch.equal(model.bias, state_dict["bias"])
 
 
 def test_molmoact2_scheduler_warmup_is_continuous_with_post_warmup_cosine():
@@ -1627,7 +1645,7 @@ def test_molmoact2_norm_metadata_is_initialization_only(tmp_path, monkeypatch):
         return model
 
     monkeypatch.setattr(molmoact2_modeling, "_load_hf_norm_metadata_for_tag", fail_norm_tag_lookup)
-    monkeypatch.setattr(MolmoAct2Policy, "_load_hf_model", lambda self: None)
+    monkeypatch.setattr(MolmoAct2Policy, "_load_hf_model", lambda self, load_weights: None)
     monkeypatch.setattr(MolmoAct2Policy, "_load_as_safetensor", classmethod(fake_load_as_safetensor))
     policy = MolmoAct2Policy.from_pretrained(checkpoint_path)
 
@@ -2830,6 +2848,62 @@ def test_train_mode_vlm_freeze_freezes_non_action_expert_params():
     assert not any(param.requires_grad for param in policy.model.model.transformer.parameters())
     assert not any(param.requires_grad for param in policy.model.model.vision_backbone.parameters())
     assert not any(param.requires_grad for param in policy.model.lm_head.parameters())
+
+
+def test_load_hf_model_skips_base_weights_for_lerobot_checkpoint(monkeypatch):
+    class DummyLoadedModel(torch.nn.Module):
+        def __init__(self, config):
+            super().__init__()
+            self.config = SimpleNamespace(
+                max_action_dim=32,
+                max_action_horizon=30,
+                action_mode="both",
+                add_action_expert=True,
+            )
+            self.model = torch.nn.Module()
+            self.weight = torch.nn.Parameter(torch.ones(1))
+
+    class DummyHFConfig:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del cls, args, kwargs
+            return SimpleNamespace()
+
+    class DummyMolmoAct2ForConditionalGeneration(DummyLoadedModel):
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del cls, args, kwargs
+            pytest.fail("LeRobot checkpoint loading must not load base model weights")
+
+    monkeypatch.setattr(
+        molmoact2_modeling,
+        "_resolve_checkpoint_location",
+        lambda checkpoint_path, **kwargs: checkpoint_path,
+    )
+    monkeypatch.setattr(molmoact2_modeling, "HFMolmoAct2Config", DummyHFConfig)
+    monkeypatch.setattr(
+        molmoact2_modeling,
+        "MolmoAct2ForConditionalGeneration",
+        DummyMolmoAct2ForConditionalGeneration,
+    )
+    monkeypatch.setattr(
+        molmoact2_modeling,
+        "_strict_load_safetensors_weights",
+        lambda *args: pytest.fail("LeRobot checkpoint loading must not load base model safetensors"),
+    )
+    policy = object.__new__(MolmoAct2Policy)
+    torch.nn.Module.__init__(policy)
+    policy.config = MolmoAct2Config(
+        checkpoint_path="/tmp/base-hf-checkpoint",
+        action_mode="both",
+        train_mode_vlm="fft",
+        freeze_embedding=False,
+        dtype="float32",
+    )
+
+    policy._load_hf_model(load_weights=False)
+
+    assert policy.model.weight.device.type == "meta"
 
 
 def test_load_hf_model_accepts_max_action_horizon_schema(monkeypatch):
