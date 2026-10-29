@@ -1881,7 +1881,12 @@ class MolmoAct2VisionBackbone(nn.Module):
 
         # MLP layer to map the feature.
         pooled_features = self.image_projector(pooled_features)
-        return pooled_features.view(-1, pooled_features.shape[-1])[valid_token.flatten()]
+        pooled_features = pooled_features.view(-1, pooled_features.shape[-1])
+        if batch_size == 1:
+            # Only batching adds all-padding rows (every processor pooling window holds a patch), so a
+            # single example skips the data-dependent selection and keeps a static shape.
+            return pooled_features
+        return pooled_features[valid_token.flatten()]
 
 
 # Copied from transformers.models.llama.modeling_llama.rotate_half
@@ -3561,15 +3566,20 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
             # Normalize the modality boundary to the text activation dtype;
             # parameter storage and autocast can otherwise make them differ.
             image_features = self.vision_backbone(images, token_pooling).to(device=x.device, dtype=x.dtype)
-            is_image_patch = input_ids.reshape(-1) == self.config.image_patch_id
+            is_image_patch = input_ids.reshape(-1).to(x.device) == self.config.image_patch_id
             _check_image_inputs(
                 is_image_patch.sum() == image_features.shape[0],
                 "Image patch tokens do not match image features",
                 lambda: f"expected {int(is_image_patch.sum())} image patch embeddings, got {len(image_features)}.",
                 RuntimeError,
             )
-            flat_x = x.reshape(-1, x.shape[-1]).clone()
-            flat_x[is_image_patch] = flat_x[is_image_patch] + image_features
+            # The k-th image patch token takes the k-th feature (patch tokens index from 1). A gather keeps
+            # every shape static, which boolean indexing does not; torch.where drops what other tokens read.
+            padded_features = F.pad(image_features, (0, 0, 1, 0))
+            flat_x = x.reshape(-1, x.shape[-1])
+            flat_x = torch.where(
+                is_image_patch[:, None], flat_x + padded_features[is_image_patch.cumsum(0)], flat_x
+            )
             x = flat_x.reshape_as(x)
 
         # shape: (batch_size, seq_len, d_model)

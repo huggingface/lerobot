@@ -3357,6 +3357,10 @@ def test_single_example_image_inputs_export(monkeypatch):
     embed = ImageEmbeddings()
     program = torch.export.export(embed, example, strict=False)
 
+    for node in program.graph.nodes:
+        value = node.meta.get("val")
+        if isinstance(value, torch.Tensor):
+            assert all(isinstance(size, int) for size in value.shape), node.format_node()
     with torch.no_grad():
         embeddings = embed(*example)
         # Reference: each image feature added to its image patch token, in order.
@@ -3400,6 +3404,13 @@ def test_single_example_image_inputs_export(monkeypatch):
     with torch.no_grad():
         batched = embed(*(torch.cat(pair) for pair in zip(example, other, strict=True)))
     torch.testing.assert_close(batched[:1], embeddings)
+
+    if torch.cuda.is_available():
+        # Accelerate can return the text embeddings on a different device from input_ids.
+        model.transformer.wte.register_forward_hook(lambda module, args, output: output.cuda())
+        with torch.no_grad():
+            split = model.build_input_embeddings(example[0], *model.build_batched_images(*example))[0]
+        torch.testing.assert_close(split.cpu(), embeddings)
 
 
 def test_rtc_generation_uses_previous_chunk_prefix():
