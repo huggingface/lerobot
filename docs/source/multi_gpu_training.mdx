@@ -112,6 +112,24 @@ torchrun --nnodes=2 --nproc-per-node=8 ... $(which lerobot-train) \
   --parallelism.dp_replicate=2 --parallelism.dp_shard=8 ...
 ```
 
+### PEFT
+
+[PEFT fine-tuning](./peft_training) (`--peft.*`) works under FSDP2 and HSDP. The frozen base model is sharded together with the adapters, so each rank only holds its shard of the base weights:
+
+```bash
+torchrun --nproc-per-node=4 $(which lerobot-train) \
+  --policy.path=${HF_USER}/my_base_policy \
+  --peft.method_type=LORA --peft.r=16 \
+  --parallelism.dp_shard=4 \
+  --accelerator.mixed_precision=bf16 \
+  --output_dir=outputs/train/my_policy_fsdp_lora
+```
+
+- Wrap units still come from the policy's `_fsdp_wrap_modules` declaration (or `--accelerator.fsdp.wrap_modules`).
+- Use mixed precision when the base model is stored in bf16 or fp16. PEFT keeps its adapters in fp32 while the copies of `--peft.full_training_modules` keep the base model's dtype, and FSDP2 needs a single dtype for the trainable parameters it shards together. With mixed precision on, accelerate upcasts every trainable parameter to fp32.
+- Checkpoints store the adapter instead of the full weights, in every `--checkpoint_format` (see [Checkpoints](#checkpoints)).
+- `--accelerator.fsdp.ignored_modules` is matched against the module names of the PEFT model, which start with `base_model.model.`. Begin the pattern with `.*` to match them.
+
 ## Checkpoints
 
 Every checkpoint contains a `pretrained_model/` directory and a `training_state/` directory:
@@ -147,6 +165,8 @@ During sharded training, the optimizer state is saved as DCP shards under `train
 | `dcp`                     | `pytorch_model_fsdp_0/` shard directory only | gathering the full weights makes saves and resumes too slow           |
 | `safetensors_dcp`         | both                                         | you want fast resume _and_ immediately loadable checkpoints           |
 
+A PEFT run stores its adapter instead of the full weights: `adapter_model.safetensors` and `adapter_config.json` replace `model.safetensors`, and the DCP shards hold the adapter only. The base model loads from the path recorded in `adapter_config.json`.
+
 Two things to know about gathered (`safetensors`) checkpoints from sharded runs:
 
 - **They store fp32 weights.** Under mixed precision training, FSDP keeps an fp32 master copy, and the checkpoint saves the master copy to make sure training resumes consistently.
@@ -161,7 +181,7 @@ lerobot-convert-dcp --checkpoint_dir=outputs/train/run/checkpoints/005000
 lerobot-convert-dcp --checkpoint_dir=... --delete_dcp=true --push_to_hub=${HF_USER}/my_policy
 ```
 
-`--push_to_hub` publishes the converted directory as a model repo.
+`--push_to_hub` publishes the converted directory as a model repo. The shards of a PEFT run merge into `adapter_model.safetensors`. Like any `dcp` checkpoint, a PEFT checkpoint saved with `--checkpoint_format=dcp` loads with `--policy.path` only after this conversion.
 
 ### Resuming
 

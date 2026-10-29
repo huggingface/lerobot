@@ -18,7 +18,8 @@
 Two artifact channels with distinct owners:
 
 - the **distributable** ``model.safetensors``: produced by ``PreTrainedPolicy.save_pretrained``
-  through :func:`full_model_state_dict` — a collective full gather when the model is sharded;
+  through :func:`full_model_state_dict` — a collective full gather when the model is sharded
+  (a PEFT run writes its adapter, ``adapter_model.safetensors``, through :func:`save_peft_adapter`);
 - the **resume** channel (sharded runs): torch DCP directories written/read through accelerate's
   ``save/load_fsdp_model`` and ``save/load_fsdp_optimizer`` (``pytorch_model_fsdp_0/`` and
   ``optimizer_0/``, names imported from accelerate constants), which reshard on load across
@@ -32,6 +33,8 @@ from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
+
+from .utils import is_main_process
 
 if TYPE_CHECKING:
     from accelerate import Accelerator
@@ -77,6 +80,28 @@ def full_model_state_dict(module: nn.Module) -> dict[str, torch.Tensor]:
     from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
 
     return get_model_state_dict(module, options=StateDictOptions(full_state_dict=True, cpu_offload=True))
+
+
+def save_peft_adapter(model: nn.Module, save_directory: Path) -> None:
+    """Write a PEFT model's adapter (`adapter_model.safetensors`, `adapter_config.json`).
+
+    Collective when the model is sharded: call on all ranks. Only the main process writes.
+
+    Args:
+        model (nn.Module): The (possibly sharded) `PeftModel` to save.
+        save_directory (Path): The directory the adapter files are written into.
+    """
+    if not is_sharded_module(model):
+        if is_main_process():
+            model.save_pretrained(save_directory)
+        return
+
+    from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
+
+    options = StateDictOptions(full_state_dict=True, cpu_offload=True, ignore_frozen_params=True)
+    state_dict = get_model_state_dict(model, options=options)  # {} off the main rank
+    if is_main_process():
+        model.save_pretrained(save_directory, state_dict=state_dict)
 
 
 def _fsdp_plugin(accelerator: "Accelerator") -> object:
@@ -137,11 +162,11 @@ def save_sharded_model(accelerator: "Accelerator", model: nn.Module, output_dir:
         model (nn.Module): The prepared (sharded) model to save.
         output_dir (Path): The directory the shard subdirectory is created in.
     """
-    from accelerate.utils import save_fsdp_model
+    from accelerate.utils import is_peft_model, save_fsdp_model
 
-    # accelerate 1.14's DCP helpers do string containment checks on the path:
-    # always hand them str, never Path.
-    save_fsdp_model(_fsdp_plugin(accelerator), accelerator, model, str(output_dir))
+    save_fsdp_model(
+        _fsdp_plugin(accelerator), accelerator, model, str(output_dir), adapter_only=is_peft_model(model)
+    )
 
 
 def load_sharded_model(accelerator: "Accelerator", model: nn.Module, input_dir: Path) -> None:
@@ -153,13 +178,16 @@ def load_sharded_model(accelerator: "Accelerator", model: nn.Module, input_dir: 
         input_dir (Path): The directory containing the `pytorch_model_fsdp_0/` shard
             subdirectory.
     """
-    from accelerate.utils import load_fsdp_model
+    from accelerate.utils import is_peft_model, load_fsdp_model
     from accelerate.utils.constants import FSDP_MODEL_NAME
 
-    # Pass the exact shard directory: accelerate's load resolves it with a substring check
-    # ("pytorch_model_fsdp" in the path -> use as-is), which misfires on run paths that happen
-    # to contain the marker; the exact dir makes the check deterministic.
-    load_fsdp_model(_fsdp_plugin(accelerator), accelerator, model, str(input_dir / f"{FSDP_MODEL_NAME}_0"))
+    load_fsdp_model(
+        _fsdp_plugin(accelerator),
+        accelerator,
+        model,
+        str(input_dir / f"{FSDP_MODEL_NAME}_0"),
+        adapter_only=is_peft_model(model),
+    )
 
 
 def save_sharded_optimizer(
@@ -203,8 +231,6 @@ def load_sharded_optimizer(
     from accelerate.utils import load_fsdp_optimizer
     from accelerate.utils.constants import OPTIMIZER_NAME
 
-    # Exact shard directory for the same reason as load_sharded_model: accelerate's substring
-    # check ("optimizer" in the path) would misread e.g. --job_name=optimizer_sweep run paths.
     # Unwrapped optimizer: torch's `_init_optim_state` runs a dummy step here (the state is
     # always empty on a fresh resume), which must not reach the fp16 scaler — see
     # `_inner_optimizer`.
@@ -234,8 +260,9 @@ def dcp_to_safetensors(dcp_dir: Path, output_dir: Path, *, delete_dcp: bool = Fa
         Path: The written `model.safetensors` file's path.
     """
     from accelerate.utils import merge_fsdp_weights
+    from accelerate.utils.constants import SAFE_WEIGHTS_NAME
 
     merge_fsdp_weights(
         str(dcp_dir), str(output_dir), safe_serialization=True, remove_checkpoint_dir=delete_dcp
     )
-    return output_dir / "model.safetensors"
+    return output_dir / SAFE_WEIGHTS_NAME

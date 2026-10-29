@@ -35,9 +35,11 @@ from pathlib import Path
 
 from huggingface_hub import HfApi
 
-from lerobot.configs import parser
+import lerobot.policies  # noqa: F401  (registers the policy config types)
+from lerobot.configs import PreTrainedConfig, parser
 from lerobot.distributed.checkpoint import dcp_to_safetensors
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
+from lerobot.utils.import_utils import register_third_party_plugins, require_package
 from lerobot.utils.utils import init_logging
 
 
@@ -85,7 +87,6 @@ def _publish_converted(pretrained_dir: Path, repo_id: str, private: bool | None)
             existing repo's) default.
     """
     from lerobot.common.train_utils import generate_model_card
-    from lerobot.configs.policies import PreTrainedConfig
     from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 
     train_cfg = None
@@ -134,7 +135,7 @@ def _publish_converted(pretrained_dir: Path, repo_id: str, private: bool | None)
 
 @parser.wrap()
 def convert_checkpoint(cfg: ConvertDcpConfig) -> Path:
-    """Merge a checkpoint's DCP shards into `model.safetensors`, then optionally publish it.
+    """Merge a checkpoint's DCP shards into its safetensors weights, then optionally publish them.
 
     Args:
         cfg (ConvertDcpConfig): Conversion options — the checkpoint directory to convert, whether
@@ -142,13 +143,14 @@ def convert_checkpoint(cfg: ConvertDcpConfig) -> Path:
             visibility) to publish the converted directory to.
 
     Returns:
-        Path: The path to the merged `model.safetensors` file.
+        Path: The path to the merged file: `model.safetensors`, or `adapter_model.safetensors` for
+        a PEFT run, whose DCP shards hold its adapter only.
 
     Raises:
         FileNotFoundError: If the checkpoint has no DCP shard directory, i.e. it was not saved
             with `checkpoint_format=dcp` (or `safetensors_dcp`).
     """
-    from accelerate.utils.constants import FSDP_MODEL_NAME
+    from accelerate.utils.constants import FSDP_MODEL_NAME, SAFE_WEIGHTS_NAME
 
     pretrained_dir = _locate_pretrained_dir(cfg.checkpoint_dir)
     dcp_dir = pretrained_dir / f"{FSDP_MODEL_NAME}_0"
@@ -157,8 +159,15 @@ def convert_checkpoint(cfg: ConvertDcpConfig) -> Path:
             f"No DCP shard directory at {dcp_dir}. Point --checkpoint_dir at a checkpoint "
             "saved with checkpoint_format=dcp (or safetensors_dcp)."
         )
-    logging.info(f"Merging {dcp_dir} -> {pretrained_dir / 'model.safetensors'}")
+    use_peft = PreTrainedConfig.from_pretrained(pretrained_dir).use_peft
+    logging.info(f"Merging {dcp_dir} -> {pretrained_dir / SAFE_WEIGHTS_NAME}")
     safetensors_path = dcp_to_safetensors(dcp_dir, pretrained_dir, delete_dcp=cfg.delete_dcp)
+    if use_peft:
+        # The shards of a PEFT run hold its adapter, which PEFT loads from adapter_model.safetensors.
+        require_package("peft", extra="peft")
+        from peft.utils.constants import SAFETENSORS_WEIGHTS_NAME
+
+        safetensors_path = safetensors_path.rename(pretrained_dir / SAFETENSORS_WEIGHTS_NAME)
     if cfg.push_to_hub:
         _publish_converted(pretrained_dir, cfg.push_to_hub, cfg.private)
     return safetensors_path
@@ -167,6 +176,7 @@ def convert_checkpoint(cfg: ConvertDcpConfig) -> Path:
 def main() -> None:
     """`lerobot-convert-dcp` console entry point: set up logging and run the conversion."""
     init_logging()
+    register_third_party_plugins()
     convert_checkpoint()  # type: ignore[call-arg]
 
 

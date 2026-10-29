@@ -53,22 +53,12 @@ class CheckpointFormat(str, Enum):
       save under sharding.
     - DCP: sharded `pytorch_model_fsdp_0/*.distcp` only — fastest save/resume; convert with
       `lerobot-convert-dcp` before distributing.
-    - SAFETENSORS_AND_DCP: both artifacts, written independently.
+    - SAFETENSORS_DCP: both artifacts, written independently.
     """
 
     SAFETENSORS = "safetensors"
     DCP = "dcp"
-    SAFETENSORS_AND_DCP = "safetensors_dcp"
-
-    @property
-    def wants_safetensors(self) -> bool:
-        """True when a full `model.safetensors` artifact should be written."""
-        return self in (CheckpointFormat.SAFETENSORS, CheckpointFormat.SAFETENSORS_AND_DCP)
-
-    @property
-    def wants_dcp(self) -> bool:
-        """True when sharded DCP model shards (`pytorch_model_fsdp_0/`) should be written."""
-        return self in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_AND_DCP)
+    SAFETENSORS_DCP = "safetensors_dcp"
 
 
 def _migrate_legacy_wandb_section(config: dict[str, Any]) -> dict[str, Any] | None:
@@ -402,7 +392,10 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError("--accelerator.compile is a placeholder and not wired yet.")
         if self.accelerator.activation_checkpointing.mode is not ActivationCheckpointingMode.NONE:
             raise ValueError("--accelerator.activation_checkpointing is a placeholder and not wired yet.")
-        if self.checkpoint_format is not CheckpointFormat.SAFETENSORS and not self.parallelism.is_sharded:
+        if (
+            self.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP)
+            and not self.parallelism.is_sharded
+        ):
             raise ValueError(
                 f"checkpoint_format={self.checkpoint_format.value} requires a sharded run "
                 "(--parallelism.dp_shard != 1); non-sharded checkpoints are always safetensors."
@@ -421,8 +414,6 @@ class TrainPipelineConfig(HubMixin):
                 "(which does autocast on CPU) or =no."
             )
         if self.parallelism.is_sharded:
-            if self.peft is not None:
-                raise ValueError("PEFT is not supported under sharded training yet.")
             if self.is_reward_model_training:
                 raise ValueError(
                     "Reward-model training is not supported under sharded training yet "
