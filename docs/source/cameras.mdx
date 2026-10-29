@@ -176,6 +176,45 @@ require `use_rgb=True`.
 Manual color controls require a dedicated RGB module. Cameras without one, such as the RealSense
 D405, do not support them and raise an error at connection time.
 
+#### Native JSON presets
+
+Use `json_config_path` to load a native device preset exported by RealSense Viewer. This lets
+you reuse sensor settings without translating each preset parameter into a LeRobot option.
+
+```python
+config = RealSenseCameraConfig(
+    serial_number_or_name="233522074606",
+    json_config_path="presets/wrist-camera.json",
+    fps=30,
+    width=640,
+    height=480,
+)
+```
+
+The same option is available in a robot's camera configuration:
+
+```json
+{
+  "wrist": {
+    "type": "intelrealsense",
+    "serial_number_or_name": "233522074606",
+    "json_config_path": "presets/wrist-camera.json"
+  }
+}
+```
+
+The preset is loaded onto the selected device after its pipeline starts and before the capture
+thread reads frames. Explicit `exposure`, `gain`, and `white_balance` options are applied afterward
+and override the preset's corresponding color settings. Omitted color options leave those settings
+as loaded from the preset. Stream selection, resolution and FPS are still configured through
+LeRobot's camera options.
+
+The SDK validates preset contents and device support. Use a preset compatible with your camera;
+enable advanced mode in RealSense Viewer first if your device requires it. An unreadable file fails
+before opening a pipeline. If the SDK rejects a preset, connection fails with the path and SDK
+error, and the pipeline is stopped. Presets are read and reapplied on reconnect and warmup retries.
+Omitting `json_config_path` keeps the existing connection behavior.
+
 </hfoption>
 </hfoptions>
 
