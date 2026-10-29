@@ -1,0 +1,24 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""The helpers a control loop shares with `lerobot-rollout` load without PyTorch."""
+
+import pytest
+
+from tests.torch_free import assert_runs_without_torch
+
+
+@pytest.mark.parametrize("module", ["lerobot.utils.action_interpolator"])
+def test_the_helper_loads_without_torch(module):
+    assert_runs_without_torch(f"import {module}")

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.hardware_types import RobotAction, RobotObservation
 from lerobot.model import GravityCompensation
 from lerobot.motors import MotorCalibration
 from lerobot.utils import (

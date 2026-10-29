@@ -18,8 +18,14 @@ Provides configurable Nx control rate by interpolating between consecutive actio
 Useful with RTC and action-chunking policies to reduce jerkiness.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-from torch import Tensor
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 
 class ActionInterpolator:

@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.hardware_types import RobotAction
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 

@@ -20,7 +20,7 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.hardware_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.motors.motors_bus import NameOrID
