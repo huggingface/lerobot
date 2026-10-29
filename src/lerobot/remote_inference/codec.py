@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Remote inference codec: the shared NumPy codec, also accepting torch tensors."""
+"""Remote inference codec: the shared NumPy codec, plus support for torch tensors."""
 
 from typing import Any
 
@@ -40,5 +40,5 @@ def _tensor_to_numpy(value: Any) -> Any:
 
 
 def encode_message(envelope: Envelope, limits: CodecLimits = CodecLimits()) -> bytes:
-    """Encode finite values, adapting torch tensors within the shared resource budget."""
+    """Encode a message, converting torch tensors to NumPy arrays under the same size limits."""
     return _encode_message(envelope, limits, tensor_converter=_tensor_to_numpy)

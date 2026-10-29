@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Transport-free simulation values and environment metadata."""
+"""Env metadata and step results, independent of how the env is served."""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,13 +22,13 @@ from gymnasium import spaces
 
 from lerobot.utils.feature_spec import FeatureSpec
 
-# Joint targets, end-effector deltas, or end-effector poses.
+# What an action commands: joint targets, end-effector deltas, or end-effector poses.
 CONTROL_MODES = ("position", "delta", "eef_pose")
 
 
 @dataclass(frozen=True)
 class EnvDescriptor:
-    """Canonical spaces, control convention, and tasks of an environment."""
+    """What an env exposes: observation and action features, control mode, fps and tasks."""
 
     sim_type: str
     semantics: str
@@ -53,7 +53,7 @@ class EnvDescriptor:
             raise ValueError("Duplicate observation features")
 
     def observation_space(self) -> spaces.Dict:
-        """One environment's observation space: RGB images as uint8, other features unbounded."""
+        """Return the observation space of one env: RGB images as uint8, other features unbounded."""
         return spaces.Dict(
             {
                 f.name: spaces.Box(0, 255, f.shape, np.uint8)
@@ -64,11 +64,11 @@ class EnvDescriptor:
         )
 
     def action_space(self) -> spaces.Box:
-        """One environment's action space."""
+        """Return the action space of one env: unbounded float32."""
         return spaces.Box(-np.inf, np.inf, self.action_feature.shape, np.float32)
 
     def same_schema(self, other: "EnvDescriptor") -> bool:
-        """Whether ``other`` declares the same observations, action and semantics."""
+        """Return whether ``other`` has the same observation features, action feature and semantics."""
         return (
             self.features == other.features
             and self.action_feature == other.action_feature
@@ -78,7 +78,7 @@ class EnvDescriptor:
 
 @dataclass(frozen=True)
 class StepResult:
-    """Result of stepping a batch of environments once."""
+    """Result of one reset or step of a batch of envs. Arrays have the batch dimension first."""
 
     obs: dict[str, np.ndarray]
     task: tuple[str, ...]
@@ -90,14 +90,14 @@ class StepResult:
     elapsed_steps: np.ndarray
 
     def frames(self) -> list[np.ndarray]:
-        """Each environment's frame from its first RGB observation, terminal frames included."""
+        """Return one frame per env from the first RGB observation, including terminal frames."""
         key = next((k for k, v in self.obs.items() if v.dtype == np.uint8 and v.ndim == 4), None)
         if key is None:
             raise ValueError("This environment exposes no RGB observation")
         return [frame.copy() for frame in self.obs[key]]
 
     def info(self) -> dict[str, Any]:
-        """The Gymnasium ``info`` of this step."""
+        """Return the Gymnasium ``info`` dict for this step."""
         return {
             "is_success": self.is_success,
             "task": self.task,

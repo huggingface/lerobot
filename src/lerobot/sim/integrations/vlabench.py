@@ -531,7 +531,7 @@ def env_fns(
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """The factories of ``n_envs`` VLABench environments for each task: ``{suite: {task_id: [factory, ...]}}``.
+    """Return ``n_envs`` env factories per VLABench task, as ``{suite: {task_id: [factory, ...]}}``.
 
     Notes:
         - n_envs is the number of rollouts *per task*.
@@ -565,6 +565,6 @@ def env_fns(
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """VLABench's control rate, controller and component names."""
+    """Return VLABench's default fps, control mode, and state and action names."""
     names = ("eef.x", "eef.y", "eef.z", "eef.euler.x", "eef.euler.y", "eef.euler.z", "gripper.opening")
     return {"fps": 10, "control_mode": "eef_pose", "state_names": names, "action_names": names}

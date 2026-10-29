@@ -281,7 +281,7 @@ class EpisodicStrategy(RolloutStrategy):
                             {**obs_frame, **action_frame, "task": self._require_engine().dispatched_task}
                         )
 
-            # A sim robot's own episode end (success, failure or step limit) ends this one.
+            # End the recorded episode when the sim robot's episode ends (success, failure or step limit).
             if episode_ended(robot.inner):
                 break
 

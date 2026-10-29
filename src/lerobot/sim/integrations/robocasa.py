@@ -361,7 +361,7 @@ def env_fns(
     episode_length: int | None = None,
     obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """The factories of ``n_envs`` RoboCasa365 environments for each task: ``{task_name: {0: [factory, ...]}}``.
+    """Return ``n_envs`` env factories per RoboCasa365 task, as ``{task_name: {0: [factory, ...]}}``.
 
     `task` can be:
       - a single task name (e.g. `CloseFridge`)
@@ -417,7 +417,7 @@ def env_fns(
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """RoboCasa's control rate, controller, component names and simulated body."""
+    """Return RoboCasa's default fps, control mode, state and action names, and robot type."""
     return {
         "fps": 20,
         "control_mode": "delta",

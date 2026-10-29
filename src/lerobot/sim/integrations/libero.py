@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 def _quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
-    """Convert xyzw quaternions to axis-angle as robosuite's quat2axisangle does: zero near the identity."""
+    """Convert xyzw quaternions to axis-angle like robosuite's ``quat2axisangle``: zeros near the identity."""
     quat = np.asarray(quat, dtype=np.float32)
     if quat.shape[-1:] != (4,):
         raise ValueError("Quaternion must end in four xyzw components")
@@ -49,7 +49,7 @@ def _quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
 
 
 def canonical_observation(obs: Mapping) -> dict[str, np.ndarray]:
-    """Apply LIBERO's camera orientation and build its 8-D state: eef position, axis-angle, gripper joints."""
+    """Map a LIBERO observation to LeRobot keys, rotating images by 180 degrees and building the 8-D state."""
     adapted = dict(obs)
     state = adapted.pop("robot_state", None)
     if state is not None:
@@ -95,7 +95,7 @@ def _load_initial_states(path: Path) -> np.ndarray:
         return np.load(portable, allow_pickle=False)
     if os.environ.get("LEROBOT_SIM_REQUIRE_NUMPY") == "1":
         raise FileNotFoundError(f"Convert initial-state asset before serving: {portable}")
-    # Original assets are torch pickles; served images ship the converted .npy files instead.
+    # Only the original torch-pickle assets need torch; sim Docker images ship converted .npy files.
     import torch
 
     return np.asarray(torch.load(path, weights_only=False))  # nosec B614
@@ -490,7 +490,7 @@ def env_fns(
     camera_name_mapping: dict[str, str] | None = None,
     is_libero_plus: bool = False,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """The factories of ``n_envs`` LIBERO environments for each task: ``{suite: {task_id: [factory, ...]}}``.
+    """Return ``n_envs`` LIBERO env factories per task, as ``{suite: {task_id: [factory, ...]}}``.
 
     Notes:
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
@@ -544,10 +544,7 @@ def env_fns(
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """LIBERO's control rate, controller, component names and simulated body.
-
-    LIBERO's own ``control_mode`` commands end-effector deltas (``relative``) or poses (``absolute``).
-    """
+    """Return LIBERO's defaults. ``control_mode``: ``relative`` (eef deltas) or ``absolute`` (eef poses)."""
     pose = ("eef.x", "eef.y", "eef.z", "eef.axis_angle.x", "eef.axis_angle.y", "eef.axis_angle.z")
     absolute = kwargs.get("control_mode", "relative") == "absolute"
     commanded = pose if absolute else tuple(name.replace("eef.", "eef.delta.") for name in pose)

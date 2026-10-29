@@ -31,11 +31,10 @@ def _embeds_robot(config_class: type) -> bool:
 
 
 class _SimulatedEnvChoices(ChoiceType):
-    """The environments a sim robot can run: every ``EnvConfig`` except those built around a robot.
+    """The ``--robot.env.type`` choices: every ``EnvConfig`` except those that embed a robot config.
 
-    It narrows the ``--robot.env.type`` choices. An env that embeds a robot config (``gym_manipulator``)
-    would make the robot and env registries contain each other, and draccus expands every choice of a
-    config tree. It is not an ``EnvConfig`` subclass, which draccus would not treat as a choice type.
+    Those (``gym_manipulator``) would make draccus expand robot and env choices into each other forever.
+    Not an ``EnvConfig`` subclass, which draccus wouldn't treat as a choice type.
     """
 
     @classmethod
@@ -64,10 +63,10 @@ else:
 @RobotConfig.register_subclass("sim")
 @dataclass
 class SimRobotConfig(RobotConfig):
-    """A simulated environment driven as a robot. It needs no calibration."""
+    """A sim env driven as a robot. It needs no calibration."""
 
-    # The environment, e.g. --robot.env.type=libero; its `task` selects the suite. With
-    # --robot.env.server.endpoint set, it runs in lerobot-env-server instead of in this process.
+    # The env, e.g. --robot.env.type=libero. Its `task` picks the suite. With
+    # --robot.env.server.endpoint set, the env runs on lerobot-env-server instead of in this process.
     env: SimulatedEnvConfig
     # Index of the task within the suite.
     task_id: int = 0

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Sims: the simulators behind simulated envs, without torch.
+"""Simulators behind sim envs.
 
-A ``SimConfig`` names a simulator integration (``lerobot.sim.integrations.<type>``) and its options, and
-``LocalVectorEnv`` steps it in this process. ``lerobot.envs`` builds it from an ``EnvConfig``, and
-``lerobot.env_server`` serves it. A simulator's dependencies are imported only when it is selected.
+A ``SimConfig`` names an integration (``lerobot.sim.integrations.<type>``) and its options.
+``LocalVectorEnv`` runs it, and ``lerobot.env_server`` serves it. Simulator packages are imported only
+when used.
 """

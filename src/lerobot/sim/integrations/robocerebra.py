@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RoboCerebra integration using LIBERO's environment and observation conventions."""
+"""RoboCerebra integration: reuses the LIBERO env, observation mapping and conventions."""
 
 from .libero import canonical_observation, conventions, env_fns
 

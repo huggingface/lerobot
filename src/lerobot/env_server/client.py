@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Client of a simulator server, and the vector environment it backs."""
+"""Client for the env server."""
 
 import uuid
 from threading import RLock
@@ -39,7 +39,7 @@ from .protocol import (
 
 
 class EnvClient:
-    """One session with a simulator server; operations are never retried."""
+    """One session with an env server. Requests are never retried."""
 
     def __init__(
         self,
@@ -52,14 +52,11 @@ class EnvClient:
         handshake_timeout_s: float = 10.0,
         zenoh_config_path: str | None = None,
     ):
-        """Configure the connection; nothing is opened before ``describe`` or ``open``.
+        """Set up the client; nothing connects until ``describe`` or ``open``.
 
-        ``handshake_timeout_s`` bounds connecting and describing, so an absent server is reported quickly.
-        ``timeout_s`` bounds per-tick operations; ``setup_timeout_s`` (default: the same) bounds open and
-        reset, which may build or rebuild native simulators. Without a ``deployment``, the client uses
-        whichever deployment the endpoint serves. ``encoding="jpeg"`` asks the server to send camera frames
-        as JPEG at ``jpeg_quality``, a bandwidth for fidelity tradeoff. ``zenoh_config_path`` is a Zenoh
-        JSON5 file with TLS and access-control settings, as for remote inference.
+        ``handshake_timeout_s`` bounds connecting, ``setup_timeout_s`` (at least ``timeout_s``) bounds open
+        and reset, and ``timeout_s`` bounds other requests. Without a ``deployment``, use the one the endpoint
+        serves.
         """
         if encoding not in {"raw", "jpeg"} or not 1 <= jpeg_quality <= 100:
             raise ValueError("Image encoding must be raw or jpeg, with jpeg_quality in [1, 100]")
@@ -116,7 +113,7 @@ class EnvClient:
             return self.descriptor
 
     def _wrong_deployment(self) -> Exception:
-        """The deployment did not answer: name the one this endpoint serves, if any answers."""
+        """Return an error naming the deployment this endpoint serves, or a timeout if no server answers."""
         try:
             body = self._query(ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s)
         except (TimeoutError, ProtocolError):
@@ -132,7 +129,7 @@ class EnvClient:
 
     @property
     def prefix(self) -> str:
-        """The address of the open session."""
+        """Key prefix of the open session."""
         if not self.session:
             raise RuntimeError("Simulator session is not open")
         return session_prefix(self.deployment, self.instance, self.session)
@@ -145,10 +142,7 @@ class EnvClient:
         seeds: list[int | None] | None = None,
         use_async_envs: bool = False,
     ) -> StepResult:
-        """Open a session with ``num_envs`` environments of one task and return its first result.
-
-        ``use_async_envs`` asks the server to run each environment in its own process.
-        """
+        """Open a session of ``num_envs`` envs on one task and return the result of its first reset."""
         with self.lock:
             if self.session:
                 raise RuntimeError("Simulator session already open")
@@ -183,10 +177,7 @@ class EnvClient:
             return result
 
     def request(self, operation: str, **body: Any) -> dict[str, Any]:
-        """Send one operation on the open session and return its reply, ``result`` decoded and validated.
-
-        A failed or timed-out operation fails the session, since it may have run.
-        """
+        """Send one operation and return its checked reply. A failure fails the session: it may have run."""
         with self.lock:
             if self.failed:
                 raise RuntimeError("Simulator session failed; close and reopen before continuing")
@@ -204,7 +195,6 @@ class EnvClient:
                     self.generation = reply["generation"]
                 return reply
             except Exception:
-                # A timed-out mutation may have executed. Never continue with ambiguous environment state.
                 self.failed = True
                 raise
 
@@ -219,7 +209,7 @@ class EnvClient:
             self.timeout_s if timeout is None else timeout,
             MessageType.ACK if message.session_id else MessageType.ACCEPTED,
             max_replies=1,
-            # Mutations are never retried, so a reply dropped under congestion is fatal: block instead.
+            # Requests are never retried, so a reply dropped under congestion would fail the session.
             congestion_control="block",
         )
         return response.body
@@ -240,7 +230,7 @@ class EnvClient:
 
 
 class RemoteVectorEnv(gym.vector.VectorEnv):
-    """``num_envs`` served environments of one task, stepped explicitly."""
+    """Vector env of ``num_envs`` envs on one task, run by an env server, without autoreset."""
 
     canonical_observations = True
 
@@ -253,14 +243,14 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         descriptor: EnvDescriptor | None = None,
         use_async_envs: bool = False,
     ):
-        """Describe the served task; its session opens on the first reset."""
+        """Fetch the descriptor unless one is given. The session opens on the first ``reset``."""
         self.client = client
         self.use_async_envs = use_async_envs
         self.descriptor = descriptor or self.client.describe()
         self.num_envs = num_envs
         self.task_group = task_group or next(iter(self.descriptor.tasks))
         tasks = self.descriptor.tasks.get(self.task_group, [])
-        # The suite's first task unless one is named, as for a local environment.
+        # Default to the group's first task, like a local env.
         self.task_id: int = int(next(iter(tasks), 0)) if task_id is None else task_id
         self.metadata = {
             "render_fps": self.descriptor.fps,
@@ -290,7 +280,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         seed: int | list[int | None] | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
-        """Reset every served environment with explicit seeds."""
+        """Reset every env, opening the session on first use; env ``i`` gets seed ``seed + i``."""
         if options:
             raise ValueError("This environment does not define reset options")
         seeds: list[int | None] | None = (
@@ -308,7 +298,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
     def step(
         self, actions: np.ndarray
     ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
-        """Advance every unfinished served environment once."""
+        """Step every unfinished env once."""
         if not self.client.session:
             raise RuntimeError("Reset before stepping")
         result = self._result(self.client.request("step", actions=np.asarray(actions, dtype=np.float32)))
@@ -339,7 +329,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         return self.call(name)
 
     def render(self) -> list[np.ndarray]:
-        """Return the latest RGB frame of every served environment, terminal frames included."""
+        """Return the latest RGB frame of every env, including envs whose episode has ended."""
         return self.latest.frames()
 
     def close_extras(self, **kwargs: Any) -> None:

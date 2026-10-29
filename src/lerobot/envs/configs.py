@@ -39,22 +39,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Timeout of each request to a served environment.
+# Timeout of each request to a served env.
 SERVED_TIMEOUT_S = 120.0
 
 
 @dataclass
 class EnvServerConfig:
-    """Where `lerobot-env-server` serves an environment, and how to talk to it."""
+    """Address of a `lerobot-env-server` that runs the env, and how the client talks to it."""
 
     endpoint: str
-    # The server's deployment; its configs name it after the env type, the default.
+    # Deployment name on the server. Defaults to the env type, which is how server configs name it.
     deployment: str | None = None
-    # How long to wait for the server to connect and answer before reporting it absent.
+    # Seconds to wait for the server to connect and reply before reporting that no server answered.
     handshake_timeout_s: float = 10.0
-    # A Zenoh JSON5 file with TLS and access-control settings, as for remote inference.
+    # Zenoh JSON5 file with TLS and access-control settings, as for remote inference.
     zenoh_config_path: str | None = None
-    # "jpeg" sends camera frames as JPEG at jpeg_quality, a bandwidth for fidelity tradeoff.
+    # "raw" or "jpeg". JPEG (at jpeg_quality) sends camera frames with less bandwidth but lower quality.
     encoding: str = "raw"
     jpeg_quality: int = 90
 
@@ -63,12 +63,12 @@ class EnvServerConfig:
 class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     task: str | None = None
     fps: int = 30
-    # Set from the environment's description when it is created.
+    # Filled from the env's descriptor when the env is created.
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
-    # The env server running this environment; unset, it runs in this process.
+    # Env server that runs this env. When unset, the env runs in this process.
     server: EnvServerConfig | None = None
 
     @property
@@ -87,20 +87,18 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @property
     def gym_kwargs(self) -> dict:
-        """Keyword arguments for the simulator's environments; none by default."""
+        """Keyword arguments used to build the sim's envs; empty by default."""
         return {}
 
     def sim_settings(self) -> dict[str, Any]:
-        """The simulator this config describes, as a server YAML's ``sim`` section.
+        """Return the sim settings, as in a server YAML's ``sim`` section; missing ones use sim defaults.
 
-        Settings left out (fps, control_mode, semantics, component names) follow the simulator's conventions.
-        By default, the environment Gymnasium registers as ``gym_id``, built with ``gym_kwargs`` and
-        commanded with deltas; override it to declare other conventions.
+        The default is the Gymnasium env ``gym_id`` with ``gym_kwargs`` and delta actions; override otherwise.
         """
         return _gym_settings(self, "delta")
 
     def sim_config(self) -> SimConfig:
-        """The resolved simulator settings, as the env server and local environments run them."""
+        """Return ``sim_settings()`` with the sim's defaults, as local envs and the env server run it."""
         return SimConfig.resolve(self.sim_settings())
 
     def create_envs(
@@ -108,11 +106,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         n_envs: int,
         use_async_envs: bool = False,
     ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        """Create local or served vector environments grouped by suite and task.
-
-        ``use_async_envs`` runs each environment in its own worker process, locally or on the server; a single
-        environment runs in-process.
-        """
+        """Create local or served vector envs, as ``{suite: {task_id: env}}``."""
         descriptor, make = self._environment_factory(n_envs, use_async_envs)
         groups = [task.strip() for task in self.task.split(",")] if self.task else list(descriptor.tasks)
         result = {}
@@ -129,7 +123,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         n_envs: int = 1,
         use_async_envs: bool = False,
     ) -> LocalVectorEnv | RemoteVectorEnv:
-        """Create one local or served environment for a specific task."""
+        """Create one local or served vector env for one task."""
         descriptor, make = self._environment_factory(n_envs, use_async_envs, task_group, task_id)
         group = task_group or next(iter(descriptor.tasks))
         if group not in descriptor.tasks:
@@ -182,7 +176,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         else:
             sim = self.sim_config()
             parallel = use_async_envs and n_envs > 1
-            # The environment built to read the description is handed out for its task, not built again.
+            # Reuse the env built to read the descriptor for its own task instead of building it twice.
             first = [LocalVectorEnv(sim, n_envs, task_group, task_id, parallel)]
             descriptor = first[0].descriptor
 
@@ -192,7 +186,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                     if (group, task_id) == (env.task_group, env.task_id):
                         return env
                     env.close()
-                # Given the descriptor, the other tasks build their simulators on first use.
+                # With the descriptor given, the other tasks build their sims on first use.
                 return LocalVectorEnv(sim, n_envs, group, task_id, parallel, descriptor)
 
         self.fps = int(descriptor.fps)
@@ -203,7 +197,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             for f in descriptor.features
         }
         self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=descriptor.action_feature.shape)
-        # Canonical keys reach the policy unchanged; --rename_map aliases them like any env.
+        # Sim keys reach the policy unchanged; --rename_map renames them, as for any env.
         self.features_map = {name: name for name in self.features}
         return descriptor, make
 
@@ -213,14 +207,10 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
 
 def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str) -> None:
-    """Refuse a server that runs another environment than the one expected; warn on other options.
-
-    Only the settings ``expected`` sets are compared: the others follow the server's simulator, which the
-    client may not have installed.
-    """
+    """Raise if the server runs a different env than ``expected``; warn if only its kwargs differ."""
 
     def plain(value: Any) -> Any:
-        # YAML, wire and dataclass values compare alike: tuples as lists, recursively.
+        # Make YAML, wire and dataclass values comparable: tuples become lists, recursively.
         if isinstance(value, dict):
             return {key: plain(item) for key, item in value.items()}
         if isinstance(value, (list, tuple)):
@@ -233,7 +223,7 @@ def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str
         if key != "kwargs" and value is not None and plain(value) != plain(served.get(key))
     ]
     served_kwargs = served.get("kwargs") or {}
-    # The env server loads an EnvHub repository from where its image put it.
+    # hub_path and trust_remote_code may differ: the env server loads EnvHub repos from its own image.
     warnings = [
         f"kwargs.{key}: server {served_kwargs.get(key)!r}, expected {value!r}"
         for key, value in (expected.get("kwargs") or {}).items()
@@ -251,21 +241,18 @@ def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str
 @EnvConfig.register_subclass("envhub")
 @dataclass
 class HubEnvConfig(EnvConfig):
-    """An EnvHub repository: its ``env.py`` defines the environment and ``make_env``.
-
-    Running it executes the repository's code; ``trust_remote_code`` is that consent.
-    """
+    """An env from an EnvHub repo's ``env.py``; running it needs ``trust_remote_code``."""
 
     hub_path: str | None = None  # required: e.g., "username/repo" or "username/repo@branch:file.py"
     trust_remote_code: bool = False
-    # Keyword arguments of the repository's make_env, e.g. '{"episode_length": 9000}'.
+    # Keyword arguments for the repo's make_env, e.g. '{"episode_length": 9000}'.
     make_env_kwargs: dict[str, Any] = field(default_factory=dict)
     use_native_batch: bool = False
 
     def create_envs(
         self, n_envs: int, use_async_envs: bool = False
     ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        """Optionally keep the provider's vector wrappers and device-native batches."""
+        """With ``use_native_batch``, return the repo's own vector envs (e.g. GPU batches) unchanged."""
         if not self.use_native_batch:
             return super().create_envs(n_envs, use_async_envs)
         if self.server is not None:
@@ -281,7 +268,7 @@ class HubEnvConfig(EnvConfig):
             raise ValueError("use_native_batch is for batched evaluation, not SimRobot or the env server")
         if not self.hub_path:
             raise ValueError("--env.hub_path is required for an EnvHub environment")
-        # The suites come from the repository; --env.task selects among them.
+        # The repo defines the suites; --env.task picks among them.
         return {
             "type": "envhub",
             "task": "",
@@ -299,7 +286,7 @@ def _gym_settings(
     state_names: tuple[str, ...] = (),
     action_names: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """An environment ``gym.make`` builds from ``config.gym_id``, with the given conventions."""
+    """Return sim settings for an env that ``gym.make`` builds from ``config.gym_id``."""
     return {
         "type": "gym",
         "task": config.task,
@@ -445,7 +432,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
         raise NotImplementedError("gym_manipulator wraps a robot for RL; it does not describe a simulator")
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        """Refuse: this config drives a physical robot, which `make_env` and `lerobot-eval` cannot build."""
+        """Raise: this config drives a real robot, which `make_env` and `lerobot-eval` cannot build."""
         raise NotImplementedError(
             "'gym_manipulator' is a real-robot environment: make_env and lerobot-eval cannot build it. "
             "Run it with `python -m lerobot.rl.gym_manipulator --config_path <config.json>`, and evaluate a "
@@ -466,7 +453,8 @@ class LiberoEnv(EnvConfig):
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
     hard_reset: bool = True
-    # Raw camera name -> observation name; default agentview_image -> image, robot0_eye_in_hand_image -> image2.
+    # Raw camera name -> observation name. Default: agentview_image -> image,
+    # robot0_eye_in_hand_image -> image2.
     camera_name_mapping: dict[str, str] | None = None
     observation_height: int = 360
     observation_width: int = 360
@@ -543,8 +531,8 @@ class RoboCasaEnv(EnvConfig):
     episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
-    # Raw RoboCasa camera names are the observation names (`observation.images.robot0_agentview_left`), as
-    # in the RoboCasa datasets on the Hub, so policies trained on them need no `--rename_map`.
+    # Observation names use the raw RoboCasa camera names (`observation.images.robot0_agentview_left`), as
+    # the RoboCasa datasets on the Hub do, so policies trained on them need no `--rename_map`.
     camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
     observation_height: int = 256
     observation_width: int = 256
@@ -624,7 +612,7 @@ class VLABenchEnv(EnvConfig):
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):
     hub_path: str = "nvidia/isaaclab-arena-envs"
-    # The repository's own vector environment runs locally, through EnvHub's native-batch path.
+    # Run the repo's own vector env locally, as an EnvHub native batch.
     use_native_batch: bool = True
     episode_length: int = 300
     num_envs: int = 1
@@ -730,7 +718,7 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
     """
 
     hub_path: str = "lerobot/unitree-g1-mujoco"
-    # The repository's own vector environment runs locally, through EnvHub's native-batch path.
+    # Run the repo's own vector env locally, as an EnvHub native batch.
     use_native_batch: bool = True
     end_effector: G1EndEffector = G1EndEffector.DEX1
     publish_images: bool = True
@@ -778,7 +766,7 @@ class LiberoPlusEnv(LiberoEnv):
 @EnvConfig.register_subclass("robocerebra")
 @dataclass
 class RoboCerebraEnv(LiberoEnv):
-    """RoboCerebra long-horizon tasks on LIBERO scenes, with its datasets' camera names and resolution."""
+    """RoboCerebra long-horizon tasks on LIBERO scenes, using its datasets' camera names and image size."""
 
     task: str = "libero_10"
     observation_height: int = 256
@@ -807,8 +795,8 @@ class RoboTwinEnvConfig(EnvConfig):
     # Available cameras from RoboTwin's aloha-agilex embodiment: head_camera
     # (torso-mounted) + left_camera / right_camera (wrists).
     camera_names: str = "head_camera,left_camera,right_camera"
-    # Match the D435 dims in task_config/demo_clean.yml (_camera_config.yml). They must equal what SAPIEN
-    # renders: observations are checked against the declared shape.
+    # Match the D435 size in task_config/demo_clean.yml (_camera_config.yml). It must equal what SAPIEN
+    # renders, since observations are checked against the declared shape.
     observation_height: int = 240
     observation_width: int = 320
     # "joint": 14-d joint-space control. "ee": 16-d end-effector-pose deltas executed via CuRobo IK
@@ -839,7 +827,7 @@ class RoboMMEEnv(EnvConfig):
     Benchmark: https://github.com/RoboMME/robomme_benchmark
 
     Requires the `robomme` git package installed separately (Linux only);
-    see the robomme_native stage of docker/Dockerfile.sim for the canonical install.
+    see the robomme_native stage of docker/Dockerfile.sim for how to install it.
     """
 
     task: str = "PickXtimes"

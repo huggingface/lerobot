@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Torch-free canonical feature schemas and value validation, shared by environments, policies and services."""
+"""Feature schemas and array checks without torch, shared by envs, policies and servers."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -22,7 +22,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class FeatureSpec:
-    """Schema of one named value: shape, dtype, modality, component names and semantics."""
+    """Schema of one named value: shape, dtype, kind (``tensor`` or ``rgb``), component names, semantics."""
 
     name: str
     shape: tuple[int, ...]
@@ -32,7 +32,7 @@ class FeatureSpec:
     semantics: str = ""
 
     def __post_init__(self) -> None:
-        """Reject unsupported modalities and ambiguous feature metadata."""
+        """Convert ``shape`` and ``names`` to tuples and reject invalid metadata."""
         object.__setattr__(self, "shape", tuple(self.shape))
         object.__setattr__(self, "names", tuple(self.names))
         if (
@@ -59,7 +59,7 @@ class FeatureSpec:
 
 
 def validate_array(value: Any, feature: FeatureSpec, *, leading_shape: tuple[int, ...] = ()) -> None:
-    """Validate canonical NumPy values with optional batch or action-horizon dimensions."""
+    """Check ``value`` against ``feature``, allowing extra leading dims such as batch or horizon."""
     shape = (*leading_shape, *feature.shape)
     if not isinstance(value, np.ndarray) or value.shape != shape or value.dtype.name != feature.dtype:
         raise ValueError(f"Feature {feature.name!r} shape/dtype mismatch: expected {shape}, {feature.dtype}")

@@ -30,9 +30,9 @@ Usage:
         --policy pepijn223/smolvla_libero
 
 Writes <artifacts-dir>/metrics.json. The CI workflow then uploads this file
-as a GitHub Actions artifact named "<env>-metrics". The score is recorded with what it depends on: the
-checkpoint revision, simulator image tag and tested commit, when given. An evaluation whose episodes were
-capped with --max-episode-steps is marked "smoke": it checks the pipeline, not the policy.
+as a GitHub Actions artifact named "<env>-metrics". When given, it also records the checkpoint
+revision, simulator image tag and tested commit. A run with --max-episode-steps is marked "smoke":
+it checks that evaluation runs, not how good the policy is.
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ def main() -> int:
         "sim_tag": args.sim_tag,
         "commit": args.commit,
         "max_episode_steps": args.max_episode_steps,
-        # Capped episodes check that evaluation runs end to end; the success rate is not a policy score.
+        # Capped episodes only check that evaluation runs; the success rate is not a policy score.
         "smoke": args.max_episode_steps is not None,
         "pc_success": pc_success,
         "n_episodes": n_episodes,

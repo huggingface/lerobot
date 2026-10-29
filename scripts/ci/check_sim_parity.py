@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compare a simulator's seeded transitions run locally and served, inside its image."""
+"""Check that an env server returns the same steps as the same simulator run locally."""
 
 import argparse
 import logging
@@ -49,7 +49,7 @@ def check(config_path: Path, steps: int = 5):
     finally:
         env.close()
     config["zenoh"] = {"listen_endpoints": ["tcp/127.0.0.1:7458"]}
-    # Probe quickly while the server starts; reset and step keep the default timeout.
+    # A short handshake timeout keeps polling fast while the server starts; other calls keep the default.
     client = EnvClient("tcp/127.0.0.1:7458", config.get("deployment", "default"), handshake_timeout_s=1)
     with tempfile.TemporaryDirectory() as directory:
         server_config = Path(directory) / "server.yaml"
@@ -66,7 +66,7 @@ def check(config_path: Path, steps: int = 5):
                     try:
                         client.describe()
                         break
-                    except Exception:  # Connection refused before listen, or describe timeout.
+                    except Exception:  # Server not listening yet, or describe() timed out.
                         client.close()
                         if server.poll() is not None or time.monotonic() >= deadline:
                             log.seek(0)

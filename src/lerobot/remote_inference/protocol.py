@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Remote inference key addresses and admission errors; the message envelope lives in lerobot.transport.protocol."""
+"""Remote inference keys and admission errors; re-exports the shared envelope types."""
 
 import math
 from typing import Any
@@ -39,7 +39,7 @@ __all__ = [
     "session_prefix",
 ]
 
-# Remote inference's protocol version, in its keys; the shared envelope has its own.
+# Remote inference protocol version, used in its keys. Separate from the envelope version.
 PROTOCOL_VERSION = 1
 IDENTITY_KEYS = ("artifact_identity", "observation_id", "capture_time", "task", "task_version")
 

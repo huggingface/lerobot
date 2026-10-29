@@ -586,7 +586,7 @@ def env_fns(
     episode_length: int = DEFAULT_EPISODE_LENGTH,
     action_mode: str = "joint",
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """The factories of ``n_envs`` RoboTwin 2.0 environments for each task: ``{task_name: {0: [factory, ...]}}``.
+    """Return ``n_envs`` env factories per RoboTwin 2.0 task, as ``{task_name: {0: [factory, ...]}}``.
 
     Args:
         task: Comma-separated list of task names (e.g. ``"beat_block_hammer"``
@@ -630,14 +630,14 @@ def env_fns(
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """RoboTwin's control rate, controller, component names and simulated body."""
-    # Each arm's six joints then its gripper, left arm first.
+    """Return RoboTwin's default fps, control mode, state and action names, and robot type."""
+    # Left arm first; each arm has six joints, then its gripper.
     joints = tuple(
         name
         for side in ("left", "right")
         for name in (*(f"{side}_joint_{i}.pos" for i in range(6)), f"{side}_gripper.pos")
     )
-    # Joint mode commands and observes the 14 joints; ee mode commands 16-D poses, left unnamed.
+    # In ee mode the action is a 16-D eef pose, so it gets no names.
     return {
         "fps": 25,
         "control_mode": "position",

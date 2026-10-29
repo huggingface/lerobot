@@ -80,7 +80,7 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    # Torch-backed helpers load on first use so torch-free images (simulator servers) can import utils.
+    # Import torch helpers on first use, so images without torch (simulator servers) can import utils.
     if name == "ActionInterpolator":
         from .action_interpolator import ActionInterpolator
 

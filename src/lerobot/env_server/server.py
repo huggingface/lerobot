@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Serve simulator environments; one thread owns and steps them."""
+"""Serve simulator envs to clients. One thread owns and steps every env."""
 
 import contextlib
 import logging
@@ -51,13 +51,13 @@ from .protocol import (
 
 logger = logging.getLogger(__name__)
 
-# Room in a reply for what is not observations: rewards, flags, task text and the envelope.
+# Reply space kept for everything except observations: rewards, flags, task text and the envelope.
 _REPLY_HEADROOM_BYTES = 64 * 1024
 
 
 @dataclass
 class ServerConfig:
-    """The simulator a server runs, its resource limits and its Zenoh endpoints."""
+    """Simulator to serve, resource limits and Zenoh endpoints."""
 
     sim: SimConfig
     deployment: str = "default"
@@ -69,7 +69,7 @@ class ServerConfig:
 
 
 class _Session:
-    """One client's batch of environments; closed when the client's presence is lost."""
+    """One client's batch of envs. The server closes it when the client goes away."""
 
     def __init__(
         self,
@@ -85,9 +85,9 @@ class _Session:
         self.encoding = encoding
         self.jpeg_quality = jpeg_quality
         self.rgb = {f.name for f in env.descriptor.features if f.kind == "rgb"}
-        # A reset counts a generation: requests sent before it are rejected as stale.
+        # Each reset bumps the generation, so requests sent before it are rejected as stale.
         self.generation = 0
-        # Set when the simulator fails: the session then refuses every operation.
+        # Set when the simulator fails; after that the session refuses every operation.
         self.fault: str | None = None
         self.opened_at = time.monotonic()
         self.seen_client = False
@@ -102,7 +102,7 @@ class _Session:
             cleanup.pop_all()
 
     def handle(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Reset or step the owned environments."""
+        """Run a reset or step and return the reply body. A simulator error fails the session."""
         if self.fault is not None:
             raise ProtocolError(ErrorCode.EXECUTION, self.fault)
         if operation == "reset":
@@ -126,7 +126,7 @@ class _Session:
         raise ProtocolError(ErrorCode.UNSUPPORTED, f"Unsupported operation: {operation}")
 
     def actions(self, value: Any) -> np.ndarray:
-        """Validate a batch of actions against the environment contract."""
+        """Check that an action batch matches the env's action feature and batch size."""
         try:
             validate_array(value, self.env.descriptor.action_feature, leading_shape=(self.env.num_envs,))
         except ValueError as exc:
@@ -134,11 +134,11 @@ class _Session:
         return cast(np.ndarray, value)
 
     def close(self) -> None:
-        """Release the environments."""
+        """Close the envs."""
         self.env.close()
 
     def encode(self, reply: dict[str, Any]) -> dict[str, Any]:
-        """Send each environment's camera frames as JPEG when requested at open."""
+        """Mark camera frames for JPEG encoding if the client asked for it at open."""
         result = reply.get("result")
         if self.encoding == "raw" or result is None:
             return reply
@@ -152,29 +152,28 @@ class _Session:
 
 
 class EnvServer:
-    """Serve one simulator's environments to clients; a single thread owns and steps them."""
+    """Serve one simulator's envs to clients. Only the thread running ``serve`` builds and steps them."""
 
     def __init__(self, config: ServerConfig):
-        """Create the transport; simulators are built when serving starts."""
+        """Create the transport. Simulators are built in ``serve``."""
         self.config = config
         if config.max_envs < 1 or config.max_sessions < 1:
             raise ValueError("Server resource bounds must be positive")
         self.instance = uuid.uuid4().hex
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
-        # Built at startup to describe the simulator, then handed to the first matching session.
+        # Built at startup to read the descriptor, then reused by the first session asking for the same batch.
         self._startup_env: LocalVectorEnv | None = None
         self.ready = Event()
         self.stop = Event()
         self.descriptor: EnvDescriptor
 
     def serve(self) -> None:
-        """Answer requests until stopped; every simulator call happens on this thread."""
+        """Answer requests until ``stop`` is set. Every simulator call happens on this thread."""
         try:
-            # Listen first: clients connecting while a slow simulator starts wait instead of failing.
+            # Open the transport first, so clients that connect while a slow simulator starts wait
+            # instead of failing.
             self.transport.open()
-            # Built on the thread that later steps it; the first session asking for this batch reuses it
-            # instead of building another.
             self._startup_env = LocalVectorEnv(self.config.sim)
             self.descriptor = self._startup_env.descriptor
             root = deployment_prefix(self.config.deployment)
@@ -182,7 +181,7 @@ class EnvServer:
             describe = self.transport.declare_queryable(
                 root + "/describe", reply_timeout=self.config.request_timeout_s
             )
-            # Answered too for clients that take whichever deployment this endpoint serves.
+            # Also answer clients that do not name a deployment.
             any_describe = self.transport.declare_queryable(
                 ANY_DEPLOYMENT_DESCRIBE, reply_timeout=self.config.request_timeout_s
             )
@@ -221,7 +220,7 @@ class EnvServer:
 
     @staticmethod
     def _send(pending: PendingQuery, reply: Envelope) -> None:
-        """Reply once; a lost reply leaves the client waiting for its full timeout, so log it."""
+        """Send the reply, and warn if it was not sent: the client then waits for its full timeout."""
         if not pending.reply(encode_message(reply)):
             logger.warning(
                 "Reply %s for %s was not sent: the query expired %.1fs ago",
@@ -238,7 +237,7 @@ class EnvServer:
             reply = message.reply(MessageType.ACK if message.session_id else MessageType.ACCEPTED, body)
         except Exception as exc:
             code = exc.code if isinstance(exc, ProtocolError) else ErrorCode.EXECUTION
-            # A request that cannot be decoded has no envelope to answer; reply with an empty one.
+            # An undecodable request has no envelope to reply to, so reply with an empty one.
             reply = (message or Envelope(MessageType.DESCRIBE)).error(code, str(exc))
             logger.debug("Simulator request failed", exc_info=True)
         self._send(pending, reply)
@@ -314,7 +313,7 @@ class EnvServer:
     def _session_env(
         self, count: int, task_group: str | None, task_id: int, use_async_envs: bool
     ) -> LocalVectorEnv:
-        """The startup environment when the session asks for it, else a new one."""
+        """Return the startup env if it matches the request; otherwise close it and build a new one."""
         env, self._startup_env = self._startup_env, None
         if env is not None:
             asked = (count, task_group or env.task_group, task_id, use_async_envs)

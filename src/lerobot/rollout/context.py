@@ -321,7 +321,7 @@ def _disconnect_setup_hardware(robot: Robot, teleop: Teleoperator | None) -> Non
     """Release each connected device without masking the original setup failure."""
     for name, resource in (("teleoperator", teleop), ("robot", robot)):
         try:
-            # A sim robot holds its simulator from construction, so it is closed even if never connected.
+            # A sim robot builds its sim in __init__, so close it even if it never connected.
             if resource is not None and (resource.is_connected or isinstance(resource, SimRobot)):
                 resource.disconnect()
         except Exception:
@@ -529,7 +529,7 @@ def build_rollout_context(
 
     try:
         # Retain position and base-velocity channels for mobile manipulators, plus cameras.
-        # A sim robot's state and action components are all policy inputs, whatever their names.
+        # Keep every state and action component of a sim robot, whatever its name.
         keep_all = isinstance(robot, SimRobot)
         all_obs_features = robot.observation_features
         observation_features_hw: dict[str, type | tuple] = {

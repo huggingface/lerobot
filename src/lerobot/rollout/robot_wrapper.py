@@ -106,7 +106,7 @@ class ThreadSafeRobot:
         self._position_hold_enabled = True
 
     def configure_hold(self) -> None:
-        """Enable the robot's own hold() if it declares one, otherwise position hold (raises if unsupported)."""
+        """Enable the robot's own hold() if it has one, else position hold. Raises if neither is supported."""
         if self.supports_command_hold:
             self._command_hold_enabled = True
         else:
@@ -127,12 +127,10 @@ class ThreadSafeRobot:
         return self._robot.supports_position_hold
 
     def hold(self) -> None:
-        """Keep the robot safe while no new action arrives, without camera reads or inference.
+        """Hold the robot until the next action: call its own hold(), or resend the last position targets.
 
-        The robot's own hold() is called when enabled. Otherwise the last applied position targets
-        are refreshed: driver-returned targets include interpolation and safety clipping, and before
-        any command the last finite measured pose is used. The robot may still settle toward these
-        targets; this is not an instantaneous physical stop.
+        Before any command, the last measured pose is the target. The robot may still settle; this is not an
+        instant stop.
         """
         with self._lock:
             if not self.supports_hold:

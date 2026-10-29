@@ -14,7 +14,7 @@
 
 """RoboMME environment wrapper for LeRobot evaluation.
 
-Wraps the RoboMME ``BenchmarkEnvBuilder`` into a Gymnasium environment for LeRobot's simulation.
+Wraps RoboMME's ``BenchmarkEnvBuilder`` in a Gymnasium env for LeRobot simulation.
 
 RoboMME tasks:
   Counting:    BinFill, PickXtimes, SwingXtimes, StopCube
@@ -23,7 +23,7 @@ RoboMME tasks:
   Imitation:   MoveCube, InsertPeg, PatternLock, RouteStick
 
 Dataset: lerobot/robomme (LeRobot v3.0, 1,600 episodes)
-Install: see the robomme_native stage of docker/Dockerfile.sim  (Linux only — mani-skill vs numpy pin conflict)
+Install: the ``robomme_native`` stage of docker/Dockerfile.sim (Linux only; mani-skill and numpy pins clash)
 Benchmark: https://github.com/RoboMME/robomme_benchmark
 """
 
@@ -244,7 +244,7 @@ def env_fns(
     front_camera_name: str = "camera1",
     wrist_camera_name: str = "camera2",
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """The factories of ``n_envs`` RoboMME environments for each task: ``{suite: {task_id: [factory, ...]}}``.
+    """Return ``n_envs`` env factories per RoboMME task, as ``{suite: {task_id: [factory, ...]}}``.
 
     `task` may be a single RoboMME task name (e.g. "PickXtimes") or a
     comma-separated list (e.g. "PickXtimes,BinFill,StopCube"). Each task
@@ -276,7 +276,7 @@ def env_fns(
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """RoboMME's control rate, controller and component names."""
+    """Return RoboMME's default fps, control mode, and state and action names."""
     joints = (*(f"joint_{i}.pos" for i in range(7)), "gripper.pos")
     joint_actions = kwargs.get("action_space_type", "joint_angle") == "joint_angle"
     return {

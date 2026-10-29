@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Versioned message envelopes, their bounded codec, and request/reply helpers shared by LeRobot services."""
+"""Versioned message envelopes, a size-limited codec and request/reply helpers shared by LeRobot services."""

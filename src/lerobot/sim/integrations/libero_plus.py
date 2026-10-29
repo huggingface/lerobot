@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LIBERO-plus integration using LIBERO's environment and observation conventions."""
+"""LIBERO-plus integration: reuses the LIBERO env, observation mapping and conventions."""
 
 from collections.abc import Callable
 from typing import Any
@@ -23,5 +23,5 @@ __all__ = ["canonical_observation", "conventions", "env_fns"]
 
 
 def env_fns(**kwargs: Any) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """LIBERO-plus environment factories, through the shared LIBERO wrapper."""
+    """Return LIBERO-plus env factories; takes the same arguments as LIBERO's ``env_fns``."""
     return _env_fns(**{**kwargs, "is_libero_plus": True})

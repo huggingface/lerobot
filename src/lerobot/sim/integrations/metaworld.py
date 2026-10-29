@@ -288,7 +288,7 @@ def env_fns(
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """The factories of ``n_envs`` Meta-World environments for each task: ``{group: {task_id: [factory, ...]}}``.
+    """Return ``n_envs`` env factories per Meta-World task, as ``{group: {task_id: [factory, ...]}}``.
 
     Notes:
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
@@ -319,7 +319,7 @@ def env_fns(
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Meta-World's control rate, controller, component names and simulated body."""
+    """Return Meta-World's default fps, control mode, state and action names, and robot type."""
     return {
         "fps": 80,
         "control_mode": "delta",

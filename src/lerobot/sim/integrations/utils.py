@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-# lerobot.lerobot_types.RobotObservation, without its torch import.
+# Same as lerobot.lerobot_types.RobotObservation, redefined here so integrations don't import torch.
 RobotObservation = dict[str, Any]
 
 
@@ -28,7 +28,7 @@ def canonical_observation(
     *,
     flip_images: bool = False,
 ) -> dict[str, np.ndarray]:
-    """Map the observation values integrations share to canonical LeRobot names."""
+    """Map a simulator observation to LeRobot keys; images must be HWC ``uint8``."""
     result = {}
     pixels = obs.get("pixels")
     if pixels is not None:

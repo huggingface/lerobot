@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simulator integrations, one module per simulator, imported by name only when selected.
+"""Simulator integrations: one module per simulator, imported only when used.
 
-Each module defines ``env_fns(task, n_envs, **kwargs)``, returning each task's ``n_envs`` environment
-factories as ``{suite: {task_id: [factory, ...]}}``, and ``canonical_observation(obs)``, mapping a native
-observation to canonical LeRobot names. It may define ``conventions(kwargs)``: its control rate, controller,
-ordered component names and simulated body, for the settings a configuration leaves out.
+Each defines ``env_fns(task, n_envs, **kwargs)``, returning ``{suite: {task_id: [factory, ...]}}``, and
+``canonical_observation(obs)``, mapping observations to LeRobot keys. ``conventions(kwargs)`` is
+optional: the sim's default fps, control mode, names and robot type.
 """
 
 import contextlib
@@ -27,10 +26,9 @@ from importlib.metadata import metadata
 
 @contextlib.contextmanager
 def simulator_required(sim_type: str) -> Iterator[None]:
-    """Say how to get the simulator ``sim_type`` when running its integration finds a package missing.
+    """Turn a missing package in ``sim_type``'s integration into an error with install instructions.
 
-    Some integrations import their simulator only when building an environment, so this wraps every call
-    into integration code, not only its import.
+    Wrap every call into integration code: some integrations import their simulator lazily.
     """
     try:
         yield

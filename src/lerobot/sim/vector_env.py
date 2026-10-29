@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Batches of simulator environments, stepped explicitly; finished environments stay terminal until reset."""
+"""Vector envs for simulators, with no autoreset: a finished env stays finished until ``reset``."""
 
 import contextlib
 import importlib
@@ -37,14 +37,14 @@ from lerobot.utils.feature_spec import FeatureSpec
 
 logger = logging.getLogger(__name__)
 
-# Environment attributes copied back from a worker process.
+# Env attributes copied from a worker process after it builds the env and after each reset.
 _ENV_ATTRS = ("task_description", "task")
-# Episode length of an environment that declares none.
+# Episode limit for an env that declares none.
 _DEFAULT_MAX_EPISODE_STEPS = 500
 
 
 def _max_episode_steps(env: Any) -> int | None:
-    """The episode limit an environment declares, looked up through Gymnasium wrappers."""
+    """Return the env's episode limit, looked up through Gymnasium wrappers, or None if it has none."""
     get_wrapper_attr = getattr(env, "get_wrapper_attr", None)
     try:
         limit = get_wrapper_attr("_max_episode_steps") if get_wrapper_attr else env._max_episode_steps
@@ -59,7 +59,7 @@ def _build_env(sim_type: str, make: Callable[[], Any]) -> Any:
 
 
 def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
-    """Build one environment and run its reset/step commands until told to close."""
+    """Worker process: build one env, then run the commands sent on ``pipe`` until ``close``."""
     try:
         env = make()
     except BaseException:
@@ -166,13 +166,10 @@ class _ProcessEnv:
 
 
 class LocalVectorEnv(gym.vector.VectorEnv):
-    """``num_envs`` environments of one simulator task, stepped explicitly.
+    """``num_envs`` envs of one simulator task, with no autoreset.
 
-    The simulator integration ``lerobot.sim.integrations.<config.type>`` supplies the environments and their
-    canonical observations. A finished environment keeps its terminal observation and flags, and earns no
-    reward, until ``reset``: it costs no simulation while the rest of the batch finishes, and cannot inflate a
-    summed return. With ``use_async_envs``, each environment runs in its own process and the batch steps in
-    parallel.
+    A finished env is not stepped until ``reset``: it keeps its last observation and gets zero reward. With
+    ``use_async_envs``, each env runs in its own worker process.
     """
 
     canonical_observations = True
@@ -186,11 +183,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         use_async_envs: bool = False,
         descriptor: EnvDescriptor | None = None,
     ) -> None:
-        """Select the task. Given its ``descriptor``, the simulators are built on first use rather than now.
-
-        A suite's tasks then do not all start their simulators (and GPU contexts) at once: ``lerobot-eval``
-        builds one task at a time.
-        """
+        """Select the task; given a ``descriptor``, build the simulators on first use instead of now."""
         with simulator_required(config.type):
             integration = importlib.import_module(f"lerobot.sim.integrations.{config.type}")
             factories = integration.env_fns(task=config.task, n_envs=num_envs, **config.kwargs)
@@ -201,7 +194,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         self.tasks = {group: [str(task) for task in tasks] for group, tasks in factories.items()}
         self.task_group = task_group or next(iter(factories))
         tasks = factories.get(self.task_group, {})
-        # The suite's first task unless one is named: a suite may be filtered (LIBERO's task_ids).
+        # Default to the suite's first task id, not 0: a suite can be filtered (e.g. LIBERO's task_ids).
         self.task_id: int = next(iter(tasks), 0) if task_id is None else task_id
         if self.task_id not in tasks:
             raise ValueError(f"Unknown task: {self.task_group}/{self.task_id}")
@@ -227,7 +220,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         self.render_mode = "rgb_array"
 
     def build(self) -> None:
-        """Build the simulators unless already built; ``lerobot-eval`` calls it to prefetch the next task."""
+        """Build the simulators if not built yet; ``lerobot-eval`` calls this to build the next task early."""
         if self._envs:
             return
         try:
@@ -252,7 +245,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         self._max_steps = [limit or _DEFAULT_MAX_EPISODE_STEPS for limit in limits]
 
     def _describe(self) -> EnvDescriptor:
-        """Describe the canonical observations and actions of the built environments."""
+        """Build the envs and describe the first one's observations (with LeRobot keys) and actions."""
         self.build()
         env = self._envs[0]
         if not isinstance(env.observation_space, spaces.Dict):
@@ -291,7 +284,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         seed: int | list[int | None] | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
-        """Reset every environment with explicit seeds and clear terminal latches."""
+        """Reset every env; an int ``seed`` gives env ``i`` the seed ``seed + i``."""
         if options:
             raise ValueError("This environment does not define reset options")
         if isinstance(seed, int):
@@ -316,7 +309,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
     def step(
         self, actions: np.ndarray
     ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
-        """Advance each unfinished environment once; finished ones keep their terminal transition."""
+        """Step every unfinished env once; finished envs are not stepped until ``reset``."""
         if not self._last:
             raise RuntimeError("Reset before stepping")
         actions = np.asarray(actions, dtype=np.float32)
@@ -326,7 +319,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         running = []
         for i, env in enumerate(self._envs):
             if self._last[i][2] or self._last[i][3]:
-                # A finished environment keeps its terminal observation and flags, and earns no reward.
+                # Finished: keep the terminal observation and flags, with zero reward.
                 self._last[i] = (self._last[i][0], 0.0, *self._last[i][2:])
                 continue
             if self.use_async_envs:
@@ -375,7 +368,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         return self._latest
 
     def render(self) -> list[np.ndarray]:
-        """Return the latest RGB frame of every environment, terminal frames included, without rendering."""
+        """Return each env's latest RGB frame, taken from the last observation instead of a new render."""
         return self.latest.frames()
 
     def call(self, name: str, *args: Any, **kwargs: Any) -> tuple[Any, ...]:

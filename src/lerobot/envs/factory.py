@@ -69,12 +69,11 @@ def make_hub_envs(
     hub_cache_dir: str | None = None,
     cfg: EnvConfig | None = None,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """The vector envs a Hub repository's ``make_env`` returns, as it returns them."""
-    # _download_hub_file raises unless trust_remote_code is set.
+    """Call a Hub repo's ``make_env`` and return its envs, as ``{suite: {task_id: env}}``."""
     repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)
     module = _import_hub_module(local_file, repo_id)
-    # A plain EnvHub config passes its make_env_kwargs; provider configs (Isaac Lab Arena, Unitree G1)
-    # subclass it and pass themselves, since their options are config fields.
+    # A plain EnvHub config passes its make_env_kwargs. Provider configs (Isaac Lab Arena, Unitree G1)
+    # subclass it and pass themselves as ``cfg``, since their options are config fields.
     options = cfg.make_env_kwargs if isinstance(cfg, HubEnvConfig) else {}
     provider_cfg = None if type(cfg) is HubEnvConfig else cfg
     raw_result = _call_make_env(
@@ -90,14 +89,14 @@ def make_env(
     hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """Makes the vector environments of a config, or of a Hub repository's ``make_env``.
+    """Build the vector envs of a config, or of a Hub repo's ``make_env``.
 
     Args:
-        cfg (EnvConfig | str): Either an `EnvConfig` object describing the environment, or a Hugging Face
-            Hub repository identifier (e.g. `"username/repo"`), whose `env.py` builds the environments.
+        cfg (EnvConfig | str): Either an `EnvConfig` describing the env, or a Hugging Face Hub repo ID
+            (e.g. `"username/repo"`) whose `env.py` builds the envs.
         n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
-        use_async_envs (bool, optional): Whether to step environments in parallel processes. Defaults to
-            False.
+        use_async_envs (bool, optional): Whether to run each sub-env in its own worker process. Defaults
+            to False.
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
             Default False — must be set to True to import/exec hub `env.py`.
@@ -109,7 +108,7 @@ def make_env(
         dict[str, dict[int, gym.vector.VectorEnv]]:
             A mapping from suite name to indexed vectorized environments.
             - For multi-task benchmarks (e.g., LIBERO): one entry per suite, and one vec env per task_id.
-            - For single-task environments: a single suite entry with task_id=0.
+            - For single-task envs: a single suite entry with task_id=0.
 
     """
     if n_envs < 1:

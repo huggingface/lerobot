@@ -270,7 +270,7 @@ def rollout(
     # of this public loop is covered; rebinding the same callable each rollout is a no-op.
     # The anchor is [B, state_dim] and tracks exactly what the single shared action queue tracks,
     # so it inherits the queue's batching assumptions rather than adding any: every sub-env
-    # refills on the same step, and a sub-env that finished early stays frozen at its terminal state
+    # refills on the same step, and a sub-env that finished early stays frozen at its final state
     # and its transitions are discarded.
     if bind_relative_anchor(policy, preprocessor) is not None:
         logging.info("Relative actions enabled: chunk anchor held until the action queue drains")
@@ -281,7 +281,7 @@ def rollout(
     max_steps = env.call("_max_episode_steps")[0]
     if max_episode_steps is not None:
         max_steps = min(max_steps, max_episode_steps)
-    # Simulator integrations return canonical observations; other envs return their own format.
+    # Sim envs already return observations with LeRobot keys; other envs return their own format.
     prepare_observation = (
         prepare_canonical_observation
         if getattr(env, "canonical_observations", False)
@@ -803,7 +803,8 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         trust_remote_code=cfg.trust_remote_code,
     )
 
-    # Hub-only and native-batch environments carry no descriptor.
+    # Check the checkpoint against the sim before loading the policy. Hub-only and native-batch envs have
+    # no descriptor.
     first_env = next(env for tasks in envs.values() for env in tasks.values())
     descriptor = getattr(first_env, "descriptor", None)
     if descriptor is not None:
@@ -877,7 +878,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     # Close all vec envs
     close_envs(envs)
 
-    # Each task's language instruction, saved next to the metrics (the benchmark CI report reads it).
+    # Save each task's language instruction next to the metrics; the benchmark CI report reads it.
     descriptions = {
         f"{group}_{task_id}": env.latest.task[0]
         for group, tasks in envs.items()

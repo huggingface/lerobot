@@ -27,8 +27,8 @@ from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 
-# Still importable from here: envhub.mdx documents these helpers for testing an env.py locally, and
-# parse_camera_names was public in this module. They live in the simulator integrations now.
+# Keep these importable from here: envhub.mdx uses these helpers to test an env.py locally, and
+# parse_camera_names is part of this module's public API.
 from lerobot.sim.integrations.envhub import (
     _call_make_env as _call_make_env,
     _load_module_from_path as _load_module_from_path,
@@ -140,7 +140,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
 
 def prepare_canonical_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
-    """Convert canonical simulator observations to policy tensors: RGB to float CHW in [0, 1]."""
+    """Convert batched sim observations to tensors; uint8 BHWC images become float BCHW in [0, 1]."""
     result = {}
     for name, value in observations.items():
         tensor = torch.from_numpy(value)
@@ -175,11 +175,9 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
 def validate_checkpoint(
     descriptor: EnvDescriptor, config: PreTrainedConfig, rename_map: dict[str, str]
 ) -> None:
-    """Reject a checkpoint whose inputs or action do not fit the simulator ``descriptor`` describes.
+    """Raise if the checkpoint's features don't match the sim's ``descriptor``, after ``rename_map``.
 
-    Simulator keys are renamed with ``rename_map``, as for any robot. RGB spatial dimensions are left to
-    policy preprocessing, which owns resizing, and the policy's placeholder cameras (``empty_cameras``) are
-    its own.
+    Image sizes and the policy's placeholder cameras (``empty_cameras``) are not checked.
     """
     available = {rename_map.get(f.name, f.name): f for f in descriptor.features}
     placeholders = {f"{OBS_IMAGES}.empty_camera_{i}" for i in range(getattr(config, "empty_cameras", 0))}

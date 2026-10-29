@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The env server: serves a sim to other processes or machines.
+"""Serve a simulator over the network, so another process or machine can step it.
 
-``lerobot-env-server`` steps a ``LocalVectorEnv`` for each session, and ``RemoteVectorEnv`` drives it with
-the same Gymnasium API, over the transport remote inference uses. Simulator images import it without torch.
+``lerobot-env-server`` is the server. ``RemoteVectorEnv`` is the client, with the same API as
+``LocalVectorEnv``.
 """

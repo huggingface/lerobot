@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run one benchmark's simulator server and evaluation containers, the same way locally and in CI."""
+"""Run one benchmark in Docker: start the simulator server, then evaluate the policy against it."""
 
 import argparse
 import json
@@ -36,7 +36,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     selected = parser.add_mutually_exclusive_group(required=True)
     selected.add_argument("--name", help="A benchmarks/benchmarks.yaml entry; needs PyYAML")
-    # CI passes the matrix entry, so the GPU runner needs no packages beyond the standard library.
+    # With --entry, the GPU runner needs only the standard library (no PyYAML).
     selected.add_argument("--entry", help="A resolved benchmark_matrix.py entry, as JSON")
     parser.add_argument("--policy-image", required=True)
     parser.add_argument("--sim-image", required=True)
@@ -49,7 +49,7 @@ def main():
 
         entry = next(e for e in load_entries(Path(".")) if e["name"] == args.name)
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    # Unique per run: concurrent jobs or leftovers on a persistent runner must not collide.
+    # Unique names, so parallel jobs and leftover containers on a persistent runner don't clash.
     run_id = os.environ.get("GITHUB_RUN_ID", "local") + "-" + uuid.uuid4().hex[:8]
     network = f"sim-benchmark-{entry['name']}-{run_id}"
     simulator = f"{network}-server"
@@ -74,8 +74,8 @@ def main():
                 args.sim_image,
             ]
         )
-        # Describe is a bounded readiness check; the session is opened only by evaluation.
-        # Retry: the connect itself fails until the simulator process listens.
+        # Poll describe() until the server is up: it has a timeout and does not open a session.
+        # Connecting fails until the server listens, so keep retrying until the deadline.
         probe = (
             "import time; from lerobot.env_server.client import EnvClient\n"
             "deadline = time.monotonic() + 300\n"
@@ -158,7 +158,6 @@ def main():
                 entry["revision"],
                 "--sim-tag",
                 entry["sim_tag"],
-                # The tested commit, set by GitHub Actions; local runs leave it out.
                 *(["--commit", os.environ["GITHUB_SHA"]] if "GITHUB_SHA" in os.environ else []),
                 *(
                     ["--max-episode-steps", str(entry["max_episode_steps"])]

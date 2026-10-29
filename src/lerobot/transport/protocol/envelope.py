@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared versioned envelopes and generic protocol errors (no Python-object serialization)."""
+"""Message envelopes and protocol errors shared by LeRobot services (no Python-object serialization)."""
 
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-# The envelope's version; each service versions its own keys and messages separately.
+# Envelope format version. Each service also has its own protocol version, in its keys.
 ENVELOPE_VERSION = 1
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
@@ -129,7 +129,7 @@ class Envelope:
 def correlate_reply(
     response: Envelope, request: Envelope, *, check_instance: bool = True, check_session: bool = True
 ) -> None:
-    """Reject replies outside the request identity, allowing negotiated peer identifiers."""
+    """Raise a ``STALE`` ``ProtocolError`` if the reply's IDs or generation don't match the request's."""
     if (
         response.request_id != request.request_id
         or response.generation != request.generation
@@ -140,7 +140,7 @@ def correlate_reply(
 
 
 def raise_peer_error(response: Envelope) -> None:
-    """Validate and propagate structured peer errors without service-specific interpretation."""
+    """Raise an error reply as ``ProtocolError`` with the peer's code, message and details."""
     if response.message_type is not MessageType.ERROR:
         return
     try:
@@ -164,7 +164,7 @@ def validate_reply(
     check_instance: bool = True,
     check_session: bool = True,
 ) -> None:
-    """Check correlation before peer errors and the successful operation's reply type."""
+    """Check, in order, that the reply matches the request, is not a peer error, and has type ``expected``."""
     correlate_reply(response, request, check_instance=check_instance, check_session=check_session)
     raise_peer_error(response)
     if response.message_type is not expected:

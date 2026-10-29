@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""EnvHub environments: load a Hub repository's ``env.py`` and build its environments, without torch."""
+"""EnvHub envs: load a Hub repository's ``env.py`` and build its envs."""
 
 import importlib.util
 import logging
@@ -30,8 +30,8 @@ __all__ = ["canonical_observation", "conventions", "env_fns"]
 
 logger = logging.getLogger(__name__)
 
-# Simulator settings an EnvHub env.py may declare in a module-level LEROBOT_SIM dict, with the
-# defaults used when neither the server configuration nor the repository sets them.
+# Settings an EnvHub env.py may set in a module-level LEROBOT_SIM dict. A key falls back to its default
+# here when neither the sim config nor the repository sets it.
 SIM_DEFAULTS: dict[str, Any] = {
     "fps": 30,
     "control_mode": "position",
@@ -53,7 +53,7 @@ def _load_module_from_path(path: str, module_name: str | None = None):
 
 
 def _parse_hub_url(hub_uri: str):
-    """Split ``user/repo[@revision][:path]``; the path defaults to ``env.py``."""
+    """Split ``user/repo[@revision][:path]`` into repo id, revision and path (default ``env.py``)."""
     revision = None
     file_path = "env.py"
     if "@" in hub_uri:
@@ -74,10 +74,7 @@ def _download_hub_file(
     trust_remote_code: bool,
     hub_cache_dir: str | None,
 ) -> tuple[str, str, str, str | None]:
-    """
-    Parse `cfg_str` (hub URL or local directory), enforce `trust_remote_code`, and return
-    (repo_id, file_path, local_file, revision).
-    """
+    """Find (downloading if needed) the ``env.py`` ``cfg_str`` points to; needs ``trust_remote_code``."""
     if not trust_remote_code:
         raise RuntimeError(
             f"Refusing to execute remote code from the Hub for '{cfg_str}'. "
@@ -86,7 +83,7 @@ def _download_hub_file(
             "and prefer pinning to a specific revision: 'user/repo@<commit-hash>:env.py'."
         )
 
-    # A local directory holding the repository's files, e.g. one baked into a simulator image.
+    # A local copy of the repository, e.g. one baked into a simulator Docker image.
     directory, _, local_path = cfg_str.partition(":")
     if os.path.isdir(directory):
         file_path = local_path or "env.py"
@@ -134,16 +131,12 @@ def _import_hub_module(local_file: str, repo_id: str) -> Any:
     return module
 
 
-# Hub modules already executed in this process, keyed by file, modification time and size.
+# Hub modules already run in this process, keyed by file path, mtime and size, so an edited file reloads.
 _MODULES: dict[tuple[str, int, int], Any] = {}
 
 
 def _load_hub_module(hub_path: str, trust_remote_code: bool, hub_cache_dir: str | None) -> tuple[str, Any]:
-    """Download and import a Hub env.py once per process.
-
-    The server builds environments for its probe and for every session; executing env.py only once
-    lets a repository keep process-wide state, such as a simulator app that can start only once.
-    """
+    """Import a Hub ``env.py`` at most once per process, so it can keep process-wide state."""
     repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)
     stat = os.stat(local_file)
     key = (os.path.realpath(local_file), stat.st_mtime_ns, stat.st_size)
@@ -153,9 +146,7 @@ def _load_hub_module(hub_path: str, trust_remote_code: bool, hub_cache_dir: str 
 
 
 def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: Any | None, **kwargs: Any) -> Any:
-    """
-    Ensure module exposes make_env and call it, with ``kwargs`` as the repository's own options.
-    """
+    """Call the module's ``make_env``, passing ``kwargs`` as repository-specific options."""
     if not hasattr(module, "make_env"):
         raise AttributeError(
             f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
@@ -166,7 +157,7 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: Any | No
 
 
 def _suite_name(env: Any) -> str:
-    """The env's registered Gymnasium id, else ``hub_env``."""
+    """Return the env's registered Gymnasium id, or ``hub_env`` if it has none."""
     return getattr(getattr(env, "spec", None), "id", None) or "hub_env"
 
 
@@ -195,11 +186,7 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
 
 
 def _env_factories(vec: Any, n_envs: int) -> list[Callable[[], Any]]:
-    """Keep a vector env's per-environment factories and close it.
-
-    Gymnasium builds a vector env's environments when it is created; ``LocalVectorEnv`` builds them again
-    from these factories, on first use.
-    """
+    """Return a vector env's per-env factories and close it; ``LocalVectorEnv`` builds the envs again."""
     try:
         if type(vec) not in {gym.vector.SyncVectorEnv, gym.vector.AsyncVectorEnv}:
             raise ValueError(
@@ -222,15 +209,12 @@ def env_fns(
     hub_cache_dir: str | None = None,
     make_env_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """The factories of a Hub repository's environments, from its ``make_env`` called with ``make_env_kwargs``.
-
-    ``task`` is unused: suites and task ids come from the repository, and clients select them.
-    """
+    """Return factories for a Hub repo's envs from ``make_env(**make_env_kwargs)``; ``task`` is unused."""
     _, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
     options = make_env_kwargs or {}
     result = _call_make_env(module, n_envs=n_envs, use_async_envs=False, cfg=None, **options)
     if isinstance(result, gym.Env):
-        # A single env has no reusable factory, so each environment calls make_env again.
+        # A plain env has no factory to reuse, so each factory calls make_env again.
         suite = _suite_name(result)
         result.close()
         fns = [lambda: _call_make_env(module, n_envs=1, use_async_envs=False, cfg=None, **options)] * n_envs
@@ -242,7 +226,7 @@ def env_fns(
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """The repository's ``LEROBOT_SIM``, over the EnvHub defaults."""
+    """Return the repo's ``LEROBOT_SIM`` over ``SIM_DEFAULTS``; an unknown key raises, naming the closest."""
     repo_id, module = _load_hub_module(
         kwargs["hub_path"], kwargs.get("trust_remote_code", False), kwargs.get("hub_cache_dir")
     )

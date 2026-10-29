@@ -379,7 +379,7 @@ def record_loop(
                     compress_images=display_compressed_images,
                 )
 
-        # A sim robot's own episode end (success, failure or step limit) ends the recorded episode.
+        # End the recorded episode when the sim robot's episode ends (success, failure or step limit).
         if dataset is not None and episode_ended(robot):
             break
 

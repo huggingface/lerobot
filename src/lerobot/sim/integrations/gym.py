@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Environments registered with Gymnasium by their own package (gym_aloha, gym_pusht, ...)."""
+"""Gymnasium envs that their own package registers on import (gym_aloha, gym_pusht, ...)."""
 
 import importlib
 from collections.abc import Callable
@@ -28,7 +28,7 @@ __all__ = ["canonical_observation", "env_fns"]
 
 def _make(gym_id: str, gym_kwargs: dict[str, Any], disable_env_checker: bool) -> gym.Env:
     if gym_id not in gym.registry:
-        # The package named before the slash registers its environments on import.
+        # Importing the package named before the slash registers its envs.
         importlib.import_module(gym_id.split("/")[0])
     return gym.make(gym_id, disable_env_checker=disable_env_checker, **gym_kwargs)
 
@@ -40,6 +40,6 @@ def env_fns(
     gym_kwargs: dict[str, Any] | None = None,
     disable_env_checker: bool = True,
 ) -> dict[str, dict[int, list[Callable[[], gym.Env]]]]:
-    """One suite and task with ``n_envs`` environments made by ``gym.make(gym_id)``."""
+    """Return ``n_envs`` factories that call ``gym.make(gym_id)``, as ``{task: {0: [factory, ...]}}``."""
     make = partial(_make, gym_id, dict(gym_kwargs or {}), disable_env_checker)
     return {task: {0: [make] * n_envs}}

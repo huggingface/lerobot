@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Envs: what a LeRobot command runs, selected with ``--env.type`` (``--robot.env.type`` for a sim robot).
+"""Env configs and factories, picked with ``--env.type`` (``--robot.env.type`` for a sim robot).
 
-An ``EnvConfig`` holds an env's command-line options. Not every env is a simulator: ``gym_manipulator`` drives
-a real robot, and EnvHub's native batches keep the provider's own vector environment. A simulated env runs a
-sim (``lerobot.sim``) in this process, or on a server (``lerobot.env_server``) when it has an ``endpoint``.
+A sim env runs its sim (``lerobot.sim``) locally, or on an env server when ``server.endpoint`` is set.
+Not every env is a sim: ``gym_manipulator`` drives a real robot.
 """
 
 # NOTE: gymnasium is currently a core dependency but is a candidate for moving to an

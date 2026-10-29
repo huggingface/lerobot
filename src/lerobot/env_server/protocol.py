@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keys, wire encoding and result validation shared by the env server and its clients.
+"""Keys, encoding and result checks shared by the env server and its client.
 
-Keys include the env server's protocol version, so clients and servers of different versions never connect.
+Keys carry the protocol version, so a client and a server of different versions never connect.
 """
 
 from dataclasses import asdict, fields
@@ -26,36 +26,36 @@ from lerobot.sim.types import EnvDescriptor, StepResult
 from lerobot.transport.protocol.envelope import validate_segment
 from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
-# The env server's protocol version, independent of remote inference's and of the shared envelope's.
+# The env server's own version, separate from the remote inference and envelope versions.
 PROTOCOL_VERSION = 1
 
 
 def deployment_prefix(deployment: str) -> str:
-    """Key of a deployment: the name a server serves its simulator under."""
+    """Return the key prefix of a deployment, the name a server serves its simulator under."""
     return f"lerobot/env/v{PROTOCOL_VERSION}/deployments/{validate_segment(deployment)}"
 
 
-# The describe key every server answers, for clients that take whichever deployment is served.
+# Every server also answers describe here, for clients that do not name a deployment.
 ANY_DEPLOYMENT_DESCRIBE = f"lerobot/env/v{PROTOCOL_VERSION}/describe"
 
 
 def instance_prefix(deployment: str, instance: str) -> str:
-    """Key of one server process (instance) under its deployment."""
+    """Return the key prefix of one server process (instance) in a deployment."""
     return f"{deployment_prefix(deployment)}/instances/{validate_segment(instance)}"
 
 
 def session_prefix(deployment: str, instance: str, session: str) -> str:
-    """Key of one session on a server process."""
+    """Return the key prefix of one session on a server process."""
     return f"{instance_prefix(deployment, instance)}/sessions/{validate_segment(session)}"
 
 
 def encode_descriptor(descriptor: EnvDescriptor) -> dict[str, Any]:
-    """Encode environment metadata for transport."""
+    """Encode an env descriptor as a plain dict."""
     return asdict(descriptor)
 
 
 def decode_descriptor(data: dict[str, Any]) -> EnvDescriptor:
-    """Decode environment metadata, ignoring fields added by newer servers."""
+    """Decode an env descriptor, ignoring fields added by newer servers."""
     known = {item.name for item in fields(EnvDescriptor)}
     values = {key: value for key, value in data.items() if key in known}
     values["features"] = tuple(FeatureSpec(**feature) for feature in values["features"])
@@ -64,19 +64,19 @@ def decode_descriptor(data: dict[str, Any]) -> EnvDescriptor:
 
 
 def encode_step_result(result: StepResult) -> dict[str, Any]:
-    """Encode a simulation result for transport."""
+    """Encode a step result as a dict of its fields."""
     # Not asdict(): it deep-copies every array, camera frames included.
     return {field.name: getattr(result, field.name) for field in fields(result)}
 
 
 def decode_step_result(data: dict[str, Any]) -> StepResult:
-    """Decode a transport result into simulation values."""
-    # JPEG replies carry one frame per environment; stack them back into the batch.
+    """Decode a step result from its wire dict."""
+    # JPEG replies carry a list of frames, one per env; stack them into one batch array.
     obs = {name: np.stack(value) if isinstance(value, list) else value for name, value in data["obs"].items()}
     return StepResult(**{**data, "obs": obs, "task": tuple(data["task"])})
 
 
-# The per-environment values of a result, with their dtype.
+# Per-env fields of a result and their dtype.
 _BATCH_DTYPES = {
     "reward": "float32",
     "terminated": "bool",
@@ -87,7 +87,7 @@ _BATCH_DTYPES = {
 
 
 def validate_result(result: StepResult, descriptor: EnvDescriptor, num_envs: int) -> None:
-    """Reject a result whose observations or per-environment values disagree with the descriptor or batch."""
+    """Raise ``ValueError`` if a result does not match the descriptor or the batch size."""
     if set(result.obs) != {f.name for f in descriptor.features}:
         raise ValueError("Simulator observation keys differ from its descriptor")
     for feature in descriptor.features:

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generate the CI matrix and content identities from the benchmark manifest."""
+"""Print the CI benchmark matrix from benchmarks/benchmarks.yaml as JSON, with a sim_tag per entry."""
 
 import argparse
 import hashlib
@@ -23,7 +23,7 @@ import yaml
 
 
 def image_hash(root: Path, entry: dict) -> str:
-    """Content identity of a simulator image: what Dockerfile.sim copies in (keep in sync) and its build args."""
+    """Hash what the simulator image is built from; keep in sync with Dockerfile.sim's COPY lines."""
     digest = hashlib.sha256()
     paths = [
         root / entry["dockerfile"],
@@ -56,25 +56,25 @@ def image_hash(root: Path, entry: dict) -> str:
 
 
 def with_defaults(entry: dict) -> dict:
-    """Fill fields that follow the per-benchmark naming convention unless the manifest overrides them."""
+    """Add default values for the fields a benchmarks.yaml entry leaves out."""
     name = entry["name"]
     defaults = {
         "policy": f"lerobot/smolvla_{name}",
         "sim_config": f"docker/sim/configs/{name}.yaml",
-        # Simulator camera key -> checkpoint camera key, as for any robot.
+        # Maps simulator camera keys to the camera keys the checkpoint expects.
         "rename_map": {},
         "dockerfile": "docker/Dockerfile.sim",
         "policy_extras": ["remote", "evaluation", "smolvla", "training", "hardware"],
         "episodes": 1,
         "batch_size": 1,
-        # An end-to-end check, not a success-rate measure: short rollouts are enough.
+        # CI checks that the pipeline runs end to end, not the success rate, so short episodes are enough.
         "max_episode_steps": 30,
         "train_smoke": False,
-        # Compare seeded local and served transitions; only deterministic simulators match exactly.
+        # Run check_sim_parity.py; only deterministic simulators give the same steps locally and served.
         "parity": False,
     }
     merged = {**defaults, **entry}
-    # The shared multi-stage Dockerfile selects the backend stage with SIM.
+    # Dockerfile.sim picks the simulator's build stage from SIM.
     merged["build_args"] = {"SIM": name, **entry.get("build_args", {})}
     return merged
 

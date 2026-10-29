@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Convert LIBERO's trusted torch initial-state files to NumPy at image build, before torch is removed."""
+"""Convert LIBERO's torch initial-state files to NumPy when building the simulator image."""
 
 import argparse
 import logging

@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Patch the pinned LIBERO package inside the simulator image so it imports without torch.
-
-Its benchmark module loads the NumPy initial states convert_libero_init_states.py wrote, and its utils
-lose an unused torch import.
-"""
+"""Patch the pinned LIBERO package in the simulator image so it imports without torch."""
 
 import argparse
 from pathlib import Path

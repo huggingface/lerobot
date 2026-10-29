@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Common bounded client exchanges; service lifecycles and retries stay with callers."""
+"""Client-side request/reply helpers. Callers own connection setup, sessions and retries."""
 
 from collections.abc import Callable
 from typing import Any
@@ -41,10 +41,7 @@ def query_reply(
     check_session: bool = True,
     **query_options: Any,
 ) -> Envelope:
-    """Issue one query without retries, requiring one correlated, validated response.
-
-    ``query_options`` go to ``transport.query``, e.g. ``cancelled`` or ``congestion_control``.
-    """
+    """Send one query, without retries, and return its single checked reply."""
     replies = transport.query(key, encoder(request), timeout, **query_options)
     if len(replies) != 1:
         raise TimeoutError("Expected one reply within its deadline")
@@ -54,7 +51,7 @@ def query_reply(
 
 
 def decode_reply(payload: bytes, request: Envelope, *, discard_stale: bool = False) -> Envelope | None:
-    """Correlate before decoding large bodies; optionally discard obsolete channel traffic."""
+    """Decode a reply to ``request``, checking its header first; ``discard_stale`` returns None if stale."""
     try:
         correlate_reply(peek_envelope(payload), request)
     except ProtocolError as exc:

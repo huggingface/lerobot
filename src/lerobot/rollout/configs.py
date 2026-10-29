@@ -63,8 +63,7 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     dataset_mode: ClassVar[str] = "none"
     # Whether --teleop.type is mandatory (human-in-the-loop strategies).
     requires_teleop: ClassVar[bool] = False
-    # Whether the strategy can drive a sim robot. A sim robot stops when its episode ends, so the strategy
-    # must start the next one (see ``episode_ended`` and ``start_episode`` in ``lerobot.robots.sim_robot``).
+    # Whether the strategy can drive a sim robot: it must start a new episode when one ends.
     supports_sim_robot: ClassVar[bool] = False
 
     @property

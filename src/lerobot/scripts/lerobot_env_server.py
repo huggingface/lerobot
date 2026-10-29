@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run a simulator server from a YAML configuration or an EnvHub repository.
+"""Run an env server from a YAML config or an EnvHub repository.
 
 lerobot-env-server --docker --config=docker/sim/configs/libero.yaml   # in its Docker image, on :7448
 lerobot-env-server --docker --envhub=<user/repo[@revision]>            # serve an EnvHub repository
-lerobot-env-server --config=docker/sim/configs/metaworld.yaml         # in this environment
+lerobot-env-server --config=docker/sim/configs/metaworld.yaml         # in the current Python environment
 """
 
 import argparse
@@ -45,8 +45,9 @@ DOCKERFILE = "docker/Dockerfile.sim"
 # Where the EnvHub stage of the Dockerfile copies the repository.
 ENVHUB_IMAGE_DIR = "/envhub"
 
-# Serving an EnvHub repository. Settings left null come from the repository's optional LEROBOT_SIM dict in
-# env.py, else from defaults (fps 30, position control, generic component names); --set overrides either.
+# Base config to serve an EnvHub repository. Null settings come from the optional LEROBOT_SIM dict in the
+# repository's env.py, else from defaults (fps 30, position control, generic component names). --set
+# overrides both.
 ENVHUB_CONFIG: dict[str, Any] = {
     "deployment": "envhub",
     "sim": {
@@ -63,22 +64,19 @@ ENVHUB_CONFIG: dict[str, Any] = {
 
 
 def load_config(path: str | Path, overrides: list[str]) -> dict[str, Any]:
-    """Read a YAML configuration and override existing dotted keys; reject typos and malformed paths."""
+    """Read a YAML config and apply ``key=value`` overrides; typos and malformed keys raise ``ValueError``."""
     return apply_overrides(yaml.safe_load(Path(path).read_text()), overrides)
 
 
 def envhub_config(repo: str, overrides: list[str], path: str | Path | None = None) -> dict[str, Any]:
-    """The configuration serving an EnvHub repository (``user/repo[@revision]``), from ``path`` if given.
-
-    Passing the repository is the explicit consent to run its ``env.py``, like ``trust_remote_code=True``.
-    """
+    """Return the config to serve an EnvHub repo, based on ``path`` if given; this trusts its ``env.py``."""
     data = yaml.safe_load(Path(path).read_text()) if path else copy.deepcopy(ENVHUB_CONFIG)
     serve = [f"sim.kwargs.hub_path={repo}", "sim.kwargs.trust_remote_code=true"]
     return apply_overrides(data, [*serve, *overrides])
 
 
 def apply_overrides(data: Any, overrides: list[str]) -> dict[str, Any]:
-    """Override existing dotted keys of a configuration mapping, in place."""
+    """Set existing dotted keys of a config mapping in place. Values are parsed as YAML."""
     if not isinstance(data, dict):
         raise ValueError("Simulator configuration must be a YAML mapping")
     for override in overrides:
@@ -98,11 +96,9 @@ def apply_overrides(data: Any, overrides: list[str]) -> dict[str, Any]:
 
 
 def envhub_context(hub_path: str, directory: Path) -> Path:
-    """The build context holding an EnvHub repository: a local directory as is, else a Hub download.
+    """Return the Docker build context of an EnvHub repo: a local directory, or a Hub download.
 
-    The download uses the host's Hugging Face login, so private repositories build without passing a token
-    to Docker. The Hub cache links its files into a blob store outside the context: copy them as files
-    under ``directory``.
+    The download uses the host's Hugging Face login, so private repos build without giving Docker a token.
     """
     location = hub_path.split(":")[0]
     if Path(location).is_dir():
@@ -116,11 +112,7 @@ def envhub_context(hub_path: str, directory: Path) -> Path:
 
 
 def run_in_docker(data: dict[str, Any], build: bool = False, stop: bool = False) -> None:
-    """Start the server for configuration ``data`` in its image on localhost (or stop it).
-
-    The image is selected by ``sim.type`` and built from the LeRobot checkout this package is installed
-    from, when missing or when ``build`` is set.
-    """
+    """Start (or ``stop``) the server for ``data`` in its Docker image on localhost, building it if needed."""
     root = Path(lerobot.__file__).resolve().parents[2]
     if not (root / DOCKERFILE).is_file():
         raise RuntimeError(
@@ -137,7 +129,7 @@ def run_in_docker(data: dict[str, Any], build: bool = False, stop: bool = False)
     directory.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "SIM": backend}
     if backend == "envhub":
-        # The image bakes in the repository at ENVHUB_IMAGE_DIR, so each repository gets its own tag.
+        # The image contains the repository at ENVHUB_IMAGE_DIR, so each repository gets its own tag.
         hub_path = data["sim"]["kwargs"]["hub_path"]
         location = Path(hub_path.split(":")[0])
         name = f"local-{location.resolve().name}" if location.is_dir() else hub_path
@@ -147,7 +139,7 @@ def run_in_docker(data: dict[str, Any], build: bool = False, stop: bool = False)
         _, separator, file_path = hub_path.partition(":")
         data = copy.deepcopy(data)
         data["sim"]["kwargs"]["hub_path"] = ENVHUB_IMAGE_DIR + separator + file_path
-    # Keep the bind-mounted effective configuration after startup, for container restarts.
+    # The container bind-mounts this file; keep it after startup so a restarted container can read it.
     content = yaml.safe_dump(data, sort_keys=False)
     config = directory / f"{hashlib.sha256(content.encode()).hexdigest()}.yaml"
     config.write_text(content)
@@ -159,7 +151,7 @@ def run_in_docker(data: dict[str, Any], build: bool = False, stop: bool = False)
         command.extend(["up", "-d", "--wait"])
         image = f"lerobot-sim-{backend}:{env.get('SIM_TAG', 'local')}"
         inspect = ["docker", "image", "inspect", image]
-        # Docker from PATH, as for docker compose below.
+        # Runs docker from PATH, like docker compose below.
         if build or subprocess.run(inspect, capture_output=True).returncode:  # nosec B603
             command.append("--build")
             if backend == "envhub":
@@ -213,7 +205,7 @@ def main() -> None:
             parser.error(str(error))
         return
     init_logging()
-    # Settings left null come from the simulator's conventions (an EnvHub repository's LEROBOT_SIM).
+    # Fill null settings from the simulator's conventions (for EnvHub, the repository's LEROBOT_SIM).
     data["sim"] = SimConfig.resolve(data["sim"])
     if args.listen:
         data.setdefault("zenoh", {})["listen_endpoints"] = [args.listen]
