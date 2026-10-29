@@ -1224,15 +1224,38 @@ def test_hotswap_stats_basic_functionality():
     assert new_processor.steps[1].stats == new_stats
 
     # Check that tensor stats are updated correctly
+    # Note: visual stats are reshaped from (C,) to (C,1,1) by _reshape_visual_stats
     expected_tensor_stats = to_tensor(new_stats)
     for key in expected_tensor_stats:
         for stat_name in expected_tensor_stats[key]:
             torch.testing.assert_close(
-                new_processor.steps[0]._tensor_stats[key][stat_name], expected_tensor_stats[key][stat_name]
+                new_processor.steps[0]._tensor_stats[key][stat_name].squeeze(),
+                expected_tensor_stats[key][stat_name].squeeze(),
             )
             torch.testing.assert_close(
-                new_processor.steps[1]._tensor_stats[key][stat_name], expected_tensor_stats[key][stat_name]
+                new_processor.steps[1]._tensor_stats[key][stat_name].squeeze(),
+                expected_tensor_stats[key][stat_name].squeeze(),
             )
+
+
+def test_hotswap_stats_reshapes_flat_visual_stats():
+    """Test that flat (C,) visual stats still broadcast over (B, C, H, W) images after hotswap_stats."""
+    initial_stats = {OBS_IMAGE: {"mean": np.array([0.5, 0.5, 0.5]), "std": np.array([0.2, 0.2, 0.2])}}
+    new_stats = {OBS_IMAGE: {"mean": np.array([0.1, 0.2, 0.3]), "std": np.array([0.5, 0.5, 0.5])}}
+
+    features = {OBS_IMAGE: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8))}
+    norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
+
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=initial_stats)
+    new_processor = hotswap_stats(DataProcessorPipeline(steps=[normalizer]), new_stats)
+
+    image = torch.rand(2, 3, 8, 8)
+    transition = create_transition(observation={OBS_IMAGE: image})
+    normalized = new_processor.steps[0](transition)[TransitionKey.OBSERVATION][OBS_IMAGE]
+
+    mean = torch.tensor([0.1, 0.2, 0.3]).view(3, 1, 1)
+    expected = (image - mean) / (0.5 + normalizer.eps)
+    torch.testing.assert_close(normalized, expected)
 
 
 def test_hotswap_stats_deep_copy():
@@ -1430,11 +1453,13 @@ def test_hotswap_stats_multiple_normalizer_types():
         assert step.stats == new_stats
 
         # Check tensor stats conversion
+        # Note: visual stats are reshaped from (C,) to (C,1,1) by _reshape_visual_stats
         expected_tensor_stats = to_tensor(new_stats)
         for key in expected_tensor_stats:
             for stat_name in expected_tensor_stats[key]:
                 torch.testing.assert_close(
-                    step._tensor_stats[key][stat_name], expected_tensor_stats[key][stat_name]
+                    step._tensor_stats[key][stat_name].squeeze(),
+                    expected_tensor_stats[key][stat_name].squeeze(),
                 )
 
 
@@ -1485,9 +1510,9 @@ def test_hotswap_stats_with_different_data_types():
     assert isinstance(tensor_stats[ACTION]["mean"], torch.Tensor)
     assert isinstance(tensor_stats[ACTION]["std"], torch.Tensor)
 
-    # Check values
-    torch.testing.assert_close(tensor_stats[OBS_IMAGE]["mean"], torch.tensor([0.3, 0.4, 0.5]))
-    torch.testing.assert_close(tensor_stats[OBS_IMAGE]["std"], torch.tensor([0.1, 0.2, 0.3]))
+    # Check values (visual stats are reshaped from (C,) to (C,1,1) by _reshape_visual_stats)
+    torch.testing.assert_close(tensor_stats[OBS_IMAGE]["mean"], torch.tensor([0.3, 0.4, 0.5]).view(3, 1, 1))
+    torch.testing.assert_close(tensor_stats[OBS_IMAGE]["std"], torch.tensor([0.1, 0.2, 0.3]).view(3, 1, 1))
     torch.testing.assert_close(tensor_stats[OBS_IMAGE]["min"], torch.tensor(0.0))
     torch.testing.assert_close(tensor_stats[OBS_IMAGE]["max"], torch.tensor(1.0))
 
@@ -1548,8 +1573,12 @@ def test_hotswap_stats_functional_test():
 
     # Verify that the new processor is actually using the new stats by checking internal state
     assert new_processor.steps[0].stats == new_stats
-    assert torch.allclose(new_processor.steps[0]._tensor_stats[OBS_IMAGE]["mean"], torch.tensor([0.3, 0.2]))
-    assert torch.allclose(new_processor.steps[0]._tensor_stats[OBS_IMAGE]["std"], torch.tensor([0.1, 0.2]))
+    torch.testing.assert_close(
+        new_processor.steps[0]._tensor_stats[OBS_IMAGE]["mean"], torch.tensor([0.3, 0.2]).view(2, 1, 1)
+    )
+    torch.testing.assert_close(
+        new_processor.steps[0]._tensor_stats[OBS_IMAGE]["std"], torch.tensor([0.1, 0.2]).view(2, 1, 1)
+    )
     assert torch.allclose(new_processor.steps[0]._tensor_stats[ACTION]["mean"], torch.tensor([0.1, -0.1]))
     assert torch.allclose(new_processor.steps[0]._tensor_stats[ACTION]["std"], torch.tensor([0.5, 0.5]))
 
