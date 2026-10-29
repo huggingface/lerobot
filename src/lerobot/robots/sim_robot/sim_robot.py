@@ -35,11 +35,9 @@ if TYPE_CHECKING:
 class SimRobot(Robot):
     """A simulated environment as a robot: swappable with hardware.
 
-    Each sent action advances the environment exactly once. Callers that run episodes start each one with
-    ``start_episode`` and end it when ``episode_ended``; until then a finished episode keeps its last state,
-    and ``latest`` its reward, termination and success. As in Gymnasium's default autoreset, an action sent
-    after a finished episode starts the next one instead of moving the robot. Its ``robot_type`` is the
-    simulated body the environment declares, else ``sim``; ``name`` stays ``sim``.
+    Each action advances the environment by one step. When an episode ends, the robot stays in its final state
+    and ignores actions until ``start_episode`` is called; ``latest`` keeps the final reward, termination and
+    success. ``robot_type`` is the body the environment declares, or ``sim`` if it declares none.
     """
 
     config_class = SimRobotConfig
@@ -156,9 +154,7 @@ class SimRobot(Robot):
                 "teleoperator must send the simulated robot's action names, as for the real follower."
             )
         values = np.asarray([[action[name] for name in names]], dtype=np.float32)
-        if self.episode_ended:
-            self.start_episode()
-        else:
+        if not self.episode_ended:
             self._env.step(values)
             self.latest = self._env.latest
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
@@ -198,7 +194,7 @@ def check_control_rate(robot: Robot, fps: float, flag: str | None = None, multip
 
 
 def start_episode(robot: Robot) -> None:
-    """Start a recorded episode: a sim robot restarts its world, while a real robot's scene is reset by hand."""
+    """Start a new episode. A sim robot resets its world; a real robot's scene is reset by hand."""
     if isinstance(robot, SimRobot):
         robot.start_episode()
 

@@ -111,7 +111,7 @@ def test_rollout_holds_a_sim_robot_with_its_own_hold(tmp_path):
 
 
 @pytest.mark.parametrize("where", ["local", "served"])
-def test_a_sim_episode_ends_and_restarts_as_in_gymnasium(where, request, tmp_path):
+def test_a_finished_sim_episode_stays_until_the_next_one_starts(where, request, tmp_path):
     config = ToyEnvConfig(
         server=EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
     )
@@ -123,9 +123,13 @@ def test_a_sim_episode_ends_and_restarts_as_in_gymnasium(where, request, tmp_pat
         robot.send_action({"command_0": 2.0, "command_1": 0.0})
         assert robot.episode_ended
         assert robot.latest.terminated[0] and robot.latest.is_success[0] and robot.latest.reward[0] == 1
-        assert robot.get_observation()["state_0"] >= 1
-        # As in Gymnasium's autoreset, the next action starts the next episode instead of moving the robot.
-        robot.send_action({"command_0": 2.0, "command_1": 0.0})
+        final = robot.get_observation()["state_0"]
+        assert final >= 1
+        # Until the caller starts the next episode, actions are ignored.
+        robot.send_action({"command_0": -2.0, "command_1": 0.0})
+        assert robot.episode_ended and robot.latest.elapsed_steps[0] == 1
+        assert robot.get_observation()["state_0"] == final
+        robot.start_episode()
         assert not robot.episode_ended and robot.latest.elapsed_steps[0] == 0
         assert robot.get_observation()["state_0"] < 1
         # It truncates after 5 steps.
@@ -151,6 +155,51 @@ def test_episode_functions_leave_real_robots_alone():
     start_episode(robot)
     assert not episode_ended(robot)
     assert not robot.method_calls
+
+
+def test_rollout_runs_a_sim_robot_only_with_strategies_that_run_its_episodes():
+    pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")
+    from types import SimpleNamespace
+
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import (
+        BaseStrategyConfig,
+        DAggerStrategyConfig,
+        EpisodicStrategyConfig,
+        HighlightStrategyConfig,
+        RolloutConfig,
+        SentryStrategyConfig,
+    )
+
+    def make(strategy, **kwargs):
+        robot = SimRobotConfig(env=ToyEnvConfig())
+        return RolloutConfig(robot=robot, policy=SimpleNamespace(device="cpu"), strategy=strategy, **kwargs)
+
+    make(BaseStrategyConfig())
+    make(EpisodicStrategyConfig(), dataset=DatasetRecordConfig(repo_id="user/sim_test"))
+    # These record by time or on demand, not per sim episode.
+    for strategy in (SentryStrategyConfig(), HighlightStrategyConfig(), DAggerStrategyConfig()):
+        with pytest.raises(ValueError, match=f"{strategy.type} strategy does not support a sim robot"):
+            make(strategy)
+
+
+def test_teleoperation_starts_the_next_sim_episode(tmp_path):
+    from unittest.mock import MagicMock
+
+    from lerobot.processor import make_default_processors
+    from lerobot.scripts.lerobot_teleoperate import teleop_loop
+
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
+    teleop = MagicMock()
+    # The toy's episode ends once x passes 1, so each action of 2 ends one.
+    teleop.get_action.return_value = {"command_0": 2.0, "command_1": 0.0}
+    try:
+        robot.connect()
+        teleop_loop(teleop, robot, robot.descriptor.fps, *make_default_processors(), duration=0.2)
+        assert teleop.get_action.call_count > 1
+        assert not robot.episode_ended and robot.latest.elapsed_steps[0] == 0
+    finally:
+        robot.disconnect()
 
 
 def test_sim_robot_names_the_actions_it_takes(tmp_path):

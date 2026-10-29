@@ -28,6 +28,7 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
 from lerobot.lerobot_types import RobotObservation
+from lerobot.robots.sim_robot import start_episode
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         RolloutContext,
         RuntimeContext,
     )
+    from ..robot_wrapper import ThreadSafeRobot
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +167,19 @@ class RolloutStrategy(abc.ABC):
         if hw.robot_wrapper.supports_hold and hw.robot_wrapper.hardware_failure is None:
             hw.robot_wrapper.hold()
             self._require_engine().acknowledge_hold()
+
+    def _start_episode(self, robot: ThreadSafeRobot, timer: CycleTimer) -> None:
+        """Start a new episode with a fresh policy: no hidden state, no queued actions.
+
+        A sim robot also resets its world. Call it from the control loop.
+        """
+        engine = self._require_engine()
+        start_episode(robot.inner)
+        engine.reset()
+        self._require_interpolator().reset()
+        # As at start-up, the interpolator needs two inference ticks to refill; don't report them as slow.
+        timer.restart()
+        engine.resume()
 
     @contextlib.contextmanager
     def _pause_for_recording(

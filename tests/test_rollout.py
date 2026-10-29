@@ -1392,6 +1392,33 @@ def test_starved_engine_is_counted_through_the_real_dispatch_path(caplog):
     assert dataset.add_frame.call_count == 0
 
 
+def test_base_strategy_starts_the_next_sim_episode_with_fresh_policy_state():
+    import itertools
+    from unittest.mock import PropertyMock
+
+    from lerobot.robots.sim_robot import SimRobot
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, _ = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=4)
+    # The sim robot's episode ends at the second action.
+    sim_robot = MagicMock(spec=SimRobot)
+    type(sim_robot).episode_ended = PropertyMock(
+        side_effect=itertools.chain([False, True], itertools.repeat(False))
+    )
+    ctx.hardware.robot_wrapper.inner = sim_robot
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+
+    strategy.run(ctx)
+
+    sim_robot.start_episode.assert_called_once_with()
+    ctx.policy.inference.reset.assert_called_once_with()
+    assert ctx.hardware.robot_wrapper.send_action.call_count == 4
+
+
 def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog, clock):
     from lerobot.rollout import EpisodicStrategyConfig
     from lerobot.rollout.strategies import EpisodicStrategy
