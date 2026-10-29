@@ -1,0 +1,41 @@
+# Microphones
+
+Microphones supply audio observations. Every backend implements the [`Microphone`] interface, so swapping
+hardware does not change the code that reads audio.
+
+See the [Microphones guide](../microphones) for finding and configuring a microphone.
+
+## Microphone
+
+[[autodoc]] lerobot.microphones.Microphone
+    - connect
+    - disconnect
+    - start_recording
+    - stop_recording
+    - read
+    - read_latest
+    - find_microphones
+
+## MicrophoneConfig
+
+[[autodoc]] lerobot.microphones.MicrophoneConfig
+
+## make_microphones_from_configs
+
+[[autodoc]] lerobot.microphones.make_microphones_from_configs
+
+## async_microphones_start_recording
+
+[[autodoc]] lerobot.microphones.async_microphones_start_recording
+
+## async_microphones_stop_recording
+
+[[autodoc]] lerobot.microphones.async_microphones_stop_recording
+
+## PortAudioMicrophone
+
+[[autodoc]] lerobot.microphones.portaudio.PortAudioMicrophone
+
+## PortAudioMicrophoneConfig
+
+[[autodoc]] lerobot.microphones.portaudio.PortAudioMicrophoneConfig

@@ -34,6 +34,7 @@ from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBO
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
 
+from .audio_utils import AUDIO_CODEC, validate_audio_feature
 from .compute_stats import aggregate_stats
 from .depth_utils import MM_PER_METRE
 from .feature_utils import canonicalize_depth_marker, create_empty_dataset_info
@@ -363,6 +364,38 @@ class LeRobotDatasetMetadata:
         fpath = video_path_template.format(video_key=vid_key, chunk_index=chunk_idx, file_index=file_idx)
         return Path(fpath)
 
+    def get_audio_file_path(self, ep_index: int, audio_key: str) -> Path:
+        """Return the relative audio file path for the given episode and audio key.
+
+        Args:
+            ep_index: Zero-based episode index.
+            audio_key: Feature key identifying the audio stream
+                (e.g. ``'observation.audio.wrist'``).
+
+        Returns:
+            Path to the FLAC file containing this episode's audio.
+
+        Raises:
+            IndexError: If ``ep_index`` is out of range.
+            ValueError: If the dataset stores no audio (no ``audio_path`` template).
+        """
+        if self.episodes is None:
+            self.episodes = load_episodes(self.root)
+        if ep_index >= len(self.episodes):
+            raise IndexError(
+                f"Episode index {ep_index} out of range. Episodes: {len(self.episodes) if self.episodes else 0}"
+            )
+        audio_path_template = self.audio_path
+        if audio_path_template is None:
+            raise ValueError(f"Dataset '{self.repo_id}' has no audio_path template: it stores no audio.")
+        ep = self.episodes[ep_index]
+        fpath = audio_path_template.format(
+            audio_key=audio_key,
+            chunk_index=ep[f"audio/{audio_key}/chunk_index"],
+            file_index=ep[f"audio/{audio_key}/file_index"],
+        )
+        return Path(fpath)
+
     @property
     def storage_format(self) -> str:
         """Format holding the underlying data files (``"lerobot"`` by default)."""
@@ -377,6 +410,11 @@ class LeRobotDatasetMetadata:
     def video_path(self) -> str | None:
         """Formattable string for the video files."""
         return self.info.video_path
+
+    @property
+    def audio_path(self) -> str | None:
+        """Formattable string for the audio files."""
+        return self.info.audio_path
 
     @property
     def robot_type(self) -> str | None:
@@ -441,6 +479,11 @@ class LeRobotDatasetMetadata:
             self.stats[key] = {
                 stat: value if stat == "count" else value * factor for stat, value in self.stats[key].items()
             }
+
+    @property
+    def audio_keys(self) -> list[str]:
+        """Keys to access audio modalities, stored as FLAC files."""
+        return [key for key, ft in self.features.items() if ft["dtype"] == "audio"]
 
     @property
     def camera_keys(self) -> list[str]:
@@ -529,6 +572,11 @@ class LeRobotDatasetMetadata:
     def video_files_size_in_mb(self) -> int:
         """Max size of video file in mega bytes."""
         return self.info.video_files_size_in_mb
+
+    @property
+    def audio_files_size_in_mb(self) -> int | None:
+        """Max size of audio file in mega bytes, ``None`` if the dataset stores no audio."""
+        return self.info.audio_files_size_in_mb
 
     def get_task_index(self, task: str) -> int | None:
         """
@@ -807,6 +855,7 @@ class LeRobotDatasetMetadata:
         chunks_size: int | None = None,
         data_files_size_in_mb: int | None = None,
         video_files_size_in_mb: int | None = None,
+        audio_files_size_in_mb: int | None = None,
     ) -> "LeRobotDatasetMetadata":
         """Create metadata for a new LeRobot dataset from scratch.
 
@@ -830,6 +879,8 @@ class LeRobotDatasetMetadata:
                 default.
             video_files_size_in_mb: Max video file size in MB. ``None`` uses the
                 default.
+            audio_files_size_in_mb: Max audio file size in MB. ``None`` uses the
+                default.
 
         Returns:
             A new :class:`LeRobotDatasetMetadata` instance.
@@ -843,6 +894,10 @@ class LeRobotDatasetMetadata:
 
         features = {**deepcopy(features), **DEFAULT_FEATURES}
         _validate_feature_names(features)
+        for key, ft in features.items():
+            if ft["dtype"] == "audio":
+                validate_audio_feature(key, ft)
+                ft["info"]["audio.codec"] = AUDIO_CODEC
 
         obj.tasks = None
         obj.episodes = None
@@ -856,6 +911,7 @@ class LeRobotDatasetMetadata:
             chunks_size,
             data_files_size_in_mb,
             video_files_size_in_mb,
+            audio_files_size_in_mb,
         )
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError(
