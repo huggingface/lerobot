@@ -67,7 +67,7 @@ class SimRobotConfig(RobotConfig):
     """A simulated environment driven as a robot. It needs no calibration."""
 
     # The environment, e.g. --robot.env.type=libero; its `task` selects the suite. With
-    # --robot.env.endpoint set, it runs in lerobot-env-server instead of in this process.
+    # --robot.env.server.endpoint set, it runs in lerobot-env-server instead of in this process.
     env: SimulatedEnvConfig
     # Index of the task within the suite.
     task_id: int = 0

@@ -296,12 +296,12 @@ Passing `--envhub` is the explicit consent to run the repository's code, like `t
 
 ```bash
 lerobot-eval --policy.path=<checkpoint> \
-  --env.type=envhub --env.hub_path=username/my-env@<commit> --env.endpoint=tcp/127.0.0.1:7448 \
+  --env.type=envhub --env.hub_path=username/my-env@<commit> --env.server.endpoint=tcp/127.0.0.1:7448 \
   --rename_map='{"observation.images.front": "observation.images.camera1"}' \
   --eval.n_episodes=10
 ```
 
-Without `--env.endpoint`, the same command runs the environment locally (with `--trust_remote_code=true`); a sim robot takes the same options under `--robot.env.*`.
+Without `--env.server.endpoint`, the same command runs the environment locally (with `--trust_remote_code=true`); a sim robot takes the same options under `--robot.env.*`.
 
 The server reads the control rate, action convention and component names from the repository's [`LEROBOT_SIM`](#optional-files), and uses the defaults for anything it does not declare. Override a value with `--set`, which wins over the repository, e.g. `--set sim.fps=15`.
 

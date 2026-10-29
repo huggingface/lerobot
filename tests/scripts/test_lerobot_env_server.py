@@ -145,7 +145,7 @@ def test_server_configs_take_their_conventions_from_the_simulator(path, monkeypa
     "path", sorted((Path(__file__).resolve().parents[2] / "docker/sim/configs").glob("*.yaml")), ids=str
 )
 def test_server_configs_serve_what_their_env_options_describe(path, monkeypatch):
-    # `--env.type=<sim> --env.task=<task> --env.endpoint=...` against the shipped image passes the client's check.
+    # `--env.type=<sim> --env.task=<task> --env.server.endpoint=...` against the shipped image passes the client's check.
     sim = load_config(path, [])["sim"]
     served = asdict(resolve_without_simulator(sim, monkeypatch))
     expected = EnvConfig.get_choice_class(sim["type"])(task=sim["task"]).sim_settings()

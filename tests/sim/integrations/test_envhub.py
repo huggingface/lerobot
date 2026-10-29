@@ -250,7 +250,7 @@ def test_envhub_native_batch_preserves_provider_and_options(monkeypatch) -> None
     import pytest
 
     from lerobot.envs import factory
-    from lerobot.envs.configs import HubEnvConfig
+    from lerobot.envs.configs import EnvServerConfig, HubEnvConfig
 
     calls = []
 
@@ -276,9 +276,9 @@ def test_envhub_native_batch_preserves_provider_and_options(monkeypatch) -> None
         assert not hasattr(env, "descriptor")
     finally:
         env.close()
-    config.endpoint = "tcp/127.0.0.1:7448"
-    with pytest.raises(ValueError, match="endpoint"):
+    config.server = EnvServerConfig("tcp/127.0.0.1:7448")
+    with pytest.raises(ValueError, match="env server"):
         config.create_envs(1)
-    config.endpoint = None
+    config.server = None
     with pytest.raises(ValueError, match="SimRobot"):
         config.create_env()

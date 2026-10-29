@@ -25,13 +25,14 @@ sim (``lerobot.sim``) in this process, or on a server (``lerobot.env_server``) w
 # from lerobot.utils.import_utils import require_package
 # require_package("gymnasium", extra="<update_extra>", import_name="gymnasium")
 
-from .configs import AlohaEnv, EnvConfig, HILSerlRobotEnvConfig, HubEnvConfig, PushtEnv
+from .configs import AlohaEnv, EnvConfig, EnvServerConfig, HILSerlRobotEnvConfig, HubEnvConfig, PushtEnv
 from .factory import make_env, make_env_config, make_env_pre_post_processors
 from .utils import check_env_attributes_and_types, close_envs, env_to_policy_features, preprocess_observation
 
 __all__ = [
     "AlohaEnv",
     "EnvConfig",
+    "EnvServerConfig",
     "HILSerlRobotEnvConfig",
     "HubEnvConfig",
     "PushtEnv",

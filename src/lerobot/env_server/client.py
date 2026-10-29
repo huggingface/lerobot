@@ -126,8 +126,8 @@ class EnvClient:
         return ProtocolError(
             ErrorCode.INCOMPATIBLE,
             f"The env server at {self.endpoint} serves deployment {body['deployment']!r}, not "
-            f"{self.deployment!r}: set --env.deployment={body['deployment']} "
-            "(--robot.env.deployment for a sim robot)",
+            f"{self.deployment!r}: set --env.server.deployment={body['deployment']} "
+            "(--robot.env.server.deployment for a sim robot)",
         )
 
     @property

@@ -44,6 +44,22 @@ SERVED_TIMEOUT_S = 120.0
 
 
 @dataclass
+class EnvServerConfig:
+    """Where `lerobot-env-server` serves an environment, and how to talk to it."""
+
+    endpoint: str
+    # The server's deployment; its configs name it after the env type, the default.
+    deployment: str | None = None
+    # How long to wait for the server to connect and answer before reporting it absent.
+    handshake_timeout_s: float = 10.0
+    # A Zenoh JSON5 file with TLS and access-control settings, as for remote inference.
+    zenoh_config_path: str | None = None
+    # "jpeg" sends camera frames as JPEG at jpeg_quality, a bandwidth for fidelity tradeoff.
+    encoding: str = "raw"
+    jpeg_quality: int = 90
+
+
+@dataclass
 class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     task: str | None = None
     fps: int = 30
@@ -52,17 +68,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     features_map: dict[str, str] = field(default_factory=dict)
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
-    # Where `lerobot-env-server` serves this environment; unset, it runs in this process.
-    endpoint: str | None = None
-    # Served only: the server's deployment; its configs name it after the env type, the default.
-    deployment: str | None = None
-    # Served only: how long to wait for the server to connect and answer before reporting it absent.
-    handshake_timeout_s: float = 10.0
-    # Served only: a Zenoh JSON5 file with TLS and access-control settings, as for remote inference.
-    zenoh_config_path: str | None = None
-    # Served only: "jpeg" sends camera frames as JPEG at jpeg_quality, a bandwidth for fidelity tradeoff.
-    encoding: str = "raw"
-    jpeg_quality: int = 90
+    # The env server running this environment; unset, it runs in this process.
+    server: EnvServerConfig | None = None
 
     @property
     def type(self) -> str:
@@ -142,30 +149,30 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         from lerobot.sim.vector_env import LocalVectorEnv
 
         settings = self.sim_settings()
-        endpoint = self.endpoint
-        if endpoint is not None:
+        server = self.server
+        if server is not None:
             from lerobot.env_server.client import EnvClient, RemoteVectorEnv
 
             if self.max_parallel_tasks != 1:
                 raise ValueError("A served environment runs one task at a time")
             connect = partial(
                 EnvClient,
-                endpoint,
-                self.deployment or self.type,
+                server.endpoint,
+                server.deployment or self.type,
                 SERVED_TIMEOUT_S,
-                handshake_timeout_s=self.handshake_timeout_s,
-                zenoh_config_path=self.zenoh_config_path,
+                handshake_timeout_s=server.handshake_timeout_s,
+                zenoh_config_path=server.zenoh_config_path,
             )
             probe = connect()
             try:
                 descriptor = probe.describe()
             finally:
                 probe.close()
-            check_served(descriptor.config, settings, endpoint)
+            check_served(descriptor.config, settings, server.endpoint)
 
             def make(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
                 return RemoteVectorEnv(
-                    connect(encoding=self.encoding, jpeg_quality=self.jpeg_quality),
+                    connect(encoding=server.encoding, jpeg_quality=server.jpeg_quality),
                     n_envs,
                     group,
                     task_id,
@@ -261,8 +268,8 @@ class HubEnvConfig(EnvConfig):
         """Optionally keep the provider's vector wrappers and device-native batches."""
         if not self.use_native_batch:
             return super().create_envs(n_envs, use_async_envs)
-        if self.endpoint is not None:
-            raise ValueError("use_native_batch runs locally; it cannot use an endpoint")
+        if self.server is not None:
+            raise ValueError("use_native_batch runs locally; it cannot use an env server")
         if not self.hub_path:
             raise ValueError("--env.hub_path is required for an EnvHub environment")
         from .factory import make_hub_envs

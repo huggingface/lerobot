@@ -22,6 +22,7 @@ import draccus
 import numpy as np
 import pytest
 
+from lerobot.envs.configs import EnvServerConfig
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
 
 
@@ -30,7 +31,9 @@ def test_env_config_creates_vector_envs_locally_or_served(where, request):
     from lerobot.env_server.client import RemoteVectorEnv
     from lerobot.sim.vector_env import LocalVectorEnv
 
-    config = ToyEnvConfig(endpoint=request.getfixturevalue("sim_server")[1] if where == "served" else None)
+    config = ToyEnvConfig(
+        server=EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+    )
     env = config.create_envs(n_envs=2)["reach"][0]
     try:
         assert isinstance(env, RemoteVectorEnv if where == "served" else LocalVectorEnv)
@@ -69,8 +72,8 @@ def test_environments_in_separate_processes_match_sequential_environments():
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_reset_options_are_rejected_locally_and_served(where, request):
-    endpoint = request.getfixturevalue("sim_server")[1] if where == "served" else None
-    env = ToyEnvConfig(endpoint=endpoint).create_env()
+    server = EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+    env = ToyEnvConfig(server=server).create_env()
     try:
         with pytest.raises(ValueError, match="does not define reset options"):
             env.reset(options={"task_id": 1})
@@ -80,8 +83,8 @@ def test_reset_options_are_rejected_locally_and_served(where, request):
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_stepping_or_reading_before_reset_fails_locally_and_served(where, request):
-    endpoint = request.getfixturevalue("sim_server")[1] if where == "served" else None
-    env = ToyEnvConfig(endpoint=endpoint).create_env()
+    server = EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+    env = ToyEnvConfig(server=server).create_env()
     try:
         with pytest.raises(RuntimeError, match="Reset before stepping"):
             env.step(np.zeros((1, 2), np.float32))
@@ -93,8 +96,8 @@ def test_stepping_or_reading_before_reset_fails_locally_and_served(where, reques
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_attributes_take_no_arguments_locally_and_served(where, request):
-    endpoint = request.getfixturevalue("sim_server")[1] if where == "served" else None
-    env = ToyEnvConfig(endpoint=endpoint).create_env()
+    server = EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+    env = ToyEnvConfig(server=server).create_env()
     try:
         with pytest.raises(TypeError, match="do not take arguments"):
             env.call("task", 0)
@@ -173,6 +176,16 @@ def test_batched_env_works_under_gymnasium_vector_wrappers():
         env.step(np.zeros((2, 2), np.float32))
     finally:
         env.close()
+
+
+def test_env_server_options_are_one_optional_group():
+    assert ToyEnvConfig().server is None and draccus.encode(ToyEnvConfig())["server"] is None
+    config = draccus.parse(
+        ToyEnvConfig, args=["--server.endpoint=tcp/127.0.0.1:7448", "--server.encoding=jpeg"]
+    )
+    assert (config.server.endpoint, config.server.encoding) == ("tcp/127.0.0.1:7448", "jpeg")
+    with pytest.raises(draccus.utils.DecodingError, match="endpoint"):
+        draccus.parse(ToyEnvConfig, args=["--server.encoding=jpeg"])
 
 
 def test_env_config_saves_only_its_settings():

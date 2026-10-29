@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from lerobot.env_server.client import EnvClient
+from lerobot.envs.configs import EnvServerConfig
 from lerobot.transport.protocol.envelope import ErrorCode, ProtocolError
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
 
@@ -249,7 +250,7 @@ def _episode(config: ToyEnvConfig) -> list[tuple]:
 
 def test_local_environment_matches_the_server(sim_server):
     local = _episode(ToyEnvConfig())
-    served = _episode(ToyEnvConfig(endpoint=sim_server[1]))
+    served = _episode(ToyEnvConfig(server=EnvServerConfig(sim_server[1])))
     for expected, actual in zip(local, served, strict=True):
         for expected_array, actual_array in zip(expected[1:4], actual[1:4], strict=True):
             np.testing.assert_array_equal(actual_array, expected_array)
@@ -261,7 +262,7 @@ def test_local_environment_matches_the_server(sim_server):
 
 
 def test_served_env_must_be_the_env_the_command_describes(sim_server):
-    config = ToyEnvConfig(endpoint=sim_server[1], fps=30)  # the server's toy runs at 20 fps
+    config = ToyEnvConfig(server=EnvServerConfig(sim_server[1]), fps=30)  # the server's toy runs at 20 fps
     with pytest.raises(ValueError, match="fps: server 20"):
         config.create_envs(n_envs=1)
 
@@ -280,7 +281,7 @@ def test_first_session_uses_the_environment_built_to_describe(sim_server):
 
 
 def test_a_wrong_deployment_names_the_one_served(sim_server):
-    config = ToyEnvConfig(endpoint=sim_server[1], deployment="other", handshake_timeout_s=0.5)
+    config = ToyEnvConfig(server=EnvServerConfig(sim_server[1], deployment="other", handshake_timeout_s=0.5))
     with pytest.raises(ProtocolError, match="serves deployment 'toy', not 'other'"):
         config.create_envs(n_envs=1)
 
