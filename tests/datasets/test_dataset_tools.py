@@ -16,6 +16,7 @@
 """Tests for dataset tools utilities."""
 
 import shutil
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -28,6 +29,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
     _fractions_to_episode_indices,
+    _try_keep_episodes_from_video_by_stream_copy,
     add_features,
     convert_image_to_video_dataset,
     delete_episodes,
@@ -38,7 +40,7 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.io_utils import load_episodes, load_info
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY, DUMMY_REPO_ID
@@ -79,6 +81,31 @@ def sample_dataset(tmp_path, sample_dataset_template):
     root = tmp_path / "test_dataset"
     shutil.copytree(sample_dataset_template, root)
     return LeRobotDataset(DUMMY_REPO_ID, root=root)
+
+
+def _make_packed_video_dataset(root, dataset_factory):
+    """Encode H.264 episodes separately, then pack them into one video file."""
+    features = {
+        "action": {"dtype": "float32", "shape": (6,), "names": None},
+        "observation.images.top": {"dtype": "video", "shape": (64, 64, 3), "names": None},
+    }
+
+    dataset = dataset_factory(
+        root=root,
+        features=features,
+        use_videos=True,
+        # A short GOP puts several keyframes inside each episode, so a mid-GOP boundary is
+        # reachable for the negative case.
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=6, crf=30),
+    )
+
+    for _ in range(5):
+        add_frames(dataset, 10)
+        dataset.save_episode()
+
+    dataset.finalize()
+    dataset.meta.episodes = load_episodes(dataset.meta.root)
+    return dataset
 
 
 def test_delete_single_episode(sample_dataset, tmp_path):
@@ -1017,6 +1044,100 @@ def test_delete_first_and_last_episodes(sample_dataset, tmp_path):
 
     episode_indices = sorted({int(idx.item()) for idx in new_dataset.hf_dataset["episode_index"]})
     assert episode_indices == [0, 1, 2]
+
+
+@require_h264
+@pytest.mark.parametrize("stream_copy", [True, False], ids=["stream-copy", "reencode"])
+def test_delete_episodes_packed_videos(stream_copy, tmp_path, empty_lerobot_dataset_factory):
+    """Both video paths retain the selected episodes and a continuous output timeline."""
+    import av
+
+    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory)
+    output_dir = tmp_path / "filtered"
+    video_key = src_dataset.meta.video_keys[0]
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+        patch(
+            "lerobot.datasets.dataset_tools._try_keep_episodes_from_video_by_stream_copy",
+            wraps=_try_keep_episodes_from_video_by_stream_copy,
+        ) as mock_stream_copy,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+        if not stream_copy:
+            mock_stream_copy.return_value = False
+
+        new_dataset = delete_episodes(src_dataset, [1, 3], output_dir=output_dir)
+
+    mock_stream_copy.assert_called_once()
+
+    assert new_dataset.meta.total_episodes == 3
+    assert new_dataset.meta.total_frames == 30
+
+    video_path = new_dataset.root / new_dataset.meta.get_video_file_path(0, video_key)
+    with av.open(str(video_path)) as container:
+        pts = [frame.pts for frame in container.decode(video=0)]
+        ticks_per_frame = round(1 / (src_dataset.meta.fps * container.streams.video[0].time_base))
+    assert len(pts) == 30
+    assert [p - pts[0] for p in pts] == [i * ticks_per_frame for i in range(30)]
+
+    source_frames = torch.stack([src_dataset[i][video_key] for i in range(src_dataset.meta.total_frames)])
+    for new_ep, old_ep in enumerate([0, 2, 4]):
+        for offset in range(10):
+            source_index = old_ep * 10 + offset
+            expected = source_frames[source_index]
+            actual = new_dataset[new_ep * 10 + offset][video_key]
+            if stream_copy:
+                assert torch.equal(actual, expected)
+            else:
+                # Allow lossy pixel changes, but require the correct source frame, in order.
+                errors = (source_frames - actual).abs().mean(dim=(1, 2, 3))
+                assert errors.argmin().item() == source_index
+
+
+@require_h264
+def test_stream_copy_declines_when_boundaries_are_not_gop_aligned(tmp_path, empty_lerobot_dataset_factory):
+    """A range starting mid-GOP is refused so the caller can re-encode instead."""
+    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory)
+    video_key = src_dataset.meta.video_keys[0]
+    src_video_path = src_dataset.root / src_dataset.meta.get_video_file_path(0, video_key)
+    output_path = tmp_path / "declined.mp4"
+
+    # Frame 3 sits inside the first episode's GOP rather than on its boundary.
+    assert not _try_keep_episodes_from_video_by_stream_copy(
+        src_video_path, output_path, [(3, 10)], src_dataset.meta.fps
+    )
+    assert not output_path.exists(), "declining must not leave a partial file behind"
+
+
+@require_h264
+def test_stream_copy_declines_open_gop_keyframes(tmp_path):
+    """Keyframes followed by leading pictures are not clean cut points.
+
+    In an open GOP the pictures after a keyframe in decode order can be presented before it and
+    reference the previous GOP, so the keyframe's packet index is not its frame index.
+    """
+    import av
+
+    fps = 30
+    # 64 frames, 64x64, x264: keyint=16:min-keyint=16:open-gop=1:bframes=3:b-adapt=0:scenecut=0.
+    src_video_path = Path(__file__).parent.parent / "artifacts" / "encoded_videos" / "open_gop_h264.mp4"
+
+    with av.open(str(src_video_path)) as container:
+        keyframe_indices = [
+            i
+            for i, packet in enumerate(p for p in container.demux(video=0) if p.size > 0)
+            if packet.is_keyframe
+        ]
+    assert len(keyframe_indices) > 2, "fixture must contain mid-stream keyframes"
+
+    output_path = tmp_path / "declined.mp4"
+    assert not _try_keep_episodes_from_video_by_stream_copy(
+        src_video_path, output_path, [(keyframe_indices[1], keyframe_indices[2])], fps
+    )
+    assert not output_path.exists()
 
 
 def test_split_all_episodes_assigned(sample_dataset, tmp_path):
