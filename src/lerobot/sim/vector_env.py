@@ -92,8 +92,8 @@ def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
 class _ProcessEnv:
     """One environment in its own process. A batch steps in parallel: send all, then receive all.
 
-    Not Gymnasium's ``AsyncVectorEnv``: it steps every environment, finished ones included (robosuite raises
-    on them), and builds one in this process to read the spaces.
+    Not Gymnasium's ``AsyncVectorEnv``: it steps every environment, finished ones included, which Gymnasium
+    leaves undefined, and builds one in this process to read the spaces.
     """
 
     def __init__(self, make: Callable[[], Any]):
