@@ -1,0 +1,384 @@
+# Cosmos3
+
+Cosmos3 is a **world action model for robot control**, built on [Cosmos 3](https://research.nvidia.com/labs/cosmos-lab/cosmos3/), NVIDIA's family of omnimodal world models. From the camera observations and a language instruction, the policy jointly predicts the future video frames and the next chunk of robot actions. The LeRobot implementation is adapted from the native [cosmos-framework](https://github.com/NVIDIA/cosmos-framework) action policy and runs the released [Cosmos3 Nano and Edge](https://huggingface.co/collections/nvidia/cosmos3) models, converted to the LeRobot format.
+
+- 📄 [Cosmos 3 technical report](https://research.nvidia.com/labs/cosmos-lab/cosmos3/technical-report.pdf) ([arXiv:2606.02800](https://arxiv.org/abs/2606.02800))
+- 💻 [cosmos-framework](https://github.com/NVIDIA/cosmos-framework) and [Cosmos cookbook](https://github.com/nvidia/cosmos)
+- 🤗 [Cosmos 3 model collection](https://huggingface.co/collections/nvidia/cosmos3)
+
+## Model Overview
+
+Cosmos 3 is a Mixture-of-Transformers (MoT). Every decoder layer has two pathways with their own layer norms, attention projections and MLPs, and the two pathways meet only in a shared self-attention:
+
+- The **understanding pathway** (the reasoner) reads the text tokens of the prompt, and optionally ViT image tokens, with causal attention.
+- The **generation pathway** (the generator) reads the continuous tokens of the diffusion subsequence: the Wan2.2 VAE latents of the video and the action tokens. It attends bidirectionally over both pathways and is trained with flow matching.
+
+<img
+  src="https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/cosmos3/cosmos3_mot_architecture.png"
+  alt="Mixture-of-Transformers architecture of Cosmos 3"
+  width="100%"
+/>
+
+_Mixture-of-Transformers (MoT) architecture of Cosmos 3 (Figure 5 of the [technical report](https://arxiv.org/abs/2606.02800)). Left: the autoregressive (AR) subsequence goes through the reasoner and the diffusion (DM) subsequence through the generator, and the two meet in a shared multimodal attention. Right: the attention mask, causal for AR and full for diffusion._
+
+As a policy, Cosmos3 runs in the world action model mode of the native action recipes:
+
+- **Inputs**: the camera views are composed into one video canvas (one view as is, two side by side, three with the first on top and the other two below it). The prompt carries the task, the frame rate, the canvas resolution, a description of the canvas layout and the number of idle frames of the chunk.
+- **Training**: the policy encodes the clip of the current frame and the `chunk_size` future frames with the VAE, adds noise to the future latents and to the action chunk, and learns to denoise both. The loss is a weighted sum of a video loss and an action loss.
+- **Inference**: the condition frame is clean, the future video and the actions are sampled jointly with the UniPC solver, and the policy returns the action chunk. The predicted video can be saved during evaluation (see [Evaluation](#evaluation)).
+- By default only the generation pathway, the layers around it and the action modules train (`train_gen_stream_only=true`, `freeze_vision_encoder=true`), as in the native post-training recipes.
+
+LeRobot provides the two released sizes as two policy types:
+
+|                                 | Cosmos3 Nano                                                        | Cosmos3 Edge                                                        |
+| ------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Policy type                     | `cosmos3_nano`                                                      | `cosmos3_edge`                                                      |
+| Parameters (trained by default) | 16.5B (7.0B)                                                        | 4.6B (1.4B)                                                         |
+| Backbone                        | MoT initialized from Qwen3-VL, 36 layers, hidden size 4096          | MoT with a dense 2B transformer, 28 layers, hidden size 2048        |
+| Tokenizer                       | [nvidia/Cosmos3-Nano](https://huggingface.co/nvidia/Cosmos3-Nano)   | [nvidia/Cosmos3-Edge](https://huggingface.co/nvidia/Cosmos3-Edge)   |
+| Base checkpoint                 | [lerobot/cosmos3-nano](https://huggingface.co/lerobot/cosmos3-nano) | [lerobot/cosmos3-edge](https://huggingface.co/lerobot/cosmos3-edge) |
+
+## Installation Requirements
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. Install the Cosmos3 dependencies:
+
+   ```bash
+   pip install -e ".[cosmos3]"
+   ```
+
+   If you installed LeRobot from PyPI:
+
+   ```bash
+   pip install 'lerobot[cosmos3]'
+   ```
+
+3. Add the extras of your workflow: `training` for `lerobot-train`, `libero` to train or evaluate on LIBERO, and `peft` for LoRA. For example:
+
+   ```bash
+   pip install -e ".[cosmos3,training,libero]"
+   ```
+
+Cosmos3 uses the PyTorch scaled dot product attention backend (`sdpa`) by default. If your environment has a compatible `flash_attn` installation, you can request `--policy.attn_implementation=flash_attention_2`. Do not combine it with `--policy.compile_model=true`: the compiled decoder layers recompile for every layer with flash attention and stop with a recompilation error.
+
+## Checkpoints
+
+| Checkpoint                                                                              | Size | Training data                                                                          | Use                  |
+| --------------------------------------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------- | -------------------- |
+| [lerobot/cosmos3-nano](https://huggingface.co/lerobot/cosmos3-nano)                     | Nano | Release of [nvidia/Cosmos3-Nano](https://huggingface.co/nvidia/Cosmos3-Nano)           | Base for fine-tuning |
+| [lerobot/cosmos3-edge](https://huggingface.co/lerobot/cosmos3-edge)                     | Edge | Release of [nvidia/Cosmos3-Edge](https://huggingface.co/nvidia/Cosmos3-Edge)           | Base for fine-tuning |
+| [lerobot/cosmos3-nano-libero](https://huggingface.co/lerobot/cosmos3-nano-libero)       | Nano | [lerobot/libero-cosmos3](https://huggingface.co/datasets/lerobot/libero-cosmos3)       | LIBERO evaluation    |
+| [lerobot/cosmos3-edge-libero](https://huggingface.co/lerobot/cosmos3-edge-libero)       | Edge | [lerobot/libero-cosmos3](https://huggingface.co/datasets/lerobot/libero-cosmos3)       | LIBERO evaluation    |
+| [lerobot/cosmos3-nano-libero-10](https://huggingface.co/lerobot/cosmos3-nano-libero-10) | Nano | [lerobot/libero_10-cosmos3](https://huggingface.co/datasets/lerobot/libero_10-cosmos3) | LIBERO-10 evaluation |
+| [lerobot/cosmos3-edge-libero-10](https://huggingface.co/lerobot/cosmos3-edge-libero-10) | Edge | [lerobot/libero_10-cosmos3](https://huggingface.co/datasets/lerobot/libero_10-cosmos3) | LIBERO-10 evaluation |
+
+- The base checkpoints hold the released weights in the LeRobot format. Their action modules (`action2llm`, `llm2action`, `action_modality_embed`) are not trained for a robot yet, so start fine-tuning with `--policy.load_action_modules=false` (see [Fine-tuning on LIBERO](#fine-tuning-on-libero)).
+- The `config.json` of the base checkpoints holds the native DROID post-training recipe, and the class defaults of the policy types are the native LIBERO recipe.
+- The LIBERO checkpoints hold the EMA weights of their training run.
+- The weights are stored in bfloat16. `config.json` sets `dtype: float32` on purpose: mixed precision training from these checkpoints keeps float32 master weights, as the native training does. For inference and evaluation pass `--policy.dtype=bfloat16`.
+
+There are two ways to start from a checkpoint:
+
+- `--policy.path=<checkpoint>` loads the stored configuration, the weights and the processors, then applies the command line on top.
+- `--policy.type=cosmos3_nano --policy.pretrained_path=<checkpoint>` (or `cosmos3_edge`) loads only the weights and the processors, and the configuration starts from the class defaults, the LIBERO recipe.
+
+## Fine-tuning on LIBERO
+
+The class defaults are the LIBERO recipe of the technical report: chunks of 16 actions, embodiment `domain_id=5`, no state action, quantile normalization of the actions, UniPC with 30 steps and no classifier-free guidance at inference, and a learning rate of 5e-5 with 500 warmup steps and a linear decay to zero at step 16000. Starting from a base checkpoint with `--policy.type` therefore only needs `--policy.load_action_modules=false`.
+
+The recipe trains on the LIBERO data converted to the Cosmos3 layout:
+
+- [lerobot/libero-cosmos3](https://huggingface.co/datasets/lerobot/libero-cosmos3): the four suites (Spatial, Object, Goal, 10), 1693 episodes.
+- [lerobot/libero_10-cosmos3](https://huggingface.co/datasets/lerobot/libero_10-cosmos3): LIBERO-10 only, 379 episodes.
+
+Both come from [nvidia/LIBERO_LeRobot_v3](https://huggingface.co/datasets/nvidia/LIBERO_LeRobot_v3), the data of the native recipe. The actions are 10D `[delta position (3), rot6d (6), gripper]` instead of the 7D axis angle actions of LIBERO, the two cameras `observation.images.image` (third person) and `observation.images.image2` (wrist) are 256x256 at 20 FPS, and the action statistics are the ones of the native recipe. During evaluation the LIBERO environment converts the actions back (see [Evaluation](#evaluation)).
+
+### Training command
+
+The native LIBERO recipe trains with a global batch of 2048 samples for 2000 iterations on LIBERO-10 (the best checkpoint is near iteration 1500) and for 5000 iterations on the four suites (best near 4500). The command below reproduces it on one machine with 8 GPUs: FSDP2 over the 8 GPUs, 32 samples per GPU and 8 gradient accumulation steps, so `32 x 8 x 8 = 2048` samples per optimizer update. Every native iteration count is multiplied by the 8 accumulation steps: 2000 iterations become `--steps=16000`, a checkpoint every 500 iterations `--save_freq=4000`, and the warmup of 500 and the decay end of 16000 become 4000 and 128000.
+
+```bash
+accelerate launch --num_processes=8 $(which lerobot-train) \
+  --policy.type=cosmos3_nano \
+  --policy.pretrained_path=lerobot/cosmos3-nano \
+  --policy.load_action_modules=false \
+  --policy.gradient_checkpointing=true \
+  --policy.repo_id=${HF_USER}/cosmos3_nano_libero_10 \
+  --dataset.repo_id=lerobot/libero_10-cosmos3 \
+  --parallelism.dp_shard=8 \
+  --accelerator.fsdp.mixed_precision_policy.param_dtype=bfloat16 \
+  --accelerator.fsdp.mixed_precision_policy.reduce_dtype=bfloat16 \
+  --accelerator.fsdp.mixed_precision_policy.cast_forward_inputs=false \
+  --accelerator.gradient_accumulation.steps=8 \
+  --accelerator.gradient_accumulation.sync_each_batch=true \
+  --tf32=false \
+  --ema.type=power \
+  --ema.sigma_rel=0.1 \
+  --batch_size=32 \
+  --steps=16000 \
+  --save_freq=4000 \
+  --policy.scheduler_warmup_steps=4000 \
+  --policy.scheduler_decay_steps=128000 \
+  --output_dir=outputs/train/cosmos3_nano_libero_10 \
+  --job_name=cosmos3_nano_libero_10 \
+  --wandb.enable=true
+```
+
+For the four suites use `--dataset.repo_id=lerobot/libero-cosmos3` and `--steps=40000` (5000 iterations). For Cosmos3 Edge use `--policy.type=cosmos3_edge --policy.pretrained_path=lerobot/cosmos3-edge`.
+
+### Key training parameters
+
+| Parameter                                              | Description                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--policy.load_action_modules=false`                   | Starts the action modules from their initialization instead of loading them, as the native post-training recipes do. Set it only when fine-tuning from a base checkpoint (see the notes below).                                                                                                                        |
+| `--parallelism.dp_shard=8`                             | FSDP2 over the 8 GPUs. The policy declares its FSDP2 wrap units, so `--accelerator.fsdp.wrap_modules` is not needed. See the [multi GPU training guide](./multi_gpu_training).                                                                                                                                         |
+| `--accelerator.fsdp.mixed_precision_policy.*`          | bfloat16 compute and gradient reduction with float32 master weights, as in the native training. Keep the default `--policy.dtype` (float32) with it: a bfloat16 policy would train bfloat16 master weights.                                                                                                            |
+| `--accelerator.gradient_accumulation.steps`            | The global batch is `--batch_size` x GPUs x accumulation steps. `sync_each_batch=true` reduces the gradients after every micro batch, so they stay sharded and do not need an extra unsharded copy.                                                                                                                    |
+| `--steps`, `--save_freq`, `--policy.scheduler_*_steps` | LeRobot counts loop steps (micro batches), not optimizer updates. Multiply the iteration counts of the native recipe (2000 or 5000 iterations, warmup 500, decay 16000, checkpoints every 500) by the accumulation steps. Keep `--steps` at most `--policy.scheduler_decay_steps`: the learning rate is zero after it. |
+| `--ema.type=power --ema.sigma_rel=0.1`                 | The EMA of the native recipe. Every checkpoint also holds the EMA weights in `pretrained_model_ema/`, which are the weights to evaluate and publish.                                                                                                                                                                   |
+| `--tf32=false`                                         | Keeps the float32 matrix multiplications in full precision, as the native training does.                                                                                                                                                                                                                               |
+| `--policy.gradient_checkpointing=true`                 | Recomputes the activations of the decoder layers and the vision blocks in the backward pass to save memory.                                                                                                                                                                                                            |
+| `--policy.compile_model=true`                          | Optional: `torch.compile` of the decoder layers and the VAE encoder.                                                                                                                                                                                                                                                   |
+
+On a single GPU or with DDP, replace the FSDP2 flags (`--parallelism.dp_shard` and `--accelerator.fsdp.mixed_precision_policy.*`) with `--accelerator.mixed_precision=bf16`. For example Cosmos3 Edge on one GPU, with 32 samples per step and 64 accumulation steps for the same global batch of 2048:
+
+```bash
+lerobot-train \
+  --policy.type=cosmos3_edge \
+  --policy.pretrained_path=lerobot/cosmos3-edge \
+  --policy.load_action_modules=false \
+  --policy.gradient_checkpointing=true \
+  --policy.repo_id=${HF_USER}/cosmos3_edge_libero_10 \
+  --dataset.repo_id=lerobot/libero_10-cosmos3 \
+  --accelerator.mixed_precision=bf16 \
+  --accelerator.gradient_accumulation.steps=64 \
+  --tf32=false \
+  --ema.type=power \
+  --ema.sigma_rel=0.1 \
+  --batch_size=32 \
+  --steps=128000 \
+  --save_freq=32000 \
+  --policy.scheduler_warmup_steps=32000 \
+  --policy.scheduler_decay_steps=1024000 \
+  --output_dir=outputs/train/cosmos3_edge_libero_10
+```
+
+<Tip>
+
+`--policy.load_action_modules=false` is reset to `true` once the checkpoint is loaded, so the saved run loads its trained action modules again. Two cases keep the action modules at their initialization by mistake:
+
+- Building a policy without `--policy.pretrained_path` or `--policy.path`: nothing is loaded, so the flag stays `false` and a later evaluation or resume of that run skips its trained action modules.
+- PEFT with the action modules outside `--peft.full_training_modules`: the action modules then never train.
+
+Set `--policy.load_action_modules=false` only when fine-tuning from a base checkpoint. With PEFT, keep the action modules in `--peft.full_training_modules` (the default).
+
+</Tip>
+
+### Hardware requirements
+
+Measured on A800 80 GB GPUs with the commands of this page and gradient checkpointing:
+
+| Setup                                 | GPUs |  Batch per GPU  | Peak memory per GPU |
+| ------------------------------------- | :--: | :-------------: | :-----------------: |
+| Nano, full fine-tuning (FSDP2)        |  8   |       32        |        38 GB        |
+| Nano, LoRA                            |  1   |        4        |        64 GB        |
+| Edge, full fine-tuning                |  1   |       32        |        47 GB        |
+| Edge, LoRA                            |  1   |        8        |        21 GB        |
+| Evaluation in bfloat16, Nano and Edge |  1   | 10 environments |   39 GB and 15 GB   |
+
+- Cosmos3 Nano needs 80 GB GPUs, and at least 4 of them for full fine-tuning: before FSDP2 shards the model, every GPU holds the whole float32 model (about 66 GB).
+- The LIBERO command above takes about 45 seconds per optimizer update on 8 A800 GPUs, so about 25 hours for LIBERO-10.
+
+## Fine-tuning on your own data
+
+Cosmos3 takes the training recipe from the command line and the dataset: the policy contains no robot specific logic. Any LeRobot dataset works once it follows the points below.
+
+### Dataset requirements
+
+- **Cameras**: one to three `observation.images.*` features, in the order of the dataset `info.json`. Every view is resized to `--policy.view_size` (by default the size of the first camera) and composed into one video canvas: one view as is, two side by side, three with the first one on top and the other two side by side below it. Put the cameras in the order of that layout, for example `[third person, wrist]` for LIBERO and `[wrist, exterior 1, exterior 2]` for DROID.
+- **View description**: `--policy.view_description` is the sentence of the prompt that describes the canvas layout. The defaults describe the LIBERO layout (class defaults) and the DROID layout (base `config.json`). Write the sentence of your own layout: a wrong description is not detected and only weakens the prompt.
+- **Action representation**: the policy learns the actions of the dataset as they are and has no conversion step. Convert the actions to the representation you want to learn before training, as the LIBERO data does with rot6d rotations. If the environment expects another representation, convert the actions back in the environment processors (the LIBERO environment does this for Cosmos3).
+- **Action width**: at most `--policy.max_action_dim` (64) channels. The output width comes from the dataset.
+- **Frame rate**: `fps` comes from the dataset metadata and must be the real control rate: it is written into the prompt and sets the time axis of the video positions and the thresholds of the idle frames.
+- **Statistics**: the default action normalization is `QUANTILES`, which needs the `q01` and `q99` statistics of the action in `meta/stats.json` (datasets written by LeRobot have them). The native DROID recipe uses `IDENTITY` instead.
+- **State**: with `--policy.use_state=true` the current state is placed in front of the actions as a clean state action. `observation.state` then needs the same width and channel meaning as the action. The state and the action are normalized with their own statistics.
+- **Language**: the `task` of every frame is the instruction of the prompt.
+- **Embodiment**: `--policy.domain_id` selects the row of the action projections, one of 32. The native recipes use 5 for LIBERO, 8 for DROID and 30 for RoboCasa. When the action modules start from their initialization (`--policy.load_action_modules=false`), every row starts untrained and any value works.
+- **Chunk**: `--policy.chunk_size` actions per chunk (16 for LIBERO, 32 for DROID) and `--policy.n_action_steps` actions executed per chunk.
+
+Fields left at `None` (`fps`, `view_size`) and the action channel names come from the dataset. All other fields come from the configuration, so set them on the command line or in a `--config_path` file.
+
+<Tip>
+
+**Action and state channel names.** The prompt states how many frames of the chunk are idle (the robot does not move), and `Cosmos3IdleFrameProcessorStep` counts them from the action channel names in `meta/info.json`. Names of the form `[<prefix>_]<type>_<index>` tell the channel types: `pos`, a rotation (`rot6d`, `rot9d`, `axisangle`, `euler_xyz`, `quat_xyzw`, `quat_wxyz`), `gripper` or `joint`, with a prefix to tell arms apart (for example `left_rot6d_0`). The LIBERO data uses `pos_0..2, rot6d_0..5, gripper_0`, the DROID layout `joint_0..6, gripper_0`.
+
+This naming is not required. Without it the policy only logs a warning and the prompt counts no idle frame, which is exactly what the LIBERO recipe sees anyway (its episodes have no idle frames under the native rule). Follow the naming only if you want the idle frame count of the native DROID recipe.
+
+</Tip>
+
+### DROID recipe
+
+The `config.json` of the base checkpoints is the native DROID post-training recipe: embodiment `domain_id=8`, chunks of 32 actions, the current state as a state action and idle frames counted over it (`use_state=true`, `idle_state=true`), no normalization (`IDENTITY`), UniPC with 4 steps and a classifier-free guidance scale of 3 at inference, and a learning rate of 8e-5 (the native 2e-4 times its multiplier of 0.4) with no warmup and a linear decay to zero at step 100000. Starting from it with `--policy.path` trains with this recipe.
+
+The native recipe trains on the success episodes of [nvidia/Cosmos3-DROID](https://huggingface.co/datasets/nvidia/Cosmos3-DROID). A DROID dataset in the Cosmos3 layout has:
+
+- The three cameras `observation.images.wrist_left`, `observation.images.exterior_1_left` and `observation.images.exterior_2_left`, in this order (wrist on top, the two exterior views below it), 360x640 in the native data.
+- 8D joint position actions named `joint_0` to `joint_6` and `gripper_0`, and `observation.state` with the same layout.
+- A frame rate of 15 FPS.
+
+The native recipe trains with a global batch of 8192 samples for 10000 iterations, with a checkpoint every 1000 iterations. On one machine with 8 GPUs, 8 samples per GPU and 128 accumulation steps give the same global batch (`8 x 8 x 128 = 8192`), and every iteration count is multiplied by 128:
+
+```bash
+accelerate launch --num_processes=8 $(which lerobot-train) \
+  --policy.path=lerobot/cosmos3-nano \
+  --policy.load_action_modules=false \
+  --policy.gradient_checkpointing=true \
+  --policy.repo_id=${HF_USER}/cosmos3_nano_droid \
+  --dataset.repo_id=${HF_USER}/droid_cosmos3 \
+  --parallelism.dp_shard=8 \
+  --accelerator.fsdp.mixed_precision_policy.param_dtype=bfloat16 \
+  --accelerator.fsdp.mixed_precision_policy.reduce_dtype=bfloat16 \
+  --accelerator.fsdp.mixed_precision_policy.cast_forward_inputs=false \
+  --accelerator.gradient_accumulation.steps=128 \
+  --accelerator.gradient_accumulation.sync_each_batch=true \
+  --tf32=false \
+  --ema.type=power \
+  --ema.sigma_rel=0.1 \
+  --batch_size=8 \
+  --steps=1280000 \
+  --save_freq=128000 \
+  --policy.scheduler_decay_steps=12800000 \
+  --output_dir=outputs/train/cosmos3_nano_droid \
+  --job_name=cosmos3_nano_droid \
+  --wandb.enable=true
+```
+
+The native DROID recipe ran on 256 GPUs. On one machine with 8 A800 GPUs one optimizer update of this command takes about 33 minutes, so the full recipe needs many machines. Run the same command on every machine with the multi node flags of `accelerate launch` (or `torchrun`), shard within each machine and replicate across machines with `--parallelism.dp_replicate=<number of machines> --parallelism.dp_shard=8`, and divide `--accelerator.gradient_accumulation.steps` and the step counts by the number of machines. See [HSDP](./multi_gpu_training#hsdp) in the multi GPU training guide.
+
+### A new robot
+
+For a new robot, start from the class defaults with `--policy.type` and set the fields of your data on the command line, for example:
+
+```bash
+lerobot-train \
+  --policy.type=cosmos3_edge \
+  --policy.pretrained_path=lerobot/cosmos3-edge \
+  --policy.load_action_modules=false \
+  --policy.domain_id=0 \
+  --policy.chunk_size=32 \
+  --policy.n_action_steps=32 \
+  --policy.view_description='The left half shows the front camera; the right half shows the wrist-mounted camera.' \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  ...
+```
+
+### Backbone configuration
+
+The backbone configuration `--policy.mot_backbone` is a single command line value. Pass a YAML dict with only the fields to change, for example a model with fewer layers for a quick test without pretrained weights:
+
+```bash
+--policy.type=cosmos3_edge --policy.mot_backbone='{text_config: {num_hidden_layers: 2}, vision_config: {num_hidden_layers: 1}}'
+```
+
+Fields left out keep the defaults of the size, or the values of the loaded configuration with `--policy.path`. Write floats as `1.0e-6` (YAML reads `1e-6` as a string), and give fields whose value is a dict, such as `rope_parameters`, in full. The architecture fields must match the weights you load.
+
+## Fine-tuning with PEFT (LoRA)
+
+Cosmos3 supports LoRA through the LeRobot [PEFT integration](./peft_training) (`pip install -e ".[cosmos3,training,peft]"`). By default LoRA adapts the attention projections of the generation pathway (`q_proj_gen`, `k_proj_gen`, `v_proj_gen`, `o_proj_gen`), and the action modules (`action2llm`, `llm2action`, `action_modality_embed`) train in full and are saved with the adapter.
+
+```bash
+lerobot-train \
+  --policy.type=cosmos3_nano \
+  --policy.pretrained_path=lerobot/cosmos3-nano \
+  --policy.load_action_modules=false \
+  --policy.gradient_checkpointing=true \
+  --policy.repo_id=${HF_USER}/cosmos3_nano_libero_10_lora \
+  --peft.method_type=lora \
+  --peft.r=16 \
+  --peft.lora_alpha=32 \
+  --policy.optimizer_lr=5e-4 \
+  --policy.optimizer_weight_decay=0 \
+  --dataset.repo_id=lerobot/libero_10-cosmos3 \
+  --accelerator.mixed_precision=bf16 \
+  --tf32=false \
+  --ema.type=power \
+  --ema.sigma_rel=0.1 \
+  --batch_size=4 \
+  --steps=16000 \
+  --output_dir=outputs/train/cosmos3_nano_libero_10_lora
+```
+
+- `--peft.lora_alpha=32`, the learning rate and the weight decay are the values of the native Cosmos3 LoRA recipe. Without `--peft.lora_alpha` PEFT uses 8.
+- With `--policy.load_action_modules=false` the action modules may change shape (`--policy.max_action_dim`, `--policy.num_embodiment_domains`). This works for full fine-tuning only: reloading a PEFT run loads the base, which needs the same shapes.
+- `--policy.train_gen_stream_only` and `--policy.freeze_vision_encoder` have no effect with PEFT: only the adapters and the action modules train.
+- Do not add the action projections (`action2llm`, `llm2action`) to `--peft.target_modules`: they are per embodiment tables read directly by a grouped matrix multiplication, so LoRA would not change them. They already train in full.
+- Keep the default float32 `--policy.dtype` with PEFT, so the action modules that train in full keep float32 master weights.
+- The native recipes define no LoRA batch size or schedule. The command keeps the LIBERO schedule (linear decay to zero at step 16000) with 4 samples per step.
+- Cosmos3 Nano with LoRA trains on one 80 GB GPU with gradient checkpointing, about 64 GB at 4 samples per GPU (see [Hardware requirements](#hardware-requirements)).
+
+## Evaluation
+
+Evaluate a LIBERO checkpoint on the four suites:
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/cosmos3-nano-libero \
+  --policy.dtype=bfloat16 \
+  --tf32=false \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --eval.n_episodes=10 \
+  --eval.batch_size=10 \
+  --output_dir=outputs/eval/cosmos3_nano_libero
+```
+
+- For a checkpoint of your own training run, pass the EMA weights: `--policy.path=outputs/train/cosmos3_nano_libero_10/checkpoints/last/pretrained_model_ema`.
+- `--env.observation_height=256 --env.observation_width=256` renders the cameras at the 256x256 resolution of the training data.
+- The LIBERO environment adds the Cosmos3 action conversion to its processors automatically: the 10D rot6d actions are converted back to the 7D axis angle actions of LIBERO. When you run the policy outside `lerobot-eval`, build the environment processors with `make_env_pre_post_processors(env_cfg, policy_cfg)` from `lerobot.envs.factory` as well.
+- See the [LIBERO guide](./libero) for the evaluation protocol and the other options.
+
+### Predicted video
+
+Cosmos3 predicts the future frames together with the actions. Pass `--policy.save_predicted_video=true` to decode the predicted video of every chunk with the VAE and write `pred_episode_*.mp4` next to the rendered `eval_episode_*.mp4` videos.
+
+<video
+  src="https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/cosmos3/cosmos3_libero_predicted_video.mp4"
+  autoplay
+  loop
+  muted
+  playsinline
+  width="100%"
+></video>
+
+_Cosmos3 Edge on the LIBERO-10 task "put the black bowl in the bottom drawer of the cabinet and close it". Left: the third person and wrist observations of the rollout. Right: the video predicted by the policy, sampled again every 16 actions from the current observation._
+
+## Results
+
+### LIBERO
+
+| Models                 | Libero-Spatial  |  Libero-Object  |   Libero-Goal   |    Libero-10    | Average |
+| ---------------------- | :-------------: | :-------------: | :-------------: | :-------------: | :-----: |
+| Cosmos-Nano-Libero     | 98.0% (490/500) | 99.4% (497/500) | 97.4% (487/500) | 96.8% (484/500) | 97.90%  |
+| Cosmos-Edge-Libero     | 98.6% (493/500) | 99.4% (497/500) | 97.2% (486/500) | 96.6% (483/500) | 97.95%  |
+| Cosmos-Nano-Libero_10  |       N/A       |       N/A       |       N/A       | 97.6% (488/500) | 97.60%  |
+| Cosmos-Edge-Libero_10  |       N/A       |       N/A       |       N/A       | 95.2% (476/500) | 95.20%  |
+| Cosmos-Nano-TechReport |       N/A       |       N/A       |       N/A       |      97.4%      | 97.40%  |
+
+_Closed-loop success rates on LIBERO. Cosmos-Nano-Libero and Cosmos-Edge-Libero are trained on the four LIBERO suites ([lerobot/cosmos3-nano-libero](https://huggingface.co/lerobot/cosmos3-nano-libero), [lerobot/cosmos3-edge-libero](https://huggingface.co/lerobot/cosmos3-edge-libero)). Cosmos-Nano-Libero_10 and Cosmos-Edge-Libero_10 are trained on LIBERO-10 only ([lerobot/cosmos3-nano-libero-10](https://huggingface.co/lerobot/cosmos3-nano-libero-10), [lerobot/cosmos3-edge-libero-10](https://huggingface.co/lerobot/cosmos3-edge-libero-10)), and the training setup of Cosmos-Nano-Libero_10 follows the LIBERO-10 recipe reported in the technical report. Cosmos-Nano-TechReport is the LIBERO-10 success rate of Cosmos3 Nano trained on LIBERO-10 only, as reported in Table 20 of the [technical report](https://arxiv.org/abs/2606.02800) (MT-init, iteration 2000, 500 rollouts)._
+
+## Citation
+
+```bibtex
+@techreport{nvidia2026cosmos3,
+  title  = {Cosmos 3: Omnimodal World Models for physical AI},
+  author = {{NVIDIA Cosmos Team}},
+  year   = {2026},
+  url    = {https://research.nvidia.com/labs/cosmos-lab/cosmos3/technical-report.pdf}
+}
+```
+
+## License
+
+The LeRobot implementation follows the **Apache 2.0 License** of LeRobot. The Cosmos3 weights and the native code are released under the [OpenMDW-1.1 License](https://openmdw.ai/license/1-1/).
