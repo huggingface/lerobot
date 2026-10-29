@@ -22,6 +22,7 @@ from .chunk import (
 )
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .dm05.configuration_dm05 import DM05Config as DM05Config
+from .dp3.configuration_dp3 import DP3Config as DP3Config
 from .eo1.configuration_eo1 import EO1Config as EO1Config
 from .evo1.configuration_evo1 import Evo1Config as Evo1Config
 from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
@@ -65,6 +66,7 @@ __all__ = [
     "ACTConfig",
     "DiffusionConfig",
     "DM05Config",
+    "DP3Config",
     "EO1Config",
     "FastWAMConfig",
     "FineARTVLAConfig",
