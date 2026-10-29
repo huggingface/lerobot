@@ -14,6 +14,8 @@
 
 """Local RTC and the remote runner share post-preprocessing action semantics."""
 
+from threading import Thread
+
 import pytest
 import torch
 
@@ -29,6 +31,7 @@ from tests.inference.policy_helpers import (
     runner_for,
     tiny_config,
 )
+from tests.utils import wait_for
 
 pytestmark = pytest.mark.dataset
 
@@ -168,7 +171,7 @@ def test_shared_prediction_keeps_the_policy_prediction_beside_the_actions():
     assert prediction.prediction == {"language": {"subtask": ["pick"]}}
 
 
-def _rtc_engine_after_one_chunk(monkeypatch, *, accept=True):
+def _rtc_engine_after_one_chunk(monkeypatch, *, accept=True, after_accept=None):
     """A local RTC engine that ran one chunk of a policy predicting a subtask with it."""
     config = tiny_config()
     config.rtc_config = RTCConfig(enabled=False)
@@ -184,7 +187,10 @@ def _rtc_engine_after_one_chunk(monkeypatch, *, accept=True):
 
     def accept_once(request, chunk, *, task_version):
         engine._shutdown_event.set()
-        return real_accept(request, chunk, task_version=task_version) if accept else False
+        accepted = real_accept(request, chunk, task_version=task_version) if accept else False
+        if after_accept is not None:
+            after_accept(engine)
+        return accepted
 
     monkeypatch.setattr(engine._runtime, "accept", accept_once)
     engine._rtc_loop()
@@ -202,10 +208,26 @@ def test_rtc_engine_hands_a_chunk_prediction_out_once_with_the_next_action(monke
 def test_rtc_engine_drops_the_prediction_of_a_discarded_chunk(monkeypatch):
     # A chunk the runtime does not accept is never served: its prediction must not be shown either.
     engine = _rtc_engine_after_one_chunk(monkeypatch, accept=False)
-    assert engine._chunk_prediction is None
+    assert engine._runtime.take_prediction() is None
 
 
 def test_rtc_engine_reset_clears_a_pending_prediction(monkeypatch):
     engine = _rtc_engine_after_one_chunk(monkeypatch)
     engine.reset()
-    assert engine._chunk_prediction is None
+    assert engine._runtime.take_prediction() is None
+
+
+def test_rtc_engine_reset_right_after_acceptance_drops_the_prediction(monkeypatch):
+    resets = []
+
+    def reset_concurrently(engine):
+        # reset() waits on the task lock held around accept, so it runs on another thread;
+        # the worker resumes once the reset has cleared the queue.
+        generation = engine._runtime.generation
+        resets.append(Thread(target=engine.reset))
+        resets[0].start()
+        assert wait_for(lambda: engine._runtime.generation != generation)
+
+    engine = _rtc_engine_after_one_chunk(monkeypatch, after_accept=reset_concurrently)
+    resets[0].join(timeout=3)
+    assert engine._runtime.take_prediction() is None
