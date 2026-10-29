@@ -96,6 +96,8 @@ The teleoperate command will automatically:
 1. Identify any missing calibrations and initiate the calibration procedure.
 2. Connect the robot and teleop device and start teleoperation.
 
+If the follower is set up as the leader's mirror image, for example with the two arms facing each other, add `--teleop.mirror=true`: the leader's `shoulder_pan` and `wrist_roll` are negated, so the follower moves as the leader's reflection would. Both are mirrored about the middle of their calibrated range, so before starting, hold the leader with these two joints at the negative of the follower's angles; otherwise the follower moves there at full speed.
+
 ## Cameras
 
 To add cameras to your setup, follow this [Guide](./cameras).
