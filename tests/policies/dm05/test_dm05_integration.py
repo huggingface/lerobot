@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import fnmatch
+import inspect
 import json
 import logging
 import shutil
@@ -517,6 +518,12 @@ def test_dm05_relative_actions_use_generation_state_for_training_and_inference(t
     )
 
 
+@pytest.mark.parametrize("method", [DM05Policy.predict_action_chunk, DM05Policy.select_action])
+def test_dm05_names_its_starting_noise_argument(method):
+    """`predict_action_chunk` and `select_action` declare `noise` as a keyword-only parameter."""
+    assert inspect.signature(method).parameters["noise"].kind is inspect.Parameter.KEYWORD_ONLY
+
+
 def test_dm05_action_dim_mask_and_fixed_noise_cover_training_and_inference():
     model = DM05ForCausalLM(_tiny_core_config()).eval()
     captured = []
@@ -614,6 +621,8 @@ def test_dm05_action_dim_mask_and_fixed_noise_cover_training_and_inference():
     assert policy.model.kwargs["initial_noise"].shape == (1, 2, 32)
     torch.testing.assert_close(actions, policy_noise)
     assert torch.count_nonzero(policy.model.kwargs["initial_noise"][..., 3:]) == 0
+    policy.reset()
+    torch.testing.assert_close(policy.select_action({}, noise=policy_noise), policy_noise[:, 0])
     with pytest.raises(ValueError, match="noise action dimension"):
         policy.predict_action_chunk({}, noise=torch.zeros(1, 2, 1))
     with pytest.raises(ValueError, match="diffusion_steps must be positive"):
