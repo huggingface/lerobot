@@ -229,6 +229,14 @@ def test_cycle_timer_tolerates_a_sliver_of_sleep_overshoot(caplog, clock):
     assert not caplog.records
 
 
+def test_cycle_timer_recent_rate_counts_the_last_second_and_drops_to_zero_on_a_stall(clock):
+    timer = CycleTimer(30.0, 2)
+    _drive(timer, clock, ticks=120, new_cycle=lambda i: i % 2 == 0)  # two seconds at 60 Hz
+    assert timer.recent_rate() == pytest.approx(60, abs=1)
+    clock.advance(1.5)
+    assert timer.recent_rate() == 0
+
+
 def test_cycle_timer_new_cycle_reanchors_pacing(clock):
     # The interpolator's startup buffer holds a single action, so the second
     # tick requests a fresh action one tick early.  Re-anchoring must restart

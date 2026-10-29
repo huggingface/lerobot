@@ -364,6 +364,7 @@ class DAggerStrategy(RolloutStrategy):
         features = ctx.data.dataset_features
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        ctx.runtime.cycle_timer = timer
         correction_stride = interpolator.multiplier
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
@@ -556,6 +557,7 @@ class DAggerStrategy(RolloutStrategy):
             raise RuntimeError(f"{type(self).__name__}: num_episodes not resolved; call setup() first")
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        ctx.runtime.cycle_timer = timer
         correction_stride = interpolator.multiplier
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds

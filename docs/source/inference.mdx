@@ -582,7 +582,7 @@ While a rollout without `--interactive` runs in a terminal, one status line unde
 loop  30/30 Hz · infer  18.7 ms (worst  40.1) · process 2.41 GiB · GPU 5.12/79.6 GiB
 ```
 
-`loop` counts the observations read in the last second against the target, so a stalled loop drops to 0. `infer` is the median and worst inference call of the last 5 seconds. Process memory is shown on Linux only, GPU memory only for a CUDA device, and remote inference reports no inference times. The line is drawn only when stderr is a terminal, so redirected logs stay clean.
+`loop` counts the control ticks of the last second against the target, so a stalled loop drops to 0; it is left off while no control loop runs, such as during an episodic reset. `infer` is the median and worst of the recent inference calls (with RTC and remote inference, from request to accepted chunk), hidden once none finished in the last 5 seconds. Process memory is shown on Linux only, GPU memory only for a CUDA device. The line is drawn only when stderr is a terminal, so redirected logs stay clean.
 
 In [interactive sessions](#interactive-sessions) each `/start` segment owns its own timer, so the report lands in the chat once per segment (`/reset`, `/stop`, or `--duration`) rather than once per process.
 

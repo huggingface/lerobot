@@ -67,6 +67,7 @@ from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
 from lerobot.robots import Robot, make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
@@ -198,6 +199,10 @@ class RuntimeContext:
     # must forward it to the timer it builds in ``run()``, since a session mutes
     # everything below ERROR.
     cadence_report: Callable[[str], None] | None = None
+    # The timer of the control loop running now, read by the live status line for the
+    # loop rate.  Strategies set it when their loop starts; None (such as during
+    # episodic's reset phase) leaves the rate off the line.
+    cycle_timer: CycleTimer | None = None
 
 
 @dataclass

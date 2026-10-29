@@ -378,6 +378,10 @@ class RTCInferenceEngine(InferenceEngine):
             return action
         return create_transition(action=action, prediction=prediction)
 
+    def recent_inference_times(self, max_age_s: float) -> list[float]:
+        """Turnarounds of the latest chunks, from request to accepted result."""
+        return self._runtime.recent_turnarounds(max_age_s)
+
     def notify_observation(self, obs: dict) -> None:
         """Publish an owned snapshot and its original control-thread capture time."""
         captured_at = getattr(self._robot, "observation_time", None)
@@ -603,7 +607,6 @@ class RTCInferenceEngine(InferenceEngine):
                     self._robot.robot_type,
                 )
                 batch["task"] = [task]
-                started = time.perf_counter()
                 with chunk_inference_context(request.mode):
                     preprocessed = self._preprocessor(batch)
                     prediction = predict_chunk(
@@ -642,8 +645,6 @@ class RTCInferenceEngine(InferenceEngine):
                         warmup_previous = None
                         self._compile_warmup_done.set()
                     continue
-                finished = time.perf_counter()
-                self.inference_times.append((finished, finished - started))
                 chunk = ActionChunk(
                     model_actions=original,
                     canonical_actions=processed,

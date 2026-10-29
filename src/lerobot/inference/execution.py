@@ -212,6 +212,7 @@ class ChunkRuntime:
         self.started_at = clock()
         self.turnarounds: deque[float] = deque(maxlen=100)
         self._initial_turnaround = 0.0
+        self._last_turnaround_at: float | None = None
         self._completed = 0
         self._last_anchor: tuple[int, float, int] | None = None
         self.wait_events: deque[dict] = deque(maxlen=128)
@@ -221,6 +222,13 @@ class ChunkRuntime:
     def turnaround(self) -> float:
         """Largest complete action turnaround in the recent steady-state window."""
         return max(self.turnarounds, default=self._initial_turnaround)
+
+    def recent_turnarounds(self, max_age_s: float) -> list[float]:
+        """The steady-state turnaround window, empty when no chunk completed in the last *max_age_s*."""
+        with self.lock:
+            if self._last_turnaround_at is None or self.clock() - self._last_turnaround_at > max_age_s:
+                return []
+            return list(self.turnarounds)
 
     @property
     def effective_refill(self) -> float:
@@ -444,6 +452,7 @@ class ChunkRuntime:
             self._completed += 1
             if self._completed > 1:  # cold start is not a steady-state action latency
                 self.turnarounds.append(elapsed)
+                self._last_turnaround_at = now
             else:
                 # Until a warm measurement exists, reserving less than the only
                 # observed turnaround can deterministically starve request two.

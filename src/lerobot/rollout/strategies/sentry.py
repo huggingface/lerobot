@@ -112,6 +112,7 @@ class SentryStrategy(RolloutStrategy):
 
         # Per-segment timer, never hoisted onto the instance (see ``RolloutStrategy.run``).
         timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
+        ctx.runtime.cycle_timer = timer
 
         engine.resume()
         episode_duration_s = self._episode_duration_s

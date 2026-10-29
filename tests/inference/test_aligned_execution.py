@@ -167,6 +167,22 @@ def test_aligned_refill_floor_seeds_from_startup_then_uses_steady_turnaround():
     assert rt.begin(sample(rt, clock)) is not None
 
 
+def test_recent_turnarounds_skip_the_cold_start_and_go_stale():
+    rt, clock = runtime(refill_seconds=0.01)
+    first = rt.begin(sample(rt, clock))
+    clock.now += 0.8
+    assert rt.accept(first, result(first), task_version=0)
+    assert rt.recent_turnarounds(max_age_s=5) == []  # the cold start is not a steady-state turnaround
+    for _ in range(5):
+        rt.pop()
+    request = rt.begin(sample(rt, clock))
+    clock.now += 0.25
+    assert rt.accept(request, result(request, 10), task_version=0)
+    assert rt.recent_turnarounds(max_age_s=5) == [pytest.approx(0.25)]
+    clock.now += 6
+    assert rt.recent_turnarounds(max_age_s=5) == []
+
+
 def test_fresh_task_change_bypasses_playback_gate_at_same_cursor():
     rt, clock = runtime(refill_seconds=0.01)
     initial(rt, clock)

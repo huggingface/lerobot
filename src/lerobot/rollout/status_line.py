@@ -15,31 +15,32 @@
 """A one-line view of a running rollout, redrawn in place on the terminal.
 
 It shows how the policy is doing while the robot moves: the control loop's rate against its target,
-how long policy inference takes, and how much memory the process and the GPU use. Reading the numbers
-costs tens of microseconds, and the line is redrawn every 0.25 s from a background thread, so the
-control loop never waits on the terminal.
+how long policy inference takes, and how much memory the process and the GPU use. The line is a
+tqdm bar redrawn every 0.25 s from a background thread, so the control loop never waits on the
+terminal, and a stalled loop still shows up as a rate of 0.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import shutil
 import statistics
 import sys
 import threading
-import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import IO, TYPE_CHECKING
+
+from tqdm import tqdm
 
 if TYPE_CHECKING:
     from lerobot.inference import InferenceEngine
 
-    from .robot_wrapper import ThreadSafeRobot
+    from .context import RuntimeContext
 
 REFRESH_S = 0.25
 # Inference times older than this are not shown, so a stalled or finished policy does not look healthy.
 INFERENCE_WINDOW_S = 5.0
-CLEAR_LINE = "\r\033[2K"
 
 
 def _process_rss_bytes() -> int:
@@ -51,102 +52,78 @@ def _process_rss_bytes() -> int:
         return 0
 
 
-class StatusLine:
-    """Redraws one status line with the loop rate, inference time and memory, in place.
+def format_status(runtime: RuntimeContext, engine: InferenceEngine, device: str | None = None) -> str:
+    """The status line's text: loop rate, inference time, process and GPU memory, each when known."""
+    parts = []
+    if (timer := runtime.cycle_timer) is not None:
+        parts.append(f"loop {timer.recent_rate():3d}/{timer.fps * timer.multiplier:g} Hz")
+    if inferences := engine.recent_inference_times(INFERENCE_WINDOW_S):
+        median, worst = statistics.median(inferences), max(inferences)
+        parts.append(f"infer {median * 1000:5.1f} ms (worst {worst * 1000:5.1f})")
+    if rss := _process_rss_bytes():
+        parts.append(f"process {rss / 2**30:4.2f} GiB")
+    if device is not None and device.startswith("cuda"):
+        # Imported here, so that importing the status line does not load torch.
+        import torch
 
-    The loop rate comes from the robot's observation reads, which every rollout strategy makes once
-    per control tick. It draws only on an interactive terminal. While active, it is also the stream of
-    the console log handler, so a log record and a redraw never interleave: the record clears the
-    status line, prints on its own line, and the next redraw brings it back.
-    """
+        if torch.cuda.is_initialized():
+            free, total = torch.cuda.mem_get_info(device)
+            parts.append(f"GPU {(total - free) / 2**30:4.2f}/{total / 2**30:4.1f} GiB")
+    return " · ".join(parts)
 
-    def __init__(
-        self,
-        robot: ThreadSafeRobot,
-        engine: InferenceEngine,
-        tick_hz: float,
-        device: str | None = None,
-        stream: IO[str] | None = None,
-    ) -> None:
-        self._robot = robot
-        self._engine = engine
-        self._tick_hz = tick_hz
-        self._device = device
-        self._stream = stream or sys.stderr
-        self._enabled = self._stream.isatty()
-        # Reentrant: a signal handler that logs, such as Ctrl-C's, can interrupt a write on the same thread.
-        self._lock = threading.RLock()
-        self._shown = False
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._draw_loop, name="rollout-status", daemon=True)
-        self._handlers: list[logging.StreamHandler] = []
 
-    def __enter__(self) -> StatusLine:
-        if self._enabled:
-            for handler in logging.getLogger().handlers:
-                if isinstance(handler, logging.StreamHandler) and handler.stream is self._stream:
-                    handler.setStream(self)
-                    self._handlers.append(handler)
-            self._thread.start()
-        return self
+class _AboveTheLine:
+    """Console stream for log handlers that prints each record above the status line."""
 
-    def __exit__(self, *exc: object) -> None:
-        self._stop.set()
-        if self._thread.is_alive():
-            self._thread.join()
-        for handler in self._handlers:
-            handler.setStream(self._stream)
-        with self._lock:
-            if self._shown:
-                self._stream.write("\n")
-                self._stream.flush()
+    def __init__(self, stream: IO[str]) -> None:
+        self._stream = stream
 
     def write(self, text: str) -> None:
-        with self._lock:
-            if self._shown:
-                self._stream.write(CLEAR_LINE)
-                self._shown = False
-            self._stream.write(text)
+        tqdm.write(text, file=self._stream, end="")
 
     def flush(self) -> None:
         self._stream.flush()
 
-    def _draw_loop(self) -> None:
-        while not self._stop.wait(REFRESH_S):
-            # A line wider than the terminal wraps, and clearing the last row would leave the rest behind.
-            line = self._format()[: self._columns() - 1]
-            with self._lock:
-                self._stream.write(CLEAR_LINE + line)
-                self._stream.flush()
-                self._shown = True
 
-    def _columns(self) -> int:
-        # Measure the stream the line is drawn on: stdout may be redirected while this one is a terminal.
-        try:
-            columns = os.get_terminal_size(self._stream.fileno()).columns
-        except (AttributeError, OSError, ValueError):
-            columns = 0
-        # Some consoles, such as a serial port, report a width of 0.
-        return columns or shutil.get_terminal_size().columns
+@contextmanager
+def show_status_line(
+    runtime: RuntimeContext,
+    engine: InferenceEngine,
+    device: str | None = None,
+    stream: IO[str] | None = None,
+) -> Iterator[None]:
+    """Keep the status line under the logs while the block runs, on an interactive terminal only.
 
-    def _format(self) -> str:
-        parts = []
-        now = time.perf_counter()
-        # Copied in one call each, so another thread appending meanwhile cannot change them mid-read.
-        ticks_last_second = sum(1 for tick in list(self._robot.observation_times) if now - tick <= 1.0)
-        inferences = [s for end, s in list(self._engine.inference_times) if now - end <= INFERENCE_WINDOW_S]
-        parts.append(f"loop {ticks_last_second:3d}/{self._tick_hz:g} Hz")
-        if inferences:
-            median, worst = statistics.median(inferences), max(inferences)
-            parts.append(f"infer {median * 1000:5.1f} ms (worst {worst * 1000:5.1f})")
-        rss = _process_rss_bytes()
-        if rss:
-            parts.append(f"process {rss / 2**30:4.2f} GiB")
-        if self._device is not None and self._device.startswith("cuda"):
-            # Imported here, so that importing the status line does not load torch.
-            import torch
+    The loop rate comes from the timer the running strategy publishes on ``runtime.cycle_timer``.
+    Meanwhile the console log handlers write through ``tqdm.write``, so a record never lands on the
+    line; they are kept rather than replaced, so their level and filters still apply.
+    """
+    stream = stream or sys.stderr
+    # ``disable=None`` turns the bar off when the stream is not a terminal, so redirected logs stay clean.
+    bar = tqdm(file=stream, bar_format="{desc}", dynamic_ncols=True, leave=False, disable=None)
+    if bar.disable:
+        yield
+        return
+    handlers = [
+        handler
+        for handler in logging.getLogger().handlers
+        if isinstance(handler, logging.StreamHandler) and handler.stream is stream
+    ]
+    for handler in handlers:
+        handler.setStream(_AboveTheLine(stream))
+    stop = threading.Event()
 
-            if torch.cuda.is_initialized():
-                free, total = torch.cuda.mem_get_info(self._device)
-                parts.append(f"GPU {(total - free) / 2**30:4.2f}/{total / 2**30:4.1f} GiB")
-        return " · ".join(parts)
+    def draw() -> None:
+        while not stop.wait(REFRESH_S):
+            bar.set_description_str(format_status(runtime, engine, device))
+
+    thread = threading.Thread(target=draw, name="rollout-status", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+        bar.close()
+        for handler in handlers:
+            handler.setStream(stream)

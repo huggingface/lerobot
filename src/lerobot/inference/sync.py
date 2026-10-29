@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from contextlib import nullcontext
 from copy import copy
 
@@ -68,6 +69,8 @@ class SyncInferenceEngine(InferenceEngine):
         self._ordered_action_keys = ordered_action_keys
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
+        # When each of the latest inference calls ended and how many seconds it took.
+        self._inference_times: deque[tuple[float, float]] = deque(maxlen=30)
         logger.info(
             "SyncInferenceEngine initialized (device=%s, action_keys=%d)",
             self._device,
@@ -90,6 +93,12 @@ class SyncInferenceEngine(InferenceEngine):
         self._postprocessor.reset()
         # The policy was just reset, so a pending task change has nothing stale to flush.
         self._discard_task_change()
+
+    def recent_inference_times(self, max_age_s: float) -> list[float]:
+        """Seconds the calls that computed a fresh action or chunk took, in the last *max_age_s*."""
+        now = time.perf_counter()
+        # Copied in one call, so a time appended meanwhile cannot change it mid-read.
+        return [seconds for end, seconds in list(self._inference_times) if now - end <= max_age_s]
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | EnvTransition | None:
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor.
@@ -125,7 +134,7 @@ class SyncInferenceEngine(InferenceEngine):
         action_tensor = action.squeeze(0).cpu()
         if runs_inference:
             end = time.perf_counter()
-            self.inference_times.append((end, end - start))
+            self._inference_times.append((end, end - start))
 
         # ``task`` is the pre-inference snapshot: a /subtask landing mid-inference must
         # not relabel this action.

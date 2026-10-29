@@ -152,6 +152,7 @@ class EpisodicStrategy(RolloutStrategy):
                     engine.resume()
 
                     log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
+                    ctx.runtime.cycle_timer = timer
                     self._policy_loop(
                         ctx=ctx,
                         robot=robot,
@@ -161,6 +162,8 @@ class EpisodicStrategy(RolloutStrategy):
                         control_time_s=episode_time_s,
                         dataset=dataset,
                     )
+                    # The timer is idle until the next episode, which is not a stall.
+                    ctx.runtime.cycle_timer = None
 
                     # Reset phase, skip after the last episode (but run when re-recording)
                     if not events["stop_recording"] and (

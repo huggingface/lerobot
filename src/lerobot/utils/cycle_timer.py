@@ -26,7 +26,9 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import logging
+import math
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 
 from lerobot.utils.robot_utils import precise_sleep
@@ -237,6 +239,8 @@ class CycleTimer:
         self._run = _CadenceStats()
         self._windows_closed = 0
         self._prev_tick_start: float | None = None
+        # Start of the latest ticks, about two seconds' worth, for :meth:`recent_rate`.
+        self._recent_ticks: deque[float] = deque(maxlen=2 * math.ceil(fps * multiplier))
         # Boundary effects take hold at the next ``tick()`` — see :meth:`tick`.
         self._pending_close: str | None = None
         self._drop_next_gap = False
@@ -335,6 +339,7 @@ class CycleTimer:
         ticks.
         """
         self._tick_start = time.perf_counter()
+        self._recent_ticks.append(self._tick_start)
         if self._pending_close is not None:
             self._close_window(self._pending_close)
             self._pending_close = None
@@ -430,6 +435,15 @@ class CycleTimer:
             slept = time.perf_counter() - sleep_start
             stats.sleep += slept
             stats.sleep_worst = max(stats.sleep_worst, slept)
+
+    def recent_rate(self) -> int:
+        """Ticks started in the last second, so a stalled loop drops to 0.
+
+        Safe to call from another thread, such as a live status display.
+        """
+        now = time.perf_counter()
+        # Copied in one call, so a tick appended meanwhile cannot change it mid-read.
+        return sum(1 for start in list(self._recent_ticks) if now - start <= 1.0)
 
     # ------------------------------------------------------------------
     # Cadence summaries

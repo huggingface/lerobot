@@ -52,6 +52,7 @@ class BaseStrategy(RolloutStrategy):
             records_data=False,
             report=ctx.runtime.cadence_report,
         )
+        ctx.runtime.cycle_timer = timer
 
         start_time = time.perf_counter()
         engine.resume()

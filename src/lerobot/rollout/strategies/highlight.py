@@ -104,6 +104,7 @@ class HighlightStrategy(RolloutStrategy):
         features = ctx.data.dataset_features
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        ctx.runtime.cycle_timer = timer
 
         engine.resume()
         play_sounds = cfg.play_sounds

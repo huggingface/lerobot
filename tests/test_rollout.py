@@ -19,15 +19,13 @@ from __future__ import annotations
 import dataclasses
 import io
 import logging
-import os
 import sys
 import threading
 import time
-from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -1657,19 +1655,29 @@ def test_log_telemetry_passes_the_step_only_with_display_data(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_sync_engine_times_only_the_ticks_that_run_inference():
-    """``inference_times`` gets one entry per computed chunk, not one per served action."""
+def test_sync_engine_times_only_the_calls_that_run_inference():
+    """One inference time per computed chunk, not one per served action."""
     n = 4
-    chunk_rel = torch.zeros(n, _REL_ACTION_DIM)
     pre, post, _ = _relative_pre_post()
-    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    policy = _fake_relative_policy(torch.zeros(n, _REL_ACTION_DIM), n_action_steps=n)
     engine = _build_sync_engine(policy, pre, post)
 
     for _ in range(2 * n):
         engine.get_action(_obs_frame([1.0, 2.0, 3.0, 4.0]))
 
     assert policy._predict_state["predict_calls"] == 2
-    assert len(engine.inference_times) == 2
+    assert len(engine.recent_inference_times(max_age_s=60)) == 2
+
+
+def test_status_line_shows_loop_rate_and_inference_time():
+    from lerobot.rollout.status_line import format_status
+
+    engine = SimpleNamespace(recent_inference_times=lambda max_age_s: [0.020, 0.030])
+    timer = SimpleNamespace(fps=30, multiplier=2, recent_rate=lambda: 59)
+    line = format_status(SimpleNamespace(cycle_timer=timer), engine)
+    assert line.startswith("loop  59/60 Hz · infer  25.0 ms (worst  30.0)")
+    # With no timed loop running, such as episodic's reset phase, the rate is left off.
+    assert format_status(SimpleNamespace(cycle_timer=None), engine).startswith("infer")
 
 
 class _FakeTerminal(io.StringIO):
@@ -1677,184 +1685,34 @@ class _FakeTerminal(io.StringIO):
         return True
 
 
-def test_thread_safe_robot_records_when_each_observation_is_read():
-    from lerobot.rollout.robot_wrapper import ThreadSafeRobot
-    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+def test_status_line_prints_log_records_above_the_line(monkeypatch):
+    from lerobot.rollout import status_line
 
-    robot = MockRobot(MockRobotConfig(n_motors=3))
-    robot.connect()
-    wrapper = ThreadSafeRobot(robot)
-    for _ in range(3):
-        wrapper.get_observation()
-    robot.disconnect()
-
-    times = list(wrapper.observation_times)
-    assert len(times) == 3
-    assert times == sorted(times)
-
-
-def test_status_line_redraws_in_place_and_steps_aside_for_log_records():
-    from lerobot.rollout.status_line import StatusLine
-
-    robot = SimpleNamespace(observation_times=deque())
-    engine = SimpleNamespace(
-        inference_times=deque([(time.perf_counter(), 0.020), (time.perf_counter(), 0.030)])
-    )
+    monkeypatch.setattr(status_line, "REFRESH_S", 0.01)
+    runtime = SimpleNamespace(cycle_timer=None)
+    engine = SimpleNamespace(recent_inference_times=lambda max_age_s: [0.020])
     terminal = _FakeTerminal()
     handler = logging.StreamHandler(terminal)
-    root = logging.getLogger()
-    root.addHandler(handler)
+    logging.getLogger().addHandler(handler)
     try:
-        with (
-            patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
-            StatusLine(robot, engine, 30, stream=terminal),
-        ):
-            for _ in range(3):
-                robot.observation_times.append(time.perf_counter())
-                time.sleep(0.02)
+        with status_line.show_status_line(runtime, engine, stream=terminal):
+            time.sleep(0.05)
             logging.getLogger("test").warning("a log record")
             time.sleep(0.05)
         assert handler.stream is terminal
     finally:
-        root.removeHandler(handler)
+        logging.getLogger().removeHandler(handler)
 
     output = terminal.getvalue()
-    assert "\r\033[2Kloop " in output
-    assert "infer  25.0 ms (worst  30.0)" in output
-    assert "\r\033[2Ka log record\n" in output
-    assert output.endswith("\n")
-
-
-def test_status_line_fits_the_terminal_width():
-    """A wrapped line would leave a row behind on every redraw, since clearing only reaches the last row."""
-    from lerobot.rollout.status_line import StatusLine
-
-    terminal = _FakeTerminal()
-    engine = SimpleNamespace(inference_times=deque([(time.perf_counter(), 0.020)]))
-    with (
-        patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
-        patch(
-            "lerobot.rollout.status_line.shutil.get_terminal_size", return_value=os.terminal_size((20, 24))
-        ),
-        StatusLine(SimpleNamespace(observation_times=deque()), engine, 30, stream=terminal),
-    ):
-        time.sleep(0.05)
-    lines = [line for line in terminal.getvalue().split("\r\033[2K") if line.strip()]
-    assert lines
-    assert all(len(line.rstrip("\n")) <= 19 for line in lines)
-
-
-def test_status_line_hides_inference_times_that_are_too_old():
-    """A policy that stopped running must not keep showing its last healthy time."""
-    from lerobot.rollout.status_line import INFERENCE_WINDOW_S, StatusLine
-
-    now = time.perf_counter()
-    engine = SimpleNamespace(inference_times=deque([(now - INFERENCE_WINDOW_S - 1, 0.5), (now, 0.02)]))
-    line = StatusLine(SimpleNamespace(observation_times=deque()), engine, 30, stream=io.StringIO())
-    assert "infer  20.0 ms (worst  20.0)" in line._format()
-
-    engine.inference_times.popleft()
-    engine.inference_times[0] = (now - INFERENCE_WINDOW_S - 1, 0.02)
-    assert "infer" not in line._format()
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="pty is POSIX only")
-def test_status_line_measures_the_stream_it_draws_on():
-    """With stdout redirected, the width must still come from the terminal the line is drawn on."""
-    import fcntl
-    import pty
-    import struct
-    import termios
-
-    from lerobot.rollout.status_line import StatusLine
-
-    leader, follower = pty.openpty()
-    fcntl.ioctl(follower, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 30, 0, 0))
-    with (
-        os.fdopen(follower, "w", closefd=True) as terminal,
-        patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
-        patch(
-            "lerobot.rollout.status_line.shutil.get_terminal_size", return_value=os.terminal_size((200, 24))
-        ),
-        StatusLine(
-            SimpleNamespace(observation_times=deque()),
-            SimpleNamespace(inference_times=deque([(time.perf_counter(), 0.02)])),
-            30,
-            stream=terminal,
-        ),
-    ):
-        time.sleep(0.05)
-        # Read before the terminal closes: on macOS, closing it drops what was not read yet.
-        os.set_blocking(leader, False)
-        output = os.read(leader, 65536).decode()
-    os.close(leader)
-    lines = [line for line in output.split("\r\033[2K") if line.strip()]
-    assert lines
-    assert all(len(line.rstrip("\r\n")) <= 29 for line in lines)
+    assert "infer  20.0 ms" in output
+    assert "\ra log record\n" in output  # the line was cleared first, not written over
 
 
 def test_status_line_stays_silent_off_a_terminal():
-    from lerobot.rollout.status_line import StatusLine
+    from lerobot.rollout.status_line import show_status_line
 
     stream = io.StringIO()
-    robot = SimpleNamespace(observation_times=deque([0.0, 1.0]))
-    with (
-        patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
-        StatusLine(
-            robot, SimpleNamespace(inference_times=deque([(time.perf_counter(), 0.1)])), 30, stream=stream
-        ),
-    ):
-        time.sleep(0.05)
+    engine = SimpleNamespace(recent_inference_times=lambda max_age_s: [0.020])
+    with show_status_line(SimpleNamespace(cycle_timer=None), engine, stream=stream):
+        pass
     assert stream.getvalue() == ""
-
-
-def _log_while_a_signal_arrives() -> None:
-    """In a child process: a signal whose handler logs, as Ctrl-C's does, lands inside a status-line write."""
-    import signal
-
-    from lerobot.rollout.status_line import StatusLine
-
-    class SlowTerminal(_FakeTerminal):
-        def write(self, text):
-            time.sleep(0.2)
-            return super().write(text)
-
-    terminal = SlowTerminal()
-    logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(terminal)], force=True)
-    signal.signal(signal.SIGALRM, lambda *_: logging.info("Shutdown signal received"))
-    with StatusLine(
-        SimpleNamespace(observation_times=deque()),
-        SimpleNamespace(inference_times=deque()),
-        30,
-        stream=terminal,
-    ):
-        signal.setitimer(signal.ITIMER_REAL, 0.1)
-        logging.info("a log record")
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="SIGALRM is POSIX only")
-def test_status_line_survives_a_signal_that_logs_during_a_write():
-    import multiprocessing
-
-    child = multiprocessing.get_context("spawn").Process(target=_log_while_a_signal_arrives)
-    child.start()
-    child.join(60)
-    hung = child.is_alive()
-    if hung:
-        child.kill()
-        child.join()
-    assert not hung, "a signal handler that logs deadlocked the status line"
-    assert child.exitcode == 0
-
-
-def test_status_line_rate_counts_only_the_last_second():
-    """A loop that stopped reading the robot shows 0 Hz, not the rate it last had."""
-    from lerobot.rollout.status_line import StatusLine
-
-    now = time.perf_counter()
-    running = SimpleNamespace(observation_times=deque(now - i / 30 for i in range(60)))
-    stalled = SimpleNamespace(observation_times=deque(now - 5 - i / 30 for i in range(60)))
-    engine = SimpleNamespace(inference_times=deque())
-
-    assert StatusLine(running, engine, 30, stream=io.StringIO())._format().startswith("loop  30/30 Hz")
-    assert StatusLine(stalled, engine, 30, stream=io.StringIO())._format().startswith("loop   0/30 Hz")

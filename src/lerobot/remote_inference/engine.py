@@ -483,6 +483,10 @@ class RemoteInferenceEngine(InferenceEngine):
             raise ValueError("This deployment does not support autosteering queries")
         super().start_autosteer(goal, interval_s)
 
+    def recent_inference_times(self, max_age_s: float) -> list[float]:
+        """Turnarounds of the latest chunks, from request to accepted result."""
+        return self.runtime.recent_turnarounds(max_age_s)
+
     def notify_observation(self, obs: dict) -> None:
         """Copy a control-thread capture into the worker's latest observation slot.
 
