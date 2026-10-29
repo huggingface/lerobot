@@ -44,7 +44,7 @@ class BiRebot102Leader(BimanualMixin, Teleoperator):
         self.config = config
 
         left_arm_config = RebotArm102LeaderTeleopConfig(
-            id=f"{config.id}_left" if config.id else None,
+            id=f"{config.id}_left" if config.id else "left",
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
             baudrate=config.left_arm_config.baudrate,
@@ -54,7 +54,7 @@ class BiRebot102Leader(BimanualMixin, Teleoperator):
         )
 
         right_arm_config = RebotArm102LeaderTeleopConfig(
-            id=f"{config.id}_right" if config.id else None,
+            id=f"{config.id}_right" if config.id else "right",
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
             baudrate=config.right_arm_config.baudrate,
