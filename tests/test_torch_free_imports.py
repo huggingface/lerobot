@@ -70,6 +70,13 @@ if attempts:
     [
         "lerobot.inference",
         "lerobot.scripts.lerobot_calibrate",
+        pytest.param(
+            "lerobot.datasets.language",
+            marks=[
+                pytest.mark.dataset,
+                pytest.mark.skipif(not _datasets_available, reason="datasets not installed"),
+            ],
+        ),
     ],
 )
 def test_imports_without_torch(module):

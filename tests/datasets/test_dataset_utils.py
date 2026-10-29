@@ -15,6 +15,8 @@
 # limitations under the License.
 
 import logging
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -25,7 +27,7 @@ from packaging.version import Version
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 import pandas as pd  # noqa: E402
-from datasets import Dataset  # noqa: E402
+from datasets import Dataset, Features, Value  # noqa: E402
 from huggingface_hub import DatasetCard
 
 import lerobot.datasets.utils as dataset_utils
@@ -39,6 +41,7 @@ from lerobot.datasets.utils import (
     get_safe_version,
     resolve_episode_indices,
 )
+from lerobot.datasets.video_frame import VideoFrame
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
 
@@ -288,3 +291,33 @@ def test_newer_major_dataset_only_warns_when_major_is_not_enforced(caplog):
 def test_older_major_dataset_still_raises_conversion_error():
     with pytest.raises(BackwardCompatibilityError):
         check_version_compatibility("user/dataset", "v2.1", "v3.0")
+
+
+def test_importing_the_package_registers_the_video_frame_feature_type(tmp_path):
+    # Importing lerobot.datasets registers the VideoFrame feature type, as before the package became lazy, now
+    # without video_utils. tests/test_torch_free_imports.py checks that the import leaves torch out.
+    data = {"observation.image": [{"path": "videos/episode_0.mp4", "timestamp": 0.1}], "episode_index": [0]}
+    features = Features({"observation.image": VideoFrame(), "episode_index": Value("int64")})
+    Dataset.from_dict(data, features=features).to_parquet(tmp_path / "data.parquet")
+    code = (
+        "import sys\n"
+        "import datasets\n"
+        "import lerobot.datasets\n"
+        "loaded = datasets.Dataset.from_parquet(sys.argv[1], cache_dir=sys.argv[2])\n"
+        "feature = type(loaded.features['observation.image']).__name__\n"
+        "print(feature, 'lerobot.datasets.video_utils' in sys.modules)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path / "data.parquet"), str(tmp_path / "cache")],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[-2:] == ["VideoFrame", "False"]
+
+
+def test_video_frame_is_still_importable_from_video_utils():
+    from lerobot.datasets import video_utils
+
+    assert video_utils.VideoFrame is VideoFrame

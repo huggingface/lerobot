@@ -26,7 +26,7 @@ from lerobot.utils.constants import HF_LEROBOT_HOME
 from .compute_stats import aggregate_stats
 from .feature_utils import get_hf_features_from_features
 from .lerobot_dataset import LeRobotDataset
-from .video_utils import VideoFrame
+from .video_frame import VideoFrame
 
 logger = logging.getLogger(__name__)
 

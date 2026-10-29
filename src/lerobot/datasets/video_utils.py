@@ -22,10 +22,9 @@ import queue
 import shutil
 import tempfile
 import threading
-import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from fractions import Fraction
 from pathlib import Path
 from threading import Lock
@@ -34,9 +33,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, cast
 import av
 import fsspec
 import numpy as np
-import pyarrow as pa
 import torch
-from datasets.features.features import register_feature
 from PIL import Image
 
 from lerobot.configs import (
@@ -51,6 +48,9 @@ from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .depth_utils import MM_PER_METRE, dequantize_depth, quantize_depth
 from .pyav_utils import get_pix_fmt_channels
+
+# Still importable from here, where it was defined before.
+from .video_frame import VideoFrame as VideoFrame
 
 if TYPE_CHECKING:
     from .dataset_metadata import LeRobotDatasetMetadata
@@ -812,6 +812,10 @@ class _CameraEncoderThread(threading.Thread):
         stop_event: threading.Event,
         encoder_threads: int | None = None,
     ):
+        # Imported here, in the thread that creates this one: a thread that runs a first import while another
+        # thread imports can get a partly initialized module.
+        from .compute_stats import RunningQuantileStats, auto_downsample_height_width
+
         super().__init__(daemon=True)
         self.video_path = video_path
         self.fps = fps
@@ -823,13 +827,13 @@ class _CameraEncoderThread(threading.Thread):
         self.result_queue = result_queue
         self.stop_event = stop_event
         self.encoder_threads = encoder_threads
+        self._stats_tracker = RunningQuantileStats()
+        self._downsample = auto_downsample_height_width
 
     def run(self) -> None:
-        from .compute_stats import RunningQuantileStats, auto_downsample_height_width
-
         container = None
         output_stream = None
-        stats_tracker = RunningQuantileStats()
+        stats_tracker = self._stats_tracker
         frame_count = 0
 
         try:
@@ -891,7 +895,7 @@ class _CameraEncoderThread(threading.Thread):
 
                 # Update stats with downsampled frame (per-channel stats like compute_episode_stats)
                 img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
-                img_downsampled = auto_downsample_height_width(img_chw)
+                img_downsampled = self._downsample(img_chw)
                 # Reshape CHW to (H*W, C) for per-channel stats
                 channels = img_downsampled.shape[0]
                 img_for_stats = img_downsampled.transpose(1, 2, 0).reshape(-1, channels)
@@ -1147,38 +1151,6 @@ class StreamingVideoEncoder:
         self._threads.clear()
         self._stop_events.clear()
         self._video_paths.clear()
-
-
-@dataclass
-class VideoFrame:
-    # TODO(rcadene, lhoestq): move to Hugging Face `datasets` repo
-    """
-    Provides a type for a dataset containing video frames.
-
-    Example:
-
-    ```python
-    data_dict = [{"image": {"path": "videos/episode_0.mp4", "timestamp": 0.3}}]
-    features = {"image": VideoFrame()}
-    Dataset.from_dict(data_dict, features=Features(features))
-    ```
-    """
-
-    pa_type: ClassVar[Any] = pa.struct({"path": pa.string(), "timestamp": pa.float32()})
-    _type: str = field(default="VideoFrame", init=False, repr=False)
-
-    def __call__(self):
-        return self.pa_type
-
-
-with warnings.catch_warnings():
-    warnings.filterwarnings(
-        "ignore",
-        "'register_feature' is experimental and might be subject to breaking changes in the future.",
-        category=UserWarning,
-    )
-    # to make VideoFrame available in HuggingFace `datasets`
-    register_feature(VideoFrame, "VideoFrame")
 
 
 def get_audio_info(video_path: Path | str) -> dict:
