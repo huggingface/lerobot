@@ -56,6 +56,7 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
     _position_ids_from_attention_mask,
 )
 from lerobot.policies.molmoact2.molmoact2_hf_model import (
+    inference as hf_molmoact2_inference,
     modeling_molmoact2 as hf_molmoact2_modeling,
 )
 from lerobot.policies.molmoact2.molmoact2_hf_model.modeling_molmoact2 import (
@@ -1885,6 +1886,26 @@ def test_cuda_graph_managers_are_inference_only():
     policy.eval()
     assert policy.model.model.action_cuda_graph_manager.enabled is False
     assert policy.model.depth_decode_cuda_graph_manager.enabled is False
+
+
+def test_action_cuda_graph_is_not_replayed_while_compiling(monkeypatch):
+    action_model = SimpleNamespace(
+        training=False, _require_action_expert=lambda: SimpleNamespace(training=False)
+    )
+    on_cuda = SimpleNamespace(device=torch.device("cuda"))
+    inputs = SimpleNamespace(
+        trajectory=on_cuda,
+        context=SimpleNamespace(
+            kv_contexts=[], cross_mask=None, self_mask=None, valid_action=None, rope_cache=None
+        ),
+        action_dim_is_pad=None,
+        modulations=[],
+    )
+    manager = hf_molmoact2_inference.ActionCudaGraphManager(action_model)
+    assert manager.can_use_action_flow(inputs)
+
+    monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True)
+    assert not manager.can_use_action_flow(inputs)
 
 
 def test_lora_targets_exclude_action_expert():
