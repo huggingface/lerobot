@@ -97,7 +97,9 @@ def init_logging(
         file_handler.setLevel(file_level.upper())
         logger.addHandler(file_handler)
 
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # huggingface_hub 2.x logs its requests through httpx2 instead of httpx.
+    for name in ("httpx", "httpx2"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def format_big_number(num, precision=0):
