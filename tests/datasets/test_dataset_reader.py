@@ -121,7 +121,6 @@ def test_num_frames_with_episode_filter(tmp_path, lerobot_dataset_factory):
     # Filtered frames should be less than total
     assert dataset.reader.num_frames <= dataset.meta.total_frames
     assert dataset.reader.num_episodes == 2
-    assert isinstance(dataset.absolute_to_relative_idx, dict)
 
 
 # ── get_item ─────────────────────────────────────────────────────────

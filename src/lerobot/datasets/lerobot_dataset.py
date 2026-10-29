@@ -491,10 +491,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Mapping from absolute frame indices to relative row positions.
 
         Non-None only for episode-filtered datasets where absolute indices
-        (from metadata) differ from row positions in the filtered view. The
-        concrete type depends on the storage backend (a plain ``dict`` for the
-        default reader, a compact on-the-fly index for the Lance reader);
-        callers should rely only on ``in`` and ``[]``.
+        (from metadata) differ from row positions in the filtered view.
         """
         return self._ensure_reader().absolute_to_relative_idx
 

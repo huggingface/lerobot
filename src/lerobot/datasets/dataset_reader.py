@@ -80,10 +80,7 @@ class BaseDatasetReader(ABC):
         """Mapping from absolute frame indices to relative row positions.
 
         Non-None only for episode-filtered datasets where absolute indices
-        (from metadata) differ from positions in the filtered view. Readers may
-        return a plain ``dict`` or any ``Mapping`` (e.g. a compact index that
-        resolves lookups on the fly); consumers rely only on membership tests
-        (``in``) and ``[]`` lookups.
+        (from metadata) differ from positions in the filtered view.
         """
 
     @abstractmethod
