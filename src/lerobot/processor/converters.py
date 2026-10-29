@@ -236,7 +236,7 @@ def create_transition(
 
 
 def robot_action_observation_to_transition(
-    action_observation: tuple[RobotAction, RobotObservation],
+    action_observation: tuple[RobotAction | None, RobotObservation | None],
 ) -> EnvTransition:
     """
     Convert a raw robot action and observation dictionary into a standardized `EnvTransition`.

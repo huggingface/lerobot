@@ -344,7 +344,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
 @EnvConfig.register_subclass("libero")
 @dataclass
 class LiberoEnv(EnvConfig):
-    task: str = "libero_10"  # can also choose libero_spatial, libero_object, etc.
+    task: str | None = "libero_10"  # can also choose libero_spatial, libero_object, etc.
     task_ids: list[int] | None = None
     fps: int = 20  # Must match robosuite's default control_freq (20 Hz)
     episode_length: int | None = None
@@ -478,7 +478,7 @@ class LiberoEnv(EnvConfig):
 @EnvConfig.register_subclass("metaworld")
 @dataclass
 class MetaworldEnv(EnvConfig):
-    task: str = "metaworld-push-v2"  # add all tasks
+    task: str | None = "metaworld-push-v2"  # add all tasks
     fps: int = 80
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
@@ -533,7 +533,7 @@ class MetaworldEnv(EnvConfig):
 @EnvConfig.register_subclass("robocasa")
 @dataclass
 class RoboCasaEnv(EnvConfig):
-    task: str = "CloseFridge"
+    task: str | None = "CloseFridge"
     fps: int = 20
     episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
@@ -608,7 +608,7 @@ class RoboCasaEnv(EnvConfig):
 @EnvConfig.register_subclass("vlabench")
 @dataclass
 class VLABenchEnv(EnvConfig):
-    task: str = "select_fruit"
+    task: str | None = "select_fruit"
     fps: int = 10
     episode_length: int = 500
     obs_type: str = "pixels_agent_pos"

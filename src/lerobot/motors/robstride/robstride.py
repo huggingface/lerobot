@@ -635,10 +635,9 @@ class RobstrideMotorsBus(MotorsBusBase):
 
         # Si le proto renvoie une réponse type état, on peut la décoder comme pour MIT
         recv_id = self._get_motor_recv_id(motor)
-        if recv_id is not None:
-            resp = self._recv_motor_response(expected_recv_id=recv_id)
-            if resp:
-                self._decode_motor_state(resp.data)
+        resp = self._recv_motor_response(expected_recv_id=recv_id)
+        if resp:
+            self._decode_motor_state(resp.data)
 
     def _mit_control(
         self,
