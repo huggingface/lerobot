@@ -15,10 +15,13 @@
 # limitations under the License.
 """Tests for dataset tools utilities."""
 
+import json
 import shutil
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 import torch
 
@@ -27,6 +30,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
+    _drop_stale_episode_feature_columns,
     _fractions_to_episode_indices,
     add_features,
     convert_image_to_video_dataset,
@@ -969,6 +973,119 @@ def test_remove_feature_updates_stats(sample_dataset, tmp_path):
 
     if dataset_without_reward.meta.stats:
         assert "reward" not in dataset_without_reward.meta.stats
+
+
+def test_drop_stale_episode_feature_columns_matches_full_feature_name(tmp_path):
+    """Feature names containing slashes must be matched exactly."""
+    episodes_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    episodes_dir.mkdir(parents=True)
+    columns = {
+        "episode_index": [0],
+        "stats/old/feature/max": [1.0],
+        "stats/old/feature_suffix/max": [2.0],
+        "stats/old/feature/nested/max": [3.0],
+        "videos/old/feature/chunk_index": [0],
+        "videos/old/feature_suffix/chunk_index": [0],
+    }
+    path = episodes_dir / "episode-00000.parquet"
+    pd.DataFrame(columns).to_parquet(path)
+
+    stale_features = _drop_stale_episode_feature_columns(
+        episodes_dir.parent, active_features={"old/feature_suffix"}
+    )
+
+    output_columns = pq.read_schema(path).names
+    assert stale_features == {"old/feature", "old/feature/nested"}
+    assert "stats/old/feature/max" not in output_columns
+    assert "videos/old/feature/chunk_index" not in output_columns
+    assert "stats/old/feature_suffix/max" in output_columns
+    assert "videos/old/feature_suffix/chunk_index" in output_columns
+
+
+def test_remove_feature_cleans_stale_episode_metadata(sample_dataset, tmp_path):
+    """Removing a feature also removes its episode metadata and video artifacts."""
+    camera_key = "observation.images.top"
+    source_episode_path = sample_dataset.root / "meta/episodes/chunk-000/file-000.parquet"
+    episode_df = pd.read_parquet(source_episode_path)
+    episode_df[f"stats/{camera_key}/max"] = episode_df["stats/action/max"].tolist()
+    episode_df[f"videos/{camera_key}/chunk_index"] = 0
+    episode_df.to_parquet(source_episode_path, index=False)
+
+    output_dir = tmp_path / "without_camera"
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        dataset_without_camera = remove_feature(
+            sample_dataset,
+            feature_names=camera_key,
+            output_dir=output_dir,
+        )
+
+    assert camera_key not in dataset_without_camera.meta.features
+    assert camera_key not in dataset_without_camera.meta.stats
+    assert camera_key not in dataset_without_camera.hf_dataset.column_names
+
+    info = json.loads((output_dir / "meta/info.json").read_text())
+    stats = json.loads((output_dir / "meta/stats.json").read_text())
+    assert camera_key not in info["features"]
+    assert camera_key not in stats
+
+    episode_files = list((output_dir / "meta/episodes").glob("*/*.parquet"))
+    assert episode_files
+    for episode_file in episode_files:
+        metadata_columns = pq.read_schema(episode_file).names
+        assert not any(column.startswith(f"stats/{camera_key}/") for column in metadata_columns)
+        assert not any(column.startswith(f"videos/{camera_key}/") for column in metadata_columns)
+
+    assert not (output_dir / "videos" / camera_key).exists()
+
+
+def test_delete_episodes_ignores_stale_episode_stats(sample_dataset, tmp_path, caplog):
+    """Old datasets with stale per-episode stats are cleaned when reindexing."""
+    source_episode_path = sample_dataset.root / "meta/episodes/chunk-000/file-000.parquet"
+    source_episode = pd.read_parquet(source_episode_path)
+    source_episode["stats/removed_feature/max"] = 1.0
+    source_episode["stats/nested/removed_feature/max"] = 2.0
+    source_episode["videos/removed_feature/chunk_index"] = 0
+    source_episode.to_parquet(source_episode_path, index=False)
+
+    output_dir = tmp_path / "filtered"
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        filtered_dataset = delete_episodes(
+            sample_dataset,
+            episode_indices=[1],
+            output_dir=output_dir,
+        )
+
+    assert filtered_dataset.meta.total_episodes == 4
+    assert "removed_feature" in caplog.text
+    assert "nested/removed_feature" in caplog.text
+
+    output_episode = pd.read_parquet(output_dir / "meta/episodes/chunk-000/file-000.parquet")
+    assert "stats/removed_feature/max" not in output_episode.columns
+    assert "stats/nested/removed_feature/max" not in output_episode.columns
+    assert "videos/removed_feature/chunk_index" not in output_episode.columns
+
+    # Active image statistics keep their channel-first shape and values.
+    source_stats = source_episode.iloc[0]["stats/observation.images.top/max"]
+    output_stats = output_episode.iloc[0]["stats/observation.images.top/max"]
+    stats_field = pq.read_schema(source_episode_path).field("stats/observation.images.top/max")
+    assert (
+        pq.read_schema(output_dir / "meta/episodes/chunk-000/file-000.parquet")
+        .field(stats_field.name)
+        .type.equals(stats_field.type)
+    )
+    np.testing.assert_array_equal(np.asarray(output_stats).ravel(), np.asarray(source_stats).ravel())
 
 
 def test_delete_consecutive_episodes(sample_dataset, tmp_path):

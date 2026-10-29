@@ -921,30 +921,32 @@ def _copy_and_reindex_episodes_metadata(
         # This happens particularly with image/video statistics. We need to detect and flatten
         # these nested structures back to proper (C, 1, 1) arrays so aggregate_stats can process them.
         episode_stats: dict[str, dict[str, np.ndarray]] = {}
+        ignored_stats_features: set[str] = set()
         for key in src_episode_full:
             if key.startswith("stats/"):
-                stat_key = key.replace("stats/", "")
-                parts = stat_key.split("/")
-                if len(parts) == 2:
-                    feature_name, stat_name = parts
+                parsed_key = _parse_episode_feature_column(key, "stats/")
+                if parsed_key is not None:
+                    feature_name, stat_name = parsed_key
+                    if feature_name not in dst_meta.features:
+                        ignored_stats_features.add(feature_name)
+                        continue
+
                     if feature_name not in episode_stats:
                         episode_stats[feature_name] = {}
 
                     value = src_episode_full[key]
-
-                    if feature_name in src_dataset.meta.features:
-                        feature_dtype = src_dataset.meta.features[feature_name]["dtype"]
-                        if feature_dtype in ["image", "video"] and stat_name != "count":
-                            # Stats are channel-first (C, 1, 1)
-                            if isinstance(value, np.ndarray) and value.dtype == object:
-                                flat_values = []
-                                for item in value:
-                                    while isinstance(item, np.ndarray):
-                                        item = item.flatten()[0]
-                                    flat_values.append(item)
-                                value = np.array(flat_values, dtype=np.float64).reshape(-1, 1, 1)
-                            elif isinstance(value, np.ndarray) and value.ndim == 1:
-                                value = value.reshape(-1, 1, 1)
+                    feature_dtype = dst_meta.features[feature_name]["dtype"]
+                    if feature_dtype in ["image", "video"] and stat_name != "count":
+                        # Stats are channel-first (C, 1, 1)
+                        if isinstance(value, np.ndarray) and value.dtype == object:
+                            flat_values = []
+                            for item in value:
+                                while isinstance(item, np.ndarray):
+                                    item = item.flatten()[0]
+                                flat_values.append(item)
+                            value = np.array(flat_values, dtype=np.float64).reshape(-1, 1, 1)
+                        elif isinstance(value, np.ndarray) and value.ndim == 1:
+                            value = value.reshape(-1, 1, 1)
 
                     episode_stats[feature_name][stat_name] = value
 
@@ -960,6 +962,12 @@ def _copy_and_reindex_episodes_metadata(
         dst_meta._save_episode_metadata(episode_dict)
 
         total_frames += src_episode["length"]
+
+    if ignored_stats_features:
+        logger.warning(
+            "Ignoring stale episode statistics for features absent from the output dataset: "
+            f"{sorted(ignored_stats_features)}"
+        )
 
     dst_meta.finalize()
 
@@ -1119,6 +1127,52 @@ def _copy_videos(
             shutil.copy(src_dataset.root / src_path, dst_path)
 
 
+def _parse_episode_feature_column(column: str, prefix: str) -> tuple[str, str] | None:
+    """Parse a feature and its field from an episode metadata column.
+
+    Feature names may contain ``/``, so the field name is always the last path
+    component and everything before it belongs to the feature name.
+    """
+    if not column.startswith(prefix):
+        return None
+
+    feature_name, separator, field_name = column.removeprefix(prefix).rpartition("/")
+    if not separator or not feature_name or not field_name:
+        return None
+
+    return feature_name, field_name
+
+
+def _drop_stale_episode_feature_columns(episodes_dir: Path, active_features: set[str]) -> set[str]:
+    """Drop stale feature columns from copied episode metadata parquet files.
+
+    ``stats/`` and ``videos/`` column groups are keyed by feature names. Those
+    names may themselves contain ``/``, so parse each column from the right
+    rather than matching a plain prefix.
+    """
+    stale_features: set[str] = set()
+
+    for path in sorted(episodes_dir.glob("*/*.parquet")):
+        table = pq.read_table(path)
+        stale_columns = []
+        for column in table.column_names:
+            for prefix in ("stats/", "videos/"):
+                parsed_column = _parse_episode_feature_column(column, prefix)
+                if parsed_column is None:
+                    continue
+
+                feature_name, _ = parsed_column
+                if feature_name not in active_features:
+                    stale_columns.append(column)
+                    stale_features.add(feature_name)
+                break
+
+        if stale_columns:
+            pq.write_table(table.drop(stale_columns), path)
+
+    return stale_features
+
+
 def _copy_episodes_metadata_and_stats(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
@@ -1132,6 +1186,12 @@ def _copy_episodes_metadata_and_stats(
     dst_episodes_dir = dst_meta.root / "meta/episodes"
     if episodes_dir.exists():
         shutil.copytree(episodes_dir, dst_episodes_dir, dirs_exist_ok=True)
+        stale_features = _drop_stale_episode_feature_columns(dst_episodes_dir, set(dst_meta.features.keys()))
+        if stale_features:
+            logger.warning(
+                "Dropped stale episode metadata for features absent from the output dataset: "
+                f"{sorted(stale_features)}"
+            )
 
     dst_meta.info.total_episodes = src_dataset.meta.total_episodes
     dst_meta.info.total_frames = src_dataset.meta.total_frames
