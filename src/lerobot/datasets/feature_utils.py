@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import math
 from copy import deepcopy
 from pprint import pformat
 
@@ -174,7 +175,7 @@ def features_equal_for_merge(features_a: dict[str, dict], features_b: dict[str, 
 def check_delta_timestamps(
     delta_timestamps: dict[str, list[float]], fps: int, tolerance_s: float, raise_value_error: bool = True
 ) -> bool:
-    """Check if delta timestamps are multiples of 1/fps +/- tolerance.
+    """Check if delta timestamps are finite multiples of 1/fps +/- tolerance.
 
     This ensures that adding these delta timestamps to any existing timestamp in
     the dataset will result in a value that aligns with the dataset's frame rate.
@@ -190,11 +191,15 @@ def check_delta_timestamps(
         bool: True if all deltas are valid, False otherwise.
 
     Raises:
-        ValueError: If any delta is outside the tolerance and `raise_value_error` is True.
+        ValueError: If any delta or its frame offset is non-finite, or outside the
+            tolerance, and `raise_value_error` is True.
     """
     outside_tolerance = {}
     for key, delta_ts in delta_timestamps.items():
-        within_tolerance = [abs(ts * fps - round(ts * fps)) / fps <= tolerance_s for ts in delta_ts]
+        within_tolerance = [
+            math.isfinite(ts * fps) and abs(ts * fps - round(ts * fps)) / fps <= tolerance_s
+            for ts in delta_ts
+        ]
         if not all(within_tolerance):
             outside_tolerance[key] = [
                 ts for ts, is_within in zip(delta_ts, within_tolerance, strict=True) if not is_within
@@ -204,8 +209,8 @@ def check_delta_timestamps(
         if raise_value_error:
             raise ValueError(
                 f"""
-                The following delta_timestamps are found outside of tolerance range.
-                Please make sure they are multiples of 1/{fps} +/- tolerance and adjust
+                The following delta_timestamps are invalid or outside of tolerance range.
+                Please make sure they are finite multiples of 1/{fps} +/- tolerance and adjust
                 their values accordingly.
                 \n{pformat(outside_tolerance)}
                 """
