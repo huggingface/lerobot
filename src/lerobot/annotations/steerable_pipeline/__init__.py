@@ -30,7 +30,7 @@ from lerobot.utils.import_utils import lazy_exports
 
 from .config import AnnotationPipelineConfig
 
-# These import lerobot.datasets, so each is imported the first time it is used.
+# These import torch through lerobot.datasets.io_utils, so each is imported the first time it is used.
 if TYPE_CHECKING:
     from .validator import StagingValidator, ValidationReport
     from .writer import LanguageColumnsWriter

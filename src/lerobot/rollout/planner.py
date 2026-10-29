@@ -289,7 +289,7 @@ def training_vocabulary(pretrained_path: str) -> list[str]:
     dataset's ``meta/tasks.parquet``. This is an inference, not a contract: task labels are
     examples of what the policy saw, not a proof of everything it follows.
     """
-    # lerobot.datasets imports torch, which the rollout command must not load at startup.
+    # lerobot.datasets.utils imports torch, which the rollout command must not load at startup.
     from lerobot.datasets.utils import DEFAULT_TASKS_PATH
 
     path = Path(pretrained_path)

@@ -31,6 +31,7 @@ NEEDS_DATASETS = [
 LAZY_MODULES = [
     pytest.param("lerobot.annotations.steerable_pipeline", marks=NEEDS_DATASETS),
     "lerobot.configs",
+    pytest.param("lerobot.datasets", marks=NEEDS_DATASETS),
     "lerobot.envs",
     "lerobot.lerobot_types",
     "lerobot.policies",
