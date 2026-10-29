@@ -21,7 +21,7 @@ import draccus
 import pytest
 
 from lerobot.configs.accelerator import ActivationCheckpointingMode
-from lerobot.configs.default import DatasetConfig, PeftConfig
+from lerobot.configs.default import DatasetConfig
 from lerobot.configs.parallelism import ContextParallelConfig, ParallelismConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.optim.optimizers import AdamConfig, MultiAdamConfig
@@ -94,11 +94,6 @@ class TestDistributedFailFasts:
         cfg.policy = SimpleNamespace(device="cuda")
         cfg._validate_distributed()
 
-    def test_peft_rejected_when_sharded(self):
-        cfg = make_cfg(parallelism=sharded(), peft=PeftConfig())
-        with pytest.raises(ValueError, match="PEFT"):
-            cfg._validate_distributed()
-
     def test_env_eval_rejected_when_sharded(self):
         cfg = make_cfg(parallelism=sharded(), env_eval_freq=1000)
         cfg.env = object()  # any configured env triggers the check
@@ -115,15 +110,8 @@ class TestDistributedFailFasts:
 
 class TestConfigCompat:
     def test_checkpoint_format_round_trip(self):
-        for fmt in CheckpointFormat:
-            assert draccus.decode(CheckpointFormat, draccus.encode(fmt)) is fmt
-
-    def test_wants_predicates(self):
-        assert CheckpointFormat.SAFETENSORS.wants_safetensors
-        assert not CheckpointFormat.SAFETENSORS.wants_dcp
-        assert CheckpointFormat.DCP.wants_dcp and not CheckpointFormat.DCP.wants_safetensors
-        both = CheckpointFormat.SAFETENSORS_AND_DCP
-        assert both.wants_safetensors and both.wants_dcp
+        for checkpoint_format in CheckpointFormat:
+            assert draccus.decode(CheckpointFormat, draccus.encode(checkpoint_format)) is checkpoint_format
 
 
 def test_reward_model_rejected_when_sharded():

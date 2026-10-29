@@ -61,7 +61,7 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import EvalConfig, JobConfig, parser
 from lerobot.configs.rewards import RewardModelConfig
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.datasets import (
     EpisodeAwareSampler,
     LeRobotDataset,
@@ -611,7 +611,10 @@ def train(cfg: TrainPipelineConfig) -> None:
     # On resume, cfg was parsed FROM the checkpoint's train_config.json, so cfg.checkpoint_format
     # IS the recorded value: DCP-bearing formats skip the safetensors load here and stream the
     # sharded weights in after prepare (resume_after_prepare).
-    defer_weight_load = cfg.resume and cfg.checkpoint_format.wants_dcp
+    defer_weight_load = cfg.resume and cfg.checkpoint_format in (
+        CheckpointFormat.DCP,
+        CheckpointFormat.SAFETENSORS_DCP,
+    )
     # On resume the weights and processors come from the checkpoint, while `pretrained_path`
     # keeps naming the model the run started from (the published card's `base_model`).
     resume_pretrained_dir = (
@@ -748,7 +751,7 @@ def train(cfg: TrainPipelineConfig) -> None:
     # --- prepare & resume phase 2 ---------------------------------------------------------------
     # The FSDP wrap-unit class names resolve right before prepare: user override, else the
     # policy's _fsdp_wrap_modules declaration — root-only wrapping is never silently accepted.
-    set_fsdp_wrap_modules(accelerator, accelerator.unwrap_model(policy) if peft_model else policy)
+    set_fsdp_wrap_modules(accelerator, policy)
     accelerator.wait_for_everyone()
     if cfg.dataset.streaming and eval_dataloader is not None:
         policy, optimizer, lr_scheduler, eval_dataloader = accelerator.prepare(
