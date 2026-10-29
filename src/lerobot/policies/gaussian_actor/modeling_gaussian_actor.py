@@ -654,7 +654,8 @@ class RescaleFromTanh(Transform):
 
 class TanhMultivariateNormalDiag(TransformedDistribution):
     def __init__(self, loc, scale_diag, low=None, high=None):
-        base_dist = MultivariateNormal(loc, torch.diag_embed(scale_diag))
+        # The diagonal scale holds standard deviations; its square is the covariance.
+        base_dist = MultivariateNormal(loc, scale_tril=torch.diag_embed(scale_diag))
 
         transforms = [TanhTransform(cache_size=1)]
 
