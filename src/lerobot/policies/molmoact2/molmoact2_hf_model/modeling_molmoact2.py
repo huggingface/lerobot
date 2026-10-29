@@ -1888,7 +1888,18 @@ class MolmoAct2VisionBackbone(nn.Module):
 
         # MLP layer to map the feature.
         pooled_features = self.image_projector(pooled_features)
-        return pooled_features.view(-1, pooled_features.shape[-1])[valid_token.flatten()]
+        pooled_features = pooled_features.view(-1, pooled_features.shape[-1])
+        if batch_size == 1:
+            # Only batching adds all-padding rows (every processor pooling window holds a patch), so a
+            # single example checks its rows instead of selecting them and keeps a static shape.
+            _check_image_inputs(
+                valid_token,
+                "image_token_pooling has a row with no patch",
+                lambda: f"{int((~valid_token).sum())} of {valid_token.numel()} rows hold no patch",
+                RuntimeError,
+            )
+            return pooled_features
+        return pooled_features[valid_token.flatten()]
 
 
 # Copied from transformers.models.llama.modeling_llama.rotate_half
@@ -3240,7 +3251,8 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
         # Pooling indices are relative to their own image: shift each row by the patches of the
         # images before it.
         patches_per_image = image_num_crops * n_patches
-        image_offsets = (patches_per_image.cumsum(0) - patches_per_image).to(image_token_pooling.dtype)
+        # int32, because Torch-TensorRT 2.11 computes cumsum in float, and the offsets feed a gather index.
+        image_offsets = (patches_per_image.cumsum(0) - patches_per_image).int()
         rows = torch.arange(num_pooled_patches, device=image_token_pooling.device)
         image_of_row = (rows[:, None] >= num_pooled_patches_per_image.cumsum(0)[None, :]).sum(1)
         token_pooling = torch.where(
@@ -3571,15 +3583,26 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
             # Normalize the modality boundary to the text activation dtype;
             # parameter storage and autocast can otherwise make them differ.
             image_features = self.vision_backbone(images, token_pooling).to(device=x.device, dtype=x.dtype)
-            is_image_patch = input_ids.reshape(-1) == self.config.image_patch_id
+            is_image_patch = input_ids.reshape(-1).to(x.device) == self.config.image_patch_id
             _check_image_inputs(
                 is_image_patch.sum() == image_features.shape[0],
                 "Image patch tokens do not match image features",
                 lambda: f"expected {int(is_image_patch.sum())} image patch embeddings, got {len(image_features)}.",
                 RuntimeError,
             )
-            flat_x = x.reshape(-1, x.shape[-1]).clone()
-            flat_x[is_image_patch] = flat_x[is_image_patch] + image_features
+            if input_ids.shape[0] == 1:
+                # The k-th image patch token takes the k-th feature (patch tokens index from 1). A gather
+                # keeps every shape static, which boolean indexing does not; torch.where drops what other
+                # tokens read. The index is cast to int32 because Torch-TensorRT 2.11 computes cumsum in float.
+                padded_features = F.pad(image_features, (0, 0, 1, 0))
+                flat_x = x.reshape(-1, x.shape[-1])
+                flat_x = torch.where(
+                    is_image_patch[:, None], flat_x + padded_features[is_image_patch.cumsum(0).int()], flat_x
+                )
+            else:
+                # Batches cannot export, so they need no static shapes and use boolean indexing.
+                flat_x = x.reshape(-1, x.shape[-1]).clone()
+                flat_x[is_image_patch] = flat_x[is_image_patch] + image_features
             x = flat_x.reshape_as(x)
 
         # shape: (batch_size, seq_len, d_model)
