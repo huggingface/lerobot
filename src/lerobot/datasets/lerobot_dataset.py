@@ -704,6 +704,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 exist_ok=True,
             )
 
+        upload_kwargs = {
+            "repo_id": self.repo_id,
+            "folder_path": self.root,
+            "repo_type": "dataset",
+            "revision": branch,
+            "allow_patterns": allow_patterns,
+            "ignore_patterns": ignore_patterns,
+        }
         if upload_large_folder:
             import warnings
 
@@ -714,14 +722,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 DeprecationWarning,
                 stacklevel=2,
             )
-        hub_api.upload_folder(
-            repo_id=self.repo_id,
-            folder_path=self.root,
-            repo_type="dataset",
-            revision=branch,
-            allow_patterns=allow_patterns,
-            ignore_patterns=ignore_patterns,
-        )
+        hub_api.upload_folder(**upload_kwargs)
 
         card = create_lerobot_dataset_card(
             tags=tags, dataset_info=self.meta.info, license=license, repo_id=self.repo_id, **card_kwargs
