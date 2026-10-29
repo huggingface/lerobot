@@ -200,6 +200,8 @@ class StreamingActionDiT(ActionDiT):
             raise ValueError("Streaming timesteps must be [B] or [B,T].")
         timestep = timestep.expand(batch, *timestep.shape[1:])
         action_tokens = action_tokens.to(self.action_encoder.weight)
+        if self.text_embedding is None:
+            raise ValueError("Streaming-WAM requires action text cross-attention.")
         context = context.to(self.text_embedding[0].weight)
         time = sinusoidal_embedding_1d(self.freq_dim, timestep.reshape(-1)).to(action_tokens.dtype)
         t = self.time_embedding(time)

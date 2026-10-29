@@ -117,12 +117,14 @@ def reference_model(
         in_channels=video_config["in_dim"],
     )
     action_config = {key: value for key, value in config.action_dit_config.items() if key != "fp32_attention"}
+    # The pinned reference always includes text cross-attention. Upstream now
+    # exposes that choice for Faster-WAM, but the release architecture is fixed.
+    if not action_config.pop("use_text_cross_attention", True):
+        raise ValueError("The reference requires action text cross-attention.")
     with torch.device("meta"):
         video = reference.Video(info).to(dtype=config.dtype)
         action = reference.Action(**action_config).to(dtype=config.dtype)
-        video.rtc_1step_selfatt_z1_slot_encoder = reference.Slot(action.hidden_dim).to(
-            dtype=config.dtype
-        )
+        video.rtc_1step_selfatt_z1_slot_encoder = reference.Slot(action.hidden_dim).to(dtype=config.dtype)
         proprio = nn.Linear(config.proprio_dim, video.text_dim).to(dtype=config.dtype)
     for name, expert in (("video", video), ("action", action)):
         prefix = f"mixtures.{name}."

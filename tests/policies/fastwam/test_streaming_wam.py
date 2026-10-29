@@ -12,7 +12,7 @@ from torch import nn
 pytest.importorskip("transformers")
 pytest.importorskip("diffusers")
 
-from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
+from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig, default_video_dit_config
 from lerobot.policies.fastwam.convert_streaming_checkpoint import ARCHITECTURE, PHASE, map_checkpoint
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.processor_fastwam import make_fastwam_pre_post_processors
@@ -145,6 +145,26 @@ def test_streaming_reload_rejects_missing_weights_even_non_strict(tiny_component
         FastWAMPolicy.from_pretrained(tmp_path, strict=False, init_empty_weights=True)
 
 
+def test_streaming_maps_public_noise_to_action_noise(tiny_components):
+    policy = FastWAMPolicy(tiny_config())
+    noise = torch.zeros(1, 32, 3)
+    batch = observation()
+    expected = policy.model.infer_action(
+        prompt=None,
+        input_image=batch["input_image"],
+        action_horizon=32,
+        proprio=batch["observation.state"],
+        context=batch["context"],
+        context_mask=batch["context_mask"],
+        seed=policy.config.inference_seed,
+        action_noise=noise,
+    )["action"]
+    assert torch.equal(policy.predict_action_chunk(batch, noise=noise), expected.unsqueeze(0))
+    with pytest.raises(ValueError, match="observation batch"):
+        policy.select_action(batch, noise=noise)
+    policy.close()
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -152,7 +172,10 @@ def test_streaming_reload_rejects_missing_weights_even_non_strict(tiny_component
         {"compile_action_infer": True},
         {"n_action_steps": 16},
         {"base_model_id": "lerobot/fastwam_base"},
-        {"video_dit_config": {"action_conditioned": True}},
+        {"video_dit_config": {**default_video_dit_config(7), "action_conditioned": True}},
+        {"lite_kv_fusion": True},
+        {"retracted_1d_rope": True, "lite_kv_fusion": True},
+        {"world_model_only_conditioning": True},
     ],
 )
 def test_reject_unsupported_streaming_config(change):
