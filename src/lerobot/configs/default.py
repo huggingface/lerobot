@@ -154,6 +154,9 @@ class TrackioConfig:
     # Allowed values: 'allow', 'must', 'never'. Defaults to 'allow' when resuming a checkpoint that stored a
     # run_name (reattach if the run exists, else start a new run under that name) and to 'never' otherwise.
     resume: str | None = None
+    # Store the run's console output (stdout and stderr, so prints, logs and tracebacks) with the run,
+    # viewable and downloadable from its dashboard page. The launch command is recorded either way.
+    capture_console: bool = True
 
     def __post_init__(self) -> None:
         if self.resume is not None and self.resume not in TRACKIO_RESUME_MODES:

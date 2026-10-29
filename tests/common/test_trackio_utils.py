@@ -17,6 +17,7 @@
 import json
 import logging
 import re
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -92,6 +93,7 @@ def test_trackio_config_defaults():
     assert cfg.private is None
     assert cfg.run_name is None
     assert cfg.resume is None
+    assert cfg.capture_console is True
 
 
 @pytest.mark.parametrize("mode", ["allow", "must", "never", None])
@@ -145,7 +147,9 @@ def test_get_safe_artifact_name_keeps_safe_names():
 def test_trackio_logger_forwards_init_kwargs(trackio, tmp_path):
     cfg = make_cfg(
         tmp_path,
-        trackio=TrackioConfig(project="my-project", space_id="user/space", private=True),
+        trackio=TrackioConfig(
+            project="my-project", space_id="user/space", private=True, capture_console=False
+        ),
         dataset=SimpleNamespace(repo_id="user/repo"),
         env=SimpleNamespace(type="pusht", fps=10),
         to_dict=lambda: sentinel.config,
@@ -165,6 +169,7 @@ def test_trackio_logger_forwards_init_kwargs(trackio, tmp_path):
         "private": True,
         "config": sentinel.config,
         "resume": "never",
+        "capture_console": False,
     }
 
 
@@ -539,6 +544,7 @@ def make_cfg(trackio_cfg, resume=False):
 first_cfg = TrackioConfig(enable=True, project="e2e", disable_artifact=False)
 first = TrackioLogger(make_cfg(first_cfg))
 first.log_dict({"loss": 1.0, "ignored": [1]}, step=0)
+print("console capture marker")
 first.log_dict({"loss": 0.5}, step=1)
 first.log_dict({"success": 0.25}, step=1, mode="eval")
 first.log_dict({"Optimization step": 3, "Hz": 2.0}, custom_step_key="Optimization step")
@@ -586,4 +592,9 @@ def test_trackio_logger_end_to_end_with_real_package(tmp_path):
     assert logged[-1][1:] == (2, {"train/loss": 0.25})
     with sqlite3.connect(storage_dir / "e2e.db") as db:
         artifacts = db.execute("SELECT name, type FROM artifacts").fetchall()
+        configs = [json.loads(row[0]) for row in db.execute("SELECT config FROM configs").fetchall()]
     assert artifacts == [("policy_act-seed_7-dataset_user_repo-000100", "model")]
+    assert shlex.split(configs[0]["_Command"])[1:] == [str(script), str(checkpoint_dir)]
+
+    console_logs = sorted((storage_dir / "media" / "e2e" / summary["run_name"]).glob("console-*.log"))
+    assert "console capture marker" in "".join(log.read_text() for log in console_logs)

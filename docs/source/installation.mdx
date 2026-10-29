@@ -303,6 +303,8 @@ To sync runs to a Hugging Face Space (created if missing), run `hf auth login` a
 
 Space privacy defaults to `None`: new Spaces are public unless the organization's default is private. Pass `--trackio.private=true` to create a private Space.
 
+Each run records the command that launched it and its console output (prints, logs, tracebacks), both shown on the run's page in the dashboard. On a Space they are as visible as the Space itself; pass `--trackio.capture_console=false` to keep the console output out of the run.
+
 #### Migrating from Weights & Biases
 
 | W&B setting                     | Trackio setting                                                                                  |
@@ -314,6 +316,7 @@ Space privacy defaults to `None`: new Spaces are public unless the organization'
 | `--wandb.run_id=<id>`           | Use `--trackio.run_name=<name>` for an existing **Trackio** run                                  |
 | `--wandb.mode=offline`          | Omit `space_id` for local logging; also unset `TRACKIO_SPACE_ID` and `TRACKIO_SERVER_URL` if set |
 | `--wandb.mode=disabled`         | `--trackio.enable=false`                                                                         |
+| `--wandb.console=off`           | `--trackio.capture_console=false`                                                                |
 
 ## Next steps
 

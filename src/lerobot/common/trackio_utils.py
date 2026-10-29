@@ -81,6 +81,7 @@ class TrackioLogger:
             private=self.cfg.private,
             config=cfg.to_dict(),
             resume=resume,
+            capture_console=self.cfg.capture_console,
         )
         self._trackio = trackio
 
