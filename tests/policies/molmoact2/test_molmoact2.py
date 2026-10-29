@@ -3432,6 +3432,19 @@ def test_single_example_image_inputs_export(monkeypatch):
     assert torch.equal(token_pooling, torch.tensor([[[0, 1], [2, -1], [4, 9], [11, -1]]]))
     program = torch.export.export(embed, example, strict=False)
 
+    # Torch-TensorRT 2.11 computes cumsum in float, and a float cannot be a gather index. So an index computed
+    # from a cumsum must go through an int32 cast (or a comparison) on the way.
+    def from_cumsum(node):
+        if getattr(node.meta.get("val"), "dtype", None) in (torch.int32, torch.bool):
+            return False
+        return node.target == torch.ops.aten.cumsum.default or any(map(from_cumsum, node.all_input_nodes))
+
+    for node in program.graph.nodes:
+        value = node.meta.get("val")
+        if isinstance(value, torch.Tensor):
+            assert all(isinstance(size, int) for size in value.shape), node.format_node()
+        if node.target == torch.ops.aten.index.Tensor:
+            assert not any(map(from_cumsum, filter(None, node.args[1]))), node.format_node()
     with torch.no_grad():
         embeddings = embed(*example)
         # Reference: each image feature added to its image patch token, in order.
@@ -3458,6 +3471,17 @@ def test_single_example_image_inputs_export(monkeypatch):
             model.build_batched_images(*single), model.build_batched_images(*pair), strict=True
         ):
             assert torch.equal(two, one.expand_as(two))
+    # A batch of examples with different image counts has all-padding pooling rows, which the backbone drops.
+    one_image = (
+        torch.tensor([[1, 1, 1, 1, patch_id, patch_id, end_id, 2]]),
+        example[1][:1],
+        example[2][:2],
+        example[3][:1],
+        example[4][:1],
+    )
+    mixed = tuple(torch.cat(parts) for parts in zip(example, one_image, strict=True))
+    with torch.no_grad():
+        torch.testing.assert_close(embed(*mixed), torch.cat([embed(*example), embed(*one_image)]))
 
     # Counts that do not match must fail in the program, and under torch.compile with the eager error rather than
     # the program's assert, even with transformers checks off.
@@ -3466,11 +3490,15 @@ def test_single_example_image_inputs_export(monkeypatch):
     missing_end = example[0].clone()
     missing_end[0, 3] = 1
     bad_grids = torch.tensor([[1, 1, 1, 1], [1, 2, 1, 1]])
+    # A single example keeps every pooling row, so a row with no patch must fail instead of pooling nothing.
+    padding_row = example[2].clone()
+    padding_row[1] = -1
     bad_inputs = (
         ((missing_patch, *example[1:]), RuntimeError, "Image patch tokens", "expected 3 image patch"),
         ((missing_end, *example[1:]), ValueError, "image end tokens", "end_tokens=1, image_grids=2"),
         ((*example[:4], torch.tensor([1, 1])), AssertionError, "image_num_crops", "expected 2 crops"),
         ((*example[:3], bad_grids, example[4]), AssertionError, "image_token_pooling", "expected 5 pooled"),
+        ((*example[:2], padding_row, *example[3:]), RuntimeError, "row with no patch", "rows hold no patch"),
     )
     monkeypatch.setenv("TRANSFORMERS_DISABLE_TORCH_CHECK", "1")
     compiled = torch.compile(embed, backend="eager")
@@ -3489,6 +3517,25 @@ def test_single_example_image_inputs_export(monkeypatch):
         contiguous_bf16 = embed(*example)
         strided_bf16 = embed(example[0], strided, *example[2:])
     assert torch.equal(strided_bf16, contiguous_bf16)
+
+
+def test_embedding_gradients_match_boolean_indexing_for_one_example():
+    model = _tiny_molmoact2_model()
+    example = _two_image_example()
+    images, token_pooling = model.build_batched_images(*example)
+    embeddings = model.build_input_embeddings(example[0], images, token_pooling)[0]
+    # Reference: each image feature added to its image patch token by boolean indexing.
+    expected = model.transformer.wte(example[0]).reshape(-1, 8).clone()
+    expected[example[0].flatten() == 6] += model.vision_backbone(images, token_pooling)
+
+    parameters = [*model.vision_backbone.parameters(), *model.transformer.wte.parameters()]
+    grads = torch.autograd.grad(embeddings.sum(), parameters, allow_unused=True)
+    expected_grads = torch.autograd.grad(expected.sum(), parameters, allow_unused=True)
+    assert any(grad is not None for grad in grads)
+    for grad, expected_grad in zip(grads, expected_grads, strict=True):
+        assert (grad is None) == (expected_grad is None)
+        if grad is not None:
+            torch.testing.assert_close(grad, expected_grad)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="Checks the exported program on CUDA.")
@@ -3512,6 +3559,18 @@ def test_single_example_image_inputs_export_on_cuda():
     with pytest.raises(RuntimeError, match="Image patch tokens"):
         program(missing_patch, *cuda_example[1:])
     torch.testing.assert_close(program(*cuda_example).cpu(), embeddings)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Moves the text embeddings to CUDA.")
+def test_image_features_follow_text_embeddings_device():
+    model = _tiny_molmoact2_model()
+    example = _two_image_example()
+    with torch.no_grad():
+        embeddings = _ImageEmbeddings(model)(*example)
+        # Accelerate can return the text embeddings on a different device from input_ids.
+        model.transformer.wte.register_forward_hook(lambda module, args, output: output.cuda())
+        split = _ImageEmbeddings(model)(*example)
+    assert torch.equal(split.cpu(), embeddings)
 
 
 def test_rtc_generation_uses_previous_chunk_prefix():
