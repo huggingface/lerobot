@@ -30,6 +30,7 @@ from lerobot.scripts.lerobot_edit_dataset import (
     ReencodeVideosConfig,
     RemoveFeatureConfig,
     SplitConfig,
+    TrimEpisodesConfig,
     _validate_config,
 )
 
@@ -39,6 +40,23 @@ pytestmark = pytest.mark.dataset
 def parse_cfg(cli_args: list[str]) -> EditDatasetConfig:
     """Helper to parse CLI args into an EditDatasetConfig via draccus."""
     return draccus.parse(EditDatasetConfig, args=cli_args)
+
+
+def test_trim_episode_ranges_parsing():
+    cfg = parse_cfg(
+        [
+            "--repo_id",
+            "test/source",
+            "--new_repo_id",
+            "test/trimmed",
+            "--operation.type",
+            "trim_episodes",
+            "--operation.frame_ranges",
+            '{"0": [[10, 30], [40, 50]]}',
+        ]
+    )
+    assert isinstance(cfg.operation, TrimEpisodesConfig)
+    assert cfg.operation.frame_ranges == {0: [(10, 30), (40, 50)]}
 
 
 class TestOperationTypeParsing:
