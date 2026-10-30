@@ -31,12 +31,13 @@ from lerobot import envs
 from lerobot.configs.accelerator import AcceleratorConfig, ActivationCheckpointingMode
 from lerobot.configs.parallelism import ParallelismConfig
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
+from lerobot.optim.ema import EMAConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
+from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
@@ -180,8 +181,9 @@ class TrainPipelineConfig(HubMixin):
     # FSDP/DDP tuning knobs, compile & activation-checkpointing placeholders.
     accelerator: AcceleratorConfig = field(default_factory=AcceleratorConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
-    # Maintain an EMA shadow of the policy weights during training (see EMAConfig).
-    ema: EMAConfig = field(default_factory=EMAConfig)
+    # EMA of the trainable policy weights, enabled with --ema.type (see EMAConfig). In-training env eval and the
+    # pushed main branch use the EMA weights.
+    ema: EMAConfig | None = None
     trackio: TrackioConfig = field(default_factory=TrackioConfig)
     peft: PeftConfig | None = None
 
