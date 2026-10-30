@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import io
 import json
 
 import pytest
@@ -357,8 +358,7 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
     assert len(policy.model.encode_prompt_calls) == 2
 
 
-def test_cached_inference_paths_support_fullgraph_compile():
-    torch.manual_seed(0)
+def _tiny_fastwam(vae: nn.Module | None = None, **kwargs) -> FastWAM:
     expert_kwargs = {
         "hidden_dim": 8,
         "action_dim": 3,
@@ -376,14 +376,21 @@ def test_cached_inference_paths_support_fullgraph_compile():
     mot = MoT(
         mixtures={"video": video_expert, "action": action_expert},
         mot_checkpoint_mixed_attn=False,
-    ).eval()
-    model = FastWAM(
+    )
+    return FastWAM(
         video_expert=video_expert,
         action_expert=action_expert,
         mot=mot,
-        vae=nn.Identity(),
+        vae=nn.Identity() if vae is None else vae,
         text_dim=8,
-    ).eval()
+        **kwargs,
+    )
+
+
+def test_cached_inference_paths_support_fullgraph_compile():
+    torch.manual_seed(0)
+    model = _tiny_fastwam().eval()
+    video_expert, mot = model.video_expert, model.mot
     video_tokens = torch.randn(1, 3, 8)
     video_freqs = video_expert.freqs[:3].view(3, 1, -1)
     video_t_mod = torch.zeros(1, 6, 8)
@@ -548,6 +555,41 @@ def test_frozen_components_excluded_from_params_but_follow_device_moves(monkeypa
     assert policy.model.dit.weight.dtype == torch.float64  # registered
     assert policy.model.vae.weight.dtype == torch.float64  # unregistered, moved via _apply
     assert policy.model.text_encoder.weight.dtype == torch.float64
+
+
+def test_the_core_and_its_frozen_components_follow_device_moves():
+    model = _tiny_fastwam(vae=nn.Linear(2, 2), text_encoder=nn.Linear(2, 2))
+    assert "_device_marker" not in model.state_dict()
+    meta = torch.device("meta")
+
+    # A policy moves the core from its own `_apply`, as this parent does. Meta stands in for a GPU.
+    nn.Sequential(model).to("meta")
+    assert model.device == model.vae.weight.device == model.text_encoder.weight.device == meta
+
+    # Moving only the core's weights to the CPU, where FSDP2 CPU offload keeps them, leaves the device alone.
+    model.mot.to_empty(device="cpu")
+    assert model.device == meta
+
+    # A whole model loaded with `map_location` reports where it landed.
+    saved = io.BytesIO()
+    torch.save(_tiny_fastwam(), saved)
+    saved.seek(0)
+    assert torch.load(saved, map_location="meta", weights_only=False).device == meta
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_a_model_moved_to_cuda_encodes_prompts_there():
+    class TextEncoder(nn.Embedding):
+        def forward(self, ids, mask):
+            return super().forward(ids)
+
+    def tokenizer(prompt, return_mask, add_special_tokens):
+        return torch.zeros(1, 2, dtype=torch.long), torch.ones(1, 2)
+
+    model = _tiny_fastwam(text_encoder=TextEncoder(1, 8), tokenizer=tokenizer).to("cuda")
+    cuda = torch.device("cuda", torch.cuda.current_device())
+    assert model.device == cuda
+    assert all(tensor.device == cuda for tensor in model.encode_prompt("pick up the cube"))
 
 
 def test_pretrained_config_round_trips_fastwam_features(tmp_path):
