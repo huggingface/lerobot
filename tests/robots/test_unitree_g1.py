@@ -356,6 +356,7 @@ def thread_safe(robot):
 
 
 class TestPositionHold:
+    @pytest.mark.dataset
     def test_token_controller_is_holdable(self, make_robot):
         """Re-sending the last token keeps the SONIC decoder balancing, so it can be retained."""
         factory, _ = make_robot
@@ -364,6 +365,7 @@ class TestPositionHold:
         assert robot.supports_position_hold
         thread_safe(robot).configure_position_hold()
 
+    @pytest.mark.dataset
     def test_locomotion_controller_is_not_holdable(self, make_robot):
         """Joystick velocities cannot be retained as a target."""
         factory, _ = make_robot
@@ -373,6 +375,7 @@ class TestPositionHold:
         with pytest.raises(ValueError, match="position-hold"):
             thread_safe(robot).configure_position_hold()
 
+    @pytest.mark.dataset
     def test_raw_joint_control_is_not_holdable(self, make_robot):
         factory, _ = make_robot
         robot = factory()
@@ -381,6 +384,7 @@ class TestPositionHold:
         with pytest.raises(ValueError, match="position-hold"):
             thread_safe(robot).configure_position_hold()
 
+    @pytest.mark.dataset
     def test_hold_before_first_command_replays_the_echoed_token(self, make_robot):
         """Until a policy action arrives, the hold replays the token the controller echoes as
         state, so the echo must use the action keys (SONIC seeds it with the neutral token)."""

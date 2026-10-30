@@ -6,7 +6,7 @@ A benchmark in LeRobot is a set of [Gymnasium](https://gymnasium.farama.org/) en
 
 ## Existing benchmarks at a glance
 
-Before diving in, here is what is already integrated:
+Before diving in, here are a few of the benchmarks that are already integrated (all of them are listed under **Benchmarks** in the docs sidebar):
 
 | Benchmark      | Env file            | Config class       | Tasks               | Action dim   | Processor                    |
 | -------------- | ------------------- | ------------------ | ------------------- | ------------ | ---------------------------- |
@@ -99,7 +99,7 @@ The simplest approach is to map your simulator's outputs to the standard keys th
 If your simulator uses different key names, you have two options:
 
 1. **Recommended:** Rename them to the standard keys inside your `gym.Env` wrapper.
-2. **Alternative:** Write an env processor to transform observations after `preprocess_observation()` runs (see step 4 below).
+2. **Alternative:** Write an env processor to transform observations after `preprocess_observation()` runs (see step 3 below).
 
 ### Actions
 
@@ -128,7 +128,7 @@ Each `EnvConfig` subclass declares two dicts that tell the policy what to expect
 | `src/lerobot/envs/configs.py`            | Yes      | Registers your benchmark and its `create_envs()` for the CLI |
 | `src/lerobot/processor/env_processor.py` | Optional | Custom observation/action transforms                         |
 | `src/lerobot/envs/utils.py`              | Optional | Only if you need new raw observation keys                    |
-| `pyproject.toml`                         | Yes      | Declares benchmark-specific dependencies                     |
+| `pyproject.toml`                         | Usually  | Declares benchmark-specific dependencies                     |
 | `docs/source/<benchmark>.mdx`            | Yes      | User-facing documentation page                               |
 | `docs/source/_toctree.yml`               | Yes      | Adds your page to the docs sidebar                           |
 

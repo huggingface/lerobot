@@ -864,7 +864,10 @@ class SerialMotorsBus(MotorsBusBase):
         half_turn_homings = {}
         for motor, position in positions.items():
             offset = signs[motor] * ((self.resolution(self.motors[motor].model) - 1) // 2 - int(position))
-            if (sign_bit := self._definition(motor).register("homing_offset").sign_bit) is not None:
+            register = self._definition(motor).register("homing_offset")
+            if register is None:
+                raise ValueError(f"Motor {motor!r} does not support homing offsets")
+            if (sign_bit := register.sign_bit) is not None:
                 max_magnitude = (1 << sign_bit) - 1
                 offset = max(-max_magnitude, min(max_magnitude, offset))
             half_turn_homings[motor] = offset

@@ -17,14 +17,14 @@ reference.
 ## Requirements
 
 - Linux workstation (see NVIDIA's
-  [system requirements](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html)
+  [system requirements](https://nvidia.github.io/IsaacCapture/main/references/requirements.html)
   for supported OS/GPU/headset combinations; `isaacteleop` publishes Linux wheels only).
 - An SO-101 (or SO-100) follower arm, calibrated with `lerobot-calibrate`.
 - For the XR device: a CloudXR-capable headset (e.g. Quest 3, Pico 4, Apple Vision Pro) on the
   same network.
 - For the leader device: a second, back-drivable SO-101 leader arm and the `so101_leader` plugin
   binary built from the Isaac Teleop source tree (see
-  [Build from source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html)).
+  [Build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source/index.html)).
 
 ## Installation
 

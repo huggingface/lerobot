@@ -1,7 +1,7 @@
 # Implement your own Robot Processor
 
 In this tutorial, you'll learn how to implement your own Robot Processor.
-It begins by exploring the need for a custom processor, then uses the `NormalizerProcessorStep` as the running example to explain how to implement, configure, and serialize a processor. Finally, it lists all helper processors that ship with LeRobot.
+It begins by exploring the need for a custom processor, then uses the `NormalizerProcessorStep` as the running example to explain how to implement, configure, and serialize a processor. For the processor steps that ship with LeRobot, see [Common Processor Steps](./introduction_processors#common-processor-steps).
 
 ## Why would you need a custom processor?
 
@@ -31,7 +31,7 @@ Other common processing needs include:
 pipeline = PolicyProcessorPipeline([
     RenameObservationsProcessorStep(rename_map={}),
     AddBatchDimensionProcessorStep(),
-    NormalizerProcessorStep(features=features, stats=stats),
+    NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats),
     DeviceProcessorStep(device="cuda"),
     # ...
 ])
@@ -50,7 +50,7 @@ Prepare the sequence of processing steps necessary for your problem. A processor
 - `state_dict`: gets the state of the processor step.
 - `load_state_dict`: loads the state of the processor step.
 - `reset`: resets the state of the processor step.
-- `feature_contract`: displays the modification to the feature space during the processor step.
+- `transform_features`: describes how the processor step modifies the feature space.
 
 ### Implement the `__call__` method
 
@@ -191,17 +191,19 @@ Use this to run a policy trained on CUDA on a CPU-only robot, or to remap camera
 Direct usage with `from_pretrained`:
 
 ```python
-from lerobot.processor import RobotProcessorPipeline
+from lerobot.datasets import LeRobotDataset
+from lerobot.processor import PolicyProcessorPipeline
 
 # Load a foundational policy trained on diverse robot data
 # but adapt normalization to your specific robot/environment
 new_stats = LeRobotDataset(repo_id="username/my-dataset").meta.stats
-processor = RobotProcessorPipeline.from_pretrained(
+processor = PolicyProcessorPipeline.from_pretrained(
     "huggingface/foundational-robot-policy",  # Pretrained foundation model
+    config_filename="policy_preprocessor.json",  # The policy's saved preprocessor
     overrides={
         "normalizer_processor": {"stats": new_stats},     # Inject your robot's statistics
         "device_processor": {"device": "cuda:0"},         # registry name for registered steps
-        "rename_processor": {"rename_map": robot_key_map}, # Map your robot's observation keys
+        "rename_observations_processor": {"rename_map": robot_key_map}, # Map your robot's observation keys
         # ...
     },
 )

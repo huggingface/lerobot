@@ -19,11 +19,14 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+import os
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
+from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDatasetMetadata
@@ -47,10 +50,13 @@ from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
 if TYPE_CHECKING or _peft_available:
-    from peft import PeftConfig, PeftModel
+    from peft import PeftConfig, PeftModel, get_peft_model
 else:
     PeftConfig = None
     PeftModel = None
+    get_peft_model = None
+
+PEFT_ADAPTER_CONFIG_NAME = "adapter_config.json"
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -218,6 +224,34 @@ def make_pre_post_processors(
     )
 
 
+def has_peft_adapter_config(
+    pretrained_path: str | Path,
+    revision: str | None = None,
+) -> bool:
+    """Return whether ``pretrained_path`` points to an existing PEFT adapter.
+
+    A PEFT adapter checkpoint always ships an ``adapter_config.json``.
+    A plain base-model checkpoint does not. This distinction lets us tell apart
+    two very different ``use_peft=True`` scenarios that both set ``pretrained_path``:
+
+    * loading/resuming a previously trained adapter (config lives at ``pretrained_path``)
+    * starting a *fresh* PEFT fine-tune on top of a base model
+
+    Works for both local directories and Hub repo ids. Hub repos go through the local cache, so
+    a cached adapter is recognised offline. Only a missing ``adapter_config.json`` means "not an
+    adapter": any other Hub error (unknown repo, auth, network) is raised as-is.
+    """
+    pretrained_path = str(pretrained_path)
+    if os.path.isdir(pretrained_path):
+        return os.path.isfile(os.path.join(pretrained_path, PEFT_ADAPTER_CONFIG_NAME))
+
+    try:
+        hf_hub_download(pretrained_path, PEFT_ADAPTER_CONFIG_NAME, revision=revision)
+    except EntryNotFoundError:  # also raised offline when the file is not cached
+        return False
+    return True
+
+
 def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
@@ -247,7 +281,8 @@ def make_policy(
             config resolution, same stats-derived buffers, same device placement and eval mode —
             but skip the safetensors weight load. Used when resuming from a DCP checkpoint, whose
             sharded weights stream in after `accelerator.prepare()` (the distributed checkpoint
-            engine overwrites the random init).
+            engine overwrites the random init). For a PEFT policy only the adapter weights are
+            skipped, the base weights load as usual.
         pretrained_path (str | Path | None): Load the weights (or PEFT adapter) from here instead
             of `cfg.pretrained_path`, which keeps naming the model the policy was fine-tuned from
             once the policy is built. Used when resuming from a checkpoint.
@@ -300,7 +335,8 @@ def make_policy(
     if rename_map:
         features = {rename_map.get(key, key): feature for key, feature in features.items()}
 
-    cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    if ds_meta is not None or not cfg.output_features:
+        cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
@@ -349,7 +385,17 @@ def make_policy(
             "the PEFT config parameters to be set. For training with PEFT, see `lerobot_train.py` on how to do that."
         )
 
-    if cfg.pretrained_path and not cfg.use_peft:
+    # When `use_peft=True` and a checkpoint is given, the checkpoint can be one of two things:
+    # 1. A base model checkpoint (e.g., a pretrained policy) on which we want to start a fresh PEFT fine-tune.
+    # 2. A PEFT adapter checkpoint (e.g., a previously trained PEFT adapter)
+    # We distinguish between these two cases
+    load_existing_adapter = (
+        cfg.pretrained_path
+        and cfg.use_peft
+        and has_peft_adapter_config(cfg.pretrained_path, cfg.pretrained_revision)
+    )
+
+    if cfg.pretrained_path and not load_existing_adapter:
         if defer_weight_load:
             # Same construction path as from_pretrained (config already resolved from the
             # checkpoint by the caller; dataset_stats/dataset_meta kwargs identical), minus the
@@ -358,11 +404,13 @@ def make_policy(
             policy.eval()
         else:
             # Load a pretrained policy and override the config if needed (for example, if there
-            # are inference-time hyperparameters that we want to vary).
+            # are inference-time hyperparameters that we want to vary). This also covers starting
+            # a fresh PEFT fine-tune on top of a base model: the base weights are loaded here and
+            # `wrap_with_peft` builds the adapter afterwards.
             kwargs["pretrained_name_or_path"] = cfg.pretrained_path
             kwargs["revision"] = cfg.pretrained_revision
             policy = policy_cls.from_pretrained(**kwargs)
-    elif cfg.pretrained_path and cfg.use_peft:
+    elif load_existing_adapter:
         # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo
         # of the adapter and the adapter's config contains the path to the base policy. So we need the
         # adapter config first, then load the correct policy and then apply PEFT.
@@ -387,13 +435,18 @@ def make_policy(
 
         kwargs["revision"] = peft_config.revision
         policy = policy_cls.from_pretrained(**kwargs)
-        policy = PeftModel.from_pretrained(
-            policy,
-            peft_pretrained_path,
-            config=peft_config,
-            revision=cfg.pretrained_revision,
-            is_trainable=True,
-        )
+        if defer_weight_load:
+            peft_config.inference_mode = False  # trainable, as `is_trainable=True` below
+            policy.name_or_path = peft_config.base_model_name_or_path
+            policy = get_peft_model(policy, peft_config)
+        else:
+            policy = PeftModel.from_pretrained(
+                policy,
+                peft_pretrained_path,
+                config=peft_config,
+                revision=cfg.pretrained_revision,
+                is_trainable=True,
+            )
 
     else:
         # Make a fresh policy.

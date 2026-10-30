@@ -31,6 +31,8 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 SIMPLE_FEATURES = {
     "state": {"dtype": "float32", "shape": (6,), "names": None},
     "action": {"dtype": "float32", "shape": (6,), "names": None},

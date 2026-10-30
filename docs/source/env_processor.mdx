@@ -25,8 +25,8 @@ raw_observation = env.step(action)
 # 2. Convert numpy to torch, normalize images [0,1]
 observation = preprocess_observation(raw_observation)
 
-# 3. Add task metadata (for multi-task environments)
-observation = add_envs_task(env, observation)
+# 3. Add the task description (for multi-task environments)
+observation["task"] = list(env.call("task_description"))
 
 # 4. ENVIRONMENT-SPECIFIC preprocessing (NEW!)
 #    - Flatten robot states
@@ -163,13 +163,16 @@ The `make_env_pre_post_processors` function follows the same pattern as `make_pr
 from lerobot.envs import make_env_pre_post_processors, PushtEnv
 from lerobot.envs.configs import LiberoEnv
 
+# policy_cfg is your policy's config (e.g. cfg.policy in lerobot-eval); a few policies,
+# such as XVLA, provide their own environment processors
+
 # For LIBERO: Returns LiberoProcessorStep in preprocessor
-libero_cfg = LiberoEnv(task="libero_spatial", camera_name=["agentview"])
-env_preprocessor, env_postprocessor = make_env_pre_post_processors(libero_cfg)
+libero_cfg = LiberoEnv(task="libero_spatial")
+env_preprocessor, env_postprocessor = make_env_pre_post_processors(libero_cfg, policy_cfg=policy_cfg)
 
 # For other environments: Returns identity processors (no-op)
 pusht_cfg = PushtEnv()
-env_preprocessor, env_postprocessor = make_env_pre_post_processors(pusht_cfg)
+env_preprocessor, env_postprocessor = make_env_pre_post_processors(pusht_cfg, policy_cfg=policy_cfg)
 ```
 
 ### Implementation in `envs/factory.py`
@@ -225,7 +228,7 @@ def eval_main(cfg: EvalPipelineConfig):
     )
 
     # Create environment processors (NEW!)
-    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env)
+    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
 
     # Run evaluation with both processor types
     eval_policy_all(
