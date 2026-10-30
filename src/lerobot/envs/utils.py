@@ -170,9 +170,10 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
 
 
 def _sub_env_has_attr(env: gym.vector.VectorEnv, attr: str) -> bool:
+    # Don't probe with get_attr(): a missing attribute raises inside an AsyncVectorEnv worker,
+    # and the worker shuts down on any exception, leaving the vector env unusable.
     try:
-        env.get_attr(attr)
-        return True
+        return all(env.call("has_wrapper_attr", attr))
     except (AttributeError, Exception):
         return False
 
