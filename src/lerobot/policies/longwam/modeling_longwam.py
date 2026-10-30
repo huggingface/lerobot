@@ -225,27 +225,36 @@ class LongWAMPolicy(PreTrainedPolicy):
         }
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, video_noise: Tensor | None = None
+    ) -> Tensor:
+        """`noise` is the starting action sample `(B, prediction_steps, action_dim)` and `video_noise` the
+        starting future video latent `(B, z, future_video_steps // 16, h, w)`, shaped like the encoded history.
+        Each one left as None is drawn as before, from `inference_seed` when it is set."""
         self.eval()
         self._observe(batch)
-        return self._predict(batch)
+        return self._predict(batch, noise=noise, video_noise=video_noise)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, video_noise: Tensor | None = None
+    ) -> Tensor:
         self.eval()
         # Record every tick, including those that execute a previously predicted action.
         self._observe(batch)
         if not self._action_queue:
-            actions = self._predict(batch)
+            actions = self._predict(batch, noise=noise, video_noise=video_noise)
             self._action_queue.extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
         return self._action_queue.popleft()
 
-    def _predict(self, batch: dict[str, Tensor]) -> Tensor:
+    def _predict(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, video_noise: Tensor | None = None
+    ) -> Tensor:
         cfg = self.config
         clean = self._encode_video(self._history())
         context = self._context(batch, batch["observation.state"], cache=True)
 
-        def noise(shape):
+        def draw(shape):
             # Match released inference: separate, same-seeded draws per chunk.
             generator = (
                 None if cfg.inference_seed is None else torch.Generator().manual_seed(cfg.inference_seed)
@@ -253,8 +262,10 @@ class LongWAMPolicy(PreTrainedPolicy):
             return torch.randn(shape, generator=generator, device="cpu").to(clean)
 
         b, z, m, h, w = clean.shape
-        future = noise((b, z, cfg.future_video_steps // 16, h, w))
-        action = noise((b, cfg.prediction_steps, cfg.action_dim))
+        future = (
+            draw((b, z, cfg.future_video_steps // 16, h, w)) if video_noise is None else video_noise.to(clean)
+        )
+        action = draw((b, cfg.prediction_steps, cfg.action_dim)) if noise is None else noise.to(clean)
         schedule = self._schedule(cfg.num_inference_steps, clean)
         if cfg.denoising == "idm":
             video_schedule = self._schedule(cfg.imagine_steps, clean, cfg.imagine_sigma)
