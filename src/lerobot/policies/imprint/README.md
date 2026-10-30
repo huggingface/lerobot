@@ -11,18 +11,18 @@ It does not load the paper's Pi0.5 checkpoint, Wan 2.2 tokenizer, or DINOv3 enco
 
 ## Source map
 
-| Paper or reference name | Code |
-| --- | --- |
-| `CosmoBottleneckMemory` | `FullAttentionMemory` |
-| Language FiLM, skipped when language is missing | `language_condition_queries` |
-| Event order `action_proprio_then_finalized_visual_v1` | `chunk_type_ids` |
-| Gated delta step and carried state | `gated_delta_step`, `RecurrentMemory.update_incremental` |
-| Full event scan equals the incremental scan on dense chunks | `RecurrentMemory.forward_sequence` |
-| Stage-1 decoder, then discarded | `ImprintDecoder`, `training_stage="memory"` |
-| Stage-1 weights 1, 0.5, 0.5, 0.5 | `memory_pretraining_loss` |
-| Action-expert cross-attention plus FiLM | `MemoryModulation` |
-| Causal action `a_t = a_{t-1}`, first step zero | dataset `action_delta_indices`, and `causal_action_stream` for a raw executed stream |
-| Pi0.5 flow match `x_t = t * noise + (1 - t) * action`, target `noise - action` | `ImprintPolicy._joint_forward` |
+| Paper or reference name                                                        | Code                                                                                 |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `CosmoBottleneckMemory`                                                        | `FullAttentionMemory`                                                                |
+| Language FiLM, skipped when language is missing                                | `language_condition_queries`                                                         |
+| Event order `action_proprio_then_finalized_visual_v1`                          | `chunk_type_ids`                                                                     |
+| Gated delta step and carried state                                             | `gated_delta_step`, `RecurrentMemory.update_incremental`                             |
+| Full event scan equals the incremental scan on dense chunks                    | `RecurrentMemory.forward_sequence`                                                   |
+| Stage-1 decoder, then discarded                                                | `ImprintDecoder`, `training_stage="memory"`                                          |
+| Stage-1 weights 1, 0.5, 0.5, 0.5                                               | `memory_pretraining_loss`                                                            |
+| Action-expert cross-attention plus FiLM                                        | `MemoryModulation`                                                                   |
+| Causal action `a_t = a_{t-1}`, first step zero                                 | dataset `action_delta_indices`, and `causal_action_stream` for a raw executed stream |
+| Pi0.5 flow match `x_t = t * noise + (1 - t) * action`, target `noise - action` | `ImprintPolicy._joint_forward`                                                       |
 
 The reference `chunkwise_wy` fast path is not implemented. The event-wise scan is the checked path.
 
