@@ -21,10 +21,12 @@ import logging
 import math
 import time
 import traceback
+from collections import deque
 from copy import deepcopy
 from threading import Event, Lock, Thread
 from typing import Any
 
+import numpy as np
 import torch
 
 from lerobot.lerobot_types import EnvTransition
@@ -33,6 +35,7 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    RenameObservationsProcessorStep,
     create_transition,
 )
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -48,6 +51,7 @@ from .contracts import (
     QueryKind,
 )
 from .execution import ChunkRuntime, HoldState
+from .observation_history import sample_camera_history
 from .prediction import chunk_inference_context, predict_chunk
 
 logger = logging.getLogger(__name__)
@@ -73,7 +77,7 @@ def validate_local_chunk_policy(policy: PreTrainedPolicy) -> ChunkPolicySpec:
     """Check local asynchronous compatibility before connecting hardware or starting a worker."""
     try:
         spec = policy.chunk_inference_spec()
-        if not spec.current_observation_only:
+        if not spec.current_observation_only and not spec.memory_image_key:
             raise ValueError("Local asynchronous inference does not implement temporal observation sampling")
     except (ValueError, NotImplementedError) as exc:
         raise ValueError(
@@ -149,6 +153,18 @@ class RTCInferenceEngine(InferenceEngine):
         self._rtc_config = rtc_config
         # Same feature spec sync uses, so both engines order observation.state identically.
         self._obs_features = dataset_features
+        self._memory_image_key: str | None = None
+        if memory_key := self._policy_spec.memory_image_key:
+            camera_keys = {key: key for key in dataset_features if key.startswith("observation.image")}
+            for step in preprocessor.steps:
+                if isinstance(step, RenameObservationsProcessorStep):
+                    camera_keys = {
+                        key: step.rename_map.get(value, value) for key, value in camera_keys.items()
+                    }
+            matches = [key for key, value in camera_keys.items() if value == memory_key]
+            if len(matches) != 1:
+                raise ValueError(f"MEM camera {memory_key!r} must map to exactly one hardware camera.")
+            self._memory_image_key = matches[0]
         self._fps = fps
         self._device = device or "cpu"
         self._use_torch_compile = use_torch_compile
@@ -191,6 +207,9 @@ class RTCInferenceEngine(InferenceEngine):
                 )
 
         self._obs_holder: dict[str, Any] = {}
+        self._memory_images: deque[np.ndarray] = deque(
+            maxlen=self._policy_spec.memory_frames * self._policy_spec.memory_stride + 1
+        )
         self._obs_lock = Lock()
         # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
         # reset is discarded instead of merged into the fresh queue.
@@ -353,6 +372,7 @@ class RTCInferenceEngine(InferenceEngine):
             # queue.  Lock order is _obs_lock -> queue.lock on both sides.
             self._runtime.invalidate()
             self._obs_holder["obs"] = None
+            self._memory_images.clear()
             self._reset_epoch += 1
             self._reset_pending = True
             self._hold.clear()
@@ -386,6 +406,14 @@ class RTCInferenceEngine(InferenceEngine):
             captured_at = time.monotonic()
         owned = deepcopy(obs)
         with self._obs_lock:
+            if key := self._memory_image_key:
+                frame = build_dataset_frame(self._obs_features, owned, prefix="observation")
+                self._memory_images.append(np.array(frame[key], copy=True))
+                self._obs_holder["history"] = sample_camera_history(
+                    list(self._memory_images),
+                    self._policy_spec.memory_frames,
+                    self._policy_spec.memory_stride,
+                )
             self._obs_holder["obs"] = owned
             self._obs_holder["capture_time"] = captured_at
 
@@ -573,6 +601,7 @@ class RTCInferenceEngine(InferenceEngine):
                 with self._obs_lock:
                     obs = self._obs_holder.get("obs")
                     capture_time = self._obs_holder.get("capture_time")
+                    history = self._obs_holder.get("history")
                     epoch_before = self._reset_epoch
                 if obs is None or capture_time is None:
                     time.sleep(_RTC_IDLE_SLEEP_S)
@@ -604,8 +633,18 @@ class RTCInferenceEngine(InferenceEngine):
                     self._robot.robot_type,
                 )
                 batch["task"] = [task]
+                if (key := self._memory_image_key) and history is not None:
+                    images, padding = history
+                    pixels = torch.from_numpy(np.stack(images)).permute(0, 3, 1, 2).float().div_(255)
+                    batch[key] = torch.cat(
+                        (pixels.unsqueeze(0).to(policy_device), batch[key].unsqueeze(1)), dim=1
+                    )
+                    batch[f"{key}_is_pad"] = torch.tensor([(*padding, False)], device=policy_device)
                 with chunk_inference_context(request.mode):
                     preprocessed = self._preprocessor(batch)
+                    if (key := self._memory_image_key) and key != self._policy_spec.memory_image_key:
+                        # Padding is also mirrored in complementary data; keep only the renamed copy.
+                        preprocessed.pop(f"{key}_is_pad", None)
                     prediction = predict_chunk(
                         self._policy,
                         self._postprocessor,

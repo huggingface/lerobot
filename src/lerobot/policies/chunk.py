@@ -79,6 +79,9 @@ class ChunkPolicySpec:
     current_observation_only: bool = True
     retains_session_state: bool = True
     training_max_delay: int = 0
+    memory_image_key: str | None = None
+    memory_frames: int = 0
+    memory_stride: int = 1
 
     def __post_init__(self) -> None:
         """Validate the policy's declared prediction and execution lengths."""
