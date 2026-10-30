@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+from dataclasses import replace
 
 import pytest
 import torch
@@ -37,6 +38,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.feature_spec import FeatureSpec
 
 
 class FakeFastWAMCore(nn.Module):
@@ -729,3 +731,42 @@ def test_vae_adapter_empty_build_encode_decode_shapes():
 
     # list input is accepted and equals the batched path
     assert torch.equal(vae.encode([video[0]]), latents)
+
+
+def test_chunk_serving_declares_the_horizon_and_accepts_any_camera_size(monkeypatch):
+    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: FakeFastWAMCore())
+    cfg = FastWAMConfig(
+        action_dim=3,
+        proprio_dim=2,
+        action_horizon=4,
+        n_action_steps=2,
+        num_video_frames=5,
+        action_video_freq_ratio=1,
+        image_size=(16, 16),
+        input_features={
+            "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        base_model_id=None,
+    )
+    assert cfg.observation_delta_indices == [0, 1, 2, 3, 4]
+
+    policy = FastWAMPolicy(cfg)
+    spec = policy.chunk_inference_spec()
+
+    assert (spec.prediction_steps, spec.execution_steps) == (4, 2)
+    camera = FeatureSpec(
+        "observation.images.image", (480, 640, 3), "uint8", kind="rgb", semantics="RGB pixels"
+    )
+    state = FeatureSpec(OBS_STATE, (2,), "float32", semantics="joint positions")
+    policy.validate_chunk_input_features((camera, state))
+    with pytest.raises(ValueError, match="RGB camera"):
+        policy.validate_chunk_input_features((replace(camera, kind="tensor"), state))
+    with pytest.raises(ValueError, match="Tensor feature shape"):
+        policy.validate_chunk_input_features((camera, replace(state, shape=(3,))))
+    with pytest.raises(ValueError, match="names must exactly match"):
+        policy.validate_chunk_input_features((camera,))
+    policy.config.n_obs_steps = 2
+    with pytest.raises(ValueError, match="n_obs_steps=1"):
+        policy.chunk_inference_spec()
