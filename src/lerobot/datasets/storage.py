@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -41,7 +42,8 @@ DEFAULT_STORAGE_FORMAT = "lerobot"
 # the keyword arguments ``meta``, ``root``, ``episodes``, ``delta_timestamps``,
 # ``image_transforms``, ``tolerance_s``, ``revision``, ``return_uint8``,
 # ``depth_output_unit`` and ``token``) and a ``localize_root`` hook for
-# object-store roots.
+# object-store roots. Readers may additionally declare ``video_backend`` in
+# their constructor to honor the caller's decoder choice.
 _DATASET_READER_MODULES: dict[str, str] = {}
 
 
@@ -101,13 +103,22 @@ def _reader_module(storage_format: str):
     return importlib.import_module(module_name)
 
 
-def make_dataset_reader(storage_format: str, **kwargs) -> BaseDatasetReader:
+def make_dataset_reader(
+    storage_format: str, *, video_backend: str | None = None, **kwargs
+) -> BaseDatasetReader:
     """Instantiate the reader class serving ``storage_format``."""
     if storage_format == DEFAULT_STORAGE_FORMAT:
         from .dataset_reader import DatasetReader  # noqa: PLC0415  (import cycle)
 
-        return DatasetReader(**kwargs)
-    return _reader_module(storage_format).DATASET_READER(**kwargs)
+        reader_class = DatasetReader
+    else:
+        reader_class = _reader_module(storage_format).DATASET_READER
+    # Older registered readers choose their own decoder, often forwarding
+    # **kwargs with a hardcoded video_backend. Only pass this new option to
+    # constructors that explicitly accept it, preserving their existing contract.
+    if video_backend is not None and "video_backend" in inspect.signature(reader_class).parameters:
+        kwargs["video_backend"] = video_backend
+    return reader_class(**kwargs)
 
 
 def localize_remote_root(
