@@ -316,7 +316,7 @@ def make_policy(
     # overwrite, so it names the weight source until the policy is built, then the parent again.
     parent_path = cfg.pretrained_path
     if pretrained_path is not None:
-        cfg.pretrained_path = Path(pretrained_path)
+        cfg.pretrained_path = pretrained_path
 
     kwargs: dict[str, Any] = {}
     if ds_meta is not None:
