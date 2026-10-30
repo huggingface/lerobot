@@ -66,12 +66,8 @@ class InferenceRobot(Protocol):
         """Return whether the robot declares compatible position control."""
         ...
 
-    def configure_position_hold(self) -> None:
-        """Validate and enable the robot's local waiting behavior."""
-        ...
-
     def configure_hold(self) -> None:
-        """Enable the driver's declared command or position hold behavior."""
+        """Enable the robot's own hold() if it declares one, otherwise position hold."""
         ...
 
 

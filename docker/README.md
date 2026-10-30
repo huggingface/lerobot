@@ -35,7 +35,7 @@ A CUDA-enabled image based on `nvidia/cuda`. This is the image for training — 
 
 ### `Dockerfile.rocm` (AMD GPU)
 
-An image for AMD Instinct accelerators, based on a ROCm PyTorch image (`rocm/primus` by default, override with `--build-arg BASE_IMAGE=...`). The base image owns the PyTorch install: LeRobot pins `torch<2.12`, `torchvision<0.27` and `numpy<2.3`, all below what current ROCm images ship, and `[tool.uv.sources]` resolves torch from the CUDA `cu128` index — installing normally would swap in CUDA wheels and leave the GPUs unusable. Those packages are therefore pinned with `uv pip install --override`, the same approach `Dockerfile.benchmark.robomme` uses for its own irreconcilable pins, and the rest of the dependency tree resolves from `pyproject.toml` as usual.
+An image for AMD Instinct accelerators, based on a ROCm PyTorch image (`rocm/primus` by default, override with `--build-arg BASE_IMAGE=...`). The base image owns the PyTorch install: LeRobot pins `torch<2.12`, `torchvision<0.27` and `numpy<2.3`, all below what current ROCm images ship, and `[tool.uv.sources]` resolves torch from the CUDA `cu128` index — installing normally would swap in CUDA wheels and leave the GPUs unusable. Those packages are therefore pinned with `uv pip install --override`, the same approach the `robomme_native` stage of `Dockerfile.sim` uses for its own irreconcilable pins, and the rest of the dependency tree resolves from `pyproject.toml` as usual.
 
 The default base image is compiled for `gfx942`/`gfx950` (MI300X / MI308X / MI325X / MI350X). Other architectures need a base image built for them.
 
@@ -50,7 +50,7 @@ docker run -it --rm --runtime nvidia lerobot-jetson
 
 ### `Dockerfile.sim` and `Dockerfile.policy` (simulation benchmarks)
 
-`Dockerfile.sim --build-arg SIM=<name>` builds one simulator behind `lerobot-env-server`, without torch; it replaces the former `Dockerfile.benchmark.*` images, inside which `lerobot-eval` used to run. `Dockerfile.policy` builds the policy side, which runs `lerobot-eval --env.endpoint=...` against it. `lerobot-env-server --docker --config=docker/sims/configs/<name>.yaml` builds and starts a simulator image (see [Simulation: in-process or served](https://huggingface.co/docs/lerobot/simulator_server)).
+`Dockerfile.sim --build-arg SIM=<name>` builds one simulator behind `lerobot-env-server`, without torch; it replaces the former `Dockerfile.benchmark.*` images, inside which `lerobot-eval` used to run. `Dockerfile.policy` builds the policy side, which runs `lerobot-eval --env.server.endpoint=...` against it. `lerobot-env-server --docker --config=docker/sim/configs/<name>.yaml` builds and starts a simulator image (see [Simulation: local or served](https://huggingface.co/docs/lerobot/simulation)).
 
 ## Usage
 

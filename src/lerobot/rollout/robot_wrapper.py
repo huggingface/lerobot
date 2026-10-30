@@ -106,8 +106,8 @@ class ThreadSafeRobot:
         self._position_hold_enabled = True
 
     def configure_hold(self) -> None:
-        if getattr(self._robot, "supports_command_hold", False):
-            # Robot.hold raises NotImplementedError unless the driver implements it.
+        """Enable the robot's own hold() if it has one, else position hold. Raises if neither is supported."""
+        if self.supports_command_hold:
             self._command_hold_enabled = True
         else:
             self.configure_position_hold()
@@ -118,7 +118,8 @@ class ThreadSafeRobot:
 
     @property
     def supports_command_hold(self) -> bool:
-        return bool(getattr(self._robot, "supports_command_hold", False))
+        """Whether this robot implements its own hold()."""
+        return self._robot.supports_command_hold
 
     @property
     def supports_position_hold(self) -> bool:
@@ -126,28 +127,23 @@ class ThreadSafeRobot:
         return self._robot.supports_position_hold
 
     def hold(self) -> None:
-        """Refresh the last applied position targets without camera reads or inference.
+        """Hold the robot until the next action: call its own hold(), or resend the last position targets.
 
-        Driver-returned targets include interpolation and safety clipping. Before
-        any command, use the last finite measured pose. The robot may still settle
-        toward these targets; this is not an instantaneous physical stop.
+        Before any command, the last measured pose is the target. The robot may still settle; this is not an
+        instant stop.
         """
         with self._lock:
-            if self._command_hold_enabled:
-                try:
-                    self._robot.hold()
-                except Exception as exc:
-                    self._record_hardware_failure("hold", exc)
-                    raise
-                return
-            if not self._position_hold_enabled:
+            if not self.supports_hold:
                 raise RuntimeError("Local hold was not configured for this robot")
             try:
-                target = self._last_applied_action
-                if target is None:
-                    target = self._validated_positions(self._observed_positions)
-                applied_action = self._robot.send_action(target.copy())
-                self._last_applied_action = self._validated_positions(applied_action)
+                if self._command_hold_enabled:
+                    self._robot.hold()
+                else:
+                    target = self._last_applied_action
+                    if target is None:
+                        target = self._validated_positions(self._observed_positions)
+                    applied_action = self._robot.send_action(target.copy())
+                    self._last_applied_action = self._validated_positions(applied_action)
             except Exception as exc:
                 self._record_hardware_failure("hold", exc)
                 raise

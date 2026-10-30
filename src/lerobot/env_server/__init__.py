@@ -12,4 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Torch-free simulator serving and clients."""
+"""Serve a simulator over the network, so another process or machine can step it.
+
+``lerobot-env-server`` is the server. ``RemoteVectorEnv`` is the client, with the same API as
+``LocalVectorEnv``.
+"""

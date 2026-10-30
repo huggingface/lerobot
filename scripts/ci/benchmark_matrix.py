@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generate the CI matrix and content identities from the benchmark manifest."""
+"""Print the CI benchmark matrix from benchmarks/benchmarks.yaml as JSON, with a sim_tag per entry."""
 
 import argparse
 import hashlib
@@ -23,13 +23,13 @@ import yaml
 
 
 def image_hash(root: Path, entry: dict) -> str:
+    """Hash what the simulator image is built from; keep in sync with Dockerfile.sim's COPY lines."""
     digest = hashlib.sha256()
     paths = [
         root / entry["dockerfile"],
-        root / "docker/sims/requirements.txt",
         root / entry["sim_config"],
-        root / "scripts/ci/convert_sim_assets.py",
-        root / "scripts/ci/patch_sim_runtime.py",
+        root / "scripts/ci/convert_libero_init_states.py",
+        root / "scripts/ci/patch_libero_runtime.py",
         root / "scripts/ci/check_sim_parity.py",
         root / "pyproject.toml",
         root / "setup.py",
@@ -41,13 +41,13 @@ def image_hash(root: Path, entry: dict) -> str:
     ]
     for directory in (
         "src/lerobot/env_server",
-        "src/lerobot/sims",
+        "src/lerobot/sim",
         "src/lerobot/transport",
         "src/lerobot/utils",
     ):
         paths.extend((root / directory).rglob("*.py"))
-    paths.append(root / "src/lerobot/sims/native/metaworld_config.json")
-    paths.extend(path for path in (root / "docker/sims").rglob("*") if path.is_file())
+    paths.append(root / "src/lerobot/sim/integrations/metaworld_config.json")
+    paths.extend(path for path in (root / "docker/sim").rglob("*") if path.is_file())
     for path in sorted(set(paths)):
         digest.update(str(path.relative_to(root)).encode())
         digest.update(path.read_bytes())
@@ -56,23 +56,25 @@ def image_hash(root: Path, entry: dict) -> str:
 
 
 def with_defaults(entry: dict) -> dict:
-    """Fill fields that follow the per-benchmark naming convention unless the manifest overrides them."""
+    """Add default values for the fields a benchmarks.yaml entry leaves out."""
     name = entry["name"]
     defaults = {
         "policy": f"lerobot/smolvla_{name}",
-        "sim_config": f"docker/sims/configs/{name}.yaml",
-        # Simulator camera key -> checkpoint camera key, as for any robot.
+        "sim_config": f"docker/sim/configs/{name}.yaml",
+        # Maps simulator camera keys to the camera keys the checkpoint expects.
         "rename_map": {},
         "dockerfile": "docker/Dockerfile.sim",
         "policy_extras": ["remote", "evaluation", "smolvla", "training", "hardware"],
         "episodes": 1,
         "batch_size": 1,
-        # An end-to-end check, not a success-rate measure: short rollouts are enough.
+        # CI checks that the pipeline runs end to end, not the success rate, so short episodes are enough.
         "max_episode_steps": 30,
         "train_smoke": False,
+        # Run check_sim_parity.py; only deterministic simulators give the same steps locally and served.
+        "parity": False,
     }
     merged = {**defaults, **entry}
-    # The shared multi-stage Dockerfile selects the backend stage with SIM.
+    # Dockerfile.sim picks the simulator's build stage from SIM.
     merged["build_args"] = {"SIM": name, **entry.get("build_args", {})}
     return merged
 

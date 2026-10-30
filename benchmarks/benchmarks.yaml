@@ -2,12 +2,14 @@ benchmarks:
 - name: libero
   task: libero_spatial
   train_smoke: true
+  parity: true
   revision: a24f1f380461b665158d52acd140152c79e8b36d
   rename_map:
     observation.images.image: observation.images.camera1
     observation.images.image2: observation.images.camera2
 - name: metaworld
   task: metaworld-push-v3
+  parity: true
   revision: 8d82bdf3487776404e5e863f585c9d5210b96d14
   rename_map:
     observation.image: observation.images.camera1

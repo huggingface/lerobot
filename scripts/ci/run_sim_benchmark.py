@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run the same simulator sidecar and driver locally and in benchmark CI."""
+"""Run one benchmark in Docker: start the simulator server, then evaluate the policy against it."""
 
 import argparse
 import json
@@ -36,7 +36,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     selected = parser.add_mutually_exclusive_group(required=True)
     selected.add_argument("--name", help="A benchmarks/benchmarks.yaml entry; needs PyYAML")
-    # CI passes the matrix entry, so the GPU runner needs no packages beyond the standard library.
+    # With --entry, the GPU runner needs only the standard library (no PyYAML).
     selected.add_argument("--entry", help="A resolved benchmark_matrix.py entry, as JSON")
     parser.add_argument("--policy-image", required=True)
     parser.add_argument("--sim-image", required=True)
@@ -49,7 +49,7 @@ def main():
 
         entry = next(e for e in load_entries(Path(".")) if e["name"] == args.name)
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    # Unique per run: concurrent jobs or leftovers on a persistent runner must not collide.
+    # Unique names, so parallel jobs and leftover containers on a persistent runner don't clash.
     run_id = os.environ.get("GITHUB_RUN_ID", "local") + "-" + uuid.uuid4().hex[:8]
     network = f"sim-benchmark-{entry['name']}-{run_id}"
     simulator = f"{network}-server"
@@ -74,13 +74,13 @@ def main():
                 args.sim_image,
             ]
         )
-        # Describe is a bounded readiness check; the session is opened only by evaluation.
-        # Retry: the connect itself fails until the simulator process listens.
+        # Poll describe() until the server is up: it has a timeout and does not open a session.
+        # Connecting fails until the server listens, so keep retrying until the deadline.
         probe = (
             "import time; from lerobot.env_server.client import EnvClient\n"
             "deadline = time.monotonic() + 300\n"
             "while True:\n"
-            f"    c = EnvClient('tcp/sim:7448', {entry['name']!r}, 30)\n"
+            f"    c = EnvClient('tcp/sim:7448', {entry['name']!r}, handshake_timeout_s=30)\n"
             "    try:\n"
             "        c.describe(); break\n"
             "    except Exception:\n"
@@ -105,7 +105,7 @@ def main():
             "HF_HUB_DOWNLOAD_TIMEOUT=300",
         ]
         run(common + ["--rm", args.policy_image, "python", "-c", probe])
-        if entry["name"] in {"libero", "metaworld"}:
+        if entry["parity"]:
             with (args.artifacts / "transition-parity.log").open("w") as stream:
                 subprocess.run(
                     [
@@ -128,7 +128,7 @@ def main():
             "--policy.device=cuda",
             f"--env.type={entry['name']}",
             f"--env.task={entry['task']}",
-            "--env.endpoint=tcp/sim:7448",
+            "--env.server.endpoint=tcp/sim:7448",
             f"--rename_map={json.dumps(entry['rename_map'])}",
             f"--eval.n_episodes={entry['episodes']}",
             f"--eval.batch_size={entry['batch_size']}",
@@ -154,6 +154,16 @@ def main():
                 entry["task"],
                 "--policy",
                 entry["policy"],
+                "--policy-revision",
+                entry["revision"],
+                "--sim-tag",
+                entry["sim_tag"],
+                *(["--commit", os.environ["GITHUB_SHA"]] if "GITHUB_SHA" in os.environ else []),
+                *(
+                    ["--max-episode-steps", str(entry["max_episode_steps"])]
+                    if entry["max_episode_steps"] is not None
+                    else []
+                ),
             ]
         )
         if entry["train_smoke"]:
@@ -171,7 +181,7 @@ def main():
                 "--dataset.use_imagenet_stats=false",
                 "--env.type=libero",
                 f"--env.task={entry['task']}",
-                "--env.endpoint=tcp/sim:7448",
+                "--env.server.endpoint=tcp/sim:7448",
                 "--policy.empty_cameras=1",
                 "--output_dir=/tmp/train-smoke",
                 "--steps=1",

@@ -115,8 +115,8 @@
     title: Real-Time Chunking (RTC)
   title: "Inference"
 - sections:
-  - local: simulator_server
-    title: "Simulation: In-Process or Served"
+  - local: simulation
+    title: "Simulation: Local or Served"
   - local: envhub
     title: Environments from the Hub
   - local: envhub_leisaac

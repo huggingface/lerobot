@@ -591,6 +591,22 @@ def test_rollout_config_enforces_strategy_declarations():
 
         cfg = make(strategy=RecorderConfig(), teleop=MockTeleopConfig(), dataset=dataset)
         assert cfg.dataset.streaming_encoding is True
+        # One frame is recorded per control cycle, so the dataset runs at --fps.
+        with pytest.raises(ValueError, match="pass --dataset.fps=50"):
+            make(
+                strategy=RecorderConfig(),
+                teleop=MockTeleopConfig(),
+                dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+                fps=50,
+            )
+        # A resumed dataset keeps its own rate, so --dataset.fps is not compared.
+        make(
+            strategy=RecorderConfig(),
+            teleop=MockTeleopConfig(),
+            dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+            fps=50,
+            resume=True,
+        )
 
         # requires_streaming_encoding() is a method so it can depend on the config's fields.
         dagger = make(
@@ -601,6 +617,21 @@ def test_rollout_config_enforces_strategy_declarations():
         assert dagger.dataset.streaming_encoding is False
     finally:
         RolloutStrategyConfig.get_known_choices().pop("test_recorder")
+
+
+def test_resumed_dataset_must_record_at_fps(monkeypatch):
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import context
+
+    monkeypatch.setattr(context.LeRobotDataset, "resume", lambda *args, **kwargs: SimpleNamespace(fps=15))
+    cfg = SimpleNamespace(
+        dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+        resume=True,
+        fps=30,
+        strategy=SimpleNamespace(extra_dataset_features=dict),
+    )
+    with pytest.raises(ValueError, match="pass --fps=15"):
+        context._build_rollout_dataset(cfg, SimpleNamespace(), {})
 
 
 def test_setup_defaults_to_starting_the_engine():
@@ -1163,6 +1194,36 @@ def test_episodic_records_once_per_interpolation_cycle():
     assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
 
 
+def test_episodic_episode_ends_with_the_sim_episode():
+    from unittest.mock import PropertyMock
+
+    from lerobot.robots.sim_robot import SimRobot
+    from lerobot.rollout import EpisodicStrategyConfig
+    from lerobot.rollout.strategies import EpisodicStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=8)
+    # The sim robot's episode ends at the third action, before the loop's own time is up.
+    sim_robot = MagicMock(spec=SimRobot)
+    type(sim_robot).episode_ended = PropertyMock(side_effect=[False, False, True])
+    ctx.hardware.robot_wrapper.inner = sim_robot
+    strategy = EpisodicStrategy(EpisodicStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+
+    strategy._policy_loop(
+        ctx=ctx,
+        robot=ctx.hardware.robot_wrapper,
+        events={"exit_early": False},
+        features=_LOOP_FEATURES,
+        timer=CycleTimer(200.0, 1),
+        control_time_s=10.0,
+        dataset=dataset,
+    )
+
+    assert _recorded_actions(dataset) == [1.0, 2.0, 3.0]
+
+
 def test_dagger_continuous_records_once_per_interpolation_cycle():
     from lerobot.rollout import DAggerStrategyConfig
     from lerobot.rollout.strategies import DAggerStrategy
@@ -1329,6 +1390,33 @@ def test_starved_engine_is_counted_through_the_real_dispatch_path(caplog):
     assert "ticks with no action to send (inference engine starved): 4" in summary
     assert ctx.hardware.robot_wrapper.send_action.call_count == 0
     assert dataset.add_frame.call_count == 0
+
+
+def test_base_strategy_starts_the_next_sim_episode_with_fresh_policy_state():
+    import itertools
+    from unittest.mock import PropertyMock
+
+    from lerobot.robots.sim_robot import SimRobot
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, _ = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=4)
+    # The sim robot's episode ends at the second action.
+    sim_robot = MagicMock(spec=SimRobot)
+    type(sim_robot).episode_ended = PropertyMock(
+        side_effect=itertools.chain([False, True], itertools.repeat(False))
+    )
+    ctx.hardware.robot_wrapper.inner = sim_robot
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+
+    strategy.run(ctx)
+
+    sim_robot.start_episode.assert_called_once_with()
+    ctx.policy.inference.reset.assert_called_once_with()
+    assert ctx.hardware.robot_wrapper.send_action.call_count == 4
 
 
 def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog, clock):

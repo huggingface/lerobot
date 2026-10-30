@@ -40,6 +40,7 @@ from lerobot.common.control_utils import (
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.robots.sim_robot import episode_ended
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -106,7 +107,6 @@ class EpisodicStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         """Main multi-episode recording loop."""
-        engine = self._require_engine()
         interpolator = self._require_interpolator()
         events = self._events
         if events is None:
@@ -141,14 +141,7 @@ class EpisodicStrategy(RolloutStrategy):
                     if ctx.runtime.shutdown_event.is_set():
                         break
 
-                    # Reset policy state at episode start (discard leftover hidden state / queue)
-                    engine.reset()
-                    interpolator.reset()
-                    # A reset interpolator re-primes over two consecutive inference
-                    # ticks, exactly like loop start-up, so exempt the group that
-                    # spans them instead of reporting a healthy episode as slow.
-                    timer.restart()
-                    engine.resume()
+                    self._start_episode(robot, timer)
 
                     log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
                     self._policy_loop(
@@ -287,6 +280,10 @@ class EpisodicStrategy(RolloutStrategy):
                         dataset.add_frame(
                             {**obs_frame, **action_frame, "task": self._require_engine().dispatched_task}
                         )
+
+            # End the recorded episode when the sim robot's episode ends (success, failure or step limit).
+            if episode_ended(robot.inner):
+                break
 
             self._require_engine().pump_query(obs_processed)
             timer.wait()

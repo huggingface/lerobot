@@ -382,21 +382,21 @@ lerobot-eval \
 
 - Use `--policy.path=outputs/train/.../checkpoints/<step>/pretrained_model` for local checkpoints.
 - `--eval.n_episodes` should be ≥ 50 for a stable success-rate estimate.
-- Available envs live in `src/lerobot/envs/`. See [`docs/source/libero.mdx`](./docs/source/libero.mdx), [`metaworld.mdx`](./docs/source/metaworld.mdx), [`robocasa.mdx`](./docs/source/robocasa.mdx), [`vlabench.mdx`](./docs/source/vlabench.mdx) for specific benchmarks.
+- Env configs live in `src/lerobot/envs/configs.py`, simulator integrations in `src/lerobot/sim/integrations/`. See [`docs/source/libero.mdx`](./docs/source/libero.mdx), [`metaworld.mdx`](./docs/source/metaworld.mdx), [`robocasa.mdx`](./docs/source/robocasa.mdx), [`vlabench.mdx`](./docs/source/vlabench.mdx) for specific benchmarks.
 - To add a new benchmark, see [`docs/source/adding_benchmarks.mdx`](./docs/source/adding_benchmarks.mdx) and [`envhub.mdx`](./docs/source/envhub.mdx).
 
 ### 8.2b Simulator servers for benchmark eval
 
-Benchmark simulators often have native dependencies that conflict with LeRobot's. Each one can run in its own image built from [`docker/Dockerfile.sim`](./docker/Dockerfile.sim) (one `<benchmark>_native` stage per simulator: LIBERO, LIBERO+, MetaWorld, RoboCasa, RoboCerebra, RoboMME, RoboTwin, VLABench); `--env.endpoint` points `lerobot-eval` at it, and everything else is the in-process command:
+Benchmark simulators often have native dependencies that conflict with LeRobot's. Each one can run in its own image built from [`docker/Dockerfile.sim`](./docker/Dockerfile.sim) (one `<benchmark>_native` stage per simulator: LIBERO, LIBERO+, MetaWorld, RoboCasa, RoboCerebra, RoboMME, RoboTwin, VLABench); `--env.server.endpoint` points `lerobot-eval` at it, and everything else is the local command:
 
 ```bash
-lerobot-env-server --docker --config=docker/sims/configs/libero.yaml   # builds and starts the server on :7448
+lerobot-env-server --docker --config=docker/sim/configs/libero.yaml   # builds and starts the server on :7448
 lerobot-eval --policy.path=<your_policy> \
-  --env.type=libero --env.task=libero_spatial --env.endpoint=tcp/127.0.0.1:7448 \
+  --env.type=libero --env.task=libero_spatial --env.server.endpoint=tcp/127.0.0.1:7448 \
   --eval.n_episodes=50
 ```
 
-A simulated world is also a robot: `lerobot-rollout --robot.type=sim --robot.env.type=libero ...`. See [`docs/source/simulator_server.mdx`](./docs/source/simulator_server.mdx) for camera renames, sim robots, and remote inference.
+A simulated environment can also be used through the robot interface: `lerobot-rollout --robot.type=sim --robot.env.type=libero ...`. See [`docs/source/simulation.mdx`](./docs/source/simulation.mdx) for camera renames, sim robots, and remote inference.
 
 ### 8.3 Target success rates
 

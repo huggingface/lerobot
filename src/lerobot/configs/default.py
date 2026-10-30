@@ -162,8 +162,8 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
-    # If set, end each rollout after at most this many steps, below the env's own limit
-    # (e.g. a CI smoke test that checks the eval runs end to end).
+    # Cap each episode at this many steps (the env's own limit still applies when lower).
+    # For quick end-to-end checks such as CI; success rates from capped episodes are not meaningful.
     max_episode_steps: int | None = None
 
     def __post_init__(self) -> None:

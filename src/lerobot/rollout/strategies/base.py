@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import time
 
+from lerobot.robots.sim_robot import episode_ended
 from lerobot.utils.cycle_timer import CycleTimer
 
 from ..context import RolloutContext
@@ -31,7 +32,8 @@ class BaseStrategy(RolloutStrategy):
     """Autonomous policy rollout with no data recording.
 
     All actions flow through the ``robot_action_processor`` pipeline
-    before reaching the robot.
+    before reaching the robot.  When a sim robot's episode ends, a new one
+    starts with a fresh policy.
     """
 
     def setup(self, ctx: RolloutContext) -> None:
@@ -76,6 +78,10 @@ class BaseStrategy(RolloutStrategy):
                 action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
                 with timer.section("telemetry"):
                     self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+
+                if episode_ended(robot.inner):
+                    logger.info("Sim episode ended, starting a new one")
+                    self._start_episode(robot, timer)
 
                 # Service the text-query channel (/vqa answers, /autosteer turns) at
                 # the end of the tick; no-op when nothing is queued.

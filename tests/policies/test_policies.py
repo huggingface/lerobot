@@ -31,9 +31,8 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets import make_dataset
-from lerobot.envs.batched import prepare_canonical_observation
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.envs.utils import close_envs
+from lerobot.envs.utils import close_envs, prepare_canonical_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
