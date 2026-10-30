@@ -44,3 +44,23 @@ def test_rotvec_roundtrip():
     rotvec = np.array([0.1, -0.2, 0.3])
     r = Rotation.from_rotvec(rotvec)
     assert np.allclose(r.as_rotvec(), rotvec, atol=1e-6)
+
+
+@pytest.mark.parametrize("angle", [1e-12, 1e-9, 3e-8, 1e-6])
+def test_small_rotations_preserve_angle_and_axis(angle):
+    axis = np.array([1.0, -2.0, 3.0]) / np.sqrt(14.0)
+    rotvec = angle * axis
+    rotation = Rotation.from_rotvec(rotvec)
+
+    np.testing.assert_allclose(rotation.as_rotvec(), rotvec, rtol=1e-12, atol=1e-24)
+    np.testing.assert_allclose(rotation.as_quat()[:3], axis * np.sin(angle / 2), rtol=1e-12, atol=1e-24)
+    np.testing.assert_allclose((rotation * rotation).as_rotvec(), 2 * rotvec, rtol=1e-12, atol=1e-24)
+
+
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_small_quaternion_sign_does_not_change_rotation(sign):
+    angle = 3e-8
+    quat = sign * np.array([0.0, np.sin(angle / 2), 0.0, np.cos(angle / 2)])
+    np.testing.assert_allclose(
+        Rotation.from_quat(quat).as_rotvec(), [0.0, angle, 0.0], rtol=1e-12, atol=1e-24
+    )
