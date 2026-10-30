@@ -100,11 +100,15 @@ def hw_to_dataset_features(
         }
 
     for key, shape in nd_fts.items():
+        if f"{prefix}.{key}" in features:
+            raise ValueError(f"Feature name collision: {prefix}.{key}")
         features[f"{prefix}.{key}"] = {"dtype": "float32", "shape": tuple(shape), "names": None}
 
     for key, shape in cam_fts.items():
         dtype = "video" if use_video else "image"
         if len(shape) == 3 and shape[2] in (1, 3):
+            if f"{prefix}.images.{key}" in features:
+                raise ValueError(f"Feature name collision: {prefix}.images.{key}")
             features[f"{prefix}.images.{key}"] = {
                 "dtype": dtype,
                 "shape": shape,

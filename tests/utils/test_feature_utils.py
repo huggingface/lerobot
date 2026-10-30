@@ -189,3 +189,26 @@ def test_dataset_round_trip_with_nd_numeric_feature(tmp_path):
         assert tuple(item.shape) == ND_FEATURE_SHAPE
         np.testing.assert_array_equal(item.numpy(), sensor)
     assert "observation.sensor" in reloaded.meta.stats
+
+
+def test_nd_state_does_not_silently_replace_joints():
+    with pytest.raises(ValueError, match="collision"):
+        hw_to_dataset_features(
+            {"joint.pos": float, "state": PolicyFeature(type=FeatureType.STATE, shape=(2, 3))}, "observation"
+        )
+
+
+def test_nd_camera_name_does_not_silently_replace_sensor():
+    with pytest.raises(ValueError, match="collision"):
+        hw_to_dataset_features(
+            {"cam": (8, 8, 3), "images.cam": PolicyFeature(type=FeatureType.STATE, shape=(2, 3))},
+            "observation",
+        )
+
+
+def test_standalone_nd_state_remains_supported():
+    features = hw_to_dataset_features(
+        {"state": PolicyFeature(type=FeatureType.STATE, shape=(2, 3))}, "observation"
+    )
+    frame = build_dataset_frame(features, {"state": np.ones((2, 3))}, "observation")
+    assert frame["observation.state"].shape == (2, 3)
