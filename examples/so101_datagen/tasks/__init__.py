@@ -99,6 +99,27 @@ def footprint(obj: ObjectParams) -> float:
     return float(np.hypot(obj.half_size[0], obj.half_size[1]))
 
 
+def obstacle_top(
+    scene: SceneParams, start: np.ndarray, end: np.ndarray, exclude: set[str], corridor: float = 0.05
+) -> float:
+    """Height of the tallest object or container whose footprint comes within ``corridor`` of the
+    straight path from ``start`` to ``end`` on the table; zero when the way is clear."""
+    start, end = np.asarray(start[:2], dtype=float), np.asarray(end[:2], dtype=float)
+    path = end - start
+    top = 0.0
+    for item in [*scene.objects, *scene.containers]:
+        if item.name in exclude:
+            continue
+        if isinstance(item, ObjectParams):
+            height, radius = 2 * item.half_size[-1], footprint(item)
+        else:
+            height, radius = item.wall_height, np.sqrt(2) * (item.inner_half + item.thickness)
+        s = np.clip(np.dot(np.asarray(item.pos[:2]) - start, path) / max(np.dot(path, path), 1e-9), 0, 1)
+        if np.linalg.norm(start + s * path - np.asarray(item.pos[:2])) < radius + corridor:
+            top = max(top, height)
+    return top
+
+
 def sentence(text: str) -> str:
     return text[0].upper() + text[1:] + ("" if text.endswith(("?", ".")) else ".")
 

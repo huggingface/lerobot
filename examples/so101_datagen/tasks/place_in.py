@@ -20,9 +20,10 @@ import mujoco
 import numpy as np
 
 from ..motion import Planner
+from ..randomization import uniform
 from ..scene import SceneInfo, SceneParams
 from ..so101 import REST
-from . import Task, TaskInstance, find, footprint, phrase, register, touches_gripper
+from . import Task, TaskInstance, find, footprint, obstacle_top, phrase, register, touches_gripper
 
 TEMPLATES = [
     "put the {obj} in the {target}",
@@ -80,7 +81,15 @@ class PlaceIn(Task):
                 container.thickness + grasp.height + clearance,
             ]
         )
-        planner.place(release, grasp.tilt)
+        # The rim, and anything on the way, passes under the object's bottom with room to spare.
+        top = obstacle_top(scene, obj.pos, release, exclude={obj.name})
+        clear = top + grasp.height
+        planner.place(
+            release,
+            grasp.tilt,
+            hover_z=clear + uniform(rng, planner.cfg.carry_margin),
+            min_hover_z=clear + planner.cfg.min_carry_margin,
+        )
         if rng.random() < planner.cfg.return_rest_prob:
             planner.subtask("go back to the rest position")
             planner.transit(REST + rng.uniform(-3, 3, 6) * [1, 1, 1, 1, 1, 0])

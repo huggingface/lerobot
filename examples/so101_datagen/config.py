@@ -156,7 +156,12 @@ class MotionConfig:
     blend: Range = (0.4, 0.7)
     pause_prob: float = 0.25
     approach_height: Range = (0.05, 0.11)
-    lift_height: Range = (0.06, 0.13)
+    lift_height: Range = (0.08, 0.15)
+    # Room kept between a carried object's bottom and the top of what it passes over (a container's rim,
+    # other objects on the way), as a person lifts well clear of it.
+    carry_margin: Range = (0.04, 0.08)
+    # Where that is out of the arm's reach (close to the base), the least room kept.
+    min_carry_margin: float = 0.02
     # Approach tilt from vertical, outwards from the robot: mostly near vertical, sometimes steeply angled.
     # A 5-DoF arm keeps its approach in the plane of its pan, so tilts are always radial; horizontal
     # grasps would put the gripper's body into the table. Steep ones are only reachable far from the

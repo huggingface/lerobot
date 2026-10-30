@@ -20,9 +20,10 @@ import mujoco
 import numpy as np
 
 from ..motion import Planner, PlanningError
+from ..randomization import uniform
 from ..scene import SceneInfo, SceneParams
 from ..so101 import REST
-from . import Task, TaskInstance, find, footprint, phrase, register, resting_on_table
+from . import Task, TaskInstance, find, footprint, obstacle_top, phrase, register, resting_on_table
 
 TEMPLATES = [
     "place the {obj} next to the {target}",
@@ -81,7 +82,15 @@ class PlaceNear(Task):
         grasp = planner.pick(obj)
         planner.subtask(f"place the {obj.label} next to the {target.label}")
         release = np.array([spot[0], spot[1], grasp.height + rng.uniform(0.004, 0.015)])
-        planner.place(release, grasp.tilt)
+        # Over whatever stands on the way; the target itself is beside the spot, not under the path.
+        top = obstacle_top(scene, obj.pos, release, exclude={obj.name, target.name})
+        clear = top + grasp.height
+        planner.place(
+            release,
+            grasp.tilt,
+            hover_z=clear + uniform(rng, planner.cfg.carry_margin),
+            min_hover_z=clear + planner.cfg.min_carry_margin,
+        )
         if rng.random() < planner.cfg.return_rest_prob:
             planner.subtask("go back to the rest position")
             planner.transit(REST + rng.uniform(-3, 3, 6) * [1, 1, 1, 1, 1, 0])

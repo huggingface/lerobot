@@ -37,6 +37,7 @@ from .scene import ObjectParams
 from .so101 import ARM_JOINTS, GRIPPER, WRIST_ROLL, Arm
 
 DOWN = np.array([0.0, 0.0, -1.0])
+UP = -DOWN
 # A command that misses its Cartesian target by more than this is unreachable.
 IK_TOLERANCE = 0.004
 # Shoulder lift, elbow and wrist flex of the poses IK restarts from, turned towards the target.
@@ -196,9 +197,10 @@ class Planner:
         if overlap:
             self._blendable = len(self.frames) - before
 
-    def transit(self, target: np.ndarray, gripper: float | None = None) -> None:
+    def transit(self, target: np.ndarray, gripper: float | None = None, min_z: float | None = None) -> None:
         """Joint-space move to ``target`` along a cubic curve: raised through a random via point and bent
-        by random control points, the way a hand never takes the straight path."""
+        by random control points, the way a hand never takes the straight path. With ``min_z``, the via
+        point keeps the gripper site at least that high, as when carrying something over obstacles."""
         start = self.q.copy()
         target = np.array(target, dtype=np.float64)
         target[GRIPPER] = start[GRIPPER] if gripper is None else gripper
@@ -207,7 +209,7 @@ class Planner:
         seconds = max(0.5, distance / (uniform(self.rng, self.cfg.joint_speed) * self._segment_speed()))
         # A cubic Bezier with controls at the thirds plus ``d`` passes 3/4 d off the line halfway.
         middle = (start + target) / 2
-        lift = 4 / 3 * (self._via(middle) - middle)
+        lift = 4 / 3 * (self._via(middle, min_z) - middle)
         # One arc (both controls bent the same way), or sometimes an S.
         bend = (
             self.rng.uniform(-1, 1, len(start))
@@ -226,11 +228,18 @@ class Planner:
 
         self._segment(seconds, path)
 
-    def _via(self, middle: np.ndarray) -> np.ndarray:
-        """``middle`` with the gripper raised by a random height, or unchanged when that is unreachable."""
+    def _via(self, middle: np.ndarray, min_z: float | None = None) -> np.ndarray:
+        """``middle`` with the gripper raised by a random height, or unchanged when that is unreachable.
+
+        With ``min_z``, raised from that height at least, and the wrist may tilt to get there: carrying
+        something up and over, a hand doesn't keep pointing down.
+        """
         pos, rot = self.arm.tcp_pose(middle)
-        raised = pos + np.array([0.0, 0.0, uniform(self.rng, self.cfg.via_height)])
+        raised = pos.copy()
+        raised[2] = max(pos[2], -np.inf if min_z is None else min_z) + uniform(self.rng, self.cfg.via_height)
         q, err = self.arm.ik(raised, rot[:, 0], None, middle)
+        if err >= 0.01 and min_z is not None:
+            q, err = self.arm.ik(raised, None, None, middle, iters=150, roll=float(middle[WRIST_ROLL]))
         return q if err < 0.01 else middle
 
     def linear_move(
@@ -328,7 +337,9 @@ class Planner:
                 height, q_pre = self._highest(
                     grasp.pos, grasp.approach, grasp.jaw, q_grasp, sampled_height, offset=entry
                 )
-                lift_height, _ = self._highest(grasp.pos, DOWN, None, q_grasp, sampled_lift, grasp)
+                lift_height, _ = self._highest(
+                    grasp.pos, grasp.approach, grasp.jaw, q_grasp, sampled_lift, away=UP
+                )
                 break
             except PlanningError:
                 continue
@@ -353,32 +364,58 @@ class Planner:
         self.mark("lifted")
         return grasp
 
-    def place(self, pos: np.ndarray, tilt: float) -> None:
-        """Holding an object: move above ``pos``, lower the gripper site there, open, and back off."""
+    def place(self, pos: np.ndarray, tilt: float, hover_z: float = 0.0, min_hover_z: float = 0.0) -> None:
+        """Holding an object: move above ``pos``, lower the gripper site there, open, and back off.
+
+        The carry keeps the gripper site at ``hover_z`` or higher until it is above ``pos``, high enough
+        for the held object to clear the container's rim or whatever stands on the way, or at
+        ``min_hover_z`` where that is out of reach.
+        """
         rng = self.rng
         sampled_height = uniform(rng, self.cfg.approach_height)
+        rise, min_rise = max(0.0, hover_z - pos[2]), max(0.0, min_hover_z - pos[2])
+        found = None
         for candidate in candidate_tilts(tilt):
             approach = tilted_approach(pos, candidate)
             # Carried: the jaw direction may follow, but the wrist keeps its roll.
             try:
                 q_release = self.solve(pos, approach, None, keep_roll=True)
-                entry = self._off_axis(approach)
-                height, q_above = self._highest(
-                    pos, approach, None, q_release, sampled_height, offset=entry, keep_roll=True
-                )
-                break
             except PlanningError:
                 continue
-        else:
+            entry = self._off_axis(approach)
+            # Down along the approach, or, when the point that high on its axis is out of reach (close
+            # to the base), straight down from above the release, as one lowers something into a box.
+            along = max(-approach[2], 0.3)
+            for away, target, floor in ((-approach, rise / along, min_rise / along), (UP, rise, min_rise)):
+                try:
+                    height, q_above = self._highest(
+                        pos,
+                        approach,
+                        None,
+                        q_release,
+                        max(sampled_height, target),
+                        away=away,
+                        offset=entry,
+                        keep_roll=True,
+                        floor=floor,
+                    )
+                    found = approach, away
+                    break
+                except PlanningError:
+                    continue
+            if found:
+                break
+        if found is None:
             raise PlanningError("No reachable release pose")
-        self.transit(q_above)
+        approach, away = found
+        self.transit(q_above, min_z=hover_z)
         if rng.random() < self.cfg.pause_prob:
             self.dwell()
-        self.linear_move(pos, approach, None, via=pos - approach * height / 2, keep_roll=True)
+        self.linear_move(pos, approach, None, via=pos + away * height / 2, keep_roll=True)
         self.dwell(rng.uniform(0.0, 0.2))
         self.mark("release")
         self.gripper(min(100.0, self.q[GRIPPER] + rng.uniform(25, 45)), overlap=True)
-        self.linear_move(pos - approach * height, approach, None, keep_roll=True)
+        self.linear_move(pos + away * height, approach, None, keep_roll=True)
         self.mark("released")
 
     def reach(self, pos: np.ndarray, tilt: float) -> None:
@@ -400,23 +437,25 @@ class Planner:
         jaw: np.ndarray | None,
         q_at: np.ndarray,
         sampled: float,
-        grasp: Grasp | None = None,
+        away: np.ndarray | None = None,
         offset: np.ndarray | None = None,
         keep_roll: bool = False,
+        floor: float = 0.0,
     ) -> tuple[float, np.ndarray]:
-        """The largest reachable distance up to ``sampled`` back along ``approach`` from ``pos``.
-
-        With ``grasp``, the offset is a vertical lift keeping the grasp's orientation. ``offset`` moves
-        the point off the axis, scaled down with the height so low approaches stay close to it.
+        """The largest reachable distance up to ``sampled``, and not below ``floor``, from ``pos`` towards
+        ``away`` (back along ``approach`` by default), keeping the orientation given by ``approach`` and
+        ``jaw``. ``offset`` moves the point off that line, scaled down with the distance so low
+        approaches stay close to it.
         """
-        for height in (sampled, 0.75 * sampled, 0.5 * sampled, 0.03):
+        away = -approach if away is None else away
+        heights = [h for h in (sampled, 0.75 * sampled, 0.5 * sampled, 0.03) if h > floor]
+        heights += [floor] if floor > 0 else []
+        for height in heights:
             side = 0.0 if offset is None else offset * height / sampled
-            if grasp is None:
-                target, a, j = pos - approach * height + side, approach, jaw
-            else:
-                target, a, j = pos + np.array([0.0, 0.0, height]), grasp.approach, grasp.jaw
             try:
-                return height, self.solve(target, a, j, init=q_at, keep_roll=keep_roll)
+                return height, self.solve(
+                    pos + away * height + side, approach, jaw, init=q_at, keep_roll=keep_roll
+                )
             except PlanningError:
                 continue
         raise PlanningError("Nothing reachable above the target")

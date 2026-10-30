@@ -155,7 +155,7 @@ class Arm:
     def ik(
         self,
         pos: np.ndarray,
-        approach: np.ndarray,
+        approach: np.ndarray | None,
         jaw: np.ndarray | None,
         init: np.ndarray,
         iters: int = 60,
@@ -164,8 +164,8 @@ class Arm:
     ) -> tuple[np.ndarray, float]:
         """Damped least squares on the five arm joints.
 
-        Reaches ``pos`` with the gripper's approach axis (site x) along ``approach`` and, when given,
-        its jaw axis (site z, from the fixed towards the moving jaw) along ``jaw``. ``roll`` (degrees)
+        Reaches ``pos`` with the gripper's approach axis (site x) along ``approach`` (any direction when
+        None, so the nearest one) and, when given, its jaw axis (site z, from the fixed towards the moving jaw) along ``jaw``. ``roll`` (degrees)
         weakly pulls the wrist roll there instead, at the cost of a slightly looser approach: position
         and approach alone leave only a few solutions, some with the wrist half a turn away. Starts from
         ``init`` (degrees, gripper kept) and returns the solution with its position error in meters.
@@ -175,7 +175,7 @@ class Arm:
         cols = self.dofadr[:ARM_JOINTS]
         jp = np.zeros((3, model.nv))
         jr = np.zeros((3, model.nv))
-        approach = approach / np.linalg.norm(approach)
+        approach = None if approach is None else approach / np.linalg.norm(approach)
         err = np.inf
         for _ in range(iters):
             data.qpos[self.qadr] = q
@@ -187,8 +187,10 @@ class Arm:
             mujoco.mj_jacSite(model, data, jp, jr, self.tcp)
             w = jr[:, cols]
             # d(axis)/dq = omega x axis, written as -[axis]x @ omega.
-            residuals = [pos - p, 0.25 * (approach - a)]
-            jacobians = [jp[:, cols], 0.25 * -_skew(a) @ w]
+            residuals, jacobians = [pos - p], [jp[:, cols]]
+            if approach is not None:
+                residuals.append(0.25 * (approach - a))
+                jacobians.append(0.25 * -_skew(a) @ w)
             if jaw is not None:
                 residuals.append(0.15 * (jaw - z))
                 jacobians.append(0.15 * -_skew(z) @ w)
@@ -198,7 +200,9 @@ class Arm:
             e = np.concatenate(residuals)
             jac = np.concatenate(jacobians)
             err = float(np.linalg.norm(pos - p))
-            if err < tol and np.linalg.norm(e[3:6]) < 2e-3 and (jaw is None or np.linalg.norm(e[6:9]) < 2e-3):
+            # Position, then each axis block (approach, jaw) within tolerance.
+            blocks = [e[k : k + 3] for k in range(3, len(e) - (roll is not None), 3)]
+            if err < tol and all(np.linalg.norm(b) < 2e-3 for b in blocks):
                 break
             dq = jac.T @ np.linalg.solve(jac @ jac.T + 1e-4 * np.eye(len(e)), e)
             q[:ARM_JOINTS] = np.clip(q[:ARM_JOINTS] + dq, self.lo[:ARM_JOINTS], self.hi[:ARM_JOINTS])
