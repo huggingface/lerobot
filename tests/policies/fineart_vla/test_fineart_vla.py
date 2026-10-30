@@ -186,6 +186,40 @@ def test_processor_save_load_roundtrip_embeds_action_tokenizer(tmp_path, monkeyp
     torch.testing.assert_close(loaded.steps[-1]._tokenize_action(action)[0], expected_tokens)
 
 
+class _CharTokenizer:
+    eos_token = "<eos>"
+
+    def __call__(self, text, max_length, **kwargs):
+        ids = [ord(c) for c in text[:max_length]]
+        n = len(ids)
+        pad = max_length - n
+        return {
+            "input_ids": torch.tensor([ids + [0] * pad]),
+            "attention_mask": torch.tensor([[1] * n + [0] * pad]),
+            "offset_mapping": torch.tensor([[(i, i + 1) for i in range(n)] + [(0, 0)] * pad]),
+        }
+
+
+def test_text_tokenizer_prompts_only_the_current_state_of_a_history():
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.fineart_vla.processor_fineart_vla import FineARTVLATextTokenizerStep
+    from lerobot.utils.constants import OBS_STATE
+
+    step = FineARTVLATextTokenizerStep(max_length=512)
+    step._tokenizer = _CharTokenizer()
+    # use_proprioceptive_memory feeds (B, T, D) states in training; inference sees only (B, D).
+    history = torch.linspace(-1, 1, 2 * 3 * 4).reshape(2, 3, 4)
+
+    def tokens(state):
+        transition = {
+            TransitionKey.OBSERVATION: {OBS_STATE: state},
+            TransitionKey.COMPLEMENTARY_DATA: {"task": ["pick", "place"]},
+        }
+        return step(transition)[TransitionKey.OBSERVATION][OBS_LANGUAGE_TOKENS]
+
+    torch.testing.assert_close(tokens(history), tokens(history[:, -1]))
+
+
 def _parity_features():
     return {
         "input_features": {
