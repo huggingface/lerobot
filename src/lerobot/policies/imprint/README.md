@@ -107,7 +107,7 @@ postprocessor.save_pretrained(joint_init)
 
 ## Limits
 
-- The image stem is a stride-2 convolution and a spatial mean. It is not Wan 2.2 and not DINOv3.
+- The image stem is `TinyFrameEncoder`, a stride-2 convolution and a spatial mean. It is a stand-in for DINOv3 and Wan 2.2. Its weights are this policy's own random initialization.
 - A finalized chunk is the mean of `chunk_frames` stem tokens. It is not a Wan latent.
 - No JAX checkpoint, Orbax loader, or Hugging Face weight file from `Amazon-FAR/imprint_models` is read. `load_memory_weights` copies this package's own stage-1 memory, not those checkpoints.
 - Stage 1 and joint training use separate configs. The joint model has no decoder. `load_memory_weights` is the handoff.
