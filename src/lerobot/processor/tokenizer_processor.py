@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
+from huggingface_hub import HfApi
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
@@ -41,16 +43,21 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_SUBTASK_TOKENS,
     OBS_LANGUAGE_TOKENS,
 )
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoProcessor, AutoTokenizer
+    from transformers import AutoProcessor, AutoTokenizer, ProcessorMixin
+    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+    from transformers.models.auto.processing_auto import processor_class_from_name
 else:
     AutoProcessor = None
     AutoTokenizer = None
+    ProcessorMixin = None
+    get_class_from_dynamic_module = None
+    processor_class_from_name = None
 
 
 @dataclass
@@ -386,9 +393,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             self.action_tokenizer = self.action_tokenizer_input_object
 
         elif self.action_tokenizer_name is not None:
-            if AutoProcessor is None:
-                raise ImportError("AutoProcessor is not available")
-            self.action_tokenizer = AutoProcessor.from_pretrained(
+            self.action_tokenizer = load_action_tokenizer(
                 self.action_tokenizer_name, trust_remote_code=self.trust_remote_code
             )
         else:
@@ -616,3 +621,95 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             The updated dictionary of policy features.
         """
         return features
+
+
+def load_action_tokenizer(name: str | PathLike, trust_remote_code: bool) -> Any:
+    """Load an action tokenizer processor, including FAST processors saved by transformers 4.
+
+    Transformers 4 saved a processor's `bpe_tokenizer` at the top of the repository, as
+    `physical-intelligence/fast` still has it. Transformers 5.4 to 5.12 only look in a `bpe_tokenizer/`
+    subfolder, so `AutoProcessor` fails on that layout, and then the tokenizer is loaded from the top level
+    and passed to the processor class. Transformers 5.13 added a similar fallback
+    (https://github.com/huggingface/transformers/pull/46592) but marks it as deprecated, so keep this while
+    repositories in the old layout are in use.
+
+    The fallback runs only when `AutoProcessor` raises ImportError or ValueError, `trust_remote_code` is True,
+    there are no files in `bpe_tokenizer/`, no processor class is registered locally under the processor's
+    name, and the remote processor class is a `ProcessorMixin` with `bpe_tokenizer` as its only attribute. It
+    loads the top-level tokenizer without running any repository code.
+
+    Args:
+        name (`str | PathLike`):
+            Hub repository id or local path of the processor.
+        trust_remote_code (`bool`):
+            Whether to allow the processor's custom code to run.
+
+    Returns:
+        `Any`: The loaded processor.
+
+    Raises:
+        ImportError: If transformers is not installed.
+        Exception: The error from `AutoProcessor.from_pretrained`, when the fallback does not apply, or when
+            it fails (then with a note that names the fallback error).
+    """
+    require_package("transformers", extra="transformers-dep")
+    try:
+        return AutoProcessor.from_pretrained(name, trust_remote_code=trust_remote_code)
+    except (ImportError, ValueError) as error:
+        # The old layout fails with ImportError without protobuf and with ValueError with it.
+        try:
+            processor = _load_fast_processor_saved_by_transformers_4(name, trust_remote_code)
+        except Exception as fallback_error:
+            error.add_note(
+                "Loading the bpe_tokenizer from the top level, where transformers 4 saved it, also failed: "
+                f"{type(fallback_error).__name__}: {fallback_error}"
+            )
+            processor = None
+        if processor is None:
+            raise
+        return processor
+
+
+def _load_fast_processor_saved_by_transformers_4(name: str | PathLike, trust_remote_code: bool) -> Any:
+    """Builds the processor with the tokenizer from the top level of `name`, where transformers 4 saved it.
+
+    Returns None when the fallback does not apply (see `load_action_tokenizer`).
+    """
+    if not trust_remote_code:
+        return None
+    try:
+        # Any file in bpe_tokenizer/ means the current layout, which stale top-level files must not replace.
+        if Path(name).is_dir():
+            nested = any(Path(name, "bpe_tokenizer").glob("*"))
+        else:
+            nested = any(file.startswith("bpe_tokenizer/") for file in HfApi().list_repo_files(str(name)))
+        if nested:
+            return None
+        processor_dict, _ = ProcessorMixin.get_processor_dict(name)
+        class_reference = processor_dict.get("auto_map", {}).get("AutoProcessor")
+        if class_reference is None:
+            return None
+        # From transformers 5.5 AutoProcessor prefers a class registered locally by this name; keep its error.
+        local_class = processor_class_from_name(processor_dict.get("processor_class") or "")
+        if local_class is not None and not local_class.__module__.startswith("transformers."):
+            return None
+        processor_class = get_class_from_dynamic_module(class_reference, name)
+    except Exception:
+        # Not yet known to be the old layout, so the AutoProcessor error is the one to show.
+        return None
+    if not issubclass(processor_class, ProcessorMixin):
+        return None
+    if processor_class.get_attributes() != ["bpe_tokenizer"]:
+        return None
+    # So that saving the processor also saves its code, as AutoProcessor does for remote code.
+    processor_class.register_for_auto_class()
+    # AutoProcessor never loads this tokenizer, so it must not run any code the tokenizer names.
+    bpe_tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=False)
+    processor = processor_class.from_args_and_dict([bpe_tokenizer], processor_dict)
+    logging.warning(
+        f"Loaded the bpe_tokenizer of {name} from the top level, where transformers 4 saved it. "
+        "To avoid this, save the loaded processor with save_pretrained(), push it to the Hub, and use "
+        "the new repository id as the action tokenizer (lerobot/fast-action-tokenizer is such a copy "
+        "of physical-intelligence/fast)."
+    )
+    return processor

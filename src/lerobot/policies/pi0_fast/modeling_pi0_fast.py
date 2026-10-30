@@ -33,7 +33,7 @@ else:
     idct = None
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoProcessor, AutoTokenizer
+    from transformers import AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
 
     from ..pi_gemma import (
@@ -42,12 +42,12 @@ if TYPE_CHECKING or _transformers_available:
     )
 else:
     CONFIG_MAPPING = None
-    AutoProcessor = None
     AutoTokenizer = None
     PiGemmaModel = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.processor.tokenizer_processor import load_action_tokenizer
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -768,7 +768,7 @@ class PI0FastPolicy(PreTrainedPolicy):
         # Load tokenizers first
         try:
             # Load FAST tokenizer
-            self.action_tokenizer = AutoProcessor.from_pretrained(
+            self.action_tokenizer = load_action_tokenizer(
                 config.action_tokenizer_name, trust_remote_code=True
             )
 
