@@ -239,6 +239,8 @@ class PushtEnv(EnvConfig):
 class ImagePreprocessingConfig:
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
     resize_size: tuple[int, int] | None = None
+    # Move uint8 images to this device before conversion, normalization and crop/resize.
+    image_device: str = "cpu"
 
 
 @dataclass
