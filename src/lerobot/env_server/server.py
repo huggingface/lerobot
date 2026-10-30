@@ -89,7 +89,6 @@ class _Session:
         self.generation = 0
         # Set when the simulator fails; after that the session refuses every operation.
         self.fault: str | None = None
-        self.opened_at = time.monotonic()
         self.seen_client = False
         with contextlib.ExitStack() as cleanup:
             cleanup.callback(env.close)
@@ -100,6 +99,9 @@ class _Session:
             cleanup.callback(self.presence.close)
             self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
             cleanup.pop_all()
+        # The client announces itself once it has the open reply, sent right after this, so its grace period
+        # starts now: a first reset slower than the grace must not close the session before the client can.
+        self.opened_at = time.monotonic()
 
     def handle(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
         """Run a reset or step and return the reply body. A simulator error fails the session."""
