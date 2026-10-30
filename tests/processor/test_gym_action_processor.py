@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +41,33 @@ def test_torch2numpy_preserves_batch_dimension_setting_after_save_load(
 
     np.testing.assert_array_equal(loaded(batch)["action"], expected)
     assert loaded.steps[0].squeeze_batch_dim is squeeze_batch_dim
+
+
+@pytest.mark.parametrize("saved_squeeze_batch_dim", [False, True])
+def test_torch2numpy_load_override_takes_precedence(tmp_path: Path, saved_squeeze_batch_dim: bool):
+    pipeline = DataProcessorPipeline(
+        steps=[Torch2NumpyActionProcessorStep(squeeze_batch_dim=saved_squeeze_batch_dim)],
+        name="action_processor",
+    )
+    pipeline.save_pretrained(tmp_path)
+    saved_config = json.loads((tmp_path / "action_processor.json").read_text())
+    assert saved_config["steps"][0]["config"]["squeeze_batch_dim"] is saved_squeeze_batch_dim
+
+    override_squeeze_batch_dim = not saved_squeeze_batch_dim
+    loaded = DataProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename="action_processor.json",
+        local_files_only=True,
+        overrides={"torch2numpy_action_processor": {"squeeze_batch_dim": override_squeeze_batch_dim}},
+    )
+    expected = np.array(
+        [1.0, 2.0, 3.0] if override_squeeze_batch_dim else [[1.0, 2.0, 3.0]], dtype=np.float32
+    )
+
+    output = loaded({"action": torch.tensor([[1.0, 2.0, 3.0]])})["action"]
+
+    np.testing.assert_array_equal(output, expected)
+    assert loaded.steps[0].squeeze_batch_dim is override_squeeze_batch_dim
 
 
 def test_torch2numpy_legacy_empty_config_uses_default_squeeze():
