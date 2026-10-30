@@ -412,8 +412,7 @@ def test_predicted_video_splits_the_clip_back_into_cameras(monkeypatch):
         assert frames["observation.images.wrist"].unique().tolist() == [10 + t]
 
 
-def test_cached_inference_paths_support_fullgraph_compile():
-    torch.manual_seed(0)
+def _tiny_fastwam() -> FastWAM:
     expert_kwargs = {
         "hidden_dim": 8,
         "action_dim": 3,
@@ -431,14 +430,20 @@ def test_cached_inference_paths_support_fullgraph_compile():
     mot = MoT(
         mixtures={"video": video_expert, "action": action_expert},
         mot_checkpoint_mixed_attn=False,
-    ).eval()
-    model = FastWAM(
+    )
+    return FastWAM(
         video_expert=video_expert,
         action_expert=action_expert,
         mot=mot,
         vae=nn.Identity(),
         text_dim=8,
-    ).eval()
+    )
+
+
+def test_cached_inference_paths_support_fullgraph_compile():
+    torch.manual_seed(0)
+    model = _tiny_fastwam().eval()
+    video_expert, mot = model.video_expert, model.mot
     video_tokens = torch.randn(1, 3, 8)
     video_freqs = video_expert.freqs[:3].view(3, 1, -1)
     video_t_mod = torch.zeros(1, 6, 8)
@@ -641,6 +646,23 @@ def test_frozen_components_excluded_from_params_but_follow_device_moves(monkeypa
     assert policy.model.dit.weight.dtype == torch.float64  # registered
     assert policy.model.vae.weight.dtype == torch.float64  # unregistered, moved via _apply
     assert policy.model.text_encoder.weight.dtype == torch.float64
+
+
+def test_the_recorded_device_follows_device_moves():
+    model = _tiny_fastwam()
+    # Frozen VAE and text encoder stand-ins, kept out of the module tree like the real ones.
+    object.__setattr__(model, "vae", nn.Linear(2, 2).requires_grad_(False))
+    object.__setattr__(model, "text_encoder", nn.Linear(2, 2).requires_grad_(False))
+    assert "_device_marker" not in model.state_dict()
+    meta = torch.device("meta")
+
+    # A policy moves the core from its own `_apply`, as this parent does. Meta stands in for a GPU.
+    nn.Sequential(model).to("meta")
+    assert model.device == model.vae.weight.device == model.text_encoder.weight.device == meta
+
+    # Moving only the core's weights to the CPU, where FSDP2 CPU offload keeps them, leaves the device alone.
+    model.mot.to_empty(device="cpu")
+    assert model.device == meta
 
 
 def test_pretrained_config_round_trips_fastwam_features(tmp_path):
