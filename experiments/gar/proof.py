@@ -28,6 +28,7 @@ import json
 import math
 import os
 import random
+import sys
 import time
 import traceback
 import urllib.request
@@ -90,6 +91,53 @@ def require_bfloat16(dtype: object) -> None:
     if dtype in (torch.bfloat16, "bfloat16"):
         return
     raise StopProofError(f"checkpoint dtype is {dtype}, not bfloat16")
+
+
+def libero_config_file() -> Path:
+    """Return the config file LIBERO reads before it asks for a dataset path."""
+    directory = os.environ.get("LIBERO_CONFIG_PATH", str(Path.home() / ".libero"))
+    return Path(directory) / "config.yaml"
+
+
+def find_libero_benchmark_root(search_path: list[str] | None = None) -> Path:
+    """Locate ``libero/libero`` by scanning path entries. This does not import it."""
+    for entry in sys.path if search_path is None else search_path:
+        init_file = Path(entry) / "libero" / "libero" / "__init__.py"
+        if init_file.is_file():
+            return init_file.parent.resolve()
+    raise StopProofError("libero/libero/__init__.py was not found on sys.path")
+
+
+def _package_directory(root: Path, *names: str) -> Path:
+    for name in names:
+        candidate = root / name
+        if candidate.is_dir():
+            return candidate.resolve()
+    raise StopProofError(f"{root} has none of these directories: {', '.join(names)}")
+
+
+def write_libero_config(search_path: list[str] | None = None, datasets_dir: Path | None = None) -> Path:
+    """Write the five LIBERO paths before any import of the package."""
+    root = find_libero_benchmark_root(search_path)
+    datasets = (libero_config_file().parent / "datasets") if datasets_dir is None else datasets_dir
+    datasets.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "benchmark_root": root,
+        "bddl_files": _package_directory(root, "bddl_files"),
+        "init_states": _package_directory(root, "init_files", "init_states"),
+        "datasets": datasets.resolve(),
+        "assets": _package_directory(root, "assets"),
+    }
+    missing = [key for key, path in paths.items() if not path.is_dir()]
+    if missing:
+        raise StopProofError(f"LIBERO config paths do not exist: {', '.join(missing)}")
+    config_path = libero_config_file()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "".join(f"{key}: {json.dumps(str(path))}\n" for key, path in paths.items()),
+        encoding="utf-8",
+    )
+    return config_path
 
 
 class Clock:
@@ -1130,7 +1178,8 @@ def _rollout(
 
 
 def _simulate(policy, processors, manifest, readout_path: Path, output: Path, clock: Clock) -> dict[str, Any]:
-    from libero.libero import benchmark
+    write_libero_config()
+    import libero.libero.benchmark as benchmark
 
     from lerobot.envs.libero import LiberoEnv
     from lerobot.policies.pi05.gaussian_readout import collapse_label
