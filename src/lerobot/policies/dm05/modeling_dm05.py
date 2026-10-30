@@ -22,6 +22,7 @@ import builtins
 import logging
 import os
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Unpack, cast
 
@@ -34,6 +35,7 @@ from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
+from ..chunk import ChunkPolicySpec
 from ..common.vla_utils import pad_vector
 from ..pi05.memory import sample_observation_history
 from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
@@ -553,6 +555,19 @@ class DM05Policy(PreTrainedPolicy):
         self.eval()
         return self._predict_action_chunk(self._remember_batch(batch), **kwargs)
 
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Require control-frame camera history from chunk-serving callers."""
+        spec = super().chunk_inference_spec()
+        if not self.config.use_memory:
+            return spec
+        return replace(
+            spec,
+            current_observation_only=False,
+            memory_image_key=self.config.memory_image_key,
+            memory_frames=self.config.memory_frames,
+            memory_stride=self.config.memory_stride,
+        )
+
     def _remember_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Build MEM inputs from every online observation, including action-queue steps."""
         current_key = f"{MODEL_INPUT_PREFIX}history_current_pixel_values"
@@ -580,13 +595,13 @@ class DM05Policy(PreTrainedPolicy):
         model_inputs = {
             key.removeprefix(MODEL_INPUT_PREFIX): value
             for key, value in batch.items()
-            if key.startswith(MODEL_INPUT_PREFIX)
+            if key.startswith(MODEL_INPUT_PREFIX) and key != current_key
         }
         filled = fill_memory_slots(
             model_inputs, valid.to(model_inputs["history_slot_mask"].device), history_pixels
         )
         return {
-            **batch,
+            **{key: value for key, value in batch.items() if key != current_key},
             **{f"{MODEL_INPUT_PREFIX}{key}": value for key, value in filled.items() if value is not None},
         }
 
@@ -632,6 +647,6 @@ class DM05Policy(PreTrainedPolicy):
         self.eval()
         batch = self._remember_batch(batch)
         if len(self._queues[ACTION]) == 0:
-            actions = self._predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
             self._queues[ACTION].extend(actions.transpose(0, 1))
         return self._queues[ACTION].popleft()

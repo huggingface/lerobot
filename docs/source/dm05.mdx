@@ -133,7 +133,7 @@ full-benchmark statistics with an episode filter.
 torchrun --standalone --nproc_per_node=8 -m lerobot.scripts.lerobot_train \
   --dataset.repo_id=local/robodojo-cover-blocks --dataset.root="$DATASET_ROOT" \
   --dataset.video_backend=pyav \
-  --policy.type=dm05 --policy.pretrained_name_or_path="$BASE_MODEL" \
+  --policy.path="$BASE_MODEL" \
   --policy.push_to_hub=false --policy.use_memory=true \
   --policy.memory_image_key=observation.images.cam_high \
   --policy.memory_frames=20 --policy.memory_stride=25 --policy.robot_type=Aloha \
@@ -159,6 +159,12 @@ dependencies in the simulator environment, and install this LeRobot checkout in 
 policy environment. Evaluation requires a RoboDojo-side `LeRobotDM05` adapter,
 which is not included in this repository. It must load the saved LeRobot processors,
 update MEM history on every simulation frame, and reset the policy at episode boundaries.
+For chunk deployment, local and remote execution collect the main camera on every
+control frame, even while playing queued actions. Run observation capture at the
+training rate (25 FPS here): `memory_stride=25` means 25 captured frames, not 25
+predictions. Remote deployment sends the sampled history and padding mask with
+each chunk request; direct `PolicyRunner` callers must provide the same history
+in `ObservationSnapshot`. Reset the execution engine between episodes.
 Create `$ROBODOJO/XPolicyLab/policy/LeRobotDM05/deploy.yml`:
 
 ```yaml

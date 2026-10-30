@@ -180,6 +180,14 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
         0.0,
         "warmup",
         observation_id="warmup",
+        history_images=tuple(
+            np.zeros(
+                next(f.shape for f in cfg.features if f.name == runner.capabilities.memory_image_key),
+                dtype=np.uint8,
+            )
+            for _ in range(runner.capabilities.memory_frames)
+        ),
+        history_is_pad=(True,) * runner.capabilities.memory_frames,
     )
     try:
         for mode in runner.capabilities.modes:

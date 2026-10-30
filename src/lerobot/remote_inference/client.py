@@ -434,6 +434,11 @@ class RemoteClient:
             "capture_time": observation.capture_time,
             "task": observation.task,
             "task_version": observation.task_version,
+            "history_images": [
+                RGBImage(image, self.config.encoding, self.config.jpeg_quality)
+                for image in observation.history_images
+            ],
+            "history_is_pad": list(observation.history_is_pad),
             "features": {
                 name: RGBImage(value, self.config.encoding, self.config.jpeg_quality)
                 if name in rgb

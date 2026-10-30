@@ -474,6 +474,20 @@ class SessionWorker:
                 raise ProtocolError(ErrorCode.INCOMPATIBLE, f"Invalid feature {feature.name}")
             if not np.isfinite(value).all():
                 raise ProtocolError(ErrorCode.MALFORMED, "Non-finite observation values")
+        history, padding = body.get("history_images", []), body.get("history_is_pad", [])
+        if not isinstance(history, list) or not isinstance(padding, list):
+            raise ProtocolError(ErrorCode.MALFORMED, "Invalid camera history")
+        if len(history) != caps.memory_frames or len(padding) != caps.memory_frames:
+            raise ProtocolError(ErrorCode.INCOMPATIBLE, "Camera history length differs from deployment")
+        if any(type(value) is not bool for value in padding):
+            raise ProtocolError(ErrorCode.MALFORMED, "Invalid camera history padding")
+        if caps.memory_image_key:
+            camera = next(feature for feature in caps.features if feature.name == caps.memory_image_key)
+            if any(
+                not isinstance(image, np.ndarray) or image.shape != camera.shape or image.dtype != np.uint8
+                for image in history
+            ):
+                raise ProtocolError(ErrorCode.INCOMPATIBLE, "Invalid history camera image")
         if message.message_type is MessageType.LANGUAGE_REQUEST:
             if not caps.language:
                 raise ProtocolError(ErrorCode.UNSUPPORTED, "Deployment has no text capability")
@@ -580,7 +594,13 @@ class SessionWorker:
             return message.error(ErrorCode.STALE, "Motion generation invalidated")
         body = message.body
         observation = ObservationSnapshot(
-            body["features"], body["capture_time"], body["task"], body["task_version"], body["observation_id"]
+            body["features"],
+            body["capture_time"],
+            body["task"],
+            body["task_version"],
+            body["observation_id"],
+            history_images=tuple(body.get("history_images", ())),
+            history_is_pad=tuple(body.get("history_is_pad", ())),
         )
         started = time.monotonic()
         identity = {key: body[key] for key in IDENTITY_KEYS}

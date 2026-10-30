@@ -41,6 +41,7 @@ from lerobot.inference import (
     QueryKind,
     RemoteInferenceConfig,
 )
+from lerobot.inference.observation_history import sample_camera_history
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from .client import RemoteClient, RequestCancelled
@@ -103,6 +104,8 @@ class RemoteInferenceEngine(InferenceEngine):
         )
         self._lock = RLock()
         self._observation: ObservationSnapshot | None = None
+        caps = client.capabilities
+        self._memory_images: deque[np.ndarray] = deque(maxlen=caps.memory_frames * caps.memory_stride + 1)
         self._control: tuple[str, int] | None = None
         self._hold = HoldState()
         self._query_observation: ObservationSnapshot | None = None
@@ -387,6 +390,8 @@ class RemoteInferenceEngine(InferenceEngine):
         with self._lock:
             generation = self.runtime.invalidate(held=True)
             self._observation = None
+            if operation == "reset":
+                self._memory_images.clear()
             self._hold.clear()
             # A later motion invalidation must not erase a pending full reset.
             if self._control is not None and self._control[0] == "reset":
@@ -519,6 +524,17 @@ class RemoteInferenceEngine(InferenceEngine):
             task, version = self._task, self._task_version
         snapshot = ObservationSnapshot(features, capture_time, task, version, uuid4().hex)
         with self._lock:
+            caps = self.client.capabilities
+            if key := caps.memory_image_key:
+                self._memory_images.append(snapshot.features[key])
+                images, padding = sample_camera_history(
+                    list(self._memory_images), caps.memory_frames, caps.memory_stride
+                )
+                snapshot = replace(
+                    snapshot,
+                    history_images=images,
+                    history_is_pad=padding,
+                )
             # Sampling and endpoint commits both belong to this control thread;
             # no pop occurs between the hardware read and this anchor. Workers
             # may replace the future, but never advance the commitment cursor.

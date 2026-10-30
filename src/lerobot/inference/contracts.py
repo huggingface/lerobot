@@ -67,6 +67,9 @@ class PolicyCapabilities:
     retains_session_state: bool = True
     action_representation: str = "canonical"
     model_action_dim: int | None = None
+    memory_image_key: str | None = None
+    memory_frames: int = 0
+    memory_stride: int = 1
 
     def __post_init__(self) -> None:
         """Validate lengths, interval, and feature identity."""
@@ -76,6 +79,11 @@ class PolicyCapabilities:
             raise ValueError("A valid mode and execution length are required.")
         if len({feature.name for feature in self.features}) != len(self.features):
             raise ValueError("Duplicate observation feature names.")
+        if self.memory_image_key is not None:
+            if self.current_observation_only or self.memory_frames < 1 or self.memory_stride < 1:
+                raise ValueError("Camera memory requires a positive control-frame sampling contract.")
+            if not any(f.name == self.memory_image_key and f.kind == "rgb" for f in self.features):
+                raise ValueError("Memory camera must be an advertised RGB feature.")
         if self.model_action_dim is not None and (
             type(self.model_action_dim) is not int or self.model_action_dim <= 0
         ):
@@ -93,11 +101,18 @@ class ObservationSnapshot:
     observation_id: str = ""
     action_cursor: int | None = None
     execution_generation: int | None = None
+    history_images: tuple[np.ndarray, ...] = ()
+    history_is_pad: tuple[bool, ...] = ()
 
     def __post_init__(self) -> None:
         """Copy camera buffers so asynchronous encoding sees a stable frame."""
         if not math.isfinite(self.capture_time):
             raise ValueError("Observation capture time must be finite.")
+        history = tuple(np.array(image, copy=True, order="C") for image in self.history_images)
+        for image in history:
+            image.setflags(write=False)
+        object.__setattr__(self, "history_images", history)
+        object.__setattr__(self, "history_is_pad", tuple(self.history_is_pad))
         for anchor in (self.action_cursor, self.execution_generation):
             if anchor is not None and (type(anchor) is not int or anchor < 0):
                 raise ValueError("Observation action anchors must be nonnegative integers.")
