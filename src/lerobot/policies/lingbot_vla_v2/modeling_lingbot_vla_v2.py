@@ -1201,6 +1201,8 @@ class FlowMatchingV2(FlowMatchingV1):
                 self.config.max_action_dim,
             )
             noise = torch.randn(actions_shape, device=device, dtype=dtype)
+        else:
+            noise = noise.to(device=device, dtype=dtype)
 
         if (self.config.use_cudagraph_prefix or self.config.use_cudagraph_prefix_full) and not exporting:
             # CUDA-graphed prefix (see config docs). Falls back to the
