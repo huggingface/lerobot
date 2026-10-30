@@ -319,6 +319,9 @@ class FastWAMConfig(PreTrainedConfig):
         # text cross-attention modules and is never given a text/proprio context.
         self.action_dit_config["use_text_cross_attention"] = not self.world_model_only_conditioning
         self._validate_fasterwam_options()
+        if self.use_relative_actions and self.proprio_dim is None:
+            # Without a state there is no anchor: training would stay absolute and inference would fail.
+            raise ValueError("`use_relative_actions=true` requires `proprio_dim` (an `observation.state`).")
         if self.input_features is None:
             height, width = self.image_size
             self.input_features = {

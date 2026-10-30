@@ -116,6 +116,25 @@ lerobot-rollout \
 
 `policy.action_horizon` controls the number of future actions supervised during training and predicted during inference. `policy.n_action_steps` controls how many actions are consumed before the policy predicts a fresh chunk. `policy.n_action_steps` must be less than or equal to `policy.action_horizon`.
 
+### Relative Actions
+
+FastWAM predicts absolute actions by default. With `policy.use_relative_actions=true` it predicts offsets from the current `observation.state` instead, so `policy.proprio_dim` must be set. Joints named in `policy.relative_exclude_joints` (default `["gripper"]`) stay absolute. Recompute the dataset stats in relative space first, with `--operation.chunk_size` set to `policy.action_horizon` (see [π₀.₅ relative actions](./pi05#relative-actions)):
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-org/your-dataset \
+  --policy.type=fastwam \
+  --policy.use_relative_actions=true \
+  --policy.relative_exclude_joints='["gripper"]' \
+  ...
+```
+
+Checkpoints saved before relative actions existed, such as `lerobot/fastwam_base`, get the relative-action processor steps added when they are loaded with this option.
+
+### Text Encoder Device
+
+The frozen UMT5-XXL text encoder takes about 11 GB. `policy.text_encoder_device=cpu` keeps it off the GPU: prompts are encoded on the CPU and the embeddings moved to `policy.device`. During inference the encoded task is cached until `policy.reset()`, so the slower CPU encoding runs once per episode rather than once per chunk. Training encodes every batch, so there the CPU placement slows each step.
+
 ### Wan Components
 
 FastWAM loads the Wan VAE, video DiT, text encoder, and tokenizer from the configured Wan model directory or Hugging Face Hub model id. LeRobot-format FastWAM checkpoints saved by `save_pretrained` also copy the local Wan component files needed by `from_pretrained`.

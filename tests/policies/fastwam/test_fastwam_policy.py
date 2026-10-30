@@ -89,6 +89,8 @@ def test_config_validates_features_model_ids_and_saved_auto_route(tmp_path):
     assert cfg.robot_state_feature.shape == (8,)
     with pytest.raises(ValueError, match="image feature"):
         FastWAMConfig(input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(8,))})
+    with pytest.raises(ValueError, match="proprio_dim"):
+        FastWAMConfig(proprio_dim=None, use_relative_actions=True)
     assert FastWAMConfig(tokenizer_model_id="somebody/other-tokenizer").tokenizer_model_id == (
         "somebody/other-tokenizer"
     )
