@@ -243,6 +243,7 @@ The config declares what the engine arranges on the strategy's behalf, so nothin
 | `dataset_mode`                  | `"none"` (default) rejects `--dataset.*` flags, `"optional"` records when they are given, `"required"` makes `--dataset.repo_id` mandatory |
 | `requires_teleop`               | Makes `--teleop.type` mandatory                                                                                                            |
 | `supports_interactive`          | Allows `--interactive=true`; `run()` must then honour the restartable contract documented on `RolloutStrategy`                             |
+| `supports_sim_robot`            | Allows `--robot.type=sim`; `run()` must then start a new episode whenever one ends (see `lerobot.robots.sim_robot`)                        |
 | `requires_streaming_encoding()` | Return `True` when frames are written from inside the control loop: `--dataset.streaming_encoding` is forced on                            |
 | `extra_dataset_features()`      | Strategy-owned dataset columns (DAgger's `intervention`, for instance); every recorded frame must carry them                               |
 

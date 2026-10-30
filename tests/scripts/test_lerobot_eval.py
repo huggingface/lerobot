@@ -146,3 +146,25 @@ def test_rollout_starts_each_episode_with_fresh_processor_state(pipeline_kind):
     if pipeline_kind == "flux3":
         # Delta 0.25 unnormalizes to 0.5 and must be added to B's initial measured position.
         torch.testing.assert_close(reused_actions[0, 0, :-1], torch.full((5,), 2.5), rtol=0, atol=0)
+
+
+def test_rollout_ends_at_the_step_cap_below_the_env_limit():
+    class _LongEnv(_TwoStepEnv):
+        _max_episode_steps = 500
+
+    env = gym.vector.SyncVectorEnv([_LongEnv])
+    try:
+        result = rollout(
+            env,
+            _RecordingPolicy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=make_policy_processor_pipelines([], [])[0],
+            postprocessor=make_policy_processor_pipelines([], [])[1],
+            seeds=[0],
+            max_episode_steps=3,
+        )
+    finally:
+        env.close()
+    assert result[ACTION].shape[1] == 3
+    assert result["done"][0].tolist() == [False, False, True]

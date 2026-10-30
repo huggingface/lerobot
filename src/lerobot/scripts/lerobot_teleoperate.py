@@ -98,9 +98,11 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
+    sim_robot,
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
+from lerobot.robots.sim_robot import check_control_rate, episode_ended, start_episode
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -218,6 +220,11 @@ def teleop_loop(
                 # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
                 _ = robot.send_action(robot_action_to_send)
 
+            # A sim robot stops when its episode ends: start a new one, without counting the reset as loop time.
+            if episode_ended(robot):
+                start_episode(robot)
+                timer.restart()
+
             if display_data:
                 with timer.section("telemetry"):
                     # Process robot observation through pipeline
@@ -265,6 +272,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
+    check_control_rate(robot, cfg.fps, "--fps")
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     teleop.connect()

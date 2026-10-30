@@ -1,5 +1,13 @@
 # RoboCasa365
 
+<Tip>
+  The commands below run the simulator locally. To keep its dependencies away
+  from your policy's, serve it instead with `lerobot-env-server --docker
+  --config=docker/sim/configs/robocasa.yaml --set sim.task=<task>`, where `<task>`
+  is the command's `--env.task`, and add `--env.server.endpoint=tcp/127.0.0.1:7448` to
+  the command. A server runs the task it was started with (see [Simulation: local or served](./simulation)).
+</Tip>
+
 [RoboCasa365](https://robocasa.ai) is a large-scale simulation framework for training and benchmarking **generalist robots** in everyday kitchen tasks. It ships 365 diverse manipulation tasks across 2,500 kitchen environments, 3,200+ object assets and 600+ hours of human demonstration data, on a PandaOmron 12-DOF mobile manipulator (Franka arm on a holonomic base).
 
 - Paper: [RoboCasa: Large-Scale Simulation of Everyday Tasks for Generalist Robots](https://arxiv.org/abs/2406.02523)
@@ -106,7 +114,7 @@ Pass a comma-separated list of tasks:
 lerobot-eval \
   --policy.path=lerobot/smolvla_robocasa \
   --env.type=robocasa \
-  --env.task=CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove \
+  --env.task=CloseFridge,OpenCabinet,OpenDrawer,TurnOffStove \
   --eval.batch_size=1 \
   --eval.n_episodes=20 \
   --eval.use_async_envs=false \

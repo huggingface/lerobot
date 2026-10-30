@@ -15,6 +15,7 @@ from lerobot.envs.configs import EnvConfig, LiberoEnv
 from lerobot.envs.factory import make_env, make_env_config, make_env_pre_post_processors
 from lerobot.processor import LiberoProcessorStep
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_PREFIX, OBS_STATE
+from tests.fixtures.toy_env import DictObservationEnv
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +76,11 @@ def test_processors_delegation():
     assert len(pre.steps) == 0
 
 
-def test_libero_processors_are_policy_agnostic():
-    cfg = LiberoEnv()
-    pre, post = make_env_pre_post_processors(cfg, policy_cfg=object())
+def test_libero_processors_are_identity():
+    # LIBERO observations are canonical (flipped images, flat state) before they reach any processor.
+    pre, post = make_env_pre_post_processors(LiberoEnv(), policy_cfg=object())
 
-    assert isinstance(pre.steps[0], LiberoProcessorStep)
-    assert len(post.steps) == 0
+    assert len(pre.steps) == 0 and len(post.steps) == 0
 
 
 def test_libero_processor_transform_features_replaces_state_components():
@@ -124,10 +124,10 @@ def test_libero_processor_flattens_state_to_raw_8_dim():
 
 
 def test_base_create_envs():
-    """Base class create_envs() should build a single-task VectorEnv via gym.make()."""
+    """Base class create_envs() should build a single-task LocalVectorEnv via gym.make()."""
     gym_id = "_dispatch_test/CartPole-v99"
     if gym_id not in gym_registry:
-        register(id=gym_id, entry_point="gymnasium.envs.classic_control:CartPoleEnv")
+        register(id=gym_id, entry_point=DictObservationEnv)
 
     @EnvConfig.register_subclass("_dispatch_base_test")
     @dataclass
@@ -150,8 +150,9 @@ def test_base_create_envs():
 
     try:
         envs = _Env().create_envs(n_envs=2)
-        assert "_dispatch_base_test" in envs
-        env = envs["_dispatch_base_test"][0]
+        # One suite, named by the gym task.
+        assert list(envs) == ["CartPole-v99"]
+        env = envs["CartPole-v99"][0]
         assert isinstance(env, gym.vector.VectorEnv)
         assert env.num_envs == 2
         env.close()

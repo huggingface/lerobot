@@ -1,0 +1,337 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Client for the env server."""
+
+import uuid
+from threading import RLock
+from typing import Any
+
+import gymnasium as gym
+import numpy as np
+from gymnasium.vector.utils import batch_space
+
+from lerobot.sim.types import EnvDescriptor, StepResult
+from lerobot.transport.protocol.client import query_reply
+from lerobot.transport.protocol.envelope import Envelope, ErrorCode, MessageType, ProtocolError
+from lerobot.transport.zenoh import PresenceToken, ZenohConfig, ZenohTransport
+
+from .protocol import (
+    ANY_DEPLOYMENT_DESCRIBE,
+    decode_descriptor,
+    decode_step_result,
+    deployment_prefix,
+    instance_prefix,
+    session_prefix,
+    validate_result,
+)
+
+
+class EnvClient:
+    """One session with an env server. Requests are never retried."""
+
+    def __init__(
+        self,
+        endpoint: str,
+        deployment: str | None = None,
+        timeout_s: float = 120,
+        setup_timeout_s: float | None = None,
+        encoding: str = "raw",
+        jpeg_quality: int = 90,
+        handshake_timeout_s: float = 10.0,
+        zenoh_config_path: str | None = None,
+    ):
+        """Set up the client; nothing connects until ``describe`` or ``open``.
+
+        ``handshake_timeout_s`` bounds connecting, ``setup_timeout_s`` (at least ``timeout_s``) bounds open
+        and reset, and ``timeout_s`` bounds other requests. Without a ``deployment``, use the one the endpoint
+        serves.
+        """
+        if encoding not in {"raw", "jpeg"} or not 1 <= jpeg_quality <= 100:
+            raise ValueError("Image encoding must be raw or jpeg, with jpeg_quality in [1, 100]")
+        self.encoding = encoding
+        self.jpeg_quality = jpeg_quality
+        self.endpoint = endpoint
+        self.transport = ZenohTransport(
+            ZenohConfig(
+                connect_endpoints=[endpoint],
+                config_file=zenoh_config_path,
+                open_timeout_s=handshake_timeout_s,
+            )
+        )
+        self.handshake_timeout_s = handshake_timeout_s
+        self.deployment = deployment or ""
+        self.timeout_s = timeout_s
+        self.setup_timeout_s = max(timeout_s, setup_timeout_s or timeout_s)
+        self.instance = ""
+        self.session = ""
+        self.generation = 0
+        self.token: PresenceToken | None = None
+        self.descriptor: EnvDescriptor | None = None
+        self.lock = RLock()
+        self.failed = False
+        self.num_envs = 0
+
+    def describe(self) -> EnvDescriptor:
+        """Ask the server which environment it runs, without opening a session."""
+        with self.lock:
+            try:
+                self.transport.open()
+            except Exception as error:  # Zenoh reports an unreachable endpoint with its own error type.
+                raise ConnectionError(
+                    f"Could not connect to an env server at {self.endpoint} ({error}): start one with "
+                    "lerobot-env-server, or check the endpoint"
+                ) from error
+            if self.deployment:
+                try:
+                    body = self._query(
+                        deployment_prefix(self.deployment) + "/describe",
+                        MessageType.DESCRIBE,
+                        {},
+                        self.handshake_timeout_s,
+                    )
+                except TimeoutError:
+                    raise self._wrong_deployment() from None
+            else:
+                body = self._query(
+                    ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s
+                )
+            self.deployment = body["deployment"]
+            self.instance = body["instance"]
+            self.descriptor = decode_descriptor(body["descriptor"])
+            return self.descriptor
+
+    def _wrong_deployment(self) -> Exception:
+        """Return an error naming the deployment this endpoint serves, or a timeout if no server answers."""
+        try:
+            body = self._query(ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s)
+        except (TimeoutError, ProtocolError):
+            return TimeoutError(
+                f"No env server answered at {self.endpoint} within {self.handshake_timeout_s:g} s"
+            )
+        return ProtocolError(
+            ErrorCode.INCOMPATIBLE,
+            f"The env server at {self.endpoint} serves deployment {body['deployment']!r}, not "
+            f"{self.deployment!r}: set --env.server.deployment={body['deployment']} "
+            "(--robot.env.server.deployment for a sim robot)",
+        )
+
+    @property
+    def prefix(self) -> str:
+        """Key prefix of the open session."""
+        if not self.session:
+            raise RuntimeError("Simulator session is not open")
+        return session_prefix(self.deployment, self.instance, self.session)
+
+    def open(
+        self,
+        num_envs: int,
+        task_group: str | None = None,
+        task_id: int = 0,
+        seeds: list[int | None] | None = None,
+        use_async_envs: bool = False,
+    ) -> StepResult:
+        """Open a session of ``num_envs`` envs on one task and return the result of its first reset."""
+        with self.lock:
+            if self.session:
+                raise RuntimeError("Simulator session already open")
+            descriptor = self.descriptor or self.describe()
+            body = self._query(
+                instance_prefix(self.deployment, self.instance) + "/open",
+                MessageType.OPEN,
+                {
+                    "num_envs": num_envs,
+                    "task_group": task_group,
+                    "task_id": task_id,
+                    "seeds": seeds,
+                    "use_async_envs": use_async_envs,
+                    "encoding": self.encoding,
+                    "jpeg_quality": self.jpeg_quality,
+                },
+                self.setup_timeout_s,
+            )
+            opened_descriptor = decode_descriptor(body["descriptor"])
+            if not opened_descriptor.same_schema(descriptor):
+                self.transport.close()
+                raise ProtocolError(
+                    ErrorCode.INCOMPATIBLE, "Selected task differs from the negotiated simulator schema"
+                )
+            self.descriptor = opened_descriptor
+            self.session = body["session"]
+            self.generation = body["generation"]
+            self.token = self.transport.declare_token(self.prefix + "/client_alive")
+            self.num_envs = num_envs
+            result = decode_step_result(body["result"])
+            validate_result(result, self.descriptor, num_envs)
+            return result
+
+    def request(self, operation: str, **body: Any) -> dict[str, Any]:
+        """Send one operation and return its checked reply. A failure fails the session: it may have run."""
+        with self.lock:
+            if self.failed:
+                raise RuntimeError("Simulator session failed; close and reopen before continuing")
+            descriptor = self.descriptor
+            if not self.session or descriptor is None:
+                raise RuntimeError("Simulator session is not open")
+            key = f"{self.prefix}/{operation}"
+            try:
+                timeout = self.setup_timeout_s if operation == "reset" else self.timeout_s
+                reply = self._query(key, MessageType.CONTROL, body, timeout)
+                if "result" in reply:
+                    reply["result"] = decode_step_result(reply["result"])
+                    validate_result(reply["result"], descriptor, self.num_envs)
+                if "generation" in reply:
+                    self.generation = reply["generation"]
+                return reply
+            except Exception:
+                self.failed = True
+                raise
+
+    def _query(
+        self, key: str, kind: MessageType, body: dict[str, Any], timeout: float | None = None
+    ) -> dict[str, Any]:
+        message = Envelope(kind, self.instance, self.session, self.generation, uuid.uuid4().hex, body)
+        response = query_reply(
+            self.transport,
+            key,
+            message,
+            self.timeout_s if timeout is None else timeout,
+            MessageType.ACK if message.session_id else MessageType.ACCEPTED,
+            max_replies=1,
+            # Requests are never retried, so a reply dropped under congestion would fail the session.
+            congestion_control="block",
+        )
+        return response.body
+
+    def close(self) -> None:
+        """Close the session and the connection."""
+        with self.lock:
+            try:
+                if self.session and not self.failed:
+                    self.request("close")
+            finally:
+                self.transport.close()
+                self.token = None
+                self.session = ""
+                self.instance = ""
+                self.descriptor = None
+                self.failed = False
+
+
+class RemoteVectorEnv(gym.vector.VectorEnv):
+    """Vector env of ``num_envs`` envs on one task, run by an env server, without autoreset."""
+
+    canonical_observations = True
+
+    def __init__(
+        self,
+        client: EnvClient,
+        num_envs: int = 1,
+        task_group: str | None = None,
+        task_id: int | None = None,
+        descriptor: EnvDescriptor | None = None,
+        use_async_envs: bool = False,
+    ):
+        """Fetch the descriptor unless one is given. The session opens on the first ``reset``."""
+        self.client = client
+        self.use_async_envs = use_async_envs
+        self.descriptor = descriptor or self.client.describe()
+        self.num_envs = num_envs
+        self.task_group = task_group or next(iter(self.descriptor.tasks))
+        tasks = self.descriptor.tasks.get(self.task_group, [])
+        # Default to the group's first task, like a local env.
+        self.task_id: int = int(next(iter(tasks), 0)) if task_id is None else task_id
+        self.metadata = {
+            "render_fps": self.descriptor.fps,
+            "autoreset_mode": gym.vector.AutoresetMode.DISABLED,
+        }
+        self.render_mode = "rgb_array"
+        self.single_observation_space = self.descriptor.observation_space()
+        self.single_action_space = self.descriptor.action_space()
+        self.observation_space = batch_space(self.single_observation_space, num_envs)
+        self.action_space = batch_space(self.single_action_space, num_envs)
+        self._latest: StepResult | None = None
+
+    @property
+    def latest(self) -> StepResult:
+        """The result of the last reset or step."""
+        if self._latest is None:
+            raise RuntimeError("Reset before reading the environment")
+        return self._latest
+
+    def _result(self, reply: dict[str, Any]) -> StepResult:
+        self._latest = reply["result"]
+        return self._latest
+
+    def reset(
+        self,
+        *,
+        seed: int | list[int | None] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        """Reset every env, opening the session on first use; env ``i`` gets seed ``seed + i``."""
+        if options:
+            raise ValueError("This environment does not define reset options")
+        seeds: list[int | None] | None = (
+            [seed + i for i in range(self.num_envs)] if isinstance(seed, int) else seed
+        )
+        if self.client.session:
+            self._result(self.client.request("reset", seeds=seeds))
+        else:
+            self._latest = self.client.open(
+                self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
+            )
+            self.descriptor = self.client.descriptor or self.descriptor
+        return self.latest.obs, self.latest.info()
+
+    def step(
+        self, actions: np.ndarray
+    ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+        """Step every unfinished env once."""
+        if not self.client.session:
+            raise RuntimeError("Reset before stepping")
+        result = self._result(self.client.request("step", actions=np.asarray(actions, dtype=np.float32)))
+        return (
+            result.obs,
+            result.reward,
+            result.terminated,
+            result.truncated,
+            result.info(),
+        )
+
+    def call(self, name: str, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        """Return a supported per-environment attribute."""
+        if args or kwargs:
+            raise TypeError("Environment attributes do not take arguments")
+        if name == "_max_episode_steps":
+            return (self.descriptor.max_episode_steps,) * self.num_envs
+        if name == "task":
+            return (self.task_group,) * self.num_envs
+        if name == "task_description":
+            return self.latest.task
+        if name == "render":
+            return tuple(self.render())
+        raise AttributeError(f"Simulator vector attribute is not exposed: {name}")
+
+    def get_attr(self, name: str) -> tuple[Any, ...]:
+        """Return a supported per-environment attribute."""
+        return self.call(name)
+
+    def render(self) -> list[np.ndarray]:
+        """Return the latest RGB frame of every env, including envs whose episode has ended."""
+        return self.latest.frames()
+
+    def close_extras(self, **kwargs: Any) -> None:
+        """Close the served session."""
+        self.client.close()

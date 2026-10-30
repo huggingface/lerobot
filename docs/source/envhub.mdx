@@ -19,15 +19,17 @@ This design means you can go from discovering an interesting environment on the 
 
 When you create an EnvHub package, you can build anything you want inside it and use any simulation tool you like: this is your own space to play with. The only requirement is that the package contains an `env.py` file that defines the environment and allows LeRobot to load and use your EnvHub package.
 
-This `env.py` file needs to expose a small API so LeRobot can load and run it. In particular, you must provide a `make_env(n_envs: int = 1, use_async_envs: bool = False)` or `make_env(n_envs: int = 1, use_async_envs: bool = False, cfg: EnvConfig | None = None)` function, which is the main entry point for LeRobot. It should return one of:
+This `env.py` file needs to expose a small API so LeRobot can load and run it. In particular, you must provide a `make_env(n_envs: int = 1, use_async_envs: bool = False)` function, which is the main entry point for LeRobot. LeRobot calls it without a config, locally and when served. It should return one of:
 
 - A `gym.vector.VectorEnv` (most common)
 - A single `gym.Env` (will be automatically wrapped)
 - A dict mapping `{suite_name: {task_id: VectorEnv}}` (for multi-task benchmarks)
 
-You can also pass an `EnvConfig` object to `make_env` to configure the environment (e.g. the number of environments, task, camera name, initial states, control mode, episode length, etc.).
+By default, a returned vector env must be an unwrapped `SyncVectorEnv` or `AsyncVectorEnv`: LeRobot takes its `env_fns` and builds each environment itself. Custom vector wrappers and subclasses are rejected rather than silently removed.
 
-Finally, your environment must implement the standard `gym.vector.VectorEnv` interface so it works with LeRobot, including methods like `reset` and `step`.
+For provider-owned vector wrappers or GPU-native batches, use `--env.use_native_batch=true`. This keeps the repository's vector environment intact for local batched evaluation, including its preprocessing requirements. It cannot be combined with an endpoint or `SimRobot`. The string API (`make_env("user/repo")`) also keeps the provider's environment intact.
+
+`env.py` may also define an optional `LEROBOT_SIM` dictionary describing the environment (fps, control_mode, component names; see [EnvHub and the simulator server](#envhub-and-the-simulator-server)). It applies locally and when served.
 
 ## Quick Start
 
@@ -56,6 +58,7 @@ To make your environment loadable from the Hub, your repository must contain at 
 **`env.py`** (or custom Python file)
 
 - Must expose a `make_env(n_envs: int, use_async_envs: bool)` function
+- Extra keyword arguments of `make_env` are the environment's own options: `--env.make_env_kwargs='{"episode_length": 900}'` passes them (`--robot.env.make_env_kwargs` for a sim robot), and a server takes them with `--set 'sim.kwargs.make_env_kwargs={episode_length: 900}'`
 - This function should return one of:
   - A `gym.vector.VectorEnv` (most common)
   - A single `gym.Env` (will be automatically wrapped)
@@ -67,6 +70,21 @@ To make your environment loadable from the Hub, your repository must contain at 
 
 - List any additional dependencies your environment needs
 - Users will need to install these manually before loading your environment
+
+**`LEROBOT_SIM` in `env.py`**
+
+- A module-level dictionary that describes the environment when it is served by the [simulator server](#envhub-and-the-simulator-server), so it starts with a single command
+- Every key is optional; repositories without `LEROBOT_SIM` keep working with the defaults
+- `robot_type` is the type the real robot records (`so_follower`, `omx_follower`) when lerobot has a class for the body, so simulated and real datasets match
+
+| Key            | Meaning                                                        | Default                               |
+| -------------- | -------------------------------------------------------------- | ------------------------------------- |
+| `fps`          | Control rate of one `step()`                                   | `30`                                  |
+| `control_mode` | Action convention: `position`, `delta` or `eef_pose`           | `"position"`                          |
+| `semantics`    | Name of the observation/action conventions                     | `"envhub-v1"`                         |
+| `state_names`  | Names of the `observation.state` components, in order          | generic `state_0`, `state_1`, ...     |
+| `action_names` | Names of the action components, in order                       | generic `command_0`, `command_1`, ... |
+| `robot_type`   | Simulated body, recorded as a sim robot's dataset `robot_type` | none (datasets record `sim_robot`)    |
 
 **`README.md`**
 
@@ -100,6 +118,9 @@ Create an `env.py` file with a `make_env` function:
 # env.py
 import gymnasium as gym
 
+# Optional: describes the environment to the simulator server (see "Optional Files").
+LEROBOT_SIM = {"fps": 50, "control_mode": "position"}
+
 def make_env(n_envs: int = 1, use_async_envs: bool = False):
     """
     Create vectorized environments for your custom task.
@@ -129,20 +150,19 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False):
 Before uploading, test your environment locally:
 
 ```python
-from lerobot.envs.utils import _load_module_from_path, _call_make_env, _normalize_hub_result
+import numpy as np
 
-# Load your module
-module = _load_module_from_path("./env.py")
+from lerobot.envs.configs import HubEnvConfig
 
-# Test the make_env function
-result = _call_make_env(module, n_envs=2, use_async_envs=False, cfg=None)
-normalized = _normalize_hub_result(result)
+# Build the envs from the local folder that holds env.py, as lerobot-eval and the env server do
+envs = HubEnvConfig(hub_path="./my-env", trust_remote_code=True).create_envs(n_envs=2)
 
 # Verify it works
-suite_name = next(iter(normalized))
-env = normalized[suite_name][0]
-obs, info = env.reset()
-print(f"Observation shape: {obs.shape if hasattr(obs, 'shape') else type(obs)}")
+suite_name = next(iter(envs))
+env = envs[suite_name][0]
+obs, info = env.reset(seed=0)
+print({key: value.shape for key, value in obs.items()})  # LeRobot keys, e.g. observation.state
+env.step(np.zeros(env.action_space.shape, np.float32))
 env.close()
 ```
 
@@ -260,6 +280,42 @@ The hub URL format supports several patterns:
 | `user/repo@revision` | Load from specific revision    | `make_env("lerobot/cartpole-env@main")` |
 | `user/repo:path`     | Load custom file               | `make_env("lerobot/envs:pusht.py")`     |
 | `user/repo@rev:path` | Revision + custom file         | `make_env("lerobot/envs@v1:pusht.py")`  |
+
+## EnvHub and the simulator server
+
+By default, EnvHub environments run inside the evaluation process: `make_env` downloads the repository's `env.py`, and its dependencies are installed next to LeRobot. To keep an environment's dependencies away from your policy's, serve it with the [simulator server](./simulation) instead. One command builds an image with the repository and its `requirements.txt`, and starts the server:
+
+```bash
+lerobot-env-server --docker --envhub=username/my-env@<commit>
+```
+
+Besides `requirements.txt` (installed with pip's rules, so `--extra-index-url` lines work), the image installs the apt packages listed in an optional `packages.txt`, one per line, as in Hugging Face Spaces.
+
+Passing `--envhub` is the explicit consent to run the repository's code, like `trust_remote_code=True`. Pin a commit. Then evaluate against it like any other environment, adding its endpoint:
+
+```bash
+lerobot-eval --policy.path=<checkpoint> \
+  --env.type=envhub --env.hub_path=username/my-env@<commit> --env.server.endpoint=tcp/127.0.0.1:7448 \
+  --rename_map='{"observation.images.front": "observation.images.camera1"}' \
+  --eval.n_episodes=10
+```
+
+Without `--env.server.endpoint`, the same command runs the environment locally (with `--trust_remote_code=true`); a sim robot takes the same options under `--robot.env.*`.
+
+The server reads the control rate, action convention and component names from the repository's [`LEROBOT_SIM`](#optional-files), and uses the defaults for anything it does not declare. Override a value with `--set`, which wins over the repository, e.g. `--set sim.fps=15`.
+
+To be served, an environment must follow these conventions:
+
+- `make_env` returns vector environments built from per-environment factories (`SyncVectorEnv`/`AsyncVectorEnv`, as in the examples above) or a single `gym.Env`. The server builds its own environments from those factories and closes them when a session ends.
+- `env.py` is executed once per server process, so it can keep process-wide state, such as a simulator application that can only start once (Isaac Sim's `SimulationApp`).
+- Observations are the dictionaries LeRobot reads locally: `pixels` (one HWC uint8 image or a dictionary of cameras), `agent_pos` and `environment_state`, as NumPy arrays.
+- Actions are a one-dimensional continuous `Box`.
+- Episodes end through `terminated`/`truncated` or `_max_episode_steps` (default 500), and `info["is_success"]` reports success. The task text comes from the environment's `task_description` (or `task`) attribute.
+- `LEROBOT_SIM` is optional, but declare it whenever the defaults (30 fps, position control) do not match your environment.
+
+For examples, see the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments-6ad0f5bf3fac8dbe626c17dc): [`lerobot/so101-tabletop-mujoco`](https://huggingface.co/lerobot/so101-tabletop-mujoco) (MuJoCo) and [`lerobot/so101-tabletop-isaac`](https://huggingface.co/lerobot/so101-tabletop-isaac) (Isaac Sim, installed through `requirements.txt` and `packages.txt`) serve the same SO-101 scene with the same observations, actions and `LEROBOT_SIM`.
+
+The repository is downloaded on your machine with your Hugging Face login (`HF_TOKEN` or `hf auth login`), so private repositories work too, and the image build never sees a token. `--envhub` also takes a local directory holding `env.py`, to serve an environment before pushing it: `lerobot-env-server --docker --envhub=./my-env`. `--build` rebuilds only what changed: the apt packages when `packages.txt` changes, the requirements when `requirements.txt` changes, and otherwise just the repository's files. Test a new environment locally first (see [Step 2: Test Locally](#step-2-test-locally)).
 
 ## Multi-Task Environments
 
@@ -405,11 +461,12 @@ The `make_env` function must return:
 
 1. **Document your environment**: Include observation/action space descriptions, reward structure, and termination conditions in your README
 2. **Add requirements.txt**: List all dependencies with versions
-3. **Test thoroughly**: Verify your environment works locally before pushing
-4. **Use semantic versioning**: Tag releases with version numbers
-5. **Add examples**: Include usage examples in your README
-6. **Keep it simple**: Minimize dependencies when possible
-7. **License your work**: Add a LICENSE file to clarify usage terms
+3. **Declare `LEROBOT_SIM`**: Let the environment be served by the simulator server with one command
+4. **Test thoroughly**: Verify your environment works locally before pushing
+5. **Use semantic versioning**: Tag releases with version numbers
+6. **Add examples**: Include usage examples in your README
+7. **Keep it simple**: Minimize dependencies when possible
+8. **License your work**: Add a LICENSE file to clarify usage terms
 
 ## Future Directions
 

@@ -39,6 +39,7 @@ _draccus_docstring.get_attribute_docstring = functools.cache(_draccus_docstring.
 pytest_plugins = [
     "tests.fixtures.cadence",
     "tests.fixtures.optimizers",
+    "tests.fixtures.sim_server",
 ]
 
 if is_package_available("datasets"):

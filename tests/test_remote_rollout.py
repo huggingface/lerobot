@@ -25,6 +25,7 @@ pytestmark = pytest.mark.dataset
 
 class PositionRobot:
     supports_position_hold = True
+    supports_command_hold = False
     action_features = {"joint.pos": float}
     robot_type = "test_position_robot"
     is_connected = True

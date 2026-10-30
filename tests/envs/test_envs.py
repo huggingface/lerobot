@@ -28,9 +28,11 @@ from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
     _normalize_hub_result,
-    _parse_hub_url,
+    prepare_canonical_observation,
     preprocess_observation,
 )
+from lerobot.sim.integrations.envhub import _parse_hub_url
+from tests.fixtures.toy_env import DictObservationEnv
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -66,7 +68,11 @@ def test_factory(env_name):
     task_id = next(iter(envs[suite_name]))
     env = envs[suite_name][task_id]
     obs, _ = env.reset()
-    obs = preprocess_observation(obs)
+    obs = (
+        prepare_canonical_observation(obs)
+        if getattr(env, "canonical_observations", False)
+        else preprocess_observation(obs)
+    )
 
     # test image keys are float32 in range [0,1]
     for key in obs:
@@ -106,11 +112,11 @@ def test_factory_custom_gym_id():
             return {}
 
     try:
-        register(id=gym_id, entry_point="gymnasium.envs.classic_control:CartPoleEnv")
+        register(id=gym_id, entry_point=DictObservationEnv)
 
         cfg = DummyEnv()
         envs_dict = make_env(cfg, n_envs=1)
-        dummy_envs = envs_dict["dummy"]
+        dummy_envs = envs_dict["DummyTask-v0"]
         assert len(dummy_envs) == 1
         env = next(iter(dummy_envs.values()))
         assert env is not None and isinstance(env, gym.vector.VectorEnv)
@@ -280,3 +286,14 @@ def test_gym_manipulator_points_to_the_real_robot_entry_points():
         make_env(HILSerlRobotEnvConfig(), n_envs=1)
     assert "lerobot.rl.gym_manipulator" in str(e.value)
     assert "lerobot.rl.eval_policy" in str(e.value)
+
+
+def test_prepare_canonical_observation():
+    obs = {
+        "observation.image": np.full((2, 8, 8, 3), 255, np.uint8),
+        "observation.state": np.zeros((2, 2), np.float32),
+    }
+    converted = prepare_canonical_observation(obs)
+    assert converted["observation.image"].shape == (2, 3, 8, 8)
+    assert converted["observation.image"].max() == 1
+    assert converted["observation.state"].dtype == torch.float32

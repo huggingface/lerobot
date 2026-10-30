@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
+COPY --from=ghcr.io/astral-sh/uv:0.11.30 /uv /uvx /usr/local/bin/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv python3-dev build-essential linux-libc-dev git ffmpeg \
+    libegl1 libgl1 libglib2.0-0 libxrender1 libsm6 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /lerobot
+COPY pyproject.toml uv.lock README.md setup.py MANIFEST.in ./
+ARG POLICY_EXTRAS="remote evaluation smolvla training hardware"
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-install-project $(for extra in ${POLICY_EXTRAS}; do printf ' --extra %s' "$extra"; done)
+COPY . .
+RUN uv pip install --python .venv/bin/python --no-deps -e .
+ENV PATH="/lerobot/.venv/bin:${PATH}" HF_HOME=/tmp/hf
+CMD ["lerobot-eval", "--help"]
