@@ -11,12 +11,16 @@
 from __future__ import annotations
 
 import contextlib
+import logging
+import math
 import posixpath
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import quote, urljoin, urlparse
@@ -25,14 +29,40 @@ from uuid import uuid4
 import fsspec
 import httpx
 from huggingface_hub import HfApi, HfFileSystem, constants
-from huggingface_hub.utils import hf_raise_for_status
+from huggingface_hub.utils import hf_raise_for_status, parse_ratelimit_headers
 
 from .location import LocationKind, StorageLocation
 
+logger = logging.getLogger(__name__)
 
-def _retry_delay_s(attempt: int) -> float:
-    """Exponential backoff shared by HEAD and range retries."""
-    return min(0.5 * 2**attempt, 5.0)
+
+def _retry_delay_s(
+    attempt: int, status_code: int | None = None, headers: Mapping[str, str] | None = None
+) -> float:
+    """Honor server reset windows, with bounded exponential fallback between attempts."""
+    delays = [min(0.5 * 2**attempt, 5.0)]
+    if headers is not None:
+        if status_code == 429:
+            info = parse_ratelimit_headers(headers)
+            if info is not None and info.remaining == 0:
+                delays.append(float(info.reset_in_seconds) + 1)
+        retry_after = headers.get("retry-after")
+        if retry_after is not None:
+            try:
+                seconds = float(retry_after)
+            except ValueError:
+                try:
+                    reset = parsedate_to_datetime(retry_after)
+                    seconds = (reset - datetime.now(UTC)).total_seconds()
+                except (TypeError, ValueError, OverflowError):
+                    seconds = -1
+            if math.isfinite(seconds) and seconds >= 0:
+                delays.append(seconds + 1)
+    # Some storage CDNs omit reset headers. A few seconds of backoff can exhaust
+    # every retry while still inside the same throttle window.
+    if status_code == 429 and len(delays) == 1:
+        delays.append(min(30.0 * 2**attempt, 120.0))
+    return max(delays)
 
 
 class ThreadLocalRangeFetcher:
@@ -185,6 +215,7 @@ class NativeHTTPRangeFetcher:
         responses before backoff; permanent errors return immediately.
         """
         for attempt in range(self.max_retries + 1):
+            delay = _retry_delay_s(attempt)
             try:
                 response = self.client.request(
                     method, url, headers=headers, follow_redirects=follow_redirects
@@ -195,8 +226,10 @@ class NativeHTTPRangeFetcher:
             else:
                 if response.status_code not in self._RETRYABLE_STATUS_CODES or attempt >= self.max_retries:
                     return response
+                delay = _retry_delay_s(attempt, response.status_code, response.headers)
                 response.close()
-            time.sleep(_retry_delay_s(attempt))
+                logger.warning("HTTP %s; retrying in %.1fs", response.status_code, delay)
+            time.sleep(delay)
         raise RuntimeError("unreachable")
 
     def _path(self, relative_path: str) -> str:
@@ -325,27 +358,32 @@ class NativeHTTPRangeFetcher:
         headers = self._headers_for(url, source)
         headers["Range"] = f"bytes={offset}-{offset + length - 1}"
         for attempt in range(self.max_retries + 1):
+            delay = _retry_delay_s(attempt)
             try:
-                payload, status_code = self._read_range_response_once(url, headers)
+                payload, status_code, response_headers = self._read_range_response_once(url, headers)
             except self._RETRYABLE_EXCEPTIONS:
                 if attempt >= self.max_retries:
                     raise
             else:
                 if status_code not in self._RETRYABLE_STATUS_CODES or attempt >= self.max_retries:
                     return payload, status_code
-            time.sleep(_retry_delay_s(attempt))
+                delay = _retry_delay_s(attempt, status_code, response_headers)
+                logger.warning("HTTP %s; retrying in %.1fs", status_code, delay)
+            time.sleep(delay)
         raise RuntimeError("unreachable")
 
-    def _read_range_response_once(self, url: str, headers: dict[str, str]) -> tuple[bytes, int]:
+    def _read_range_response_once(
+        self, url: str, headers: dict[str, str]
+    ) -> tuple[bytes, int, httpx.Headers]:
         """Read one HTTP response; denied and retryable statuses return an empty payload."""
         with self.client.stream("GET", url, headers=headers) as response:
             if response.status_code in (401, 403) or response.status_code in self._RETRYABLE_STATUS_CODES:
-                return b"", response.status_code
+                return b"", response.status_code, response.headers
             hf_raise_for_status(response)
             # Response.read() caches the body in HTTPX's response/stream cycle,
             # retaining a second video copy until cyclic GC runs. Consume the
             # chunks without populating that cache; context exit still closes it.
-            return b"".join(response.iter_bytes()), response.status_code
+            return b"".join(response.iter_bytes()), response.status_code, response.headers
 
     def close(self) -> None:
         """Close the HTTP client and subrange executor."""

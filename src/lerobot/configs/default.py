@@ -55,6 +55,9 @@ class DatasetConfig:
     # Has no effect on datasets without depth cameras.
     depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
+    # Optional payload location for streaming with an explicit local metadata/statistics root.
+    # Without an override, an explicit `root` also selects local payload reads.
+    streaming_data_root: str | None = None
     # Complete episodes mixed by the exact-coverage sampler of each DataLoader worker. None mixes
     # 32 episodes for the rank and gives each of the N workers 32/N; a larger pool mixes more
     # episodes in each batch, but uses more memory and fetches more data before the first sample.
@@ -80,6 +83,8 @@ class DatasetConfig:
     eval_split: float = 0.0
 
     def __post_init__(self) -> None:
+        if self.streaming_data_root is not None and not self.streaming:
+            raise ValueError("streaming_data_root requires streaming=true")
         if self.repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
         if self.eval_split != 0.0 and self.streaming:

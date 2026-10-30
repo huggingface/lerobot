@@ -175,6 +175,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             dataset = StreamingLeRobotDataset(
                 cfg.dataset.repo_id,
                 root=root,
+                data_root=cfg.dataset.streaming_data_root,
                 episodes=episodes,
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,

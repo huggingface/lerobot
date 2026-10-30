@@ -97,6 +97,8 @@
     title: WALL-OSS
   - local: wall_oss_05
     title: Wall-OSS-0.5
+  - local: zero_wam
+    title: Zero-WAM
   - local: dm05
     title: DM05
   title: "Policies"

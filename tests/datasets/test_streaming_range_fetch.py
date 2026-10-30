@@ -14,6 +14,8 @@ import weakref
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 
 import httpx
 import pytest
@@ -138,10 +140,99 @@ def test_head_status_retry_budget(
         assert fetcher.read_range("video.mp4", 3, 3) == b"345"
     assert len(responses) == 3
     assert all(response.is_closed for response in responses)
-    assert sleeps == [0.5, 1.0]
+    assert sleeps == ([30.0, 60.0] if status == 429 else [0.5, 1.0])
     assert sum(request.method == "GET" for request in requests) == (
         int(operation == "refresh") + int(not exhaust and operation != "metadata")
     )
+
+
+@pytest.mark.parametrize("operation", ["resolve", "range"])
+@pytest.mark.parametrize(
+    "status,headers,delays",
+    [
+        (429, {"RateLimit": '"resolvers";r=0;t=45'}, [46.0, 46.0]),
+        (429, {"Retry-After": "60"}, [61.0, 61.0]),
+        (503, {"Retry-After": "60"}, [61.0, 61.0]),
+        (429, {"RateLimit": '"resolvers";r=0;t=45', "Retry-After": "90"}, [91.0, 91.0]),
+        (429, {"Retry-After": "NaN", "RateLimit": "invalid"}, [30.0, 60.0]),
+        (429, {"Retry-After": "inf"}, [30.0, 60.0]),
+        (429, {"Retry-After": "-1"}, [30.0, 60.0]),
+        (429, {"Retry-After": "not a date"}, [30.0, 60.0]),
+    ],
+)
+def test_rate_limit_reset_closes_response_and_preserves_range(
+    fetcher, monkeypatch, operation, status, headers, delays
+):
+    """Honor advertised windows without extra attempts, changed bytes or leaked authorization."""
+    fetcher.max_retries = 2
+    fetcher._resolved_urls["video.mp4"] = "https://cdn.example/video"
+    if operation == "resolve":
+        fetcher._resolved_urls.clear()
+    throttled = []
+    sleeps = []
+
+    def sleep(seconds):
+        assert throttled[-1].is_closed
+        sleeps.append(seconds)
+
+    def serve(request):
+        if request.method == "HEAD":
+            assert request.headers["authorization"] == "Bearer test-token"
+        else:
+            assert "authorization" not in request.headers
+            assert request.headers["range"] == "bytes=3-5"
+        if request.method == ("HEAD" if operation == "resolve" else "GET") and len(throttled) < 2:
+            response = httpx.Response(status, headers=headers)
+            throttled.append(response)
+            return response
+        if request.method == "HEAD":
+            return httpx.Response(302, headers={"Location": "https://cdn.example/video"})
+        return httpx.Response(206, content=b"345")
+
+    monkeypatch.setattr("lerobot.streaming.range_fetch.time.sleep", sleep)
+    fetcher.client = httpx.Client(transport=httpx.MockTransport(serve))
+    assert fetcher.read_range("video.mp4", 3, 3) == b"345"
+    assert sleeps == delays
+    assert len(throttled) == 2
+
+
+def test_range_throttling_has_a_finite_retry_budget(fetcher, monkeypatch):
+    """Persistent throttling must fail instead of sleeping forever or reading a non-range body."""
+    fetcher.max_retries = 2
+    fetcher._resolved_urls["video.mp4"] = "https://cdn.example/video"
+    responses, sleeps = [], []
+
+    def serve(request):
+        response = httpx.Response(429, headers={"Retry-After": "120"})
+        responses.append(response)
+        return response
+
+    monkeypatch.setattr("lerobot.streaming.range_fetch.time.sleep", sleeps.append)
+    fetcher.client = httpx.Client(transport=httpx.MockTransport(serve))
+    with pytest.raises(RuntimeError, match="429 after retries"):
+        fetcher.read_range("video.mp4", 3, 3)
+    assert len(responses) == 3
+    assert all(response.is_closed for response in responses)
+    assert sleeps == [121.0, 121.0]
+
+
+def test_retry_after_http_date(fetcher, monkeypatch):
+    """An HTTP-date reset gets the same treatment as a numeric Retry-After."""
+    fetcher.max_retries = 1
+    fetcher._resolved_urls["video.mp4"] = "https://cdn.example/video"
+    reset = datetime.now(UTC) + timedelta(seconds=60)
+    sleeps = []
+
+    def serve(request):
+        if not sleeps:
+            return httpx.Response(429, headers={"Retry-After": format_datetime(reset, usegmt=True)})
+        return httpx.Response(206, content=b"345")
+
+    monkeypatch.setattr("lerobot.streaming.range_fetch.time.sleep", sleeps.append)
+    fetcher.client = httpx.Client(transport=httpx.MockTransport(serve))
+    assert fetcher.read_range("video.mp4", 3, 3) == b"345"
+    assert len(sleeps) == 1
+    assert 59 < sleeps[0] <= 61
 
 
 @pytest.mark.parametrize("error_type", [httpx.ConnectTimeout, httpx.ReadError])

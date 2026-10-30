@@ -1,0 +1,261 @@
+# Zero-WAM
+
+[Zero-WAM](https://github.com/robbyant-research/Zero-WAM) is a causal video-action model that uses a language instruction, a demonstration video, or both as task context. The native `zero_wam` policy implements its video/action experts, persistent demonstration context, multi-chunk prediction (MCP), and streaming observation feedback. It reuses the Wan VAE, text encoders, scheduler, and rotary embeddings from LeRobot's LingBot-VA integration. No upstream checkout is required at runtime.
+
+See the [paper](https://arxiv.org/abs/2608.26103) and [project page](https://robbyant-research.github.io/Zero-WAM/). The implementation was checked against upstream revision [`08e2c4a`](https://github.com/robbyant-research/Zero-WAM/tree/08e2c4ae41e2b63573a299825cebe6753481407c).
+
+## Install
+
+```bash
+uv sync --locked --extra zero_wam --extra training --extra dataset
+```
+
+The released transformer has approximately 10.8B parameters, including MCP heads. The frozen Wan2.2 VAE and UMT5 encoder load separately on demand. Training uses CUDA flex attention; `attention_backend=sdpa` provides dense attention for small CPU tests. Full-size training and inference require suitable accelerator memory.
+
+## Convert a checkpoint
+
+The upstream [pretrained](https://huggingface.co/robbyant-research/zero-wam-pretrain) and [RoboTwin post-trained](https://huggingface.co/robbyant-research/zero-wam-posttrain-robotwin) checkpoints use diffusers component directories. Convert their transformer to LeRobot format:
+
+```bash
+uv run python examples/zero_wam/convert_checkpoint.py \
+  --source robbyant-research/zero-wam-pretrain \
+  --output outputs/zero_wam_robotwin --for-training
+```
+
+Use `--revision <Hub-commit>` to pin the source. The converter records the resolved revision and pins subsequent frozen-component loads to it. Local source directories must contain `transformer/config.json` and its safetensors shards; retain their `vae/`, `text_encoder/`, and `tokenizer/` directories for runtime use.
+
+`--for-training` creates processors without fitted statistics. Fine-tune with the training dataset before deployment. For inference conversion, replace it with `--action-stats /path/to/stats.json`. The stats file must contain `action.q01` and `action.q99` in dataset action order, or be the official RoboTwin `wan_va/assets/norm_stats/robotwin_icl.json`. RoboTwin end-effector statistics cannot be used for joint-space robots.
+
+Conversion rejects duplicate, missing, unexpected, and mismatched tensors. `conversion_report.json` lists mapped keys, missing and unexpected keys, shape mismatches, and deliberately discarded MCP tensors. `--no-mcp` omits the training heads for an inference-only artifact. Keep MCP enabled for the full training objective.
+
+## Camera, time, and action contracts
+
+Cameras in `obs_cam_keys` are resized to `height` × `width` (default 224 × 288), encoded independently, and concatenated along latent width. Camera order is part of the saved configuration. Do not swap left/right views between training and deployment.
+
+One latent frame covers four video frames. Video is sampled every `video_frame_stride` dataset frames, giving `action_per_frame = 4 * video_frame_stride`. With the default two latent frames per chunk, the first chunk yields one latent frame's actions; later chunks yield two. At 30 Hz with stride 2, this is 8 actions initially and 16 thereafter. The policy buffers observations while those actions execute and feeds them back before predicting again. Inference requires `frame_chunk_size >= 2`, since its first latent frame conditions on the current observation.
+
+`used_action_channel_ids` maps the dataset's ordered action vector into the model's 30 channels:
+
+| Model channels | Representation                                  |
+| -------------- | ----------------------------------------------- |
+| 0–6, 7–13      | Left/right end-effector position and quaternion |
+| 14–20, 21–27   | Left/right joint positions                      |
+| 28, 29         | Left/right gripper                              |
+
+The default RoboTwin order is left EEF (7), left gripper, right EEF (7), right gripper. The released RoboTwin adapter uses relative end-effector poses; conversion alone does not transform absolute poses, quaternion conventions, units, or robot kinematics. Supply model-compatible targets and the matching execution adapter.
+
+For a six-joint bimanual robot, choose the six joint channels and gripper per arm explicitly. This configures the tensor layout; it does not establish transfer performance on that embodiment:
+
+```bash
+uv run python examples/zero_wam/convert_checkpoint.py \
+  --source robbyant-research/zero-wam-pretrain \
+  --output outputs/zero_wam_joints --for-training \
+  --cameras observation.images.top observation.images.left observation.images.right \
+  --video-frame-stride 2 \
+  --action-channels 14 15 16 17 18 19 28 21 22 23 24 25 26 29
+```
+
+Standard LeRobot processors own q01/q99 normalization, saved statistics, and inverse action scaling. The model clips normalized actions to ±2. Quantiles must come from the selected training data. Min/max and unrelated robot statistics are unsuitable substitutes.
+
+## Training
+
+The policy trains video and action flow matching plus MCP future-video heads. It supports text-only samples and optional paired demonstration latents. The supplied LeRobot `task` is preserved before the encoder's HTML/whitespace cleanup; caption selection belongs in the dataset or language pipeline. Instruction and demonstration dropout follow the configured recipe.
+
+To avoid loading UMT5 for every training process, precompute the task embeddings:
+
+```bash
+uv run python examples/zero_wam/precompute_text_embeddings.py \
+  --dataset-root /path/to/dataset --output outputs/text_embeddings.pt
+
+uv run lerobot-train \
+  --policy.path=outputs/zero_wam_joints \
+  --policy.dtype=float32 --accelerator.mixed_precision=bf16 \
+  --policy.text_embedding_cache_path=outputs/text_embeddings.pt \
+  --dataset.repo_id=YOUR_ORG/YOUR_DATASET \
+  --batch_size=1 --steps=20000 --output_dir=outputs/train/zero_wam
+```
+
+The transformer declares `WanICLTransformerBlock` as its FSDP wrapping unit. Choose a distributed layout for available hardware; a single accelerator must fit the model, gradients, and optimizer state. The VAE and text encoder stay frozen and are excluded from policy weights and optimizer parameters. Their pinned source must remain accessible when reloading the policy.
+
+For demonstration-conditioned training, set `--policy.icl_pairs_path` to a JSONL manifest:
+
+```json
+{
+  "episode_index": 0,
+  "start_frame": 0,
+  "end_frame": 160,
+  "latent_path": "/path/to/demo.pth"
+}
+```
+
+Frame ranges are half-open. The entire target training window, including its last camera frame, must fit inside the paired segment. A clip that crosses the next subtask trains with text context only. With 11 latent frames and stride 2, a segment needs at least 81 source frames. Latent files contain a normalized Wan video `latent` and optional UMT5 `text_emb`.
+
+### Recorded robot episodes as prompts
+
+`examples/zero_wam/prepare_episode_prompts.py` resolves a recorded LeRobot v3 episode into a video path and its exact time bounds. This also works when multiple episodes share one MP4. Encode it once, then pass the resulting latent to rollout:
+
+```bash
+uv run python examples/zero_wam/prepare_episode_prompts.py \
+  --dataset-root /path/to/recorded_dataset \
+  --camera observation.images.top --episode-index 0 \
+  --max-video-frames 81 --output outputs/recorded_prompt.jsonl
+
+uv run python examples/zero_wam/encode_human_videos.py \
+  --pairs outputs/recorded_prompt.jsonl --output-dir outputs/prompt_latents
+```
+
+Use the `latent_path` from `outputs/prompt_latents/prompts.jsonl` as `--policy.icl_latent_path`, joining relative paths to the index's directory. For example, a `demo.pth` entry here becomes `outputs/prompt_latents/demo.pth`. Each entry records the source video, caption, crop bounds and frame cap. The cap samples across the complete demonstration rather than taking its first frames. For a newly recorded physical demonstration, supply `--prompt-text` when its instruction differs from the recorded episode's task label. Physical recording and execution use your robot/teleoperator integration and calibrated connection settings.
+
+The same preparation tool accepts a JSONL pairing index with `target_episode`, `target_from_frame`, `target_to_frame`, `prompt_episode`, `prompt_from_frame`, `prompt_to_frame`, `detail_raw` (the prompt caption), and `split`. Episode IDs must be source dataset IDs. For example:
+
+```bash
+uv run python examples/zero_wam/prepare_episode_prompts.py \
+  --dataset-root /path/to/abc \
+  --camera observation.images.top --pairs candidate_pairs.jsonl \
+  --dataset-id abc --split train --output outputs/abc_prompts.jsonl
+
+uv run python examples/zero_wam/encode_human_videos.py \
+  --pairs outputs/abc_prompts.jsonl --output-dir outputs/abc_prompt_latents
+```
+
+Select the split before creating prompt/target pairs and use distinct episodes. `--dataset-id` filters a pairing index with a `dataset` column. `--metadata-only` resolves paths before downloading videos and reports missing files. Preparation rejects self-pairs and out-of-range frames. Keep held-out source recordings and related takes out of training; different episode IDs alone do not establish independent source sessions.
+
+For training, set `--policy.icl_pairs_path=outputs/abc_prompt_latents/pairs.jsonl`. Each crop/caption has its own encoding identity, so shared MP4 containers and alternative captions do not overwrite one another. The encoder also accepts ordinary `prompt_video` / `prompt_text` entries and legacy `human_video` / `human_text` entries. Samples without a matching pair train with text context only.
+
+### Sample from all available prompt episodes
+
+For large datasets, compact pools avoid expanding every target/prompt combination. An unencoded pool contains one member per source episode or segment:
+
+```json
+{
+  "pool_id": "fold-shirts",
+  "dataset": "abc",
+  "split": "train",
+  "text": "fold and stack the t-shirts",
+  "members": [
+    { "episode_index": 0, "start_frame": 0, "end_frame": 300 },
+    { "episode_index": 7, "start_frame": 10, "end_frame": 340 },
+    { "episode_index": 12, "start_frame": 0, "end_frame": 280 }
+  ]
+}
+```
+
+Prepare and encode each member once:
+
+```bash
+uv run python examples/zero_wam/prepare_episode_prompts.py \
+  --dataset-root /path/to/abc --camera observation.images.top \
+  --pools abc_training_pools.jsonl --dataset-id abc --split train \
+  --output outputs/abc_pool_members.jsonl
+
+uv run python examples/zero_wam/encode_human_videos.py \
+  --pairs outputs/abc_pool_members.jsonl --output-dir outputs/abc_prompt_latents
+```
+
+Train with `--policy.icl_pools_path=outputs/abc_prompt_latents/pools.jsonl` and `--policy.icl_pools_split=train`. Choose pools or fixed pairs; `icl_pools_path` and `icl_pairs_path` are mutually exclusive. Encoded pools add `latent_path` to each member. A training forward selects a matching pool, then a different episode and one of its segments. The full target window must fit a member interval. Multiple segments from the target episode are all excluded as prompts. Pool storage and the episode index grow with member count rather than pair count.
+
+Use one source dataset per file and split recordings before building pools. The loader rejects a declared episode appearing across splits, duplicate member intervals and missing encoded paths. It does not establish that different episode IDs come from independent source sessions. Prompt-cache files are written atomically so interrupted encoding can resume without treating a partial file as a completed latent.
+
+Set `dataset.episodes` to the target episodes in the same training split. `icl_pools_split` selects demonstration pools; it does not filter the target dataset or compute train-only normalization statistics.
+
+For LeRobot streaming, set `--dataset.streaming=true`. If `dataset.root` contains local metadata with train-only statistics, also set `--dataset.streaming_data_root=hf://datasets/OWNER/DATASET@COMMIT_SHA` so payloads stream from the pinned source. Without that override, an explicit local root selects local payload files too. Streaming maintains bounded episode buffers; it does not require downloading the whole video dataset. Encoded demonstration latents are prepared separately.
+
+Prompt preparation can also read from a pinned Hub source while keeping metadata local:
+
+```bash
+uv run python examples/zero_wam/prepare_episode_prompts.py \
+  --dataset-root /path/to/abc_metadata --camera observation.images.top \
+  --streaming-data-root hf://datasets/OWNER/DATASET@COMMIT_SHA \
+  --pools abc_training_pools.jsonl --dataset-id abc --split train \
+  --output outputs/abc_pool_members.jsonl
+
+uv run python examples/zero_wam/encode_human_videos.py \
+  --pairs outputs/abc_pool_members.jsonl --output-dir outputs/abc_prompt_latents \
+  --text-embedding-cache outputs/text_embeddings.pt \
+  --mp4-sidecar /path/to/streaming-index.npz
+```
+
+The encoder fetches the keyframe-aligned byte range for each prompt interval and decodes only its selected frames. It does not localize full source containers. A supplied streaming index avoids parsing source headers again; without one, a small file-index cache is used. Remote prompts require explicit finite start/end times. `--max-prompt-video-mb` defaults to 512 and rejects oversized synthesized clips before payload fetching. The prepared frame cap samples across the full demonstration.
+
+Keep Hub authentication available when relocating caches with `HF_HOME`; `HF_TOKEN_PATH` can point to your existing login token file. Native HTTP reads honor `RateLimit` and `Retry-After` reset windows before bounded retries. If rate limiting persists, reduce encoding concurrency and rerun the same command to resume completed prompt files.
+
+The optional text cache is produced by `precompute_text_embeddings.py` and must contain every exact prompt instruction. It avoids loading UMT5 and re-encoding repeated instructions during video preparation. Cache identity includes the pinned video revision, crop, caption, encoder settings and text-cache checksum; changing the text cache produces new latent files.
+
+### Reuse a prompt cache across runs and machines
+
+The encoder writes `latent_path` relative to each output manifest. Both fixed pairs and compact pools resolve these references from the manifest's directory, so the complete cache folder can be moved or saved as a separate dataset repository. Previously encoded absolute paths remain supported. Keep source revisions, episode splits and encoding settings alongside the cache, and pin the repository revision used for each run. Stage the prompt cache locally for training; target observations can still use LeRobot streaming.
+
+Add `--share-text-embeddings` to store each distinct padded demonstration caption once in `text_embeddings/`. The video files then contain a relative `text_emb_path` instead of an inline `text_emb`. Preserve that subdirectory when copying the cache. The policy loads both formats and keeps a bounded CPU cache of shared text. Missing shared captions raise an error instead of silently using the target instruction. The normalized video latents, nonzero empty-caption embedding and full text padding are unchanged.
+
+For example, an 81-frame 320×480 prompt has 1,209,600 bytes of BF16 video latents. Its 512×4096 padded text tensor adds 4,194,304 bytes when embedded in every file. With blank demonstration captions, 6,430 such prompts need approximately 7.78 GB of tensor payload plus one shared 4.19 MB caption, rather than 34.75 GB of repeated video/text tensors. Serialization and metadata add overhead. This is a storage calculation, not a full-dataset benchmark; different frame caps or resolutions change it. The flag changes cache identity, so inline and shared-caption files can coexist.
+
+### Compare video context on held-out clips
+
+`examples/zero_wam/evaluate_video_prompts.py` compares correct, contrasting and absent demonstration context on streamed held-out target clips. It uses empty target text and requires the exact padded empty-caption embedding in both demonstration files. Correct and contrasting video latents must have identical shapes. Each target/noise seed is prepared once, including MCP targets, and reused across all three conditions.
+
+Create a cases JSONL with one comparison per target episode. For example:
+
+```json
+{
+  "dataset_repo_id": "OWNER/DATASET",
+  "revision": "COMMIT_SHA",
+  "split": "validation",
+  "pool_dataset": "abc",
+  "target_episode": 20,
+  "target_task": "load the cups into the dish rack",
+  "correct_prompt_episode": 0,
+  "contrasting_prompt_episode": 7,
+  "correct_pool_id": "load-cups",
+  "contrasting_pool_id": "unload-cups"
+}
+```
+
+The episode-split JSON must contain the same `revision` and disjoint `train`, `validation` and `test` episode-ID lists. Targets must belong to the requested held-out split; both prompts must be distinct training episodes. Pool IDs and source episode IDs resolve to existing encoded files in the training pools manifest. The tool checks task membership against dataset metadata: the correct prompt shares the target label, and the contrasting prompt excludes it. Inspect the demonstrations as well; labels alone do not establish behavioral equivalence or independent source recordings.
+
+Use a local native checkpoint with its saved processors and exported safetensors. If the training checkpoint uses DCP, convert it first with the existing `lerobot-convert-dcp` command:
+
+```bash
+uv run lerobot-convert-dcp --checkpoint_dir=/path/to/checkpoints/005000
+
+uv run python examples/zero_wam/evaluate_video_prompts.py \
+  --policy /path/to/checkpoints/005000/pretrained_model \
+  --train-config /path/to/train_config.json \
+  --cases outputs/validation_cases.jsonl \
+  --prompt-pools outputs/abc_prompt_latents/pools.jsonl \
+  --episode-splits outputs/episode_splits.json \
+  --text-embedding-cache outputs/text_embeddings.pt \
+  --split validation --device cuda --amp bfloat16 \
+  --clips-per-episode 1 --noise-seeds 0 1 2 \
+  --chunk-size 2 --window-size 16 --max-scanned-clips 10000 \
+  --output outputs/validation_prompt_diagnostic.jsonl
+```
+
+The supplied training configuration must use native LeRobot streaming and a pinned dataset revision. The tool selects only the declared target episodes, disables image augmentation, reuses the checkpoint's normalization processors, skips padded windows and stops at the scan limit. Target payloads stream through the configured reader. It runs in one process and needs memory for the exported model and frozen components.
+
+Each completed noise draw records native flow-matching losses for all three conditions and the change in predicted action velocity over valid future action elements. Action velocity is the model's flow prediction; these values are not denoised action error or task success. In particular, a nonzero sensitivity score does not establish that the model follows the demonstration. Completed runs also write a `.summary.json` with input-manifest hashes and diagnostic settings. Incomplete runs retain completed JSONL rows but do not write a completed summary, and existing outputs are never overwritten.
+
+## Streaming inference
+
+```bash
+uv run lerobot-rollout \
+  --policy.path=outputs/train/zero_wam/checkpoints/last/pretrained_model \
+  --policy.icl_video_path=/path/to/recorded_demo.mp4 \
+  --robot.type=YOUR_ROBOT --robot.id=YOUR_ROBOT_ID \
+  --task="Put the cup in the tray"
+```
+
+Supply the robot's connection and camera configuration as usual. Use `icl_latent_path` for a precomputed demonstration or `icl_video_path` for an ordinary video. Both are optional and mutually exclusive. Videos default to 12 fps at 320 × 480. Context is encoded once per reset and kept in the KV cache. Only video queries attend directly to demonstration tokens.
+
+Streaming inference supports **one environment** through `select_action()`. Call `reset()` between episodes. Direct chunk calls do not supply the intermediate observation feedback this model needs, and RTC execution is not supported by this integration. Instruction changes apply at the next chunk boundary after queued actions have executed. Changing demonstration videos requires resetting the policy.
+
+`guidance_scale < 0` uses empty target text; values up to 1 use the instruction, and values above 1 enable text guidance. `icl_guidance_scale > 1` contrasts video-conditioned and unconditioned streams. When ICL guidance is active, it takes precedence over text CFG, following upstream.
+
+## Validation and current limits
+
+The focused CPU tests execute a small real transformer with deterministic fake frozen encoders. They cover training/backward/update, gradient-checkpointing recomputation, serialization, conversion with and without MCP, normalization persistence, task preservation, and multi-chunk streaming with and without demonstration context. Run `uv run pytest tests/policies/zero_wam -q`.
+
+A full-weight H100 check executed the released 10.8B transformer using CUDA flex attention, BF16, MCP heads and synthetic prepared inputs, with demonstration context on and off. All tested outputs matched the pinned upstream implementation exactly after aligning its rotary tables to the full precision used here. With upstream's default BF16 rotary tables, maximum absolute output differences were 0.09375 for video and 0.03125 for actions. This comparison isolates transformer execution; it does not validate preprocessing, denoising or task success.
+
+A separate single-B300 smoke test ran the full transformer and real frozen VAE with forward/backward and FP32 AdamW, using synthetic camera clips, actions and precomputed context. Per-GPU batches of 1, 2, 4 and 8 passed with gradient checkpointing and accumulation 4. This validates short single-GPU execution; streaming I/O and distributed performance were excluded.
+
+VAE/text preprocessing parity, full-size save/resume, distributed training, RoboTwin task-success evaluation, and real-YAM deployment remain to be established. No benchmark success rate or YAM transfer result is claimed. Standard LeRobot quantile denominators also differ from upstream: epsilon is applied to constant dimensions rather than added to every dimension. Account for that difference when checking action scaling.

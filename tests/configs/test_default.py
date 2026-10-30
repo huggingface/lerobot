@@ -108,3 +108,20 @@ def test_dataset_config_eval_split():
     DatasetConfig(repo_id="user/repo", repo_type="bucket", eval_split=0.1)
     with pytest.raises(ValueError, match="streaming"):
         DatasetConfig(repo_id="user/repo", streaming=True, eval_split=0.1)
+
+
+def test_streaming_payload_override_cli_and_round_trip() -> None:
+    payload = "hf://datasets/owner/repo@" + "a" * 40
+    cfg = draccus.parse(
+        DatasetConfig,
+        args=[
+            "--repo_id=owner/repo",
+            "--root=/local/metadata",
+            "--streaming=true",
+            f"--streaming_data_root={payload}",
+        ],
+    )
+    restored = draccus.decode(DatasetConfig, draccus.encode(cfg))
+    assert restored.root == "/local/metadata" and restored.streaming_data_root == payload
+    with pytest.raises(ValueError, match="streaming_data_root requires streaming"):
+        DatasetConfig(repo_id="owner/repo", streaming_data_root=payload)

@@ -1,0 +1,1416 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""CPU tests for Zero-WAM on a tiny transformer with fake frozen components."""
+
+from __future__ import annotations
+
+import copy
+import io
+import json
+import runpy
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import torch
+import torch.distributed.checkpoint as dcp
+from torch.distributed.checkpoint.state_dict import get_optimizer_state_dict, set_optimizer_state_dict
+
+pytest.importorskip("diffusers")
+
+from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
+from lerobot.policies.factory import (  # noqa: E402
+    get_policy_class,
+    make_policy_config,
+    make_pre_post_processors,  # noqa: E402
+)
+from lerobot.policies.zero_wam.configuration_zero_wam import ZeroWAMConfig  # noqa: E402
+from lerobot.policies.zero_wam.modeling_zero_wam import ZeroWAMPolicy, read_video_at_fps  # noqa: E402
+from lerobot.policies.zero_wam.prompt_cache import load_prompt_text  # noqa: E402
+from lerobot.policies.zero_wam.transformer import ICL_CACHE_TYPE  # noqa: E402
+from lerobot.utils.constants import ACTION  # noqa: E402
+
+CAMERAS = ["observation.images.base", "observation.images.left_wrist", "observation.images.right_wrist"]
+REBOT_CHANNELS = [*range(14, 20), 28, *range(21, 27), 29]
+Z_DIM = 4
+TEXT_DIM = 16
+
+
+class FakeVAE(torch.nn.Module):
+    """Deterministic stand-in for the Wan2.2 VAE with its 16x spatial / 4x causal temporal downsample."""
+
+    def __init__(self):
+        super().__init__()
+        self.proj = torch.nn.Conv3d(3, 2 * Z_DIM, 1)
+        self.config = SimpleNamespace(latents_mean=[0.0] * Z_DIM, latents_std=[1.0] * Z_DIM, z_dim=Z_DIM)
+
+    def moments(self, video, first_chunk=True):
+        t = video.shape[2]
+        frames = 1 + (t - 1) // 4 if first_chunk else t // 4
+        out = torch.nn.functional.adaptive_avg_pool3d(
+            video.float(), (frames, video.shape[3] // 16, video.shape[4] // 16)
+        )
+        return self.proj(out).to(video.dtype)
+
+    def encode(self, video):
+        mean, logvar = self.moments(video).chunk(2, dim=1)
+        return SimpleNamespace(latent_dist=SimpleNamespace(mean=mean, logvar=logvar))
+
+
+class FakeStreamingVAE:
+    def __init__(self, vae):
+        self.vae = vae
+        self.first = True
+
+    def clear_cache(self):
+        self.first = True
+
+    def encode_chunk(self, video):
+        out = self.vae.moments(video, first_chunk=self.first)
+        self.first = False
+        return out
+
+
+class FakeTokenizer:
+    def __call__(self, prompts, max_length, **kwargs):
+        ids = torch.zeros(len(prompts), max_length, dtype=torch.long)
+        mask = torch.zeros_like(ids)
+        for i, p in enumerate(prompts):
+            n = min(len(p.split()) + 1, max_length)
+            ids[i, :n] = torch.arange(1, n + 1)
+            mask[i, :n] = 1
+        return SimpleNamespace(input_ids=ids, attention_mask=mask)
+
+
+class FakeTextEncoder(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.emb = torch.nn.Embedding(64, TEXT_DIM)
+
+    def forward(self, ids, mask):
+        return SimpleNamespace(last_hidden_state=self.emb(ids % 64))
+
+
+def tiny_config(**overrides) -> ZeroWAMConfig:
+    kwargs = {
+        "num_attention_heads": 2,
+        "attention_head_dim": 24,
+        "in_channels": Z_DIM,
+        "out_channels": Z_DIM,
+        "text_dim": TEXT_DIM,
+        "freq_dim": 16,
+        "ffn_dim": 64,
+        "num_layers": 4,
+        "action_inner_dim": 48,
+        "action_ffn_dim": 64,
+        "mcp_hidden_collect_layers": (0, 1, 2, 3),
+        "rope_max_seq_len": 64,
+        "attention_backend": "sdpa",
+        "gradient_checkpointing": False,
+        "dtype": torch.float32,
+        "frozen_dtype": torch.float32,
+        "device": "cpu",
+        "text_encoder_device": "cpu",
+        "max_sequence_length": 8,
+        "obs_cam_keys": CAMERAS,
+        "height": 32,
+        "width": 32,
+        "video_frame_stride": 1,
+        "frame_chunk_size": 2,
+        "used_action_channel_ids": REBOT_CHANNELS,
+        "train_num_latent_frames": 5,
+        "num_inference_steps": 2,
+        "action_num_inference_steps": 2,
+        "icl_height": 32,
+        "icl_width": 64,
+        "input_features": {k: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 48, 64)) for k in CAMERAS},
+        "output_features": {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(14,))},
+    }
+    kwargs.update(overrides)
+    return ZeroWAMConfig(**kwargs)
+
+
+def make_policy(config: ZeroWAMConfig) -> ZeroWAMPolicy:
+    torch.manual_seed(0)
+    policy = ZeroWAMPolicy(config)
+    vae = FakeVAE()
+    policy._frozen = {
+        "vae": vae,
+        "streaming_vae": FakeStreamingVAE(vae),
+        "text_encoder": FakeTextEncoder(),
+        "tokenizer": FakeTokenizer(),
+    }
+    return policy
+
+
+def training_batch(config: ZeroWAMConfig, batch_size: int = 1) -> dict:
+    frames = len(config.observation_delta_indices)
+    steps = len(config.action_delta_indices)
+    batch = {k: torch.rand(batch_size, frames, 3, 48, 64) for k in CAMERAS}
+    batch[ACTION] = torch.randn(batch_size, steps, 14)
+    batch[f"{ACTION}_is_pad"] = torch.zeros(batch_size, steps, dtype=torch.bool)
+    batch["task"] = ["pick up the red cup | put the red cup in the bin"] * batch_size
+    batch["episode_index"] = torch.zeros(batch_size, dtype=torch.long)
+    batch["frame_index"] = torch.full((batch_size,), 10)
+    return batch
+
+
+def write_icl_latent(tmp_path, name="human.pth"):
+    path = tmp_path / name
+    torch.save({"latent": torch.randn(1, Z_DIM, 3, 2, 4), "text_emb": torch.randn(8, TEXT_DIM)}, path)
+    return path
+
+
+def test_registered_and_resolved() -> None:
+    assert isinstance(make_policy_config("zero_wam"), ZeroWAMConfig)
+    assert get_policy_class("zero_wam") is ZeroWAMPolicy
+
+
+def test_temporal_layout() -> None:
+    config = ZeroWAMConfig(video_frame_stride=2, train_num_latent_frames=11, frame_chunk_size=2)
+    assert config.action_per_frame == 8
+    assert config.chunk_size == 16
+    assert config.observation_delta_indices == list(range(0, 82, 2))
+    assert config.action_delta_indices == list(range(80))
+
+
+def test_invalid_channels_raise() -> None:
+    with pytest.raises(ValueError):
+        ZeroWAMConfig(used_action_channel_ids=[0, 0])
+    with pytest.raises(ValueError):
+        ZeroWAMConfig(used_action_channel_ids=[30])
+
+
+@pytest.mark.parametrize("with_icl", [False, True])
+@pytest.mark.parametrize("mcp_blocks_per_group", [1, 2])
+def test_training_loss_backward(tmp_path, with_icl: bool, mcp_blocks_per_group: int) -> None:
+    overrides = {"drop_icl": 0.0, "droptext_target": 0.0}
+    if with_icl:
+        latent = write_icl_latent(tmp_path)
+        pairs = tmp_path / "pairs.jsonl"
+        pairs.write_text(
+            json.dumps({"episode_index": 0, "start_frame": 0, "end_frame": 50, "latent_path": str(latent)})
+            + "\n"
+        )
+        overrides["icl_pairs_path"] = str(pairs)
+    policy = make_policy(tiny_config(mcp_blocks_per_group=mcp_blocks_per_group, **overrides))
+    policy.train()
+    loss, logs = policy.forward(training_batch(policy.config, batch_size=2))
+    assert torch.isfinite(loss)
+    assert set(logs) == {"latent_loss", "action_loss", "mcp_loss"}
+    loss.backward()
+    trainable = {name: p for name, p in policy.named_parameters() if p.requires_grad}
+    # DCP initializes state for every trainable optimizer parameter on restart.
+    # Unused released layers would be absent from the checkpoint's Adam state.
+    assert not [name for name, p in trainable.items() if p.grad is None]
+    assert all(torch.isfinite(p.grad).all() for p in trainable.values())
+    if mcp_blocks_per_group > 1:
+        first_mcp_block = policy.transformer.mcp_blocks[0][0]
+        assert first_mcp_block.attn2.action_to_out[0].weight.grad.abs().sum() > 0
+        assert first_mcp_block.action_ffn.net[0].proj.weight.grad.abs().sum() > 0
+    assert policy.transformer.action_embedder.weight.grad.abs().sum() > 0
+    before = policy.transformer.action_embedder.weight.detach().clone()
+    optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=1e-3)
+    optimizer.step()
+    assert len(optimizer.state) == len(trainable)
+    assert not torch.equal(before, policy.transformer.action_embedder.weight)
+
+
+def test_training_preserves_selected_task(monkeypatch) -> None:
+    policy = make_policy(tiny_config(droptext_target=0.0))
+    batch = training_batch(policy.config)
+    supplied = "pick up the red cup | put the red cup in the bin"
+    seen = []
+    encode = policy._encode_text
+
+    def capture(prompt):
+        seen.append(prompt)
+        return encode(prompt)
+
+    monkeypatch.setattr(policy, "_encode_text", capture)
+    policy.forward(batch)
+    assert seen == [supplied]
+
+
+def test_dcp_optimizer_restart(tmp_path) -> None:
+    config = tiny_config(drop_icl=0.0, droptext_target=0.0)
+    policy = make_policy(config)
+    optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=1e-3)
+    batch = training_batch(config, batch_size=2)
+    policy.forward(batch)[0].backward()
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+    checkpoint = tmp_path / "dcp"
+    dcp.save(
+        {"model": policy.state_dict(), "optimizer": get_optimizer_state_dict(policy, optimizer)},
+        checkpoint_id=checkpoint,
+    )
+
+    restored = make_policy(config)
+    restored_optimizer = torch.optim.AdamW(restored.get_optim_params(), lr=1e-3)
+    state = {
+        "model": restored.state_dict(),
+        "optimizer": get_optimizer_state_dict(restored, restored_optimizer),
+    }
+    dcp.load(state, checkpoint_id=checkpoint)
+    restored.load_state_dict(state["model"], strict=True)
+    set_optimizer_state_dict(restored, restored_optimizer, state["optimizer"])
+    restored_optimizer.zero_grad(set_to_none=True)
+
+    original_params = dict(policy.named_parameters())
+    for name, parameter in restored.named_parameters():
+        torch.testing.assert_close(parameter, original_params[name], atol=0, rtol=0)
+        if parameter.requires_grad:
+            expected = optimizer.state[original_params[name]]
+            actual = restored_optimizer.state[parameter]
+            assert actual.keys() == expected.keys()
+            for field in expected:
+                torch.testing.assert_close(actual[field], expected[field], atol=0, rtol=0)
+
+    rng_state = torch.get_rng_state()
+    loss = policy.forward(batch)[0]
+    loss.backward()
+    optimizer.step()
+    torch.set_rng_state(rng_state)
+    restored_loss = restored.forward(batch)[0]
+    restored_loss.backward()
+    restored_optimizer.step()
+    torch.testing.assert_close(restored_loss, loss, atol=0, rtol=0)
+    for name, value in restored.state_dict().items():
+        torch.testing.assert_close(value, policy.state_dict()[name], atol=0, rtol=0)
+
+
+@pytest.mark.parametrize("stride", [1, 2])
+def test_icl_pair_requires_the_entire_training_window(stride) -> None:
+    policy = make_policy(tiny_config(video_frame_stride=stride))
+    # A conditioning frame plus 16*stride future frames fit exactly at frame 100.
+    stop = 101 + 16 * stride
+    policy._icl_pairs = {7: [{"start_frame": 100, "end_frame": stop, "latent_path": "matched.pth"}]}
+    assert policy._find_icl_latent(7, 100) == "matched.pth"
+    assert policy._find_icl_latent(7, 101) is None
+    assert policy._find_icl_latent(7, 99) is None
+    assert policy._find_icl_latent(8, 100) is None
+
+
+def test_training_from_compact_prompt_pool(tmp_path, monkeypatch) -> None:
+    latent = write_icl_latent(tmp_path, "other-episode.pth")
+    pools = tmp_path / "pools.jsonl"
+    pools.write_text(
+        json.dumps(
+            {
+                "pool_id": "task",
+                "dataset": "abc",
+                "split": "train",
+                "members": [
+                    {
+                        "episode_index": 0,
+                        "start_frame": 0,
+                        "end_frame": 50,
+                        "latent_path": "must-not-load.pth",
+                    },
+                    {"episode_index": 1, "start_frame": 0, "end_frame": 50, "latent_path": str(latent)},
+                ],
+            }
+        )
+        + "\n"
+    )
+    policy = make_policy(tiny_config(icl_pools_path=str(pools), drop_icl=0.0, droptext_target=0.0))
+    loaded = []
+    original = policy._load_icl_latent
+
+    def capture(path):
+        loaded.append(path)
+        return original(path)
+
+    monkeypatch.setattr(policy, "_load_icl_latent", capture)
+    loss, _ = policy(training_batch(policy.config))
+    loss.backward()
+    assert loaded == [str(latent)]
+    assert torch.isfinite(loss) and policy.transformer.action_embedder.weight.grad.abs().sum() > 0
+    with pytest.raises(ValueError, match="only one of icl_pairs_path and icl_pools_path"):
+        tiny_config(icl_pairs_path="pairs.jsonl", icl_pools_path="pools.jsonl")
+
+
+def test_processor_quantiles_survive_save_reload(tmp_path) -> None:
+    config = tiny_config()
+    q01 = torch.arange(14, dtype=torch.float32)
+    q99 = q01 + 2
+    q99[-1] = q01[-1]  # Constant gripper channel must stay finite.
+    pre, post = make_pre_post_processors(config, dataset_stats={ACTION: {"q01": q01, "q99": q99}})
+    pre.save_pretrained(tmp_path)
+    post.save_pretrained(tmp_path)
+    loaded_pre, loaded_post = make_pre_post_processors(config, pretrained_path=tmp_path)
+    batch = {**{k: torch.zeros(3, 48, 64) for k in CAMERAS}, ACTION: q01.clone(), "task": "move"}
+    normalized = loaded_pre(batch)[ACTION]
+    assert torch.isfinite(normalized).all()
+    torch.testing.assert_close(normalized[..., :-1], -torch.ones(1, 13))
+    torch.testing.assert_close(loaded_post(normalized), q01[None])
+
+
+def test_inference_rejects_multiple_environments() -> None:
+    policy = make_policy(tiny_config())
+    with pytest.raises(ValueError, match="batch size 1"):
+        policy.select_action({k: torch.zeros(2, 3, 48, 64) for k in CAMERAS})
+
+
+@pytest.mark.parametrize("no_mcp", [False, True])
+def test_conversion_strict_reload_and_normalization(tmp_path, monkeypatch, no_mcp) -> None:
+    from safetensors.torch import save_file
+
+    policy = make_policy(tiny_config())
+    source = tmp_path / "source" / "transformer"
+    source.mkdir(parents=True)
+    policy.transformer.save_config(source)
+    save_file(
+        {k: v.detach().clone() for k, v in policy.transformer.state_dict().items()},
+        source / "diffusion_pytorch_model.safetensors",
+    )
+    stats = tmp_path / "stats.json"
+    stats.write_text(json.dumps({ACTION: {"q01": [1.0] * 14, "q99": [3.0] * 14}}))
+    output = tmp_path / "converted"
+    argv = [
+        "convert_checkpoint.py",
+        "--source",
+        str(source.parent),
+        "--output",
+        str(output),
+        "--cameras",
+        *CAMERAS,
+        "--action-channels",
+        *map(str, REBOT_CHANNELS),
+        "--dtype",
+        "float32",
+        "--action-stats",
+        str(stats),
+    ]
+    if no_mcp:
+        argv.append("--no-mcp")
+    monkeypatch.setattr("sys.argv", argv)
+    script = Path(__file__).parents[3] / "examples/zero_wam/convert_checkpoint.py"
+    runpy.run_path(str(script), run_name="__main__")
+    loaded = ZeroWAMPolicy.from_pretrained(output, strict=True)
+    assert loaded.config.enable_mcp is not no_mcp
+    for name, value in loaded.transformer.state_dict().items():
+        torch.testing.assert_close(value, policy.transformer.state_dict()[name])
+    _, post = make_pre_post_processors(loaded.config, pretrained_path=output)
+    torch.testing.assert_close(post(torch.zeros(1, 14)), torch.full((1, 14), 2.0))
+    report = json.loads((output / "conversion_report.json").read_text())
+    assert not report["missing"] and not report["unexpected"] and not report["shape_mismatches"]
+    assert bool(report["dropped_mcp"]) is no_mcp
+
+
+def test_gradient_checkpointing_matches() -> None:
+    batch = training_batch(tiny_config())
+    losses = []
+    for checkpointing in (False, True):
+        policy = make_policy(tiny_config(gradient_checkpointing=checkpointing))
+        policy.train()
+        torch.manual_seed(1)
+        losses.append(policy.forward(batch)[0])
+    torch.testing.assert_close(losses[0], losses[1])
+
+
+def test_gradient_checkpointing_gradients_match_across_batch() -> None:
+    # Every sample draws its own chunk size and window, so each needs its own masks on recompute.
+    batch = training_batch(tiny_config(train_frame_chunk_size=0, train_attn_window=0), batch_size=3)
+    grads = []
+    for checkpointing in (False, True):
+        policy = make_policy(tiny_config(gradient_checkpointing=checkpointing))
+        policy.train()
+        torch.manual_seed(3)
+        policy.forward(batch)[0].backward()
+        grads.append({n: p.grad.clone() for n, p in policy.named_parameters() if p.grad is not None})
+    assert grads[0].keys() == grads[1].keys()
+    for name in grads[0]:
+        torch.testing.assert_close(grads[0][name], grads[1][name], msg=name)
+
+
+def test_save_load_roundtrip(tmp_path) -> None:
+    policy = make_policy(tiny_config())
+    policy.save_pretrained(tmp_path)
+    loaded = ZeroWAMPolicy.from_pretrained(tmp_path, strict=True)
+    for (name, a), (_, b) in zip(policy.state_dict().items(), loaded.state_dict().items(), strict=True):
+        torch.testing.assert_close(a, b, msg=name)
+    # attn2 action K/V alias the video projections and must stay tied after loading.
+    block = loaded.transformer.blocks[0].attn2
+    assert block.action_to_k is block.to_k and block.action_norm_k is block.norm_k
+
+
+def run_rollout(policy: ZeroWAMPolicy, steps: int) -> list[torch.Tensor]:
+    torch.manual_seed(0)
+    actions = []
+    for _ in range(steps):
+        obs = {k: torch.rand(1, 3, 48, 64) for k in CAMERAS}
+        obs["task"] = ["pick up the red cup"]
+        actions.append(policy.select_action(obs))
+    return actions
+
+
+@pytest.mark.parametrize("with_icl", [False, True])
+def test_streaming_inference(tmp_path, with_icl: bool) -> None:
+    overrides = {"icl_latent_path": str(write_icl_latent(tmp_path))} if with_icl else {}
+    policy = make_policy(tiny_config(**overrides))
+    apf = policy.config.action_per_frame
+    # First chunk skips the conditioning frame; later chunks yield frame_chunk_size frames each.
+    first, later = apf, policy.config.chunk_size
+    actions = run_rollout(policy, first + 2 * later + 1)
+    assert all(a.shape == (1, 14) and torch.isfinite(a).all() for a in actions)
+    assert policy._chunk_idx == 3
+    counts = policy.transformer.cache_counts()
+    assert (counts[ICL_CACHE_TYPE] > 0) == with_icl
+    policy.reset()
+    assert policy.transformer.cache_counts() == {}
+    assert not policy._action_queue
+
+
+def test_icl_video_file_is_encoded_as_a_whole_clip(tmp_path) -> None:
+    av = pytest.importorskip("av")
+    import numpy as np
+
+    video = tmp_path / "human_demo.mp4"
+    with av.open(str(video), "w") as container:
+        stream = container.add_stream("mpeg4", rate=30)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        for i in range(90):  # 3 s: 37 frames at the 12 fps ICL rate, not a streaming-chunk length
+            frame = np.full((48, 64, 3), (i * 3) % 255, dtype=np.uint8)
+            for packet in stream.encode(av.VideoFrame.from_ndarray(frame, format="rgb24")):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+    policy = make_policy(tiny_config(icl_video_path=str(video), icl_width=64))
+    streamed_widths = []
+    streaming = policy._frozen["streaming_vae"]
+    original = streaming.encode_chunk
+
+    def tracking_encode_chunk(clip):
+        streamed_widths.append(clip.shape[-1])
+        return original(clip)
+
+    streaming.encode_chunk = tracking_encode_chunk
+    actions = run_rollout(policy, policy.config.action_per_frame + policy.config.chunk_size + 1)
+    assert all(torch.isfinite(a).all() for a in actions)
+    assert policy.transformer.cache_counts()[ICL_CACHE_TYPE] > 0
+    # Only camera keyframes (width 32) are streamed; the ICL clip (width 64) is encoded whole.
+    assert streamed_widths and set(streamed_widths) == {policy.config.width}
+
+
+def test_bounded_prompt_keeps_the_selected_episode_and_final_motion(tmp_path) -> None:
+    av = pytest.importorskip("av")
+    import numpy as np
+
+    video = tmp_path / "three_episodes.mp4"
+    with av.open(str(video), "w") as container:
+        stream = container.add_stream("mpeg4", rate=30)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        for i in range(90):
+            color = (230, 0, 0) if i < 30 else (0, 80 + (i - 30) * 5, 0) if i < 60 else (0, 0, 230)
+            rgb = np.empty((48, 64, 3), dtype=np.uint8)
+            rgb[:] = color
+            for packet in stream.encode(av.VideoFrame.from_ndarray(rgb, format="rgb24")):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    clip = read_video_at_fps(str(video), 12, start_time_s=1, end_time_s=2, max_frames=5)
+    assert clip.shape == (5, 3, 48, 64)
+    assert clip[:, [0, 2]].max() < 0.05  # Neither adjacent red/blue episode is included.
+    assert clip[-1, 1].mean() > clip[0, 1].mean() + 0.4  # Sample the whole motion, not its first 5 frames.
+    with pytest.raises(ValueError, match="past the available video"):
+        read_video_at_fps(str(video), 12, start_time_s=2, end_time_s=4, max_frames=5)
+
+
+def test_episode_prompt_uses_video_offset_and_source_episode_id(tmp_path, monkeypatch) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/prepare_episode_prompts.py"
+    prepare = runpy.run_path(str(example))["episode_video_spec"]
+    info = {"fps": 30, "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"}
+    episode = {
+        "episode_index": 700,
+        "length": 180,
+        "videos/top/from_timestamp": 10.0,
+        "videos/top/chunk_index": 2,
+        "videos/top/file_index": 3,
+    }
+    prompt = prepare(tmp_path, info, episode, "top", 30, 90)
+    assert prompt["prompt_episode_index"] == 700
+    assert prompt["prompt_start_s"] == 11.0 and prompt["prompt_end_s"] == 13.0
+    assert prompt["prompt_video"] == str(tmp_path / "videos/top/chunk-002/file-003.mp4")
+    remote_root = "hf://datasets/owner/data@" + "a" * 40
+
+    def unexpected_local_resolution(*args):
+        raise AssertionError("Remote preparation must not resolve local payload paths")
+
+    with monkeypatch.context() as context:
+        context.setattr(Path, "resolve", unexpected_local_resolution)
+        remote = prepare(tmp_path, info, episode, "top", 30, 90, data_root=remote_root)
+    assert remote["prompt_video"] == remote_root + "/videos/top/chunk-002/file-003.mp4"
+    assert remote["prompt_start_s"] == 11 and remote["prompt_end_s"] == 13
+    with pytest.raises(ValueError, match="Invalid prompt frame interval"):
+        prepare(tmp_path, info, episode, "top", 0, 181)
+
+
+def test_prompt_encoding_identity_preserves_crops_and_captions(tmp_path) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/encode_human_videos.py"
+    spec = runpy.run_path(str(example))["prompt_spec"]
+    base = {
+        "prompt_video": str(tmp_path / "episodes.mp4"),
+        "prompt_text": "fold the cloth",
+        "prompt_start_s": 10,
+        "prompt_end_s": 20,
+    }
+    assert spec(base, 81) != spec({**base, "prompt_start_s": 12}, 81)
+    assert spec(base, 81) != spec({**base, "prompt_text": "stack the cloth"}, 81)
+    assert spec({"human_video": "demo.mp4", "human_text": "fold"})["text"] == "fold"
+
+
+@pytest.mark.parametrize("remote", [False, True])
+def test_episode_pair_preparation_preserves_ids_and_rejects_self_pairs(tmp_path, monkeypatch, remote) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    root = tmp_path / "dataset"
+    meta = root / "meta"
+    (meta / "episodes/chunk-000").mkdir(parents=True)
+    info = {
+        "codebase_version": "v3.0",
+        "fps": 30,
+        "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+    }
+    (meta / "info.json").write_text(json.dumps(info))
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "episode_index": ep,
+                    "length": 90,
+                    "tasks": ["fold"],
+                    "videos/top/from_timestamp": offset,
+                    "videos/top/chunk_index": 0,
+                    "videos/top/file_index": file,
+                }
+                for ep, offset, file in [(10, 4.0, 4), (20, 7.0, 5)]
+            ]
+        ),
+        meta / "episodes/chunk-000/file-000.parquet",
+    )
+    pair = {
+        "dataset": "abc",
+        "split": "train",
+        "target_episode": 10,
+        "prompt_episode": 20,
+        "target_from_frame": 0,
+        "target_to_frame": 90,
+        "prompt_from_frame": 30,
+        "prompt_to_frame": 90,
+        "detail_raw": "fold",
+    }
+    source, output = tmp_path / "input.jsonl", tmp_path / "prepared.jsonl"
+    source.write_text(json.dumps(pair) + "\n")
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/prepare_episode_prompts.py"
+    main = runpy.run_path(str(example))["main"]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(example),
+            "--dataset-root",
+            str(root),
+            "--camera",
+            "top",
+            "--pairs",
+            str(source),
+            "--dataset-id",
+            "abc",
+            *(
+                ["--streaming-data-root", "hf://datasets/owner/data@" + "a" * 40]
+                if remote
+                else ["--metadata-only"]
+            ),
+            "--output",
+            str(output),
+        ],
+    )
+    main()
+    saved = output.read_text()
+    row = json.loads(saved)
+    assert row["episode_index"] == 10 and row["prompt_episode_index"] == 20
+    assert row["prompt_start_s"] == 8 and row["prompt_end_s"] == 10
+    if remote:
+        assert (
+            row["prompt_video"]
+            == "hf://datasets/owner/data@" + "a" * 40 + "/videos/top/chunk-000/file-005.mp4"
+        )
+    source.write_text(json.dumps({**pair, "prompt_episode": "10"}) + "\n")
+    with pytest.raises(ValueError, match="another episode"):
+        main()
+    assert output.read_text() == saved
+    assert not output.with_suffix(".jsonl.tmp").exists()
+
+
+def test_streamed_prompt_matches_local_crop_without_fetching_the_container(tmp_path, monkeypatch) -> None:
+    av = pytest.importorskip("av")
+    import numpy as np
+
+    from lerobot.policies.zero_wam import prompt_video
+    from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
+    from lerobot.streaming.mp4 import fetch_mp4_index
+    from lerobot.streaming.sidecar_utils import SidecarSpec
+
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "index-cache"))
+    video = tmp_path / "shared.mp4"
+    with av.open(str(video), "w") as container:
+        stream = container.add_stream("mpeg4", rate=30)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        for i in range(90):
+            pixels = np.zeros((48, 64, 3), dtype=np.uint8)
+            pixels[:, :, 0 if i < 30 else 1 if i < 60 else 2] = 80 + i % 30 * 5
+            for packet in stream.encode(av.VideoFrame.from_ndarray(pixels, format="rgb24")):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    data = video.read_bytes()
+    relative = "videos/top/shared.mp4"
+    root = "hf://datasets/owner/data@" + "a" * 40
+    uri = root + "/" + relative
+    index = fetch_mp4_index(
+        relative, lambda _path, offset, length: data[offset : offset + length], file_size=len(data)
+    )
+    sidecar = tmp_path / "index.npz"
+    spec = SidecarSpec("owner/data", "a" * 40, root, ((relative, len(data)),))
+    EpisodeVideoManifest.save_file_sidecar(sidecar, [VideoFileRecord(relative, len(data), index)], spec=spec)
+    reads, closed = [], []
+
+    class Fetcher:
+        def __init__(self, actual_root, **kwargs):
+            assert actual_root == root
+
+        def info_size(self, _path):
+            raise AssertionError("A supplied sidecar must avoid source header/size requests")
+
+        def read_range(self, path, offset, length):
+            assert path == relative
+            reads.append((offset, length))
+            return data[offset : offset + length]
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(prompt_video, "NativeHTTPRangeFetcher", Fetcher)
+    with prompt_video.PromptVideoReader([uri], sidecar_path=sidecar) as reader:
+        actual = reader.read(uri, 12, start_time_s=1, end_time_s=2, max_frames=5)
+        with pytest.raises(ValueError, match="finite start/end"):
+            reader.read(uri, 12)
+    expected = read_video_at_fps(str(video), 12, start_time_s=1, end_time_s=2, max_frames=5)
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+    assert len(reads) == 1 and 0 < reads[0][1] < len(data)
+    assert closed == [True]
+    with (
+        prompt_video.PromptVideoReader([uri], sidecar_path=sidecar, max_video_bytes=1) as reader,
+        pytest.raises(ValueError, match="exceeds max_video_bytes"),
+    ):
+        reader.read(uri, 12, start_time_s=1, end_time_s=2)
+    assert len(reads) == 1  # Reject the byte reservation before fetching any payload.
+    with pytest.raises(ValueError, match="same immutable source"):
+        prompt_video.PromptVideoReader([uri.replace("a" * 40, "b" * 40)], sidecar_path=sidecar)
+    assert prompt_video.prompt_source_identity(uri)["revision"] == "a" * 40
+
+
+@pytest.mark.parametrize("share_text", [False, True])
+def test_prompt_encoder_uses_and_invalidates_the_exact_text_cache(tmp_path, monkeypatch, share_text) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/encode_human_videos.py"
+    main = runpy.run_path(str(example))["main"]
+    scope = main.__globals__
+    monkeypatch.setitem(scope, "load_vae", lambda *a, **k: FakeVAE())
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Cached prompt text must skip tokenizer and text encoder initialization")
+
+    monkeypatch.setitem(scope, "load_tokenizer", unexpected)
+    monkeypatch.setitem(scope, "load_text_encoder", unexpected)
+    monkeypatch.setitem(scope, "read_video_at_fps", lambda *a, **k: torch.zeros(5, 3, 48, 64))
+    source = tmp_path / "video.mp4"
+    source.touch()
+    pairs = tmp_path / "prompts.jsonl"
+    pairs.write_text(json.dumps({"prompt_video": str(source), "prompt_text": "fold"}) + "\n")
+    cache = tmp_path / "text.pt"
+    embedding = torch.arange(2 * TEXT_DIM).reshape(2, TEXT_DIM).to(torch.bfloat16)
+    torch.save({"fold": embedding}, cache)
+    output = tmp_path / "latents"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(example),
+            "--pairs",
+            str(pairs),
+            "--output-dir",
+            str(output),
+            "--device",
+            "cpu",
+            "--height",
+            "32",
+            "--width",
+            "64",
+            "--max-sequence-length",
+            "8",
+            "--text-embedding-cache",
+            str(cache),
+            *(["--share-text-embeddings"] if share_text else []),
+        ],
+    )
+    main()
+    first = json.loads((output / "prompts.jsonl").read_text())["latent_path"]
+    assert not Path(first).is_absolute()
+    encoded = torch.load(output / first, weights_only=True)
+    text = load_prompt_text(encoded, output / first)
+    torch.testing.assert_close(text[:2], embedding)
+    assert torch.count_nonzero(text[2:]) == 0
+    torch.save({"fold": embedding + 1}, cache)
+    main()
+    second = json.loads((output / "prompts.jsonl").read_text())["latent_path"]
+    assert first != second
+    changed = torch.load(output / second, weights_only=True)
+    torch.testing.assert_close(load_prompt_text(changed, output / second)[:2], embedding + 1)
+    torch.save({"different exact task": embedding}, cache)
+    with pytest.raises(ValueError, match="every prompt's exact instruction"):
+        main()
+
+
+def test_encoder_writes_distinct_crops_and_standalone_prompt_index(tmp_path, monkeypatch) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/encode_human_videos.py"
+    main = runpy.run_path(str(example))["main"]
+    scope = main.__globals__
+    monkeypatch.setitem(scope, "load_vae", lambda *a, **k: FakeVAE())
+    monkeypatch.setitem(scope, "load_tokenizer", lambda *a, **k: FakeTokenizer())
+    monkeypatch.setitem(scope, "load_text_encoder", lambda *a, **k: FakeTextEncoder())
+    seen = []
+
+    def decode(video, fps, **crop):
+        seen.append(crop)
+        return torch.full((5, 3, 48, 64), float(crop["start_time_s"]))
+
+    monkeypatch.setitem(scope, "read_video_at_fps", decode)
+    video = tmp_path / "source.mp4"
+    video.touch()
+    pairs = tmp_path / "source.jsonl"
+    base = {"prompt_video": str(video), "prompt_text": "fold", "prompt_start_s": 0, "prompt_end_s": 1}
+    # The first row is a standalone physical prompt. The second has a training target.
+    pairs.write_text(
+        json.dumps(base)
+        + "\n"
+        + json.dumps(
+            {
+                **base,
+                "prompt_start_s": 1,
+                "prompt_end_s": 2,
+                "episode_index": 7,
+                "start_frame": 0,
+                "end_frame": 90,
+            }
+        )
+        + "\n"
+    )
+    output = tmp_path / "latents"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(example),
+            "--pairs",
+            str(pairs),
+            "--output-dir",
+            str(output),
+            "--device",
+            "cpu",
+            "--height",
+            "32",
+            "--width",
+            "64",
+            "--max-sequence-length",
+            "8",
+        ],
+    )
+    main()
+    prompts = [json.loads(line) for line in (output / "prompts.jsonl").read_text().splitlines()]
+    train = [json.loads(line) for line in (output / "pairs.jsonl").read_text().splitlines()]
+    assert len(prompts) == len(seen) == 2 and len(train) == 1
+    assert len({p["latent_path"] for p in prompts}) == 2
+    assert train[0]["episode_index"] == 7
+    for p in prompts:
+        encoded = torch.load(output / p["latent_path"], weights_only=True)
+        assert encoded["source_start_s"] == p["start_time_s"]
+
+
+def test_shared_prompt_cache_relocates_and_matches_inline_training(tmp_path, monkeypatch) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/encode_human_videos.py"
+    main = runpy.run_path(str(example))["main"]
+    scope = main.__globals__
+    vae = FakeVAE()
+    monkeypatch.setitem(scope, "load_vae", lambda *a, **k: vae)
+    monkeypatch.setitem(
+        scope, "read_video_at_fps", lambda *a, **k: torch.full((5, 3, 48, 64), k["start_time_s"] / 4)
+    )
+    source = tmp_path / "video.mp4"
+    source.touch()
+    inputs = tmp_path / "input.jsonl"
+    inputs.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "prompt_video": str(source),
+                    "prompt_text": "" if episode < 2 else "fold",
+                    "prompt_start_s": episode,
+                    "prompt_end_s": episode + 1,
+                    "pool_id": f"task-{episode // 2}",
+                    "dataset": "abc",
+                    "split": "train",
+                    "prompt_episode_index": episode,
+                    "prompt_start_frame": 0,
+                    "prompt_end_frame": 100,
+                    "episode_index": episode ^ 1,
+                    "start_frame": 0,
+                    "end_frame": 100,
+                }
+            )
+            + "\n"
+            for episode in range(4)
+        )
+    )
+    cache = tmp_path / "text.pt"
+    captions = {"": torch.full((1, TEXT_DIM), 2.0), "fold": torch.full((3, TEXT_DIM), 4.0)}
+    torch.save(captions, cache)
+
+    def encode(output, share_text):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                str(example),
+                "--pairs",
+                str(inputs),
+                "--output-dir",
+                str(output),
+                "--device",
+                "cpu",
+                "--height",
+                "32",
+                "--width",
+                "64",
+                "--max-sequence-length",
+                "8",
+                "--text-embedding-cache",
+                str(cache),
+                *(["--share-text-embeddings"] if share_text else []),
+            ],
+        )
+        main()
+
+    inline, compact = tmp_path / "inline", tmp_path / "compact"
+    encode(inline, False)
+    encode(compact, True)
+    shared = list((compact / "text_embeddings").glob("*.pth"))
+    assert len(shared) == 2  # Four videos, two captions, including a nonzero empty-caption embedding.
+    for entry in compact.glob("*.pth"):
+        payload = torch.load(entry, weights_only=True)
+        assert "text_emb" not in payload
+        caption = torch.load(compact / payload["text_emb_path"], weights_only=True)
+        expected = captions[payload["text"]].to(torch.bfloat16)
+        torch.testing.assert_close(caption[: len(expected)], expected, rtol=0, atol=0)
+        assert caption.shape == (8, TEXT_DIM) and not caption[len(expected) :].count_nonzero()
+
+    # Recover a missing caption without paying for video decoding/VAE encoding again.
+    shared[0].unlink()
+
+    def unexpected_decode(*args, **kwargs):
+        raise AssertionError("Resume must repair shared text without decoding completed videos")
+
+    monkeypatch.setitem(scope, "read_video_at_fps", unexpected_decode)
+    encode(compact, True)
+    assert shared[0].is_file()
+    source.unlink()
+    moved = tmp_path / "relocated"
+    moved.mkdir()
+    inline = inline.rename(moved / "inline")
+    compact = compact.rename(moved / "compact")
+    monkeypatch.chdir(tmp_path)
+    policies = [
+        make_policy(tiny_config(icl_pools_path=str(root / "pools.jsonl"), drop_icl=0.0, droptext_target=1.0))
+        for root in [inline, compact]
+    ]
+    for episode in range(4):
+        latents, texts = [], []
+        for root, policy in zip([inline, compact], policies, strict=True):
+            path = policy._find_icl_latent(episode, 10)
+            assert Path(path).parent == root
+            latent, text = policy._load_icl_latent(path)
+            latents.append(latent)
+            texts.append(text)
+            # Fixed pairing manifests use the same portable-path contract as pools.
+            fixed = make_policy(tiny_config(icl_pairs_path=str(root / "pairs.jsonl")))
+            assert fixed._find_icl_latent(episode, 10) == path
+        torch.testing.assert_close(latents[0], latents[1], rtol=0, atol=0)
+        torch.testing.assert_close(texts[0], texts[1], rtol=0, atol=0)
+
+    batch = training_batch(policies[0].config, batch_size=4)
+    batch["episode_index"] = torch.arange(4)
+    losses, gradients = [], []
+    for policy in policies:
+        torch.manual_seed(20)
+        loss, _ = policy(batch)
+        loss.backward()
+        losses.append(loss)
+        gradients.append({name: p.grad for name, p in policy.named_parameters() if p.grad is not None})
+    torch.testing.assert_close(losses[0], losses[1], rtol=0, atol=0)
+    assert gradients[0].keys() == gradients[1].keys()
+    for name in gradients[0]:
+        torch.testing.assert_close(gradients[0][name], gradients[1][name], rtol=0, atol=0, msg=name)
+
+
+def test_pool_preparation_and_encoding_preserve_compact_members(tmp_path) -> None:
+    base = Path(__file__).resolve().parents[3] / "examples/zero_wam"
+    flatten = runpy.run_path(str(base / "prepare_episode_prompts.py"))["pool_member_rows"]
+    encode = runpy.run_path(str(base / "encode_human_videos.py"))["encoded_pools"]
+    import io
+
+    raw = {
+        "pool_id": "fold",
+        "dataset": "abc",
+        "split": "train",
+        "text": "fold the shirt",
+        "members": [
+            {"episode_index": 5, "start_frame": 10, "end_frame": 100},
+            {"episode_index": 8, "start_frame": 0, "end_frame": 120},
+            {"episode_index": 12, "start_frame": 0, "end_frame": 140},
+        ],
+    }
+    rows = list(flatten(io.StringIO(json.dumps(raw)), "abc", "train"))
+    assert len(rows) == 3  # Three source members represent six possible directed assignments.
+    resolved = [
+        {
+            **r,
+            "prompt_episode_index": r["prompt_episode"],
+            "prompt_start_frame": r["prompt_from_frame"],
+            "prompt_end_frame": r["prompt_to_frame"],
+        }
+        for r in rows
+    ]
+    result = encode(resolved, ["5", "8", "12"], {"5": "5.pth", "8": "8.pth", "12": "12.pth"})
+    assert len(result) == 1 and len(result[0]["members"]) == 3
+    assert result[0]["split"] == "train" and result[0]["dataset"] == "abc"
+    assert result[0]["members"][0] == {**raw["members"][0], "latent_path": "5.pth"}
+
+
+def diagnostic_fixture(tmp_path):
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/evaluate_video_prompts.py"
+    scope = runpy.run_path(str(example))["main"].__globals__
+    policy = make_policy(tiny_config())
+    caption = policy._encode_text("")[0].clone()
+    paths = []
+    for name, offset in [("correct", 0), ("contrasting", 2)]:
+        path = tmp_path / f"{name}.pth"
+        torch.save({"latent": torch.randn(1, Z_DIM, 3, 2, 4) + offset, "text_emb": caption, "text": ""}, path)
+        paths.append(str(path))
+    return scope, policy, paths
+
+
+def test_video_prompt_diagnostic_reuses_noise_and_loads_heldout_prompts(tmp_path, monkeypatch):
+    scope, policy, paths = diagnostic_fixture(tmp_path)
+    compare = scope["compare_video_prompts"]
+    batch = training_batch(policy.config)
+    batch["episode_index"] = torch.tensor([999])  # Not a member of any training prompt pool.
+    prepared = []
+    original = policy._sample_loss
+
+    def observe(inputs):
+        prepared.append(copy.deepcopy(inputs))
+        return original(inputs)
+
+    monkeypatch.setattr(policy, "_sample_loss", observe)
+    loaded = []
+    load = policy._load_icl_latent
+
+    def observe_load(path):
+        loaded.append(path)
+        return load(path)
+
+    monkeypatch.setattr(policy, "_load_icl_latent", observe_load)
+    rng = torch.get_rng_state().clone()
+    config = {
+        k: getattr(policy.config, k)
+        for k in ["drop_icl", "droptext_target", "train_frame_chunk_size", "train_attn_window"]
+    }
+    weights = {name: p.detach().clone() for name, p in policy.named_parameters()}
+    result = compare(policy, batch, *paths, seed=21, window_size=4)
+    assert loaded == paths and len(prepared) == 3
+    assert [p["icl_latent_dict"] is not None for p in prepared] == [True, True, False]
+    for name in ["latent_dict", "action_dict"]:
+        for key, expected in prepared[0][name].items():
+            if isinstance(expected, torch.Tensor):
+                for candidate in prepared[1:]:
+                    torch.testing.assert_close(candidate[name][key], expected, rtol=0, atol=0)
+    for index, mcp in enumerate(prepared[0]["mcp_latent_dicts"]):
+        for key, expected in mcp.items():
+            if isinstance(expected, torch.Tensor):
+                for candidate in prepared[1:]:
+                    torch.testing.assert_close(
+                        candidate["mcp_latent_dicts"][index][key], expected, rtol=0, atol=0
+                    )
+    for inputs in prepared:
+        assert inputs["chunk_size"] == 2 and inputs["window_size"] == 4
+        empty = policy._encode_text("")
+        length = policy.config.max_sequence_length
+        torch.testing.assert_close(inputs["text_emb"][:, :length], empty, rtol=0, atol=0)
+        if inputs["icl_latent_dict"] is not None:
+            torch.testing.assert_close(inputs["text_emb"][:, length:], empty, rtol=0, atol=0)
+    assert result["correct_vs_contrasting_action_velocity_rmse"] > 0
+    assert result["future_action_velocity_elements"] == len(policy.config.action_delta_indices) * 14
+    assert torch.equal(torch.get_rng_state(), rng) and policy.training
+    assert {k: getattr(policy.config, k) for k in config} == config
+    for name, p in policy.named_parameters():
+        torch.testing.assert_close(p, weights[name], rtol=0, atol=0)
+        assert p.grad is None
+
+
+def test_video_prompt_diagnostic_null_control_and_cold_warm_seed_parity(tmp_path, monkeypatch):
+    scope, policy, paths = diagnostic_fixture(tmp_path)
+    frozen = policy._frozen
+    policy._frozen = {}
+    policy._text_cache.clear()
+
+    def lazy_loading():
+        if not policy._frozen:
+            torch.rand(13)  # Simulate random initialization during a first frozen-weight load.
+            policy._frozen = frozen
+
+    monkeypatch.setattr(policy, "_ensure_frozen_modules", lazy_loading)
+    batch = training_batch(policy.config)
+    a = scope["compare_video_prompts"](policy, batch, paths[0], paths[0], seed=3, window_size=4)
+    b = scope["compare_video_prompts"](policy, batch, paths[0], paths[0], seed=3, window_size=4)
+    assert a == b
+    assert a["conditions"]["correct"] == a["conditions"]["contrasting"]
+    assert a["correct_vs_contrasting_action_velocity_rmse"] == 0
+
+
+@pytest.mark.parametrize("invalid", ["caption", "missing_caption", "shape"])
+def test_video_prompt_diagnostic_rejects_confounded_context_and_restores_state(tmp_path, invalid):
+    scope, policy, paths = diagnostic_fixture(tmp_path)
+    item = torch.load(paths[1], weights_only=True)
+    if invalid == "caption":
+        item["text_emb"] = item["text_emb"] + 1
+    elif invalid == "missing_caption":
+        del item["text_emb"]
+    else:
+        item["latent"] = item["latent"][:, :, :2]
+    torch.save(item, paths[1])
+    previous = policy.config.drop_icl, policy.config.droptext_target
+    batch = training_batch(policy.config)
+    rng = torch.get_rng_state().clone()
+    with pytest.raises(ValueError, match="empty-caption|same latent shape"):
+        scope["compare_video_prompts"](policy, batch, *paths, seed=3, window_size=4)
+    assert policy.training and (policy.config.drop_icl, policy.config.droptext_target) == previous
+    assert torch.equal(torch.get_rng_state(), rng)
+    assert not policy.transformer._forward_hooks
+
+
+def diagnostic_manifests(tmp_path):
+    revision = "a" * 40
+    pools, cases, splits = (tmp_path / name for name in ["pools.jsonl", "cases.jsonl", "splits.json"])
+    pools.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "pool_id": name,
+                    "dataset": "tiny",
+                    "split": "train",
+                    "members": [
+                        {
+                            "episode_index": episode,
+                            "start_frame": 0,
+                            "end_frame": 100,
+                            "latent_path": f"{name}.pth",
+                        }
+                    ],
+                }
+            )
+            + "\n"
+            for episode, name in [(0, "correct"), (1, "contrasting")]
+        )
+    )
+    cases.write_text(
+        json.dumps(
+            {
+                "dataset_repo_id": "owner/data",
+                "revision": revision,
+                "split": "validation",
+                "pool_dataset": "tiny",
+                "target_episode": 7,
+                "target_task": "load",
+                "correct_prompt_episode": 0,
+                "contrasting_prompt_episode": 1,
+                "correct_pool_id": "correct",
+                "contrasting_pool_id": "contrasting",
+            }
+        )
+        + "\n"
+    )
+    splits.write_text(json.dumps({"revision": revision, "train": [0, 1], "validation": [7], "test": [8]}))
+    return pools, cases, splits, revision
+
+
+def test_diagnostic_cases_reject_split_and_source_confounds(tmp_path):
+    scope, _, paths = diagnostic_fixture(tmp_path)
+    pools, cases, splits, revision = diagnostic_manifests(tmp_path)
+    parsed = scope["load_cases"](cases, pools, splits, "owner/data", revision, "validation")
+    assert parsed[7].correct_latent == paths[0] and parsed[7].contrasting_latent == paths[1]
+    row = json.loads(cases.read_text())
+    row["correct_prompt_episode"] = 7
+    cases.write_text(json.dumps(row) + "\n")
+    with pytest.raises(ValueError, match="held-out target"):
+        scope["load_cases"](cases, pools, splits, "owner/data", revision, "validation")
+    row["correct_prompt_episode"] = 0
+    row["revision"] = "b" * 40
+    cases.write_text(json.dumps(row) + "\n")
+    with pytest.raises(ValueError, match="same source dataset"):
+        scope["load_cases"](cases, pools, splits, "owner/data", revision, "validation")
+
+
+def test_diagnostic_cli_loads_native_checkpoint_and_saved_processors(tmp_path, monkeypatch):
+    import draccus
+
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.configs.train import TrainPipelineConfig
+
+    scope, policy, _ = diagnostic_fixture(tmp_path)
+    pools, cases, splits, revision = diagnostic_manifests(tmp_path)
+    checkpoint = tmp_path / "checkpoint"
+    policy.save_pretrained(checkpoint)
+    pre, post = make_pre_post_processors(
+        policy.config, dataset_stats={ACTION: {"q01": -torch.ones(14), "q99": torch.ones(14)}}
+    )
+    pre.save_pretrained(checkpoint)
+    post.save_pretrained(checkpoint)
+    cfg = TrainPipelineConfig(
+        policy=policy.config,
+        dataset=DatasetConfig(repo_id="owner/data", revision=revision, streaming=True, episodes=[0, 1]),
+        output_dir=tmp_path / "unused",
+    )
+    cfg.dataset.image_transforms.enable = True
+    config_path = tmp_path / "train_config.json"
+    config_path.write_text(json.dumps(draccus.encode(cfg)))
+    sample_batch = training_batch(policy.config)
+    sample = {key: value[0] for key, value in sample_batch.items()}
+    sample["episode_index"] = torch.tensor(7)
+    sample["task"] = "load"
+    for camera in CAMERAS:
+        sample[camera] = (sample[camera] * 255).byte()
+
+    class Dataset:
+        meta = SimpleNamespace(
+            camera_keys=CAMERAS,
+            episodes=[
+                {"episode_index": 0, "tasks": ["load"]},
+                {"episode_index": 1, "tasks": ["unload"]},
+                {"episode_index": 7, "tasks": ["load"]},
+                {"episode_index": 8, "tasks": ["unload"]},
+            ],
+        )
+        closed = False
+        requested = 0
+
+        def __iter__(self):
+            try:
+                self.requested += 1
+                yield {**sample, f"{ACTION}_is_pad": torch.ones_like(sample[f"{ACTION}_is_pad"])}
+                self.requested += 1
+                yield sample
+                raise AssertionError("The completed diagnostic must not fetch another target")
+            finally:
+                self.closed = True
+
+    dataset = Dataset()
+
+    def source(config):
+        assert config.dataset.streaming and config.dataset.episodes == [7]
+        assert not config.dataset.image_transforms.enable and config.num_workers == 0
+        return dataset
+
+    frozen = policy._frozen
+    monkeypatch.setitem(scope, "make_dataset", source)
+    monkeypatch.setattr(
+        ZeroWAMPolicy, "_ensure_frozen_modules", lambda self: setattr(self, "_frozen", frozen)
+    )
+    output = tmp_path / "results.jsonl"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "diagnostic",
+            "--policy",
+            str(checkpoint),
+            "--train-config",
+            str(config_path),
+            "--cases",
+            str(cases),
+            "--prompt-pools",
+            str(pools),
+            "--episode-splits",
+            str(splits),
+            "--device",
+            "cpu",
+            "--amp",
+            "none",
+            "--noise-seeds",
+            "2",
+            "3",
+            "--window-size",
+            "4",
+            "--output",
+            str(output),
+        ],
+    )
+    scope["main"]()
+    records = [json.loads(line) for line in output.read_text().splitlines()]
+    assert len(records) == 2 and all(r["target_episode"] == 7 for r in records)
+    assert all(r["conditions"]["correct"]["icl_video_tokens"] == 6 for r in records)
+    assert all(r["conditions"]["absent"]["icl_video_tokens"] == 0 for r in records)
+    assert dataset.closed and dataset.requested == 2
+    assert json.loads(config_path.read_text())["dataset"]["image_transforms"]["enable"]
+    summary = json.loads(output.with_suffix(".jsonl.summary.json").read_text())
+    assert summary["target_clips"] == 1 and summary["noise_draws"] == 2
+
+
+def test_diagnostic_stream_scan_limit_closes_incomplete_source(tmp_path):
+    scope, policy, _ = diagnostic_fixture(tmp_path)
+    pools, cases_path, splits, revision = diagnostic_manifests(tmp_path)
+    cases = scope["load_cases"](cases_path, pools, splits, "owner/data", revision, "validation")
+    batch = training_batch(policy.config)
+    sample = {key: value[0] for key, value in batch.items()}
+    sample["episode_index"] = torch.tensor(7)
+    sample[f"{ACTION}_is_pad"] = torch.ones_like(sample[f"{ACTION}_is_pad"])
+
+    class Dataset:
+        meta = SimpleNamespace(
+            camera_keys=CAMERAS,
+            episodes=[
+                {"episode_index": 0, "tasks": ["load"]},
+                {"episode_index": 1, "tasks": ["unload"]},
+                {"episode_index": 7, "tasks": ["load"]},
+            ],
+        )
+        requested = 0
+        closed = False
+
+        def __iter__(self):
+            try:
+                while True:
+                    self.requested += 1
+                    yield sample
+            finally:
+                self.closed = True
+
+    dataset = Dataset()
+    with pytest.raises(ValueError, match="Not enough complete clips"):
+        scope["run_comparisons"](
+            policy,
+            lambda batch: batch,
+            dataset,
+            cases,
+            clips_per_episode=1,
+            seeds=[0],
+            max_scanned=2,
+            rename_map={},
+            chunk_size=2,
+            window_size=4,
+            amp_dtype=None,
+            output=io.StringIO(),
+        )
+    assert dataset.requested == 2 and dataset.closed
+
+
+def test_video_prompt_diagnostic_restores_state_after_forward_failure(tmp_path, monkeypatch):
+    scope, policy, paths = diagnostic_fixture(tmp_path)
+    batch = training_batch(policy.config)
+    before = (
+        policy.config.drop_icl,
+        policy.config.droptext_target,
+        policy.config.train_frame_chunk_size,
+        policy.config.train_attn_window,
+    )
+    rng = torch.get_rng_state().clone()
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("forward failed")
+
+    monkeypatch.setattr(policy.transformer, "forward", fail)
+    with pytest.raises(RuntimeError, match="forward failed"):
+        scope["compare_video_prompts"](policy, batch, *paths, seed=3, window_size=4)
+    assert not policy.transformer._forward_hooks and policy.training
+    assert (
+        policy.config.drop_icl,
+        policy.config.droptext_target,
+        policy.config.train_frame_chunk_size,
+        policy.config.train_attn_window,
+    ) == before
+    assert torch.equal(torch.get_rng_state(), rng)
+
+
+def test_precomputed_text_embeddings_skip_text_encoder(tmp_path) -> None:
+    cache_path = tmp_path / "text.pt"
+    torch.save({"": torch.randn(1, TEXT_DIM), "pick up the red cup": torch.randn(5, TEXT_DIM)}, cache_path)
+    policy = make_policy(tiny_config(text_embedding_cache_path=str(cache_path)))
+    vae = policy._frozen["vae"]
+    policy._frozen = {}
+    policy._ensure_frozen_modules = lambda: None
+    policy._frozen = {"vae": vae, "streaming_vae": FakeStreamingVAE(vae)}
+    policy._precomputed_text = torch.load(cache_path)
+
+    def fail():
+        raise AssertionError("text encoder must not load for cached prompts")
+
+    policy._ensure_text_encoder = fail
+    emb = policy._encode_text("pick up the red cup")
+    assert emb.shape == (1, policy.config.max_sequence_length, TEXT_DIM)
+    assert torch.equal(emb[0, 5:], torch.zeros_like(emb[0, 5:]))
+    run_rollout(policy, 2)
+
+
+def test_instruction_change_applies_next_chunk() -> None:
+    policy = make_policy(tiny_config())
+    run_rollout(policy, 1)
+    policy.drop_queued_actions()
+    assert policy.count_queued_actions() == policy.config.action_per_frame - 1
+    obs = {k: torch.rand(1, 3, 48, 64) for k in CAMERAS}
+    obs["task"] = ["pick up the blue block"]
+    for _ in range(policy.config.action_per_frame):
+        policy.select_action(obs)
+    assert policy._prompt == "pick up the blue block"
+
+
+def test_feedback_cache_matches_clipped_actions() -> None:
+    policy = make_policy(tiny_config(action_clip=0.01))
+    obs = {k: torch.rand(1, 3, 48, 64) for k in CAMERAS}
+    obs["task"] = ["move the cup"]
+    first_action = policy.select_action(obs)
+    dispatched = torch.cat([first_action, torch.stack(list(policy._action_queue))])
+    cached = policy._last_actions[0, policy.config.used_action_channel_ids, 1:].flatten(1).T
+    assert dispatched.abs().max() <= policy.config.action_clip
+    torch.testing.assert_close(cached, dispatched)
+
+
+def test_inference_chunk_needs_a_future_frame() -> None:
+    with pytest.raises(ValueError, match="frame_chunk_size must be at least 2"):
+        tiny_config(frame_chunk_size=1)
