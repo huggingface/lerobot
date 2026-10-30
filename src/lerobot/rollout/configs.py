@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import ClassVar
 
@@ -301,6 +302,8 @@ class RolloutConfig:
     # Run time in seconds; 0 = infinite (24/7 mode).  In interactive mode this
     # bounds each /start segment, not the whole session.
     duration: float = 0.0
+    # Periodic health logs in seconds; 0 disables them. Inactive in interactive mode.
+    status_interval_s: float = 5.0
     # Control the rollout from stdin with chat-style commands (/start, /subtask,
     # /vqa, /autosteer, /reset, /stop) while hardware and policy stay warm.  The
     # robot does not move until /start, and logs below ERROR are muted for the
@@ -347,6 +350,8 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        if not math.isfinite(self.status_interval_s) or self.status_interval_s < 0:
+            raise ValueError("status_interval_s must be finite and >= 0")
         if self.interpolation_multiplier < 1:
             raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
 

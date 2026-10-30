@@ -263,6 +263,9 @@ lerobot-rollout \
 
 For asynchronous backends, the dispatch contract is mandatory. Publish each captured observation with `engine.notify_observation(obs_processed)`, call `send_next_action(...)` on **every autonomous motor tick**, including interpolation and held ticks, then call `engine.pump_query(obs_processed)`. Calling only `engine.get_action()` bypasses the permission and hold handshake: a planned text query can wait indefinitely, and a terminal fault may never signal shutdown.
 
+Third-party strategies can call `self._tick(timer, new_cycle=interpolator.needs_new_action())`
+in place of `timer.tick(...)` to include periodic health reporting after `_init_engine(ctx)`.
+
 `send_next_action` is built on `lerobot.inference.dispatch_tick` and its parts (`next_interpolated_action`, `commit_action`, `dispatch_permitted`), which encode that order once: `dispatch_allowed()` before and after pulling an action and again before sending, interpolation invalidation plus a supported local hold and `acknowledge_hold()` when denied, and `record_dispatch()` after sending. A hold that fails is never acknowledged. Use those helpers rather than re-implementing the sequence; `send_next_action` only adds the dataset frame, the robot-side action processor and cadence accounting. Remote contexts have `ctx.policy.policy`, `preprocessor` and `postprocessor` set to `None`; use `ctx.policy.inference` and the robot-side pipelines in `ctx.processors`.
 
 Wrap known blocking mid-run recording work in `self._pause_for_recording(ctx)`, including ring-buffer drains and episode finalization. This invalidates asynchronous motion before the recording stall and resumes only if the run is still healthy and active. Strategies with operator-controlled phases must pass their current motion permission as `resume_allowed`. The next action must come from a fresh observation; saved work must not revive a paused, stopped or faulted run.
@@ -539,6 +542,7 @@ strategy.teardown(ctx)  # teardown stays with the caller
 | `--robot.port`                    | Serial port for the robot                                         | --      |
 | `--robot.cameras`                 | Camera configuration (JSON dict)                                  | --      |
 | `--fps`                           | Policy inference and dataset recording frequency                  | 30      |
+| `--status_interval_s`             | Seconds between health logs (0 disables; non-interactive only)    | 5       |
 | `--duration`                      | Run time in seconds (0 = infinite; per segment if interactive)    | 0       |
 | `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                               | auto    |
 | `--task`                          | Task description (used when no dataset is provided)               | --      |
@@ -553,6 +557,18 @@ strategy.teardown(ctx)  # teardown stays with the caller
 ---
 
 ## Cadence Reporting
+
+Non-interactive rollout prints an ordinary `INFO` log every five seconds, also in redirected logs. Set `--status_interval_s=10` to change the interval or `=0` to disable reporting and latency collection.
+
+```text
+Rollout: loop 29.7/30 Hz · over budget 2/149 · starved 0 · infer 18.7 ms (worst 40.1) · process 2.41 GiB · GPU 5.12/79.6 GiB
+```
+
+- **loop**, **over budget**, **starved**: control-tick rate versus `fps × interpolation_multiplier`, cycles over budget, and ticks where inference returned no action, since the previous report. They follow the summary rules below, including startup exemptions and excluded reset gaps. A healthy loop rate alone does not establish that async inference keeps up.
+- **infer**: median/worst fresh sync inference latency, including preprocessing, postprocessing and CPU action transfer. RTC and remote show **turnaround** from request submission to result receipt, including remote transport. Both cover completions in the last `status_interval_s` seconds, including cold start; cached action retrievals, explicit compilation warmup and text queries are excluded.
+- **process**, **GPU**: current process RSS on Linux and device-wide used/total CUDA memory, including other processes. Remote reports local process memory only. Unavailable memory and latency without recent samples are omitted.
+
+Sampling and logging count as control-loop work; there is no monitoring thread. Blocked loops delay reporting without a catch-up burst. Interactive sessions and episodic reset phases do not print periodic logs. Existing warnings and episode/run summaries remain available.
 
 Every strategy reports what its control loop actually achieved, as do `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay` — they all pace through the same timer. Each saved episode gets a one-line digest, and when the loop ends — including on `Ctrl-C` — a block covering the whole run:
 

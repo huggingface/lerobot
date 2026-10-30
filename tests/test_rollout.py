@@ -23,7 +23,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 import torch
@@ -32,8 +32,12 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 # Hoisted rather than re-imported inside each test: the module-scoped `importorskip`
 # above already guards everything below it.
+from lerobot.inference import SyncInferenceEngine, sync  # noqa: E402
 from lerobot.processor import transition_to_prediction  # noqa: E402
+from lerobot.rollout import BaseStrategyConfig, status  # noqa: E402
+from lerobot.rollout.strategies import BaseStrategy  # noqa: E402
 from lerobot.utils.cycle_timer import CycleTimer  # noqa: E402
+from tests.interactive_helpers import _FakeEngine, _loop_ctx  # noqa: E402
 
 pytestmark = pytest.mark.dataset
 
@@ -649,7 +653,11 @@ def test_setup_defaults_to_starting_the_engine():
 
     engine = MagicMock()
     ctx = SimpleNamespace(
-        runtime=SimpleNamespace(cfg=SimpleNamespace(interpolation_multiplier=2)),
+        runtime=SimpleNamespace(
+            cfg=SimpleNamespace(
+                interpolation_multiplier=2, interactive=False, status_interval_s=5, device="cpu"
+            )
+        ),
         policy=SimpleNamespace(inference=engine),
     )
     strategy = MinimalStrategy(BaseStrategyConfig())
@@ -1651,3 +1659,75 @@ def test_log_telemetry_passes_the_step_only_with_display_data(monkeypatch):
     core.RolloutStrategy._log_telemetry({"x": 1.0}, step, runtime)
     assert logged[-1]["action"] == step[TransitionKey.ACTION]
     assert logged[-1]["policy_step"] is step  # passed as is; the viewer extracts what to show
+
+
+@pytest.fixture
+def probes(monkeypatch, clock):
+    monkeypatch.setattr(status, "time", SimpleNamespace(monotonic=clock.perf_counter))
+    rss = Mock(side_effect=[2 * 1024**3, None])
+    gpu = Mock(side_effect=[(5 * 1024**3, 80 * 1024**3), None])
+    monkeypatch.setattr(status, "_process_rss_bytes", rss)
+    monkeypatch.setattr(status, "_gpu_memory_bytes", gpu)
+    return rss, gpu
+
+
+def test_periodic_logs_use_interval_metrics_and_omit_unavailable_measurements(probes, clock, caplog):
+    engine = _FakeEngine()
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy.setup(_loop_ctx(engine, interactive=False, status_interval_s=1, device="cuda:1"))
+    timer = CycleTimer(4)
+    with caplog.at_level(logging.INFO, logger=status.logger.name):
+        for tick in range(9):
+            strategy._tick(timer)
+            if tick == 0:
+                timer.note_starved_tick()
+                engine.latency.record(0.04, 0.1)
+                engine.latency.record(0.02, 0.2)
+            if tick < 4:
+                probes[0].assert_not_called()
+                probes[1].assert_not_called()
+            timer.wait()
+    lines = [r.message for r in caplog.records if r.name == status.logger.name]
+    assert lines == [
+        "Rollout: loop 4.0/4 Hz · over budget 0/3 · starved 1 · infer 30.0 ms (worst 40.0) "
+        "· process 2.00 GiB · GPU 5.00/80.0 GiB",
+        "Rollout: loop 4.0/4 Hz · over budget 0/4 · starved 0",
+    ]
+    assert probes[0].call_count == probes[1].call_count == 2
+    probes[1].assert_called_with("cuda:1")
+    assert timer.snapshot().starved_ticks == 1
+
+
+@pytest.mark.parametrize("interactive, interval", [(False, 0), (True, 5)])
+def test_disabled_and_interactive_skip_measurements(probes, clock, caplog, interactive, interval):
+    engine = _FakeEngine()
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy.setup(_loop_ctx(engine, interactive=interactive, status_interval_s=interval))
+    timer = CycleTimer(1)
+    with caplog.at_level(logging.INFO):
+        strategy._tick(timer)
+        timer.wait()
+        clock.advance(20)
+        strategy._tick(timer)
+    probes[0].assert_not_called()
+    probes[1].assert_not_called()
+    assert engine.latency.interval_s == 0
+    assert not any(r.message.startswith("Rollout:") for r in caplog.records)
+
+
+def test_sync_latency_excludes_precomputed_actions(monkeypatch, clock):
+    monkeypatch.setattr(sync, "time", SimpleNamespace(monotonic=clock.perf_counter))
+    policy = Mock()
+    policy.count_queued_actions.return_value = 0
+
+    def select(_obs):
+        clock.advance(0.02)
+        return torch.zeros(1, 2)
+
+    policy.select_action.side_effect = select
+    engine = SyncInferenceEngine(policy, lambda x: x, lambda x: x, {}, [], "test", "cpu", "mock")
+    engine.latency.configure(1)
+    engine.get_action({})
+    policy.count_queued_actions.return_value = 3
+    engine.get_action({})
+    assert engine.latency.recent(clock.now) == pytest.approx([0.02])

@@ -174,6 +174,7 @@ class RTCInferenceEngine(InferenceEngine):
             action_starvation_grace_s=action_starvation_grace_s,
             training_max_delay=self._policy_spec.training_max_delay,
         )
+        self.latency = self._runtime.latency
         self._runtime.queue.cfg = rtc_config
         self._reset_pending = False
         self._hold = HoldState()
