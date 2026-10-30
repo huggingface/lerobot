@@ -159,13 +159,13 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             config = json.load(f)
 
         config.pop("type", None)
-        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
-            json.dump(config, f)
-            config_file = f.name
-
         cli_overrides = reward_kwargs.pop("cli_overrides", [])
-        with draccus.config_type("json"):
-            config = draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+        with tempfile.NamedTemporaryFile("w+", delete_on_close=False, suffix=".json") as f:
+            json.dump(config, f)
+            # Close before draccus reopens the file on Windows; the context still removes it.
+            f.close()
+            with draccus.config_type("json"):
+                config = draccus.parse(orig_config.__class__, f.name, args=cli_overrides)
 
         # Same backfill as PreTrainedConfig.from_pretrained: config.json does not
         # carry the source path, and direct callers (PreTrainedRewardModel,
