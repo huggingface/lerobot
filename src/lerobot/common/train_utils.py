@@ -141,7 +141,9 @@ def update_last_checkpoint(checkpoint_dir: Path) -> None:
 # ---------------------------------------------------------------------------------------------
 
 
-def save_training_metadata(step: int, save_dir: Path, cfg: TrainPipelineConfig) -> None:
+def save_training_metadata(
+    step: int, save_dir: Path, cfg: TrainPipelineConfig, *, accumulation_boundary: bool | None = None
+) -> None:
     """Record the step counter plus everything a resume needs to reason about topology changes.
 
     `step` counts loop iterations (= micro-batches), so
@@ -155,6 +157,8 @@ def save_training_metadata(step: int, save_dir: Path, cfg: TrainPipelineConfig) 
         save_dir (Path): The `training_state/` directory to write `training_step.json` into.
         cfg (TrainPipelineConfig): The training config whose batch size, gradient-accumulation,
             precision, and parallelism settings are snapshotted alongside the step.
+        accumulation_boundary (bool | None): Whether the caller verified a completed
+            accumulation window. None preserves the legacy metadata layout.
     """
     state: dict[str, Any] = {
         "step": step,
@@ -169,6 +173,8 @@ def save_training_metadata(step: int, save_dir: Path, cfg: TrainPipelineConfig) 
             "ulysses_degree": cfg.parallelism.context_parallel.ulysses_degree,
         },
     }
+    if accumulation_boundary is not None:
+        state["accumulation_boundary"] = accumulation_boundary
     write_json(state, save_dir / TRAINING_STEP)
 
 
@@ -187,7 +193,7 @@ def load_training_metadata(training_state_dir: Path) -> dict[str, Any]:
             not recorded).
     """
     state = load_json(training_state_dir / TRAINING_STEP)
-    return {
+    metadata = {
         "step": int(state["step"]),
         "dp_world_size": state.get("dp_world_size", state.get("num_processes")),
         "batch_size": state.get("batch_size"),
@@ -195,6 +201,25 @@ def load_training_metadata(training_state_dir: Path) -> dict[str, Any]:
         "mixed_precision": state.get("mixed_precision"),
         "parallelism": state.get("parallelism"),
     }
+    if "accumulation_boundary" in state:
+        metadata["accumulation_boundary"] = state["accumulation_boundary"]
+    return metadata
+
+
+def _require_accumulation_boundary(
+    step: int, cfg: TrainPipelineConfig, accelerator: "Accelerator | None"
+) -> None:
+    """Reject checkpoints that would discard pending gradients and their accumulation phase."""
+    if accelerator is not None:
+        complete = accelerator.sync_gradients
+    else:
+        complete = step % cfg.accelerator.gradient_accumulation.steps == 0
+    if not complete:
+        raise ValueError(
+            "Cannot save a resumable checkpoint inside a gradient accumulation window: "
+            "pending gradients and the accumulation phase are not checkpointed. "
+            "Save after an optimizer-update boundary (adjust save_freq and the final step)."
+        )
 
 
 # ---------------------------------------------------------------------------------------------
@@ -254,6 +279,7 @@ def save_checkpoint(
             used to unwrap the model and required on sharded runs, where it owns the DCP save
             channels. Defaults to None (plain single-process saves).
     """
+    _require_accumulation_boundary(step, cfg, accelerator)
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy_to_save = accelerator.unwrap_model(policy) if accelerator is not None else policy
     sharded = is_sharded_module(policy_to_save)
@@ -320,6 +346,7 @@ def save_training_state(
             model FQNs), so accelerate's `save_fsdp_optimizer` needs the sharded module
             alongside the optimizer. Defaults to None.
     """
+    _require_accumulation_boundary(step, cfg, accelerator)
     save_dir = checkpoint_dir / TRAINING_STATE_DIR
     # All ranks: the directory must exist before the DCP optimizer collective writes into it
     # (exist_ok makes the concurrent mkdir race-free on shared filesystems).
@@ -332,7 +359,7 @@ def save_training_state(
         save_sharded_optimizer(accelerator, optimizer, model, save_dir)
 
     if is_main_process():  # ONE grouped gate for the whole rank-0-only region
-        save_training_metadata(step, save_dir, cfg)
+        save_training_metadata(step, save_dir, cfg, accumulation_boundary=True)
         save_rng_state(save_dir)
         if scheduler is not None:
             save_scheduler_state(scheduler, save_dir)
@@ -383,6 +410,16 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
         raise NotADirectoryError(training_state_dir)
     metadata = load_training_metadata(training_state_dir)
     _guard_resume_changes(cfg, metadata)
+    boundary = metadata.get("accumulation_boundary")
+    if boundary is not None and type(boundary) is not bool:
+        raise ValueError("Checkpoint accumulation_boundary must be a boolean.")
+    saved_accumulation = metadata.get("grad_accum_steps") or 1
+    if boundary is False or (boundary is None and metadata["step"] % saved_accumulation):
+        raise ValueError(
+            "Cannot resume this checkpoint exactly: it was saved inside a gradient "
+            "accumulation window without pending gradients or the accumulation phase. "
+            "Resume a checkpoint from a completed optimizer-update boundary instead."
+        )
     load_rng_state(training_state_dir)
     return metadata["step"]
 

@@ -746,6 +746,13 @@ def train(cfg: TrainPipelineConfig) -> None:
     if cfg.resume:
         step = resume_before_prepare(cfg)  # step + RNG only; sharded state loads after prepare
 
+    if cfg.save_checkpoint and (cfg.steps - step) % cfg.accelerator.gradient_accumulation.steps:
+        raise ValueError(
+            "The remaining training steps must complete a gradient accumulation window "
+            "to save a resumable final checkpoint. Adjust steps so (steps - resume_step) "
+            "is divisible by accelerator.gradient_accumulation.steps."
+        )
+
     dataloader, eval_dataloader = make_dataloaders(cfg, dataset, eval_dataset, step, parallel_dims)
 
     # --- prepare & resume phase 2 ---------------------------------------------------------------
@@ -924,6 +931,7 @@ def train(cfg: TrainPipelineConfig) -> None:
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
+    checkpoint_pending = False
     for _ in range(step, cfg.steps):
         step_start = time.perf_counter()
         batch = next(dl_iter)
@@ -962,7 +970,10 @@ def train(cfg: TrainPipelineConfig) -> None:
             progbar.update(1)
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
-        is_saving_step = should_save_checkpoint(step, cfg.save_freq, cfg.steps)
+        # A scheduled save may fall between optimizer updates. Defer it to the
+        # next completed accumulation window; partial gradients are not saved.
+        checkpoint_pending |= should_save_checkpoint(step, cfg.save_freq, cfg.steps)
+        is_saving_step = checkpoint_pending and accelerator.sync_gradients
         is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
         is_eval_step = cfg.eval_steps > 0 and step % cfg.eval_steps == 0
 
@@ -1027,6 +1038,7 @@ def train(cfg: TrainPipelineConfig) -> None:
                 postprocessor=postprocessor,
                 accelerator=accelerator,
             )
+            checkpoint_pending = False
             if is_main_process():
                 if ema is not None:
                     # Save the shadow for exact resume, plus a directly loadable copy of the EMA

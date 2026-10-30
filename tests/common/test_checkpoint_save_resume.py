@@ -53,7 +53,9 @@ def passthrough_accelerator(scaler=None) -> SimpleNamespace:
 
     `scaler` is None on every precision but fp16, which is what a real `Accelerator` exposes.
     """
-    return SimpleNamespace(unwrap_model=lambda m: m, wait_for_everyone=lambda: None, scaler=scaler)
+    return SimpleNamespace(
+        unwrap_model=lambda m: m, wait_for_everyone=lambda: None, scaler=scaler, sync_gradients=True
+    )
 
 
 class TestSaveCheckpoint:
@@ -87,7 +89,7 @@ class TestSaveCheckpoint:
         policy = make_dummy_policy()
         save_checkpoint(
             tmp_path,
-            step=11,
+            step=12,
             cfg=cfg,
             policy=policy,
             optimizer=torch.optim.Adam(policy.parameters()),
