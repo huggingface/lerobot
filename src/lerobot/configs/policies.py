@@ -16,7 +16,6 @@ import builtins
 import json
 import os
 import tempfile
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
@@ -85,27 +84,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     pretrained_path: Path | None = None
     # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
     pretrained_revision: str | None = None
-
-    # Register draccus encode/decode functions for the torch.dtype values held by dtype fields.
-    @staticmethod
-    @draccus.decode.register(torch.dtype)
-    def _decode_dtype(value: Any, path: Sequence[str] = ()) -> torch.dtype:
-        """Resolve a dtype name coming from config.json or the command line.
-
-        Args:
-            value: The raw serialized value, e.g. "bfloat16".
-            path: The field breadcrumb draccus prefixes onto error messages, e.g. ("policy", "dtype").
-        """
-        dtype = getattr(torch, str(value).removeprefix("torch."), None)
-        if not isinstance(dtype, torch.dtype):
-            raise ValueError(f"Invalid dtype {value!r}: expected a torch dtype name.")
-        return dtype
-
-    @staticmethod
-    @draccus.encode.register(torch.dtype)
-    def _encode_dtype(value: torch.dtype, declared_type: type | None = None) -> str:
-        """Serialize a dtype to its bare name, e.g. torch.bfloat16 -> "bfloat16"."""
-        return str(value).removeprefix("torch.")
 
     def __post_init__(self) -> None:
         if self.dtype is not None and not isinstance(self.dtype, torch.dtype):
@@ -261,4 +239,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
         with draccus.config_type("json"):
-            return draccus.parse(config_cls, config_file, args=cli_overrides)
+            config = draccus.parse(config_cls, config_file, args=cli_overrides)
+
+        # The serialized config.json does not carry the source path, so parsing
+        # yields pretrained_path=None. Backfill it: downstream code (e.g.
+        # make_policy / make_pre_post_processors) silently builds an untrained
+        # processor pipeline without it, instead of loading the pretrained stats.
+        config.pretrained_path = Path(model_id)
+        config.pretrained_revision = revision
+        return config

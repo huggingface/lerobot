@@ -98,7 +98,13 @@ repos:
     rev: v2.3.1
     hooks:
       - id: mypy
+        # Ignore ambient PYTHONPATH so unrelated global packages cannot shadow the hook's stubs.
+        entry: python -I -m mypy
         args: [--config-file=pyproject.toml]
+        additional_dependencies:
+          - "numpy>=2.0.0,<2.3.0"
+          - "rustypot>=1.13.1,<2.0.0"
+          - "pyzmq>=26.2.1,<28.0.0"
         pass_filenames: false
         types_or: [python, pyi, toml]
         files: ^(src/lerobot/|scripts/|utils/|conftest\.py$|setup\.py$|pyproject\.toml$)

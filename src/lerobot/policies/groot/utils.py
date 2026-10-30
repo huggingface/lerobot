@@ -187,7 +187,7 @@ def flatten_n1_7_modality_stats(
 
 
 def rot6d_to_matrix(rot6d: np.ndarray) -> np.ndarray:
-    rows = rot6d.reshape(2, 3).astype(np.float64)
+    rows: np.ndarray = rot6d.reshape(2, 3).astype(np.float64)
     row1 = rows[0] / np.linalg.norm(rows[0])
     row2 = rows[1] - np.dot(row1, rows[1]) * row1
     row2 = row2 / np.linalg.norm(row2)

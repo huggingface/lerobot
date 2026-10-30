@@ -34,6 +34,9 @@ OBS_LANGUAGE_SUBTASK_ATTENTION_MASK = OBS_LANGUAGE_SUBTASK + ".attention_mask"
 
 ACTION = "action"
 ACTION_PREFIX = ACTION + "."
+# Batch key of a policy's prediction (see ``PolicyOutput``), and the prefix naming what it predicts:
+# ``observation.images.top`` predicted is ``prediction.images.top``.
+PREDICTION = "prediction"
 ACTION_TOKENS = ACTION + ".tokens"
 ACTION_TOKEN_MASK = ACTION + ".token_mask"
 ACTION_CODE_TOKEN_MASK = ACTION + ".code_token_mask"
@@ -42,6 +45,7 @@ TRUNCATED = "next.truncated"
 DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
+TASK = "task"
 
 # Complementary-data keys describing a text-generation request, set by the rollout
 # inference engines before the preprocessor runs so a processor step can format the
@@ -63,6 +67,7 @@ TELEOPERATORS = "teleoperators"
 CHECKPOINTS_DIR = "checkpoints"
 LAST_CHECKPOINT_LINK = "last"
 PRETRAINED_MODEL_DIR = "pretrained_model"
+PRETRAINED_MODEL_EMA_DIR = "pretrained_model_ema"
 TRAINING_STATE_DIR = "training_state"
 ALGORITHM_DIR = "algorithm"
 RNG_STATE = "rng_state.safetensors"
@@ -71,6 +76,8 @@ OPTIMIZER_STATE = "optimizer_state.safetensors"
 OPTIMIZER_PARAM_GROUPS = "optimizer_param_groups.json"
 SCHEDULER_STATE = "scheduler_state.json"
 SCALER_STATE = "scaler_state.json"
+EMA_STATE = "ema_state.safetensors"
+EMA_SHARDED_STATE = "ema_state"
 
 POLICY_PREPROCESSOR_DEFAULT_NAME = "policy_preprocessor"
 POLICY_POSTPROCESSOR_DEFAULT_NAME = "policy_postprocessor"

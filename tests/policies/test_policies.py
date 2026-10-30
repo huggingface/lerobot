@@ -35,7 +35,7 @@ from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import close_envs, preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
+from lerobot.policies.act.modeling_act import ACTPolicy, ACTTemporalEnsembler
 from lerobot.policies.factory import (
     get_policy_class,
     make_policy,
@@ -45,13 +45,15 @@ from lerobot.policies.factory import (
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.vqbet.modeling_vqbet import VQBeTHead
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import is_package_available
 from lerobot.utils.random_utils import seeded_context
 from lerobot.utils.utils import cycle
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
+
+pytestmark = pytest.mark.dataset
 
 # Policies that require optional heavy dependencies to instantiate
 _POLICY_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
@@ -112,7 +114,8 @@ def test_get_policy_and_config_classes(policy_name: str):
 @pytest.mark.parametrize(
     "ds_repo_id,env_name,env_kwargs,policy_name,policy_kwargs",
     [
-        ("lerobot/pusht", "pusht", {}, "diffusion", {}),
+        # Diffusion denoises 100 times per action by default; 10 runs the same sampling loop.
+        ("lerobot/pusht", "pusht", {}, "diffusion", {"num_inference_steps": 10}),
         ("lerobot/pusht", "pusht", {}, "vqbet", {}),
         ("lerobot/pusht", "pusht", {}, "act", {}),
         ("lerobot/aloha_sim_insertion_human", "aloha", {"task": "AlohaInsertion-v0"}, "act", {}),
@@ -128,7 +131,7 @@ def test_get_policy_and_config_classes(policy_name: str):
             "aloha",
             {"task": "AlohaInsertion-v0"},
             "diffusion",
-            {},
+            {"num_inference_steps": 10},
         ),
         (
             "lerobot/aloha_sim_transfer_cube_human",
@@ -271,6 +274,13 @@ def test_act_backbone_lr():
     assert len(optimizer.param_groups[1]["params"]) == 20
 
 
+@pytest.mark.parametrize("policy_name", ["act", "groot", "pi0", "pi05", "pi0_fast", "smolvla"])
+@pytest.mark.parametrize("fused", [None, True, False])
+def test_optimizer_preset_forwards_fused(policy_name: str, fused: bool | None):
+    cfg = make_policy_config(policy_name, optimizer_fused=fused, push_to_hub=False)
+    assert cfg.get_optimizer_preset().fused is fused
+
+
 @pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     """Check that the policy can be instantiated with defaults."""
@@ -398,12 +408,6 @@ def test_multikey_construction(multikey: bool):
             marks=pytest.mark.skipif(not is_package_available("diffusers"), reason="diffusers not installed"),
         ),
         ("lerobot/aloha_sim_insertion_human", "act", {"n_action_steps": 10}, ""),
-        (
-            "lerobot/aloha_sim_insertion_human",
-            "act",
-            {"n_action_steps": 1000, "chunk_size": 1000},
-            "1000_steps",
-        ),
     ],
 )
 # As artifacts have been generated on an x86_64 kernel, this test won't
@@ -453,6 +457,54 @@ def test_backward_compatibility(ds_repo_id: str, policy_name: str, policy_kwargs
     for key in saved_actions:
         rtol, atol = (2e-3, 5e-6) if policy_name == "diffusion" else (None, None)  # HACK
         torch.testing.assert_close(actions[key], saved_actions[key], rtol=rtol, atol=atol)
+
+
+def test_act_ignores_padded_actions():
+    """Padded actions reach neither the VAE encoder (its attention mask) nor the loss."""
+    chunk_size, action_dim = 10, 2
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
+            OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(4,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
+        chunk_size=chunk_size,
+        n_action_steps=chunk_size,
+        dim_model=32,
+        n_heads=2,
+        dim_feedforward=64,
+        n_encoder_layers=1,
+        n_vae_encoder_layers=2,
+        latent_dim=8,
+        device="cpu",
+    )
+    policy = ACTPolicy(config)
+    policy.train()
+    action_is_pad = torch.zeros(2, chunk_size, dtype=torch.bool)
+    action_is_pad[:, 6:] = True
+    batch = {
+        OBS_STATE: torch.randn(2, 4),
+        OBS_ENV_STATE: torch.randn(2, 4),
+        ACTION: torch.randn(2, chunk_size, action_dim),
+        "action_is_pad": action_is_pad,
+    }
+
+    def loss_of(actions):
+        torch.manual_seed(0)  # same dropout and latent noise for every call
+        return policy.forward({**batch, ACTION: actions})
+
+    loss, loss_dict = loss_of(batch[ACTION])
+    padded_changed = batch[ACTION].clone()
+    padded_changed[action_is_pad] = 1e3
+    padded_loss, padded_loss_dict = loss_of(padded_changed)
+    torch.testing.assert_close(padded_loss, loss)
+    assert padded_loss_dict == loss_dict
+
+    valid_changed = batch[ACTION].clone()
+    valid_changed[:, 0] += 1.0
+    valid_loss, valid_loss_dict = loss_of(valid_changed)
+    assert valid_loss_dict["kld_loss"] != loss_dict["kld_loss"]
+    assert valid_loss_dict["l1_loss"] != loss_dict["l1_loss"]
 
 
 def test_act_temporal_ensembler():

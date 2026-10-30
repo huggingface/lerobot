@@ -398,6 +398,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         # Preprocess image features present in the batch
         for key in present_img_keys:
             img = batch[key][:, -1, :, :, :] if batch[key].ndim == 5 else batch[key]
+            if img.dtype == torch.uint8:
+                img = img.to(torch.float32) / 255.0
             if self.config.resize_imgs_with_padding is not None:
                 # SmolVLA stores the target as (width, height); the shared helper expects (height, width).
                 img = resize_with_pad(
@@ -583,7 +585,6 @@ class VLAFlowMatching(nn.Module):
 
         # Compile model if requested
         if config.compile_model:
-            torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)  # type: ignore[method-assign]
             self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 

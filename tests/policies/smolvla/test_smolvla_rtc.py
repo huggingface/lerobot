@@ -54,8 +54,9 @@ def test_smolvla_rtc_initialization():
         "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
     }
 
-    # Instantiate policy
-    policy = SmolVLAPolicy(config)
+    # Instantiate policy on the GPU: initializing the VLM weights on the CPU is slow
+    with torch.device("cuda"):
+        policy = SmolVLAPolicy(config)
 
     # Verify RTC processor is initialized
     assert hasattr(policy, "rtc_processor")
@@ -75,8 +76,9 @@ def test_smolvla_rtc_initialization_without_rtc_config():
 
     config = SmolVLAConfig(max_action_dim=7, chunk_size=50)
 
-    # Instantiate policy
-    policy = SmolVLAPolicy(config)
+    # Instantiate policy on the GPU: initializing the VLM weights on the CPU is slow
+    with torch.device("cuda"):
+        policy = SmolVLAPolicy(config)
 
     # Verify RTC processor is not initialized
     assert hasattr(policy, "rtc_processor")

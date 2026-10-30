@@ -163,7 +163,7 @@ Where the robot supports the rollout position hold, a pause refreshes the last p
 
 | Flag                                 | Description                                                                                                                                                    |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--strategy.num_episodes`            | Number of correction episodes to record (default: 10)                                                                                                          |
+| `--strategy.num_episodes`            | Number of correction episodes to record (default: `--dataset.num_episodes`)                                                                                    |
 | `--strategy.record_autonomous`       | Record autonomous frames too (default: false)                                                                                                                  |
 | `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)                                                                                                                      |
 | `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard)                                                                                                        |
@@ -182,7 +182,7 @@ lerobot-rollout \
     --robot.port=/dev/ttyACM0 \
     --teleop.type=so100_leader \
     --teleop.port=/dev/ttyACM1 \
-    --dataset.repo_id=${HF_USER}/my_eval_data \
+    --dataset.repo_id=${HF_USER}/rollout_eval_data \
     --dataset.num_episodes=20 \
     --dataset.episode_time_s=30 \
     --dataset.reset_time_s=10 \
@@ -263,11 +263,26 @@ lerobot-rollout \
 
 For asynchronous backends, the dispatch contract is mandatory. Publish each captured observation with `engine.notify_observation(obs_processed)`, call `send_next_action(...)` on **every autonomous motor tick**, including interpolation and held ticks, then call `engine.pump_query(obs_processed)`. Calling only `engine.get_action()` bypasses the permission and hold handshake: a planned text query can wait indefinitely, and a terminal fault may never signal shutdown.
 
+Third-party strategies can call `self._tick(timer, new_cycle=interpolator.needs_new_action())`
+in place of `timer.tick(...)` to include periodic health reporting after `_init_engine(ctx)`.
+
 `send_next_action` is built on `lerobot.inference.dispatch_tick` and its parts (`next_interpolated_action`, `commit_action`, `dispatch_permitted`), which encode that order once: `dispatch_allowed()` before and after pulling an action and again before sending, interpolation invalidation plus a supported local hold and `acknowledge_hold()` when denied, and `record_dispatch()` after sending. A hold that fails is never acknowledged. Use those helpers rather than re-implementing the sequence; `send_next_action` only adds the dataset frame, the robot-side action processor and cadence accounting. Remote contexts have `ctx.policy.policy`, `preprocessor` and `postprocessor` set to `None`; use `ctx.policy.inference` and the robot-side pipelines in `ctx.processors`.
 
 Wrap known blocking mid-run recording work in `self._pause_for_recording(ctx)`, including ring-buffer drains and episode finalization. This invalidates asynchronous motion before the recording stall and resumes only if the run is still healthy and active. Strategies with operator-controlled phases must pass their current motion permission as `resume_allowed`. The next action must come from a fresh observation; saved work must not revive a paused, stopped or faulted run.
 
 ---
+
+## Visualizing policy predictions
+
+With `--display_data`, the viewer also shows what the policy predicts besides actions: a world
+model's imagined camera frames, a predicted subtask, bounding boxes drawn over a camera. Each policy
+decides what it predicts and turns it on through its own config, for example
+`--policy.return_predicted_video=true` for LingBot-VA. A prediction is named after what it predicts:
+Rerun shows a predicted `observation.images.top` as `prediction.images.top`, a predicted subtask as
+`prediction.subtask`, and boxes under their camera (`<camera>/prediction`); Foxglove publishes them
+on `/prediction/...` topics and `<camera topic>/prediction` image annotations. With RTC, the
+prediction refreshes once per chunk. See [Bring your own policy](./bring_your_own_policies) to return
+a prediction from a policy.
 
 ## Inference Backends
 
@@ -527,6 +542,7 @@ strategy.teardown(ctx)  # teardown stays with the caller
 | `--robot.port`                    | Serial port for the robot                                         | --      |
 | `--robot.cameras`                 | Camera configuration (JSON dict)                                  | --      |
 | `--fps`                           | Policy inference and dataset recording frequency                  | 30      |
+| `--status_interval_s`             | Seconds between health logs (0 disables; non-interactive only)    | 5       |
 | `--duration`                      | Run time in seconds (0 = infinite; per segment if interactive)    | 0       |
 | `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                               | auto    |
 | `--task`                          | Task description (used when no dataset is provided)               | --      |
@@ -541,6 +557,14 @@ strategy.teardown(ctx)  # teardown stays with the caller
 ---
 
 ## Cadence Reporting
+
+Non-interactive rollout logs its status every five seconds. Change the interval with `--status_interval_s=10`, or disable it with `--status_interval_s=0`.
+
+```text
+Rollout: loop 29.7/30 Hz · over budget 2/149 · starved 0 · infer 18.7 ms (worst 40.1) · process 2.41 GiB · GPU 5.12/79.6 GiB
+```
+
+Latency is median/worst over the interval (`turnaround` for RTC/remote). Unavailable fields are omitted; GPU memory is device-wide, and remote memory is local. Reporting pauses when the loop blocks.
 
 Every strategy reports what its control loop actually achieved, as do `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay` — they all pace through the same timer. Each saved episode gets a one-line digest, and when the loop ends — including on `Ctrl-C` — a block covering the whole run:
 

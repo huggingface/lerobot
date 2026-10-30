@@ -25,6 +25,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 # exercises) imports ``lerobot.datasets``, which only ships under the
 # ``dataset`` extra. Skip in tiers without it instead of erroring.
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytestmark = pytest.mark.dataset
 
 
 def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):

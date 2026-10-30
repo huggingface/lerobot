@@ -37,7 +37,11 @@ if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
     from lerobot.teleoperators import Teleoperator
 from lerobot.lerobot_types import PolicyAction, RobotAction
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import (
+    PolicyProcessorPipeline,
+    policy_output_to_transition,
+    transition_to_policy_action,
+)
 from lerobot.robots import Robot
 
 
@@ -85,7 +89,7 @@ def predict_action(
 
         # Compute the next action with the policy
         # based on the current observation
-        action = policy.select_action(observation)
+        action = transition_to_policy_action(policy_output_to_transition(policy.select_action(observation)))
 
         action = postprocessor(action)
 
@@ -100,13 +104,15 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
     if and only if a policy configuration is provided for evaluation purposes.
 
     Args:
-        repo_id: The Hugging Face Hub repository ID of the dataset.
+        repo_id: The Hugging Face Hub repository ID of the dataset, or a local
+            dataset name with no namespace.
         policy_cfg: The configuration object for the policy, or `None`.
 
     Raises:
         ValueError: If the naming convention is violated.
     """
-    _, dataset_name = repo_id.split("/")
+    # Hub IDs are "namespace/name"; local recordings may pass a name with no slash.
+    dataset_name = repo_id.split("/")[-1]
     # either repo_id doesnt start with "eval_" and there is no policy
     # or repo_id starts with "eval_" and there is a policy
 

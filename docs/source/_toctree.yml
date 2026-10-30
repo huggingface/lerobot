@@ -77,8 +77,12 @@
     title: EO-1
   - local: lingbot_va
     title: LingBot-VA
+  - local: lingbot_vla_v2
+    title: LingBot-VLA 2.0
   - local: fastwam
     title: FastWAM
+  - local: longwam
+    title: Long-WAM
   - local: flux3
     title: FLUX 3 Action (flux3)
   - local: evo1
@@ -91,6 +95,8 @@
     title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
+  - local: wall_oss_05
+    title: Wall-OSS-0.5
   - local: dm05
     title: DM05
   title: "Policies"

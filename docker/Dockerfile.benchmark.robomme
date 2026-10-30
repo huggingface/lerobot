@@ -47,7 +47,7 @@ COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md
 RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\n' > /tmp/robomme_override.txt \
     && uv pip install --no-cache --override /tmp/robomme_override.txt \
          -e ".[smolvla,av-dep]" \
-         "robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main" \
+         "robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@53673b3c94a723d757e9c235f1961e398950e5e3" \
     && python -c "import robomme; print('robomme import OK')"
 
 # Overlay the PR's source code on top of the nightly image.

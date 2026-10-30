@@ -69,7 +69,7 @@ dependencies = [
     # Config & Hub
     "draccus>=0.11.6,<0.12.0",
     "huggingface-hub>=1.6.0,<2.0.0",
-    "filelock>=3.12.0,<4.0.0",
+    "filelock>=4.2.1,<5.0.0",
     "fsspec>=2023.5.0,<2027.0.0",
     "httpx>=0.27.0,<1.0.0",
     "requests>=2.32.0,<3.0.0",
@@ -126,7 +126,8 @@ dataset = [
 ]
 training = [
     "lerobot[dataset]",
-    "wandb>=0.24.0,<0.28.0",
+    "trackio[gpu]>=0.44.0,<1.0.0; sys_platform != 'darwin'",
+    "trackio[apple-gpu]>=0.44.0,<1.0.0; sys_platform == 'darwin'",
     "lerobot[accelerate-dep]",
 ]
 hardware = [
@@ -246,6 +247,7 @@ robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot
 topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
+longwam = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[sentencepiece-dep]"]
 fastwam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -269,6 +271,8 @@ fineart_vla_kernels = [
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
+lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
+wall_oss_05 = ["lerobot[transformers-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -349,12 +353,14 @@ all = [
     "lerobot[diffusion]",
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
+    "lerobot[wall_oss_05]",
     "lerobot[pi]",
     "lerobot[dm05]",
     "lerobot[fineart_vla]",
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
     "lerobot[fastwam]",
+    "lerobot[longwam]",
     "lerobot[flux3]",
     "lerobot[groot]",
     "lerobot[xvla]",
@@ -362,6 +368,7 @@ all = [
     "lerobot[hilserl]",
     "lerobot[vla_jepa]",
     "lerobot[lingbot_va]",
+    "lerobot[lingbot_vla_v2]",
     "lerobot[lawam]",
     "lerobot[remote]",
     "lerobot[dev]",
@@ -549,6 +556,8 @@ default.extend-ignore-identifiers-re = [
     "OT_VALUE",
     "VanderBilt",
     "seperated_timestep",
+    # Diffusers VAE configuration spelling.
+    "temperal_downsample",
     "nd",  # einsum output axes "...nd" in the vendored FLUX 3 Action transformer
     "EmbedND",
 ]
@@ -612,3 +621,9 @@ enable_error_code = [
 [[tool.mypy.overrides]]
 module = ["lerobot.rl.*", "lerobot.policies.molmoact2.molmoact2_hf_model.*"]
 ignore_errors = true
+
+# ZeroMQ's public stubs re-export names from Python modules. Follow those modules
+# to retain their types instead of treating the re-exported names as missing.
+[[tool.mypy.overrides]]
+module = ["zmq", "zmq.*"]
+follow_imports = "silent"
