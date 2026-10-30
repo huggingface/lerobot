@@ -36,6 +36,8 @@ from lerobot.datasets.compute_stats import (
 from lerobot.datasets.io_utils import load_stats, write_stats
 from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
+pytestmark = pytest.mark.dataset
+
 
 def mock_load_image_as_numpy(path, dtype, channel_first):
     is_depth = "depth" in str(path)

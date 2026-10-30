@@ -85,7 +85,12 @@ from lerobot.envs import (
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
+from lerobot.processor import (
+    PolicyProcessorPipeline,
+    bind_relative_anchor,
+    policy_output_to_transition,
+    transition_to_policy_action,
+)
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.eval_stats import success_summary
@@ -308,7 +313,9 @@ def rollout(
 
             observation = preprocessor(observation)
             with torch.inference_mode():
-                action = policy.select_action(observation)
+                action = transition_to_policy_action(
+                    policy_output_to_transition(policy.select_action(observation))
+                )
             if predicted_latents_callback is not None:
                 predicted_latents_callback(policy)
             action = postprocessor(action)
@@ -781,7 +788,9 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     device = get_safe_torch_device(cfg.policy.device, log=True)
 
     torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
     set_seed(cfg.seed)
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")

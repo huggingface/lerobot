@@ -167,7 +167,7 @@ def shift_timestamps(timestamps: Sequence[float], offset: float) -> list[float]:
 
 def task_name(tasks: "pd.DataFrame", task_index: int | torch.Tensor) -> str:
     """Look up a task string from the metadata tasks table by its integer ``task_index``."""
-    return tasks.iloc[int(task_index)].name
+    return str(tasks.iloc[int(task_index)].name)
 
 
 DEPTH_FILE_PATTERN = "frame-{frame_index:06d}.tiff"

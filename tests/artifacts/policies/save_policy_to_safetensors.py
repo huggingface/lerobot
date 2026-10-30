@@ -144,12 +144,6 @@ if __name__ == "__main__":
             "",
         ),
         ("lerobot/aloha_sim_insertion_human", "act", {"n_action_steps": 10}, ""),
-        (
-            "lerobot/aloha_sim_insertion_human",
-            "act",
-            {"n_action_steps": 1000, "chunk_size": 1000},
-            "1000_steps",
-        ),
     ]
     if len(artifacts_cfg) == 0:
         raise RuntimeError("No policies were provided!")

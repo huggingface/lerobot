@@ -64,7 +64,8 @@ class RunningQuantileStats:
             batch: An array where all dimensions except the last are batch dimensions.
         """
         batch = batch.reshape(-1, batch.shape[-1])
-        # Promote integer and low-precision inputs before computing statistics.
+        # Preserve the histogram/min/max dtype; centered moments below use float64
+        # before subtraction and squaring, including for integer/low-precision input.
         batch = batch.astype(np.result_type(batch.dtype, np.float32), copy=False)
         num_elements, vector_length = batch.shape
 
@@ -210,9 +211,9 @@ class RunningQuantileStats:
         idx = np.searchsorted(cumsum, target_count)
 
         if idx == 0:
-            return edges[0]
+            return float(edges[0])
         if idx >= len(cumsum):
-            return edges[-1]
+            return float(edges[-1])
 
         # If not edge case, interpolate within the bin
         count_before = cumsum[idx - 1]
@@ -220,11 +221,11 @@ class RunningQuantileStats:
 
         # If no samples in this bin, use the bin edge
         if count_in_bin == 0:
-            return edges[idx]
+            return float(edges[idx])
 
         # Linear interpolation within the bin
         fraction = (target_count - count_before) / count_in_bin
-        return edges[idx] + fraction * (edges[idx + 1] - edges[idx])
+        return float(edges[idx] + fraction * (edges[idx + 1] - edges[idx]))
 
 
 def estimate_num_samples(

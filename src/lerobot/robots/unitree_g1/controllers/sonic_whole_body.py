@@ -141,13 +141,13 @@ class SonicWholeBodyController(RobotController):
 
     def reset(self) -> None:
         """Reset internal state for a new episode: held token and proprioception history."""
-        self.last_action_mj = np.zeros(NUM_MOTORS, np.float32)
-        self.h_q_mj = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_dq_mj = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_ang = [np.zeros(3, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_act_mj = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
+        self.last_action_mj: np.ndarray = np.zeros(NUM_MOTORS, np.float32)
+        self.h_q_mj: list[np.ndarray] = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_dq_mj: list[np.ndarray] = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_ang: list[np.ndarray] = [np.zeros(3, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_act_mj: list[np.ndarray] = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
         self.h_quat = [np.array([1, 0, 0, 0], np.float32) for _ in range(HISTORY_LEN)]
-        self._last_token = None  # neutral token is re-seeded on the first tick
+        self._last_token: np.ndarray | None = None  # neutral token is re-seeded on the first tick
 
     def observation_state(self) -> dict[str, float]:
         """Echo the last decoded token as ``observation.state`` so a token-output VLA closes
@@ -195,7 +195,7 @@ class SonicWholeBodyController(RobotController):
         self.h_quat = [quat] + self.h_quat[:-1]
 
         # Assemble the 994-D decoder input: token + oldest->newest history + gravity.
-        obs = np.zeros(DECODER_INPUT_DIM, np.float32)
+        obs: np.ndarray = np.zeros(DECODER_INPUT_DIM, np.float32)
         obs[:TOKEN_DIM] = self._last_token
         off = TOKEN_DIM
         for hist, sz in (

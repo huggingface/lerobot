@@ -123,16 +123,16 @@ python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 
 ### Training a Policy
 
-To train a policy, checkout the configuration example available [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/train_config.json) and run the actor and learner servers:
-
-```bash
-python -m lerobot.rl.actor --config_path path/to/train_gym_hil_env.json
-```
-
-In a different terminal, run the learner server:
+To train a policy, checkout the configuration example available [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/train_config.json) and run the learner and actor servers. Start the learner first, since the actor connects to it:
 
 ```bash
 python -m lerobot.rl.learner --config_path path/to/train_gym_hil_env.json
+```
+
+In a different terminal, run the actor server:
+
+```bash
+python -m lerobot.rl.actor --config_path path/to/train_gym_hil_env.json
 ```
 
 The simulation environment provides a safe and repeatable way to develop and test your Human-In-the-Loop reinforcement learning components before deploying to real robots.
