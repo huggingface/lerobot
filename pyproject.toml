@@ -84,7 +84,7 @@ dependencies = [
     "safetensors>=0.4.3,<1.0.0",
 
     # Lightweight utilities
-    "packaging>=24.2,<26.0",
+    "packaging>=24.2,<27.0",
     "termcolor>=2.4.0,<4.0.0",
     "tqdm>=4.66.0,<5.0.0",
 
