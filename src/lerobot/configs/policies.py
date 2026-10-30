@@ -81,7 +81,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     license: str | None = None
     # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
     # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.
-    pretrained_path: Path | None = None
+    pretrained_path: str | Path | None = None
     # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
     pretrained_revision: str | None = None
 
@@ -190,7 +190,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     ) -> T:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
-        if Path(model_id).is_dir():
+        is_local = Path(model_id).is_dir()
+        if is_local:
             if CONFIG_NAME in os.listdir(model_id):
                 config_file = os.path.join(model_id, CONFIG_NAME)
             else:
@@ -245,6 +246,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         # yields pretrained_path=None. Backfill it: downstream code (e.g.
         # make_policy / make_pre_post_processors) silently builds an untrained
         # processor pipeline without it, instead of loading the pretrained stats.
-        config.pretrained_path = Path(model_id)
+        config.pretrained_path = Path(model_id) if is_local else model_id
         config.pretrained_revision = revision
         return config
