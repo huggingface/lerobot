@@ -1,0 +1,575 @@
+# SPDX-License-Identifier: LicenseRef-G0.5-Community-1.0
+# Copyright (c) 2026 Galaxea
+# Modified for LeRobot in 2026.
+
+"""Configuration for the OpenGalaxea G0.5 policy adapter."""
+
+import re
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+import torch
+
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.optim.optimizers import AdamWConfig
+from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
+from lerobot.utils.constants import ACTION, OBS_STATE
+
+
+def _bbox_binding(camera: str) -> str:
+    """Bind the BBox target to the VQA answers annotated on ``camera``."""
+    return f"emitted_at(t, style=vqa, role=assistant, camera={camera})"
+
+
+# Matches the built-in BBox binding whatever camera it was saved with.
+_DEFAULT_BBOX_BINDING = re.compile(r"emitted_at\(t, style=vqa, role=assistant, camera=[^,)]*\)")
+
+
+def _g05_default_recipe(bbox_camera: str = "observation.images.exterior") -> dict:
+    """G0.5's native training mix: chain-of-thought, subtask-as-task, and plain samples.
+
+    Mirrors the upstream ``MixedSamplesBuilder``. ``cot`` covers ``SubtaskCoTBuilder`` (x2),
+    ``BBoxCoTBuilder`` and ``BBoxSubtaskCoTBuilder``: the task, then the BBox and/or Subtask
+    chain of thought, then actions. ``atomic_task`` is ``AtomicTaskBaseSamplesBuilder``: the
+    active subtask as the task, straight to actions, which is what the policy sees once a
+    subtask is steered in (``/subtask``, ``/autosteer``). ``base`` is ``BaseSamplesBuilder``:
+    the task straight to actions, the System 1 prompt.
+
+    Serialized like EO-1's default recipe so policy config discovery stays
+    independent of the dataset extras that `lerobot.datasets.recipe` needs.
+    """
+    return {
+        "blend": {
+            "cot": {
+                "weight": 4.0,
+                "bindings": {"bbox": _bbox_binding(bbox_camera)},
+                "messages": [
+                    {"role": "user", "content": "${task}", "stream": "low_level"},
+                    {
+                        "role": "assistant",
+                        "content": "BBoxJSON: ${bbox}",
+                        "stream": "low_level",
+                        "target": True,
+                        "if_present": "bbox",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Subtask: ${subtask}",
+                        "stream": "low_level",
+                        "target": True,
+                        "if_present": "subtask",
+                    },
+                ],
+            },
+            "atomic_task": {
+                "weight": 1.0,
+                "messages": [
+                    {"role": "user", "content": "${subtask}", "stream": "low_level", "if_present": "subtask"}
+                ],
+            },
+            "base": {
+                "weight": 1.0,
+                "messages": [{"role": "user", "content": "${task}", "stream": "low_level"}],
+            },
+        }
+    }
+
+
+G05_CAMERA_PROFILES: dict[str, tuple[str, ...]] = {
+    "libero": (
+        "observation.images.image",
+        "observation.images.wrist_image",
+    ),
+    "robotwin": (
+        "observation.images.head_camera",
+        "observation.images.left_camera",
+        "observation.images.right_camera",
+    ),
+    "so100": (
+        "observation.images.exterior",
+        "observation.images.wrist_left",
+        "observation.images.wrist_right",
+    ),
+    "galaxea_r1lite": (
+        "observation.images.head_rgb",
+        "observation.images.left_wrist_rgb",
+        "observation.images.right_wrist_rgb",
+    ),
+    "galaxea_r1pro": (
+        "observation.images.head_rgb",
+        "observation.images.left_wrist_rgb",
+        "observation.images.right_wrist_rgb",
+    ),
+}
+
+G05_CAMERA_SIZE_PROFILES: dict[str, dict[str, tuple[int, int]]] = {
+    "libero": dict.fromkeys(G05_CAMERA_PROFILES["libero"], (224, 224)),
+    "robotwin": dict.fromkeys(G05_CAMERA_PROFILES["robotwin"], (256, 256)),
+    "so100": dict.fromkeys(G05_CAMERA_PROFILES["so100"], (256, 256)),
+    "galaxea_r1lite": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1lite"], (256, 256)),
+    "galaxea_r1pro": dict.fromkeys(G05_CAMERA_PROFILES["galaxea_r1pro"], (256, 256)),
+}
+
+
+# The CoT prompt text of each upstream builder, keyed by the fields it generates, in order.
+G05_COT_PROMPTS: dict[tuple[str, ...], str] = {
+    ("bbox",): "predict bbox",
+    ("subtask",): "predict subtask",
+    ("bbox", "subtask"): "predict bbox, subtask and action",
+}
+
+
+def _g05_user_turn(num_images: int) -> str:
+    """The chat-wrapped user turn shared by the System 1 and CoT templates."""
+    images = "".join(f"<image{index}_image_!>" for index in range(num_images))
+    return (
+        f"<chat_user_prefix>{images}<bos>"
+        "Embodiment: <embodiment_text_!>; Task: <command_text_!_200> "
+        "State: <proprio_proprio_!>;"
+        "<chat_user_suffix><chat_assistant_prefix>"
+    )
+
+
+def make_g05_prompt_template(num_images: int, *, predict_cot: bool, flow_only: bool) -> str:
+    """Reproduce the selected author SamplesBuilder template exactly."""
+
+    if predict_cot:
+        return make_g05_cot_prompt_template(num_images, fields=("subtask",), flow_only=flow_only)
+    if flow_only:
+        # BaseActionSamplesBuilderFMOnly intentionally has no chat wrapper.
+        images = "".join(f"<image{index}_image_!>" for index in range(num_images))
+        return (
+            f"{images}<bos>Embodiment: <embodiment_text_!>; "
+            "Task: <command_text_!_200> State: <proprio_proprio_!>;\n"
+            "Action: <EOV><EOC><eos>"
+        )
+    return f"{_g05_user_turn(num_images)}Action: <EOV><EOC><action_action>|<eos>"
+
+
+def make_g05_cot_prompt_template(
+    num_images: int,
+    *,
+    fields: tuple[str, ...],
+    flow_only: bool,
+) -> str:
+    """Build the exact author template for a selected Subtask/BBox CoT format."""
+
+    supported_fields = {"bbox", "subtask"}
+    if not fields or not set(fields) <= supported_fields:
+        raise ValueError(
+            f"G0.5 CoT fields must be a non-empty subset of {sorted(supported_fields)}, got {fields}."
+        )
+    # The released BBoxSubtaskCoTBuilder emits BBox before Subtask. Preserve
+    # checkpoint serialization even though the paper's schematic orders the
+    # independently composable labels differently.
+    ordered_fields = tuple(field for field in ("bbox", "subtask") if field in fields)
+    placeholders = {
+        "bbox": "<bbox_text>|",
+        "subtask": "<atomic_task_text>|",
+    }
+    action = "Action: <EOV><eos>" if flow_only else "Action: <EOV><action_action>|<eos>"
+    return (
+        f"{_g05_user_turn(num_images)}<prompt_text_!>\n<EOC>"
+        + "".join(placeholders[field] for field in ordered_fields)
+        + action
+    )
+
+
+# Raw dimensions are inserted in these exact policy slots. The G0.5 shared layout is:
+# left_control[9] | left_gripper[1] | right_control[9] | right_gripper[1] | lower_body[7].
+# LIBERO uses only the right EEF delta and right gripper.
+G05_EMBODIMENT_MAPPINGS: dict[str, dict[str, tuple[int, ...]]] = {
+    "libero": {
+        "state": (10, 11, 12, 13, 14, 15, 19),
+        "action": (10, 11, 12, 13, 14, 15, 19),
+    },
+    "robotwin": {
+        "state": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
+        "action": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
+    },
+    "so100": {
+        "state": (10, 11, 12, 13, 14, 15),
+        "action": (10, 11, 12, 13, 14, 15),
+    },
+    "galaxea_r1lite": {
+        "state": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
+        "action": (0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 19),
+    },
+    "galaxea_r1pro": {
+        "state": (0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15, 16, 19),
+        "action": (0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15, 16, 19),
+    },
+}
+
+G05_POLICY_PARTS: dict[int, dict[str, int]] = {
+    20: {
+        "left_control": 9,
+        "left_gripper": 1,
+        "right_control": 9,
+        "right_gripper": 1,
+    },
+    27: {
+        "left_control": 9,
+        "left_gripper": 1,
+        "right_control": 9,
+        "right_gripper": 1,
+        "lower_body": 7,
+    },
+}
+
+_SIDE_PREFIX = re.compile(r"^(left|right)[_.\-]")
+
+
+def _part_offsets(width: int) -> dict[str, int]:
+    """Start index of each part in the ``width``-dim policy layout."""
+    offsets, start = {}, 0
+    for part, size in G05_POLICY_PARTS[width].items():
+        offsets[part] = start
+        start += size
+    return offsets
+
+
+def derive_g05_slots(names: Sequence[str], width: int) -> tuple[int, ...]:
+    """Place a robot's joints in the shared policy layout from their names.
+
+    A ``left_``-prefixed joint goes on the left arm and any other joint on the right arm, so a
+    single-arm robot fills the right arm like the released single-arm checkpoints. A joint whose
+    name contains ``gripper`` takes that arm's gripper slot; the others fill its control slots in
+    order.
+    """
+    parts, offsets = G05_POLICY_PARTS[width], _part_offsets(width)
+    used = {"left_control": 0, "right_control": 0, "left_gripper": 0, "right_gripper": 0}
+    slots = []
+    for name in names:
+        match = _SIDE_PREFIX.match(name.lower())
+        side = match.group(1) if match else "right"
+        part = f"{side}_gripper" if "gripper" in name.lower() else f"{side}_control"
+        if used[part] >= parts[part]:
+            raise ValueError(
+                f"Joint {name!r} does not fit: the G0.5 {part} part holds {parts[part]} value(s). "
+                "Set state_slots/action_slots explicitly."
+            )
+        slots.append(offsets[part] + used[part])
+        used[part] += 1
+    return tuple(slots)
+
+
+def _feature_names(feature: Any) -> list[str] | None:
+    """Flat per-dimension names of a dataset feature, or None when it has none."""
+    names = feature.get("names") if isinstance(feature, dict) else None
+    if isinstance(names, dict):
+        names = [name for group in names.values() for name in group]
+    return list(names) if names else None
+
+
+@PreTrainedConfig.register_subclass("g05")
+@dataclass
+class G05Config(PreTrainedConfig):
+    """LeRobot-side, checkpoint-auditable configuration for G0.5.
+
+    ``author_model_config`` is the backward-compatible serialized field holding
+    the packaged checkpoint's resolved native architecture. It is checkpoint
+    state rather than a collection of guessed LeRobot defaults.
+    """
+
+    # Fine-tunes stay Derivative Works under the G0.5 Community License, so their
+    # model card must not fall back to the Apache-2.0 default.
+    license: str | None = "other"
+    embodiment: str = "libero"
+    action_head: str = "actioncodec"  # actioncodec (AR) or flow (continuous)
+    runtime_system: str = "system1"  # system1 actions, or unified system2 CoT+actions
+    predict_cot: bool = False
+    discrete_action: bool = True
+    continuous_action: bool = False
+    # torch.bfloat16 runs the released mixed precision on CUDA (BF16 weights with the author's FP32
+    # islands, BF16 autocast); torch.float32 keeps every weight in FP32.
+    dtype: torch.dtype | None = torch.bfloat16
+
+    policy_action_dim: int = 20
+    policy_state_dim: int = 20
+    raw_action_dim: int = 7
+    raw_state_dim: int = 7
+    # Policy-layout slot of each raw state/action value. Empty means the named embodiment's
+    # table, or, for another robot, slots derived from the dataset's joint names.
+    state_slots: tuple[int, ...] = ()
+    action_slots: tuple[int, ...] = ()
+    chunk_size: int = 16
+    n_action_steps: int = 16
+    normalization_clip: tuple[float, float] | None = None
+    use_relative_actions: bool = False
+    relative_exclude_joints: tuple[str, ...] = ()
+    action_feature_names: tuple[str, ...] = ()
+    use_stepwise_action_norm: bool = False
+    joint_signs: tuple[float, ...] = ()
+    joint_offsets: tuple[float, ...] = ()
+    libero_gripper_binarize: bool = False
+    # Dataset camera feeding each checkpoint image slot, in slot order; `None` leaves a slot empty.
+    camera_order: tuple[str | None, ...] = field(default_factory=lambda: G05_CAMERA_PROFILES["libero"])
+    camera_sizes: dict[str, tuple[int, int]] = field(default_factory=dict)
+    optional_camera_keys: tuple[str, ...] = ()
+    image_mean: tuple[float, float, float] = (0.5, 0.5, 0.5)
+    image_std: tuple[float, float, float] = (0.5, 0.5, 0.5)
+    num_input_images: int = 0
+    num_prompt_images: int = 0
+
+    author_model_config: dict[str, Any] = field(default_factory=dict)
+    processor_metadata: dict[str, Any] = field(default_factory=dict)
+    prompt_template: str = ""
+    use_language_recipe: bool = False
+    # A recipe YAML read once into `recipe` when the config is built; it is not saved.
+    recipe_path: str | None = None
+    recipe: dict[str, Any] | None = field(default_factory=_g05_default_recipe)
+    cot_bbox_camera: str | None = None
+    # The System 2 chain of thought generated at inference: ("subtask",) is upstream's
+    # SubtaskCoTBuilder prompt, ("bbox", "subtask") its BBoxSubtaskCoTBuilder prompt (boxes
+    # first, then the subtask; the action attends to both).
+    runtime_cot_fields: tuple[str, ...] = ("subtask",)
+    # Training-only probability of dropping a sample's <state> token from the prompt, as upstream's
+    # `proprio_encoder: mlp_dropout` (its default p is 0.2). Keeps the policy from acting on the
+    # arm state alone and ignoring the cameras.
+    proprio_dropout_p: float = 0.2
+
+    normalization_mapping: dict[str, NormalizationMode] = field(
+        default_factory=lambda: {
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.IDENTITY,
+            "ACTION": NormalizationMode.IDENTITY,
+        }
+    )
+    optimizer_lr: float = 8e-5
+    optimizer_betas: tuple[float, float] = (0.9, 0.95)
+    optimizer_weight_decay: float = 0.01
+    optimizer_grad_clip_norm: float = 1.0
+    optimizer_backbone_lr_multiplier: float = 1.0
+    optimizer_vision_lr_multiplier: float = 1.0
+    optimizer_apply_decay_on_norm_and_bias: bool = False
+    scheduler_warmup_steps: int = 500
+
+    def __post_init__(self) -> None:
+        """Resolve the recipe override and validate the configured fields."""
+        super().__post_init__()
+        if self.dtype not in (torch.bfloat16, torch.float32):
+            raise ValueError(f"dtype must be torch.bfloat16 or torch.float32, got {self.dtype!r}.")
+        if self.recipe_path is not None:
+            # The file is read once and stored inline, and the path is dropped, so a saved
+            # checkpoint keeps the recipe it was trained with even if the file changes later.
+            # Import only here: the datasets package requires optional extras.
+            from lerobot.datasets.recipe import resolve_recipe_override
+
+            resolved = resolve_recipe_override(self.recipe, self.recipe_path)
+            self.recipe = asdict(resolved) if resolved is not None else None
+            self.recipe_path = None
+            self.use_language_recipe = True
+        # An empty slot becomes an optional camera, which the image step zero-fills.
+        empty = {
+            index: f"observation.images.empty_{index}"
+            for index, key in enumerate(self.camera_order)
+            if key is None
+        }
+        self.camera_order = tuple(empty.get(index, key) for index, key in enumerate(self.camera_order))
+        self.camera_sizes = {
+            key: (int(size[0]), int(size[1])) for key, size in (self.camera_sizes or {}).items()
+        }
+        self.optional_camera_keys = tuple(dict.fromkeys((*self.optional_camera_keys, *empty.values())))
+        self.state_slots = tuple(int(slot) for slot in self.state_slots)
+        self.action_slots = tuple(int(slot) for slot in self.action_slots)
+        if self.normalization_clip is not None:
+            clip = tuple(float(value) for value in self.normalization_clip)
+            if len(clip) != 2 or clip[0] >= clip[1]:
+                raise ValueError("normalization_clip must be an increasing (minimum, maximum) pair.")
+            self.normalization_clip = (clip[0], clip[1])
+        self.relative_exclude_joints = tuple(self.relative_exclude_joints)
+        self.action_feature_names = tuple(self.action_feature_names)
+        self.joint_signs = tuple(float(value) for value in self.joint_signs)
+        self.joint_offsets = tuple(float(value) for value in self.joint_offsets)
+        if len(self.joint_signs) != len(self.joint_offsets):
+            raise ValueError("joint_signs and joint_offsets must have the same length.")
+        if set(self.camera_sizes) != set(self.camera_keys):
+            # New cameras on a packaged checkpoint keep its per-slot sizes (config-file/CLI
+            # dict values merge instead of replacing, so the saved entries are still there).
+            profile = G05_CAMERA_SIZE_PROFILES.get(self.embodiment, {})
+            slot_sizes = list(self.camera_sizes.values()) or list(profile.values())
+            self.camera_sizes = {
+                key: self.camera_sizes.get(key)
+                or profile.get(key)
+                or (slot_sizes[index] if index < len(slot_sizes) else (256, 256))
+                for index, key in enumerate(self.camera_keys)
+            }
+        if self.recipe is not None:
+            for component in [self.recipe, *(self.recipe.get("blend") or {}).values()]:
+                bindings = component.get("bindings") or {}
+                if _DEFAULT_BBOX_BINDING.fullmatch(bindings.get("bbox", "")):
+                    # The built-in recipe reads the boxes annotated on the bbox camera.
+                    component["bindings"] = {**bindings, "bbox": _bbox_binding(self.bbox_camera)}
+        # Both follow from the camera slots and the history length; a saved value would go
+        # stale when a fine-tune changes either (e.g. `n_obs_steps=1` on the 6-step base).
+        self.num_input_images = len(self.camera_order) * self.n_obs_steps
+        self.num_prompt_images = len(self.camera_order)
+        if not self.prompt_template:
+            samples_builder = self.processor_metadata.get("samples_builder") or {}
+            if isinstance(samples_builder, dict):
+                samples_builder_target = str(samples_builder.get("_target_", ""))
+            else:
+                samples_builder_target = str(samples_builder)
+            self.prompt_template = make_g05_prompt_template(
+                self.num_prompt_images,
+                predict_cot=self.predict_cot,
+                flow_only=samples_builder_target.endswith("FMOnly"),
+            )
+        if self.action_head not in {"actioncodec", "flow"}:
+            raise ValueError("action_head must be 'actioncodec' or 'flow'.")
+        if self.runtime_system not in {"system1", "system2"}:
+            raise ValueError("runtime_system must be 'system1' or 'system2'.")
+        if self.runtime_system == "system2" and not self.predict_cot:
+            raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
+        if self.use_language_recipe and self.recipe is None:
+            raise ValueError("G0.5 language training requires a recipe in policy config.")
+        if self.use_language_recipe and not self.predict_cot:
+            raise ValueError("G0.5 recipe-driven CoT training requires predict_cot=True.")
+        if not 0.0 <= self.proprio_dropout_p <= 1.0:
+            raise ValueError(f"proprio_dropout_p must be in [0, 1], got {self.proprio_dropout_p}.")
+        if not 1 <= self.n_action_steps <= self.chunk_size:
+            raise ValueError("n_action_steps must be between 1 and chunk_size.")
+        if self.action_head == "actioncodec" and not self.discrete_action:
+            raise ValueError("The ActionCodec runtime requires discrete_action=True.")
+        if self.action_head == "flow" and not self.continuous_action:
+            raise ValueError("The flow runtime requires continuous_action=True.")
+        if self.policy_action_dim not in G05_POLICY_PARTS:
+            raise ValueError(
+                f"No named G0.5 shared action layout for policy_action_dim={self.policy_action_dim}."
+            )
+        if not (self.discrete_action or self.continuous_action):
+            raise ValueError("At least one G0.5 action path must be enabled.")
+        if bool(self.state_slots) != bool(self.action_slots):
+            raise ValueError("state_slots and action_slots must be set together.")
+        if self.slot_mapping is not None:
+            self._apply_slots()
+        if not set(self.optional_camera_keys) <= set(self.camera_order):
+            raise ValueError("optional_camera_keys must be a subset of camera_order.")
+        self.runtime_cot_fields = tuple(self.runtime_cot_fields)
+        if self.runtime_cot_fields not in G05_COT_PROMPTS:
+            raise ValueError(
+                f"runtime_cot_fields must be one of {sorted(G05_COT_PROMPTS)}, got {self.runtime_cot_fields}."
+            )
+        if self.cot_bbox_camera is not None and self.cot_bbox_camera not in self.camera_order:
+            raise ValueError("cot_bbox_camera must be one of camera_order.")
+        if any(min(size) <= 0 for size in self.camera_sizes.values()):
+            raise ValueError("Every G0.5 camera size must be a positive (height, width) pair.")
+        if len(self.image_mean) != 3 or len(self.image_std) != 3 or min(self.image_std) <= 0:
+            raise ValueError("G0.5 image_mean/image_std must be three channels with positive std.")
+
+    @property
+    def slot_mapping(self) -> dict[str, tuple[int, ...]] | None:
+        """Policy-layout slots of the raw state and action, or None until a dataset provides them."""
+        if self.state_slots:
+            return {"state": self.state_slots, "action": self.action_slots}
+        return G05_EMBODIMENT_MAPPINGS.get(self.embodiment)
+
+    @property
+    def camera_keys(self) -> tuple[str, ...]:
+        """The camera slots as observation keys; `__post_init__` names the empty ones."""
+        return tuple(key for key in self.camera_order if key is not None)
+
+    @property
+    def bbox_camera(self) -> str:
+        """Camera whose image the BBox targets are expressed in."""
+        filled = [key for key in self.camera_keys if key not in self.optional_camera_keys]
+        return self.cot_bbox_camera or (filled or list(self.camera_keys))[0]
+
+    def _apply_slots(self) -> None:
+        """Size the raw state/action from the slots and check they fit the policy layout."""
+        mapping = self.slot_mapping
+        if mapping is None:
+            raise ValueError(f"G0.5 embodiment {self.embodiment!r} has no slots to apply.")
+        if self.state_slots:
+            self.raw_state_dim, self.raw_action_dim = len(self.state_slots), len(self.action_slots)
+        for key, width in (("state", self.policy_state_dim), ("action", self.policy_action_dim)):
+            raw_dim = self.raw_state_dim if key == "state" else self.raw_action_dim
+            if len(mapping[key]) != raw_dim:
+                raise ValueError(f"raw_{key}_dim does not match the selected embodiment mapping.")
+            if (
+                len(set(mapping[key])) != len(mapping[key])
+                or not 0 <= min(mapping[key]) <= max(mapping[key]) < width
+            ):
+                raise ValueError(f"G0.5 {key} slots must be distinct indices below policy_{key}_dim={width}.")
+        # Checked once the slots have sized the raw state/action, so signs given for a new robot
+        # are not compared against the checkpoint's own joint count.
+        if self.joint_signs and not len(self.joint_signs) == self.raw_state_dim == self.raw_action_dim:
+            raise ValueError("joint_signs must cover exactly the raw state and action dimensions.")
+
+    def set_dataset_feature_metadata(self, features: dict[str, Any]) -> None:
+        """Derive the slots of a robot without a named embodiment from the dataset's joint names."""
+        if self.slot_mapping is not None:
+            return
+        state_names, action_names = (_feature_names(features.get(key)) for key in (OBS_STATE, ACTION))
+        if state_names is None or action_names is None:
+            missing = [
+                key for key, names in ((OBS_STATE, state_names), (ACTION, action_names)) if names is None
+            ]
+            raise ValueError(
+                f"G0.5 embodiment {self.embodiment!r} has no named slot table and the dataset gives "
+                f"no joint names for {missing}; set state_slots and action_slots."
+            )
+        self.state_slots = derive_g05_slots(state_names, self.policy_state_dim)
+        self.action_slots = derive_g05_slots(action_names, self.policy_action_dim)
+        self._apply_slots()
+
+    def validate_features(self) -> None:
+        """Derive the input features from the embodiment and check the action width."""
+        if self.slot_mapping is None:
+            raise ValueError(
+                f"G0.5 embodiment {self.embodiment!r} has no named slot table; set state_slots and "
+                "action_slots, or train on a dataset whose state/action features carry joint names."
+            )
+        # G0.5 reads exactly the raw state and the camera slots. A checkpoint loaded for
+        # another embodiment keeps its saved input features (`make_policy` only fills
+        # empty ones), so they are rebuilt here rather than trusted.
+        self.input_features = {
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(self.raw_state_dim,)),
+            **{
+                key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, *self.camera_sizes[key]))
+                for key in self.camera_keys
+            },
+        }
+        if self.output_features is None:
+            self.output_features = {}
+        action = self.output_features.get(ACTION)
+        if action is not None and action.shape[-1] != self.raw_action_dim:
+            raise ValueError(
+                f"G0.5 {self.embodiment} expects {self.raw_action_dim} raw action dimensions, "
+                f"got {action.shape[-1]}."
+            )
+        if ACTION not in self.output_features:
+            self.output_features[ACTION] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(self.raw_action_dim,)
+            )
+
+    def get_optimizer_preset(self) -> AdamWConfig:
+        """Return the AdamW preset the checkpoint was trained with."""
+        return AdamWConfig(
+            lr=self.optimizer_lr,
+            betas=self.optimizer_betas,
+            weight_decay=self.optimizer_weight_decay,
+            grad_clip_norm=self.optimizer_grad_clip_norm,
+        )
+
+    def get_scheduler_preset(self) -> LRSchedulerConfig | None:
+        """Return the constant-with-warmup schedule preset."""
+        return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
+
+    @property
+    def observation_delta_indices(self) -> list[int]:
+        """Frame offsets of the observation history the policy consumes."""
+        return list(range(-(self.n_obs_steps - 1), 1))
+
+    @property
+    def action_delta_indices(self) -> list[int]:
+        """Frame offsets of the action chunk the policy predicts."""
+        return list(range(self.chunk_size))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        """G0.5 does not consume rewards."""
+        return None
