@@ -427,18 +427,13 @@ class RemoteClient:
     def _observation_body(self, observation: ObservationSnapshot) -> dict:
         self._request_sequence += 1
         rgb = {feature.name for feature in self.capabilities.features if feature.kind == "rgb"}
-        return {
+        body = {
             "sequence": self._request_sequence,
             "artifact_identity": self.artifact_identity,
             "observation_id": observation.observation_id,
             "capture_time": observation.capture_time,
             "task": observation.task,
             "task_version": observation.task_version,
-            "history_images": [
-                RGBImage(image, self.config.encoding, self.config.jpeg_quality)
-                for image in observation.history_images
-            ],
-            "history_is_pad": list(observation.history_is_pad),
             "features": {
                 name: RGBImage(value, self.config.encoding, self.config.jpeg_quality)
                 if name in rgb
@@ -446,6 +441,13 @@ class RemoteClient:
                 for name, value in observation.features.items()
             },
         }
+        if self.capabilities.memory_image_key is not None:
+            body["history_images"] = [
+                RGBImage(image, self.config.encoding, self.config.jpeg_quality)
+                for image in observation.history_images
+            ]
+            body["history_is_pad"] = list(observation.history_is_pad)
+        return body
 
     def _exchange(
         self, request: Envelope, suffix: str, channel: Any, timeout: float, cancelled: Callable[[], bool]

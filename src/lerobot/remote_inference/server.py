@@ -235,6 +235,9 @@ class SessionWorker:
         capabilities = asdict(self.runner.capabilities)
         if capabilities["model_action_dim"] in (None, self.runner.capabilities.action_feature.shape[0]):
             capabilities.pop("model_action_dim")
+        if capabilities["memory_image_key"] is None:
+            for key in ("memory_image_key", "memory_frames", "memory_stride"):
+                capabilities.pop(key)
         return {
             "deployment": self.deployment,
             "instance_id": self.instance_id,
