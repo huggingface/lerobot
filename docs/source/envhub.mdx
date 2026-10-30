@@ -150,20 +150,19 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False):
 Before uploading, test your environment locally:
 
 ```python
-from lerobot.envs.utils import _load_module_from_path, _call_make_env, _normalize_hub_result
+import numpy as np
 
-# Load your module
-module = _load_module_from_path("./env.py")
+from lerobot.envs.configs import HubEnvConfig
 
-# Test the make_env function
-result = _call_make_env(module, n_envs=2, use_async_envs=False, cfg=None)
-normalized = _normalize_hub_result(result)
+# Build the envs from the local folder that holds env.py, as lerobot-eval and the env server do
+envs = HubEnvConfig(hub_path="./my-env", trust_remote_code=True).create_envs(n_envs=2)
 
 # Verify it works
-suite_name = next(iter(normalized))
-env = normalized[suite_name][0]
-obs, info = env.reset()
-print(f"Observation shape: {obs.shape if hasattr(obs, 'shape') else type(obs)}")
+suite_name = next(iter(envs))
+env = envs[suite_name][0]
+obs, info = env.reset(seed=0)
+print({key: value.shape for key, value in obs.items()})  # LeRobot keys, e.g. observation.state
+env.step(np.zeros(env.action_space.shape, np.float32))
 env.close()
 ```
 
