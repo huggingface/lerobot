@@ -19,6 +19,9 @@ Tests for the TokenizerProcessorStep class.
 """
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -231,6 +234,39 @@ def test_action_tokenizer_falls_back_on_either_auto_processor_error(tmp_path, mo
         paligemma_tokenizer_name=str(tmp_path / "text"),
     )
     _assert_tiny_action_processor(saved.action_tokenizer)
+
+
+@skip_if_package_missing("transformers")
+def test_legacy_action_tokenizer_saved_artifact_is_portable(tmp_path, monkeypatch):
+    """The saved copy loads offline in a new process, without the original folder or module cache."""
+    import transformers.dynamic_module_utils
+
+    monkeypatch.setattr(transformers.dynamic_module_utils, "HF_MODULES_CACHE", str(tmp_path / "modules"))
+    source = tmp_path / "legacy_fast"
+    _save_action_processor(source, tokenizer_subfolder="")
+    _save_tiny_tokenizer(tmp_path / "text")
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_name=str(source), paligemma_tokenizer_name=str(tmp_path / "text")
+    )
+    artifact = step.save_artifacts(tmp_path / "saved")["action_tokenizer_name"]
+    source.rename(tmp_path / "original_moved")
+    (tmp_path / "saved").rename(tmp_path / "relocated")
+    script = """
+import sys
+from lerobot.processor import ActionTokenizerProcessorStep
+step = ActionTokenizerProcessorStep(action_tokenizer_name=sys.argv[1], paligemma_tokenizer_name=sys.argv[2])
+assert step.action_tokenizer.scale == 7
+assert step.action_tokenizer.bpe_tokenizer.encode("b a", add_special_tokens=False) == [1, 0]
+"""
+    env = dict(os.environ, HF_MODULES_CACHE=str(tmp_path / "fresh_modules"), HF_HUB_OFFLINE="1")
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "relocated" / artifact), str(tmp_path / "text")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @skip_if_package_missing("transformers")
