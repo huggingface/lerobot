@@ -15,6 +15,9 @@
 # limitations under the License.
 """Tests for the RL algorithm abstraction and SACAlgorithm implementation."""
 
+import math
+from collections.abc import Iterator
+
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
@@ -268,6 +271,48 @@ def test_update_with_discrete_critic():
     stats = algorithm.update(_batch_iterator(action_dim=7))  # continuous + 1 discrete
     assert "loss_discrete_critic" in stats.losses
     assert "discrete_critic" in stats.grad_norms
+
+
+def _batch_iterator_with_discrete_action(discrete_values: list[float]) -> Iterator[dict]:
+    """Like ``_batch_iterator`` with one discrete action column, which holds the given values."""
+    while True:
+        batch = _make_batch(batch_size=len(discrete_values), action_dim=7)
+        batch[ACTION][:, -1] = torch.tensor(discrete_values)
+        yield batch
+
+
+@pytest.mark.parametrize("bad_value", [-1.0, 3.0])
+def test_update_with_out_of_range_discrete_action_trains_and_warns_once(
+    bad_value: float, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An out-of-range stored discrete action must not crash the learner (a device-side assert on CUDA)."""
+    algorithm, _ = _make_algorithm(num_discrete_actions=3, action_dim=6)
+    it = _batch_iterator_with_discrete_action([0.0, 1.0, 2.0, bad_value])
+    with caplog.at_level("WARNING"):
+        for _ in range(2):
+            stats = algorithm.update(it)
+            assert math.isfinite(stats.losses["loss_discrete_critic"])
+    assert sum("out-of-range discrete action" in m for m in caplog.messages) == 1
+
+
+def test_update_with_valid_discrete_actions_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    algorithm, _ = _make_algorithm(num_discrete_actions=3, action_dim=6)
+    with caplog.at_level("WARNING"):
+        algorithm.update(_batch_iterator_with_discrete_action([0.0, 1.0, 2.0, 1.0]))
+    assert "out-of-range discrete action" not in caplog.text
+
+
+def test_update_trains_out_of_range_discrete_actions_as_nearest_valid_action() -> None:
+    """-1 must train as action 0 and 3 as action 2, not as any other valid index."""
+    batch = _make_batch(batch_size=4, action_dim=7)
+    losses = []
+    for discrete_values in ([0.0, 1.0, -1.0, 3.0], [0.0, 1.0, 0.0, 2.0]):
+        set_seed(0)
+        algorithm, _ = _make_algorithm(num_discrete_actions=3, action_dim=6)
+        variant = {**batch, ACTION: batch[ACTION].clone()}
+        variant[ACTION][:, -1] = torch.tensor(discrete_values)
+        losses.append(algorithm.update(iter([variant])).losses["loss_discrete_critic"])
+    assert losses[0] == losses[1]
 
 
 # ===========================================================================
