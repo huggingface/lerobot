@@ -140,8 +140,11 @@ class TrainPipelineConfig(HubMixin):
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
-    # Set to True to use deterministic cuDNN algorithms for reproducibility.
-    # This disables cudnn.benchmark and may reduce training speed by ~10-20 percent.
+    # Enable strict deterministic PyTorch algorithms (including cuDNN) and disable cudnn.benchmark.
+    # This may reduce training performance. Known nondeterministic operations without a
+    # deterministic implementation raise RuntimeError instead of continuing nondeterministically.
+    # Some PyTorch/CUDA versions require CUBLAS_WORKSPACE_CONFIG=:4096:8 (or :16:8)
+    # to be set before launching training for affected cuBLAS operations.
     cudnn_deterministic: bool = False
     # Number of workers for the dataloader.
     num_workers: int = 4
