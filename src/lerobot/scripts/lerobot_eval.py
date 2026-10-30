@@ -86,7 +86,6 @@ from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoin
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
-from lerobot.sim.vector_env import LocalVectorEnv
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.eval_stats import success_summary
@@ -1120,25 +1119,16 @@ def eval_policy_all(
     policy.eval()
     try:
         if max_parallel_tasks <= 1:
-            prefetch_thread: threading.Thread | None = None
-            for i, (task_group, task_id, env) in enumerate(tasks):
-                if prefetch_thread is not None:
-                    prefetch_thread.join()
-                    prefetch_thread = None
-
+            # Each task builds its simulator on its first reset, in this thread, after the previous
+            # task's env is closed: consecutive tasks never hold the GPU at once, and simulators
+            # that must run on the main thread (e.g. Isaac Sim) are built there.
+            for task_group, task_id, env in tasks:
                 try:
                     tg, tid, metrics = task_runner(task_group, task_id, env)
                     _accumulate_to(tg, metrics)
                     per_task_infos.append(_task_info(tg, tid, metrics))
                 finally:
                     env.close()
-                    # Prefetch next task's workers *after* closing current env to prevent
-                    # GPU memory overlap between consecutive tasks.
-                    if i + 1 < len(tasks):
-                        next_env = tasks[i + 1][2]
-                        if isinstance(next_env, LocalVectorEnv):
-                            prefetch_thread = threading.Thread(target=next_env.build, daemon=True)
-                            prefetch_thread.start()
         else:
             with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
                 fut2meta = {}

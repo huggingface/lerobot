@@ -152,7 +152,7 @@ def test_local_and_served_environments_default_to_the_same_task():
 
 
 def test_other_tasks_build_their_simulators_on_first_use():
-    # lerobot-eval creates every task's environment up front, then prefetches the next one with build().
+    # lerobot-eval creates every task's environment up front; each builds its simulator on its first reset.
     from lerobot.sim.vector_env import LocalVectorEnv
 
     config = ToyEnvConfig()

@@ -220,7 +220,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         self.render_mode = "rgb_array"
 
     def build(self) -> None:
-        """Build the simulators if not built yet; ``lerobot-eval`` calls this to build the next task early."""
+        """Build the simulators if not built yet; ``reset`` calls this, so each task builds on first use."""
         if self._envs:
             return
         try:
