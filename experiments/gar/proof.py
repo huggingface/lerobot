@@ -85,6 +85,13 @@ class StopProofError(RuntimeError):
     """Loading, memory, or a required check failed. Partial files stay on disk."""
 
 
+def require_bfloat16(dtype: object) -> None:
+    """Accept the checkpoint dtype as ``torch.bfloat16`` or the config string."""
+    if dtype in (torch.bfloat16, "bfloat16"):
+        return
+    raise StopProofError(f"checkpoint dtype is {dtype}, not bfloat16")
+
+
 class Clock:
     def __init__(self, seconds: float) -> None:
         self.started = time.monotonic()
@@ -546,8 +553,7 @@ def _load_policy(assets: Path, manifest: dict[str, Any]):
     config.n_action_steps = EXECUTED_ACTIONS
     config.push_to_hub = False
     config.device = "cuda"
-    if config.dtype != "bfloat16":
-        raise StopProofError(f"checkpoint dtype is {config.dtype}, not bfloat16")
+    require_bfloat16(config.dtype)
     policy = PI05Policy(config)
     weight_file = hf_hub_download(MODEL_ID, "model.safetensors", revision=MODEL_REVISION)
     state = load_file(weight_file)
