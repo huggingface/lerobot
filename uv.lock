@@ -1358,7 +1358,7 @@ wheels = [
 
 [[package]]
 name = "datasets"
-version = "4.8.5"
+version = "5.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dill" },
@@ -1376,9 +1376,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "xxhash" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/34/14cd8e76f907f7d4dca2334cfeec9f81d30fd15c25a015f99aaea694eaed/datasets-4.8.5.tar.gz", hash = "sha256:0f0c1c3d56ffff2c93b2f4c63c95bac94f3d7e8621aea2a2a576275233bba772", size = 605649, upload-time = "2026-04-27T15:43:57.384Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0a/5b/836516269d4f618efe621661cfb6f9acc57e6f95265db3efaee48a5ffe04/datasets-5.0.1.tar.gz", hash = "sha256:ce22bb851efd7494f08aad33b940803784434f6e77763d00679a0dc45fcf686a", size = 641498, upload-time = "2026-07-28T11:09:12.016Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/99/00f3196036501b53032c4b1ab8337a0b978dee832ed276dae3815df4e8b5/datasets-4.8.5-py3-none-any.whl", hash = "sha256:5079900781719c0e063a8efdd2cd95a31ad0c63209178669cd23cf1b926149ff", size = 528973, upload-time = "2026-04-27T15:43:53.702Z" },
+    { url = "https://files.pythonhosted.org/packages/44/0b/98fc6eb83333508ca5f44c52b3e287ea8137a0ad582714e2cbc67a02154b/datasets-5.0.1-py3-none-any.whl", hash = "sha256:9fbf73688f8c18f7529b4fe592abd04015f81d1e58001e4bac73ffb2b39d7cc4", size = 559079, upload-time = "2026-07-28T11:09:10.266Z" },
 ]
 
 [[package]]
@@ -3870,7 +3870,7 @@ requires-dist = [
     { name = "cmeel-tinyxml2", marker = "extra == 'placo-dep'", specifier = "<11" },
     { name = "cmeel-urdfdom", marker = "extra == 'placo-dep'", specifier = ">=4,<5" },
     { name = "contourpy", marker = "extra == 'matplotlib-dep'", specifier = ">=1.3.0,<2.0.0" },
-    { name = "datasets", marker = "extra == 'dataset'", specifier = ">=4.8.0,<5.0.0" },
+    { name = "datasets", marker = "extra == 'dataset'", specifier = ">=4.8.0,<6.0.0" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = ">=1.8.1,<1.9.0" },
     { name = "decord", marker = "(platform_machine == 'AMD64' and extra == 'groot') or (platform_machine == 'x86_64' and extra == 'groot')", specifier = ">=0.6.0,<1.0.0" },
     { name = "deepdiff", marker = "extra == 'deepdiff-dep'", specifier = ">=7.0.1,<9.0.0" },
@@ -4102,7 +4102,7 @@ requires-dist = [
     { name = "scipy", marker = "extra == 'all'", specifier = ">=1.14.0,<2.0.0" },
     { name = "scipy", marker = "extra == 'scipy-dep'", specifier = ">=1.14.0,<2.0.0" },
     { name = "sentencepiece", marker = "extra == 'sentencepiece-dep'", specifier = ">=0.2.0,<0.3.0" },
-    { name = "setuptools", specifier = ">=71.0.0,<82.0.0" },
+    { name = "setuptools", specifier = ">=71.0.0,<85.0.0" },
     { name = "teleop", marker = "extra == 'phone'", specifier = ">=0.1.0,<0.2.0" },
     { name = "termcolor", specifier = ">=2.4.0,<4.0.0" },
     { name = "timm", marker = "extra == 'timm-dep'", specifier = ">=1.0.0,<1.1.0" },
@@ -4117,7 +4117,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.66.0,<5.0.0" },
     { name = "trackio", extras = ["apple-gpu"], marker = "sys_platform == 'darwin' and extra == 'training'", specifier = ">=0.44.0,<1.0.0" },
     { name = "trackio", extras = ["gpu"], marker = "sys_platform != 'darwin' and extra == 'training'", specifier = ">=0.44.0,<1.0.0" },
-    { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
+    { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.11.0" },
 ]
 provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "sentencepiece-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "rustypot-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "serial-motors", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "dm05", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "longwam", "fastwam", "flux3", "evo1", "fineart-vla", "fineart-vla-kernels", "hilserl", "vla-jepa", "lingbot-va", "lingbot-vla-v2", "wall-oss-05", "lawam", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
@@ -8056,7 +8056,7 @@ wheels = [
 
 [[package]]
 name = "transformers"
-version = "5.5.4"
+version = "5.10.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -8069,9 +8069,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a5/1e/1e244ab2ab50a863e6b52cc55761910567fa532b69a6740f6e99c5fdbd98/transformers-5.5.4.tar.gz", hash = "sha256:2e67cadba81fc7608cc07c4dd54f524820bc3d95b1cabd0ef3db7733c4f8b82e", size = 8227649, upload-time = "2026-04-13T16:55:55.181Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/d3/5b7c2f1a52ff0e57355efdc21554aab7e4602f6592ab4582a34c988ab956/transformers-5.10.1.tar.gz", hash = "sha256:31112d1dcdfcf9934242acbba891f44e2279ff74b9b8ba4595640e0e04195a3a", size = 8798372, upload-time = "2026-06-03T15:37:03.289Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/29/fb/162a66789c65e5afa3b051309240c26bf37fbc8fea285b4546ae747995a2/transformers-5.5.4-py3-none-any.whl", hash = "sha256:0bd6281b82966fe5a7a16f553ea517a9db1dee6284d7cb224dfd88fc0dd1c167", size = 10236696, upload-time = "2026-04-13T16:55:51.497Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/8c/3119596c7fcd9b8b8d924d5b5ba1bfdfafd6d8738bdd81ca09c60b4a38b3/transformers-5.10.1-py3-none-any.whl", hash = "sha256:ccb919ea1b77338b44d0d45d23f7472081906b1bb6ed8e5f5cf4d692d1da03d4", size = 11003770, upload-time = "2026-06-03T15:37:00.433Z" },
 ]
 
 [[package]]
