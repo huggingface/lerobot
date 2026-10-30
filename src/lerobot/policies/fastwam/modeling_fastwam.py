@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import require_package
 
 from .configuration_fastwam import FastWAMConfig
+from .streaming import StreamingController
 from .wan import (
     ActionDiT,
     FastWAM,
@@ -38,6 +40,7 @@ from .wan import (
     load_pretrained_wan_text_encoder,
     load_pretrained_wan_vae,
 )
+from .wan.streaming import StreamingActionDiT, StreamingMoT, StreamingVideoDiT, StreamingWAM
 
 
 class FastWAMPolicy(PreTrainedPolicy):
@@ -65,6 +68,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         self,
         config: FastWAMConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        init_empty_weights: bool = False,
         **kwargs: Any,
     ):
         # FastWAM's Wan2.2 backbone needs transformers (UMT5 text encoder/tokenizer) and
@@ -79,6 +83,9 @@ class FastWAMPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
         self.dataset_stats = dataset_stats
+        if init_empty_weights and not config.streaming_wam:
+            raise ValueError("init_empty_weights is supported only for Streaming-WAM.")
+        self._init_empty_weights = init_empty_weights
         self.model = self._build_core_model(config)
         if config.freeze_video_expert and getattr(self.model, "video_expert", None) is not None:
             # Freeze the ~5B Wan video expert; get_optim_params filters on requires_grad,
@@ -181,6 +188,21 @@ class FastWAMPolicy(PreTrainedPolicy):
         from safetensors import safe_open
 
         model_state_dict = model.state_dict()
+        if model.config.streaming_wam:
+            from safetensors.torch import load_file
+
+            # Memory-mapped storages replace meta parameters without a second model copy.
+            state = load_file(model_file, device="cpu")
+            if set(state) != set(model_state_dict):
+                raise RuntimeError("Streaming-WAM requires exact checkpoint keys.")
+            for key, value in state.items():
+                expected = model_state_dict[key]
+                if value.shape != expected.shape or value.dtype != expected.dtype:
+                    raise RuntimeError(f"Streaming-WAM shape/dtype mismatch for {key}.")
+            model.load_state_dict(state, strict=True, assign=True)
+            if map_location and map_location != "cpu":
+                model.to(map_location)
+            return model
         mismatched = []
         with safe_open(model_file, framework="pt") as f:
             checkpoint_keys = list(f.keys())
@@ -227,7 +249,47 @@ class FastWAMPolicy(PreTrainedPolicy):
         return [p for p in params if p.requires_grad]
 
     def reset(self) -> None:
+        controller = getattr(self, "_streaming_controller", None)
+        if controller is not None:
+            controller.reset()
         self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
+
+    def close(self) -> None:
+        """Drain and close the opt-in streaming worker before releasing the policy."""
+        controller = getattr(self, "_streaming_controller", None)
+        if controller is not None:
+            controller.close()
+
+    def drop_queued_actions(self) -> None:
+        if self.config.streaming_wam:
+            controller = getattr(self, "_streaming_controller", None)
+            if controller is not None:
+                controller.reset()
+        else:
+            super().drop_queued_actions()
+
+    def count_queued_actions(self) -> int:
+        if self.config.streaming_wam:
+            controller = getattr(self, "_streaming_controller", None)
+            return controller.count_queued_actions() if controller is not None else 0
+        return super().count_queued_actions()
+
+    def mark_action_executed(self) -> None:
+        """Acknowledge execution after each streaming ``select_action`` call."""
+        controller = getattr(self, "_streaming_controller", None)
+        if controller is None:
+            raise RuntimeError("No streaming action is awaiting execution.")
+        controller.mark_action_executed()
+
+    @torch.no_grad()
+    def _predict_streaming_chunk(self, batch: dict[str, Any], previous: Tensor | None) -> Tensor:
+        infer_kwargs = _batch_to_infer_kwargs(batch, self.config)
+        if _infer_kwargs_batch_size(infer_kwargs) != 1:
+            raise ValueError("Streaming-WAM requires batch size one.")
+        action = _action_from_model_output(
+            self.model.infer_action(**infer_kwargs, previous_action_chunk=previous)
+        )
+        return action.to(device=batch_device(batch), dtype=torch.float32)
 
     def _batch_to_training_sample(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Adapt a standard LeRobot batch to the FastWAM-native sample that
@@ -297,8 +359,10 @@ class FastWAMPolicy(PreTrainedPolicy):
 
         self.eval()
         infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
-        infer_kwargs["noise"] = noise
+        infer_kwargs["action_noise" if self.config.streaming_wam else "noise"] = noise
         batch_size = _infer_kwargs_batch_size(infer_kwargs)
+        if self.config.streaming_wam and batch_size != 1:
+            raise ValueError("Streaming-WAM requires batch size one.")
         if batch_size == 1:
             action = _action_from_model_output(self.model.infer_action(**infer_kwargs))
         else:
@@ -318,6 +382,12 @@ class FastWAMPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         self.eval()
+        if self.config.streaming_wam:
+            if noise is not None:
+                raise ValueError("Pass streaming inference inputs in the observation batch.")
+            if not hasattr(self, "_streaming_controller"):
+                self._streaming_controller = StreamingController(self._predict_streaming_chunk)
+            return self._streaming_controller.next_action(batch)
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
@@ -344,10 +414,21 @@ class FastWAMPolicy(PreTrainedPolicy):
         if video_dit_config is None or action_dit_config is None:
             # FastWAMConfig.__post_init__ always fills both; None here is a programming error.
             raise ValueError("`FastWAMConfig.video_dit_config` and `action_dit_config` must be resolved.")
-        video_expert = WanVideoDiT(**video_dit_config).to(device=device, dtype=dtype)
-        action_expert = ActionDiT(**action_dit_config).to(device=device, dtype=dtype)
-        # Faster-WAM (arXiv 2608.02365) options, all opt-in. The fusion module exists only
-        # when enabled so default checkpoints keep their exact key layout.
+        video_cls = StreamingVideoDiT if config.streaming_wam else WanVideoDiT
+        action_cls = StreamingActionDiT if config.streaming_wam else ActionDiT
+        video_kwargs = dict(video_dit_config)
+        if config.streaming_wam:
+            video_kwargs["stream_action_hidden_dim"] = action_dit_config["hidden_dim"]
+            video_kwargs["fp32_attention"] = False
+        build_device = "meta" if self._init_empty_weights else device
+        with torch.device("meta") if self._init_empty_weights else nullcontext():
+            video_expert = video_cls(**video_kwargs).to(device=build_device, dtype=dtype)
+        action_kwargs = dict(action_dit_config)
+        if config.streaming_wam:
+            action_kwargs["fp32_attention"] = False
+        with torch.device("meta") if self._init_empty_weights else nullcontext():
+            action_expert = action_cls(**action_kwargs).to(device=build_device, dtype=dtype)
+        # Preserve upstream Faster-WAM construction when streaming is disabled.
         lite_kv_fusion = (
             LiteKVFusion(
                 num_action_layers=int(action_dit_config["num_layers"]),
@@ -357,7 +438,8 @@ class FastWAMPolicy(PreTrainedPolicy):
             if config.lite_kv_fusion
             else None
         )
-        mot = MoT(
+        mot_cls = StreamingMoT if config.streaming_wam else MoT
+        mot = mot_cls(
             mixtures={"video": video_expert, "action": action_expert},
             mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
             lite_kv_fusion=lite_kv_fusion,
@@ -370,29 +452,39 @@ class FastWAMPolicy(PreTrainedPolicy):
             if config.load_text_encoder
             else None
         )
-        return FastWAM(
-            video_expert=video_expert,
-            action_expert=action_expert,
-            mot=mot,
-            vae=load_pretrained_wan_vae(torch_dtype=dtype, device=device),
-            text_encoder=text_encoder,
-            tokenizer=build_wan_tokenizer(
-                model_id=config.tokenizer_model_id, tokenizer_max_len=config.tokenizer_max_len
-            ),
-            text_dim=int(video_dit_config["text_dim"]),
-            proprio_dim=config.proprio_dim,
-            device=device,
-            torch_dtype=dtype,
-            video_train_shift=float(config.video_scheduler["train_shift"]),
-            video_infer_shift=float(config.video_scheduler["infer_shift"]),
-            video_num_train_timesteps=int(config.video_scheduler["num_train_timesteps"]),
-            action_train_shift=float(config.action_scheduler["train_shift"]),
-            action_infer_shift=float(config.action_scheduler["infer_shift"]),
-            action_num_train_timesteps=int(config.action_scheduler["num_train_timesteps"]),
-            loss_lambda_video=float(config.loss["lambda_video"]),
-            loss_lambda_action=float(config.loss["lambda_action"]),
-            world_model_only_conditioning=config.world_model_only_conditioning,
-        )
+        core_cls = StreamingWAM if config.streaming_wam else FastWAM
+        vae = load_pretrained_wan_vae(torch_dtype=dtype, device=device)
+        # Scheduler scalar statistics need real CPU tensors, even when trainable
+        # parameters stay on meta until the strict memory-mapped reload.
+        with torch.device("cpu") if self._init_empty_weights else nullcontext():
+            core = core_cls(
+                video_expert=video_expert,
+                action_expert=action_expert,
+                mot=mot,
+                vae=torch.nn.Identity() if self._init_empty_weights else vae,
+                text_encoder=None if self._init_empty_weights else text_encoder,
+                tokenizer=build_wan_tokenizer(
+                    model_id=config.tokenizer_model_id, tokenizer_max_len=config.tokenizer_max_len
+                ),
+                text_dim=int(video_dit_config["text_dim"]),
+                proprio_dim=config.proprio_dim,
+                device=build_device,
+                torch_dtype=dtype,
+                video_train_shift=float(config.video_scheduler["train_shift"]),
+                video_infer_shift=float(config.video_scheduler["infer_shift"]),
+                video_num_train_timesteps=int(config.video_scheduler["num_train_timesteps"]),
+                action_train_shift=float(config.action_scheduler["train_shift"]),
+                action_infer_shift=float(config.action_scheduler["infer_shift"]),
+                action_num_train_timesteps=int(config.action_scheduler["num_train_timesteps"]),
+                loss_lambda_video=float(config.loss["lambda_video"]),
+                loss_lambda_action=float(config.loss["lambda_action"]),
+                world_model_only_conditioning=config.world_model_only_conditioning,
+            )
+        if self._init_empty_weights:
+            object.__setattr__(core, "vae", vae)
+            object.__setattr__(core, "text_encoder", text_encoder)
+            core.device = torch.device(device)
+        return core
 
 
 def _scalar(value: Any) -> Any:
@@ -498,6 +590,8 @@ def _stack_video_from_images(batch: dict[str, Tensor], config: FastWAMConfig) ->
     if not image_keys:
         raise KeyError("FastWAM batch must contain `video` or `observation.images.*` keys.")
     per_cam = (int(config.image_size[0]), int(config.image_size[1]) // len(image_keys))
+    if config.streaming_wam and any(tuple(batch[key].shape[-2:]) != per_cam for key in image_keys):
+        raise ValueError("Streaming-WAM requires cameras pre-resized to the configured per-camera size.")
     images = [_resize_frames(batch[key], per_cam) for key in image_keys]
     # Cameras concatenate along width (last dim) in both the single-frame and temporal case.
     image = torch.cat(images, dim=-1) if len(images) > 1 else images[0]
@@ -535,4 +629,6 @@ def _prepare_infer_image(image: Tensor, config: FastWAMConfig) -> Tensor:
     # also covers a directly-supplied `input_image`). The model owns its input resolution — see
     # `_stack_video_from_images` — so we resize rather than assert on a mismatch.
     target_h, target_w = int(config.image_size[0]), int(config.image_size[1])
+    if config.streaming_wam and tuple(image.shape[-2:]) != (target_h, target_w):
+        raise ValueError("Streaming-WAM requires a pre-resized input image.")
     return _resize_frames(image, (target_h, target_w))
