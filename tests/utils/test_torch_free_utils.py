@@ -103,3 +103,15 @@ assert _gpu_memory_bytes("cpu") is None
         [sys.executable, "-c", code, str(tmp_path)], capture_output=True, text=True, timeout=60
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_plugin_flags_are_read_without_torch():
+    assert_runs_without_torch(
+        """
+        from lerobot.utils.import_utils import PLUGIN_DISCOVERY_SUFFIX, filter_arg, parse_plugin_args
+
+        args = ["--env.discover_packages_path=pkg", "--env.type=x"]
+        assert parse_plugin_args(PLUGIN_DISCOVERY_SUFFIX, args) == {"env.discover_packages_path": "pkg"}
+        assert filter_arg("env.discover_packages_path", args) == ["--env.type=x"]
+        """
+    )
