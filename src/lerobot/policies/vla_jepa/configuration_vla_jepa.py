@@ -111,6 +111,10 @@ class VLAJEPAConfig(PreTrainedConfig):
     repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
     # If True, encode the world-model context causally instead of slicing it from the leaky shared pass (#4153).
     causal_world_model_context: bool = False
+    # If True, the world predictor uses the rotary expansion from before #4835 (frequency blocks repeated, not
+    # interleaved per coordinate pair). Only for checkpoints whose world model was trained before that fix; new
+    # training keeps the default.
+    world_model_rope_legacy: bool = False
 
     resize_images_to: tuple[int, int] | None = None
     # Gripper post-processing from the starVLA LIBERO eval loop. Off by default: only correct for
