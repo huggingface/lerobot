@@ -5,4 +5,4 @@ https://github.com/SJTU-DENG-Lab/Streaming-WAM
 Source revision: ff36d6e66514afd65bf957a06a0a2410f182b0e3
 Hub release: 8dcc67ce14c72a5cce0c04c87a518b4ccfec217e
 Adaptations reuse LeRobot FastWAM module ownership and processors.
-The Apache-2.0 license is reproduced in LICENSE.streaming-wam.
+See the repository root LICENSE for the Apache-2.0 license.

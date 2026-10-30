@@ -14,7 +14,7 @@
 
 # Adapted from Streaming-WAM by Xuyao Huang et al.
 # Source revision: ff36d6e66514afd65bf957a06a0a2410f182b0e3
-# Copyright 2026 Shaohua Pan. Apache-2.0; see ../LICENSE.streaming-wam.
+# Copyright 2026 Shaohua Pan. Apache-2.0; see the repository root LICENSE.
 
 from __future__ import annotations
 
@@ -264,7 +264,7 @@ class StreamingVideoDiT(WanVideoDiT):
             self.attn_head_dim // 3,
             self.attn_head_dim // 3,
         )
-        freqs_f, freqs_h, freqs_w = [rope_params(1024, dim).to(x.device) for dim in dims]
+        freqs_f, freqs_h, freqs_w = (rope_params(1024, dim).to(x.device) for dim in dims)
         freqs = torch.cat(
             (
                 freqs_f[:frames].view(frames, 1, 1, -1).expand(frames, height, width, -1),

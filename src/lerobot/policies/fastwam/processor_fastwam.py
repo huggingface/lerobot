@@ -41,7 +41,7 @@ class StreamingWAMStateClamp(ObservationProcessorStep):
 
     Adapted from Streaming-WAM, Xuyao Huang et al., revision
     ff36d6e66514afd65bf957a06a0a2410f182b0e3. Copyright 2026 Shaohua Pan.
-    Apache-2.0; see LICENSE.streaming-wam.
+    Apache-2.0; see the repository root LICENSE.
     """
 
     def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
@@ -93,7 +93,7 @@ class StreamingWAMActionToggle(FastWAMActionToggleProcessorStep):
 
     Adapted from Streaming-WAM, Xuyao Huang et al., revision
     ff36d6e66514afd65bf957a06a0a2410f182b0e3. Copyright 2026 Shaohua Pan.
-    Apache-2.0; see LICENSE.streaming-wam.
+    Apache-2.0; see the repository root LICENSE.
     """
 
     def action(self, action: PolicyAction) -> PolicyAction:

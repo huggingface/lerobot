@@ -4,7 +4,7 @@
 # You may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
 # Unless required by applicable law or agreed to in writing, software is
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
-# See LICENSE.streaming-wam for the full license.
+# See the repository root LICENSE for the full license.
 # Adapted from Streaming-WAM, Xuyao Huang et al.
 # Source revision: ff36d6e66514afd65bf957a06a0a2410f182b0e3.
 
