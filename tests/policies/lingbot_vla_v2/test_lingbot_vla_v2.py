@@ -598,3 +598,15 @@ def test_expert_caches_follow_a_dtype_cast():
         actual = experts(weights.double(), selected, tokens.double())
     # With autograd on, the weights are packed on every call, without the caches.
     torch.testing.assert_close(actual, experts(weights.double(), selected, tokens.double()))
+
+
+def test_a_given_noise_runs_in_the_model_dtype(tiny_backbone):
+    """A float32 starting noise, as callers draw it, runs in the dtype of a bfloat16 policy."""
+    policy, batch, _ = _policy_and_batch(tiny_backbone, (CAMERA,), dtype=torch.bfloat16)
+    noise = torch.randn(2, CHUNK, policy.config.max_action_dim)
+
+    with torch.no_grad():
+        given = policy.predict_action_chunk(batch, noise=noise)
+        cast = policy.predict_action_chunk(batch, noise=noise.to(torch.bfloat16))
+
+    torch.testing.assert_close(given, cast, rtol=0, atol=0)
