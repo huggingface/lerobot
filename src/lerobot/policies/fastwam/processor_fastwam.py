@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -23,14 +24,18 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     ActionProcessorStep,
+    NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
+    UnnormalizerProcessorStep,
+    load_pretrained_policy_processors,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from .configuration_fastwam import FastWAMConfig
 
@@ -127,3 +132,74 @@ def make_fastwam_pre_post_processors(
         )
     output_steps.append(steps.to_cpu)
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
+
+
+def make_fastwam_pre_post_processors_from_pretrained(
+    config: FastWAMConfig,
+    pretrained_path: str | Path,
+    *,
+    revision: str | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+    **_: Any,
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Load saved FastWAM processors, adding the relative-action pair when the checkpoint lacks it.
+
+    Checkpoints saved before `use_relative_actions` existed (e.g. `lerobot/fastwam_base`, which
+    `--policy.type=fastwam` loads by default) have no relative/absolute steps, so the training
+    script's overrides for them would name steps that do not exist. Those overrides are held back
+    while loading and applied once the pair is in place, at the positions a fresh pipeline uses.
+    """
+    preprocessor_overrides = dict(preprocessor_overrides or {})
+    postprocessor_overrides = dict(postprocessor_overrides or {})
+    relative_overrides = preprocessor_overrides.pop("relative_actions_processor", {})
+    absolute_overrides = postprocessor_overrides.pop("absolute_actions_processor", {})
+    preprocessor, postprocessor = load_pretrained_policy_processors(
+        pretrained_path,
+        revision=revision,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+    )
+
+    relative_step = next(
+        (step for step in preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)), None
+    )
+    if relative_step is None:
+        if not relative_overrides.get("enabled", config.use_relative_actions):
+            return preprocessor, postprocessor
+        relative_step = RelativeActionsProcessorStep(
+            enabled=config.use_relative_actions,
+            exclude_joints=config.relative_exclude_joints,
+            action_names=config.action_feature_names,
+        )
+        absolute_step = AbsoluteActionsProcessorStep(
+            enabled=config.use_relative_actions, relative_step=relative_step
+        )
+        pre_steps = list(preprocessor.steps)
+        pre_steps.insert(_step_index(pre_steps, NormalizerProcessorStep), relative_step)
+        preprocessor.steps = pre_steps
+        post_steps = list(postprocessor.steps)
+        post_steps.insert(_step_index(post_steps, UnnormalizerProcessorStep) + 1, absolute_step)
+        postprocessor.steps = post_steps
+    else:
+        absolute_step = next(
+            step for step in postprocessor.steps if isinstance(step, AbsoluteActionsProcessorStep)
+        )
+
+    # Same precedence as the pipeline loader: overrides win over the saved (or config) values.
+    for key, value in relative_overrides.items():
+        setattr(relative_step, key, value)
+    for key, value in absolute_overrides.items():
+        setattr(absolute_step, key, value)
+    return preprocessor, postprocessor
+
+
+def _step_index(steps: list[ProcessorStep], step_type: type[ProcessorStep]) -> int:
+    for index, step in enumerate(steps):
+        if isinstance(step, step_type):
+            return index
+    raise ValueError(f"FastWAM processors have no {step_type.__name__} to place relative actions around.")

@@ -29,6 +29,12 @@ from lerobot.policies import FastWAMConfig, get_policy_class, make_policy_config
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.processor_fastwam import FastWAMActionToggleProcessorStep
 from lerobot.policies.fastwam.wan import ActionDiT, FastWAM, MoT
+from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
+    NormalizerProcessorStep,
+    RelativeActionsProcessorStep,
+    UnnormalizerProcessorStep,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -151,6 +157,50 @@ def test_preprocessor_passes_images_through_and_postprocessor_toggles_actions(tm
     assert torch.equal(
         loaded_postprocessor(torch.tensor([[0.25, 0.5, 1.0]])), torch.tensor([[0.25, 0.5, -1.0]])
     )
+
+
+@pytest.mark.parametrize("saved_with_relative_pair", [False, True])
+def test_relative_actions_opt_in_on_a_saved_checkpoint(tmp_path, saved_with_relative_pair):
+    # `lerobot/fastwam_base` predates relative actions and has no relative/absolute steps; a
+    # checkpoint saved by the current code has a disabled pair. Both must accept the training opt-in.
+    names = ["j0", "j1", "gripper"]
+    kwargs = {"action_dim": 3, "proprio_dim": 3, "device": "cpu", "base_model_id": None}
+    stats = {key: {"mean": torch.zeros(3), "std": torch.ones(3)} for key in (OBS_STATE, ACTION)}
+    preprocessor, postprocessor = make_pre_post_processors(FastWAMConfig(**kwargs), dataset_stats=stats)
+    if not saved_with_relative_pair:
+        preprocessor.steps = [
+            s for s in preprocessor.steps if not isinstance(s, RelativeActionsProcessorStep)
+        ]
+        postprocessor.steps = [
+            s for s in postprocessor.steps if not isinstance(s, AbsoluteActionsProcessorStep)
+        ]
+    preprocessor.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
+    postprocessor.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
+
+    cfg = FastWAMConfig(**kwargs, use_relative_actions=True, action_feature_names=names)
+    preprocessor, postprocessor = make_pre_post_processors(
+        cfg,
+        pretrained_path=str(tmp_path),
+        # What lerobot_train sends when fine-tuning with `use_relative_actions=true`.
+        preprocessor_overrides={
+            "device_processor": {"device": "cpu"},
+            "relative_actions_processor": {
+                "enabled": True,
+                "exclude_joints": ["gripper"],
+                "action_names": names,
+            },
+        },
+        postprocessor_overrides={"absolute_actions_processor": {"enabled": True}},
+    )
+
+    pre_types = [type(step) for step in preprocessor.steps]
+    post_types = [type(step) for step in postprocessor.steps]
+    assert pre_types.index(RelativeActionsProcessorStep) + 1 == pre_types.index(NormalizerProcessorStep)
+    assert post_types.index(UnnormalizerProcessorStep) + 1 == post_types.index(AbsoluteActionsProcessorStep)
+    state = torch.tensor([[1.0, 2.0, 3.0]])
+    processed = preprocessor({OBS_STATE: state, ACTION: torch.tensor([[[2.0, 2.0, 0.5]]])})
+    assert torch.equal(processed[ACTION], torch.tensor([[[1.0, 0.0, 0.5]]]))
+    assert torch.equal(postprocessor(torch.tensor([[[1.0, 0.0, 0.5]]])), torch.tensor([[[2.0, 2.0, 0.5]]]))
 
 
 def test_forward_returns_per_sample_losses_under_reduction_none(monkeypatch):
