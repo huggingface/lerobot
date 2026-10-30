@@ -3140,3 +3140,218 @@ def test_gr00t_n1_7_model_forward_with_mocked_backbone():
     inference_inputs = {key: value for key, value in inputs.items() if key != "action"}
     action_output = model.get_action(inference_inputs)
     assert action_output["action_pred"].shape == (2, config.action_horizon, config.max_action_dim)
+
+
+def _alternate_vl_dit_before_the_split(
+    model, hidden_states, encoder_hidden_states, timestep, image_mask, mask
+):
+    """`AlternateVLDiT.forward` as it was written before its blocks and output became methods."""
+    temb = model.timestep_encoder(timestep)
+    image_attention_mask = image_mask & mask
+    non_image_attention_mask = (~image_mask) & mask
+    for idx, block in enumerate(model.transformer_blocks):
+        if idx % 2 == 1:
+            hidden_states = block(hidden_states, temb=temb)
+        else:
+            encoder_mask = (
+                non_image_attention_mask
+                if idx % (2 * model.attend_text_every_n_blocks) == 0
+                else image_attention_mask
+            )
+            hidden_states = block(
+                hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_mask,
+                temb=temb,
+            )
+    shift, scale = model.proj_out_1(torch.nn.functional.silu(temb)).chunk(2, dim=1)
+    return model.proj_out_2(model.norm_out(hidden_states) * (1 + scale[:, None]) + shift[:, None])
+
+
+def test_alternate_vl_dit_computes_what_it_did_before_the_split():
+    pytest.importorskip("diffusers")
+    from lerobot.policies.groot.action_head.cross_attention_dit import AlternateVLDiT
+
+    torch.manual_seed(0)
+    model = AlternateVLDiT(
+        output_dim=8,
+        num_attention_heads=2,
+        attention_head_dim=4,
+        num_layers=4,
+        dropout=0.0,
+        final_dropout=False,
+        max_num_positional_embeddings=16,
+        interleave_self_attention=True,
+        cross_attention_dim=6,
+    ).eval()
+    hidden_states, encoder_hidden_states = torch.randn(2, 5, 8), torch.randn(2, 7, 6)
+    timestep = torch.tensor([3, 600])
+    image_mask = torch.tensor([[True, True, True, False, False, False, False]] * 2)
+    mask = torch.tensor([[True] * 7, [True] * 5 + [False] * 2])
+
+    with torch.no_grad():
+        actual = model(
+            hidden_states,
+            encoder_hidden_states,
+            timestep,
+            image_mask=image_mask,
+            backbone_attention_mask=mask,
+        )
+        expected = _alternate_vl_dit_before_the_split(
+            model, hidden_states, encoder_hidden_states, timestep, image_mask, mask
+        )
+
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+
+def test_alternate_vl_dit_block_mask_needs_both_masks():
+    pytest.importorskip("diffusers")
+    from lerobot.policies.groot.action_head.cross_attention_dit import AlternateVLDiT
+
+    model = AlternateVLDiT(
+        output_dim=8,
+        num_attention_heads=2,
+        attention_head_dim=4,
+        num_layers=2,
+        interleave_self_attention=True,
+        cross_attention_dim=6,
+    )
+    mask = torch.ones(1, 3, dtype=torch.bool)
+    with pytest.raises(ValueError, match="image_mask is required"):
+        model.encoder_masks(None, mask)
+    with pytest.raises(ValueError, match="backbone_attention_mask is required"):
+        model.encoder_masks(mask, None)
+
+
+def test_alternate_vl_dit_makes_its_masks_once_per_forward(monkeypatch):
+    """A forward runs once per denoising step, so it makes its masks once, not once per block."""
+    pytest.importorskip("diffusers")
+    from lerobot.policies.groot.action_head.cross_attention_dit import AlternateVLDiT
+
+    model = AlternateVLDiT(
+        output_dim=8,
+        num_attention_heads=2,
+        attention_head_dim=4,
+        num_layers=8,
+        dropout=0.0,
+        final_dropout=False,
+        interleave_self_attention=True,
+        cross_attention_dim=6,
+    ).eval()
+    image_mask = torch.tensor([[True, True, False]])
+    calls = []
+    encoder_masks = model.encoder_masks
+    monkeypatch.setattr(model, "encoder_masks", lambda *masks: calls.append(masks) or encoder_masks(*masks))
+    with torch.no_grad():
+        model(
+            torch.randn(1, 5, 8),
+            torch.randn(1, 3, 6),
+            torch.tensor([3]),
+            image_mask=image_mask,
+            backbone_attention_mask=torch.ones(1, 3, dtype=torch.bool),
+        )
+    assert len(calls) == 1
+
+
+def test_self_attention_transformer_leaves_masked_tokens_out():
+    """With the padding masked, the real tokens come out as they do without the padding."""
+    pytest.importorskip("diffusers")
+    from lerobot.policies.groot.action_head.cross_attention_dit import SelfAttentionTransformer
+
+    torch.manual_seed(0)
+    model = SelfAttentionTransformer(
+        num_attention_heads=2, attention_head_dim=4, num_layers=2, dropout=0.0, positional_embeddings=None
+    ).eval()
+    tokens = torch.randn(1, 5, 8)
+    padded = torch.cat((tokens, torch.randn(1, 3, 8)), dim=1)
+    mask = torch.tensor([[True] * 5 + [False] * 3])
+    with torch.no_grad():
+        torch.testing.assert_close(model(padded, attention_mask=mask)[:, :5], model(tokens))
+        assert not torch.allclose(model(padded)[:, :5], model(tokens))
+
+
+def test_action_encoder_spreads_one_time_encoding_over_the_chunk():
+    from lerobot.policies.groot.groot_n1_7 import MultiEmbodimentActionEncoder
+
+    torch.manual_seed(0)
+    encoder = MultiEmbodimentActionEncoder(action_dim=3, hidden_size=8, num_embodiments=2)
+    actions, cat_ids, timestep = torch.randn(2, 2, 3), torch.tensor([0, 1]), torch.tensor([7])
+
+    actual = encoder.encode(actions, encoder.pos_encoding(timestep.view(1, 1)), cat_ids)
+
+    torch.testing.assert_close(actual, encoder(actions, timestep.expand(2), cat_ids), atol=0, rtol=0)
+    # With as many samples as steps, a (B, D) encoding would silently give step j the time of sample j.
+    with pytest.raises(ValueError, match="time_encoding"):
+        encoder.encode(actions, encoder.pos_encoding(torch.tensor([3, 600])), cat_ids)
+
+
+def _dit_before_the_split(model, hidden_states, encoder_hidden_states, timestep):
+    """`DiT.forward` as it was written before its blocks and output became methods."""
+    temb = model.timestep_encoder(timestep)
+    for idx, block in enumerate(model.transformer_blocks):
+        if idx % 2 == 1 and model.config.interleave_self_attention:
+            hidden_states = block(hidden_states, temb=temb)
+        else:
+            hidden_states = block(hidden_states, encoder_hidden_states=encoder_hidden_states, temb=temb)
+    shift, scale = model.proj_out_1(torch.nn.functional.silu(temb)).chunk(2, dim=1)
+    return model.proj_out_2(model.norm_out(hidden_states) * (1 + scale[:, None]) + shift[:, None])
+
+
+def test_dit_pieces_compute_its_forward():
+    """`DiT.forward` computes what it did before the split. Without padding, the pieces give what it gives; with
+    the padding masked, what it gives without the padding."""
+    pytest.importorskip("diffusers")
+    from lerobot.policies.groot.action_head.cross_attention_dit import DiT
+
+    torch.manual_seed(0)
+    model = DiT(
+        output_dim=8,
+        num_attention_heads=2,
+        attention_head_dim=4,
+        num_layers=2,
+        dropout=0.0,
+        final_dropout=False,
+        max_num_positional_embeddings=16,
+        interleave_self_attention=True,
+        cross_attention_dim=6,
+    ).eval()
+    hidden_states, encoder_hidden_states, timestep = (
+        torch.randn(1, 5, 8),
+        torch.randn(1, 4, 6),
+        torch.tensor([3]),
+    )
+
+    def pieces(encoder_hidden_states, mask):
+        temb = model.timestep_encoder(timestep)
+        masks = model.encoder_masks(None, mask)
+        hidden = hidden_states
+        for idx in range(len(model.transformer_blocks)):
+            hidden = model.run_block(idx, hidden, encoder_hidden_states, temb, masks[idx])
+        return model.output(hidden, temb)
+
+    padded = torch.cat((encoder_hidden_states, torch.randn(1, 3, 6)), dim=1)
+    with torch.no_grad():
+        expected = model(hidden_states, encoder_hidden_states, timestep)
+        before = _dit_before_the_split(model, hidden_states, encoder_hidden_states, timestep)
+        torch.testing.assert_close(expected, before, atol=0, rtol=0)
+        torch.testing.assert_close(
+            pieces(encoder_hidden_states, torch.ones(1, 4, dtype=torch.bool)), expected
+        )
+        torch.testing.assert_close(pieces(padded, torch.tensor([[True] * 4 + [False] * 3])), expected)
+
+
+def test_alternate_vl_dit_block_masks_need_interleaved_self_attention():
+    pytest.importorskip("diffusers")
+    from lerobot.policies.groot.action_head.cross_attention_dit import AlternateVLDiT
+
+    model = AlternateVLDiT(
+        output_dim=8,
+        num_attention_heads=2,
+        attention_head_dim=4,
+        num_layers=2,
+        interleave_self_attention=False,
+        cross_attention_dim=6,
+    )
+    mask = torch.ones(1, 3, dtype=torch.bool)
+    with pytest.raises(ValueError, match="requires interleave_self_attention=True"):
+        model.encoder_masks(mask, mask)

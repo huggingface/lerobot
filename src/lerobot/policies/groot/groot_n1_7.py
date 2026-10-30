@@ -246,8 +246,17 @@ class MultiEmbodimentActionEncoder(nn.Module):
         if timesteps.dim() != 1 or timesteps.shape[0] != batch_size:
             raise ValueError("Expected `timesteps` to have shape (B,).")
         timesteps = timesteps.unsqueeze(1).expand(-1, horizon)
+        return self.encode(actions, self.pos_encoding(timesteps), cat_ids)
+
+    def encode(
+        self, actions: torch.Tensor, time_encoding: torch.Tensor, cat_ids: torch.Tensor
+    ) -> torch.Tensor:
+        """The actions `(B, T, action_dim)` encoded with their sinusoidal time encoding, `(B, T, D)` or `(1, 1, D)`."""
+        # A (B, D) encoding would broadcast over the horizon instead of the batch.
+        if time_encoding.dim() != 3:
+            raise ValueError("Expected `time_encoding` to have shape (B, T, D) or (1, 1, D).")
         action_emb = self.W1(actions, cat_ids)
-        time_emb = self.pos_encoding(timesteps).to(dtype=action_emb.dtype)
+        time_emb = time_encoding.expand(*action_emb.shape[:2], -1).to(dtype=action_emb.dtype)
         x = swish(self.W2(torch.cat([action_emb, time_emb], dim=-1), cat_ids))
         return self.W3(x, cat_ids)
 
