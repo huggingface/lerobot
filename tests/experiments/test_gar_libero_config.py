@@ -29,7 +29,7 @@ def _fake_package(root: Path) -> Path:
     package = root / "site" / "libero" / "libero"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("# package marker\n", encoding="utf-8")
-    for name in ("bddl_files", "init_files", "assets"):
+    for name in ("bddl_files", "init_files"):
         (package / name).mkdir()
     return root / "site"
 
@@ -42,12 +42,19 @@ def _values(config_path: Path) -> dict[str, str]:
     return values
 
 
-def test_write_libero_config_points_at_the_package_directories(tmp_path, monkeypatch):
+def test_write_libero_config_uses_assets_outside_the_package(tmp_path, monkeypatch):
     before = {name for name in sys.modules if name == "libero" or name.startswith("libero.")}
     site = _fake_package(tmp_path)
+    assets = tmp_path / "outside-assets"
+    assets.mkdir()
+    (assets / "marker.txt").write_text("present\n", encoding="utf-8")
     monkeypatch.setenv("LIBERO_CONFIG_PATH", str(tmp_path / "config-home"))
 
-    config_path = write_libero_config(search_path=[str(site)])
+    def fail_download(destination: Path) -> None:
+        raise AssertionError(f"downloaded into {destination}")
+
+    monkeypatch.setattr("experiments.gar.proof._download_libero_assets", fail_download)
+    config_path = write_libero_config(search_path=[str(site)], assets_dir=assets)
 
     after = {name for name in sys.modules if name == "libero" or name.startswith("libero.")}
     assert after == before
@@ -57,7 +64,8 @@ def test_write_libero_config_points_at_the_package_directories(tmp_path, monkeyp
     assert values["benchmark_root"] == str(package.resolve())
     assert values["bddl_files"] == str((package / "bddl_files").resolve())
     assert values["init_states"] == str((package / "init_files").resolve())
-    assert values["assets"] == str((package / "assets").resolve())
+    assert values["assets"] == str(assets.resolve())
+    assert not (package / "assets").exists()
     datasets = Path(values["datasets"])
     assert datasets.is_dir()
     assert set(values) == {"benchmark_root", "bddl_files", "init_states", "datasets", "assets"}

@@ -116,17 +116,40 @@ def _package_directory(root: Path, *names: str) -> Path:
     raise StopProofError(f"{root} has none of these directories: {', '.join(names)}")
 
 
-def write_libero_config(search_path: list[str] | None = None, datasets_dir: Path | None = None) -> Path:
+def _download_libero_assets(destination: Path) -> None:
+    """Download ``lerobot/libero-assets`` once into ``destination``."""
+    destination.mkdir(parents=True, exist_ok=True)
+    if any(destination.iterdir()):
+        return
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(
+        repo_id="lerobot/libero-assets",
+        repo_type="dataset",
+        local_dir=str(destination),
+    )
+    if not any(destination.iterdir()):
+        raise StopProofError("lerobot/libero-assets download produced an empty directory")
+
+
+def write_libero_config(
+    search_path: list[str] | None = None,
+    datasets_dir: Path | None = None,
+    assets_dir: Path | None = None,
+) -> Path:
     """Write the five LIBERO paths before any import of the package."""
     root = find_libero_benchmark_root(search_path)
     datasets = (libero_config_file().parent / "datasets") if datasets_dir is None else datasets_dir
     datasets.mkdir(parents=True, exist_ok=True)
+    if assets_dir is None:
+        assets_dir = libero_config_file().parent / "assets"
+        _download_libero_assets(assets_dir)
     paths = {
         "benchmark_root": root,
         "bddl_files": _package_directory(root, "bddl_files"),
         "init_states": _package_directory(root, "init_files", "init_states"),
         "datasets": datasets.resolve(),
-        "assets": _package_directory(root, "assets"),
+        "assets": assets_dir.resolve(),
     }
     missing = [key for key, path in paths.items() if not path.is_dir()]
     if missing:
