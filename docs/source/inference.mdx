@@ -558,17 +558,13 @@ strategy.teardown(ctx)  # teardown stays with the caller
 
 ## Cadence Reporting
 
-Non-interactive rollout prints an ordinary `INFO` log every five seconds, also in redirected logs. Set `--status_interval_s=10` to change the interval or `=0` to disable reporting and latency collection.
+Non-interactive rollout logs its status every five seconds. Change the interval with `--status_interval_s=10`, or disable it with `--status_interval_s=0`.
 
 ```text
 Rollout: loop 29.7/30 Hz · over budget 2/149 · starved 0 · infer 18.7 ms (worst 40.1) · process 2.41 GiB · GPU 5.12/79.6 GiB
 ```
 
-- **loop**, **over budget**, **starved**: control-tick rate versus `fps × interpolation_multiplier`, cycles over budget, and ticks where inference returned no action, since the previous report. They follow the summary rules below, including startup exemptions and excluded reset gaps. A healthy loop rate alone does not establish that async inference keeps up.
-- **infer**: median/worst fresh sync inference latency, including preprocessing, postprocessing and CPU action transfer. RTC and remote show **turnaround** from request submission to result receipt, including remote transport. Both cover completions in the last `status_interval_s` seconds, including cold start; cached action retrievals, explicit compilation warmup and text queries are excluded.
-- **process**, **GPU**: current process RSS on Linux and device-wide used/total CUDA memory, including other processes. Remote reports local process memory only. Unavailable memory and latency without recent samples are omitted.
-
-Sampling and logging count as control-loop work; there is no monitoring thread. Blocked loops delay reporting without a catch-up burst. Interactive sessions and episodic reset phases do not print periodic logs. Existing warnings and episode/run summaries remain available.
+Latency is median/worst over the interval (`turnaround` for RTC/remote). Unavailable fields are omitted; GPU memory is device-wide, and remote memory is local. Reporting pauses when the loop blocks.
 
 Every strategy reports what its control loop actually achieved, as do `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay` — they all pace through the same timer. Each saved episode gets a one-line digest, and when the loop ends — including on `Ctrl-C` — a block covering the whole run:
 
