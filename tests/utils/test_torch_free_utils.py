@@ -65,3 +65,7 @@ def test_a_numpy_tick_runs_without_torch():
         assert sent == [0.0, 1.0, 2.0], sent
         """
     )
+
+
+def test_the_plugin_flags_are_read_without_torch():
+    assert_runs_without_torch("from lerobot.utils.import_utils import load_plugin, parse_plugin_args")
