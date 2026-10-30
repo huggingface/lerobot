@@ -740,3 +740,15 @@ def test_moving_the_experts_off_the_gpu_moves_their_cached_weights():
     assert experts._gate_up_proj_cache is not None and experts._sparse_wd_cache is not None
     experts.cpu()
     assert experts._gate_up_proj_cache.device.type == "cpu" and experts._sparse_wd_cache.device.type == "cpu"
+
+
+def test_a_given_noise_runs_in_the_model_dtype(tiny_backbone):
+    """A float32 starting noise, as callers draw it, runs in the dtype of a bfloat16 policy."""
+    policy, batch, _ = _policy_and_batch(tiny_backbone, (CAMERA,), dtype=torch.bfloat16)
+    noise = torch.randn(2, CHUNK, policy.config.max_action_dim)
+
+    with torch.no_grad():
+        given = policy.predict_action_chunk(batch, noise=noise)
+        cast = policy.predict_action_chunk(batch, noise=noise.to(torch.bfloat16))
+
+    torch.testing.assert_close(given, cast, rtol=0, atol=0)
