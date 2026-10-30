@@ -36,6 +36,8 @@ from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import log_visualization_data
 
+from ..status import RolloutStatusReporter
+
 if TYPE_CHECKING:
     from ..configs import RolloutConfig, RolloutStrategyConfig
     from ..context import (
@@ -83,6 +85,7 @@ class RolloutStrategy(abc.ABC):
     def __init__(self, config: RolloutStrategyConfig) -> None:
         self.config = config
         self._engine: InferenceEngine | None = None
+        self._status: RolloutStatusReporter | None = None
         self._interpolator: ActionInterpolator | None = None
         self._warmup_flushed: bool = False
         self._cached_obs_processed: RobotObservation | None = None
@@ -97,11 +100,21 @@ class RolloutStrategy(abc.ABC):
         """
         self._interpolator = ActionInterpolator(multiplier=ctx.runtime.cfg.interpolation_multiplier)
         self._engine = ctx.policy.inference
+        cfg = ctx.runtime.cfg
+        interval = 0.0 if cfg.interactive else cfg.status_interval_s
+        self._engine.latency.configure(interval)
+        self._status = RolloutStatusReporter(self._engine, interval, cfg.device)
         logger.info("Starting inference engine...")
         self.reset_control_state()
         self._engine.start()
         self._warmup_flushed = False
         logger.info("Inference engine started")
+
+    def _tick(self, timer: CycleTimer, *, new_cycle: bool = False) -> None:
+        """Start a control tick and report health, including warmup/paused/correction ticks."""
+        timer.tick(new_cycle=new_cycle)
+        if self._status is not None:
+            self._status.report_if_due(timer)
 
     def _require_engine(self) -> InferenceEngine:
         """The inference engine attached by :meth:`_init_engine`."""

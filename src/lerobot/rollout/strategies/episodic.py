@@ -256,7 +256,7 @@ class EpisodicStrategy(RolloutStrategy):
         start_t = time.perf_counter()
 
         while timestamp < control_time_s:
-            timer.tick(new_cycle=interpolator.needs_new_action())
+            self._tick(timer, new_cycle=interpolator.needs_new_action())
 
             if events["exit_early"]:
                 events["exit_early"] = False

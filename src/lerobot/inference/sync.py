@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import nullcontext
 from copy import copy
 
@@ -114,12 +115,17 @@ class SyncInferenceEngine(InferenceEngine):
                 # than ``policy.reset``: observation history and other episode state stay.
                 logger.info("Task changed to '%s' — dropping precomputed actions", task)
                 self._policy.drop_queued_actions()
+            measure = self.latency.interval_s > 0 and self._policy.count_queued_actions() == 0
+            started = time.monotonic() if measure else 0.0
             observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
             observation = self._preprocessor(observation)
             transition = policy_output_to_transition(self._policy.select_action(observation))
             # Only the action goes through the postprocessor; the prediction travels beside it.
             action = self._postprocessor(transition_to_policy_action(transition))
         action_tensor = action.squeeze(0).cpu()
+        if measure:
+            completed = time.monotonic()
+            self.latency.record(completed - started, completed)
 
         # ``task`` is the pre-inference snapshot: a /subtask landing mid-inference must
         # not relabel this action.
