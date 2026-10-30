@@ -233,13 +233,13 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                 f"Available policy types: {cls.get_known_choices()}"
             ) from e
 
-        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
-            json.dump(config, f)
-            config_file = f.name
-
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
-        with draccus.config_type("json"):
-            config = draccus.parse(config_cls, config_file, args=cli_overrides)
+        with tempfile.NamedTemporaryFile("w+", delete_on_close=False, suffix=".json") as f:
+            json.dump(config, f)
+            # Close before draccus reopens the file on Windows; the context still removes it.
+            f.close()
+            with draccus.config_type("json"):
+                config = draccus.parse(config_cls, f.name, args=cli_overrides)
 
         # The serialized config.json does not carry the source path, so parsing
         # yields pretrained_path=None. Backfill it: downstream code (e.g.
