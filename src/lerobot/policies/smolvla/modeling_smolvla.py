@@ -808,6 +808,11 @@ class VLAFlowMatching(nn.Module):
             use_cache=self.config.use_cache,
         )
         num_steps = self.config.num_steps
+        cross_attn_kv = (
+            self.vlm_with_expert.precompute_cross_attn_kv(past_key_values)
+            if past_key_values is not None
+            else None
+        )
 
         return euler_integrate(
             lambda input_x_t, current_timestep: self.denoise_step(
@@ -815,6 +820,7 @@ class VLAFlowMatching(nn.Module):
                 prefix_pad_masks=prefix_pad_masks,
                 past_key_values=past_key_values,
                 timestep=current_timestep,
+                cross_attn_kv=cross_attn_kv,
             ),
             noise,
             num_steps,
@@ -831,6 +837,7 @@ class VLAFlowMatching(nn.Module):
         past_key_values,
         x_t,
         timestep,
+        cross_attn_kv=None,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, timestep)
@@ -852,6 +859,7 @@ class VLAFlowMatching(nn.Module):
             past_key_values=past_key_values,
             inputs_embeds=[None, suffix_embs],
             use_cache=self.config.use_cache,
+            cross_attn_kv=cross_attn_kv,
         )
         if past_key_values is not None:
             # Self-attention layers append suffix K/V in place; restore the prefix for the next step.
