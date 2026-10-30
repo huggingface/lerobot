@@ -91,6 +91,8 @@ class FindJointLimitsConfig:
     control_loop_fps: int = 30
 
 
+from lerobot.rollout.hardware_gate import send_action_checked_with_approval
+
 @draccus.wrap()
 def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig) -> None:
     teleop = make_teleoperator_from_config(cfg.teleop)
@@ -132,7 +134,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig) -> None:
 
             # 1. Teleoperation Control Loop
             action = teleop.get_action()
-            robot.send_action(action)
+            send_action_checked_with_approval(robot, action)
 
             # 2. Read Observations
             observation = robot.get_observation()

@@ -76,6 +76,7 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
+from lerobot.rollout.hardware_gate import send_action_checked_with_approval
 
 
 @dataclass
@@ -133,7 +134,7 @@ def replay(cfg: ReplayConfig):
 
             with timer.section("send"):
                 processed_action = robot_action_processor((action, robot_obs))
-                _ = robot.send_action(processed_action)
+                _ = send_action_checked_with_approval(robot, processed_action)
 
             timer.wait()
     finally:
