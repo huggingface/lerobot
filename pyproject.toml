@@ -63,13 +63,13 @@ dependencies = [
     "torchvision>=0.22.0,<0.27.0",
     "numpy>=2.0.0,<2.3.0", # NOTE: Explicitly listing numpy helps the resolver converge faster. Upper bound imposed by opencv-python-headless.
     "opencv-python-headless>=4.9.0,<4.14.0",
-    "Pillow>=10.0.0,<13.0.0",
+    "Pillow>=10.0.0,<14.0.0",
     "einops>=0.8.0,<0.9.0",
 
     # Config & Hub
     "draccus>=0.11.6,<0.12.0",
     "huggingface-hub>=1.6.0,<2.0.0",
-    "filelock>=3.12.0,<4.0.0",
+    "filelock>=4.2.1,<5.0.0",
     "fsspec>=2023.5.0,<2027.0.0",
     "httpx>=0.27.0,<1.0.0",
     "requests>=2.32.0,<3.0.0",
@@ -84,7 +84,7 @@ dependencies = [
     "safetensors>=0.4.3,<1.0.0",
 
     # Lightweight utilities
-    "packaging>=24.2,<26.0",
+    "packaging>=24.2,<27.0",
     "termcolor>=2.4.0,<4.0.0",
     "tqdm>=4.66.0,<5.0.0",
 
@@ -126,7 +126,8 @@ dataset = [
 ]
 training = [
     "lerobot[dataset]",
-    "wandb>=0.24.0,<0.28.0",
+    "trackio[gpu]>=0.44.0,<1.0.0; sys_platform != 'darwin'",
+    "trackio[apple-gpu]>=0.44.0,<1.0.0; sys_platform == 'darwin'",
     "lerobot[accelerate-dep]",
 ]
 hardware = [
@@ -246,6 +247,7 @@ robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot
 topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
+longwam = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[sentencepiece-dep]"]
 fastwam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -359,6 +361,7 @@ all = [
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
     "lerobot[fastwam]",
+    "lerobot[longwam]",
     "lerobot[flux3]",
     "lerobot[groot]",
     "lerobot[xvla]",
@@ -555,6 +558,8 @@ default.extend-ignore-identifiers-re = [
     "OT_VALUE",
     "VanderBilt",
     "seperated_timestep",
+    # Diffusers VAE configuration spelling.
+    "temperal_downsample",
     "nd",  # einsum output axes "...nd" in the vendored FLUX 3 Action transformer
     "EmbedND",
 ]

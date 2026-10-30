@@ -527,7 +527,7 @@ lerobot-train \
   --output_dir=outputs/train/act_so101_test \
   --job_name=act_so101_test \
   --policy.device=cuda \
-  --wandb.enable=true \
+  --trackio.enable=true \
   --policy.repo_id=${HF_USER}/my_policy
 ```
 
@@ -536,7 +536,7 @@ Let's explain the command:
 1. We provided the dataset recorded earlier as argument with `--dataset.repo_id=${HF_USER}/record-test_YYYYMMDD_HHMMSS` (use your dataset's full name, including the timestamp).
 2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `wrist` and `top`) which have been saved in your dataset.
 3. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
-4. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
+4. We provided `trackio.enable=true` to use [Trackio](https://huggingface.co/docs/trackio) for visualizing training plots. This is optional. Run `trackio show --project lerobot` to open the dashboard, or pass `--trackio.space_id=<user>/<space>` to sync the run to a Hugging Face Space.
 5. We did not set `--steps`, so training runs for the default 100,000 steps. That is usually more than a small dataset needs: imitation learning typically converges within 5–10 epochs over the data. See the [Compute & Hardware Guide](./hardware_guide#training-time) to turn epochs into a `--steps` value for your dataset size and batch size.
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_so101_test/checkpoints`.
@@ -592,7 +592,7 @@ By default the job is capped at `2d` (48h) of wall-clock. Override it with an HF
 
 > **Note:** the model repo is created up front (it holds the staged training config the job runs from). If a run fails before the model is pushed, that repo is left on the Hub so you can inspect it — it is not deleted automatically, so repeated failures can leave empty repos behind. Remove one with `hf repo delete <repo-id>`.
 
-**Prerequisites:** run `hf auth login` before submitting. For Weights & Biases integration, run `wandb login` or set `WANDB_API_KEY` on your machine — the key is forwarded to the job automatically.
+**Prerequisites:** run `hf auth login` before submitting. For Trackio, pass `--trackio.space_id=<user>/<space>` — the Space is created if missing and the job's HF_TOKEN is forwarded automatically.
 
 **Resuming on a job.** Adding `--job.target` to a resume command runs the resume in the cloud — the same command works locally or remotely. The checkpoint repo is the source of truth, and new checkpoints continue the lineage in the same repo:
 

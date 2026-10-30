@@ -17,6 +17,8 @@ from lerobot.datasets.video_utils import (  # noqa: E402
     normalize_rgb_frames,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def test_normalize_rgb_frames():
     frames = torch.tensor([[0, 255]], dtype=torch.uint8)

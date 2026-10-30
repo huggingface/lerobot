@@ -31,14 +31,14 @@ python -m lerobot.rl.learner --config_path src/lerobot/configs/train_config_hils
 **NOTE**: Start the learner server before launching the actor server. The learner opens a gRPC server
 to communicate with actors.
 
-**NOTE**: Training progress can be monitored through Weights & Biases if wandb.enable is set to true
+**NOTE**: Training progress can be monitored through Trackio if trackio.enable is set to true
 in your configuration.
 
 **WORKFLOW**:
 1. Create training configuration with proper policy, dataset, and environment settings
 2. Start this learner server with the configuration
 3. Start an actor server with the same configuration
-4. Monitor training progress through wandb dashboard
+4. Monitor training progress through the Trackio dashboard (`trackio show`)
 
 For more details on the complete HILSerl training workflow, see:
 https://github.com/michel-aractingi/lerobot-hilserl-guide
@@ -49,6 +49,7 @@ import os
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
@@ -72,6 +73,7 @@ from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
 from lerobot.cameras import opencv  # noqa: F401
+from lerobot.common.trackio_utils import TrackioLogger
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     load_training_metadata,
@@ -79,7 +81,6 @@ from lerobot.common.train_utils import (
     should_save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, make_dataset
 from lerobot.optim import load_optimizer_state
@@ -167,36 +168,39 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
     logging.info(f"Learner logging initialized, writing to {log_file}")
     logging.info(pformat(cfg.to_dict()))
 
-    # Setup WandB logging if enabled
-    if cfg.wandb.enable and cfg.wandb.project:
-        from lerobot.common.wandb_utils import WandBLogger
-
-        wandb_logger = WandBLogger(cfg)
-    else:
-        wandb_logger = None
-        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
-
     # Handle resume logic
     cfg = handle_resume_logic(cfg)
+
+    # Setup Trackio logging if enabled. After the resume logic, so a resumed run reattaches to the
+    # Trackio run stored in the checkpoint's train_config.json.
+    if cfg.trackio.enable and cfg.trackio.project:
+        trackio_logger = TrackioLogger(cfg)
+    else:
+        trackio_logger = None
+        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     set_seed(seed=cfg.seed)
 
     torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
 
     is_threaded = use_threads(cfg)
     shutdown_event = ProcessSignalHandler(is_threaded, display_pid=display_pid).shutdown_event
 
     start_learner_threads(
         cfg=cfg,
-        wandb_logger=wandb_logger,
+        trackio_logger=trackio_logger,
         shutdown_event=shutdown_event,
     )
+    if trackio_logger is not None:
+        trackio_logger.finish()
 
 
 def start_learner_threads(
     cfg: TrainRLServerPipelineConfig,
-    wandb_logger: WandBLogger | None,
+    trackio_logger: TrackioLogger | None,
     shutdown_event: Any,  # Event
 ) -> None:
     """
@@ -204,7 +208,7 @@ def start_learner_threads(
 
     Args:
         cfg (TrainRLServerPipelineConfig): Training configuration
-        wandb_logger (WandBLogger | None): Logger for metrics
+        trackio_logger (TrackioLogger | None): Logger for metrics
         shutdown_event: Event to signal shutdown
     """
     # Create multiprocessing queues
@@ -239,7 +243,7 @@ def start_learner_threads(
     try:
         add_actor_information_and_train(
             cfg=cfg,
-            wandb_logger=wandb_logger,
+            trackio_logger=trackio_logger,
             shutdown_event=shutdown_event,
             transition_queue=transition_queue,
             interaction_message_queue=interaction_message_queue,
@@ -270,7 +274,7 @@ def start_learner_threads(
 
 def add_actor_information_and_train(
     cfg: TrainRLServerPipelineConfig,
-    wandb_logger: WandBLogger | None,
+    trackio_logger: TrackioLogger | None,
     shutdown_event: Any,  # Event
     transition_queue: Queue,
     interaction_message_queue: Queue,
@@ -294,7 +298,7 @@ def add_actor_information_and_train(
 
     Args:
         cfg (TrainRLServerPipelineConfig): Configuration object containing hyperparameters.
-        wandb_logger (WandBLogger | None): Logger for tracking training progress.
+        trackio_logger (TrackioLogger | None): Logger for tracking training progress.
         shutdown_event (Event): Event to signal shutdown.
         transition_queue (Queue): Queue for receiving transitions from the actor.
         interaction_message_queue (Queue): Queue for receiving interaction messages from the actor.
@@ -405,7 +409,7 @@ def add_actor_information_and_train(
         interaction_message = process_interaction_messages(
             interaction_message_queue=interaction_message_queue,
             interaction_step_shift=interaction_step_shift,
-            wandb_logger=wandb_logger,
+            trackio_logger=trackio_logger,
             shutdown_event=shutdown_event,
         )
 
@@ -434,8 +438,8 @@ def add_actor_information_and_train(
             training_infos["Optimization step"] = optimization_step
 
             # Log training metrics
-            if wandb_logger:
-                wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
+            if trackio_logger:
+                trackio_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
 
         # Calculate and log optimization frequency
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
@@ -444,8 +448,8 @@ def add_actor_information_and_train(
         logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {frequency_for_one_optimization_step}")
 
         # Log optimization frequency
-        if wandb_logger:
-            wandb_logger.log_dict(
+        if trackio_logger:
+            trackio_logger.log_dict(
                 {
                     "Optimization frequency loop [Hz]": frequency_for_one_optimization_step,
                     "Optimization step": optimization_step,
@@ -702,6 +706,11 @@ def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipeli
     checkpoint_cfg_path = os.path.join(checkpoint_dir, PRETRAINED_MODEL_DIR, "train_config.json")
     checkpoint_cfg = TrainRLServerPipelineConfig.from_pretrained(checkpoint_cfg_path)
 
+    # Keep the caller's tracking settings (including CLI overrides), recovering only the saved run name.
+    checkpoint_cfg.trackio = replace(
+        cfg.trackio, run_name=cfg.trackio.run_name or checkpoint_cfg.trackio.run_name
+    )
+
     # Ensure resume flag is set in returned config
     checkpoint_cfg.resume = True
     return checkpoint_cfg
@@ -935,7 +944,7 @@ def push_actor_policy_to_queue(parameters_queue: Queue, algorithm: RLAlgorithm) 
 
 
 def process_interaction_message(
-    message, interaction_step_shift: int, wandb_logger: WandBLogger | None = None
+    message, interaction_step_shift: int, trackio_logger: TrackioLogger | None = None
 ):
     """Process a single interaction message with consistent handling."""
     message = bytes_to_python_object(message)
@@ -943,8 +952,8 @@ def process_interaction_message(
     message["Interaction step"] += interaction_step_shift
 
     # Log if logger available
-    if wandb_logger:
-        wandb_logger.log_dict(d=message, mode="train", custom_step_key="Interaction step")
+    if trackio_logger:
+        trackio_logger.log_dict(d=message, mode="train", custom_step_key="Interaction step")
 
     return message
 
@@ -991,7 +1000,7 @@ def process_transitions(
 def process_interaction_messages(
     interaction_message_queue: Queue,
     interaction_step_shift: int,
-    wandb_logger: WandBLogger | None,
+    trackio_logger: TrackioLogger | None,
     shutdown_event: Any,  # Event
 ) -> dict | None:
     """Process all available interaction messages from the queue.
@@ -999,7 +1008,7 @@ def process_interaction_messages(
     Args:
         interaction_message_queue: Queue for receiving interaction messages
         interaction_step_shift: Amount to shift interaction step by
-        wandb_logger: Logger for tracking progress
+        trackio_logger: Logger for tracking progress
         shutdown_event: Event to signal shutdown
 
     Returns:
@@ -1011,7 +1020,7 @@ def process_interaction_messages(
         last_message = process_interaction_message(
             message=message,
             interaction_step_shift=interaction_step_shift,
-            wandb_logger=wandb_logger,
+            trackio_logger=trackio_logger,
         )
 
     return last_message

@@ -24,6 +24,8 @@ from lerobot.datasets.streaming_dataset import DEFAULT_STREAMING_SEED, Streaming
 from lerobot.datasets.streaming_sidecar import streaming_data_root
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize(
     ("repo_type", "root", "expected_repo_type"),

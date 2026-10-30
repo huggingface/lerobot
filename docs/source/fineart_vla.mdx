@@ -121,11 +121,11 @@ lerobot-train \
     --steps=30000 \
     --output_dir=outputs/fineart_vla \
     --job_name=fineart_vla \
-    --wandb.enable=true
+    --trackio.enable=true
 ```
 
-Start with a small run and confirm that W&B examples show
-the expected prompt, text target, and action endpoints before scaling up.
+Start with a small run and confirm in the Trackio dashboard that the losses
+behave as expected before scaling up.
 
 To start from the plain PI0.5 checkpoint instead, keep FineART-VLA's default
 config and point `--policy.pretrained_path` at it:

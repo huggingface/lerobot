@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import torch
 from huggingface_hub import snapshot_download
 
 from lerobot.configs import PreTrainedConfig
@@ -134,6 +135,9 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
         policy_cfg = replace(policy_cfg, **overrides)
     policy_cfg.pretrained_path = path
     policy_cfg.device = cfg.model.device
+    if cfg.model.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.model.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.model.tf32
     modes = tuple(ExecutionMode(mode) for mode in cfg.execution.supported_modes)
     if any(mode != ExecutionMode.CHUNK for mode in modes):
         # Some RTC-capable policy configs obtain this runtime attribute locally

@@ -33,6 +33,7 @@ from .groot.configuration_groot import GrootConfig as GrootConfig
 from .lawam.configuration_lawam import LaWAMConfig as LaWAMConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig as LingBotVAConfig
 from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config as LingbotVLAV2Config
+from .longwam.configuration_longwam import LongWAMConfig as LongWAMConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config as MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config as PI0Config
@@ -75,6 +76,7 @@ __all__ = [
     "LaWAMConfig",
     "LingBotVAConfig",
     "LingbotVLAV2Config",
+    "LongWAMConfig",
     "MolmoAct2Config",
     "MultiTaskDiTConfig",
     "PI0Config",

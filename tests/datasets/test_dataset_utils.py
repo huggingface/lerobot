@@ -42,6 +42,8 @@ from lerobot.datasets.utils import (
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
 
+pytestmark = pytest.mark.dataset
+
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
     """Calculate episode data index for testing. Returns {"from": Tensor, "to": Tensor}."""
