@@ -17,6 +17,14 @@
 Each defines ``env_fns(task, n_envs, **kwargs)``, returning ``{suite: {task_id: [factory, ...]}}``, and
 ``canonical_observation(obs)``, mapping observations to LeRobot keys. ``conventions(kwargs)`` is
 optional: the sim's default fps, control mode, names and robot type.
+
+A simulator that steps a whole batch at once (one GPU world with many envs) defines
+``vector_env_fns(task, n_envs, **kwargs)`` instead, returning ``{suite: {task_id: factory}}``: each
+factory builds one Gymnasium vector env of ``n_envs`` envs, like Gymnasium's ``vector_entry_point``. That
+env must not autoreset (``metadata["autoreset_mode"]`` is ``AutoresetMode.DISABLED``), takes one seed per
+env in ``reset``, returns batched observations and ``info["is_success"]`` per env, and has
+``_max_episode_steps`` and ``task_description`` attributes. ``canonical_observation`` still maps one env's
+observation.
 """
 
 import contextlib

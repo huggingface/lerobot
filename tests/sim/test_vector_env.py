@@ -17,6 +17,7 @@
 import os
 import sys
 import types
+from dataclasses import replace
 
 import draccus
 import numpy as np
@@ -68,6 +69,47 @@ def test_environments_in_separate_processes_match_sequential_environments():
         np.testing.assert_array_equal(parallel.terminated, sequential.terminated)
         np.testing.assert_array_equal(parallel.elapsed_steps, sequential.elapsed_steps)
         assert parallel.task == sequential.task
+
+
+@pytest.mark.parametrize("use_async_envs", [False, True])
+def test_a_batched_simulator_runs_like_one_env_per_batch_entry(use_async_envs):
+    # A GPU simulator steps its whole batch, finished envs included; they must still look finished.
+    from lerobot.sim.vector_env import LocalVectorEnv
+
+    toy = ToyEnvConfig().sim_config()
+    # Env 0 succeeds on the first step, env 1 on the third, and env 2 is truncated after five.
+    actions = [[[2, 0], [0.1, 0], [0, 0]], [[0.3, 0.1], [0.3, 0.1], [0, 0]], [[1, 0], [1, 0], [0, 0]]]
+    actions += [[[0, 0]] * 3] * 2
+    runs = []
+    for config, in_process in ((toy, True), (replace(toy, type="toy_vector"), not use_async_envs)):
+        env = LocalVectorEnv(config, num_envs=3, use_async_envs=not in_process)
+        try:
+            env.reset(seed=[4, 5, 6])
+            steps = [env.latest]
+            for batch in actions:
+                env.step(np.array(batch, np.float32))
+                steps.append(env.latest)
+            runs.append((env.descriptor, env.call("_max_episode_steps"), steps))
+        finally:
+            env.close()
+    (per_env, per_env_limits, per_env_steps), (batched, batched_limits, batched_steps) = runs
+    assert batched.same_schema(per_env) and batched_limits == per_env_limits == (5, 5, 5)
+    for expected, step in zip(per_env_steps, batched_steps, strict=True):
+        for key in expected.obs:
+            np.testing.assert_array_equal(step.obs[key], expected.obs[key])
+        for field in ("reward", "terminated", "truncated", "is_success", "elapsed_steps"):
+            np.testing.assert_array_equal(getattr(step, field), getattr(expected, field))
+        assert step.task == expected.task
+    assert batched_steps[-1].terminated.tolist() == [True, True, False]
+    assert batched_steps[-1].truncated.tolist() == [False, False, True]
+
+
+def test_a_batched_simulator_that_autoresets_is_rejected():
+    from lerobot.sim.vector_env import LocalVectorEnv
+
+    config = replace(ToyEnvConfig().sim_config(), type="toy_vector", kwargs={"autoreset_mode": "NEXT_STEP"})
+    with pytest.raises(ValueError, match="must not autoreset"):
+        LocalVectorEnv(config, num_envs=2)
 
 
 @pytest.mark.parametrize("where", ["local", "served"])

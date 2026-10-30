@@ -15,18 +15,29 @@
 """A deterministic toy simulator integration and its env config, for local and served execution tests."""
 
 import sys
+import types
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
+from gymnasium.vector.utils import batch_space
 
 from lerobot.envs.configs import EnvConfig
 from lerobot.sim.integrations.utils import canonical_observation
 
-__all__ = ["DictObservationEnv", "ToyEnv", "ToyEnvConfig", "canonical_observation", "env_fns"]
+__all__ = [
+    "DictObservationEnv",
+    "ToyEnv",
+    "ToyEnvConfig",
+    "ToyVectorEnv",
+    "batched_env_fns",
+    "canonical_observation",
+    "env_fns",
+]
 
 
 class ToyEnv:
@@ -82,6 +93,64 @@ def env_fns(
     return {"reach": {task_id: [ToyEnv] * n_envs for task_id in task_ids}}
 
 
+class ToyVectorEnv(gym.vector.VectorEnv):
+    """``ToyEnv`` for a whole batch at once, as a GPU simulator steps it; it keeps stepping finished envs."""
+
+    def __init__(self, num_envs: int, autoreset_mode: str = "DISABLED") -> None:
+        self.num_envs = num_envs
+        self.metadata = {"autoreset_mode": gym.vector.AutoresetMode[autoreset_mode]}
+        self.single_observation_space = spaces.Dict(
+            {
+                "agent_pos": spaces.Box(-100, 100, (2,), np.float32),
+                "pixels": spaces.Box(0, 255, (8, 8, 3), np.uint8),
+            }
+        )
+        self.single_action_space = spaces.Box(-1, 1, (2,), np.float32)
+        self.observation_space = batch_space(self.single_observation_space, num_envs)
+        self.action_space = batch_space(self.single_action_space, num_envs)
+        self._max_episode_steps = 5
+        self.task_description = "Move to the target"
+        self.state: np.ndarray = np.zeros((num_envs, 2), dtype=np.float32)
+
+    def _obs(self) -> dict[str, np.ndarray]:
+        brightness = np.clip(self.state[:, 0] * 10 + 100, 0, 255).astype(np.uint8)
+        pixels = np.broadcast_to(brightness[:, None, None, None], (self.num_envs, 8, 8, 3))
+        return {"agent_pos": self.state.copy(), "pixels": pixels.copy()}
+
+    def reset(self, *, seed: list[int | None] | None = None, options: dict | None = None):
+        """Place each point near the origin, from its seed, as ``ToyEnv`` does."""
+        seeds = seed if seed is not None else [None] * self.num_envs
+        self.state = np.stack([np.random.default_rng(s).uniform(-0.1, 0.1, 2) for s in seeds]).astype(
+            np.float32
+        )
+        return self._obs(), {}
+
+    def step(self, actions: np.ndarray):
+        """Move every point, finished ones included."""
+        self.state += actions
+        success = self.state[:, 0] >= 1
+        return (
+            self._obs(),
+            success.astype(np.float32),
+            success,
+            np.zeros(self.num_envs, bool),
+            {"is_success": success},
+        )
+
+
+def batched_env_fns(
+    task: str,
+    n_envs: int,
+    task_ids: tuple[int, ...] = (0,),
+    autoreset_mode: str = "DISABLED",
+    **_: Any,
+) -> dict[str, dict[int, Callable[[], Any]]]:
+    """The batched toy environments' factories, as a GPU simulator integration returns them."""
+    if task != "reach":
+        raise ValueError(f"Unknown toy task: {task!r}")
+    return {"reach": {task_id: partial(ToyVectorEnv, n_envs, autoreset_mode) for task_id in task_ids}}
+
+
 class DictObservationEnv(gym.Env):
     """A Gymnasium env with the dict observations LeRobot environments provide, for gym.make() registration."""
 
@@ -96,8 +165,12 @@ class DictObservationEnv(gym.Env):
         return {"agent_pos": np.zeros(2, np.float32)}, 0.0, False, False, {}
 
 
-# Simulator integrations are imported as `lerobot.sim.integrations.<type>`; the toy is registered there for tests.
+# Simulator integrations are imported as `lerobot.sim.integrations.<type>`; the toys are registered there for tests.
 sys.modules.setdefault("lerobot.sim.integrations.toy", sys.modules[__name__])
+toy_vector = types.ModuleType("lerobot.sim.integrations.toy_vector")
+toy_vector.vector_env_fns = batched_env_fns
+toy_vector.canonical_observation = canonical_observation
+sys.modules.setdefault("lerobot.sim.integrations.toy_vector", toy_vector)
 
 
 @EnvConfig.register_subclass("toy")

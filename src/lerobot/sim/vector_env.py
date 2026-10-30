@@ -19,7 +19,7 @@ import importlib
 import logging
 import multiprocessing
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from functools import partial
 from multiprocessing.connection import Connection
@@ -38,7 +38,7 @@ from lerobot.utils.feature_spec import FeatureSpec
 logger = logging.getLogger(__name__)
 
 # Env attributes copied from a worker process after it builds the env and after each reset.
-_ENV_ATTRS = ("task_description", "task")
+_ENV_ATTRS = ("task_description", "task", "num_envs")
 # Episode limit for an env that declares none.
 _DEFAULT_MAX_EPISODE_STEPS = 500
 
@@ -53,9 +53,34 @@ def _max_episode_steps(env: Any) -> int | None:
     return None if limit is None else int(limit)
 
 
+def _spaces(env: Any) -> tuple[spaces.Space, spaces.Space]:
+    """Return the observation and action spaces of one env; for a vector env, those of each of its envs."""
+    return (
+        getattr(env, "single_observation_space", env.observation_space),
+        getattr(env, "single_action_space", env.action_space),
+    )
+
+
+def _row(batch: Mapping[str, Any], index: int) -> dict[str, Any]:
+    """Return env ``index``'s observation from a vector env's batched, possibly nested, observation."""
+    return {
+        key: _row(value, index) if isinstance(value, Mapping) else value[index]
+        for key, value in batch.items()
+    }
+
+
 def _build_env(sim_type: str, make: Callable[[], Any]) -> Any:
     with simulator_required(sim_type):
-        return make()
+        env = make()
+    if isinstance(env, gym.vector.VectorEnv):
+        mode = env.metadata.get("autoreset_mode")
+        if mode is not gym.vector.AutoresetMode.DISABLED:
+            env.close()
+            raise ValueError(
+                f"A vector env from vector_env_fns must not autoreset; set metadata['autoreset_mode'] to "
+                f"AutoresetMode.DISABLED (got {mode})"
+            )
+    return env
 
 
 def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
@@ -77,7 +102,7 @@ def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
                 elif command == "step":
                     result = env.step(argument)
                 elif command == "spaces":
-                    result = (env.observation_space, env.action_space)
+                    result = _spaces(env)
                 else:  # "attrs"
                     result = {name: getattr(env, name) for name in _ENV_ATTRS if hasattr(env, name)}
                     result["_max_episode_steps"] = _max_episode_steps(env)
@@ -170,6 +195,11 @@ class LocalVectorEnv(gym.vector.VectorEnv):
 
     A finished env is not stepped until ``reset``: it keeps its last observation and gets zero reward. With
     ``use_async_envs``, each env runs in its own worker process.
+
+    An integration that defines ``vector_env_fns`` builds the whole batch as one Gymnasium vector env instead
+    (a GPU simulator stepping every env at once). That env must not autoreset; it is stepped as a whole, and
+    the rows of finished envs are ignored, so they stay finished as above. With ``use_async_envs``, it runs in
+    one worker process.
     """
 
     canonical_observations = True
@@ -186,8 +216,12 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         """Select the task; given a ``descriptor``, build the simulators on first use instead of now."""
         with simulator_required(config.type):
             integration = importlib.import_module(f"lerobot.sim.integrations.{config.type}")
-            factories = integration.env_fns(task=config.task, n_envs=num_envs, **config.kwargs)
+            vector_env_fns = getattr(integration, "vector_env_fns", None)
+            make_factories = vector_env_fns or integration.env_fns
+            factories = make_factories(task=config.task, n_envs=num_envs, **config.kwargs)
         self._canonical_observation = integration.canonical_observation
+        # One vector env for the whole batch, instead of one env per batch entry.
+        self._batched = vector_env_fns is not None
         self.config = config
         self.num_envs = num_envs
         self.use_async_envs = use_async_envs
@@ -198,9 +232,8 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         self.task_id: int = next(iter(tasks), 0) if task_id is None else task_id
         if self.task_id not in tasks:
             raise ValueError(f"Unknown task: {self.task_group}/{self.task_id}")
-        self._env_fns: list[Callable[[], Any]] = [
-            partial(_build_env, config.type, fn) for fn in tasks[self.task_id]
-        ]
+        fns = [tasks[self.task_id]] if self._batched else tasks[self.task_id]
+        self._env_fns: list[Callable[[], Any]] = [partial(_build_env, config.type, fn) for fn in fns]
         self._envs: list[Any] = []
         self._last: list[tuple[dict[str, np.ndarray], float, bool, bool, bool]] = []
         self._elapsed_steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)
@@ -232,10 +265,16 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             else:
                 for fn in self._env_fns:
                     self._envs.append(fn())
+            if self._batched and getattr(self._envs[0], "num_envs", None) != self.num_envs:
+                raise ValueError(
+                    f"vector_env_fns of {self.config.type} built {getattr(self._envs[0], 'num_envs', None)} "
+                    f"envs, expected {self.num_envs}"
+                )
         except BaseException:
             self._close_envs()
             raise
-        limits = [_max_episode_steps(env) for env in self._envs]
+        # A vector env has one limit, for all of its envs.
+        limits = [_max_episode_steps(env) for env in self._envs] * (self.num_envs if self._batched else 1)
         if None in limits:
             logger.warning(
                 "%s declares no episode limit; episodes are truncated after %d steps",
@@ -247,23 +286,23 @@ class LocalVectorEnv(gym.vector.VectorEnv):
     def _describe(self) -> EnvDescriptor:
         """Build the envs and describe the first one's observations (with LeRobot keys) and actions."""
         self.build()
-        env = self._envs[0]
-        if not isinstance(env.observation_space, spaces.Dict):
+        observation_space, action_space = _spaces(self._envs[0])
+        if not isinstance(observation_space, spaces.Dict):
             raise ValueError(
                 "LeRobot simulation needs dict observations "
-                f"(pixels, agent_pos, environment_state), got {env.observation_space}"
+                f"(pixels, agent_pos, environment_state), got {observation_space}"
             )
-        if not isinstance(env.action_space, spaces.Box) or len(env.action_space.shape) != 1:
-            raise ValueError(f"LeRobot simulation needs a 1-D Box action space, got {env.action_space}")
+        if not isinstance(action_space, spaces.Box) or len(action_space.shape) != 1:
+            raise ValueError(f"LeRobot simulation needs a 1-D Box action space, got {action_space}")
         config = self.config
         features = []
-        for name, value in self._canonical_observation(env.observation_space.sample()).items():
+        for name, value in self._canonical_observation(observation_space.sample()).items():
             names = config.state_names if name == "observation.state" else ()
             if not names and value.ndim == 1:
                 names = tuple(f"state_{index}" for index in range(value.shape[0]))
             kind = "rgb" if value.dtype == np.uint8 else "tensor"
             features.append(FeatureSpec(name, value.shape, value.dtype.name, kind, names, config.semantics))
-        dim = env.action_space.shape[0]
+        dim = action_space.shape[0]
         action_names = config.action_names or tuple(f"command_{index}" for index in range(dim))
         return EnvDescriptor(
             config.type,
@@ -294,13 +333,18 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         if len(seeds) != self.num_envs:
             raise ValueError("Seed count must match the batch size")
         self.build()
-        if self.use_async_envs:
+        if self._batched:
+            batch, _ = self._envs[0].reset(seed=seeds)
+            observations = [_row(batch, i) for i in range(self.num_envs)]
+        elif self.use_async_envs:
             for env, env_seed in zip(self._envs, seeds, strict=True):
                 env.send("reset", env_seed)
-            results = [env.receive(refresh=True) for env in self._envs]
+            observations = [env.receive(refresh=True)[0] for env in self._envs]
         else:
-            results = [env.reset(seed=env_seed) for env, env_seed in zip(self._envs, seeds, strict=True)]
-        self._last = [(self._canonical_observation(obs), 0.0, False, False, False) for obs, _ in results]
+            observations = [
+                env.reset(seed=env_seed)[0] for env, env_seed in zip(self._envs, seeds, strict=True)
+            ]
+        self._last = [(self._canonical_observation(obs), 0.0, False, False, False) for obs in observations]
         self._elapsed_steps[:] = 0
         self._sim_time = 0.0
         result = self._snapshot()
@@ -317,19 +361,13 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         if actions.shape != expected or not np.isfinite(actions).all():
             raise ValueError(f"Expected finite floating-point actions of shape {expected}")
         running = []
-        for i, env in enumerate(self._envs):
-            if self._last[i][2] or self._last[i][3]:
+        for i, last in enumerate(self._last):
+            if last[2] or last[3]:
                 # Finished: keep the terminal observation and flags, with zero reward.
-                self._last[i] = (self._last[i][0], 0.0, *self._last[i][2:])
-                continue
-            if self.use_async_envs:
-                env.send("step", actions[i])
-            running.append(i)
-        for i in running:
-            env = self._envs[i]
-            obs, reward, terminated, truncated, info = (
-                env.receive() if self.use_async_envs else env.step(actions[i])
-            )
+                self._last[i] = (last[0], 0.0, *last[2:])
+            else:
+                running.append(i)
+        for i, (obs, reward, terminated, truncated, info) in self._step_running(actions, running):
             self._elapsed_steps[i] += 1
             truncated = bool(truncated or self._elapsed_steps[i] >= self._max_steps[i])
             self._last[i] = (
@@ -343,11 +381,38 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         result = self._snapshot()
         return result.obs, result.reward, result.terminated, result.truncated, result.info()
 
+    def _step_running(self, actions: np.ndarray, running: list[int]) -> list[tuple[int, tuple]]:
+        """Step the envs in ``running``; return ``(i, (obs, reward, terminated, truncated, info))`` for each."""
+        if self._batched:
+            if not running:
+                return []
+            # One vector env steps every env; the rows of finished envs are dropped.
+            batch, rewards, terminated, truncated, info = self._envs[0].step(actions)
+            success = info.get("is_success", info.get("success"))
+            return [
+                (
+                    i,
+                    (
+                        _row(batch, i),
+                        rewards[i],
+                        terminated[i],
+                        truncated[i],
+                        {"is_success": False if success is None else success[i]},
+                    ),
+                )
+                for i in running
+            ]
+        if self.use_async_envs:
+            for i in running:
+                self._envs[i].send("step", actions[i])
+            return [(i, self._envs[i].receive()) for i in running]
+        return [(i, self._envs[i].step(actions[i])) for i in running]
+
     def _snapshot(self) -> StepResult:
         obs = {key: np.stack([last[0][key] for last in self._last]) for key in self._last[0][0]}
         task = tuple(
             str(getattr(env, "task_description", getattr(env, "task", self.task_group))) for env in self._envs
-        )
+        ) * (self.num_envs if self._batched else 1)
         self._latest = StepResult(
             obs,
             task,
