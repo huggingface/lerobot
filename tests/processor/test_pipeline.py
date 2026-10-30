@@ -41,6 +41,21 @@ from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 from tests.conftest import assert_contract_is_typed
 
+pytestmark = pytest.mark.dataset
+
+TRANSITION_KEYS = frozenset(
+    {
+        TransitionKey.OBSERVATION,
+        TransitionKey.ACTION,
+        TransitionKey.PREDICTION,
+        TransitionKey.REWARD,
+        TransitionKey.DONE,
+        TransitionKey.TRUNCATED,
+        TransitionKey.INFO,
+        TransitionKey.COMPLEMENTARY_DATA,
+    }
+)
+
 
 @dataclass
 class MockStep(ProcessorStep):
@@ -293,10 +308,10 @@ def test_step_through():
     assert "step1_counter" in results[1][TransitionKey.COMPLEMENTARY_DATA]  # After step1
     assert "step2_counter" in results[2][TransitionKey.COMPLEMENTARY_DATA]  # After step2
 
-    # Ensure all results are dicts (same format as input)
+    # Ensure all results are dicts keyed by the (string) transition keys
     for result in results:
         assert isinstance(result, dict)
-        assert all(isinstance(k, TransitionKey) for k in result)
+        assert all(isinstance(k, str) and k in TRANSITION_KEYS for k in result)
 
 
 def test_step_through_with_dict():
@@ -321,17 +336,9 @@ def test_step_through_with_dict():
     # Ensure all results are EnvTransition dicts (regardless of input format)
     for result in results:
         assert isinstance(result, dict)
-        # Check that keys are TransitionKey enums or at least valid transition keys
+        # Check that keys are valid transition keys
         for key in result:
-            assert key in [
-                TransitionKey.OBSERVATION,
-                TransitionKey.ACTION,
-                TransitionKey.REWARD,
-                TransitionKey.DONE,
-                TransitionKey.TRUNCATED,
-                TransitionKey.INFO,
-                TransitionKey.COMPLEMENTARY_DATA,
-            ]
+            assert key in TRANSITION_KEYS
 
     # Check that the processing worked - verify step counters in complementary_data
     assert results[1].get(TransitionKey.COMPLEMENTARY_DATA, {}).get("step1_counter") == 0
@@ -1944,6 +1951,7 @@ def test_state_file_naming_with_multiple_processors():
         assert loaded_post.steps[0].window_size == 10
 
 
+@pytest.mark.gpu
 def test_override_with_device_strings():
     """Test overriding device parameters with string values."""
 

@@ -215,10 +215,10 @@ class VLABenchEnv(gym.Env):
         if self._env is not None:
             return
 
-        import VLABench.robots  # noqa: F401  # type: ignore[import-untyped]
-        import VLABench.tasks  # noqa: F401  # type: ignore[import-untyped]
-        from dm_control.rl.control import PhysicsError  # type: ignore[import-untyped]
-        from VLABench.envs import load_env  # type: ignore[import-untyped]
+        import VLABench.robots  # noqa: F401
+        import VLABench.tasks  # noqa: F401
+        from dm_control.rl.control import PhysicsError
+        from VLABench.envs import load_env
 
         h, w = self.render_resolution
         last_exc: PhysicsError | None = None
@@ -247,14 +247,18 @@ class VLABenchEnv(gym.Env):
                 f"from the eval set. Last physics error: {last_exc}"
             ) from last_exc
 
-        # Extract task description from the dm_control task
-        task_obj = self._env.task
-        if hasattr(task_obj, "task_description"):
-            self.task_description = task_obj.task_description
-        elif hasattr(task_obj, "language_instruction"):
-            self.task_description = task_obj.language_instruction
-        else:
-            self.task_description = self.task
+        # VLABench builds the language instruction once per task build and
+        # exposes it via `get_instruction()`; `reset()` does not change it.
+        instruction = self._env.task.get_instruction()
+        if not instruction:
+            with contextlib.suppress(Exception):
+                self._env.close()
+            self._env = None
+            raise ValueError(
+                f"VLABench task '{self.task}' produced no language instruction, so it cannot be "
+                "evaluated with a language-conditioned policy."
+            )
+        self.task_description = instruction
 
         # Cache robot base world position so `_build_ctrl_from_action` and
         # `_get_obs` can translate between robot-frame (dataset) and
@@ -449,7 +453,7 @@ class VLABenchEnv(gym.Env):
                 rng_seed(seed)
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
-        from dm_control.rl.control import PhysicsError  # type: ignore[import-untyped]
+        from dm_control.rl.control import PhysicsError
 
         self._ensure_env()
         assert self._env is not None

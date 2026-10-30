@@ -349,7 +349,7 @@ class _DummyGrootModel(nn.Module):
         self.forward_inputs = dict(inputs)
         return {"loss": self.weight + 1.0}
 
-    def get_action(self, inputs, options=None):
+    def get_action(self, inputs, options=None, *, noise=None):
         self.forward_inputs = dict(inputs)
         self.get_action_options = options
         batch_size = inputs["state"].shape[0]
@@ -496,8 +496,8 @@ def test_groot_n1_7_predict_action_chunk_truncates_to_checkpoint_valid_horizon(t
     _write_raw_n1_7_libero_checkpoint(model_path)
 
     class HorizonModel(_DummyGrootModel):
-        def get_action(self, inputs, options=None):
-            del options
+        def get_action(self, inputs, options=None, *, noise=None):
+            del options, noise
             batch_size = inputs["state"].shape[0]
             steps = torch.arange(40, dtype=torch.float32).view(1, 40, 1).expand(batch_size, 40, 132)
             return {"action_pred": steps}
@@ -2263,6 +2263,7 @@ def test_groot_n1_7_relative_action_training_processors_save_native_grouped_stat
     assert decode_config["raw_stats"]["action"]["gripper"]["max"] == [100.0]
 
 
+@pytest.mark.dataset
 def test_groot_n1_7_relative_action_processors_compute_stats_from_runtime_dataset_meta(monkeypatch, tmp_path):
     pytest.importorskip("datasets")
 
@@ -2680,7 +2681,7 @@ def test_groot_n1_7_select_action_uses_checkpoint_valid_horizon(tmp_path, monkey
     _write_raw_n1_7_libero_checkpoint(model_path)
 
     class HorizonModel(_DummyGrootModel):
-        def get_action(self, inputs):
+        def get_action(self, inputs, *, noise=None):
             assert inputs["action_mask"].shape == (1, 40)
             assert inputs["action_mask"][0, :16].sum().item() == 16
             assert inputs["action_mask"][0, 16:].sum().item() == 0
@@ -2902,7 +2903,12 @@ def test_gr00t_n1_7_from_pretrained_defers_backbone_weight_loading(monkeypatch, 
     assert called["load_backbone_weights"] is False
 
 
-def test_gr00t_n1_7_action_head_meta_init_defers_beta_distribution():
+def test_gr00t_n1_7_action_head_samples_time_after_meta_init():
+    """Building the head under a meta-device context must not poison later timestep draws.
+
+    ``Beta`` sampling has no meta kernel, so the concentrations may not be materialised from
+    the ambient default device at construction time.
+    """
     pytest.importorskip("diffusers")
 
     from lerobot.policies.groot.groot_n1_7 import GR00TN17ActionHead, GR00TN17Config
@@ -2936,15 +2942,17 @@ def test_gr00t_n1_7_action_head_meta_init_defers_beta_distribution():
     with torch.device("meta"):
         meta_action_head = GR00TN17ActionHead(config)
 
-    assert meta_action_head._beta_dist is None
     assert any(parameter.is_meta for parameter in meta_action_head.parameters())
 
-    action_head = GR00TN17ActionHead(config)
-    sample = action_head.sample_time(batch_size=3, device=torch.device("cpu"), dtype=torch.float32)
+    for action_head in (meta_action_head, GR00TN17ActionHead(config)):
+        sample = action_head.sample_time(batch_size=3, device=torch.device("cpu"), dtype=torch.float32)
 
-    assert action_head._beta_dist is not None
-    assert sample.shape == (3,)
-    assert torch.isfinite(sample).all()
+        assert sample.shape == (3,)
+        assert sample.dtype == torch.float32
+        assert sample.device.type == "cpu"
+        # sample_time returns (1 - Beta(alpha, beta)) * noise_s, so it stays within [0, noise_s].
+        assert torch.isfinite(sample).all()
+        assert sample.min() >= 0.0 and sample.max() <= config.noise_s
 
 
 def test_gr00t_n1_7_model_forward_with_mocked_backbone():

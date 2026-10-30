@@ -31,19 +31,23 @@ import contextlib
 import importlib
 import json
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
+from itertools import batched
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 import torch
 
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
+from lerobot.streaming.location import hf_dataset_uri
 from lerobot.utils.import_utils import _lancedb_available, require_package
 
 if TYPE_CHECKING or _lancedb_available:
     from lancedb.permutation import Permutation
+    from lancedb.table import Table
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader
@@ -61,6 +65,7 @@ from .lance_utils import (  # noqa: F401
     VIDEOS_TABLE,
     _connect,
     _merge_spans,
+    _RangeReader,
     _SparseBlobSource,
     _VideoDecoderLRU,
     build_video_byte_index,
@@ -71,6 +76,56 @@ from .lance_utils import (  # noqa: F401
 )
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
+
+# Per-call limits for multi-sample RGB decoding within each DataLoader worker.
+# Concurrent file decodes have independent budgets; final sample outputs,
+# scatter copies, and decoder-internal memory are excluded from the byte estimate.
+_RGB_DECODE_MAX_FRAMES = 64
+_RGB_DECODE_MAX_BYTES = 64 << 20
+
+# Limit the temporal span when merging multiple depth windows, further bounded
+# by the byte budget. Individual windows keep the direct decode path; these
+# limits do not split an individual window.
+_DEPTH_DECODE_MAX_SPAN_FRAMES = 64
+_DEPTH_DECODE_MAX_BYTES = 64 << 20
+# PyAV retains decoded uint16 frames while dequantization creates float32 output.
+# Leave extra headroom for the selected-frame stack and allocator overhead.
+_DEPTH_DECODE_BYTES_PER_VALUE = 8
+
+
+def _decode_frame_limit(
+    shape: Sequence[int] | None,
+    *,
+    max_frames: int,
+    max_bytes: int,
+    bytes_per_value: int,
+) -> int:
+    """Bound frame capacity by estimated memory, allowing at least one frame.
+
+    Missing or zero-sized shapes fall back to the frame cap. Callers apply the
+    capacity to unique RGB frames or the temporal span of merged depth windows.
+    """
+    frame_values = int(np.prod(shape)) if shape else 0
+    if not frame_values:
+        return max_frames
+    return min(max_frames, max(1, max_bytes // (frame_values * bytes_per_value)))
+
+
+class _SamplePlan(TypedDict):
+    """Frames-table rows one sample needs, plus its per-key delta windows and padding masks."""
+
+    abs_idx: int
+    ep_idx: int
+    rows: set[int]
+    windows: dict[str, list[int]]
+    padding: dict[str, torch.Tensor]
+
+
+def _opened[T](resource: T | None) -> T:
+    """Return a lazily-opened reader resource, raising if ``_ensure_open()`` has not run."""
+    if resource is None:
+        raise RuntimeError("LanceDatasetReader is not open; call _ensure_open() first.")
+    return resource
 
 
 class LanceDatasetReader(BaseDatasetReader):
@@ -95,8 +150,10 @@ class LanceDatasetReader(BaseDatasetReader):
         depth_output_unit: Unit depth features dequantize to (``'mm'`` or ``'m'``).
             Depth decodes through pyav (16-bit planes torchcodec cannot emit).
         storage_options: Extra options forwarded to ``lancedb.connect``.
-        video_decoder_cache_size: Max decoders per worker (default 16, also
-            bounded by a 2 GiB per-worker byte budget).
+        video_decoder_cache_size: Max open video decoders per worker (default 256, also
+            bounded by a 2 GiB per-worker byte budget). Each cached decoder costs a few MB, so
+            on datasets with more video files than this, RAM grows with the cache times the
+            number of workers.
     """
 
     def __init__(
@@ -122,7 +179,7 @@ class LanceDatasetReader(BaseDatasetReader):
         self._token = token
 
         self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision, token)
-        self._hub_revision = meta.revision if self._db_uri == f"hf://datasets/{self.repo_id}" else None
+        self._hub_revision = meta.revision if self._db_uri == hf_dataset_uri(self.repo_id) else None
 
         if self.meta.image_keys:
             raise NotImplementedError(
@@ -169,6 +226,8 @@ class LanceDatasetReader(BaseDatasetReader):
                 "the dataset metadata is inconsistent."
             )
 
+        self._rel_to_abs: np.ndarray | None = None
+        self._absolute_to_relative_idx: dict[int, int] | None = None
         if self.episodes is not None:
             # Rows are served in storage order regardless of the episodes list
             # order, matching the default reader's parquet predicate pushdown.
@@ -178,9 +237,6 @@ class LanceDatasetReader(BaseDatasetReader):
             self._absolute_to_relative_idx = {
                 int(abs_idx): rel_idx for rel_idx, abs_idx in enumerate(self._rel_to_abs)
             }
-        else:
-            self._rel_to_abs = None
-            self._absolute_to_relative_idx = None
 
         self._task_names = list(self.meta.tasks.index)
 
@@ -213,43 +269,14 @@ class LanceDatasetReader(BaseDatasetReader):
             for key in self.meta.video_keys
         }
 
-        self._frames_perm = None
-        self._videos_table = None
-        self._video_row_ids: dict[tuple, int] | None = None
-        self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
-        self._prefetch_pool: ThreadPoolExecutor | None = None
-        self._decode_pool: ThreadPoolExecutor | None = None
-        if video_decoder_cache_size is None:
-            video_decoder_cache_size = 16
-        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30)  # 2GB cap
-
-    def _episode_numpy(self, name: str, dtype: type[np.generic]) -> np.ndarray:
-        # Read straight from the underlying Arrow column, not HF Dataset __getitem__
-        column = self.meta.episodes.data.column(name).to_numpy(zero_copy_only=False)
-        return column.astype(dtype, copy=False)
-
-    def _ensure_open(self) -> None:
-        if self._frames_perm is not None:
-            return
+        # Resolved once here so DataLoader workers inherit the map instead of each
+        # scanning the videos table.
+        self._video_row_ids: dict[tuple, int] = {}
         if self.meta.video_keys:
-            self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
-            self._decode_pool = ThreadPoolExecutor(max_workers=16)
-        db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
-        table = db.open_table(FRAMES_TABLE)
-        n_rows = table.count_rows()
-        if n_rows != self.meta.total_frames:
-            raise ValueError(
-                f"frames table has {n_rows} rows but meta declares "
-                f"{self.meta.total_frames} frames; the dataset is truncated or corrupt."
-            )
-        self._frames_perm = (
-            Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
-        )
-        if self.meta.video_keys:
-            self._videos_table = db.open_table(VIDEOS_TABLE)
-            # future TODO: resolve row ids lazily per batch.
+            db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
             index = (
-                self._videos_table.search()
+                db.open_table(VIDEOS_TABLE)
+                .search()
                 .select(["video_key", "chunk_index", "file_index"])
                 .with_row_id(True)
                 .to_arrow()
@@ -271,11 +298,44 @@ class LanceDatasetReader(BaseDatasetReader):
                     "was converted against different metadata."
                 )
 
+        # Opened lazily by ``_ensure_open()``; reset by ``close()`` and when pickled.
+        self._frames_perm: Permutation | None = None
+        self._videos_table: Table | None = None
+        self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
+        self._prefetch_pool: ThreadPoolExecutor | None = None
+        self._decode_pool: ThreadPoolExecutor | None = None
+        if video_decoder_cache_size is None:
+            video_decoder_cache_size = 256
+        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30)  # 2GB cap
+
+    def _episode_numpy(self, name: str, dtype: type[np.generic]) -> np.ndarray:
+        # Read straight from the underlying Arrow column, not HF Dataset __getitem__
+        column = self.meta.episodes.data.column(name).to_numpy(zero_copy_only=False)
+        return column.astype(dtype, copy=False)
+
+    def _ensure_open(self) -> None:
+        if self._frames_perm is not None:
+            return
+        db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
+        table = db.open_table(FRAMES_TABLE)
+        n_rows = table.count_rows()
+        if n_rows != self.meta.total_frames:
+            raise ValueError(
+                f"frames table has {n_rows} rows but meta declares "
+                f"{self.meta.total_frames} frames; the dataset is truncated or corrupt."
+            )
+        frames_perm = Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
+        if self.meta.video_keys:
+            self._videos_table = db.open_table(VIDEOS_TABLE)
+            self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
+            self._decode_pool = ThreadPoolExecutor(max_workers=16)
+        # Publish last: a failure above leaves the reader closed rather than half-open.
+        self._frames_perm = frames_perm
+
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
         state["_frames_perm"] = None
         state["_videos_table"] = None
-        state["_video_row_ids"] = None
         state["_file_meta"] = OrderedDict()
         state["_prefetch_pool"] = None
         state["_decode_pool"] = None
@@ -322,15 +382,16 @@ class LanceDatasetReader(BaseDatasetReader):
         # Video prep (byte-index, header ranges, decoder creation, frame-window fetch)
         # needs only the batch's files, so it overlaps the frames-table fetch. A wrong
         # speculative range costs a re-fetch via the ranged-read fallback, never a wrong frame.
-        prepared_future = None
+        prepared_future: Future[dict[tuple, tuple]] | None = None
         if self.meta.video_keys:
             windows = self._plan_file_windows(plans)
-            prepared_future = self._prefetch_pool.submit(self._prepare_files, sorted(windows), windows)
+            prefetch_pool = _opened(self._prefetch_pool)
+            prepared_future = prefetch_pool.submit(self._prepare_files, sorted(windows), windows)
 
         columns = self._fetch_rows(rows)
         items = [self._build_item(plan, columns, row_pos) for plan in plans]
 
-        if self.meta.video_keys:
+        if prepared_future is not None:
             decoded = self._decode_videos(plans, columns, row_pos, prepared_future.result())
             for item, frames in zip(items, decoded, strict=True):
                 item.update(frames)
@@ -342,7 +403,7 @@ class LanceDatasetReader(BaseDatasetReader):
                     item[cam_key] = self._image_transforms(item[cam_key])
         return items
 
-    def _plan_file_windows(self, plans: list[dict]) -> dict[tuple, list[tuple[int, int]]]:
+    def _plan_file_windows(self, plans: list[_SamplePlan]) -> dict[tuple, list[tuple[int, int]]]:
         """Map each batch sample's video windows to (file key -> frame spans).
 
         Positions come from episode metadata alone; stage 2 re-derives ranges
@@ -357,14 +418,20 @@ class LanceDatasetReader(BaseDatasetReader):
                 windows.setdefault(file_key, []).append(span)
         return windows
 
-    def _plan_batch(self, indices: list[int]) -> list[dict]:
+    def _plan_batch(self, indices: list[int]) -> list[_SamplePlan]:
         """Resolve each sample to the absolute rows it needs and its padding masks."""
-        plans = []
+        plans: list[_SamplePlan] = []
         for idx in indices:
             abs_idx = self._resolve_abs_idx(idx)
             ep_idx = self._episode_index_for_abs_idx(abs_idx)
             start, end = self._episode_bounds(ep_idx)
-            plan = {"abs_idx": abs_idx, "ep_idx": ep_idx, "rows": {abs_idx}, "windows": {}, "padding": {}}
+            plan: _SamplePlan = {
+                "abs_idx": abs_idx,
+                "ep_idx": ep_idx,
+                "rows": {abs_idx},
+                "windows": {},
+                "padding": {},
+            }
             if self.delta_indices is not None:
                 for key, deltas in self.delta_indices.items():
                     window = [min(max(abs_idx + delta, start), end - 1) for delta in deltas]
@@ -390,12 +457,12 @@ class LanceDatasetReader(BaseDatasetReader):
     def _episode_bounds(self, ep_idx: int) -> tuple[int, int]:
         return int(self._ep_from[ep_idx]), int(self._ep_to[ep_idx])
 
-    def _batch_rows(self, plans: list[dict]) -> tuple[list[int], dict[int, int]]:
+    def _batch_rows(self, plans: list[_SamplePlan]) -> tuple[list[int], dict[int, int]]:
         rows = sorted({row for plan in plans for row in plan["rows"]})
         return rows, {row: pos for pos, row in enumerate(rows)}
 
     def _planned_file_window(
-        self, key: str, ep_idx: int, plan: dict, fps: float
+        self, key: str, ep_idx: int, plan: _SamplePlan, fps: float
     ) -> tuple[tuple[str, int, int], tuple[int, int]]:
         ep_start, _ = self._episode_bounds(ep_idx)
         _, _, from_ts_arr = self._video_locator[key]
@@ -405,7 +472,7 @@ class LanceDatasetReader(BaseDatasetReader):
         return self._video_file_key(key, ep_idx), (first, base + max(window))
 
     def _fetch_rows(self, rows: list[int]) -> dict[str, np.ndarray]:
-        batch = self._frames_perm.__getitems__(rows)
+        batch = _opened(self._frames_perm).__getitems__(rows)
         columns = {}
         for key, lance_name in zip(self._tabular_keys, self._fetch_columns, strict=True):
             array = batch.column(lance_name)
@@ -430,7 +497,7 @@ class LanceDatasetReader(BaseDatasetReader):
 
     def _decode_videos(
         self,
-        plans: list[dict],
+        plans: list[_SamplePlan],
         columns: dict[str, np.ndarray],
         row_pos: dict[int, int],
         prepared: dict[tuple, tuple],
@@ -445,33 +512,117 @@ class LanceDatasetReader(BaseDatasetReader):
             key, chunk_idx, file_idx = file_key
             decoder, source = entries[file_key]
             if key in self.meta.depth_keys:
-                for sample_idx, shifted_ts in file_requests:
-                    results[sample_idx][key] = self._decode_depth_window(source, shifted_ts, file_key)
+                for sample_idx, frames in self._decode_depth_file_requests(source, file_requests, file_key):
+                    results[sample_idx][key] = frames
                 return
             fps = decoder.metadata.average_fps
-            for sample_idx, shifted_ts in file_requests:
-                indices = [round(ts * fps) for ts in shifted_ts]
-                batch = decoder.get_frames_at(indices=indices)
-                distance = (torch.tensor(shifted_ts, dtype=torch.float64) - batch.pts_seconds).abs()
+            request_indices = [[round(ts * fps) for ts in shifted_ts] for _, shifted_ts in file_requests]
+
+            def _finish_request(
+                sample_idx: int, shifted_ts: list[float], frames: torch.Tensor, loaded_pts: torch.Tensor
+            ) -> None:
+                distance = (
+                    torch.tensor(shifted_ts, dtype=torch.float64, device=loaded_pts.device) - loaded_pts
+                ).abs()
                 if (distance > self.tolerance_s).any():
                     raise FrameTimestampError(
                         f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
                         f"'{key}' (chunk {chunk_idx}, file {file_idx}): queried {shifted_ts}, "
-                        f"loaded {batch.pts_seconds.tolist()}."
+                        f"loaded {loaded_pts.tolist()}."
                     )
+                results[sample_idx][key] = frames.squeeze(0)
+
+            # Avoid set/map construction and an advanced-index copy when this file
+            # contributes to only one sample in the batch. The decoded tensor is
+            # the final sample output, so splitting it would add another full-size
+            # output allocation without reducing the required result memory.
+            if len(file_requests) == 1:
+                sample_idx, shifted_ts = file_requests[0]
+                batch = decoder.get_frames_at(indices=request_indices[0])
                 frames = batch.data
                 if not self.return_uint8:
                     frames = (frames / 255.0).type(torch.float32)
-                results[sample_idx][key] = frames.squeeze(0)
+                _finish_request(sample_idx, shifted_ts, frames, batch.pts_seconds)
+                return
 
-        futures = [self._decode_pool.submit(_decode_file, k, r) for k, r in requests.items()]
+            unique_indices = sorted({index for indices in request_indices for index in indices})
+            # Normalization allocates float32 output while ``batch`` still owns the
+            # decoder's uint8 tensor, so both storages contribute to peak decode memory.
+            value_bytes = np.dtype(np.uint8).itemsize
+            if not self.return_uint8:
+                value_bytes += np.dtype(np.float32).itemsize
+            decode_batch_size = _decode_frame_limit(
+                self.meta.features[key].get("shape"),
+                max_frames=_RGB_DECODE_MAX_FRAMES,
+                max_bytes=_RGB_DECODE_MAX_BYTES,
+                bytes_per_value=value_bytes,
+            )
+
+            # Keep the low-overhead gather/scatter path when all unique frames
+            # already fit within the configured per-decode limits.
+            if len(unique_indices) <= decode_batch_size:
+                batch = decoder.get_frames_at(indices=unique_indices)
+                frames = batch.data
+                if not self.return_uint8:
+                    frames = (frames / 255.0).type(torch.float32)
+                positions = {index: position for position, index in enumerate(unique_indices)}
+                for (sample_idx, shifted_ts), indices in zip(file_requests, request_indices, strict=True):
+                    source_positions = [positions[index] for index in indices]
+                    _finish_request(
+                        sample_idx,
+                        shifted_ts,
+                        frames[source_positions],
+                        batch.pts_seconds[source_positions],
+                    )
+                return
+
+            index_batches = iter(batched(unique_indices, decode_batch_size))
+
+            first_indices = list(next(index_batches))
+            first_batch = decoder.get_frames_at(indices=first_indices)
+            first_frames = first_batch.data
+            if not self.return_uint8:
+                first_frames = (first_frames / 255.0).type(torch.float32)
+            sample_frames = [
+                first_frames.new_empty((len(indices), *first_frames.shape[1:])) for indices in request_indices
+            ]
+            sample_pts = [first_batch.pts_seconds.new_empty(len(indices)) for indices in request_indices]
+
+            def _scatter_batch(indices: list[int], frames: torch.Tensor, pts: torch.Tensor) -> None:
+                positions = {index: position for position, index in enumerate(indices)}
+                for request_pos, requested in enumerate(request_indices):
+                    output_positions = [pos for pos, index in enumerate(requested) if index in positions]
+                    if not output_positions:
+                        continue
+                    source_positions = [positions[requested[pos]] for pos in output_positions]
+                    sample_frames[request_pos][output_positions] = frames[source_positions]
+                    sample_pts[request_pos][output_positions] = pts[source_positions]
+
+            _scatter_batch(first_indices, first_frames, first_batch.pts_seconds)
+            del first_batch, first_frames
+            for index_batch in index_batches:
+                indices = list(index_batch)
+                batch = decoder.get_frames_at(indices=indices)
+                frames = batch.data
+                if not self.return_uint8:
+                    frames = (frames / 255.0).type(torch.float32)
+                _scatter_batch(indices, frames, batch.pts_seconds)
+                del batch, frames
+
+            for (sample_idx, shifted_ts), frames, loaded_pts in zip(
+                file_requests, sample_frames, sample_pts, strict=True
+            ):
+                _finish_request(sample_idx, shifted_ts, frames, loaded_pts)
+
+        decode_pool = _opened(self._decode_pool)
+        futures = [decode_pool.submit(_decode_file, k, r) for k, r in requests.items()]
         for future in futures:
             future.result()
         return results
 
     def _build_video_requests(
         self,
-        plans: list[dict],
+        plans: list[_SamplePlan],
         timestamps: np.ndarray,
         row_pos: dict[int, int],
     ) -> dict[tuple, list[tuple[int, list[float]]]]:
@@ -492,7 +643,7 @@ class LanceDatasetReader(BaseDatasetReader):
         # Lazy load torchcodec
         from torchcodec.decoders import VideoDecoder
 
-        self._load_file_meta([key for key in file_keys if key not in self._file_meta])
+        file_meta = self._load_file_meta(file_keys)
 
         prepared: dict[tuple, tuple] = {}
         new_files = []
@@ -503,16 +654,13 @@ class LanceDatasetReader(BaseDatasetReader):
                 new_files.append(key)
 
         if new_files:
-            handles = self._videos_table.fetch_blob_files(
-                VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
-            )
             sources = {
-                key: _SparseBlobSource(self._file_meta[key]["file_size"], handle)
-                for key, handle in zip(new_files, handles, strict=True)
+                key: _SparseBlobSource(file_meta[key]["file_size"], partial(self._blob_handle, key))
+                for key in new_files
             }
             spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
             for key in new_files:
-                meta = self._file_meta[key]
+                meta = file_meta[key]
                 spans = [
                     (0, min(_OPEN_PROBE_BYTES, meta["file_size"])),
                     # Slack past the moov covers the next box header ffmpeg reads.
@@ -528,7 +676,7 @@ class LanceDatasetReader(BaseDatasetReader):
             self._fetch_spans(spans_by_key, sources)
 
             rgb_files = [key for key in new_files if key[0] not in self.meta.depth_keys]
-            created = self._decode_pool.map(
+            created = _opened(self._decode_pool).map(
                 lambda key: VideoDecoder(sources[key], seek_mode="approximate"), rgb_files
             )
             for key, decoder in zip(rgb_files, created, strict=True):
@@ -540,7 +688,7 @@ class LanceDatasetReader(BaseDatasetReader):
         if windows:
             window_spans: dict[tuple, list[tuple[int, int]]] = {}
             for key, frame_windows in windows.items():
-                meta = self._file_meta[key]
+                meta = file_meta[key]
                 source = prepared[key][1]
                 spans = [
                     span
@@ -556,6 +704,10 @@ class LanceDatasetReader(BaseDatasetReader):
         for key, (decoder, source) in prepared.items():
             self._decoder_cache.put(key, (decoder, source), nbytes=source.buffered)
         return prepared
+
+    def _blob_handle(self, key: tuple) -> _RangeReader:
+        videos_table = _opened(self._videos_table)
+        return videos_table.fetch_blob_files(VIDEO_BLOB_COLUMN, [self._video_row_ids[key]])[0]
 
     def _video_file_key(self, key: str, ep_idx: int) -> tuple[str, int, int]:
         chunk_arr, file_arr, _ = self._video_locator[key]
@@ -573,8 +725,8 @@ class LanceDatasetReader(BaseDatasetReader):
         base = float(from_ts_arr[ep_idx])
         return [base + float(timestamps[row_pos[row]]) for row in window]
 
-    def _decode_depth_window(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
-        """Decode one depth window with upstream's pyav decoder over our sparse source."""
+    def _decode_depth_frames(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
+        """Decode and dequantize to (N, C, H, W), preserving timestamp order and the time axis."""
         source.seek(0)
         frames = decode_video_frames_pyav(
             source, shifted_ts, self.tolerance_s, return_uint8=False, is_depth=True
@@ -587,7 +739,59 @@ class LanceDatasetReader(BaseDatasetReader):
             shift=config.shift,
             use_log=config.use_log,
             output_unit=self._depth_output_unit,
-        ).squeeze(0)
+        )
+
+    def _decode_depth_file_requests(
+        self, source, file_requests: list[tuple[int, list[float]]], file_key: tuple
+    ) -> list[tuple[int, torch.Tensor]]:
+        """Merge nearby sample windows so each depth span opens and seeks PyAV once."""
+        if len(file_requests) == 1:
+            sample_idx, shifted_ts = file_requests[0]
+            return [(sample_idx, self._decode_depth_frames(source, shifted_ts, file_key).squeeze(0))]
+
+        fps = float(self.meta.fps)
+        max_span_frames = _decode_frame_limit(
+            self.meta.features[file_key[0]].get("shape"),
+            max_frames=_DEPTH_DECODE_MAX_SPAN_FRAMES,
+            max_bytes=_DEPTH_DECODE_MAX_BYTES,
+            bytes_per_value=_DEPTH_DECODE_BYTES_PER_VALUE,
+        )
+        merge_gap_s = 1.0 / fps + self.tolerance_s
+
+        ordered = sorted(file_requests, key=lambda request: min(request[1]))
+        groups: list[list[tuple[int, list[float]]]] = []
+        group: list[tuple[int, list[float]]] = []
+        group_start = group_end = 0.0
+        for request in ordered:
+            start, end = min(request[1]), max(request[1])
+            merged_end = max(group_end, end)
+            merged_span_frames = int(np.ceil((merged_end - group_start) * fps)) + 1
+            if group and start <= group_end + merge_gap_s and merged_span_frames <= max_span_frames:
+                group.append(request)
+                group_end = merged_end
+            else:
+                if group:
+                    groups.append(group)
+                group = [request]
+                group_start, group_end = start, end
+        groups.append(group)
+
+        decoded: list[tuple[int, torch.Tensor]] = []
+        for group in groups:
+            if len(group) == 1:
+                sample_idx, timestamps = group[0]
+                decoded.append(
+                    (sample_idx, self._decode_depth_frames(source, timestamps, file_key).squeeze(0))
+                )
+                continue
+            unique_ts = sorted({timestamp for _, timestamps in group for timestamp in timestamps})
+            frames = self._decode_depth_frames(source, unique_ts, file_key)
+            positions = {timestamp: position for position, timestamp in enumerate(unique_ts)}
+            for sample_idx, timestamps in group:
+                decoded.append(
+                    (sample_idx, frames[[positions[timestamp] for timestamp in timestamps]].squeeze(0))
+                )
+        return decoded
 
     def _fetch_spans(
         self, spans_by_key: dict[tuple, list[tuple[int, int]]], sources: dict[tuple, _SparseBlobSource]
@@ -600,17 +804,20 @@ class LanceDatasetReader(BaseDatasetReader):
                 range_targets.append((key, start))
         if not range_requests:
             return
-        payloads = self._videos_table.fetch_blob_ranges(VIDEO_BLOB_COLUMN, range_requests)
+        payloads = _opened(self._videos_table).fetch_blob_ranges(VIDEO_BLOB_COLUMN, range_requests)
         for (key, offset), payload in zip(range_targets, payloads, strict=True):
             sources[key].add(offset, payload.as_py())
 
-    def _load_file_meta(self, missing: list[tuple]) -> None:
-        """Fetch byte-index columns for files not yet in the per-worker cache."""
+    def _load_file_meta(self, file_keys: list[tuple]) -> dict[tuple, dict]:
+        """Return the batch's byte indexes, retaining references across cache eviction."""
+        file_meta = {key: self._file_meta[key] for key in file_keys if key in self._file_meta}
+        missing = [key for key in file_keys if key not in file_meta]
         if not missing:
-            return
+            return file_meta
         row_ids = [self._video_row_ids[file_key] for file_key in missing]
         batch = (
-            self._videos_table.take_row_ids(row_ids)
+            _opened(self._videos_table)
+            .take_row_ids(row_ids)
             .select(["video_key", "chunk_index", "file_index", *VIDEO_INDEX_COLUMNS])
             .to_arrow()
         )
@@ -632,7 +839,7 @@ class LanceDatasetReader(BaseDatasetReader):
         position_values = kf_position_column.values.to_numpy(zero_copy_only=False)
         for i in range(batch.num_rows):
             file_key = (scalars["video_key"][i], scalars["chunk_index"][i], scalars["file_index"][i])
-            self._file_meta[file_key] = {
+            file_meta[file_key] = self._file_meta[file_key] = {
                 "file_size": scalars["file_size"][i],
                 "moov_offset": scalars["moov_offset"][i],
                 "moov_size": scalars["moov_size"][i],
@@ -641,6 +848,7 @@ class LanceDatasetReader(BaseDatasetReader):
             }
         while len(self._file_meta) > 2048:
             self._file_meta.popitem(last=False)
+        return file_meta
 
     def _window_byte_range(self, key: str, meta: dict, first_frame: int, last_frame: int) -> tuple[int, int]:
         """Byte range covering frames [first, last]: preceding keyframe to next keyframe."""
@@ -651,9 +859,9 @@ class LanceDatasetReader(BaseDatasetReader):
         slack = _RANGE_SLACK * 4 if key in self.meta.depth_keys else _RANGE_SLACK
         return int(kf_positions[start_idx]), min(end + slack, meta["file_size"])
 
-    def _build_item(self, plan: dict, columns: dict[str, np.ndarray], row_pos: dict[int, int]) -> dict:
+    def _build_item(self, plan: _SamplePlan, columns: dict[str, np.ndarray], row_pos: dict[int, int]) -> dict:
         base = row_pos[plan["abs_idx"]]
-        item = {}
+        item: dict = {}
         for key in self._tabular_keys:
             data = columns[key]
             shape = self._feature_shapes[key]

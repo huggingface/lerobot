@@ -17,6 +17,7 @@ from __future__ import annotations
 import abc
 import importlib
 from dataclasses import dataclass, field, fields
+from enum import Enum
 from typing import Any
 
 import draccus
@@ -315,6 +316,29 @@ class HILSerlRobotEnvConfig(EnvConfig):
     @property
     def gym_kwargs(self) -> dict:
         return {}
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        """Refuse to build a vectorized environment: this one drives a physical robot.
+
+        `make_env` and `lerobot-eval` build simulated environments through `gym.make()`, which would look
+        for a non-existent `gym_gym_manipulator` package. The real-robot environment is built by
+        `lerobot.rl.gym_manipulator.make_robot_env` instead.
+
+        Args:
+            n_envs (`int`):
+                Ignored.
+            use_async_envs (`bool`, *optional*, defaults to `False`):
+                Ignored.
+
+        Raises:
+            NotImplementedError: Always, with the commands to use instead.
+        """
+        raise NotImplementedError(
+            "'gym_manipulator' is a real-robot environment: make_env and lerobot-eval cannot build it. "
+            "Run it with `python -m lerobot.rl.gym_manipulator --config_path <config.json>`, and evaluate a "
+            "policy on the robot with `python -m lerobot.rl.eval_policy --config_path <config.json>`. "
+            "See https://huggingface.co/docs/lerobot/hilserl"
+        )
 
 
 @EnvConfig.register_subclass("libero")
@@ -724,6 +748,53 @@ class IsaaclabArenaEnv(HubEnvConfig):
             ),
             PolicyProcessorPipeline(steps=[]),
         )
+
+
+class G1EndEffector(str, Enum):
+    """What the G1's arms carry, by hardware name.
+
+    Shared with UnitreeG1Config, which owns the robot-level flag.
+    """
+
+    DUMMY = "dummy"  # bare wrists
+    DEX1 = "dex1"  # parallel grippers
+    DEX3 = "dex3"  # three-finger hands
+
+    @classmethod
+    def _missing_(cls, value: object) -> None:
+        raise ValueError(f"`end_effector` is expected to be in {list(cls)}, but {value} is provided.")
+
+
+@EnvConfig.register_subclass("unitree_g1_mujoco")
+@dataclass
+class UnitreeG1MujocoEnv(HubEnvConfig):
+    """Config for the MuJoCo simulation of the Unitree G1.
+
+    The end effector selects the MuJoCo model, and with it the finger actuators and the
+    wrist cameras that exist: "dummy" for bare wrists, "dex1" for the parallel grippers,
+    "dex3" for the three-finger hands.
+
+    The sim renders either its cameras or its window, never both: the offscreen contexts
+    are bound to the thread that creates them, which is not the one driving the viewer.
+    `onscreen` is therefore resolved from `publish_images` unless it is set explicitly.
+    """
+
+    hub_path: str = "lerobot/unitree-g1-mujoco"
+    end_effector: G1EndEffector = G1EndEffector.DEX1
+    publish_images: bool = True
+    camera_port: int = 5555
+    onscreen: bool | None = None
+
+    def __post_init__(self) -> None:
+        self.end_effector = G1EndEffector(self.end_effector)
+        if self.onscreen is None:
+            self.onscreen = not self.publish_images
+        elif self.onscreen and self.publish_images:
+            raise ValueError(
+                "The G1 sim cannot publish camera images and open its viewer in the same "
+                "process. Set publish_images=False to watch the window, or onscreen=False "
+                "to take the image stream."
+            )
 
 
 @EnvConfig.register_subclass("libero_plus")

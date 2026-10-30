@@ -250,8 +250,8 @@ def _load_robotwin_setup_kwargs(task_name: str) -> dict[str, Any]:
 
     import os
 
-    import yaml  # type: ignore[import-untyped]
-    from envs import CONFIGS_PATH  # type: ignore[import-not-found]
+    import yaml
+    from envs import CONFIGS_PATH
 
     task_config = "demo_clean"
     with open(os.path.join(CONFIGS_PATH, f"{task_config}.yml"), encoding="utf-8") as f:
@@ -498,6 +498,7 @@ class RoboTwinEnv(gym.Env):
 
         with torch.enable_grad():
             if self.action_mode == "ee":
+                assert self._init_eef_pose is not None, "EEF reference pose must be initialized by reset()"
                 ee_action = _add_init_eef_pose(np.asarray(action, dtype=np.float64), self._init_eef_pose)
                 self._env.take_action(ee_action, action_type="ee")
             elif hasattr(self._env, "take_action"):

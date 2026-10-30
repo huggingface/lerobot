@@ -32,8 +32,6 @@ on:
       - "uv.lock"
       - "Makefile"
 
-permissions:
-  contents: read
 
 # Sets up the environment variables
 env:
@@ -46,11 +44,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
 
   # This job runs the E2E tests + pytest with all extras
   # It runs everytime a PR is approved or a push to main
   full-tests:
+    permissions:
+      contents: read
     name: Full Tests
     runs-on: ubuntu-latest
     if: |
@@ -86,11 +88,9 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
 
+      # lancedb-convert converts the fixtures for the lance backend tests
       - name: Install lerobot with all extras
-        run: uv sync --locked --extra all # TODO(Steven): Make flash-attn optional
-
-      - name: Install lerobot-lancedb (converts fixtures for the lance backend tests)
-        run: uv sync --locked --extra all --extra lancedb-convert
+        run: uv sync --locked --extra all --extra lancedb-convert # TODO(Steven): Make flash-attn optional
 
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''
@@ -108,6 +108,8 @@ jobs:
   # It runs everytime a PR is approved or a push to main
   # TODO(Steven): For now we skip this job for community PRs
   build-and-push-docker:
+    permissions:
+      contents: read
     name: Build and Push Docker
     runs-on:
       group: aws-general-8-plus
@@ -164,6 +166,7 @@ jobs:
   # This job runs pytest with all extras in a GPU enabled host
   # It runs everytime a test image is created
   gpu-tests:
+    permissions: {}
     name: GPU Tests
     needs: [build-and-push-docker]
     runs-on:
@@ -192,14 +195,16 @@ jobs:
           hf auth whoami
       - name: Fix ptxas permissions
         run: chmod +x /lerobot/.venv/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas
+      # Tests without the `gpu` mark do not use the GPU and already ran in the Full Tests job (see tests/conftest.py)
       - name: Run pytest on GPU
-        run: pytest tests -vv --maxfail=10
+        run: pytest tests -vv --maxfail=10 -m gpu
       - name: Run end-to-end tests
         run: make test-end-to-end
 
   # This job deletes the test image recently created
   # It runs everytime after the gpu-tests have finished
   delete-pr-image:
+    permissions: {}
     name: Delete PR Image
     needs: [gpu-tests, build-and-push-docker]
     if: always() && ((github.event.review.state == 'approved') || (github.event_name == 'workflow_dispatch')) && needs.build-and-push-docker.result == 'success'

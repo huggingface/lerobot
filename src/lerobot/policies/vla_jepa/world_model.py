@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
@@ -46,8 +48,11 @@ def rotate_queries_or_keys(x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
     omega /= dim / 2.0
     omega = 1.0 / 10000**omega
     freqs = torch.einsum("..., f -> ... f", pos, omega)
-    emb_sin = freqs.sin().squeeze(-1).repeat(1, 1, 1, 2)
-    emb_cos = freqs.cos().squeeze(-1).repeat(1, 1, 1, 2)
+    # Each adjacent coordinate pair is rotated by one frequency.
+    # Upstream proposal: https://github.com/facebookresearch/vjepa2/pull/15
+    # Checkpoint compatibility notes: https://github.com/facebookresearch/vjepa2/pull/75
+    emb_sin = freqs.sin().repeat_interleave(2, dim=-1)
+    emb_cos = freqs.cos().repeat_interleave(2, dim=-1)
 
     y = x.unflatten(-1, (-1, 2))
     y1, y2 = y.unbind(dim=-1)
@@ -263,7 +268,7 @@ class ACBlock(nn.Module):
         drop: float = 0.0,
         attn_drop: float = 0.0,
         drop_path: float = 0.0,
-        norm_layer: type[nn.Module] = nn.LayerNorm,
+        norm_layer: Callable[[int], nn.Module] = nn.LayerNorm,
         use_sdpa: bool = True,
         is_causal: bool = False,
         grid_size: int = 16,
@@ -400,7 +405,7 @@ class ActionConditionedVideoPredictor(nn.Module):
         cond_tokens = actions.shape[2]
 
         x = x.view(batch_size, num_frames, self.grid_height * self.grid_width, hidden_dim)
-        if self.use_extrinsics:
+        if self.extrinsics_encoder is not None:  # built iff `use_extrinsics`
             if extrinsics is None:
                 raise ValueError("extrinsics are required when use_extrinsics=True.")
             cond_tokens += 1

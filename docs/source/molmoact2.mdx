@@ -58,7 +58,7 @@ LeRobot disables dataset image augmentation by default. Keep
 original MolmoAct2 transform recipe is not LeRobot's generic transform default,
 so the first command also pins its 95% crop, 5-degree rotation, and color
 jitter explicitly. The original recipe additionally applies a Gaussian blur
-with probability 0.2; LeRobot's generic `RandomSubsetApply` configuration cannot
+with probability 0.2; LeRobot's generic transform-subset configuration cannot
 express that optional fourth transform without sometimes dropping one of the
 three required transforms.
 
@@ -108,9 +108,8 @@ accelerate launch \
   --policy.normalize_gripper=false \
   --policy.enable_knowledge_insulation=false \
   --policy.push_to_hub=false \
-  --wandb.enable=true \
-  --wandb.entity=<wandb_entity> \
-  --wandb.project=<wandb_project> \
+  --trackio.enable=true \
+  --trackio.project=<trackio_project> \
   --job_name=<job_name> \
   --output_dir=outputs/<job_name> \
   --steps=10000 \
@@ -154,9 +153,8 @@ accelerate launch \
   --policy.num_flow_timesteps=8 \
   --policy.gradient_checkpointing=true \
   --policy.compile_model=true \
-  --wandb.enable=true \
-  --wandb.entity=<wandb_entity> \
-  --wandb.project=<wandb_project> \
+  --trackio.enable=true \
+  --trackio.project=<trackio_project> \
   --job_name=<job_name> \
   --output_dir=outputs/<job_name> \
   --steps=10000 \
@@ -526,7 +524,7 @@ differences from the original training repository are:
   one LeRobot sample per item and uses batch-local padding with an inferred
   maximum sequence-length guard.
 - The LeRobot port follows LeRobot's optimizer, scheduler, checkpoint saving,
-  dataset transforms, image augmentation, and Weights & Biases logging
+  dataset transforms, image augmentation, and Trackio logging
   conventions.
 - The original training path supports mixed action horizons by padding to
   `max_action_horizon` and masking padded horizon slots in the action expert

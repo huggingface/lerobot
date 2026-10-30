@@ -36,7 +36,7 @@ from tests.utils import require_cuda, require_hf_token  # noqa: E402
 def test_policy_instantiation():
     # Create config
     set_seed(42)
-    config = PI0Config(max_action_dim=7, max_state_dim=14, dtype="float32")
+    config = PI0Config(max_action_dim=7, max_state_dim=14, dtype=torch.float32)
 
     # Set up input_features and output_features in the config
     from lerobot.configs.types import FeatureType, PolicyFeature
@@ -75,8 +75,9 @@ def test_policy_instantiation():
         },
     }
 
-    # Instantiate policy
-    policy = PI0Policy(config)
+    # Instantiate policy on the GPU: initializing the 3B weights on the CPU takes over a minute
+    with torch.device("cuda"):
+        policy = PI0Policy(config)
     preprocessor, postprocessor = make_pi0_pre_post_processors(config=config, dataset_stats=dataset_stats)
     # Test forward pass with dummy data
     batch_size = 1

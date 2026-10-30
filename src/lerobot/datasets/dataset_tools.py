@@ -25,7 +25,7 @@ This module provides utilities for:
 
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from pathlib import Path
@@ -56,6 +56,7 @@ from .compute_stats import (
     compute_relative_action_stats,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
+from .dataset_reader import DatasetReader
 from .image_writer import write_image
 from .io_utils import (
     get_parquet_file_size_in_mb,
@@ -80,6 +81,8 @@ from .video_utils import (
     encode_video_frames,
     reencode_video,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
@@ -131,7 +134,7 @@ def delete_episodes(
     if invalid:
         raise ValueError(f"Invalid episode indices: {invalid}")
 
-    logging.info(f"Deleting {len(episode_indices)} episodes from dataset")
+    logger.info(f"Deleting {len(episode_indices)} episodes from dataset")
 
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_modified"
@@ -168,7 +171,7 @@ def delete_episodes(
         tolerance_s=dataset.tolerance_s,
     )
 
-    logging.info(f"Created new dataset with {len(episodes_to_keep)} episodes")
+    logger.info(f"Created new dataset with {len(episodes_to_keep)} episodes")
     return new_dataset
 
 
@@ -202,11 +205,16 @@ def split_dataset(
     if not splits:
         raise ValueError("No splits provided")
 
-    if all(isinstance(v, float) for v in splits.values()):
-        splits = _fractions_to_episode_indices(dataset.meta.total_episodes, splits)
+    fractions = {name: value for name, value in splits.items() if isinstance(value, float)}
+    if len(fractions) == len(splits):
+        episode_splits = _fractions_to_episode_indices(dataset.meta.total_episodes, fractions)
+    elif fractions:
+        raise ValueError("splits must map every name to a fraction, or every name to episode indices")
+    else:
+        episode_splits = {name: value for name, value in splits.items() if not isinstance(value, float)}
 
-    all_episodes = set()
-    for split_name, episodes in splits.items():
+    all_episodes: set[int] = set()
+    for split_name, episodes in episode_splits.items():
         if not episodes:
             raise ValueError(f"Split '{split_name}' has no episodes")
         episode_set = set(episodes)
@@ -224,8 +232,8 @@ def split_dataset(
 
     result_datasets = {}
 
-    for split_name, episodes in splits.items():
-        logging.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
+    for split_name, episodes in episode_splits.items():
+        logger.info(f"Creating split '{split_name}' with {len(episodes)} episodes")
 
         split_repo_id = f"{dataset.repo_id}_{split_name}"
 
@@ -502,7 +510,7 @@ def _fractions_to_episode_indices(
 
     for name, fraction in splits.items():
         if fraction == 0:
-            logging.warning(f"Split '{name}' has a fraction of 0 and will be skipped.")
+            logger.warning(f"Split '{name}' has a fraction of 0 and will be skipped.")
 
     positive_splits = [name for name, fraction in splits.items() if fraction > 0]
     if not positive_splits:
@@ -669,7 +677,7 @@ def _keep_episodes_from_video_with_av(
 
     v_in = in_container.streams.video[0]
 
-    out = av.open(str(output_path), mode="w")
+    out = av.open(str(output_path), mode="w", options={"movflags": "faststart"})
 
     # Convert fps to Fraction for PyAV compatibility.
     fps_fraction = Fraction(fps).limit_denominator(1000)
@@ -765,7 +773,7 @@ def _copy_and_reindex_videos(
     episodes_video_metadata: dict[int, dict] = {new_idx: {} for new_idx in episode_mapping.values()}
 
     for video_key in src_dataset.meta.video_keys:
-        logging.info(f"Processing videos for {video_key}")
+        logger.info(f"Processing videos for {video_key}")
         video_encoder = encoder_config_from_video_info(
             src_dataset.meta.info.features.get(video_key, {}).get("info")
         )
@@ -841,7 +849,7 @@ def _copy_and_reindex_videos(
                 )
                 dst_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-                logging.info(
+                logger.info(
                     f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx}) "
                     f"with {len(episodes_to_keep_ranges)} episodes"
                 )
@@ -912,7 +920,7 @@ def _copy_and_reindex_episodes_metadata(
         #   array([array([array([0.])]), array([array([0.])]), array([array([0.])])])
         # This happens particularly with image/video statistics. We need to detect and flatten
         # these nested structures back to proper (C, 1, 1) arrays so aggregate_stats can process them.
-        episode_stats = {}
+        episode_stats: dict[str, dict[str, np.ndarray]] = {}
         for key in src_episode_full:
             if key.startswith("stats/"):
                 stat_key = key.replace("stats/", "")
@@ -962,10 +970,10 @@ def _copy_and_reindex_episodes_metadata(
     write_info(dst_meta.info, dst_meta.root)
 
     if not all_stats:
-        logging.warning("No statistics found to aggregate")
+        logger.warning("No statistics found to aggregate")
         return
 
-    logging.info(f"Aggregating statistics for {len(all_stats)} episodes")
+    logger.info(f"Aggregating statistics for {len(all_stats)} episodes")
     aggregated_stats = aggregate_stats(all_stats)
     filtered_stats = {k: v for k, v in aggregated_stats.items() if k in dst_meta.features}
     write_stats(filtered_stats, dst_meta.root)
@@ -1145,7 +1153,7 @@ def _copy_episodes_metadata_and_stats(
     write_info(dst_meta.info, dst_meta.root)
 
     if set(dst_meta.features.keys()) != set(src_dataset.meta.features.keys()):
-        logging.info("Recalculating dataset statistics...")
+        logger.info("Recalculating dataset statistics...")
         if src_dataset.meta.stats:
             new_stats = {}
             for key in dst_meta.features:
@@ -1271,7 +1279,7 @@ def _iter_episode_batches(
     video_file_size_limit: float,
     max_episodes: int | None,
     max_frames: int | None,
-):
+) -> Iterator[list[int]]:
     """Generator that yields batches of episode indices for video encoding.
 
     Groups episodes into batches that respect size and memory constraints:
@@ -1290,7 +1298,7 @@ def _iter_episode_batches(
     Yields:
         List of episode indices for each batch
     """
-    batch_episodes = []
+    batch_episodes: list[int] = []
     estimated_size = 0.0
     total_frames = 0
 
@@ -1387,7 +1395,7 @@ def _estimate_frame_size_via_calibration(
         video_size_mb = video_size_bytes / BYTES_PER_MIB
         size_per_frame_mb = video_size_mb / num_frames
 
-        logging.info(
+        logger.info(
             f"  Calibration: {num_frames} frames -> {video_size_mb:.2f} MB "
             f"= {size_per_frame_mb:.4f} MB/frame for {img_key}"
         )
@@ -1557,13 +1565,13 @@ def modify_tasks(
     )
     task_to_index = {task: idx for idx, task in enumerate(unique_tasks)}
 
-    logging.info(f"Modifying tasks in {dataset.repo_id}")
-    logging.info(f"New tasks: {unique_tasks}")
+    logger.info(f"Modifying tasks in {dataset.repo_id}")
+    logger.info(f"New tasks: {unique_tasks}")
 
     root = dataset.root
 
     # Update data files - modify task_index column
-    logging.info("Updating data files...")
+    logger.info("Updating data files...")
     data_dir = root / DATA_DIR
 
     for parquet_path in tqdm(sorted(data_dir.rglob("*.parquet")), desc="Updating data"):
@@ -1580,7 +1588,7 @@ def modify_tasks(
         df.to_parquet(parquet_path, index=False)
 
     # Update episodes metadata - modify tasks column
-    logging.info("Updating episodes metadata...")
+    logger.info("Updating episodes metadata...")
     episodes_dir = root / "meta" / "episodes"
 
     for parquet_path in tqdm(sorted(episodes_dir.rglob("*.parquet")), desc="Updating episodes"):
@@ -1600,8 +1608,11 @@ def modify_tasks(
     # Reload metadata to reflect changes
     dataset.meta.tasks = new_task_df
     dataset.meta.episodes = load_episodes(root)
+    # A dataset opened from disk already holds its frames in memory: reload them for the new task_index.
+    if isinstance(dataset.reader, DatasetReader) and dataset.reader.hf_dataset is not None:
+        dataset.reader.load_and_activate()
 
-    logging.info(f"Tasks: {unique_tasks}")
+    logger.info(f"Tasks: {unique_tasks}")
 
     return dataset
 
@@ -1665,7 +1676,7 @@ def recompute_stats(
         )
         features_to_compute.pop(ACTION, None)
 
-    logging.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
+    logger.info(f"Recomputing stats for features: {list(features_to_compute.keys())}")
 
     data_dir = dataset.root / DATA_DIR
     parquet_files = sorted(data_dir.glob("*/*.parquet"))
@@ -1694,7 +1705,7 @@ def recompute_stats(
             all_episode_stats.append(ep_stats)
 
     if features_to_compute and not all_episode_stats:
-        logging.warning("No episode stats computed")
+        logger.warning("No episode stats computed")
         return dataset
 
     new_stats = aggregate_stats(all_episode_stats) if all_episode_stats else {}
@@ -1711,7 +1722,7 @@ def recompute_stats(
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
 
-    logging.info("Stats recomputed successfully")
+    logger.info("Stats recomputed successfully")
     return dataset
 
 
@@ -1779,10 +1790,10 @@ def convert_image_to_video_dataset(
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_video"
 
-    logging.info(
+    logger.info(
         f"Converting {len(episode_indices)} episodes with {len(img_keys)} cameras from {dataset.repo_id}"
     )
-    logging.info(f"RGB video encoder: {rgb_encoder}, depth video encoder: {depth_encoder}")
+    logger.info(f"RGB video encoder: {rgb_encoder}, depth video encoder: {depth_encoder}")
 
     # Create new features dict, converting image features to video features
     new_features = {}
@@ -1808,6 +1819,9 @@ def convert_image_to_video_dataset(
         data_files_size_in_mb=dataset.meta.data_files_size_in_mb,
         video_files_size_in_mb=dataset.meta.video_files_size_in_mb,
     )
+    video_path_template = new_meta.video_path
+    if video_path_template is None:
+        raise ValueError("Destination metadata has no video_path defined")
 
     # Create temporary directory for image extraction
     temp_dir = output_dir / "temp_images"
@@ -1820,7 +1834,7 @@ def convert_image_to_video_dataset(
 
     try:
         # Build episode metadata entries first
-        logging.info("Building episode metadata...")
+        logger.info("Building episode metadata...")
         cumulative_frame_idx = 0
         for ep_idx in episode_indices:
             src_episode = dataset.meta.episodes[ep_idx]
@@ -1857,7 +1871,7 @@ def convert_image_to_video_dataset(
                 video_encoder=target_encoder,
             )
 
-            logging.info(f"Processing camera: {img_key}")
+            logger.info(f"Processing camera: {img_key}")
             chunk_idx, file_idx = 0, 0
             cumulative_timestamp = 0.0
 
@@ -1871,7 +1885,7 @@ def convert_image_to_video_dataset(
                 max_frames=max_frames_per_batch,
             ):
                 total_frames_in_batch = sum(episode_lengths[idx] for idx in batch_episodes)
-                logging.info(
+                logger.info(
                     f"  Encoding batch of {len(batch_episodes)} episodes "
                     f"({batch_episodes[0]}-{batch_episodes[-1]}) = {total_frames_in_batch} frames"
                 )
@@ -1887,7 +1901,7 @@ def convert_image_to_video_dataset(
                 )
 
                 # Encode all batched episodes into single video
-                video_path = new_meta.root / new_meta.video_path.format(
+                video_path = new_meta.root / video_path_template.format(
                     video_key=img_key, chunk_index=chunk_idx, file_index=file_idx
                 )
                 video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1957,8 +1971,8 @@ def convert_image_to_video_dataset(
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
 
-    logging.info(f"Completed converting {dataset.repo_id} to video format")
-    logging.info(f"New dataset saved to: {output_dir}")
+    logger.info(f"Completed converting {dataset.repo_id} to video format")
+    logger.info(f"New dataset saved to: {output_dir}")
 
     # Return new dataset
     return LeRobotDataset(repo_id=repo_id, root=output_dir)
@@ -2019,17 +2033,17 @@ def reencode_dataset(
         current_encoder = encoder_config_from_video_info(current_info)
         target_encoder = depth_encoder if video_key in meta.depth_keys else rgb_encoder
         if target_encoder is None:
-            logging.info(f"No encoder provided for {video_key} video. Skipping re-encoding.")
+            logger.info(f"No encoder provided for {video_key} video. Skipping re-encoding.")
         elif current_encoder != target_encoder:
             video_keys_paths_dict[video_key] = list((meta.root / VIDEO_DIR / video_key).rglob("*.mp4"))
             video_keys_encoders_dict[video_key] = target_encoder
         else:
-            logging.info(f"{video_key} videos are already encoded with {target_encoder}. Nothing to do.")
+            logger.info(f"{video_key} videos are already encoded with {target_encoder}. Nothing to do.")
 
     if len(video_keys_paths_dict) == 0:
-        logging.warning("Dataset has no videos to re-encode.")
+        logger.warning("Dataset has no videos to re-encode.")
         return dataset
-    logging.info(f"Re-encoding {sum(len(paths) for paths in video_keys_paths_dict.values())} video file(s).")
+    logger.info(f"Re-encoding {sum(len(paths) for paths in video_keys_paths_dict.values())} video file(s).")
 
     worker_args = [
         (path, encoder, encoder_threads)
@@ -2060,6 +2074,6 @@ def reencode_dataset(
         meta.update_video_info(video_key=video_key, video_encoder=encoder, preserve_keys=preserve_keys)
 
     write_info(meta.info, meta.root)
-    logging.info("Dataset metadata updated.")
+    logger.info("Dataset metadata updated.")
 
     return dataset

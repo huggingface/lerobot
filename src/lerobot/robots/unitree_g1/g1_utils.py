@@ -20,6 +20,7 @@ import numpy as np
 
 # ruff: noqa: N801, N815
 
+# Body transport width, not the active joint count of every embodiment.
 NUM_MOTORS = 29
 
 # Joint-order permutation between IsaacLab and Mujoco convention
@@ -72,11 +73,31 @@ def default_remote_input() -> dict[str, float]:
 def get_gravity_orientation(quaternion: list[float] | np.ndarray) -> np.ndarray:
     """Get gravity orientation from quaternion [w, x, y, z]."""
     qw, qx, qy, qz = quaternion
-    gravity_orientation = np.zeros(3, dtype=np.float32)
+    gravity_orientation: np.ndarray = np.zeros(3, dtype=np.float32)
     gravity_orientation[0] = 2 * (-qz * qx + qw * qy)
     gravity_orientation[1] = -2 * (qz * qy + qw * qx)
     gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
     return gravity_orientation
+
+
+def make_ort_session_options(
+    intra_op_num_threads: int | None = None, inter_op_num_threads: int | None = None
+):
+    """Build quiet ONNX Runtime SessionOptions, optionally capping the CPU thread pool.
+
+    These tiny MLP policies are latency-bound, not throughput-bound, so letting ORT grab
+    every core starves the real-time control loop / torch policy and causes stutter. Pass
+    1 intra + 1 inter thread for lowest-latency per-step inference.
+    """
+    import onnxruntime as ort
+
+    so = ort.SessionOptions()
+    so.log_severity_level = 3
+    if intra_op_num_threads is not None:
+        so.intra_op_num_threads = intra_op_num_threads
+    if inter_op_num_threads is not None:
+        so.inter_op_num_threads = inter_op_num_threads
+    return so
 
 
 class G1_29_JointArmIndex(IntEnum):
@@ -97,6 +118,47 @@ class G1_29_JointArmIndex(IntEnum):
     kRightWristRoll = 26
     kRightWristPitch = 27
     kRightWristYaw = 28
+
+
+class G1_23_JointArmIndex(IntEnum):
+    kLeftShoulderPitch = 15
+    kLeftShoulderRoll = 16
+    kLeftShoulderYaw = 17
+    kLeftElbow = 18
+    kLeftWristRoll = 19
+    kRightShoulderPitch = 22
+    kRightShoulderRoll = 23
+    kRightShoulderYaw = 24
+    kRightElbow = 25
+    kRightWristRoll = 26
+
+
+class G1_23_JointIndex(IntEnum):
+    """Active G1-23 joints at their original sparse DDS indices."""
+
+    kLeftHipPitch = 0
+    kLeftHipRoll = 1
+    kLeftHipYaw = 2
+    kLeftKnee = 3
+    kLeftAnklePitch = 4
+    kLeftAnkleRoll = 5
+    kRightHipPitch = 6
+    kRightHipRoll = 7
+    kRightHipYaw = 8
+    kRightKnee = 9
+    kRightAnklePitch = 10
+    kRightAnkleRoll = 11
+    kWaistYaw = 12
+    kLeftShoulderPitch = 15
+    kLeftShoulderRoll = 16
+    kLeftShoulderYaw = 17
+    kLeftElbow = 18
+    kLeftWristRoll = 19
+    kRightShoulderPitch = 22
+    kRightShoulderRoll = 23
+    kRightShoulderYaw = 24
+    kRightElbow = 25
+    kRightWristRoll = 26
 
 
 class G1_29_JointIndex(IntEnum):

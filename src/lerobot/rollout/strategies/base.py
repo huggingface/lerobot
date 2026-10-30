@@ -41,10 +41,10 @@ class BaseStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         """Run the autonomous control loop until shutdown or duration expires."""
-        engine = self._engine
+        engine = self._require_engine()
         cfg = ctx.runtime.cfg
         robot = ctx.hardware.robot_wrapper
-        interpolator = self._interpolator
+        interpolator = self._require_interpolator()
 
         timer = CycleTimer(
             cfg.fps,
@@ -73,9 +73,9 @@ class BaseStrategy(RolloutStrategy):
                 if self._handle_warmup(cfg.use_torch_compile, timer):
                     continue
 
-                action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
                 with timer.section("telemetry"):
-                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                    self._log_telemetry(obs_processed, step, ctx.runtime)
 
                 # Service the text-query channel (/vqa answers, /autosteer turns) at
                 # the end of the tick; no-op when nothing is queued.

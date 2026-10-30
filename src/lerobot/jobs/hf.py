@@ -22,8 +22,6 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
-import netrc
-import os
 import re
 import signal
 import sys
@@ -68,25 +66,7 @@ LEROBOT_TAG = "lerobot"
 
 def resolve_job_tags(extra: list[str] | None) -> list[str]:
     """Return the tag list for a run: the lerobot tag plus any extras, deduped, order-stable."""
-    tags = [LEROBOT_TAG, *(extra or [])]
-    seen: set[str] = set()
-    return [t for t in tags if not (t in seen or seen.add(t))]
-
-
-def resolve_wandb_api_key() -> str | None:
-    """Host's wandb key for forwarding to the job: $WANDB_API_KEY, else ~/.netrc."""
-    key = os.environ.get("WANDB_API_KEY")
-    if key:
-        return key
-    try:
-        rc = netrc.netrc()
-    except (FileNotFoundError, netrc.NetrcParseError, OSError):
-        return None
-    auth = rc.authenticators("api.wandb.ai")
-    if auth is None:
-        return None
-    _login, _account, password = auth
-    return password or None
+    return list(dict.fromkeys([LEROBOT_TAG, *(extra or [])]))
 
 
 def build_repo_id(username: str, job_name: str, now: dt.datetime) -> str:
@@ -122,6 +102,15 @@ def build_remote_config_file(cfg, repo_id: str, dest: Path, tags: list[str] | No
     # trainer image doesn't know about.
     data = remote.to_dict()
     data.pop("job", None)
+    # `policy.dtype` is newer than the released trainer image. Omit it only when both the value and the
+    # policy class default are None: the pod then decodes the missing key back to the same None.
+    policy = data.get("policy")
+    if (
+        isinstance(policy, dict)
+        and policy.get("dtype") is None
+        and getattr(type(remote.policy), "dtype", None) is None
+    ):
+        policy.pop("dtype", None)
     if not remote.save_checkpoint_to_hub:
         data.pop("save_checkpoint_to_hub", None)
 
@@ -324,6 +313,9 @@ def _build_resume_job(cfg: TrainPipelineConfig, username: str) -> tuple[str, lis
     re-dispatch itself.
     """
     config_path = parser.parse_arg("config_path")
+    if not config_path:
+        # validate() only enforces this on its own resume path; keep the helper self-contained.
+        raise ValueError("A config_path is expected when resuming a run.")
     forwarded = _pod_forwarded_args(
         sys.argv[1:],
         drop_names=("--config_path", "--policy.repo_id", "--policy.push_to_hub", "--dataset.root"),
@@ -332,6 +324,12 @@ def _build_resume_job(cfg: TrainPipelineConfig, username: str) -> tuple[str, lis
 
     if Path(config_path).exists():
         # Local checkpoint: stage it on the Hub so the pod can resume from it, and push back there.
+        if cfg.checkpoint_path is None:
+            raise ValueError(
+                f"Cannot resume from local checkpoint {config_path!r}: --policy.path / "
+                "--reward_model.path take priority over --resume, so no checkpoint was resolved. "
+                "Drop them to resume from --config_path."
+            )
         # Resolve so a `last` symlink uploads under its real step name (digit), which the pod's
         # latest-checkpoint lookup keys on.
         checkpoint_dir = Path(cfg.checkpoint_path).resolve()
@@ -390,21 +388,19 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
         )
 
     secrets: dict[str, str] = {"HF_TOKEN": token}
-    if cfg.wandb.enable:
-        wandb_key = resolve_wandb_api_key()
-        if wandb_key is None:
-            raise ValueError(
-                "wandb is enabled but no WANDB_API_KEY found. "
-                "Set it via `export WANDB_API_KEY=...` or add it to ~/.netrc."
-            )
-        secrets["WANDB_API_KEY"] = wandb_key
+    if cfg.trackio.enable and not cfg.trackio.space_id:
+        raise ValueError(
+            "trackio is enabled but no `--trackio.space_id` is set. A remote job's local Trackio database "
+            "vanishes with the pod, so pass a Hugging Face Space, e.g. `--trackio.space_id=<user>/<space>`."
+        )
 
     tags = resolve_job_tags(cfg.job.tags)
     # The dataset must be reachable from the pod for both fresh and resumed runs; a local-only
     # dataset is pushed PRIVATE here. Hoisted before the resume/fresh branch since it applies to both.
     ensure_dataset_available(cfg.dataset.repo_id, api=api, tags=tags)
 
-    if cfg.resume:
+    if fresh_repo_id is None:
+        # Resuming (fresh_repo_id is only set for fresh runs): the model repo comes from the checkpoint.
         repo_id, command = _build_resume_job(cfg, username)
     else:
         config_repo_id = _stage_config_on_hub(cfg, fresh_repo_id, token, tags=tags)

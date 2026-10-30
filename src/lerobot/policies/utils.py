@@ -17,7 +17,6 @@
 import logging
 from collections import deque
 
-import numpy as np
 import torch
 from torch import nn
 
@@ -100,7 +99,7 @@ def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) 
 
 # TODO(Steven): Move this function to a proper preprocessor step
 def prepare_observation_for_inference(
-    observation: dict[str, np.ndarray],
+    observation: RobotObservation,
     device: torch.device,
     task: str | None = None,
     robot_type: str | None = None,
@@ -246,6 +245,8 @@ def validate_visual_features_consistency(
         cfg (PreTrainedConfig): The model or policy configuration containing input_features and type.
         features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects.
     """
+    if cfg.input_features is None:
+        raise ValueError("`cfg.input_features` must be resolved before validating visual features.")
     expected_visuals = {k for k, v in cfg.input_features.items() if v.type == FeatureType.VISUAL}
     provided_visuals = {k for k, v in features.items() if v.type == FeatureType.VISUAL}
 

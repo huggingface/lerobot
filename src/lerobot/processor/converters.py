@@ -23,13 +23,23 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.lerobot_types import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
+from lerobot.lerobot_types import (
+    EnvAction,
+    EnvTransition,
+    PolicyAction,
+    PolicyOutput,
+    PolicyPrediction,
+    RobotAction,
+    RobotObservation,
+    TransitionKey,
+)
 from lerobot.utils.constants import (
     ACTION,
     DONE,
     INFO,
     MESSAGES_RENDERED,
     OBS_PREFIX,
+    PREDICTION,
     QUERY_KIND,
     QUERY_TEXT,
     REWARD,
@@ -86,8 +96,7 @@ def _(
     # Check for numpy scalars (0-dimensional arrays) and treat them as scalars.
     if value.ndim == 0:
         # Numpy scalars should be converted to 0-dimensional tensors.
-        scalar_value = value.item()
-        return torch.tensor(scalar_value, dtype=dtype, device=device)
+        return torch.tensor(value.item(), dtype=dtype, device=device)
 
     # Create tensor from numpy array.
     tensor = torch.from_numpy(value)
@@ -196,24 +205,26 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
 
 def create_transition(
     observation: RobotObservation | None = None,
-    action: PolicyAction | RobotAction | None = None,
-    reward: float = 0.0,
-    done: bool = False,
-    truncated: bool = False,
+    action: PolicyAction | RobotAction | EnvAction | None = None,
+    reward: float | torch.Tensor = 0.0,
+    done: bool | torch.Tensor = False,
+    truncated: bool | torch.Tensor = False,
     info: dict[str, Any] | None = None,
     complementary_data: dict[str, Any] | None = None,
+    prediction: PolicyPrediction | None = None,
 ) -> EnvTransition:
     """
     Create an `EnvTransition` dictionary with sensible defaults.
 
     Args:
         observation: Observation dictionary.
-        action: Action dictionary.
-        reward: Scalar reward value.
+        action: Policy, robot or environment action.
+        reward: Reward value, a scalar or a tensor (e.g. for a batch).
         done: Episode termination flag.
         truncated: Episode truncation flag.
         info: Additional info dictionary.
         complementary_data: Complementary data dictionary.
+        prediction: What the policy predicts besides its action.
 
     Returns:
         A complete `EnvTransition` dictionary.
@@ -221,6 +232,7 @@ def create_transition(
     return {
         TransitionKey.OBSERVATION: observation,
         TransitionKey.ACTION: action,
+        TransitionKey.PREDICTION: prediction,
         TransitionKey.REWARD: reward,
         TransitionKey.DONE: done,
         TransitionKey.TRUNCATED: truncated,
@@ -305,7 +317,7 @@ def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
     action = transition.get(TransitionKey.ACTION)
     if not isinstance(action, dict):
         raise ValueError(f"Action should be a RobotAction type (dict) got {type(action)}")
-    return transition.get(TransitionKey.ACTION)
+    return action
 
 
 def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
@@ -316,7 +328,7 @@ def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
         raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
 
     action = transition.get(TransitionKey.ACTION)
-    if not isinstance(action, PolicyAction):
+    if not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return action
 
@@ -338,9 +350,31 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
     """
     Convert a `PolicyAction` to an `EnvTransition`.
     """
-    if not isinstance(action, PolicyAction):
+    if not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return create_transition(action=action)
+
+
+def policy_output_to_transition(output: PolicyAction | PolicyOutput) -> EnvTransition:
+    """
+    Convert what ``select_action`` / ``predict_action_chunk`` returned to an `EnvTransition`.
+
+    A policy returns a bare `PolicyAction`, or a `PolicyOutput` batch carrying the action and its
+    prediction (see `transition_to_prediction`).
+    """
+    if isinstance(output, torch.Tensor):
+        return policy_action_to_transition(output)
+    return batch_to_transition(dict(output))
+
+
+def transition_to_prediction(transition: EnvTransition) -> PolicyPrediction:
+    """
+    Extract what a policy predicted besides its action.
+
+    Returns an empty `PolicyPrediction` when the transition carries none.
+    """
+    prediction = transition.get(TransitionKey.PREDICTION)
+    return prediction if prediction is not None else PolicyPrediction()
 
 
 def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
@@ -365,7 +399,7 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
         raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
 
     action = batch.get(ACTION)
-    if action is not None and not isinstance(action, PolicyAction):
+    if action is not None and not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
     # Extract observation and complementary data keys.
@@ -380,6 +414,7 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
         truncated=batch.get(TRUNCATED, False),
         info=batch.get("info", {}),
         complementary_data=complementary_data if complementary_data else None,
+        prediction=batch.get(PREDICTION),
     )
 
 
@@ -405,6 +440,8 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
         TRUNCATED: transition.get(TransitionKey.TRUNCATED, False),
         INFO: transition.get(TransitionKey.INFO, {}),
     }
+    if (prediction := transition.get(TransitionKey.PREDICTION)) is not None:
+        batch[PREDICTION] = prediction
 
     # Add complementary data.
     comp_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})

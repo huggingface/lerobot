@@ -38,6 +38,8 @@ from lerobot.annotations.steerable_pipeline.writer import (  # noqa: E402
     speech_atom,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def _stage_episode(
     staging_dir: Path,

@@ -23,7 +23,7 @@ from lerobot.utils.import_utils import require_package
 _placo_runtime_error: ImportError | None = None
 
 if TYPE_CHECKING:
-    import placo  # type: ignore[import-not-found]
+    import placo
 else:
     try:
         import placo  # type: ignore[import-not-found]
