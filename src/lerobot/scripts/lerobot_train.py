@@ -595,6 +595,7 @@ def train(cfg: TrainPipelineConfig) -> None:
     if cfg.cudnn_deterministic:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+        torch.use_deterministic_algorithms(True, warn_only=False)
     else:
         torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
