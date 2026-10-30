@@ -47,10 +47,15 @@ from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorSt
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoProcessor, AutoTokenizer
+    from transformers import AutoProcessor, AutoTokenizer, ProcessorMixin
+    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+    from transformers.utils import cached_file
 else:
     AutoProcessor = None
     AutoTokenizer = None
+    ProcessorMixin = None
+    get_class_from_dynamic_module = None
+    cached_file = None
 
 
 @dataclass
@@ -388,9 +393,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         elif self.action_tokenizer_name is not None:
             if AutoProcessor is None:
                 raise ImportError("AutoProcessor is not available")
-            self.action_tokenizer = AutoProcessor.from_pretrained(
-                self.action_tokenizer_name, trust_remote_code=self.trust_remote_code
-            )
+            self.action_tokenizer = load_action_tokenizer(self.action_tokenizer_name, self.trust_remote_code)
         else:
             raise ValueError(
                 "Either 'action_tokenizer' or 'action_tokenizer_name' must be provided. "
@@ -616,3 +619,56 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             The updated dictionary of policy features.
         """
         return features
+
+
+def load_action_tokenizer(name: str, trust_remote_code: bool) -> Any:
+    """Load an action tokenizer processor, including FAST processors saved by transformers 4.
+
+    Transformers 4 saved a processor's `bpe_tokenizer` at the top of the repository, as
+    `physical-intelligence/fast` still has it. Transformers 5.4 to 5.12 only look in a `bpe_tokenizer/`
+    subfolder, so `AutoProcessor` fails on that layout, and then the tokenizer is loaded from the top level
+    and passed to the processor class. Transformers 5.13 added a similar fallback
+    (https://github.com/huggingface/transformers/pull/46592) but marks it as deprecated, so keep this while
+    repositories in the old layout are in use.
+
+    Args:
+        name: Hub repository id or local path of the processor.
+        trust_remote_code: Whether to allow the processor's custom code to run.
+
+    Returns:
+        The loaded processor.
+    """
+    try:
+        return AutoProcessor.from_pretrained(name, trust_remote_code=trust_remote_code)
+    except (ImportError, ValueError):
+        # The old layout fails with ImportError without protobuf and with ValueError with it.
+        processor = _load_fast_processor_saved_by_transformers_4(name) if trust_remote_code else None
+        if processor is None:
+            raise
+        return processor
+
+
+def _load_fast_processor_saved_by_transformers_4(name: str) -> Any:
+    """Returns None unless `name` is a remote-code processor with only a top-level `bpe_tokenizer`."""
+    bpe_tokenizer_config = cached_file(
+        name,
+        "bpe_tokenizer/tokenizer_config.json",
+        _raise_exceptions_for_missing_entries=False,
+        _raise_exceptions_for_connection_errors=False,
+    )
+    if bpe_tokenizer_config is not None:
+        return None
+    processor_dict, _ = ProcessorMixin.get_processor_dict(name)
+    class_reference = processor_dict.get("auto_map", {}).get("AutoProcessor")
+    if class_reference is None:
+        return None
+    processor_class = get_class_from_dynamic_module(class_reference, name)
+    if not issubclass(processor_class, ProcessorMixin):
+        return None
+    if processor_class.get_attributes() != ["bpe_tokenizer"]:
+        return None
+    logging.info(f"Loading the bpe_tokenizer of {name} from the top level, where transformers 4 saved it")
+    # So that saving the processor also saves its code, as AutoProcessor does for remote code.
+    processor_class.register_for_auto_class()
+    bpe_tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=True)
+    return processor_class.from_args_and_dict([bpe_tokenizer], processor_dict)
