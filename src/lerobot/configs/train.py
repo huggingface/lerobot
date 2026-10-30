@@ -143,6 +143,8 @@ class TrainPipelineConfig(HubMixin):
     # Set to True to use deterministic cuDNN algorithms for reproducibility.
     # This disables cudnn.benchmark and may reduce training speed by ~10-20 percent.
     cudnn_deterministic: bool = False
+    # TF32 in float32 matmuls and cuDNN convolutions on Ampere and newer GPUs.
+    tf32: bool | None = True
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8

@@ -277,7 +277,7 @@ def test_build_rollout_context_uses_resolved_device(
     # Emulate a checkpoint saved on a different host without needing that device locally.
     policy_config.device = checkpoint_device
     robot_config = MockRobotConfig(random_values=False, static_values=[0.0, 0.0, 0.0])
-    cfg = RolloutConfig(robot=robot_config, policy=policy_config, device=runtime_device)
+    cfg = RolloutConfig(robot=robot_config, policy=policy_config, device=runtime_device, tf32=None)
     robot = MockRobot(robot_config)
     policy = torch.nn.Linear(3, 3)
 
@@ -326,6 +326,7 @@ def test_local_setup_failure_releases_hardware_and_dataset(monkeypatch, tmp_path
         robot=MockRobotConfig(random_values=False, static_values=[0.0, 0.0, 0.0]),
         policy=ACTConfig(device="cpu", pretrained_path=Path("unused-checkpoint")),
         device="cpu",
+        tf32=None,
     )
     cfg.dataset = DatasetRecordConfig(repo_id="user/rollout_test", single_task="task", root=tmp_path)
     robot = MockRobot(cfg.robot)

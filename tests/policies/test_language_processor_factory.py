@@ -85,6 +85,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     cfg.trackio = SimpleNamespace(enable=False)
     cfg.seed = None
     cfg.cudnn_deterministic = False
+    cfg.tf32 = True
     cfg.checkpoint_format = CheckpointFormat.SAFETENSORS
     cfg.peft = None
     cfg.dataset = SimpleNamespace(image_transforms=ImageTransformsConfig())
@@ -104,6 +105,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     # Restore backend globals changed during training setup after each test.
     monkeypatch.setattr(torch.backends.cudnn, "benchmark", torch.backends.cudnn.benchmark)
     monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32)
+    monkeypatch.setattr(torch.backends.cudnn, "allow_tf32", torch.backends.cudnn.allow_tf32)
     pipelines = []
 
     def build(**kwargs):

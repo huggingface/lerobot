@@ -597,7 +597,9 @@ def train(cfg: TrainPipelineConfig) -> None:
         torch.backends.cudnn.benchmark = False
     else:
         torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
 
     # --- data (the main process downloads once; peers read the populated cache) ----------------
     if is_main_process():
