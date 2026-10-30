@@ -35,6 +35,7 @@ from lerobot.streaming.sidecar import SidecarSpec
 from lerobot.streaming.sidecar_utils import ARRAY_NAMES
 
 av = pytest.importorskip("av")
+pytestmark = pytest.mark.dataset
 
 
 def test_sidecar_construction_preserves_real_video_indices_and_pixels(

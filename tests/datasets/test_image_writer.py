@@ -30,6 +30,8 @@ from lerobot.datasets.image_writer import (
 )
 from tests.fixtures.constants import DUMMY_HWC
 
+pytestmark = pytest.mark.dataset
+
 DUMMY_IMAGE = "test_image.png"
 
 
@@ -264,7 +266,9 @@ def test_save_image_after_stop(tmp_path, img_array_factory):
     image_array = img_array_factory()
     fpath = tmp_path / DUMMY_IMAGE
     writer.save_image(image_array, fpath)
-    time.sleep(1)
+    # No thread is left to take the image off the queue, so it is never written.
+    assert not any(t.is_alive() for t in writer.threads)
+    assert writer.queue.qsize() == 1
     assert not fpath.exists()
 
 

@@ -15,7 +15,7 @@
 # limitations under the License.
 """Train a policy.
 
-Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wandb extras)
+Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + trackio extras)
 
 Launch with torchrun for distributed runs; every parallelism/acceleration knob lives on the
 config (`--parallelism.*`, `--accelerator.*`) so a run is reproducible from its
@@ -46,6 +46,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from tqdm import tqdm
 
+from lerobot.common.trackio_utils import TrackioLogger
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
@@ -58,10 +59,9 @@ from lerobot.common.train_utils import (
     should_save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import EvalConfig, JobConfig, parser
 from lerobot.configs.rewards import RewardModelConfig
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.datasets import (
     EpisodeAwareSampler,
     LeRobotDataset,
@@ -581,10 +581,10 @@ def train(cfg: TrainPipelineConfig) -> None:
     if is_main_process():
         logging.info(pformat(cfg.to_dict()))
 
-    if cfg.wandb.enable and cfg.wandb.project and is_main_process():
-        wandb_logger = WandBLogger(cfg)
+    if cfg.trackio.enable and cfg.trackio.project and is_main_process():
+        trackio_logger = TrackioLogger(cfg)
     else:
-        wandb_logger = None
+        trackio_logger = None
         if is_main_process():
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
@@ -611,7 +611,10 @@ def train(cfg: TrainPipelineConfig) -> None:
     # On resume, cfg was parsed FROM the checkpoint's train_config.json, so cfg.checkpoint_format
     # IS the recorded value: DCP-bearing formats skip the safetensors load here and stream the
     # sharded weights in after prepare (resume_after_prepare).
-    defer_weight_load = cfg.resume and cfg.checkpoint_format.wants_dcp
+    defer_weight_load = cfg.resume and cfg.checkpoint_format in (
+        CheckpointFormat.DCP,
+        CheckpointFormat.SAFETENSORS_DCP,
+    )
     # On resume the weights and processors come from the checkpoint, while `pretrained_path`
     # keeps naming the model the run started from (the published card's `base_model`).
     resume_pretrained_dir = (
@@ -748,7 +751,7 @@ def train(cfg: TrainPipelineConfig) -> None:
     # --- prepare & resume phase 2 ---------------------------------------------------------------
     # The FSDP wrap-unit class names resolve right before prepare: user override, else the
     # policy's _fsdp_wrap_modules declaration — root-only wrapping is never silently accepted.
-    set_fsdp_wrap_modules(accelerator, accelerator.unwrap_model(policy) if peft_model else policy)
+    set_fsdp_wrap_modules(accelerator, policy)
     accelerator.wait_for_everyone()
     if cfg.dataset.streaming and eval_dataloader is not None:
         policy, optimizer, lr_scheduler, eval_dataloader = accelerator.prepare(
@@ -970,19 +973,19 @@ def train(cfg: TrainPipelineConfig) -> None:
                 if train_tracker.step_s.avg > 0:
                     train_tracker.samples_per_s = samples_per_step / train_tracker.step_s.avg
                 logging.info(train_tracker)
-                if wandb_logger:
+                if trackio_logger:
                     # Policy sub-losses (latent_loss, action_loss, ...) are aggregated into the
                     # tracker by update_policy, so to_dict() already carries their windowed,
                     # rank-reduced averages — no per-step output_dict passthrough needed.
-                    wandb_log_dict = train_tracker.to_dict()
+                    metrics_to_log = train_tracker.to_dict()
                     # Log sample weighting statistics if enabled
                     if sample_weighter is not None:
                         weighter_stats = sample_weighter.get_stats()
-                        wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
+                        metrics_to_log.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
                     if ema is not None and ema.cur_decay_value is not None:
-                        wandb_log_dict["ema/decay"] = ema.cur_decay_value
-                        wandb_log_dict["ema/step"] = ema.optimization_step
-                    wandb_logger.log_dict(wandb_log_dict, step)
+                        metrics_to_log["ema/decay"] = ema.cur_decay_value
+                        metrics_to_log["ema/step"] = ema.optimization_step
+                    trackio_logger.log_dict(metrics_to_log, step)
             train_tracker.reset_averages()
 
         if is_eval_step and eval_dataloader is not None:
@@ -1004,8 +1007,8 @@ def train(cfg: TrainPipelineConfig) -> None:
 
             if is_main_process():
                 logging.info(f"step {step}: eval_loss={eval_loss:.4f}")
-                if wandb_logger:
-                    wandb_logger.log_dict({"eval_loss": eval_loss}, step=step, mode="eval")
+                if trackio_logger:
+                    trackio_logger.log_dict({"eval_loss": eval_loss}, step=step, mode="eval")
 
         if cfg.save_checkpoint and is_saving_step:
             # Collective: every rank participates (gathers / DCP shard writes); rank-0-only file
@@ -1047,8 +1050,8 @@ def train(cfg: TrainPipelineConfig) -> None:
                         cfg.policy.repo_id,
                         private=cfg.policy.private,
                     )
-                if wandb_logger:
-                    wandb_logger.log_policy(checkpoint_dir)
+                if trackio_logger:
+                    trackio_logger.log_policy(checkpoint_dir)
             accelerator.wait_for_everyone()
 
         if cfg.env and is_env_eval_step:
@@ -1106,10 +1109,10 @@ def train(cfg: TrainPipelineConfig) -> None:
                 eval_tracker.eval_s = aggregated.pop("eval_s")
                 eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
                 eval_tracker.pc_success = aggregated.pop("pc_success")
-                if wandb_logger:
-                    wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
-                    wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                    wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
+                if trackio_logger:
+                    metrics_to_log = {**eval_tracker.to_dict(), **eval_info}
+                    trackio_logger.log_dict(metrics_to_log, step, mode="eval")
+                    trackio_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
 
             accelerator.wait_for_everyone()
 
@@ -1148,6 +1151,9 @@ def train(cfg: TrainPipelineConfig) -> None:
                 logging.warning("Failed to push EMA weights to %s: %s", ema_repo_id, exc)
             finally:
                 unwrapped.config.repo_id = orig_repo_id
+
+    if trackio_logger:
+        trackio_logger.finish()
 
     # Properly clean up the distributed process group
     accelerator.wait_for_everyone()

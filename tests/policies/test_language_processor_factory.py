@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
+from lerobot.configs.train import CheckpointFormat
 from lerobot.policies import factory
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -81,10 +82,10 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     cfg.validate = lambda: None
     cfg.to_dict = lambda: {}
     cfg.parallelism = None
-    cfg.wandb = SimpleNamespace(enable=False)
+    cfg.trackio = SimpleNamespace(enable=False)
     cfg.seed = None
     cfg.cudnn_deterministic = False
-    cfg.checkpoint_format = SimpleNamespace(wants_dcp=False)
+    cfg.checkpoint_format = CheckpointFormat.SAFETENSORS
     cfg.peft = None
     cfg.dataset = SimpleNamespace(image_transforms=ImageTransformsConfig())
     accelerator = SimpleNamespace(
@@ -121,6 +122,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     return pipelines
 
 
+@pytest.mark.dataset
 @pytest.mark.parametrize("recipe_mode", ["absent", "disabled", "builtin", "yaml"])
 @pytest.mark.parametrize("main_process", [False, True])
 @pytest.mark.parametrize("resume", [False, True])
@@ -166,6 +168,7 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
     torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[12.0 if resume else 22.0]]))
 
 
+@pytest.mark.dataset
 @pytest.mark.parametrize("for_training", [False, True])
 def test_checkpoint_renderer_uses_saved_recipe_and_stats(tmp_path, for_training, dataset_dependencies):
     from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
@@ -206,6 +209,7 @@ def test_checkpoint_renderer_uses_saved_recipe_and_stats(tmp_path, for_training,
         assert "target_message_indices" not in result
 
 
+@pytest.mark.dataset
 def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, training_dependencies):
     from lerobot.policies.act import processor_act
 
@@ -251,6 +255,7 @@ def test_pipeline_without_recipe_preserves_training_inputs_and_renders_vqa():
     ]
 
 
+@pytest.mark.dataset
 def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
     monkeypatch, caplog, training_dependencies
 ):

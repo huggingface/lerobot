@@ -376,7 +376,8 @@ class GrootConfig(PreTrainedConfig):
     max_steps: int = 10000
     batch_size: int = 32
     dataloader_num_workers: int = 8
-    report_to: str = "wandb"
+    # Unused by LeRobot; kept so configs saved with this key still load (draccus rejects unknown fields).
+    report_to: str = "trackio"
     resume: bool = False
 
     def __post_init__(self):
