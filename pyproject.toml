@@ -480,6 +480,7 @@ ignore = [
 # CI helper scripts and the packaging shim.
 "tests/**" = ["D"]
 "examples/**" = ["D"]
+"experiments/**" = ["D"]
 "benchmarks/**" = ["D"]
 "scripts/**" = ["D"]
 "setup.py" = ["D"]

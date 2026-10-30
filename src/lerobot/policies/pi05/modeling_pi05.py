@@ -75,6 +75,7 @@ from ..common.vla_utils import (
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
+from .gaussian_readout import sample_gaussian_actions
 from .memory import encode_video_with_mem, sample_observation_history
 
 
@@ -945,6 +946,20 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action."""
+        if self.config.gaussian_readout_path is not None:
+            return sample_gaussian_actions(
+                self,
+                images,
+                img_masks,
+                tokens,
+                masks,
+                states=states,
+                state_masks=state_masks,
+                noise=noise,
+                num_steps=num_steps,
+                **kwargs,
+            )
+
         if num_steps is None:
             num_steps = self.config.num_inference_steps
 
@@ -1021,14 +1036,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             precompute_times=self.precompute_denoise_times,
         )
 
-    def denoise_step(
+    def suffix_features(
         self,
         prefix_pad_masks,
         past_key_values,
         x_t,
         timestep,
-    ):
-        """Apply one denoising step of the noise `x_t` at a given timestep."""
+    ) -> Tensor:
+        """Return action-expert features through the FP32 cast, before the velocity projection."""
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep)
 
         suffix_len = suffix_pad_masks.shape[1]
@@ -1058,6 +1073,17 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
+        return suffix_out
+
+    def denoise_step(
+        self,
+        prefix_pad_masks,
+        past_key_values,
+        x_t,
+        timestep,
+    ):
+        """Apply one denoising step of the noise `x_t` at a given timestep."""
+        suffix_out = self.suffix_features(prefix_pad_masks, past_key_values, x_t, timestep)
         return self.action_out_proj(suffix_out)
 
 
