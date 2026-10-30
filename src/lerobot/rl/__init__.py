@@ -25,6 +25,7 @@ from .algorithms.factory import (
     make_algorithm as make_algorithm,
     make_algorithm_config as make_algorithm_config,
 )
+from .algorithms.qf3.configuration_qf3 import QF3AlgorithmConfig as QF3AlgorithmConfig
 from .algorithms.sac.configuration_sac import SACAlgorithmConfig as SACAlgorithmConfig
 from .buffer import ReplayBuffer as ReplayBuffer
 from .data_sources import DataMixer as DataMixer, OnlineOfflineMixer as OnlineOfflineMixer
@@ -36,6 +37,7 @@ __all__ = [
     "TrainingStats",
     "make_algorithm",
     "make_algorithm_config",
+    "QF3AlgorithmConfig",
     "SACAlgorithmConfig",
     "RLTrainer",
     "ReplayBuffer",
