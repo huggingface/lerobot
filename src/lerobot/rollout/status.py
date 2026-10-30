@@ -94,7 +94,8 @@ def _log_status(
     span = current.span - previous.span
     if span > 0:
         hz = (current.span_ticks - previous.span_ticks) / span
-        parts.append(f"loop {hz:.1f}/{timer.fps * timer.multiplier:g} Hz")
+        # Policy rate, as in the cadence summaries (equal to the command rate without interpolation).
+        parts.append(f"loop {hz / timer.multiplier:.1f}/{timer.fps:g} Hz")
     parts.append(
         f"over budget {current.groups_over - previous.groups_over}/"
         f"{current.groups_judged - previous.groups_judged}"
