@@ -101,6 +101,9 @@ class Robot(abc.ABC):
         Values for the dict should either be:
             - The type of the value if it's a simple value, e.g. `float` for single proprioceptive value (a joint's position/velocity)
             - A tuple representing the shape if it's an array-type value, e.g. `(height, width, channel)` for images
+            - A `PolicyFeature` with a multi-dimensional shape for a fixed-shape numeric array that is not an
+              image, e.g. `PolicyFeature(type=FeatureType.STATE, shape=(16, 3))`; it is stored as a standalone
+              float32 feature of that shape
 
         Note: this property should be able to be called regardless of whether the robot is connected or not.
         """
