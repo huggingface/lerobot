@@ -32,6 +32,7 @@ pytest.importorskip("lancedb")
 pytest.importorskip("lerobot_lancedb", reason="lerobot-lancedb converts the test fixtures")
 
 import lancedb
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from lerobot_lancedb.convert import convert
@@ -41,9 +42,8 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.episode_subset_index import _EpisodeSubsetIndexMapping
 from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.lance_backend import LanceDatasetReader, lance_mp_context
+from lerobot.datasets.lance_backend import LanceDatasetReader, _EpisodeSubsetIndexMapping, lance_mp_context
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
     language_events_arrow_type,
@@ -586,6 +586,42 @@ def test_sparse_source_fetches_handle_once():
     assert source.read(2) == b"xx"
     assert source.read(2) == b"xx"
     assert Handle.opened == 1  # one handle for every miss
+
+
+@pytest.mark.parametrize("selected", [[0, 2], [1], [0, 1, 2], []])
+def test_episode_subset_index_matches_dense_mapping(selected: list[int]) -> None:
+    episode_starts = np.array([0, 5, 10])
+    episode_ends = np.array([5, 10, 14])
+    mapping = _EpisodeSubsetIndexMapping(episode_starts[selected], episode_ends[selected])
+    absolute_indices = [
+        absolute_idx
+        for episode in selected
+        for absolute_idx in range(episode_starts[episode], episode_ends[episode])
+    ]
+    dense = dict(zip(absolute_indices, range(len(absolute_indices)), strict=True))
+
+    assert len(mapping) == len(dense)
+    assert [mapping.rel_to_abs(relative_idx) for relative_idx in range(len(mapping))] == absolute_indices
+    assert {absolute_idx: mapping[absolute_idx] for absolute_idx in mapping} == dense
+    assert mapping == dense and dense == mapping
+    assert mapping != {0: -1}
+    for absolute_idx in range(-1, 16):
+        assert (absolute_idx in mapping) == (absolute_idx in dense)
+        if absolute_idx not in dense:
+            with pytest.raises(KeyError):
+                mapping[absolute_idx]
+    with pytest.raises(TypeError):
+        hash(mapping)
+
+
+def test_episode_subset_index_survives_pickle() -> None:
+    mapping = _EpisodeSubsetIndexMapping(np.array([0, 10]), np.array([5, 14]))
+    restored = pickle.loads(pickle.dumps(mapping))
+    assert len(restored) == len(mapping)
+    assert dict(restored) == dict(mapping)
+    assert [restored.rel_to_abs(relative_idx) for relative_idx in range(len(restored))] == [
+        mapping.rel_to_abs(relative_idx) for relative_idx in range(len(mapping))
+    ]
 
 
 def test_storage_format_routing(video_dataset_roots):
