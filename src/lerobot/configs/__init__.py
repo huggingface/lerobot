@@ -21,6 +21,7 @@ are intentionally NOT re-exported here to avoid circular dependencies
 Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
 """
 
+from . import parser  # registers the draccus codec of torch.dtype
 from .dataset import DatasetRecordConfig
 from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
 from .policies import PreTrainedConfig
