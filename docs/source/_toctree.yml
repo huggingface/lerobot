@@ -125,6 +125,8 @@
 - sections:
   - local: adding_benchmarks
     title: Adding a New Benchmark
+  - local: third_party_reliability_reporters
+    title: Third-party reliability reporters
   - local: libero
     title: LIBERO
   - local: libero_plus
