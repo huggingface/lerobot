@@ -121,7 +121,7 @@ accelerate launch --num_processes=8 $(which lerobot-train) \
   --policy.scheduler_decay_steps=128000 \
   --output_dir=outputs/train/cosmos3_nano_libero_10 \
   --job_name=cosmos3_nano_libero_10 \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 
 For the four suites use `--dataset.repo_id=lerobot/libero-cosmos3` and `--steps=40000` (5000 iterations). For Cosmos3 Edge use `--policy.type=cosmos3_edge --policy.pretrained_path=lerobot/cosmos3-edge`.
@@ -250,7 +250,7 @@ accelerate launch --num_processes=8 $(which lerobot-train) \
   --policy.scheduler_decay_steps=12800000 \
   --output_dir=outputs/train/cosmos3_nano_droid \
   --job_name=cosmos3_nano_droid \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 
 The native DROID recipe ran on 256 GPUs. On one machine with 8 A800 GPUs one optimizer update of this command takes about 33 minutes, so the full recipe needs many machines. Run the same command on every machine with the multi node flags of `accelerate launch` (or `torchrun`), shard within each machine and replicate across machines with `--parallelism.dp_replicate=<number of machines> --parallelism.dp_shard=8`, and divide `--accelerator.gradient_accumulation.steps` and the step counts by the number of machines. See [HSDP](./multi_gpu_training#hsdp) in the multi GPU training guide.
