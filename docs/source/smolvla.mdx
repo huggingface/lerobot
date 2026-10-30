@@ -70,6 +70,8 @@ lerobot-train \
 - `--policy.repo_id` is the Hub repo the fine-tuned model is pushed to.
 - `--rename_map` maps the dataset's camera names to the `camera1`, `camera2` and `camera3` names that `smolvla_base` expects. Without it, training stops with a feature mismatch error. Map your own camera names the same way (see [Rename Map](./rename_map)).
 
+SmolVLA stores trainable weights in fp32 by default and keeps the pretrained VLM in bf16 when frozen. Fp32 storage retains smaller optimizer updates than bf16, at the cost of more memory for weights and optimizer state.
+
 <Tip>
   You can start with a small batch size and increase it incrementally, if the
   GPU allows it, as long as loading times remain short.
