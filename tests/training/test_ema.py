@@ -16,7 +16,6 @@
 
 """Tests for the opt-in EMA of the trainable policy weights maintained by the training pipeline (--ema.type=...)."""
 
-import draccus
 import numpy as np
 import pytest
 import torch
@@ -25,9 +24,9 @@ from safetensors.torch import load_file
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.configs.train import TrainPipelineConfig, _migrate_legacy_ema_fields
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.optim.ema import EMA, ConstantEMAConfig, EMAConfig, PowerEMAConfig, WarmupEMAConfig
+from lerobot.optim.ema import EMA, ConstantEMAConfig, PowerEMAConfig, WarmupEMAConfig
 from lerobot.utils.constants import (
     EMA_STATE,
     PRETRAINED_MODEL_DIR,
@@ -87,31 +86,6 @@ def test_ema_decay_schedules():
     assert WarmupEMAConfig().get_decay(10**9) == 0.9999
     # sigma_rel 0.1 is gamma 6.94 in EDM2.
     assert PowerEMAConfig(sigma_rel=0.1).get_decay(11) == pytest.approx((10 / 11) ** (6.9372 + 1), rel=1e-4)
-
-
-LEGACY_EMA = {
-    "enable": True,
-    "decay": None,
-    "update_after_step": 0,
-    "inv_gamma": 1.0,
-    "power": 0.8,
-    "min_decay": 0.0,
-    "max_decay": 0.9999,
-    "use_for_eval": True,
-}
-
-
-@pytest.mark.parametrize(
-    "legacy, expected",
-    [
-        ({**LEGACY_EMA, "enable": False}, None),
-        (LEGACY_EMA, WarmupEMAConfig(power=0.8)),
-        ({**LEGACY_EMA, "decay": 0.99}, ConstantEMAConfig(decay=0.99)),
-    ],
-)
-def test_legacy_ema_config_is_migrated(legacy, expected):
-    migrated = _migrate_legacy_ema_fields({"ema": legacy})
-    assert draccus.decode(EMAConfig | None, migrated["ema"]) == expected
 
 
 def make_dummy_dataset(tmp_path):

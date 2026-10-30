@@ -122,23 +122,6 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
     return migrated_config
 
 
-def _migrate_legacy_ema_fields(config: dict[str, Any]) -> dict[str, Any] | None:
-    """Return migrated payload for the untyped EMA fields, or None when no migration is needed."""
-    ema = config.get("ema")
-    if ema is None or "type" in ema:
-        return None
-    if not ema.get("enable", False):
-        return {**config, "ema": None}
-    if ema.get("decay") is not None:
-        migrated = {"type": "constant", "decay": ema["decay"]}
-    else:
-        warmup = ("inv_gamma", "power", "min_decay", "max_decay")
-        migrated = {"type": "warmup", **{key: ema[key] for key in warmup if key in ema}}
-    if "update_after_step" in ema:
-        migrated["update_after_step"] = ema["update_after_step"]
-    return {**config, "ema": migrated}
-
-
 @dataclass
 class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
@@ -517,7 +500,7 @@ class TrainPipelineConfig(HubMixin):
             with open(config_file) as f:
                 config = json.load(f)
             migrated = False
-            for migrate in (_migrate_legacy_rabc_fields, _migrate_legacy_wandb_section, _migrate_legacy_ema_fields):
+            for migrate in (_migrate_legacy_rabc_fields, _migrate_legacy_wandb_section):
                 migrated_config = migrate(config)
                 if migrated_config is not None:
                     config, migrated = migrated_config, True

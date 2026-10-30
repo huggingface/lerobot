@@ -154,11 +154,23 @@ class EMA:
         step = self.num_updates - self.config.update_after_step
         self.decay = self.config.get_decay(step) if step > 1 else 0.0
         parameters = dict(model.named_parameters())
-        torch._foreach_lerp_(
-            list(self.averages.values()),
-            [parameters[name].detach().to(torch.float32) for name in self.averages],
-            1.0 - self.decay,
-        )
+        averages: list[torch.Tensor] = []
+        updates: list[torch.Tensor] = []
+        promoted_averages: list[torch.Tensor] = []
+        promoted_updates: list[torch.Tensor] = []
+        for name, average in self.averages.items():
+            parameter = parameters[name].detach()
+            if parameter.dtype == torch.float32:
+                averages.append(average)
+                updates.append(parameter)
+            else:
+                promoted_averages.append(average)
+                promoted_updates.append(parameter)
+        if averages:
+            torch._foreach_lerp_(averages, updates, 1.0 - self.decay)
+        if promoted_averages:
+            torch._foreach_mul_(promoted_averages, self.decay)
+            torch._foreach_add_(promoted_averages, promoted_updates, alpha=1.0 - self.decay)
 
     @contextmanager
     def average_parameters(self, model: nn.Module) -> Iterator[None]:
