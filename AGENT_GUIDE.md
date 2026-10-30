@@ -146,7 +146,7 @@ lerobot-replay --robot.type=so101_follower --robot.port=<FOLLOWER_PORT> --robot.
   --dataset.repo_id=${HF_USER}/my_task_YYYYMMDD_HHMMSS --dataset.episode=0
 ```
 
-**4.9 Train** (default: ACT — fastest, lowest memory). Apple silicon: `--policy.device=mps`. No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`, list them with `hf jobs hardware`) to run on Hugging Face Jobs instead. See §6/§7 for policy and duration.
+**4.9 Train** (default: ACT — fastest, lowest memory). Apple silicon: `--policy.device=mps`. No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`, list them with `hf jobs hardware`) to run on Hugging Face Jobs instead; with `--trackio.enable=true`, also pass `--trackio.space_id=<user>/<space>` so the metrics outlive the job. See §6/§7 for policy and duration.
 
 ```bash
 lerobot-train \
@@ -156,7 +156,7 @@ lerobot-train \
   --output_dir=outputs/train/act_my_task \
   --job_name=act_my_task \
   --batch_size=8 \
-  --wandb.enable=true \
+  --trackio.enable=true \
   --policy.repo_id=${HF_USER}/act_my_task
 ```
 

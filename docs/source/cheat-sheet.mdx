@@ -129,7 +129,7 @@ lerobot-train \
     --output_dir=outputs/train/act_so101_test \
     --job_name=act_so101_test \
     --policy.device=cuda \
-    --wandb.enable=true \
+    --trackio.enable=true \
     --policy.repo_id=${HF_USER}/policy_test \
     --steps=20000
 ```
@@ -149,7 +149,7 @@ lerobot-train \
     --steps=20000
 ```
 
-No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`) to either command and `lerobot-train` runs it on [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) instead — it uploads a local-only dataset for you and pushes the trained model. List flavors with `hf jobs hardware`.
+No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`) to either command and `lerobot-train` runs it on [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) instead — it uploads a local-only dataset for you and pushes the trained model. List flavors with `hf jobs hardware`. To track the job's metrics, add `--trackio.enable=true --trackio.space_id=<user>/<space>`: the pod's local Trackio database does not survive the job.
 
 To resume, point `--config_path` at a checkpoint and add `--resume=true`. It accepts a local path or a Hub repo id (the latest checkpoint is fetched), and works locally or on a job by adding `--job.target=<flavor>`:
 
