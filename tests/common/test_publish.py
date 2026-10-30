@@ -21,13 +21,16 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import torch
 from huggingface_hub.utils import validate_repo_id
+from safetensors.torch import load_file
 
 import lerobot.common.train_utils as train_utils
 import lerobot.utils.hub as hub
 from lerobot.common.train_utils import generate_model_card, publish_trained_model
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.optim.ema import EMA, ConstantEMAConfig
 from tests.fixtures.dummy_checkpoint_policy import make_dummy_policy
 
 
@@ -35,6 +38,7 @@ class FakeHfApi:
     """Records every repo/upload interaction; shared across both HfApi import sites."""
 
     calls: list[dict] = []
+    branches: list[str] = []
 
     def __init__(self, *args, **kwargs):
         pass
@@ -42,13 +46,19 @@ class FakeHfApi:
     def create_repo(self, repo_id, private=None, exist_ok=False, **kwargs):
         return SimpleNamespace(repo_id=repo_id)
 
+    def create_branch(self, repo_id, *, branch, exist_ok=False, **kwargs):
+        FakeHfApi.branches.append(branch)
+
     def upload_folder(self, *, repo_id, folder_path, commit_message, **kwargs):
+        weights = Path(folder_path) / "model.safetensors"
         FakeHfApi.calls.append(
             {
                 "repo_id": repo_id,
                 "commit_message": commit_message,
                 "files": sorted(p.name for p in Path(folder_path).iterdir()),
                 "ignore_patterns": kwargs.get("ignore_patterns"),
+                "revision": kwargs.get("revision"),
+                "weights": load_file(weights) if weights.is_file() else None,
             }
         )
         return SimpleNamespace(repo_url=SimpleNamespace(url=f"https://huggingface.co/{repo_id}"))
@@ -57,6 +67,7 @@ class FakeHfApi:
 @pytest.fixture
 def mocked_hub(monkeypatch):
     FakeHfApi.calls = []
+    FakeHfApi.branches = []
     monkeypatch.setattr(train_utils, "HfApi", FakeHfApi)
     monkeypatch.setattr(hub, "HfApi", FakeHfApi)
     # card.validate() hits the Hub; publishing must work offline in tests
@@ -73,17 +84,32 @@ def make_cfg() -> TrainPipelineConfig:
 class RecordingProcessor:
     def __init__(self):
         self.pushed_to = None
+        self.branches = []
 
-    def push_to_hub(self, repo_id, **kwargs):
+    def push_to_hub(self, repo_id, branch=None, **kwargs):
         self.pushed_to = repo_id
+        self.branches.append(branch)
 
 
 class TestPublishTrainedModel:
-    def test_commit_set_and_log_contract(self, mocked_hub, caplog):
+    @pytest.mark.parametrize("with_ema", [False, True])
+    def test_commit_set_and_log_contract(self, mocked_hub, caplog, with_ema):
         policy = make_dummy_policy(repo_id="user/policy")
+        ema = EMA(policy, ConstantEMAConfig()) if with_ema else None
+        if ema is not None:
+            torch._foreach_add_(list(ema.averages.values()), 1.0)
         pre, post = RecordingProcessor(), RecordingProcessor()
         with caplog.at_level(logging.INFO):
-            publish_trained_model(make_cfg(), policy, pre, post, dataset_meta=None)
+            publish_trained_model(make_cfg(), policy, pre, post, dataset_meta=None, ema=ema)
+
+        # with EMA, main gets the averages, then a `live` branch created from main gets the live weights
+        branches = [None, "live"] if with_ema else [None]
+        assert mocked_hub.branches == branches[1:]
+        assert [call["revision"] for call in mocked_hub.calls] == [b for b in branches for _ in range(2)]
+        assert pre.branches == post.branches == branches
+        assert [call["weights"]["net.weight"].unique().item() for call in mocked_hub.calls[::2]] == (
+            [1.5, 0.5] if with_ema else [0.5]
+        )
 
         # commit 1: the model through HubMixin (config.json + model.safetensors in a tmpdir)
         model_commit = mocked_hub.calls[0]
@@ -93,10 +119,9 @@ class TestPublishTrainedModel:
         # commit 4: the bundle sidecar
         bundle = mocked_hub.calls[-1]
         assert {"README.md", "train_config.json"} <= set(bundle["files"])
-        # the exact line lerobot.jobs.hf watches to end remote runs early
-        assert any(
-            m.startswith("Model pushed to https://huggingface.co/user/policy") for m in caplog.messages
-        )
+        # the exact line lerobot.jobs.hf watches to end remote runs early, once, after every commit
+        assert [m for m in caplog.messages if m.startswith("Model pushed to")] == caplog.messages[-1:]
+        assert caplog.messages[-1].startswith("Model pushed to https://huggingface.co/user/policy")
 
     def test_peft_branch_skips_model_commit(self, mocked_hub):
         policy = make_dummy_policy(repo_id="user/policy")

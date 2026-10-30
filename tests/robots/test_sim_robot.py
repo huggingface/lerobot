@@ -94,6 +94,7 @@ def test_sim_robot_advances_once_per_action(where, request, tmp_path):
         robot.disconnect()
 
 
+@pytest.mark.dataset
 def test_rollout_holds_a_sim_robot_with_its_own_hold(tmp_path):
     pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
@@ -157,6 +158,7 @@ def test_episode_functions_leave_real_robots_alone():
     assert not robot.method_calls
 
 
+@pytest.mark.dataset
 def test_rollout_runs_a_sim_robot_only_with_strategies_that_run_its_episodes():
     pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")
     from types import SimpleNamespace
@@ -249,6 +251,7 @@ def test_sim_robot_records_the_body_its_env_declares(sim_server, tmp_path):
         SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
 
 
+@pytest.mark.dataset
 def test_sim_robot_records_scalar_state_actions_and_rgb(sim_server, tmp_path):
     pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")
     from types import SimpleNamespace
@@ -313,6 +316,7 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(sim_server, tmp_path):
         robot.disconnect()
 
 
+@pytest.mark.dataset
 def test_rollout_rejects_checkpoint_schema_before_opening_environment(sim_server, tmp_path, monkeypatch):
     pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")
     from types import SimpleNamespace
@@ -336,22 +340,23 @@ def test_rollout_rejects_checkpoint_schema_before_opening_environment(sim_server
         ),
     )
     with pytest.raises(ValueError, match="shape mismatch"):
-        context._connect_rollout_hardware(cfg)
+        context._prepare_rollout_devices(cfg)
     # A control rate other than the simulator's would replay actions too fast or too slow.
     cfg.fps = robot.descriptor.fps * 2
     with pytest.raises(ValueError, match=f"control rate is {robot.descriptor.fps:g} Hz: pass --fps="):
-        context._connect_rollout_hardware(cfg)
+        context._prepare_rollout_devices(cfg)
     # Each interpolated command advances the simulation too: the loop runs at the rate divided by them.
     cfg.fps, cfg.interpolation_multiplier = robot.descriptor.fps / 2, 2
     with pytest.raises(ValueError, match="shape mismatch"):
-        context._connect_rollout_hardware(cfg)
+        context._prepare_rollout_devices(cfg)
     cfg.fps = robot.descriptor.fps
     with pytest.raises(ValueError, match=f"pass --fps={robot.descriptor.fps / 2:g}"):
-        context._connect_rollout_hardware(cfg)
+        context._prepare_rollout_devices(cfg)
     assert not sim_server[0].sessions
     assert not robot.is_connected
 
 
+@pytest.mark.dataset
 @pytest.mark.parametrize("mode", ["sync", "rtc"])
 def test_sim_robot_local_inference_engines(sim_server, tmp_path, mode):
     pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")
@@ -419,6 +424,7 @@ def test_sim_robot_local_inference_engines(sim_server, tmp_path, mode):
         robot.disconnect()
 
 
+@pytest.mark.dataset
 def test_sim_robot_remote_inference_engine(sim_server, tmp_path):
     pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")
     import torch
@@ -518,6 +524,7 @@ def test_sim_robot_remote_inference_engine(sim_server, tmp_path):
         assert not thread.is_alive()
 
 
+@pytest.mark.dataset
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp_path, monkeypatch, clock):
     pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")

@@ -1033,7 +1033,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # overlap, so keep this extra splitter disabled for graph identity.
             _disable_dynamo_ddp_optimizer()
 
-        torch.set_float32_matmul_precision("high")
         compile_options = {"emulate_precision_casts": True}
         compile_kwargs = {
             "backend": "inductor",

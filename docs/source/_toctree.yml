@@ -81,6 +81,8 @@
     title: LingBot-VLA 2.0
   - local: fastwam
     title: FastWAM
+  - local: longwam
+    title: Long-WAM
   - local: flux3
     title: FLUX 3 Action (flux3)
   - local: evo1

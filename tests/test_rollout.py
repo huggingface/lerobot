@@ -32,7 +32,10 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 # Hoisted rather than re-imported inside each test: the module-scoped `importorskip`
 # above already guards everything below it.
+from lerobot.processor import transition_to_prediction  # noqa: E402
 from lerobot.utils.cycle_timer import CycleTimer  # noqa: E402
+
+pytestmark = pytest.mark.dataset
 
 # ---------------------------------------------------------------------------
 # Import smoke tests
@@ -274,7 +277,7 @@ def test_build_rollout_context_uses_resolved_device(
     # Emulate a checkpoint saved on a different host without needing that device locally.
     policy_config.device = checkpoint_device
     robot_config = MockRobotConfig(random_values=False, static_values=[0.0, 0.0, 0.0])
-    cfg = RolloutConfig(robot=robot_config, policy=policy_config, device=runtime_device)
+    cfg = RolloutConfig(robot=robot_config, policy=policy_config, device=runtime_device, tf32=None)
     robot = MockRobot(robot_config)
     policy = torch.nn.Linear(3, 3)
 
@@ -310,9 +313,10 @@ def test_build_rollout_context_uses_resolved_device(
             robot.disconnect()
 
 
-@pytest.mark.parametrize("failure_stage", ["observation", "processors", "engine"])
-def test_local_setup_failure_disconnects_hardware(monkeypatch, failure_stage):
+@pytest.mark.parametrize("failure_stage", ["engine", "observation"])
+def test_local_setup_failure_releases_hardware_and_dataset(monkeypatch, tmp_path, failure_stage):
     import lerobot.rollout.context as rollout_context
+    from lerobot.configs.dataset import DatasetRecordConfig
     from lerobot.policies import ACTConfig
     from lerobot.processor import PolicyProcessorPipeline
     from lerobot.rollout import RolloutConfig
@@ -322,31 +326,36 @@ def test_local_setup_failure_disconnects_hardware(monkeypatch, failure_stage):
         robot=MockRobotConfig(random_values=False, static_values=[0.0, 0.0, 0.0]),
         policy=ACTConfig(device="cpu", pretrained_path=Path("unused-checkpoint")),
         device="cpu",
+        tf32=None,
     )
+    cfg.dataset = DatasetRecordConfig(repo_id="user/rollout_test", single_task="task", root=tmp_path)
     robot = MockRobot(cfg.robot)
+    dataset = MagicMock(num_episodes=0, repo_id="user/rollout_test")
+    dataset.meta.stats = {}
     failure = RuntimeError("setup failed")
-    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
-    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+
+    def make_engine(*args, **kwargs):
+        assert not robot.is_connected, "the robot connects after the engine is constructed"
+        if failure_stage == "engine":
+            raise failure
+        return MagicMock()
+
     if failure_stage == "observation":
         monkeypatch.setattr(robot, "get_observation", MagicMock(side_effect=failure))
-    elif failure_stage == "processors":
-        monkeypatch.setattr(rollout_context, "make_pre_post_processors", MagicMock(side_effect=failure))
-    else:
-        monkeypatch.setattr(
-            rollout_context,
-            "make_pre_post_processors",
-            lambda **_: (PolicyProcessorPipeline([]), PolicyProcessorPipeline([])),
-        )
-
-        def fail_engine(*args, **kwargs):
-            assert robot.is_connected, "the engine is constructed after hardware is connected"
-            raise failure
-
-        monkeypatch.setattr(rollout_context, "create_inference_engine", fail_engine)
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
+    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr(rollout_context, "LeRobotDataset", MagicMock(create=MagicMock(return_value=dataset)))
+    monkeypatch.setattr(
+        rollout_context,
+        "make_pre_post_processors",
+        lambda **_: (PolicyProcessorPipeline([]), PolicyProcessorPipeline([])),
+    )
+    monkeypatch.setattr(rollout_context, "create_inference_engine", make_engine)
     with pytest.raises(RuntimeError) as raised:
         rollout_context.build_rollout_context(cfg, threading.Event())
     assert raised.value is failure
     assert not robot.is_connected
+    dataset.finalize.assert_called_once()
 
 
 def test_load_pretrained_policy_passes_revision(monkeypatch):
@@ -373,6 +382,30 @@ def test_load_pretrained_policy_passes_revision(monkeypatch):
     )
 
 
+def test_load_pretrained_policy_use_peft_on_base_model_loads_base(monkeypatch):
+    # A `use_peft=True` config pointing at a base model (no adapter_config.json) loads it normally.
+    import lerobot.rollout.context as rollout_context
+
+    policy_config = SimpleNamespace(
+        type="mock",
+        use_peft=True,
+        pretrained_path="user/base-policy",
+        pretrained_revision="base-sha",
+    )
+    policy_class = MagicMock()
+    monkeypatch.setattr(rollout_context, "get_policy_class", lambda _: policy_class)
+    monkeypatch.setattr(rollout_context, "has_peft_adapter_config", lambda *args: False)
+
+    policy = rollout_context._load_pretrained_policy(policy_config)
+
+    assert policy is policy_class.from_pretrained.return_value
+    policy_class.from_pretrained.assert_called_once_with(
+        "user/base-policy",
+        config=policy_config,
+        revision="base-sha",
+    )
+
+
 def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(monkeypatch):
     import lerobot.rollout.context as rollout_context
 
@@ -386,6 +419,8 @@ def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(m
     base_policy = MagicMock()
     policy_class.from_pretrained.return_value = base_policy
     monkeypatch.setattr(rollout_context, "get_policy_class", lambda _: policy_class)
+    # "user/adapter" is a fake repo id: pin the adapter check instead of reaching the Hub.
+    monkeypatch.setattr(rollout_context, "has_peft_adapter_config", lambda *args: True)
 
     peft_config = SimpleNamespace(
         base_model_name_or_path="user/base-policy",
@@ -1604,3 +1639,104 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
     policy.config.use_amp = False
     assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
     _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Policy side outputs
+# ---------------------------------------------------------------------------
+
+
+def test_sync_engine_returns_the_prediction_with_the_action():
+    from lerobot.inference import SyncInferenceEngine
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.utils.constants import ACTION, PREDICTION
+
+    returned = {"subtask": None}
+    policy = MagicMock()
+    policy.config.use_amp = False
+
+    def select_action(_obs):
+        action = torch.zeros(1, 2)
+        if returned["subtask"] is None:
+            return action
+        return {ACTION: action, PREDICTION: {"language": {"subtask": [returned["subtask"]]}}}
+
+    policy.select_action.side_effect = select_action
+    postprocessor = MagicMock(side_effect=lambda action: action + 1)
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=MagicMock(side_effect=lambda obs: obs),
+        postprocessor=postprocessor,
+        dataset_features={},
+        ordered_action_keys=[],
+        task="test",
+        device="cpu",
+        robot_type="mock",
+    )
+
+    # No prediction: a bare action, as before.
+    torch.testing.assert_close(engine.get_action({}), torch.ones(2))
+
+    # With a prediction: a transition carrying the postprocessed action and the prediction.
+    returned["subtask"] = "reach"
+    step = engine.get_action({})
+    assert isinstance(postprocessor.call_args.args[0], torch.Tensor)  # only the action is postprocessed
+    torch.testing.assert_close(step[TransitionKey.ACTION], torch.ones(2))
+    assert transition_to_prediction(step) == {"language": {"subtask": ["reach"]}}
+
+
+class _Identity:
+    """A processor pipeline stand-in with no steps."""
+
+    steps = ()
+
+    def __call__(self, data):
+        return data
+
+    def reset(self):
+        pass
+
+
+def test_send_next_action_returns_the_step_with_the_prediction():
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.processor import create_transition
+    from lerobot.rollout.strategies.core import send_next_action
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, _ = _make_loop_ctx(fps=30.0, multiplier=2, num_ticks=10)
+    engine = ctx.policy.inference
+    engine.get_action.side_effect = [
+        create_transition(action=torch.tensor([1.0]), prediction={"language": {"subtask": ["reach"]}}),
+        torch.tensor([2.0]),
+    ]
+    interpolator = ActionInterpolator(multiplier=2)
+
+    first = send_next_action({"m.pos": 0.0}, {"m.pos": 0.0}, ctx, interpolator)
+    assert first[TransitionKey.ACTION] == {"m.pos": 1.0}
+    assert transition_to_prediction(first) == {"language": {"subtask": ["reach"]}}
+
+    # The next policy step returned a bare action, and the interpolated tick in between
+    # pulled nothing from the engine: neither carries a prediction.
+    for _ in range(2):
+        step = send_next_action({"m.pos": 0.0}, {"m.pos": 0.0}, ctx, interpolator)
+        assert transition_to_prediction(step) == {}
+
+
+def test_log_telemetry_passes_the_step_only_with_display_data(monkeypatch):
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.processor import create_transition
+    from lerobot.rollout.strategies import core
+
+    logged = []
+    monkeypatch.setattr(core, "log_visualization_data", lambda *a, **k: logged.append(k))
+    step = create_transition(action={"m.pos": 1.0}, prediction={"language": {"subtask": ["reach"]}})
+    cfg = SimpleNamespace(display_data=False, display_mode="rerun", display_compressed_images=False)
+    runtime = SimpleNamespace(cfg=cfg)
+
+    core.RolloutStrategy._log_telemetry({"x": 1.0}, step, runtime)
+    assert logged == []
+
+    cfg.display_data = True
+    core.RolloutStrategy._log_telemetry({"x": 1.0}, step, runtime)
+    assert logged[-1]["action"] == step[TransitionKey.ACTION]
+    assert logged[-1]["policy_step"] is step  # passed as is; the viewer extracts what to show

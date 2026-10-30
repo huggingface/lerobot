@@ -22,6 +22,8 @@ Before suggesting any command, an agent MUST ask the user at least these questio
 
 Only after you have answers, propose a concrete path. If something is ambiguous, ask again rather than guessing. Bias toward **the simplest thing that works** for the user's hardware and goal.
 
+If their robot, teleoperator, or camera isn't natively supported, check the community plugins in [`third_party_robots.mdx`](./docs/source/third_party_robots.mdx) and [`third_party_sensors.mdx`](./docs/source/third_party_sensors.mdx) before proposing a custom integration. If nothing fits, follow [`integrate_hardware.mdx`](./docs/source/integrate_hardware.mdx).
+
 ---
 
 ## 2. LeRobot in 60 seconds
@@ -144,7 +146,7 @@ lerobot-replay --robot.type=so101_follower --robot.port=<FOLLOWER_PORT> --robot.
   --dataset.repo_id=${HF_USER}/my_task_YYYYMMDD_HHMMSS --dataset.episode=0
 ```
 
-**4.9 Train** (default: ACT — fastest, lowest memory). Apple silicon: `--policy.device=mps`. No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`, list them with `hf jobs hardware`) to run on Hugging Face Jobs instead. See §6/§7 for policy and duration.
+**4.9 Train** (default: ACT — fastest, lowest memory). Apple silicon: `--policy.device=mps`. No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`, list them with `hf jobs hardware`) to run on Hugging Face Jobs instead; with `--trackio.enable=true`, also pass `--trackio.space_id=<user>/<space>` so the metrics outlive the job. See §6/§7 for policy and duration.
 
 ```bash
 lerobot-train \
@@ -154,7 +156,7 @@ lerobot-train \
   --output_dir=outputs/train/act_my_task \
   --job_name=act_my_task \
   --batch_size=8 \
-  --wandb.enable=true \
+  --trackio.enable=true \
   --policy.repo_id=${HF_USER}/act_my_task
 ```
 
@@ -408,6 +410,7 @@ Single-task grasp-and-place with 50 clean episodes: ACT should reach **> 70% suc
 
 - **Getting started:** [`installation.mdx`](./docs/source/installation.mdx) · [`il_robots.mdx`](./docs/source/il_robots.mdx) · [What makes a good dataset](https://huggingface.co/blog/lerobot-datasets)
 - **Per-policy docs:** browse [`docs/source/*.mdx`](./docs/source/) (policies, hardware, benchmarks, advanced training).
+- **Other hardware:** [`third_party_robots.mdx`](./docs/source/third_party_robots.mdx) · [`third_party_sensors.mdx`](./docs/source/third_party_sensors.mdx) · [`integrate_hardware.mdx`](./docs/source/integrate_hardware.mdx)
 - **Community:** [Discord](https://discord.com/invite/s3KuuzsPFb) · [Hub `LeRobot` tag](https://huggingface.co/datasets?other=LeRobot) · [Dataset visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset)
 
 > Keep this file current. If you learn a rule that would prevent a class of user mistakes, add it here and in [`AGENTS.md`](./AGENTS.md).

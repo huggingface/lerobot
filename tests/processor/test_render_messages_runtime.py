@@ -58,6 +58,7 @@ def test_vqa_preserves_caller_text_and_consumes_request_metadata():
     assert QUERY_TEXT not in data
 
 
+@pytest.mark.dataset
 def test_next_subtask_uses_the_training_recipe_prefix(dataset_dependencies):
     from lerobot.datasets.recipe import render_message_turns
 
@@ -75,6 +76,7 @@ def test_next_subtask_uses_the_training_recipe_prefix(dataset_dependencies):
     assert training[-1] == {"role": "assistant", "content": "pick up cup"}
 
 
+@pytest.mark.dataset
 def test_next_subtask_tolerates_optional_runtime_bindings_that_are_absent(dataset_dependencies):
     from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
 
@@ -117,6 +119,7 @@ def test_ordinary_action_inputs_and_existing_messages_pass_through():
     assert step(messages_transition) == messages_transition
 
 
+@pytest.mark.dataset
 def test_runtime_rendering_is_stateless_and_does_not_mutate_inputs(dataset_dependencies):
     recipe = _recipe()
     original_recipe = asdict(recipe)
@@ -188,6 +191,7 @@ def test_rendered_messages_survive_conversion_and_batching():
     assert "messages" not in result
 
 
+@pytest.mark.dataset
 def test_same_pipeline_handles_training_then_text_and_action_inference(dataset_dependencies):
     import torch
 

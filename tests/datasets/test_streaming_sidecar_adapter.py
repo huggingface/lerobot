@@ -31,6 +31,8 @@ from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.sidecar import SidecarSpec, ensure_mp4_sidecar
 from tests.test_streaming_sidecar import _write_valid
 
+pytestmark = pytest.mark.dataset
+
 
 def test_hub_data_root_is_revision_qualified() -> None:
     meta = SimpleNamespace(repo_id="owner/dataset", revision="a" * 40)

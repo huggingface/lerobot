@@ -636,6 +636,24 @@ def test_evo1_rtc_processor_wiring(monkeypatch):
         policy.select_action(make_batch(include_action=False))
 
 
+def test_flowmatching_head_takes_the_starting_noise():
+    head = make_flowmatching_head().eval()
+    fused = torch.randn(2, 4, EMBED_DIM)
+    state = torch.randn(2, STATE_DIM)
+    action_mask = torch.ones(2, ACTION_DIM, dtype=torch.bool)
+    noise = torch.rand(2, CHUNK_SIZE, ACTION_DIM) * 2 - 1
+    given = noise.clone()
+
+    torch.manual_seed(0)
+    first = head.get_action(fused, state=state, action_mask=action_mask, noise=noise)
+    torch.manual_seed(1)
+    second = head.get_action(fused, state=state, action_mask=action_mask, noise=noise)
+    torch.testing.assert_close(first, second)
+    torch.testing.assert_close(noise, given)
+    with pytest.raises(ValueError, match="noise must have shape"):
+        head.get_action(fused, state=state, action_mask=action_mask, noise=noise.flatten(1))
+
+
 def test_flowmatching_rtc_guidance_pulls_prefix_toward_previous_chunk():
     head = make_flowmatching_head(num_inference_timesteps=16)
     processor = RTCProcessor(RTCConfig(execution_horizon=CHUNK_SIZE))

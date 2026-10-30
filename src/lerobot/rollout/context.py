@@ -54,6 +54,7 @@ from lerobot.policies import (
     make_pre_post_processors,
     validate_trained_rtc_horizon,
 )
+from lerobot.policies.factory import has_peft_adapter_config
 from lerobot.processor import (
     PolicyProcessorPipeline,
     RenderRuntimeMessagesStep,
@@ -281,7 +282,8 @@ def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy
     pretrained_revision = policy_config.pretrained_revision
     policy_class = get_policy_class(policy_config.type)
 
-    if not policy_config.use_peft:
+    # A `use_peft=True` config can still point at a base model (see `has_peft_adapter_config`).
+    if not (policy_config.use_peft and has_peft_adapter_config(pretrained_path, pretrained_revision)):
         return policy_class.from_pretrained(
             pretrained_path,
             config=policy_config,
@@ -328,18 +330,21 @@ def _disconnect_setup_hardware(robot: Robot, teleop: Teleoperator | None) -> Non
             logger.exception("Could not close %s after rollout setup failed", name)
 
 
-def _connect_rollout_hardware(
+def _prepare_rollout_devices(
     cfg: RolloutConfig,
     *,
     require_hold: bool = False,
     validate_simulator: Callable[[SimRobot], None] | None = None,
-) -> HardwareContext:
-    """Connect devices and capture the initial pose after policy/descriptor validation."""
+) -> tuple[ThreadSafeRobot, Teleoperator | None]:
+    """Construct rollout devices without opening their hardware resources.
+
+    A sim robot builds its simulator here, so its control rate and descriptor are checked before anything
+    connects or loads.
+    """
     if cfg.robot is None:
         raise ValueError("--robot.type is required for rollout")
     robot = make_robot_from_config(cfg.robot)
     wrapper = ThreadSafeRobot(robot)
-    teleop = None
     try:
         check_control_rate(robot, cfg.fps, "--fps", cfg.interpolation_multiplier)
         if isinstance(robot, SimRobot):
@@ -349,15 +354,25 @@ def _connect_rollout_hardware(
                 validate_checkpoint(robot.descriptor, cfg.policy, cfg.rename_map)
         if require_hold:
             wrapper.configure_hold()
-        logger.info("Connecting robot (%s)...", cfg.robot.type)
+        teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    except BaseException:
+        _disconnect_setup_hardware(robot, None)
+        raise
+    return wrapper, teleop
+
+
+def _connect_rollout_hardware(wrapper: ThreadSafeRobot, teleop: Teleoperator | None) -> HardwareContext:
+    """Connect prepared devices and capture the robot's initial position."""
+    robot = wrapper.inner
+    try:
+        logger.info("Connecting robot (%s)...", wrapper.robot_type)
         robot.connect()
         logger.info("Robot connected: %s", robot.name)
         initial_obs = wrapper.get_observation()
         initial_position = {key: value for key, value in initial_obs.items() if key.endswith(".pos")}
         logger.info("Captured initial robot position (%d keys)", len(initial_position))
-        if cfg.teleop is not None:
-            logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
-            teleop = make_teleoperator_from_config(cfg.teleop)
+        if teleop is not None:
+            logger.info("Connecting teleoperator (%s)...", teleop.name)
             teleop.connect()
             logger.info("Teleoperator connected")
         return HardwareContext(wrapper, teleop, initial_position)
@@ -479,6 +494,9 @@ def build_rollout_context(
 
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
 
     if policy_config.type == "vqbet" and cfg.device == "mps":
         raise NotImplementedError(
@@ -523,9 +541,10 @@ def build_rollout_context(
     processors = _resolve_robot_processors(
         teleop_action_processor, robot_action_processor, robot_observation_processor
     )
-    hardware = _connect_rollout_hardware(cfg)
-    robot_wrapper = hardware.robot_wrapper
+    robot_wrapper, teleop = _prepare_rollout_devices(cfg)
     robot = robot_wrapper.inner
+    dataset: LeRobotDataset | None = None
+    hardware: HardwareContext | None = None
 
     try:
         # Retain position and base-velocity channels for mobile manipulators, plus cameras.
@@ -626,6 +645,9 @@ def build_rollout_context(
         )
         _attach_planner(cfg, inference_strategy, robot_wrapper, preprocessor, policy_config)
 
+        # Keep hardware closed while loading resources that may block robot control threads.
+        hardware = _connect_rollout_hardware(robot_wrapper, teleop)
+
         logger.info("Rollout context assembled successfully")
         return RolloutContext(
             runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event),
@@ -645,7 +667,13 @@ def build_rollout_context(
             ),
         )
     except BaseException:
-        _disconnect_setup_hardware(robot, hardware.teleop)
+        # Also before connecting: a sim robot holds its simulator from construction.
+        _disconnect_setup_hardware(robot, hardware.teleop if hardware is not None else teleop)
+        if dataset is not None:
+            try:
+                dataset.finalize()
+            except Exception:
+                logger.exception("Could not close dataset after rollout setup failed")
         raise
 
 
@@ -759,8 +787,10 @@ def build_remote_rollout_context(
                 if replace(actual, name=feature.name) != feature:
                     raise ValueError("Remote observation declaration differs from simulator declaration")
 
-        hardware = _connect_rollout_hardware(cfg, require_hold=True, validate_simulator=validate_simulator)
-        wrapper = hardware.robot_wrapper
+        wrapper, teleop = _prepare_rollout_devices(
+            cfg, require_hold=True, validate_simulator=validate_simulator
+        )
+        hardware = _connect_rollout_hardware(wrapper, teleop)
         robot = wrapper.inner
 
         observation_hw: dict[str, type | tuple] = {

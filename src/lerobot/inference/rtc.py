@@ -27,11 +27,13 @@ from typing import Any
 
 import torch
 
+from lerobot.lerobot_types import EnvTransition
 from lerobot.policies import ActionQueue, PreTrainedPolicy, RTCConfig, prepare_observation_for_inference
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    create_transition,
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -362,8 +364,11 @@ class RTCInferenceEngine(InferenceEngine):
     # Action production (called from main thread)
     # ------------------------------------------------------------------
 
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
+    def get_action(self, obs_frame: dict | None) -> torch.Tensor | EnvTransition | None:
+        """Pop the next action from the RTC queue (ignores ``obs_frame``).
+
+        The first action served after a chunk is accepted carries that chunk's prediction.
+        """
         queued = self._runtime.pop()
         if self._runtime.starvation_deadline is not None and self._runtime.held:
             self._request_hold("Action starvation", self._runtime.starvation_grace)
@@ -371,7 +376,9 @@ class RTCInferenceEngine(InferenceEngine):
             return None
         action, provenance = queued
         self._set_dispatched_task(provenance.task)
-        return action
+        if (prediction := self._runtime.take_prediction()) is None:
+            return action
+        return create_transition(action=action, prediction=prediction)
 
     def notify_observation(self, obs: dict) -> None:
         """Publish an owned snapshot and its original control-thread capture time."""
@@ -641,6 +648,7 @@ class RTCInferenceEngine(InferenceEngine):
                     canonical_actions=processed,
                     execution_steps=len(processed),
                     provenance=ActionProvenance(capture_time, task, task_version),
+                    prediction=prediction.prediction,
                 )
                 with self._task_lock:
                     accepted = self._runtime.accept(request, chunk, task_version=self._task_version)

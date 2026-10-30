@@ -15,7 +15,7 @@
 # limitations under the License.
 import logging
 import math
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
 import numpy as np
 import torch
@@ -53,7 +53,7 @@ class EpisodeAwareSampler:
         drop_n_last_frames: int = 0,
         shuffle: bool = False,
         seed: int = 0,
-        absolute_to_relative_idx: dict[int, int] | None = None,
+        absolute_to_relative_idx: Mapping[int, int] | None = None,
     ):
         """
         Args:
