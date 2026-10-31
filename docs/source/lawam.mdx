@@ -128,6 +128,43 @@ Common LaWAM-specific policy fields:
 | `flow_state_dim`  | Internal padded state dimension used by the LaWAM flow head.               |
 | `embodiment_id`   | LaWAM embodiment ID used when the LeRobot dataset does not provide one.    |
 
+## Export with torch.export
+
+`torch.export` cannot trace the stock Qwen3-VL vision tower, because it reads the image grid (`image_grid_thw`)
+into Python numbers. Build the grid data once from a preprocessed batch with the camera layout you deploy, and
+pass it to `predict_action_chunk`. The VLM loads with flash attention when it can, which export refuses, so
+switch it to SDPA first:
+
+```python
+import torch
+
+from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid
+
+vlm = policy.model.policy_backend.vlm
+vlm.set_attn_implementation("sdpa")
+grid = Qwen3VisionGrid.build(vlm.model.visual, batch["image_grid_thw"])
+tensors = {key: value for key, value in batch.items() if isinstance(value, torch.Tensor)}
+
+
+class Predict(torch.nn.Module):
+    def __init__(self, policy):
+        super().__init__()
+        self.policy = policy
+
+    def forward(self, tensors, noise):
+        return self.policy.predict_action_chunk({**batch, **tensors}, noise=noise, vision_grid=grid)
+
+
+noise = torch.randn(batch["input_ids"].shape[0], policy.config.chunk_size, policy.config.flow_action_dim)
+with torch.no_grad():
+    program = torch.export.export(Predict(policy), (tensors, noise), strict=False)
+```
+
+The program refuses inputs whose image grid differs from the one `grid` was built for, and keeps the batch
+size and prompt length it was exported with. It takes the starting `noise` as an input, so the caller draws it.
+An eager call with the same `noise` and `vision_grid=grid` runs the same code as the program and says which
+check refused an input.
+
 ## Citation
 
 ```bibtex
