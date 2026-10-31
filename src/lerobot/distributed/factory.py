@@ -140,7 +140,8 @@ def set_fsdp_wrap_modules(accelerator: "Accelerator", policy: "PreTrainedPolicy"
         raise ValueError(
             f"Policy '{type(policy).__name__}' declares no FSDP wrap units. Sharded training "
             "requires wrap-unit class names: set --accelerator.fsdp.wrap_modules='[\"MyBlock\"]' "
-            "(or --accelerator.fsdp.min_num_params for a size-based policy), or declare "
+            "(or --accelerator.fsdp.min_num_params for a size-based policy, if the policy has no tied "
+            "weights), or declare "
             "`_fsdp_wrap_modules` on the policy class."
         )
     plugin.transformer_cls_names_to_wrap = list(declared)

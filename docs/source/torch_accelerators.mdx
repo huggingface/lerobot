@@ -21,9 +21,9 @@ For XPU backend, follow instructions from [PyTorch documentation](https://docs.p
 ROCm builds of PyTorch expose the HIP runtime through the `torch.cuda` namespace, so
 `--policy.device=cuda` selects an AMD GPU and no LeRobot-side change is needed. `HIP_VISIBLE_DEVICES` is preferred over `CUDA_VISIBLE_DEVICES` when selecting specific cards.
 
-Installing LeRobot on top of an existing ROCm PyTorch needs care: LeRobot pins
-`torch<2.12`, `torchvision<0.27` and `numpy<2.3`, all below what current ROCm images
-ship, and `[tool.uv.sources]` resolves torch from the CUDA `cu128` index, so an
+Installing LeRobot on top of an existing ROCm PyTorch needs care: LeRobot's `torch`,
+`torchvision` and `numpy` bounds need not match what a ROCm image ships, and a normal
+install takes torch from PyPI, whose Linux wheels are CUDA builds, so an
 unconstrained install replaces the ROCm build and leaves the GPUs unusable. Pin those
 packages with `uv pip install --override` so the rest of the tree resolves normally.
 [`docker/Dockerfile.rocm`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.rocm)
