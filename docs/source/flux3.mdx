@@ -13,8 +13,15 @@ For training a new robot embodiment from the base model or full finetuning, use 
 
 ## Installation
 
-The Video VAE requires **NATTEN** 0.21.6 or newer, as a wheel built for your exact torch and CUDA versions, from https://whl.natten.org.
-NATTEN publishes wheels for torch 2.10 to 2.13, but not yet for the torch 2.15 LeRobot installs by default, so install a supported torch first. For example, from the LeRobot checkout, torch 2.13 with CUDA 13.0 together with the training, policy, PEFT and EMA dependencies. As in the [installation guide](./installation#pytorch-cuda-variant-linux-only), TorchCodec comes from the CPU index:
+From the LeRobot checkout, install the training, policy, PEFT and EMA dependencies:
+
+```bash
+pip install -e ".[training,flux3,peft,diffusion]"
+```
+
+Without **NATTEN**, the Video VAE computes its neighborhood attention in plain PyTorch, on the GPU or the CPU. On an NVIDIA GPU, NATTEN makes it much faster, and frame checkpoints need it to run in real time: a frame checkpoint, such as the DROID one, encodes the current frame as a 45-frame clip for every prediction, which takes about 0.6 s with NATTEN and 7 s without it on an A100. History checkpoints encode one frame per history snapshot. On the CPU, with 16 threads and the default 256 × 512 canvas, that takes about 1 second per policy step, against about 2 minutes for frame conditioning. Decoding videos, which the policy does not do, needs a CUDA GPU.
+
+NATTEN 0.21.6 or newer needs a wheel built for your exact torch and CUDA versions, from https://whl.natten.org. NATTEN publishes wheels for Linux with CUDA and torch 2.10 to 2.13, but not yet for the torch 2.15 LeRobot installs by default. To use NATTEN, install with these commands instead of the one above, for example for torch 2.13 with CUDA 13.0. As in the [installation guide](./installation#pytorch-cuda-variant-linux-only), TorchCodec comes from the CPU index:
 
 ```bash
 pip install --index-url https://download.pytorch.org/whl/cu130 \
@@ -27,7 +34,7 @@ pip install 'natten==0.21.7+torch2130cu130' --find-links https://whl.natten.org
 
 For an NVIDIA driver older than 580.65, use the CUDA 12.6 build instead: the `cu126` index, the `+cu126` torch and torchvision tags, and `natten==0.21.7+torch2130cu126`. For another torch version, use the NATTEN wheel whose tag matches it, such as `natten==0.21.6+torch2110cu130` for torch 2.11 with CUDA 13.0.
 
-NATTEN picks the fastest backend that your GPU and wheel support, and `NATTEN_LOG_LEVEL=DEBUG` logs its choice, except in a VAE compiled with `--policy.compile_model=true`. To choose a backend yourself, set `F3_NATTEN_BACKEND` to `blackwell-fna`, `hopper-fna` or `cutlass-fna`. `flex-fna` runs everywhere but is much slower and needs far more memory: a full-size chunk can run out of GPU memory, and with `--policy.compile_model=true` it can fail to compile.
+NATTEN picks the fastest backend that your GPU and wheel support, and `NATTEN_LOG_LEVEL=DEBUG` logs its choice, except in a VAE compiled with `--policy.compile_model=true`. To choose a backend yourself, set `F3_NATTEN_BACKEND` to `blackwell-fna`, `hopper-fna` or `cutlass-fna`. `flex-fna` runs everywhere but is much slower and needs far more memory: a full-size chunk can run out of GPU memory, and with `--policy.compile_model=true` it can fail to compile. `F3_NATTEN_BACKEND` applies only where NATTEN runs: on CUDA tensors, with NATTEN installed.
 
 ## SO-101 task adaptation
 

@@ -506,6 +506,7 @@ def test_frozen_warmup_constant_scheduler():
     assert cool(89) == 1.0 and math.isclose(cool(95), 0.5)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
 def test_natten_kernels_get_the_backend_of_the_environment(monkeypatch):
     calls = []
 
@@ -515,17 +516,19 @@ def test_natten_kernels_get_the_backend_of_the_environment(monkeypatch):
         calls.append(backend)
         return v
 
+    # Only CUDA tensors reach NATTEN's kernels.
+    monkeypatch.setattr(video_vae, "_natten_available", True)
     monkeypatch.setattr(video_vae, "na2d", kernel, raising=False)
     monkeypatch.setattr(video_vae, "na3d", kernel, raising=False)
     # One layer for every call, so that no call can keep the backend of an earlier one.
-    layer = video_vae.Natten3D(16, [3, 3, 3], 2)
+    layer = video_vae.Natten3D(16, [3, 3, 3], 2).cuda()
     # A name NATTEN does not know goes through as it is, so that NATTEN reports it.
     for frames, backend in [(1, None), (1, "flex-fna"), (3, "no-such-backend"), (3, None), (1, None)]:
         if backend is None:
             monkeypatch.delenv("F3_NATTEN_BACKEND", raising=False)
         else:
             monkeypatch.setenv("F3_NATTEN_BACKEND", backend)
-        layer(torch.randn(1, frames, 4, 4, 16))
+        layer(torch.randn(1, frames, 4, 4, 16, device="cuda"))
     assert calls == [None, "flex-fna", "no-such-backend", None, None]
 
 

@@ -32,7 +32,6 @@ def test_vae_dependency_errors(failure):
 
         failure = sys.argv[1]
         import_utils._natten_available = failure == "broken_natten"
-        import_utils._require_package_cache["natten"] = False
         original_import = builtins.__import__
 
         def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
@@ -60,13 +59,10 @@ def test_vae_dependency_errors(failure):
             assert str(exc) == expected[failure], exc
         else:
             assert failure == "missing"
-            try:
-                f3.load_video_vae(None)
-            except ImportError as exc:
-                assert "requires NATTEN" in str(exc), exc
-                assert "whl.natten.org" in str(exc), exc
-            else:
-                raise AssertionError("VAE construction should require NATTEN")
+            import torch
+
+            attention = f3.video_vae.Natten3D(16, [3, 3, 3], 2)
+            assert attention(torch.randn(1, 3, 4, 4, 16)).shape == (1, 3, 4, 4, 16)
         """
     )
     result = subprocess.run(
