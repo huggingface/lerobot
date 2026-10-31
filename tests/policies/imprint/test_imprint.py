@@ -23,6 +23,7 @@ measure the paper's robot success rates.
 
 from __future__ import annotations
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -506,3 +507,21 @@ def test_stage1_memory_transfers_and_inference_resets(tmp_path) -> None:
     assert int(loaded.finalized_chunk_counts()[0]) == 1
     loaded.reset()
     assert loaded.finalized_chunk_counts().numel() == 0
+
+
+@pytest.mark.parametrize("encoder", ["recurrent", "full_attention"])
+@pytest.mark.parametrize("changed", ["state", "action"])
+def test_episode_history_owns_caller_buffers(encoder: str, changed: str) -> None:
+    torch.manual_seed(17)
+    policy = ImprintPolicy(tiny_config(encoder=encoder))
+    step = {CAM: _visual(1, 1), OBS_STATE: _state(1, 1)}
+    original_state = step[OBS_STATE].clone()
+    action = policy.select_action(step)
+    original_action = action.clone()
+    if changed == "state":
+        step[OBS_STATE].fill_(99)
+    else:
+        action.fill_(99)
+    policy.select_action({CAM: _visual(1, 1), OBS_STATE: _state(1, 1)})
+    torch.testing.assert_close(policy._hist_state[:, 0], original_state[:, 0])
+    torch.testing.assert_close(policy._hist_causal[:, 1], original_action)

@@ -369,7 +369,7 @@ class ImprintPolicy(PreTrainedPolicy):
             actions = self._sample_actions(obs, memory, valid)
             self._action_queue.extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
         action = self._action_queue.popleft()
-        self._last_action = action.detach()
+        self._last_action = action.detach().clone()
         return action
 
     def _joint_forward(self, batch: dict[str, Tensor], reduction: str) -> tuple[Tensor, dict[str, float]]:
@@ -514,7 +514,7 @@ class ImprintPolicy(PreTrainedPolicy):
 
     def _append_step(self, visual: Tensor, state: Tensor, causal: Tensor) -> None:
         visual = visual.detach()
-        state = state.detach()
+        state = state.detach().clone()
         causal = causal.detach()
         if self._hist_visual is None or self._hist_state is None or self._hist_causal is None:
             self._hist_visual = visual.unsqueeze(1)
