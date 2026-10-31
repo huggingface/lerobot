@@ -50,8 +50,8 @@ def export_prediction(policy, batch, noise, grid):
             PredictActionChunk(), (noise.clone(), *(batch[key] for key in keys)), strict=False
         )
 
-    def run(inputs, noise=noise):
-        return program.module()(noise.clone(), *(inputs[key] for key in keys))
+    def run(inputs, noise=noise, lowered=program):
+        return lowered.module()(noise.clone(), *(inputs[key] for key in keys))
 
     return program, run
 

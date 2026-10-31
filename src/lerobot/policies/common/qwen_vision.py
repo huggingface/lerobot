@@ -245,3 +245,14 @@ def qwen_image_rope_index(
     position_ids = torch.stack([start, start, start])
     image_offsets = torch.zeros_like(position_ids).masked_scatter(is_image.expand_as(position_ids), offsets)
     return (position_ids + image_offsets).masked_fill(~valid, padding_position)
+
+
+def marked_token_positions(mask: Tensor, count: int) -> Tensor:
+    """The positions of the first `count` True values in each row of `mask`, in order: `[B, count]`.
+
+    The caller checks that every row holds `count` of them. Unlike `nonzero`, the result has a fixed shape under
+    `torch.export`.
+    """
+    length = mask.shape[1]
+    positions = torch.arange(length, device=mask.device)
+    return torch.where(mask, positions, length).topk(count, dim=1, largest=False).indices
