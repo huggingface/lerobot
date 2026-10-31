@@ -33,6 +33,10 @@ from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..chunk import ChunkPolicySpec
+from ..common.export_utils import is_non_strict_exporting
+from ..common.input_checks import check_input
+from ..common.qwen3_vision import Qwen3VisionGrid, qwen3_vl_forward
+from ..common.qwen_vision import marked_token_positions, qwen_image_rope_index
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoModel, AutoVideoProcessor
@@ -144,7 +148,9 @@ class VLAJEPAModel(nn.Module):
             self.config.embodied_action_token * self.config.num_embodied_action_tokens_per_instruction
         )
 
-    def _qwen_last_decoder_hidden(self, qwen_inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+    def _qwen_last_decoder_hidden(
+        self, qwen_inputs: dict[str, torch.Tensor], vision_grid: Qwen3VisionGrid | None = None
+    ) -> torch.Tensor:
         """Return the last decoder hidden state before the final RMSNorm.
 
         The model was trained on the last block's pre-RMSNorm output, but in transformers 5.x
@@ -154,6 +160,9 @@ class VLAJEPAModel(nn.Module):
         forward would build and discard full-sequence logits over the 151936-token vocab (~3.4 GB
         in bf16 at batch 8). The wrapper stays as `self.qwen.model` so `lm_head` keeps its
         checkpoint key; only this path skips it.
+
+        Given `vision_grid`, `Qwen3VisionGrid.build(visual, image_grid_thw)`, Qwen runs on it, with the rope
+        positions its stock forward computes, so that `torch.export` can trace it.
         """
         captured: list[torch.Tensor] = []
 
@@ -161,10 +170,30 @@ class VLAJEPAModel(nn.Module):
             h = output[0] if isinstance(output, tuple) else output
             captured.append(h)
 
-        last_layer = self.qwen.model.model.language_model.layers[-1]
-        handle = last_layer.register_forward_hook(_hook)
+        qwen = self.qwen.model.model
+        if vision_grid is None and is_non_strict_exporting() and "pixel_values" in qwen_inputs:
+            raise ValueError(
+                "Exporting VLA-JEPA with images needs a vision_grid (see `VLAJEPAModel.predict_action`)."
+            )
+        handle = qwen.language_model.layers[-1].register_forward_hook(_hook)
         try:
-            self.qwen.model.model(**qwen_inputs)
+            if vision_grid is not None:
+                input_ids, attention_mask = qwen_inputs["input_ids"], qwen_inputs["attention_mask"]
+                position_ids = qwen_image_rope_index(
+                    input_ids, attention_mask, vision_grid.grid_thw, qwen.config
+                )
+                qwen3_vl_forward(
+                    qwen,
+                    qwen.get_input_embeddings()(input_ids),
+                    attention_mask,
+                    qwen_inputs["pixel_values"],
+                    qwen_inputs["image_grid_thw"],
+                    vision_grid,
+                    image_mask=input_ids == qwen.config.image_token_id,
+                    position_ids=position_ids,
+                )
+            else:
+                qwen(**qwen_inputs)
         finally:
             handle.remove()
 
@@ -172,18 +201,38 @@ class VLAJEPAModel(nn.Module):
 
     # ---- Native VLA-JEPA forward (follows original VLA_JEPA.py) ----
 
-    def _encode_qwen(
-        self, images: list[list[Tensor]], instructions: list[str], *, need_action_tokens: bool
-    ) -> tuple[Tensor, Tensor | None]:
-        """Run Qwen and gather the embodied-action (and optionally action) token hidden states."""
-        qwen_inputs = self.qwen.build_inputs(
+    def qwen_inputs(self, images: list[list[Tensor]], instructions: list[str]) -> dict[str, Tensor]:
+        """The Qwen3-VL processor tensors of per-sample, per-view images and their instructions.
+
+        Images not at `resize_images_to` yet are resized to it, as `VLAJEPAPolicy._prepare_model_inputs` does.
+        """
+        if self.config.resize_images_to is not None:
+            size = tuple(self.config.resize_images_to)
+            images = [
+                [
+                    img
+                    if tuple(img.shape[-2:]) == size
+                    else F.interpolate(img[None], size=size, mode="area")[0]
+                    for img in views
+                ]
+                for views in images
+            ]
+        return self.qwen.build_inputs(
             images=images,
             instructions=instructions,
             action_prompt=self.replace_prompt,
             embodied_prompt=self.embodied_replace_prompt,
         )
+
+    def _encode_qwen(
+        self,
+        qwen_inputs: dict[str, Tensor],
+        *,
+        need_action_tokens: bool,
+        vision_grid: Qwen3VisionGrid | None = None,
+    ) -> tuple[Tensor, Tensor | None]:
+        """Run Qwen and gather the embodied-action (and optionally action) token hidden states."""
         input_ids = qwen_inputs["input_ids"]
-        embodied_idx = (input_ids == self.embodied_action_token_id).nonzero(as_tuple=True)
         action_idx = None
         if need_action_tokens:
             action_mask = torch.isin(input_ids, self._action_token_ids_t)
@@ -191,15 +240,30 @@ class VLAJEPAModel(nn.Module):
 
         device_type = next(self.parameters()).device.type
         with get_autocast_context(device_type, torch.bfloat16):
-            last_hidden = self._qwen_last_decoder_hidden(qwen_inputs)  # [B, seq_len, H]
+            last_hidden = self._qwen_last_decoder_hidden(qwen_inputs, vision_grid)  # [B, seq_len, H]
             b, _, h = last_hidden.shape
-            embodied_action_tokens = last_hidden[embodied_idx[0], embodied_idx[1], :].view(b, -1, h)
+            embodied_action_tokens = self._embodied_token_states(last_hidden, input_ids)
             action_tokens = (
                 last_hidden[action_idx[0], action_idx[1], :].view(b, -1, h)
                 if action_idx is not None
                 else None
             )
         return embodied_action_tokens, action_tokens
+
+    def _embodied_token_states(self, hidden: Tensor, input_ids: Tensor) -> Tensor:
+        """The hidden states of each prompt's embodied-action tokens, in order: `[B, num_embodied, H]`.
+
+        They are found by counting, not with `nonzero`, so `torch.export` gives them a fixed shape.
+        """
+        count = self.config.num_embodied_action_tokens_per_instruction
+        is_embodied = input_ids == self.embodied_action_token_id
+        per_sample = is_embodied.sum(dim=1)
+        check_input(
+            per_sample == count,
+            lambda: f"Each prompt must hold {count} embodied action tokens, got {per_sample.tolist()}.",
+        )
+        positions = marked_token_positions(is_embodied, count)
+        return hidden.gather(1, positions.unsqueeze(-1).expand(-1, -1, hidden.shape[-1]))
 
     def _causal_video_embeddings(self, video_pixels: Tensor, tubelet_size: int, num_positions: int) -> Tensor:
         """Encode `num_positions` leading temporal positions from only their own raw-frame prefix.
@@ -338,7 +402,7 @@ class VLAJEPAModel(nn.Module):
         returns scalar losses.
         """
         embodied_action_tokens, action_tokens = self._encode_qwen(
-            images, instructions, need_action_tokens=self.config.enable_world_model
+            self.qwen_inputs(images, instructions), need_action_tokens=self.config.enable_world_model
         )
 
         if self.config.enable_world_model and videos is not None:
@@ -360,21 +424,20 @@ class VLAJEPAModel(nn.Module):
     @torch.no_grad()
     def predict_action(
         self,
-        images: list[list[Tensor]],
-        instructions: list[str],
+        qwen_inputs: dict[str, Tensor],
         state: Tensor | None = None,
         *,
         noise: Tensor | None = None,
+        vision_grid: Qwen3VisionGrid | None = None,
     ) -> Tensor:
-        """Predict an action chunk. `images` is per-sample, per-view float [0,1] [C, H, W] tensors."""
-        if self.config.resize_images_to is not None:
-            height, width = self.config.resize_images_to
-            images = [
-                [F.interpolate(img[None], size=(height, width), mode="area")[0] for img in views]
-                for views in images
-            ]
+        """Predict an action chunk from the Qwen3-VL processor tensors that `qwen_inputs()` makes.
 
-        embodied_action_tokens, _ = self._encode_qwen(images, instructions, need_action_tokens=False)
+        To export with `torch.export`, pass `vision_grid`, built once by
+        `Qwen3VisionGrid.build(self.qwen.model.model.visual, qwen_inputs["image_grid_thw"])`.
+        """
+        embodied_action_tokens, _ = self._encode_qwen(
+            qwen_inputs, need_action_tokens=False, vision_grid=vision_grid
+        )
         return self.action_model.predict_action(
             embodied_action_tokens.float(), state.float() if state is not None else None, noise=noise
         )
@@ -453,10 +516,10 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 "task": str | List[str],  (optional instruction)
             }
 
-        Returns the kwargs for `VLAJEPAModel.forward` / `.predict_action` (everything stays
-        on the batch device; no per-sample shredding): `images` (per-sample, per-view list for
-        Qwen messages), `instructions`, and the batched `videos` / `actions` / `state` /
-        `action_is_pad` when present.
+        Returns the kwargs for `VLAJEPAModel.forward` and, through `VLAJEPAModel.qwen_inputs`, for
+        `.predict_action` (everything stays on the batch device; no per-sample shredding): `images`
+        (per-sample, per-view list for Qwen messages), `instructions`, and the batched `videos` /
+        `actions` / `state` / `action_is_pad` when present.
         """
         image_keys = list(self.config.image_features.keys())
         if not image_keys:
@@ -464,8 +527,8 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         batch_size = batch[image_keys[0]].shape[0]
 
         # Current-frame image per view ([B, C, H, W]); regroup per sample for Qwen messages. Resize to
-        # `resize_images_to` as `predict_action` does, so training and inference feed Qwen the same
-        # resolution and native frames (e.g. 720x1280) don't blow up the vision-tower patch count.
+        # `resize_images_to` for training and inference alike, so Qwen always sees the same resolution
+        # and native frames (e.g. 720x1280) don't blow up the vision-tower patch count.
         resize_hw = tuple(self.config.resize_images_to) if self.config.resize_images_to else None
         frames = []
         for key in image_keys:
@@ -554,9 +617,8 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         inputs = self._prepare_model_inputs(batch, training=False)
-        actions = self.model.predict_action(
-            inputs["images"], inputs["instructions"], inputs.get("state"), noise=noise
-        )
+        qwen_inputs = self.model.qwen_inputs(inputs["images"], inputs["instructions"])
+        actions = self.model.predict_action(qwen_inputs, inputs.get("state"), noise=noise)
         return actions.to(device=self.config.device, dtype=torch.float32)
 
     @torch.no_grad()
