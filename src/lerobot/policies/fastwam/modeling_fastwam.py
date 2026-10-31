@@ -206,8 +206,6 @@ class FastWAMPolicy(PreTrainedPolicy):
         for key in mismatched:
             state_dict.pop(key, None)
         model.load_state_dict(state_dict, strict=False)
-        if map_location and map_location != "cpu":
-            model.to(map_location)
         return model
 
     def get_optim_params(self) -> list[torch.nn.Parameter]:

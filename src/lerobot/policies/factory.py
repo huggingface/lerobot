@@ -292,6 +292,8 @@ def load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy:
         adapter_path,
         config=peft_config,
         revision=pretrained_revision,
+        # PEFT otherwise maps the adapter file on the accelerator it finds, not where the policy is.
+        torch_device="cpu",
     )
 
 
@@ -486,6 +488,8 @@ def make_policy(
                 config=peft_config,
                 revision=cfg.pretrained_revision,
                 is_trainable=True,
+                # PEFT otherwise maps the adapter file on the accelerator it finds, not where the policy is.
+                torch_device="cpu",
             )
 
     else:

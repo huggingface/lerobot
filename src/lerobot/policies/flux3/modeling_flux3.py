@@ -312,7 +312,7 @@ class Flux3Policy(PreTrainedPolicy):
             )
             state.update({k: fresh[k.removeprefix("dit.")] for k in fresh_missing})
         model.load_state_dict(state, strict=True)
-        return model.to(map_location)
+        return model
 
     # ------------------------------------------------------------------ batch helpers
     def _flip(self, x: Tensor) -> Tensor:

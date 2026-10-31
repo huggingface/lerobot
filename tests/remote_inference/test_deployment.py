@@ -101,6 +101,34 @@ def test_use_peft_checkpoint_without_adapter_loads_as_base_model(deployment, tmp
     assert isinstance(runner.policy, ACTPolicy)
 
 
+def test_peft_adapter_is_mapped_on_the_cpu(deployment, tmp_path, monkeypatch):
+    checkpoint = tmp_path / "checkpoint"
+    copytree(deployment.model.repo_or_path, checkpoint)
+    config_path = checkpoint / "config.json"
+    config = json.loads(config_path.read_text())
+    config["use_peft"] = True
+    config_path.write_text(json.dumps(config))
+    adapter = SimpleNamespace(base_model_name_or_path=deployment.model.repo_or_path, revision=None)
+    adapter_kwargs = {}
+
+    def load_adapter(policy, path, **kwargs):
+        adapter_kwargs.update(kwargs)
+        return policy
+
+    monkeypatch.setattr(serving, "has_peft_adapter_config", lambda path: True)
+    monkeypatch.setattr(serving, "require_package", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        serving, "PeftConfig", SimpleNamespace(from_pretrained=lambda path: adapter), raising=False
+    )
+    monkeypatch.setattr(serving, "PeftModel", SimpleNamespace(from_pretrained=load_adapter), raising=False)
+
+    serving.load_deployment(
+        replace(deployment, model=replace(deployment.model, repo_or_path=str(checkpoint)))
+    )
+
+    assert adapter_kwargs == {"config": adapter, "torch_device": "cpu"}
+
+
 def test_requested_rtc_is_attached_without_a_saved_dataclass_field(deployment, monkeypatch):
     def load_policy(path, config):
         assert config.rtc_config.enabled

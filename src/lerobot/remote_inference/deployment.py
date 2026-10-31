@@ -151,7 +151,10 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
         base = resolve_artifact(adapter.base_model_name_or_path, adapter.revision)
         artifacts["base"] = base
         policy = policy_class.from_pretrained(base, config=policy_cfg)
-        policy = cast(PreTrainedPolicy, PeftModel.from_pretrained(policy, path, config=adapter))
+        # PEFT otherwise maps the adapter file on the accelerator it finds, not where the policy is.
+        policy = cast(
+            PreTrainedPolicy, PeftModel.from_pretrained(policy, path, config=adapter, torch_device="cpu")
+        )
     else:
         policy = policy_class.from_pretrained(path, config=policy_cfg)
     policy.to(cfg.model.device).eval()

@@ -99,6 +99,7 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch,
         config=peft_config,
         revision="adapter-sha",
         is_trainable=True,
+        torch_device="cpu",
     )
 
 
@@ -333,6 +334,7 @@ def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(m
         "user/adapter",
         config=peft_config,
         revision="adapter-sha",
+        torch_device="cpu",
     )
 
 
