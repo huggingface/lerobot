@@ -39,7 +39,7 @@ def sim_server():
             # Served env configs address the deployment named after their --env.type.
             deployment="toy",
             zenoh=ZenohConfig(listen_endpoints=[endpoint]),
-            presence_grace_s=0.5,
+            initial_presence_timeout_s=0.5,
         )
     )
     thread = threading.Thread(target=server.serve)

@@ -70,15 +70,37 @@ def _checked_seeds(value: Any, num_envs: int) -> list[int | None] | None:
 
 @dataclass
 class ServerConfig:
-    """Simulator to serve, resource limits and Zenoh endpoints."""
+    """Simulator to serve, resource limits and Zenoh endpoints.
+
+    Args:
+        sim (`SimConfig`):
+            The simulator to serve.
+        deployment (`str`):
+            Name clients find this server under, e.g. `libero`.
+        zenoh (`ZenohConfig`, *optional*):
+            Network settings. Listens on `tcp/127.0.0.1:7448` by default.
+        max_envs (`int`, *optional*, defaults to `32`):
+            Most envs one session may run.
+        max_sessions (`int`, *optional*, defaults to `1`):
+            Most sessions open at once.
+        request_timeout_s (`float`, *optional*, defaults to `120`):
+            How long the server may take to reply to one request.
+        initial_presence_timeout_s (`float`, *optional*, defaults to `10`):
+            How long a new session waits for its client to announce itself before it is closed.
+    """
 
     sim: SimConfig
-    deployment: str = "default"
+    deployment: str
     zenoh: ZenohConfig = field(default_factory=lambda: ZenohConfig(listen_endpoints=["tcp/127.0.0.1:7448"]))
     max_envs: int = 32
     max_sessions: int = 1
     request_timeout_s: float = 120
-    presence_grace_s: float = 10
+    initial_presence_timeout_s: float = 10
+
+    def __post_init__(self):
+        """Check the resource limits."""
+        if self.max_envs < 1 or self.max_sessions < 1:
+            raise ValueError("Server resource bounds must be positive")
 
 
 class _Session:
@@ -112,8 +134,8 @@ class _Session:
             cleanup.callback(self.presence.close)
             self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
             cleanup.pop_all()
-        # The client announces itself once it has the open reply, sent right after this, so its grace period
-        # starts now: a first reset slower than the grace must not close the session before the client can.
+        # The client announces itself once it has the open reply, sent right after this, so its timeout starts
+        # now: a first reset slower than the timeout must not close the session before the client can.
         self.opened_at = time.monotonic()
 
     def handle(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -173,8 +195,6 @@ class EnvServer:
     def __init__(self, config: ServerConfig):
         """Create the transport. Simulators are built in ``serve``."""
         self.config = config
-        if config.max_envs < 1 or config.max_sessions < 1:
-            raise ValueError("Server resource bounds must be positive")
         self.instance_id = uuid.uuid4().hex
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
@@ -354,7 +374,8 @@ class EnvServer:
                         lost = True
                 except Empty:
                     break
-            if lost or (not session.seen_client and now - session.opened_at > self.config.presence_grace_s):
+            elapsed = now - session.opened_at
+            if lost or (not session.seen_client and elapsed > self.config.initial_presence_timeout_s):
                 self._close_session(session_id)
 
     def _close_session(self, session_id: str) -> None:

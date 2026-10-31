@@ -249,22 +249,22 @@ def test_eval_loop_accepts_canonical_observations(sim_server):
         env.close()
 
 
-def test_a_session_whose_first_reset_outlasts_the_presence_grace_stays_open(sim_server, monkeypatch):
+def test_a_session_whose_first_reset_outlasts_the_presence_timeout_stays_open(sim_server, monkeypatch):
     # The client can only announce itself once the open reply, which carries the first reset, arrives.
     running, endpoint = sim_server
-    grace = running.config.presence_grace_s
+    timeout = running.config.initial_presence_timeout_s
     original = ToyEnv.reset
 
     def slow_reset(self, seed=None):
-        time.sleep(grace * 1.5)
+        time.sleep(timeout * 1.5)
         return original(self, seed=seed)
 
     monkeypatch.setattr(ToyEnv, "reset", slow_reset)
     client = EnvClient(endpoint)
     try:
         client.open(1)
-        # A policy's first inference can take longer than the grace period.
-        time.sleep(grace * 1.5)
+        # A policy's first inference can take longer than the presence timeout.
+        time.sleep(timeout * 1.5)
         client.request("step", actions=np.zeros((1, 2), np.float32))
     finally:
         client.close()

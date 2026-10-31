@@ -50,7 +50,7 @@ def check(config_path: Path, steps: int = 5):
         env.close()
     config["zenoh"] = {"listen_endpoints": ["tcp/127.0.0.1:7458"]}
     # A short handshake timeout keeps polling fast while the server starts; other calls keep the default.
-    client = EnvClient("tcp/127.0.0.1:7458", config.get("deployment", "default"), handshake_timeout_s=1)
+    client = EnvClient("tcp/127.0.0.1:7458", config["deployment"], handshake_timeout_s=1)
     with tempfile.TemporaryDirectory() as directory:
         server_config = Path(directory) / "server.yaml"
         server_config.write_text(yaml.safe_dump(config))
