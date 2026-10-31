@@ -20,23 +20,32 @@ import textwrap
 import pytest
 
 
-@pytest.mark.parametrize("failure", ["missing", "broken_natten", "unrelated"])
+@pytest.mark.parametrize("failure", ["missing", "broken_natten", "natten_without_kernels", "unrelated"])
 def test_vae_dependency_errors(failure):
     script = textwrap.dedent(
         """
         import builtins
+        import functools
         import importlib
+        import logging
         import sys
+        import types
 
         from lerobot.utils import import_utils
 
         failure = sys.argv[1]
-        import_utils._natten_available = failure == "broken_natten"
-        import_utils._require_package_cache["natten"] = False
+        import_utils._natten_available = failure in ("broken_natten", "natten_without_kernels")
+        if failure == "natten_without_kernels":
+            # A NATTEN wheel built for another torch imports, but its fused kernels do not load.
+            natten = types.ModuleType("natten")
+            natten.HAS_LIBNATTEN = False
+            natten.functional = types.ModuleType("natten.functional")
+            natten.functional.na2d = natten.functional.na3d = None
+            sys.modules.update({"natten": natten, "natten.functional": natten.functional})
         original_import = builtins.__import__
 
         def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == "natten" or name.startswith("natten."):
+            if (name == "natten" or name.startswith("natten.")) and failure != "natten_without_kernels":
                 if failure == "missing":
                     raise AssertionError("Missing NATTEN should not be imported")
                 raise ImportError("incompatible NATTEN wheel")
@@ -59,14 +68,26 @@ def test_vae_dependency_errors(failure):
             assert failure in expected, exc
             assert str(exc) == expected[failure], exc
         else:
-            assert failure == "missing"
-            try:
-                f3.load_video_vae(None)
-            except ImportError as exc:
-                assert "requires NATTEN" in str(exc), exc
-                assert "whl.natten.org" in str(exc), exc
-            else:
-                raise AssertionError("VAE construction should require NATTEN")
+            assert failure in ("missing", "natten_without_kernels")
+            import torch
+
+            # The public loader with fewer, smaller layers than the real VAE, to keep the test fast.
+            f3.video_vae.ViTNormInferenceParams = functools.partial(
+                f3.video_vae.ViTNormInferenceParams,
+                embed_dim=16,
+                window_size=[3, 3, 3],
+                enc_depths=[1, 1, 1, 1],
+                num_heads=[1, 1, 2, 2],
+            )
+            frame = torch.rand(1, 3, 1, 96, 96, dtype=torch.bfloat16)
+            assert f3.load_video_vae(None).encode_task(frame).shape == (1, 96, 1, 3, 3)
+            warnings = []
+            handler = logging.Handler()
+            handler.emit = warnings.append
+            logging.getLogger(f3.video_vae.__name__).addHandler(handler)
+            for _ in range(2):
+                f3.video_vae._note_attention("cuda")
+            assert len(warnings) == 1, warnings
         """
     )
     result = subprocess.run(
