@@ -256,7 +256,7 @@ def _git_head() -> str | None:
     try:
         import subprocess
 
-        completed = subprocess.run(
+        completed = subprocess.run(  # nosec B607
             ["git", "rev-parse", "HEAD"],
             check=False,
             capture_output=True,
@@ -452,7 +452,7 @@ def _gripper_stats(normalizer: Path) -> dict[str, float]:
 
 
 def _bddl_text() -> str:
-    with urllib.request.urlopen(BDDL_URL, timeout=60) as response:
+    with urllib.request.urlopen(BDDL_URL, timeout=60) as response:  # nosec B310
         return response.read().decode("utf-8")
 
 
