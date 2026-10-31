@@ -513,6 +513,13 @@ def make_groot_pre_post_processors_from_pretrained(
     # Register the GR00T N1.5 rejection stubs before deserializing, so a saved N1.5 pipeline
     # referencing their registry names fails with the canonical removal guidance.
     _register_removed_n1_5_step_stubs()
+    # A saved VLM encode step keeps the device of the machine that saved it. Preprocess on this machine's
+    # policy device instead, as the raw-checkpoint branch does, unless the caller sets the step's device.
+    preprocessor_overrides = dict(preprocessor_overrides or {})
+    preprocessor_overrides["groot_n1_7_vlm_encode_v1"] = {
+        "device": config.device,
+        **preprocessor_overrides.get("groot_n1_7_vlm_encode_v1", {}),
+    }
     preprocessor, postprocessor = load_pretrained_policy_processors(
         pretrained_path,
         revision=revision,
@@ -2027,8 +2034,14 @@ class GrootN17VLMEncodeStep(ProcessorStep):
     # deterministic center crop. Never serialized - reloaded pipelines default
     # to eval and are re-enabled only when processors are built with dataset_meta.
     training: bool = False
+    # Saved with the pipeline, but GR00T's pretrained loader replaces it with the device the caller sets,
+    # else the policy device; only other loaders read the saved value.
     device: str | None = None
     _proc: ProcessorMixin | None = field(default=None, init=False, repr=False)
+    _target_device: torch.device | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._target_device = self._resolve_device()
 
     @property
     def proc(self) -> ProcessorMixin:
@@ -2036,17 +2049,22 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             self._proc = _build_n1_7_processor(self.model_name)
         return self._proc
 
-    def _target_device(self) -> torch.device | None:
+    def _resolve_device(self) -> torch.device | None:
         # The albumentations path is cv2/numpy only, so it cannot run on GPU.
         if self.device is None or self.use_albumentations:
             return None
         try:
             return get_safe_torch_device(self.device)
-        except (AssertionError, RuntimeError):
-            # A device serialized at train time (e.g. "cuda") may be unavailable
-            # when the processor is reloaded elsewhere (e.g. CPU-only eval), and
-            # this step is not in the standard device-override set. Fall back to
-            # the CPU path, which is bit-identical, instead of crashing.
+        except ValueError:
+            # A device type serialized at train time (e.g. "cuda") may be missing
+            # when the pipeline is reloaded elsewhere without GR00T's loader, which
+            # gives this step the policy device. A missing CUDA index (e.g. "cuda:1"
+            # on one GPU) still fails later.
+            logging.warning(
+                "The GR00T N1.7 VLM encode step is set to device %r, which is not available here, "
+                "so it preprocesses the frames on their own device.",
+                self.device,
+            )
             return None
 
     def _build_sample_images(
@@ -2123,7 +2141,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             formalize_language=False,
         )
 
-        target_device = self._target_device()
+        target_device = self._target_device
         sample_images = self._build_sample_images(video, batch_size, target_device)
 
         texts: list[str] = []
