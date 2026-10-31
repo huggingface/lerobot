@@ -29,6 +29,12 @@ from lerobot.policies import FastWAMConfig, get_policy_class, make_policy_config
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.processor_fastwam import FastWAMActionToggleProcessorStep
 from lerobot.policies.fastwam.wan import ActionDiT, FastWAM, MoT
+from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
+    NormalizerProcessorStep,
+    RelativeActionsProcessorStep,
+    UnnormalizerProcessorStep,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -36,11 +42,20 @@ class FakeFastWAMCore(nn.Module):
     def __init__(self):
         super().__init__()
         self.dit = nn.Linear(2, 2)
+        self.encode_prompt_calls: list[list[str]] = []
 
-    def training_loss(self, sample):
+    def training_loss(self, sample, reduction="mean"):
         assert sample["video"].ndim == 5
         assert sample["context"].ndim == 3
-        return sample[ACTION].sum() * 0.0 + torch.tensor(1.0), {"loss_action": 1.0}
+        zero = sample[ACTION].sum() * 0.0
+        if reduction == "none":
+            return zero + torch.ones(sample[ACTION].shape[0]), {"loss_action": 1.0}
+        return zero + torch.tensor(1.0), {"loss_action": 1.0}
+
+    def encode_prompt(self, prompt):
+        prompts = [prompt] if isinstance(prompt, str) else list(prompt)
+        self.encode_prompt_calls.append(prompts)
+        return torch.zeros(len(prompts), 5, 4096), torch.ones(len(prompts), 5, dtype=torch.bool)
 
     def infer_action(self, **kwargs):
         return {"action": torch.ones(1, kwargs["action_horizon"], 3)}
@@ -74,6 +89,8 @@ def test_config_validates_features_model_ids_and_saved_auto_route(tmp_path):
     assert cfg.robot_state_feature.shape == (8,)
     with pytest.raises(ValueError, match="image feature"):
         FastWAMConfig(input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(8,))})
+    with pytest.raises(ValueError, match="proprio_dim"):
+        FastWAMConfig(proprio_dim=None, use_relative_actions=True)
     assert FastWAMConfig(tokenizer_model_id="somebody/other-tokenizer").tokenizer_model_id == (
         "somebody/other-tokenizer"
     )
@@ -144,6 +161,83 @@ def test_preprocessor_passes_images_through_and_postprocessor_toggles_actions(tm
     )
 
 
+@pytest.mark.parametrize("saved_with_relative_pair", [False, True])
+def test_relative_actions_opt_in_on_a_saved_checkpoint(tmp_path, saved_with_relative_pair):
+    # `lerobot/fastwam_base` predates relative actions and has no relative/absolute steps; a
+    # checkpoint saved by the current code has a disabled pair. Both must accept the training opt-in.
+    names = ["j0", "j1", "gripper"]
+    kwargs = {"action_dim": 3, "proprio_dim": 3, "device": "cpu", "base_model_id": None}
+    stats = {key: {"mean": torch.zeros(3), "std": torch.ones(3)} for key in (OBS_STATE, ACTION)}
+    preprocessor, postprocessor = make_pre_post_processors(FastWAMConfig(**kwargs), dataset_stats=stats)
+    if not saved_with_relative_pair:
+        preprocessor.steps = [
+            s for s in preprocessor.steps if not isinstance(s, RelativeActionsProcessorStep)
+        ]
+        postprocessor.steps = [
+            s for s in postprocessor.steps if not isinstance(s, AbsoluteActionsProcessorStep)
+        ]
+    preprocessor.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
+    postprocessor.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
+
+    cfg = FastWAMConfig(**kwargs, use_relative_actions=True, action_feature_names=names)
+    preprocessor, postprocessor = make_pre_post_processors(
+        cfg,
+        pretrained_path=str(tmp_path),
+        # What lerobot_train sends when fine-tuning with `use_relative_actions=true`.
+        preprocessor_overrides={
+            "device_processor": {"device": "cpu"},
+            "relative_actions_processor": {
+                "enabled": True,
+                "exclude_joints": ["gripper"],
+                "action_names": names,
+            },
+        },
+        postprocessor_overrides={"absolute_actions_processor": {"enabled": True}},
+    )
+
+    pre_types = [type(step) for step in preprocessor.steps]
+    post_types = [type(step) for step in postprocessor.steps]
+    assert pre_types.index(RelativeActionsProcessorStep) + 1 == pre_types.index(NormalizerProcessorStep)
+    assert post_types.index(UnnormalizerProcessorStep) + 1 == post_types.index(AbsoluteActionsProcessorStep)
+    state = torch.tensor([[1.0, 2.0, 3.0]])
+    processed = preprocessor({OBS_STATE: state, ACTION: torch.tensor([[[2.0, 2.0, 0.5]]])})
+    assert torch.equal(processed[ACTION], torch.tensor([[[1.0, 0.0, 0.5]]]))
+    assert torch.equal(postprocessor(torch.tensor([[[1.0, 0.0, 0.5]]])), torch.tensor([[[2.0, 2.0, 0.5]]]))
+
+
+def test_forward_returns_per_sample_losses_under_reduction_none(monkeypatch):
+    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: FakeFastWAMCore())
+    cfg = FastWAMConfig(
+        action_dim=3,
+        proprio_dim=2,
+        action_horizon=4,
+        n_action_steps=2,
+        num_video_frames=5,
+        action_video_freq_ratio=1,
+        image_size=(16, 16),
+        input_features={
+            "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        base_model_id=None,
+    )
+    policy = FastWAMPolicy(cfg)
+    batch = {
+        "observation.images.image": torch.zeros(2, 3, 16, 16),
+        OBS_STATE: torch.zeros(2, 2),
+        ACTION: torch.zeros(2, 4, 3),
+        "context": torch.zeros(2, 5, 4096),
+        "context_mask": torch.ones(2, 5, dtype=torch.bool),
+    }
+
+    scalar_loss, _ = policy.forward(batch)
+    per_sample_loss, _ = policy.forward(batch, reduction="none")
+
+    assert scalar_loss.shape == ()
+    assert per_sample_loss.shape == (2,)
+
+
 def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
     captured = []
 
@@ -154,6 +248,7 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
                     "image_shape": tuple(kwargs["input_image"].shape),
                     "proprio_shape": tuple(kwargs["proprio"].shape),
                     "prompt": kwargs["prompt"],
+                    "context_shape": tuple(kwargs["context"].shape),
                     "compile_action_infer": kwargs["compile_action_infer"],
                 }
             )
@@ -206,11 +301,36 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
     assert action[:, 0, 0].tolist() == [1.0, 2.0]
     assert [item["image_shape"] for item in captured] == [(1, 3, 16, 16), (1, 3, 16, 16)]
     assert [item["proprio_shape"] for item in captured] == [(1, 2), (1, 2)]
-    assert [item["prompt"] for item in captured] == [
-        cfg.prompt_template.format(task="task 0"),
-        cfg.prompt_template.format(task="task 1"),
+    # The task is encoded once per episode and the cached context is forwarded instead of the raw
+    # prompt, so `infer_action` sees `prompt=None` and a per-item slice of the encoded context.
+    assert [item["prompt"] for item in captured] == [None, None]
+    assert [item["context_shape"] for item in captured] == [(1, 5, 4096), (1, 5, 4096)]
+    assert policy.model.encode_prompt_calls == [
+        [
+            cfg.prompt_template.format(task="task 0"),
+            cfg.prompt_template.format(task="task 1"),
+        ]
     ]
     assert all(item["compile_action_infer"] for item in captured)
+
+    # A second call with the same tasks reuses the cache; `reset()` drops it.
+    policy.predict_action_chunk(
+        {
+            "observation.images.image": torch.stack([torch.zeros(3, 16, 16), torch.ones(3, 16, 16)]),
+            OBS_STATE: torch.tensor([[0.0, 1.0], [2.0, 3.0]]),
+            "task": ["task 0", "task 1"],
+        }
+    )
+    assert len(policy.model.encode_prompt_calls) == 1
+    policy.reset()
+    policy.predict_action_chunk(
+        {
+            "observation.images.image": torch.stack([torch.zeros(3, 16, 16), torch.ones(3, 16, 16)]),
+            OBS_STATE: torch.tensor([[0.0, 1.0], [2.0, 3.0]]),
+            "task": ["task 0", "task 1"],
+        }
+    )
+    assert len(policy.model.encode_prompt_calls) == 2
 
 
 def test_cached_inference_paths_support_fullgraph_compile():
