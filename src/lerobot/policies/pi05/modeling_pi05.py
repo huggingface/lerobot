@@ -50,6 +50,7 @@ else:
     sdpa_attention_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 from lerobot.configs import PreTrainedConfig
+from lerobot.policies.common.gaussian_readout import sample_gaussian_actions
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -75,7 +76,6 @@ from ..common.vla_utils import (
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
-from .gaussian_readout import sample_gaussian_actions
 from .memory import encode_video_with_mem, sample_observation_history
 
 
@@ -1038,10 +1038,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def suffix_features(
         self,
-        prefix_pad_masks,
-        past_key_values,
-        x_t,
-        timestep,
+        prefix_pad_masks: Tensor,
+        past_key_values: Any,
+        x_t: Tensor,
+        timestep: Tensor,
     ) -> Tensor:
         """Return action-expert features through the FP32 cast, before the velocity projection."""
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep)
@@ -1077,11 +1077,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def denoise_step(
         self,
-        prefix_pad_masks,
-        past_key_values,
-        x_t,
-        timestep,
-    ):
+        prefix_pad_masks: Tensor,
+        past_key_values: Any,
+        x_t: Tensor,
+        timestep: Tensor,
+    ) -> Tensor:
         """Apply one denoising step of the noise `x_t` at a given timestep."""
         suffix_out = self.suffix_features(prefix_pad_masks, past_key_values, x_t, timestep)
         return self.action_out_proj(suffix_out)

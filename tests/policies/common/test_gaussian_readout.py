@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CPU checks for the opt-in pi0.5 Gaussian readout. The default sampler stays Euler."""
+"""CPU checks for the shared opt-in Gaussian readout. The default sampler stays Euler."""
 
 from types import SimpleNamespace
 
@@ -24,12 +24,9 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from torch import nn
 
-from lerobot.policies.pi05.configuration_pi05 import PI05Config
-from lerobot.policies.pi05.gaussian_readout import (
+from lerobot.policies.common.gaussian_readout import (
     GaussianReadout,
     bind_processor_sha256,
-    collapse_label,
-    diagnose_two_mode_obstacle,
     flow_raw_action,
     load_gaussian_readout,
     make_epsilon_star,
@@ -39,6 +36,7 @@ from lerobot.policies.pi05.gaussian_readout import (
     solve_affine_residual,
     state_dict_sha256,
 )
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pi05.modeling_pi05 import PI05Pytorch
 
 
@@ -74,40 +72,6 @@ def _readout_config(**overrides):
     return SimpleNamespace(**values)
 
 
-class _EulerFake:
-    """Enough of PI05Pytorch for the unchanged Euler branch. ``denoise_step`` is intentionally local."""
-
-    def __init__(self) -> None:
-        self.config = _readout_config()
-        self.use_typed_attention_masks = False
-        self.precompute_denoise_times = False
-        self.rtc_processor = None
-        self.paligemma_with_expert = _AttentionShell()
-
-    def sample_noise(self, shape, device):
-        return PI05Pytorch.sample_noise(self, shape, device)
-
-    def embed_prefix(self, images, img_masks, tokens, masks, states=None, state_masks=None):
-        del images, img_masks, states, state_masks
-        batch = tokens.shape[0]
-        embeddings = torch.zeros(
-            batch, 2, 4, dtype=masks.dtype if masks.dtype.is_floating_point else torch.float32
-        )
-        pad = torch.ones(batch, 2, dtype=torch.bool)
-        attention = torch.zeros(batch, 2, dtype=torch.float32)
-        return embeddings, pad, attention
-
-    def _prepare_attention_masks_4d(self, masks, dtype=None):
-        return PI05Pytorch._prepare_attention_masks_4d(self, masks, dtype)
-
-    def _rtc_enabled(self) -> bool:
-        return False
-
-    def denoise_step(self, prefix_pad_masks, past_key_values, x_t, timestep):
-        del prefix_pad_masks, past_key_values, timestep
-        return -0.25 * x_t
-
-
 class _ReadoutFake(nn.Module):
     def __init__(self, path: str) -> None:
         super().__init__()
@@ -140,30 +104,6 @@ class _ReadoutFake(nn.Module):
         return self.fixed_features.expand(x_t.shape[0], -1, -1).clone()
 
 
-class _HelperFake(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.config = SimpleNamespace(chunk_size=4)
-        self.action_out_proj = nn.Linear(4, 4)
-        self.paligemma_with_expert = _AttentionShell()
-        self.calls = 0
-
-    def embed_suffix(self, noisy_actions, timestep):
-        del timestep
-        batch, horizon, _ = noisy_actions.shape
-        pad = torch.ones(batch, horizon, dtype=torch.bool)
-        attention = torch.zeros(batch, horizon)
-        attention[:, 0] = 1
-        return noisy_actions, pad, attention, None
-
-    def _prepare_attention_masks_4d(self, masks, dtype=None):
-        return PI05Pytorch._prepare_attention_masks_4d(self, masks, dtype)
-
-    def suffix_features(self, prefix_pad_masks, past_key_values, x_t, timestep):
-        self.calls += 1
-        return PI05Pytorch.suffix_features(self, prefix_pad_masks, past_key_values, x_t, timestep)
-
-
 def _tokens():
     return torch.zeros(1, 2, dtype=torch.long), torch.ones(1, 2, dtype=torch.bool)
 
@@ -171,33 +111,6 @@ def _tokens():
 def _call_euler(model, **kwargs):
     tokens, masks = _tokens()
     return PI05Pytorch.sample_actions(model, [], [], tokens, masks, **kwargs)
-
-
-def test_default_off_matches_explicit_step_count_and_rng():
-    assert PI05Config().gaussian_readout_path is None
-    model = _EulerFake()
-    torch.manual_seed(4)
-    default = _call_euler(model)
-    torch.manual_seed(4)
-    explicit = _call_euler(model, num_steps=10)
-    torch.manual_seed(4)
-    shorter = _call_euler(model, num_steps=3)
-    assert torch.equal(default, explicit)
-    assert default.shape == (1, 4, 8)
-    assert not torch.equal(default, shorter)
-
-    noise = torch.randn(1, 4, 8)
-    torch.manual_seed(1)
-    first = _call_euler(model, noise=noise)
-    torch.manual_seed(2)
-    second = _call_euler(model, noise=noise)
-    assert torch.equal(first, second)
-
-    torch.manual_seed(9)
-    again = _call_euler(model)
-    torch.manual_seed(9)
-    repeated = _call_euler(model)
-    assert torch.equal(again, repeated)
 
 
 def test_time_one_sign_and_single_feature_evaluation(tmp_path, monkeypatch):
@@ -264,14 +177,6 @@ def test_time_one_sign_and_single_feature_evaluation(tmp_path, monkeypatch):
     assert torch.allclose(action[..., 6], expected_gripper)
     assert torch.equal(action[..., 7:], torch.zeros_like(action[..., 7:]))
     assert set(action[..., 6].reshape(-1).tolist()) <= {open_code, close_code}
-
-    helper = _HelperFake()
-    prefix_pad = torch.ones(1, 2, dtype=torch.bool)
-    hidden = torch.randn(1, 4, 4)
-    features = helper.suffix_features(prefix_pad, None, hidden, torch.ones(1))
-    velocity = PI05Pytorch.denoise_step(helper, prefix_pad, None, hidden, torch.ones(1))
-    assert helper.calls == 2
-    assert torch.equal(velocity, helper.action_out_proj(features))
 
     rejected = _ReadoutFake(str(path))
     bind_processor_sha256(rejected, "processor-hash")
@@ -377,21 +282,6 @@ def test_frozen_weights_and_readout_roundtrip(tmp_path):
         load_gaussian_readout(tampered, host, "processor-hash")
 
 
-def test_synthetic_two_mode_diagnostic():
-    report = diagnose_two_mode_obstacle()
-    assert report["teacher_modes"] == ["lower", "upper"]
-    assert report["teacher_hits_obstacle"] is False
-    assert report["mean_between_targets"] is True
-    assert report["mean_mode"] == "neither"
-    assert report["lost_modes"] == ["lower", "upper"]
-    assert report["collapse_label"] == "collapse-observed"
-    assert report["one_mode_label"] == "inconclusive"
-    assert abs(report["mean_endpoint_y"]) < 1e-5
-    assert collapse_label({"soup", "sauce"}, {"soup"}) == "collapse-observed"
-    assert collapse_label({"soup"}, {"soup"}) == "inconclusive"
-    assert collapse_label({"soup", "sauce"}, {"soup", "sauce"}) == "both-covered"
-
-
 def test_readout_load_preserves_cpu_rng(tmp_path):
     path = tmp_path / "rng.safetensors"
     host = _ReadoutFake(str(path))
@@ -412,3 +302,206 @@ def test_readout_load_preserves_cpu_rng(tmp_path):
     before = torch.random.get_rng_state().clone()
     load_gaussian_readout(path, host, "processor-hash")
     assert torch.equal(torch.random.get_rng_state(), before)
+
+
+class _TinyBackbone(nn.Module):
+    """Random CPU attention replaces the large VLM; policy embeddings/sampling are real."""
+
+    def __init__(self):
+        super().__init__()
+        self.embedding = nn.Embedding(16, 8)
+        self.attention = nn.MultiheadAttention(8, 2, batch_first=True)
+        self.expert_hidden_size = 8
+        self.config = SimpleNamespace(text_config=SimpleNamespace(hidden_size=8))
+        self.paligemma = _AttentionShell().paligemma
+        self.gemma_expert = _AttentionShell().gemma_expert
+        self.suffix_calls = 0
+
+    def embed_language_tokens(self, tokens):
+        return self.embedding(tokens)
+
+    def forward(self, *, inputs_embeds, past_key_values=None, attention_mask=None, **kwargs):
+        prefix, suffix = inputs_embeds
+        if suffix is None:
+            return [prefix, None], SimpleNamespace(prefix=prefix, crop=lambda length: None)
+        self.suffix_calls += 1
+        condition = kwargs.get("adarms_cond", [None, None])[1]
+        if condition is not None:
+            suffix = suffix + condition[:, None, :]
+        context = torch.cat((past_key_values.prefix, suffix), dim=1)
+        mask = attention_mask[:, 0] if attention_mask.ndim == 4 else attention_mask
+        if mask.dtype == torch.bool:
+            mask = ~mask
+        result, _ = self.attention(suffix, context, context, attn_mask=mask.repeat_interleave(2, dim=0))
+        return [None, result], past_key_values
+
+
+@pytest.fixture(params=["pi0", "pi05", "smolvla", "fineart_vla"])
+def tiny_flow(request, monkeypatch):
+    from copy import deepcopy
+
+    from lerobot.policies.fineart_vla.configuration_fineart_vla import FineARTVLAConfig
+    from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPytorch
+    from lerobot.policies.pi0.configuration_pi0 import PI0Config
+    from lerobot.policies.pi0.modeling_pi0 import PI0Pytorch
+    from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+    from lerobot.policies.smolvla.modeling_smolvla import VLAFlowMatching
+
+    classes = {
+        "pi0": (PI0Config, PI0Pytorch),
+        "pi05": (PI05Config, PI05Pytorch),
+        "smolvla": (SmolVLAConfig, VLAFlowMatching),
+        "fineart_vla": (FineARTVLAConfig, FineARTVLAPytorch),
+    }
+    config_cls, core_cls = classes[request.param]
+    model = core_cls.__new__(core_cls)
+    nn.Module.__init__(model)
+    model.config = config_cls(chunk_size=4, n_action_steps=4, max_action_dim=8, max_state_dim=8, device="cpu")
+    model.rtc_processor = None
+    model.gradient_checkpointing_enabled = False
+    for name, inputs in (
+        ("action_in_proj", 8),
+        ("action_out_proj", 8),
+        ("state_proj", 8),
+        ("time_mlp_in", 8),
+        ("time_mlp_out", 8),
+        ("action_time_mlp_in", 16),
+        ("action_time_mlp_out", 8),
+    ):
+        setattr(model, name, nn.Linear(inputs, 8))
+    backbone = _TinyBackbone()
+    if request.param == "smolvla":
+        model.vlm_with_expert = backbone
+        model.add_image_special_tokens = False
+        model.prefix_length = -1
+    else:
+        model.paligemma_with_expert = backbone
+        monkeypatch.setattr(f"{core_cls.__module__}.clone_past_key_values", deepcopy, raising=False)
+    model.eval()
+    return model, backbone
+
+
+def _sample_tiny(model, tokens, masks, state, **kwargs):
+    if model.config.type in ("pi0", "smolvla"):
+        return model.sample_actions([], [], tokens, masks, state, **kwargs)
+    return model.sample_actions([], [], tokens, masks, **kwargs)
+
+
+def test_small_cpu_fit_and_inference(tiny_flow, tmp_path):
+    from lerobot.policies.common.gaussian_readout import (
+        evaluate_time_one_features,
+        fit_gripper_head,
+        fit_variance_head,
+    )
+
+    model, backbone = tiny_flow
+    assert model.config.gaussian_readout_path is None
+    tokens = torch.randint(0, 16, (6, 2))
+    masks, state = torch.ones_like(tokens, dtype=torch.bool), torch.randn(6, 8)
+    before = state_dict_sha256(model)
+    probe = make_epsilon_star(4, 8)
+    with torch.no_grad():
+        samples = torch.stack([_sample_tiny(model, tokens, masks, state) for _ in range(3)])
+        backbone.suffix_calls = 0
+        features, raw = evaluate_time_one_features(model, [], [], tokens, masks, state, None, probe)
+    assert backbone.suffix_calls == 1
+    readout = GaussianReadout(
+        8,
+        chunk_size=4,
+        motion_dim=6,
+        gripper_index=6,
+        max_action_dim=8,
+        action_dim=7,
+        open_normalized=-1,
+        close_normalized=1,
+        action_mean=torch.zeros(7),
+        action_std=torch.ones(7),
+    )
+    weight, bias = solve_affine_residual(features, raw[..., :6], samples[..., :6].mean(dim=0))
+    with torch.no_grad():
+        readout.affine_weight.copy_(weight)
+        readout.affine_bias.copy_(bias)
+    variance = samples[..., :6].var(dim=0, unbiased=False).clamp_min(1e-6)
+    frequency = (samples[..., 6] >= 0).float().mean(dim=0)
+    old_var = readout.var_out.weight.detach().clone()
+    old_gripper = readout.gripper_weight.detach().clone()
+    fit_variance_head(readout, features, variance, features, variance, updates=3, batch_size=6)
+    fit_gripper_head(readout, features, frequency, features, frequency, updates=3, batch_size=6)
+    assert not torch.equal(readout.var_out.weight, old_var)
+    assert not torch.equal(readout.gripper_weight, old_gripper)
+    assert state_dict_sha256(model) == before
+    path = tmp_path / "tiny.safetensors"
+    save_readout(readout, path, teacher_sha256=before, processor_sha256="tiny-processors")
+    bind_processor_sha256(model, "tiny-processors")
+    model.config.gaussian_readout_path = str(path)
+    backbone.suffix_calls = 0
+    with torch.no_grad():
+        for _ in range(3):
+            action = _sample_tiny(model, tokens, masks, state)
+            assert action.shape == (6, 4, 8)
+            assert torch.isfinite(action).all()
+            assert (action[..., 7] == 0).all()
+            assert ((action[..., 6] == -1) | (action[..., 6] == 1)).all()
+            assert torch.isfinite(readout.log_prob(features, raw, action)).all()
+    assert backbone.suffix_calls == 3
+    assert state_dict_sha256(model) == before
+    with pytest.raises(ValueError, match="starting noise"):
+        _sample_tiny(model, tokens, masks, state, noise=probe)
+
+
+def test_mixed_log_prob_matches_distributions():
+    readout = GaussianReadout(
+        8,
+        chunk_size=4,
+        motion_dim=6,
+        gripper_index=6,
+        max_action_dim=8,
+        action_dim=7,
+        open_normalized=-1,
+        close_normalized=1,
+        action_mean=torch.zeros(7),
+        action_std=torch.ones(7),
+    )
+    features, raw = torch.randn(2, 4, 8), torch.randn(2, 4, 8)
+    action = readout.sample_action(features, raw)
+    normal = torch.distributions.Normal(
+        readout.continuous_mean(features, raw), readout.variance(features).sqrt()
+    )
+    binary = torch.distributions.Bernoulli(probs=torch.special.ndtr(readout.gripper_latent(features)))
+    expected = normal.log_prob(action[..., :6]).sum((-2, -1)) + binary.log_prob(
+        (action[..., 6] == 1).float()
+    ).sum(-1)
+    torch.testing.assert_close(readout.log_prob(features, raw, action), expected)
+    action[0, 0, 6] = 0
+    action[1, 0, 7] = 1
+    assert readout.log_prob(features, raw, action).isneginf().all()
+
+
+def test_default_off_preserves_sampling_and_rng(tiny_flow, monkeypatch):
+    model, _ = tiny_flow
+    assert model.config.gaussian_readout_path is None
+    monkeypatch.setattr(
+        "lerobot.policies.common.gaussian_readout._cached_readout",
+        lambda *args: pytest.fail("default sampler loaded a readout"),
+    )
+    tokens, masks = _tokens()
+    state = torch.randn(1, 8)
+
+    def draw(**kwargs):
+        return _sample_tiny(model, tokens, masks, state, **kwargs)
+
+    torch.manual_seed(4)
+    expected = draw()
+    after = torch.random.get_rng_state()
+    torch.manual_seed(4)
+    assert torch.equal(draw(), expected)
+    assert torch.equal(torch.random.get_rng_state(), after)
+    field = "num_steps" if model.config.type == "smolvla" else "num_inference_steps"
+    setattr(model.config, field, 3)
+    torch.manual_seed(4)
+    assert not torch.equal(draw(), expected)
+    noise = torch.randn(1, 4, 8)
+    torch.manual_seed(1)
+    expected = draw(noise=noise)
+    torch.manual_seed(2)
+    assert torch.equal(draw(noise=noise), expected)

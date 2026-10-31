@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Opt-in Gaussian action readout for pi0.5.
+"""Shared opt-in Gaussian action readout for pi0, pi0.5, SmolVLA, and FineART-VLA.
 
 The default sampler stays the ten-step Euler integrator. A readout artifact is
 loaded only when ``gaussian_readout_path`` is set. LeRobot's flow puts noise at
@@ -35,8 +35,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from torch import Tensor, nn
 
-from lerobot.policies.common.flow_matching import euler_integrate
-from lerobot.policies.common.vla_utils import make_att_2d_masks
+from .vla_utils import make_att_2d_masks, prepare_attention_masks_4d
 
 FORMAT = "lerobot-gar-v1"
 EPSILON_SEED = 17
@@ -97,15 +96,6 @@ def state_dict_sha256(module: nn.Module) -> str:
 def bind_processor_sha256(model: Any, digest: str) -> None:
     """Record the live processor hash the next readout load must match."""
     model._gar_processor_sha256 = digest
-
-
-def collapse_label(teacher_orders: set[str], student_orders: set[str]) -> str:
-    """Label mode loss only when the teacher shows two successful orders and the student drops one."""
-    if len(teacher_orders) < 2:
-        return "inconclusive"
-    if teacher_orders - student_orders:
-        return "collapse-observed"
-    return "both-covered"
 
 
 def flow_raw_action(epsilon: Tensor, velocity: Tensor) -> Tensor:
@@ -205,6 +195,32 @@ class GaussianReadout(nn.Module):
         action[..., : self.motion_dim] = motion
         action[..., self.gripper_index] = gripper
         return action
+
+    def log_prob(self, features: Tensor, raw_action: Tensor, action: Tensor) -> Tensor:
+        """Score normalized chunks under the mixed Gaussian/Bernoulli readout.
+
+        Returns one log density per batch item, summed across chunk positions.
+        This scores the readout before clipping or other policy postprocessing.
+        Padding and unused coordinates are deterministic zeros. It is not a
+        likelihood for the original flow policy or for transformed robot commands.
+        """
+        features, raw_action = features.float(), raw_action.float()
+        mean = self.continuous_mean(features, raw_action)
+        variance = self.variance(features)
+        motion = action[..., : self.motion_dim].float()
+        continuous = -0.5 * ((motion - mean).square() / variance + variance.log() + math.log(2 * math.pi))
+        command = action[..., self.gripper_index]
+        latent = self.gripper_latent(features)
+        binary = torch.where(
+            command == self.close_normalized,
+            torch.special.log_ndtr(latent),
+            torch.special.log_ndtr(-latent),
+        )
+        valid = ((command == self.close_normalized) | (command == self.open_normalized)).all(dim=-1)
+        valid = valid & (action[..., self.motion_dim : self.gripper_index] == 0).all(dim=(-2, -1))
+        valid = valid & (action[..., self.gripper_index + 1 :] == 0).all(dim=(-2, -1))
+        score = continuous.sum(dim=(-2, -1)) + binary.sum(dim=-1)
+        return torch.where(valid, score, -torch.inf)
 
 
 def solve_affine_residual(
@@ -498,8 +514,19 @@ def _reject_unsupported(
     config = model.config
     if config.compile_model:
         raise ValueError("Gaussian readout rejects compilation")
-    if config.use_visual_memory or config.use_proprioceptive_memory:
+    if getattr(config, "use_visual_memory", False) or getattr(config, "use_proprioceptive_memory", False):
         raise ValueError("Gaussian readout rejects memory modes")
+    if any(
+        getattr(config, key, False)
+        for key in (
+            "use_liger_kernels",
+            "use_flashrt_adarms",
+            "use_compiled_vision",
+            "use_flex_attention",
+            "use_manual_attention",
+        )
+    ):
+        raise ValueError("Gaussian readout requires the eager attention and vision backends")
     if model._rtc_enabled() or any(kwargs.get(key) is not None for key in _RTC_KEYS):
         raise ValueError("Gaussian readout rejects real-time chunking")
 
@@ -514,6 +541,32 @@ def encode_prefix(
     state_masks: Tensor | None = None,
 ) -> tuple[Tensor, Any]:
     """Prefix prefill copied from the Euler sampler, including its eager attention flag."""
+    policy_type = getattr(model.config, "type", "pi05")
+    if policy_type == "smolvla":
+        prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(
+            images, img_masks, tokens, masks, state=states
+        )
+        attention_mask = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        _, past_key_values = model.vlm_with_expert.forward(
+            attention_mask=attention_mask,
+            position_ids=torch.cumsum(prefix_pad_masks, dim=1) - 1,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=model.config.use_cache,
+        )
+        return prefix_pad_masks, past_key_values
+    if policy_type == "pi0":
+        prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(images, img_masks, tokens, masks)
+        attention_mask = prepare_attention_masks_4d(make_att_2d_masks(prefix_pad_masks, prefix_att_masks))
+        model.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        _, past_key_values = model.paligemma_with_expert.forward(
+            attention_mask=attention_mask,
+            position_ids=torch.cumsum(prefix_pad_masks, dim=1) - 1,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+        return prefix_pad_masks, past_key_values
     prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(
         images, img_masks, tokens, masks, states, state_masks
     )
@@ -557,24 +610,12 @@ def evaluate_time_one_features(
     device = tokens.device
     probe = epsilon.to(device=device, dtype=torch.float32).expand(batch, -1, -1)
     timestep = torch.ones(batch, dtype=torch.float32, device=device)
-    features = model.suffix_features(prefix_pad_masks, past_key_values, probe, timestep)
+    if getattr(model.config, "type", "pi05") == "pi0":
+        features = model.suffix_features(states, prefix_pad_masks, past_key_values, probe, timestep)
+    else:
+        features = model.suffix_features(prefix_pad_masks, past_key_values, probe, timestep)
     raw = flow_raw_action(probe, project_velocity(model, features))
     return features, raw
-
-
-def sample_euler_from_cache(
-    model: Any,
-    prefix_pad_masks: Tensor,
-    past_key_values: Any,
-    noise: Tensor,
-    num_steps: int,
-) -> Tensor:
-    """Euler integration that reuses one prefix cache. Each step clones that cache in ``denoise_step``."""
-    return euler_integrate(
-        lambda x_t, timestep: model.denoise_step(prefix_pad_masks, past_key_values, x_t, timestep),
-        noise,
-        num_steps,
-    )
 
 
 def _cached_readout(model: Any, path: str) -> GaussianReadout:
@@ -615,60 +656,3 @@ def sample_gaussian_actions(
         model, images, img_masks, tokens, masks, states, state_masks, readout.epsilon_star
     )
     return readout.sample_action(features, raw)
-
-
-def diagnose_two_mode_obstacle() -> dict[str, Any]:
-    """CPU fixture: a mean between two obstacle corridors is not a third successful mode.
-
-    The teacher executes both corridors. The collapsed policy executes their coordinate-wise
-    mean, hits the obstacle, and loses both modes. A teacher that only shows one mode is
-    inconclusive even if the student copies it.
-    """
-    start = torch.tensor([0.0, 0.0])
-    upper = torch.tensor([3.0, 1.2])
-    lower = torch.tensor([3.0, -1.2])
-    obstacle_center = torch.tensor([1.2, 0.0])
-    obstacle_radius = 0.35
-    goal_radius = 0.3
-    steps = 25
-
-    def trajectory(target: Tensor) -> Tensor:
-        direction = target - start
-        step = direction / steps
-        return start + step * torch.arange(1, steps + 1, dtype=torch.float32)[:, None]
-
-    upper_path = trajectory(upper)
-    lower_path = trajectory(lower)
-    mean_path = 0.5 * (upper_path + lower_path)
-
-    def hits_obstacle(path: Tensor) -> bool:
-        return bool(torch.linalg.vector_norm(path - obstacle_center, dim=-1).le(obstacle_radius).any())
-
-    def mode_of(path: Tensor) -> str:
-        if hits_obstacle(path):
-            return "neither"
-        end = path[-1]
-        if torch.linalg.vector_norm(end - upper) <= goal_radius:
-            return "upper"
-        if torch.linalg.vector_norm(end - lower) <= goal_radius:
-            return "lower"
-        return "neither"
-
-    def between_targets(path: Tensor) -> bool:
-        end = path[-1]
-        midpoint = 0.5 * (upper + lower)
-        return bool(hits_obstacle(path) and torch.linalg.vector_norm(end - midpoint) < 0.25)
-
-    teacher_modes = {mode_of(upper_path), mode_of(lower_path)}
-    mean_mode = mode_of(mean_path)
-    one_mode_teacher = {"upper"}
-    return {
-        "teacher_modes": sorted(teacher_modes),
-        "mean_mode": mean_mode,
-        "mean_between_targets": between_targets(mean_path),
-        "teacher_hits_obstacle": hits_obstacle(upper_path) or hits_obstacle(lower_path),
-        "lost_modes": sorted(teacher_modes - {mean_mode}),
-        "collapse_label": collapse_label(teacher_modes, set() if mean_mode == "neither" else {mean_mode}),
-        "one_mode_label": collapse_label(one_mode_teacher, {"upper"}),
-        "mean_endpoint_y": float(mean_path[-1, 1]),
-    }
