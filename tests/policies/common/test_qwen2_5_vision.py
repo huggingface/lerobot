@@ -180,6 +180,14 @@ def test_image_rope_index_matches_stock():
         qwen_image_rope_index(input_ids, hidden, grids, config)
 
 
+def test_image_rope_index_refuses_images_that_touch():
+    # Two images back to back after one vision start token: eager rope positions read them as one image.
+    image = [IMAGE_TOKEN_ID] * 6
+    input_ids = torch.tensor([[1, VISION_START_ID, *image, *image, VISION_END_ID, 2]])
+    with pytest.raises(ValueError, match="Each image must follow a vision start token"):
+        qwen_image_rope_index(input_ids, torch.ones_like(input_ids), [[1, 4, 6], [1, 4, 6]], _tiny_config())
+
+
 def test_image_rope_index_refuses_an_image_split_across_runs():
     # Two runs for two images, each after a vision start token, but the first run holds half of the first image.
     i = IMAGE_TOKEN_ID
