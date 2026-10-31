@@ -449,22 +449,24 @@ def load_gaussian_readout(path: str | Path, teacher: Any, processor_sha256: str)
     if chunk_size != config.chunk_size or max_action_dim != config.max_action_dim:
         raise ValueError("readout chunk or padded action size does not match the policy config")
 
-    readout = GaussianReadout(
-        feature_dim,
-        chunk_size=chunk_size,
-        motion_dim=motion_dim,
-        gripper_index=gripper_index,
-        max_action_dim=max_action_dim,
-        action_dim=action_dim,
-        open_normalized=0.0,
-        close_normalized=1.0,
-        action_mean=torch.zeros(action_dim),
-        action_std=torch.ones(action_dim),
-        gripper_threshold=float(_require_meta(metadata, "gripper_threshold")),
-        open_command=float(_require_meta(metadata, "open_command")),
-        close_command=float(_require_meta(metadata, "close_command")),
-        epsilon_seed=EPSILON_SEED,
-    )
+    # Initialization is overwritten by the artifact; preserve the caller's CPU RNG.
+    with torch.random.fork_rng(devices=[]):
+        readout = GaussianReadout(
+            feature_dim,
+            chunk_size=chunk_size,
+            motion_dim=motion_dim,
+            gripper_index=gripper_index,
+            max_action_dim=max_action_dim,
+            action_dim=action_dim,
+            open_normalized=0.0,
+            close_normalized=1.0,
+            action_mean=torch.zeros(action_dim),
+            action_std=torch.ones(action_dim),
+            gripper_threshold=float(_require_meta(metadata, "gripper_threshold")),
+            open_command=float(_require_meta(metadata, "open_command")),
+            close_command=float(_require_meta(metadata, "close_command")),
+            epsilon_seed=EPSILON_SEED,
+        )
     readout.load_state_dict(tensors, strict=True)
     expected_probe = make_epsilon_star(chunk_size, max_action_dim, EPSILON_SEED)
     if not torch.equal(readout.epsilon_star, expected_probe):

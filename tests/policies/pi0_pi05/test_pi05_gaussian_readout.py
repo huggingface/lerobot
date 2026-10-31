@@ -390,3 +390,25 @@ def test_synthetic_two_mode_diagnostic():
     assert collapse_label({"soup", "sauce"}, {"soup"}) == "collapse-observed"
     assert collapse_label({"soup"}, {"soup"}) == "inconclusive"
     assert collapse_label({"soup", "sauce"}, {"soup", "sauce"}) == "both-covered"
+
+
+def test_readout_load_preserves_cpu_rng(tmp_path):
+    path = tmp_path / "rng.safetensors"
+    host = _ReadoutFake(str(path))
+    readout = GaussianReadout(
+        8,
+        chunk_size=4,
+        motion_dim=6,
+        gripper_index=6,
+        max_action_dim=8,
+        action_dim=7,
+        open_normalized=-1.0,
+        close_normalized=1.0,
+        action_mean=torch.zeros(7),
+        action_std=torch.ones(7),
+    )
+    save_readout(readout, path, teacher_sha256=state_dict_sha256(host), processor_sha256="processor-hash")
+    torch.manual_seed(1234)
+    before = torch.random.get_rng_state().clone()
+    load_gaussian_readout(path, host, "processor-hash")
+    assert torch.equal(torch.random.get_rng_state(), before)
