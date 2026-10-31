@@ -65,7 +65,6 @@ from ..common.flow_matching import (
     sample_time_beta,
 )
 from ..common.vla_utils import (
-    clone_past_key_values,
     create_sinusoidal_pos_embedding,
     make_att_2d_masks,
     pad_vector,
@@ -163,6 +162,30 @@ def _reduce_training_rtc_loss(
 
 def _no_grad_if(enabled: bool):
     return torch.no_grad() if enabled else nullcontext()
+
+
+class _ReadOnlyPrefixCache:
+    """One chunk's prefix keys and values, shared by its denoise steps.
+
+    Each step's suffix attends to the prefix plus its own keys, as with a ``DynamicCache``, but
+    nothing is appended, so the steps need no per-step copy of the prefix. Implements the two
+    calls Gemma's attention and mask code make on a cache.
+    """
+
+    def __init__(self, kv: list[tuple[Tensor, Tensor]]):
+        self.kv = kv
+        self.prefix_len = kv[0][0].shape[-2]
+
+    @classmethod
+    def from_cache(cls, cache) -> "_ReadOnlyPrefixCache":
+        return cls([(keys, values) for keys, values, _ in cache])
+
+    def get_seq_length(self, layer_idx: int = 0) -> int:
+        return self.prefix_len
+
+    def update(self, key_states: Tensor, value_states: Tensor, layer_idx: int, cache_kwargs=None):
+        keys, values = self.kv[layer_idx]
+        return torch.cat([keys, key_states], dim=-2), torch.cat([values, value_states], dim=-2)
 
 
 def _joint_attention(
@@ -824,8 +847,29 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
+        action_emb, adarms_cond = self._embed_suffix_tokens(noisy_actions, timestep)
         att_masks = []
 
+        bsize, action_time_dim = action_emb.shape[:2]
+        pad_masks = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
+
+        # Set attention masks so that image, language and state inputs do not attend to action tokens
+        att_masks += [1] + ([0] * (self.config.chunk_size - 1))
+
+        if self.use_on_device_suffix_mask:
+            n = len(att_masks)
+            att_masks = torch.zeros(n, dtype=action_emb.dtype, device=action_emb.device)
+            att_masks[0] = 1
+            att_masks = att_masks[None, :].expand(bsize, n)
+        else:
+            att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
+            att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+
+        return action_emb, pad_masks, att_masks, adarms_cond
+
+    def _embed_suffix_tokens(self, noisy_actions, timestep):
+        """The suffix embeddings and AdaRMS condition; the masks ``embed_suffix`` adds don't depend
+        on the step, so the denoise loop builds them once per chunk (``_suffix_attention``)."""
         # Embed timestep using sine-cosine positional encoding
         time_emb = create_sinusoidal_pos_embedding(
             timestep,
@@ -849,24 +893,26 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             return F.silu(x)
 
         time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
-        adarms_cond = time_emb
+        return action_emb, time_emb
 
-        bsize, action_time_dim = action_emb.shape[:2]
-        pad_masks = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
+    def _suffix_attention(self, prefix_pad_masks: Tensor) -> tuple[Tensor, Tensor]:
+        """The denoise steps' 4D attention mask and position ids. They depend only on the prefix
+        padding and the chunk size, so one chunk's ten steps share them."""
+        batch_size, prefix_len = prefix_pad_masks.shape
+        suffix_len = self.config.chunk_size
+        device = prefix_pad_masks.device
+        suffix_pad_masks = torch.ones(batch_size, suffix_len, dtype=torch.bool, device=device)
+        # the first action token starts a new block, as in embed_suffix
+        suffix_att_masks = torch.zeros(batch_size, suffix_len, device=device)
+        suffix_att_masks[:, 0] = 1
 
-        # Set attention masks so that image, language and state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.chunk_size - 1))
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
 
-        if self.use_on_device_suffix_mask:
-            n = len(att_masks)
-            att_masks = torch.zeros(n, dtype=action_emb.dtype, device=action_emb.device)
-            att_masks[0] = 1
-            att_masks = att_masks[None, :].expand(bsize, n)
-        else:
-            att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
-            att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
-        return action_emb, pad_masks, att_masks, adarms_cond
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+        return self._prepare_attention_masks_4d(full_att_2d_masks), position_ids
 
     def forward(
         self,
@@ -1002,17 +1048,28 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     training_max_delay,
                 )
 
+        rtc_guided = self._rtc_enabled() and rtc_mode == "guided"
+        if type(self).denoise_step is not PI05Pytorch.denoise_step:
+            # a subclass with its own denoise_step keeps the four-argument contract and the
+            # prefill's cache it manages itself
+            def denoise(input_x_t, current_timestep):
+                return self.denoise_step(prefix_pad_masks, past_key_values, input_x_t, current_timestep)
+
+        else:
+            prefix_cache = _ReadOnlyPrefixCache.from_cache(past_key_values)
+            suffix_attention = self._suffix_attention(prefix_pad_masks)
+
+            def denoise(input_x_t, current_timestep):
+                return self.denoise_step(
+                    prefix_pad_masks, prefix_cache, input_x_t, current_timestep, suffix_attention
+                )
+
         return euler_integrate(
-            lambda input_x_t, current_timestep: self.denoise_step(
-                prefix_pad_masks=prefix_pad_masks,
-                past_key_values=past_key_values,
-                x_t=input_x_t,
-                timestep=current_timestep,
-            ),
+            denoise,
             noise,
             num_steps,
             rtc_processor=self.rtc_processor,
-            rtc_enabled=self._rtc_enabled() and rtc_mode == "guided",
+            rtc_enabled=rtc_guided,
             inference_delay=kwargs.get("inference_delay"),
             prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
             execution_horizon=kwargs.get("execution_horizon"),
@@ -1027,25 +1084,21 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         past_key_values,
         x_t,
         timestep,
+        suffix_attention: tuple[Tensor, Tensor] | None = None,
     ):
-        """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep)
+        """Apply one denoising step of the noise `x_t` at a given timestep.
 
-        suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-        prefix_len = prefix_pad_masks.shape[1]
-
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
-        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-
-        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+        ``sample_actions`` passes a ``_ReadOnlyPrefixCache`` and the chunk's ``suffix_attention``;
+        a caller that passes the prefill's ``DynamicCache`` and no mask gets the same result.
+        """
+        if not isinstance(past_key_values, _ReadOnlyPrefixCache):
+            past_key_values = _ReadOnlyPrefixCache.from_cache(past_key_values)
+        if suffix_attention is None:
+            suffix_attention = self._suffix_attention(prefix_pad_masks)
+        full_att_2d_masks_4d, position_ids = suffix_attention
+        suffix_embs, adarms_cond = self._embed_suffix_tokens(x_t, timestep)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        past_key_values = clone_past_key_values(past_key_values)
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
