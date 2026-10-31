@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, BinaryIO, TypedDict
 
 import torch
 
+from lerobot.utils.import_utils import prepare_torchcodec_ffmpeg_dlls
+
 from .manifest import EpisodeVideoManifest
 from .mp4 import Mp4SampleSlice, synthesize_mp4
 from .range_fetch import make_range_fetcher
@@ -590,6 +592,7 @@ def open_video_decoder(
     if backend != "torchcodec":
         raise ValueError(f"Unsupported video backend: {backend}")
     # Imported here, like video_utils: torchcodec can be installed yet fail to load its FFmpeg libraries.
+    prepare_torchcodec_ffmpeg_dlls()
     from torchcodec.decoders import VideoDecoder
 
     return VideoDecoder(file_like_or_bytesio, seek_mode="approximate")
