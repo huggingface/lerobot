@@ -201,6 +201,41 @@ lerobot-rollout \
 
 Real-Time Chunking is available with `--inference.type=rtc`, as for the other flow-matching policies.
 
+## Export with torch.export
+
+`torch.export` cannot trace the stock Qwen3-VL vision tower, because it reads the image grid (`image_grid_thw`)
+into Python numbers. Build the grid data once from a preprocessed batch with the camera layout you deploy, and
+pass it to `predict_action_chunk`. The batch holds one grid row per sample and camera, so flatten it first:
+
+```python
+import torch
+
+from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid
+
+visual = policy.model.qwenvl_with_expert.qwenvl.model.visual
+grid = Qwen3VisionGrid.build(visual, batch["image_grid_thw"].flatten(0, -2))
+tensors = {key: value for key, value in batch.items() if isinstance(value, torch.Tensor)}
+
+
+class Predict(torch.nn.Module):
+    def __init__(self, policy):
+        super().__init__()
+        self.policy = policy
+
+    def forward(self, tensors, noise):
+        return self.policy.predict_action_chunk({**batch, **tensors}, noise=noise, vision_grid=grid)
+
+
+batch_size = batch["image_grid_thw"].shape[0]
+noise = torch.randn(batch_size, policy.config.chunk_size, policy.config.max_action_dim, dtype=policy.config.dtype)
+with torch.no_grad():
+    program = torch.export.export(Predict(policy), (tensors, noise), strict=False)
+```
+
+The program refuses inputs whose image grid differs from the one `grid` was built for, and keeps the batch
+size and prompt length it was exported with. It takes the starting `noise` as an input, so the caller draws it.
+Under export the CUDA graph and `torch.compile` flags are skipped.
+
 ## Citation
 
 ```bibtex
