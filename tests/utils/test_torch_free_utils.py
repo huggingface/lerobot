@@ -21,7 +21,13 @@ from tests.torch_free import assert_runs_without_torch
 
 @pytest.mark.parametrize(
     "module",
-    ["lerobot.utils.action_interpolator", "lerobot.utils.action_dispatch", "lerobot.utils.robot_utils"],
+    [
+        "lerobot.utils.action_interpolator",
+        "lerobot.utils.action_dispatch",
+        "lerobot.utils.robot_utils",
+        "lerobot.utils.latency",
+        "lerobot.utils.rollout_status",
+    ],
 )
 def test_the_helper_loads_without_torch(module):
     assert_runs_without_torch(f"import {module}")

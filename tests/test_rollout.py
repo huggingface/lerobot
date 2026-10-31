@@ -34,8 +34,9 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 # above already guards everything below it.
 from lerobot.inference import SyncInferenceEngine, sync  # noqa: E402
 from lerobot.processor import transition_to_prediction  # noqa: E402
-from lerobot.rollout import BaseStrategyConfig, status  # noqa: E402
+from lerobot.rollout import BaseStrategyConfig  # noqa: E402
 from lerobot.rollout.strategies import BaseStrategy  # noqa: E402
+from lerobot.utils import rollout_status as status  # noqa: E402
 from lerobot.utils.cycle_timer import CycleTimer  # noqa: E402
 from tests.interactive_helpers import _FakeEngine, _loop_ctx  # noqa: E402
 
@@ -1806,6 +1807,13 @@ def test_disabled_and_interactive_skip_measurements(probes, clock, caplog, inter
     probes[1].assert_not_called()
     assert engine.latency.interval_s == 0
     assert not any(r.message.startswith("Rollout:") for r in caplog.records)
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps", "cuda", "cuda:0"])
+def test_the_memory_probe_never_imports_torch(monkeypatch, device):
+    # A loop that runs without PyTorch may still name its device.
+    monkeypatch.setitem(sys.modules, "torch", None)
+    assert status._gpu_memory_bytes(device) is None
 
 
 def test_sync_latency_excludes_precomputed_actions(monkeypatch, clock):
