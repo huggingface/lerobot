@@ -29,6 +29,28 @@ from lerobot.utils.constants import ACTION, DONE, OBS_STATE, OBS_STR, REWARD
 
 
 # Tests for the unified to_tensor function
+@pytest.mark.parametrize("dtype", [None, torch.float32])
+@pytest.mark.parametrize("axis", [0, 1])
+def test_to_tensor_reversed_numpy_views(axis, dtype):
+    array = np.arange(12, dtype=np.float64).reshape(3, 4)
+    reversed_view = np.flip(array, axis=axis)
+    original = array.copy()
+
+    result = to_tensor(reversed_view, dtype=dtype, device="cpu")
+
+    expected = torch.tensor(reversed_view.copy(), dtype=dtype)
+    torch.testing.assert_close(result, expected)
+    np.testing.assert_array_equal(array, original)
+
+
+def test_to_tensor_positive_strides_preserve_shared_storage():
+    array = np.arange(12, dtype=np.float64).reshape(3, 4).T
+    result = to_tensor(array, dtype=None)
+    array[0, 0] = 42
+    assert result[0, 0].item() == 42
+    assert result.stride() == tuple(stride // array.itemsize for stride in array.strides)
+
+
 def test_to_tensor_numpy_arrays():
     """Test to_tensor with various numpy arrays."""
     # Regular numpy array
