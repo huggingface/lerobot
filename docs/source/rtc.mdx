@@ -122,6 +122,15 @@ RTCConfig(execution_horizon=10)
 
 **`max_guidance_weight`**: How strongly to enforce consistency with the previous chunk. This is a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy. For 10 steps flow matching (SmolVLA, Pi0, Pi0.5), a value of 10.0 is an optimal value.
 
+**`guidance_jacobian`**: How the prefix error is mapped back onto the noisy chunk `x_t`.
+
+With `x_t = t * noise + (1 - t) * a`, the denoiser estimate is `x1 = x_t - t * v(x_t)` and the guided velocity is
+`v - w(t) * J^T W (Y - x1)`, where `J = d x1 / d x_t`, `Y` is the previous chunk and `W` the prefix weights.
+The off-diagonal blocks of `J` are what carry a correction on the frozen prefix over to the steps after it.
+
+- `identity` (default): uses `J = I` and skips the backward pass through the denoiser. Only the weighted prefix receives guidance, so the actions just after the guided window are not pulled along. This is the historical LeRobot behaviour.
+- `vjp`: the RTC paper's vector-Jacobian product through the denoiser. Costs one extra backward pass through the action expert per denoising step.
+
 **`prefix_attention_schedule`**: How to weight consistency across the overlap region.
 
 - `LINEAR`: Linear decay from inference_delay to execution_horizon
