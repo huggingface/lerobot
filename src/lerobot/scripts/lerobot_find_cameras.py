@@ -29,6 +29,7 @@ lerobot-find-cameras
 
 import argparse
 import logging
+import platform
 import time
 from pathlib import Path
 from typing import Any
@@ -38,10 +39,24 @@ from PIL import Image
 
 from lerobot.cameras import Camera, ColorMode
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from lerobot.cameras.opencv.configuration_opencv import Cv2Backends
 from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
+
+# OpenCV names its active backend on the opened capture; reuse it for the capture run so
+# the camera is driven the same way it was discovered.
+_CV2_BACKEND_BY_NAME = {
+    "V4L2": Cv2Backends.V4L2,
+    "DSHOW": Cv2Backends.DSHOW,
+    "MSMF": Cv2Backends.MSMF,
+    "AVFOUNDATION": Cv2Backends.AVFOUNDATION,
+}
+
+
+def _cv2_backend_from_name(name: str | None) -> Cv2Backends:
+    return _CV2_BACKEND_BY_NAME.get((name or "").upper(), Cv2Backends.ANY)
 
 
 def find_all_opencv_cameras() -> list[dict[str, Any]]:
@@ -112,6 +127,12 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
             logger.warning(f"No {camera_type_filter} cameras were detected.")
         else:
             logger.warning("No cameras (OpenCV or RealSense) were detected.")
+        if platform.system() == "Windows":
+            logger.warning(
+                "On Windows a camera that is already open elsewhere is invisible here: close Teams / "
+                "Zoom / the Camera app, check Device Manager for an error, and allow camera access for "
+                "desktop apps in Settings > Privacy > Camera."
+            )
     else:
         print("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
@@ -169,6 +190,7 @@ def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> di
                 index_or_path=cam_id,
                 color_mode=ColorMode.RGB,
                 warmup_s=warmup_s,
+                backend=_cv2_backend_from_name(cam_meta.get("backend")),
             )
             instance = OpenCVCamera(cv_config)
         elif cam_type == "RealSense":
