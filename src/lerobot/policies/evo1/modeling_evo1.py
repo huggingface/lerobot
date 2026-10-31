@@ -397,11 +397,18 @@ class Evo1Policy(PreTrainedPolicy):
             camera_images.append(image)
 
         batch_size = camera_images[0].shape[0]
-        n_present = len(camera_images)
         image_masks = torch.zeros(
             batch_size, self.config.max_views, dtype=torch.bool, device=camera_images[0].device
         )
-        image_masks[:, :n_present] = True
+        # Keep each camera at its own view slot. An absent camera before the last present one gets a
+        # placeholder image (its tokens are masked out) so that the later cameras do not shift into
+        # its slot; trailing absent views are still zero-padded by the embedder.
+        last_present = max(slot for slot, camera_key in enumerate(camera_keys) if camera_key in present_keys)
+        for slot, camera_key in enumerate(camera_keys):
+            if camera_key in present_keys:
+                image_masks[:, slot] = True
+            elif slot < last_present:
+                camera_images.insert(slot, torch.zeros_like(camera_images[0]))
 
         return camera_images, image_masks
 

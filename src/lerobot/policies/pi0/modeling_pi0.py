@@ -1056,12 +1056,12 @@ class PI0Policy(PreTrainedPolicy):
             mask = torch.ones(bsize, dtype=torch.bool, device=device)
             img_masks.append(mask)
 
-        # Create image features not present in the batch as fully 0 padded images
-        for _num_empty_cameras in range(len(missing_img_keys)):
-            img = torch.ones_like(img) * -1  # padded with -1 for SigLIP
-            mask = torch.zeros_like(mask)  # mask is zero for empty cameras
-            images.append(img)
-            img_masks.append(mask)
+        # Create image features not present in the batch as fully padded images, each at its own
+        # slot in `image_features` order so that the cameras after it keep their slots
+        for slot, key in enumerate(self.config.image_features):
+            if key in missing_img_keys:
+                images.insert(slot, torch.ones_like(img) * -1)  # padded with -1 for SigLIP
+                img_masks.insert(slot, torch.zeros_like(mask))  # mask is zero for empty cameras
 
         return images, img_masks
 
