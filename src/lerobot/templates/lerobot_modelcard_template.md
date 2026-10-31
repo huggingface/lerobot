@@ -57,6 +57,8 @@ FLUX 3 Action (`flux3`) is Black Forest Labs' video-action model: the FLUX.3 vid
 [DM05](https://huggingface.co/Dexmal/DM05) is Dexmal's Vision-Language-Action model for robot control. It conditions on camera observations, robot state, and language instructions to predict continuous action chunks with a flow-matching action expert.
 {% elif model_name == "fineart_vla" %}
 FineART-VLA is a single end-to-end policy from Scale AI and Hugging Face that extends π₀.₅ with a trained language head: it predicts its next subtask in language (System 2) and executes it with a flow-matching action expert (System 1), using knowledge insulation to protect the pretrained VLM. It is mid-trained on the densely subtask-annotated FineART bimanual dataset.
+{% elif model_name == "cosmos3_nano" or model_name == "cosmos3_edge" %}
+[Cosmos3](https://research.nvidia.com/labs/cosmos-lab/cosmos3/) is a world action model for robot control, built on NVIDIA's Cosmos 3 omnimodal world models. Its Mixture-of-Transformers backbone jointly predicts the future video frames and the next robot action chunk from camera observations and a language instruction, with flow matching over the Wan2.2 VAE latents and the actions.
 {% else %}
 This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/huggingface/lerobot).
 {% endif %}
@@ -68,7 +70,9 @@ This is a **{{ model_name }}** policy trained with [LeRobot](https://github.com/
   "groot": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-groot-paper1%20(1).png",
   "wall_x": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/walloss-lerobot-paper.png",
   "wall_oss_05": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/walloss-lerobot-paper.png",
-  "xvla": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/xvla-architecture.png"
+  "xvla": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/xvla-architecture.png",
+  "cosmos3_nano": "https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/cosmos3/cosmos3_mot_architecture.png",
+  "cosmos3_edge": "https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/cosmos3/cosmos3_mot_architecture.png"
 } %}
 {% if diagrams.get(model_name) %}
 <p align="center">
@@ -106,7 +110,9 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "lingbot_vla_v2": "lingbot_vla_v2",
   "lawam": "lawam",
   "dm05": "dm05",
-  "fineart_vla": "fineart_vla"
+  "fineart_vla": "fineart_vla",
+  "cosmos3_nano": "cosmos3",
+  "cosmos3_edge": "cosmos3"
 } %}
 {% if policy_docs.get(model_name) %}Learn how to train and run it in the [LeRobot {{ model_name }} guide](https://huggingface.co/docs/lerobot/main/en/{{ policy_docs[model_name] }}), or browse the [full documentation](https://huggingface.co/docs/lerobot/index).
 {% else %}See the [full LeRobot documentation](https://huggingface.co/docs/lerobot/index).

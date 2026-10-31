@@ -99,6 +99,8 @@
     title: Wall-OSS-0.5
   - local: dm05
     title: DM05
+  - local: cosmos3
+    title: Cosmos3
   title: "Policies"
 - sections:
   - local: sarm

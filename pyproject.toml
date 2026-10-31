@@ -277,6 +277,7 @@ lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
 ]
+cosmos3 = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
 
 # Features
 # Remote inference transport and serialization.
@@ -370,6 +371,7 @@ all = [
     "lerobot[lingbot_va]",
     "lerobot[lingbot_vla_v2]",
     "lerobot[lawam]",
+    "lerobot[cosmos3]",
     "lerobot[remote]",
     "lerobot[dev]",
     "lerobot[test]",
