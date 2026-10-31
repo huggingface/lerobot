@@ -27,7 +27,7 @@ from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
+from lerobot.utils.device_utils import get_autocast_context
 from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -577,10 +577,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         if not reinit_prefixes:
             return super()._load_checkpoint(model, checkpoint, map_location, strict)
 
-        # `resolve_safetensors_device` is what keeps every rank from materializing the whole
-        # checkpoint on GPU 0: safetensors maps the bare string "cuda" to cuda:0 regardless of
-        # torch.cuda.current_device(), and `config.device` is exactly that bare string.
-        state_dict = checkpoint.load_state_dict(device=resolve_safetensors_device(map_location))
+        state_dict = checkpoint.load_state_dict(device="cpu")
         current = model.state_dict()
 
         reinitialized: list[str] = []

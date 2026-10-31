@@ -33,7 +33,6 @@ from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.lerobot_types import PolicyOutput
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
-from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
@@ -331,18 +330,22 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         The default streams one shard at a time. Custom loaders can inspect the whole
         checkpoint through its keys, shapes and tensors without creating a temporary file.
+
+        The default reads each file on the CPU and copies it into the parameters wherever they were
+        built; read on a GPU, the whole file would sit there beside them. So it ignores `map_location`,
+        the device `from_pretrained` moves the policy to afterwards. A loader that assigns the file's
+        tensors as the weights, like G0.5's, places them on it.
         """
-        device = resolve_safetensors_device(map_location)
         if len(checkpoint.files) == 1:
             missing_keys, unexpected_keys = load_model_as_safetensor(
-                model, str(checkpoint.files[0]), strict=strict, device=device
+                model, str(checkpoint.files[0]), strict=strict, device="cpu"
             )
         else:
             expected = set(model.state_dict())
             missing = set(expected)
             unexpected: set[str] = set()
             for file in checkpoint.files:
-                state = load_file(str(file), device=device)
+                state = load_file(str(file), device="cpu")
                 result = model.load_state_dict(state, strict=False)
                 missing.intersection_update(result.missing_keys)
                 unexpected.update(result.unexpected_keys)

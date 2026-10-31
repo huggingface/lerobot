@@ -190,9 +190,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         ]
 
         if not mismatched:
-            # The core model is already on the target device; stage weights on CPU
-            # to avoid holding a second full copy on the accelerator.
-            return super()._load_checkpoint(model, checkpoint, "cpu", strict)
+            return super()._load_checkpoint(model, checkpoint, map_location, strict)
         if strict:
             raise RuntimeError(
                 f"FastWAM: {len(mismatched)} checkpoint tensors have a shape mismatch under "

@@ -80,7 +80,8 @@ def merge_adapter(base: str | Path, adapter: str | Path, out: str | Path, device
     stored_device = json.loads((_local_dir(base) / "config.json").read_text()).get("device")
     config.device = str(torch.device(device))
     policy = PraxisPolicy.from_pretrained(base, config=config, strict=True, load_frozen_parts=False)
-    peft_model = PeftModel.from_pretrained(policy, str(adapter))
+    # PEFT otherwise maps the adapter file on the accelerator it finds, not where the policy is.
+    peft_model = PeftModel.from_pretrained(policy, str(adapter), torch_device="cpu")
     merged = peft_model.merge_and_unload()
     if not isinstance(merged, PraxisPolicy):
         raise TypeError(f"merge_and_unload returned {type(merged).__name__}, expected PraxisPolicy")
