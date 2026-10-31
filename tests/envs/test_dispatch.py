@@ -46,6 +46,19 @@ def test_libero_rejects_nonpositive_fps():
         LiberoEnv(fps=0)
 
 
+def test_libero_warns_when_fps_not_20(caplog):
+    """Delta-action LIBERO evals at non-20 Hz silently change action scale; warn loudly."""
+    with caplog.at_level(logging.WARNING, logger="lerobot.envs.configs"):
+        LiberoEnv(fps=10)
+    assert any("fps=10" in r.message and "20 Hz" in r.message for r in caplog.records)
+
+
+def test_libero_default_fps_does_not_warn(caplog):
+    with caplog.at_level(logging.WARNING, logger="lerobot.envs.configs"):
+        LiberoEnv()
+    assert not any("differs from the standard 20 Hz" in r.message for r in caplog.records)
+
+
 def test_identity_processors():
     """Base class get_env_processors() returns identity pipelines."""
     cfg = make_env_config("aloha")
