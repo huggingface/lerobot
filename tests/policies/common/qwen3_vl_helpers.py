@@ -63,9 +63,11 @@ def tiny_qwen3_vl_config() -> Qwen3VLConfig:
     )
 
 
-def image_prompts(config: Qwen3VLConfig, suffix: tuple[int, ...] = (4, 5)) -> dict[str, torch.Tensor]:
-    """Two left-padded prompts of different lengths: text, then each image between a vision start and a vision
-    end token, as the Qwen3-VL chat template writes images, then `suffix`."""
+def image_prompts(
+    config: Qwen3VLConfig, suffix: tuple[int, ...] = (4, 5), padding_side: str = "left"
+) -> dict[str, torch.Tensor]:
+    """Two prompts of different lengths, padded on `padding_side`: text, then each image between a vision start
+    and a vision end token, as the Qwen3-VL chat template writes images, then `suffix`."""
     merge = config.vision_config.spatial_merge_size
     rows = []
     for prefix in ([1, 2], [1, 2, 3, 4, 5]):
@@ -75,13 +77,18 @@ def image_prompts(config: Qwen3VLConfig, suffix: tuple[int, ...] = (4, 5)) -> di
             ids += [config.vision_start_token_id, *image, config.vision_end_token_id]
         rows.append(ids + list(suffix))
     length = max(len(r) for r in rows)
-    input_ids = torch.tensor([[0] * (length - len(r)) + r for r in rows])
+
+    def pad(row):
+        padding = [0] * (length - len(row))
+        return padding + row if padding_side == "left" else row + padding
+
+    input_ids = torch.tensor([pad(r) for r in rows])
     grid_thw = torch.tensor(IMAGE_GRIDS * len(rows))
     vision = config.vision_config
     patch_dim = vision.in_channels * vision.temporal_patch_size * vision.patch_size**2
     return {
         "input_ids": input_ids,
-        "attention_mask": torch.tensor([[0] * (length - len(r)) + [1] * len(r) for r in rows]),
+        "attention_mask": torch.tensor([pad([1] * len(r)) for r in rows]),
         "mm_token_type_ids": (input_ids == IMAGE_TOKEN_ID).int(),
         "pixel_values": torch.randn(int(grid_thw.prod(-1).sum()), patch_dim),
         "image_grid_thw": grid_thw,
