@@ -17,6 +17,7 @@
 import inspect
 import json
 import sys
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -217,6 +218,115 @@ def test_n1_7_backbone_preserves_missing_qwen_optional_dependency_error(monkeypa
             select_layer=0,
             use_flash_attention=False,
         )
+
+
+def _tiny_n1_7_backbone(monkeypatch):
+    from transformers import Qwen3VLForConditionalGeneration
+
+    import lerobot.policies.groot.groot_n1_7 as groot_n1_7
+    from tests.policies.common.qwen3_vl_helpers import tiny_qwen3_vl_config
+
+    torch.manual_seed(0)
+    qwen = Qwen3VLForConditionalGeneration(tiny_qwen3_vl_config()).eval()
+    monkeypatch.setattr(
+        groot_n1_7.Qwen3VLForConditionalGeneration, "from_pretrained", lambda *args, **kwargs: deepcopy(qwen)
+    )
+    return groot_n1_7.Qwen3Backbone(select_layer=2).eval()
+
+
+@pytest.mark.parametrize("padding_side", ["left", "right"])
+def test_n1_7_backbone_exports_a_vision_grid_with_legacy_positions(monkeypatch, padding_side):
+    pytest.importorskip("transformers")
+
+    from transformers.feature_extraction_utils import BatchFeature
+
+    from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid
+    from tests.policies.common.fixed_grid_checks import data_dependent_nodes
+    from tests.policies.common.qwen3_vl_helpers import IMAGE_TOKEN_ID, STOCK_DEEPSTACK_NODES, image_prompts
+
+    backbone = _tiny_n1_7_backbone(monkeypatch)
+    prompts = image_prompts(backbone.model.config, padding_side=padding_side)
+    grid = Qwen3VisionGrid.build(backbone.visual, prompts["image_grid_thw"])
+    positions = []
+
+    def record_positions(module, args, kwargs):
+        positions.append(kwargs["position_ids"])
+
+    backbone.language_model.register_forward_pre_hook(record_positions, with_kwargs=True)
+
+    class Backbone(torch.nn.Module):
+        def __init__(self, keys, grid):
+            super().__init__()
+            self.keys, self.grid = keys, grid
+
+        def forward(self, *tensors):
+            vl_input = BatchFeature(dict(zip(self.keys, tensors, strict=True)))
+            return backbone(vl_input, vision_grid=self.grid)["backbone_features"]
+
+    keys = sorted(prompts)
+    inputs = tuple(prompts[key] for key in keys)
+    with torch.no_grad():
+        expected = backbone(BatchFeature(prompts))["backbone_features"]
+        assert torch.equal(Backbone(keys, grid)(*inputs), expected)
+        with pytest.raises(ValueError, match="needs a vision_grid. Only the backbone takes one so far"):
+            torch.export.export(Backbone(keys, None), inputs, strict=False)
+        program = torch.export.export(Backbone(keys, grid), inputs, strict=False)
+        torch.testing.assert_close(program.module()(*inputs), expected, rtol=0, atol=0)
+        assert data_dependent_nodes(program) == STOCK_DEEPSTACK_NODES
+        # Eager and the program refuse images without the vision start token the processor writes before each
+        # one (two images could then touch, which eager rope positions read as one image), and a hidden image
+        # token of the second prompt.
+        input_ids = prompts["input_ids"]
+        start_token = backbone.model.config.vision_start_token_id
+        no_start = {**prompts, "input_ids": input_ids.masked_fill(input_ids == start_token, 3)}
+        hidden = {**prompts, "attention_mask": prompts["attention_mask"].clone()}
+        hidden["attention_mask"][1, (input_ids[1] == IMAGE_TOKEN_ID).nonzero()[0, 0]] = 0
+        refused = {"Each image must follow a vision start token": no_start, "must hide only padding": hidden}
+        for message, wrong in refused.items():
+            with pytest.raises(ValueError, match=message):
+                backbone(BatchFeature(wrong), vision_grid=grid)
+            with pytest.raises(RuntimeError, match="Runtime assertion failed"):
+                program.module()(*(wrong[key] for key in keys))
+        # The second image of each prompt transposed: same token counts, so only the grid check refuses it.
+        changed = {**prompts, "image_grid_thw": prompts["image_grid_thw"].clone()}
+        changed["image_grid_thw"][1::2, 1:] = changed["image_grid_thw"][1::2, 1:].flip(-1)
+        with pytest.raises(ValueError, match="differs from the one the vision grid was built for"):
+            backbone(BatchFeature(changed), vision_grid=grid)
+        with pytest.raises(ValueError, match="image inputs only"):
+            torch.export.export(
+                Backbone([*keys, "pixel_values_videos"], grid),
+                (*inputs, prompts["pixel_values"]),
+                strict=False,
+            )
+    # The stock path adds the legacy text row as a fourth row, which only flash attention reads; the fixed-grid
+    # path must pass the same rows.
+    stock_positions, grid_positions, _ = positions
+    assert torch.equal(grid_positions, stock_positions)
+
+
+def test_n1_7_backbone_export_refuses_flash_attention(monkeypatch):
+    pytest.importorskip("transformers")
+
+    from transformers.feature_extraction_utils import BatchFeature
+
+    from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid
+    from tests.policies.common.qwen3_vl_helpers import image_prompts
+
+    backbone = _tiny_n1_7_backbone(monkeypatch)
+    prompts = image_prompts(backbone.model.config)
+    grid = Qwen3VisionGrid.build(backbone.visual, prompts["image_grid_thw"])
+    keys = sorted(prompts)
+
+    class Backbone(torch.nn.Module):
+        def forward(self, *tensors):
+            return backbone(BatchFeature(dict(zip(keys, tensors, strict=True))), vision_grid=grid)[
+                "backbone_features"
+            ]
+
+    # Set after building, which would need the flash kernels; export refuses before attention runs.
+    backbone.language_model.config._attn_implementation = "flash_attention_3"
+    with torch.no_grad(), pytest.raises(ValueError, match="needs SDPA attention"):
+        torch.export.export(Backbone(), tuple(prompts[key] for key in keys), strict=False)
 
 
 def _write_raw_n1_7_libero_checkpoint(path):
