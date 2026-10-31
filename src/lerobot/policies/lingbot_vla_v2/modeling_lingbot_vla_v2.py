@@ -32,6 +32,9 @@ from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.qwen3_vl.modeling_qwen3_vl import apply_rotary_pos_emb
 
 from lerobot.policies.common.flow_matching import FlowConvention, make_flow_matching_inputs
+from lerobot.policies.common.input_checks import check_input
+from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid, qwen3_vision_forward
+from lerobot.policies.common.qwen_vision import is_exporting, qwen_image_rope_index
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.utils import populate_queues
@@ -302,6 +305,30 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             video_grid_thw=video_grid_thw,
             attention_mask=attention_mask,
         )
+        return self._pad_positions_as_trained(position_ids, attention_mask)
+
+    def build_fixed_grid_position_ids(
+        self, input_ids: Tensor, attention_mask: Tensor, grid_thw: list[list[int]]
+    ) -> Tensor:
+        """`build_prefix_position_ids` for `torch.export`, which cannot read the image grid on the host.
+
+        `grid_thw` is the grid of every camera as Python ints, including cameras hidden by `attention_mask`.
+        Eager prediction drops the hidden cameras' grids instead, which gives the same positions while the
+        visible cameras stay apart: each after its own vision start token, or, without vision boundaries, one
+        visible camera per sample (`embed_prefix` checks this).
+        """
+        vlm_cfg = self.qwenvl.config
+        position_ids = qwen_image_rope_index(
+            input_ids,
+            attention_mask,
+            grid_thw,
+            vlm_cfg.vision_config.spatial_merge_size,
+            vlm_cfg.image_token_id,
+        )
+        return self._pad_positions_as_trained(position_ids, attention_mask)
+
+    @staticmethod
+    def _pad_positions_as_trained(position_ids: Tensor, attention_mask: Tensor | None) -> Tensor:
         # transformers 4.57 (which the 6B checkpoint was trained under) filled masked
         # (padding) rope positions with 1; transformers 5.5 fills them with 0. Restore the
         # 4.57 convention so cached-prefix rope matches the trained weights exactly.
@@ -816,6 +843,7 @@ class FlowMatchingV2(FlowMatchingV1):
         lang_masks,
         image_grid_thw=None,
         vision_outputs=None,
+        vision_grid: Qwen3VisionGrid | None = None,
     ):
         if image_grid_thw is None:
             raise ValueError("LingbotVLAV2Policy requires image_grid_thw from the Qwen3-VL image processor.")
@@ -835,7 +863,27 @@ class FlowMatchingV2(FlowMatchingV1):
         else:
             flat_grid_thw = image_grid_thw
 
-        if vision_outputs is None:
+        if vision_grid is not None:
+            # The tower runs from `vision_grid`, without reading the grid on the host.
+            if len({t * h * w for t, h, w in vision_grid.grid_thw}) > 1:
+                # `embed_image` stacks the features per image, which needs one token count.
+                raise ValueError(
+                    f"Every camera must give the same number of image tokens, got {vision_grid.grid_thw}."
+                )
+            visual = self.qwenvl_with_expert.qwenvl.model.visual
+            if visual.config._attn_implementation == "flash_attention_2" and visual.dtype == torch.float32:
+                # The vendored attention runs float32 flash attention in bfloat16; the export replay does not.
+                raise ValueError(
+                    "Running LingBot's vision tower on a vision_grid with flash_attention_2 needs bfloat16 weights; set "
+                    "vit_attn_implementation='sdpa' for a float32 model."
+                )
+            features, deepstack = qwen3_vision_forward(visual, images, flat_grid_thw, vision_grid)
+            per_image = (images.shape[0], -1)
+            img_emb = features.unflatten(0, per_image)
+            deepstack_embs = [level.unflatten(0, per_image) for level in deepstack]
+        elif is_exporting():
+            raise ValueError("Exporting LingBot-VLA v2 needs a vision_grid (see `predict_action_chunk`).")
+        elif vision_outputs is None:
             img_emb, deepstack_embs = self.qwenvl_with_expert.embed_image(
                 images,
                 flat_grid_thw,
@@ -921,16 +969,30 @@ class FlowMatchingV2(FlowMatchingV1):
         else:
             att_masks = torch.zeros((bsize, embs.shape[1]), device=device, dtype=torch.bool)
 
-        flat_img_masks = einops.rearrange(img_masks, "b n -> (b n)")
-        rope_grid_thw = flat_grid_thw[flat_img_masks]
-        if rope_grid_thw.numel() == 0:
-            rope_grid_thw = flat_grid_thw[:1]
-        prefix_position_ids = self.qwenvl_with_expert.build_prefix_position_ids(
-            prefix_input_ids,
-            pad_masks.long(),
-            image_grid_thw=rope_grid_thw,
-            video_grid_thw=None,
-        )
+        if not self.config.qwen3vl_use_vision_boundaries:
+            # Without boundary tokens, visible cameras form one image block that transformers'
+            # `get_rope_index` cannot place, so such prompts stay refused as before.
+            check_input(
+                img_masks.sum(dim=1) <= 1,
+                "qwen3vl_use_vision_boundaries=False supports at most one visible camera per sample.",
+            )
+        if vision_grid is not None:
+            # Eager rope positions fail on a sample with no visible token.
+            check_input(pad_masks.any(dim=1), "Every sample needs a visible prefix token.")
+            prefix_position_ids = self.qwenvl_with_expert.build_fixed_grid_position_ids(
+                prefix_input_ids, pad_masks.long(), vision_grid.grid_thw
+            )
+        else:
+            flat_img_masks = einops.rearrange(img_masks, "b n -> (b n)")
+            rope_grid_thw = flat_grid_thw[flat_img_masks]
+            if rope_grid_thw.numel() == 0:
+                rope_grid_thw = flat_grid_thw[:1]
+            prefix_position_ids = self.qwenvl_with_expert.build_prefix_position_ids(
+                prefix_input_ids,
+                pad_masks.long(),
+                image_grid_thw=rope_grid_thw,
+                video_grid_thw=None,
+            )
         # Dense (capture-safe) deepstack layout: zero-masked per-camera embeds
         # laid out over the full prefix length instead of bool-filtered rows.
         # _apply_deepstack then does a plain shape-static add; the old filtered
@@ -1054,7 +1116,9 @@ class FlowMatchingV2(FlowMatchingV1):
         align_losses = self._align_losses(prefix_out, align_targets) if align_targets is not None else {}
         return losses, seq_wise_loss, router_z_loss, moe_metrics, align_losses
 
-    def _embed_and_fill_prefix(self, images, img_masks, lang_tokens, lang_masks, image_grid_thw):
+    def _embed_and_fill_prefix(
+        self, images, img_masks, lang_tokens, lang_masks, image_grid_thw, vision_grid: Qwen3VisionGrid | None
+    ):
         """Prefix half of sample_actions: embed_prefix
         (vision tower + language embedding + mrope position ids) followed by the
         36-layer KV fill. Returns exactly what the denoise loop consumes."""
@@ -1071,6 +1135,7 @@ class FlowMatchingV2(FlowMatchingV1):
             lang_tokens,
             lang_masks,
             image_grid_thw=image_grid_thw,
+            vision_grid=vision_grid,
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         _, past_key_values, _ = self.qwenvl_with_expert.forward(
@@ -1108,8 +1173,13 @@ class FlowMatchingV2(FlowMatchingV1):
         image_grid_thw=None,
         inference_delay: int = 0,
         prev_chunk_left_over: Tensor | None = None,
+        vision_grid: Qwen3VisionGrid | None = None,
     ) -> Tensor:
-        """Do a full Qwen3-VL inference forward and compute the action."""
+        """Do a full Qwen3-VL inference forward and compute the action.
+
+        `vision_grid`, built by `Qwen3VisionGrid.build` from every camera's grid, runs the vision tower and the
+        prefix positions without reading `image_grid_thw` on the host, as `torch.export` needs.
+        """
         if not self.config.use_cache:
             raise ValueError(
                 "sample_actions requires config.use_cache=True: the denoise loop reuses "
@@ -1117,6 +1187,9 @@ class FlowMatchingV2(FlowMatchingV1):
                 "past_key_values=None. (Training forward does not go through "
                 "sample_actions and is unaffected.)"
             )
+        # A CUDA graph captured, or a compiled function cached, while torch.export traces would stay in the
+        # live policy.
+        exporting = is_exporting()
         bsize = state.shape[0]
         device = state.device
         dtype = state.dtype
@@ -1129,17 +1202,19 @@ class FlowMatchingV2(FlowMatchingV1):
             )
             noise = torch.randn(actions_shape, device=device, dtype=dtype)
 
-        if self.config.use_cudagraph_prefix or self.config.use_cudagraph_prefix_full:
+        if (self.config.use_cudagraph_prefix or self.config.use_cudagraph_prefix_full) and not exporting:
             # CUDA-graphed prefix (see config docs). Falls back to the
             # eager prefix only for the non-CUDA / use_cache
             # guards; capture failures finish eagerly from the already-run
             # embed_prefix (no second vision pass).
-            got = self._prefix_graphed(images, img_masks, lang_tokens, lang_masks, image_grid_thw)
+            got = self._prefix_graphed(
+                images, img_masks, lang_tokens, lang_masks, image_grid_thw, vision_grid
+            )
             if got is not None:
                 prefix_pad_masks, prefix_position_ids, past_key_values = got
             else:
                 prefix_pad_masks, prefix_position_ids, past_key_values = self._embed_and_fill_prefix(
-                    images, img_masks, lang_tokens, lang_masks, image_grid_thw
+                    images, img_masks, lang_tokens, lang_masks, image_grid_thw, vision_grid
                 )
         else:
             prefix_pad_masks, prefix_position_ids, past_key_values = self._embed_and_fill_prefix(
@@ -1148,6 +1223,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 lang_tokens,
                 lang_masks,
                 image_grid_thw,
+                vision_grid,
             )
 
         dt = torch.tensor(-1.0 / self.config.num_steps, dtype=dtype, device=device)
@@ -1166,7 +1242,7 @@ class FlowMatchingV2(FlowMatchingV1):
             time = time + dt
         count = 0
         predict_velocity_fn = self.predict_velocity
-        if self.config.compile_predict_velocity:
+        if self.config.compile_predict_velocity and not exporting:
             compiled = getattr(self, "_compiled_predict_velocity", None)
             if compiled is None:
                 compiled = self._compile_with_mode(self.predict_velocity)
@@ -1174,7 +1250,7 @@ class FlowMatchingV2(FlowMatchingV1):
             predict_velocity_fn = compiled
 
         guided = self._rtc_enabled() and prev_chunk_left_over is not None
-        if self.config.use_cudagraph_denoise and not guided:
+        if self.config.use_cudagraph_denoise and not guided and not exporting:
             # The captured graph has no guidance hook; replay it only unguided.
             graphed = self._denoise_loop_graphed(
                 predict_velocity_fn,
@@ -1597,6 +1673,7 @@ class FlowMatchingV2(FlowMatchingV1):
         lang_tokens,
         lang_masks,
         image_grid_thw,
+        vision_grid: Qwen3VisionGrid | None,
     ):
         """Run the prefix 36-layer KV fill as one captured CUDA graph.
 
@@ -1615,7 +1692,8 @@ class FlowMatchingV2(FlowMatchingV1):
         if not self.config.use_cache:
             return None
 
-        if self.config.use_cudagraph_prefix_full:
+        # A vision_grid replaces the stock tower captured here, so with one only the KV fill is captured.
+        if self.config.use_cudagraph_prefix_full and vision_grid is None:
             # Vision tower as its own graph (grid metadata cached on `core`); the embed
             # glue (language embed / masks / mrope ids / dense deepstack) stays eager —
             # it is light and get_rope_index's data-dependent host syncs cannot be
@@ -1649,6 +1727,7 @@ class FlowMatchingV2(FlowMatchingV1):
             lang_masks,
             image_grid_thw=image_grid_thw,
             vision_outputs=vision_outputs,
+            vision_grid=vision_grid,
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
 
@@ -1681,7 +1760,8 @@ class FlowMatchingV2(FlowMatchingV1):
         if gs is not None and gs["sig"] != sig:
             warned = getattr(self, "_prefix_graph_warned", None)
             if warned is None:
-                warned = self._prefix_graph_warned = set()
+                warned = set()
+                self._prefix_graph_warned = warned
             if sig not in warned:
                 logger.warning("use_cudagraph_prefix: prefix shapes changed; re-capturing the prefix graph")
                 warned.add(sig)
@@ -2248,6 +2328,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         noise: Tensor | None = None,
         inference_delay: int = 0,
         prev_chunk_left_over: Tensor | None = None,
+        vision_grid: Qwen3VisionGrid | None = None,
     ) -> Tensor:
         """Run flow-matching denoising and return the canonical action chunk (B, chunk, max_action_dim).
 
@@ -2259,6 +2340,12 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         normalized leftover prefix of the previous chunk (already truncated to the
         execution horizon); ``inference_delay`` is the chunk's reaction lag in action
         steps. Passing ``None`` (default) reproduces the plain unguided sampling.
+
+        To export with ``torch.export``, pass ``vision_grid``, built once by
+        ``Qwen3VisionGrid.build(self.model.qwenvl_with_expert.qwenvl.model.visual, image_grid_thw.flatten(0, -2))``
+        from the batch's ``image_grid_thw``, and export under ``torch.no_grad()``. An eager prediction under
+        ``torch.no_grad()`` fills the fused experts' packed weight caches, which the program would carry unused, so
+        export before one, or call ``clear_inference_cache()`` on each ``Qwen2FusedExperts`` first.
         """
         self.eval()
         images, img_masks, lang_tokens, lang_masks, state, image_grid_thw = self._extract_model_inputs(batch)
@@ -2272,6 +2359,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             image_grid_thw=image_grid_thw,
             inference_delay=inference_delay,
             prev_chunk_left_over=prev_chunk_left_over,
+            vision_grid=vision_grid,
         )
         return actions
 

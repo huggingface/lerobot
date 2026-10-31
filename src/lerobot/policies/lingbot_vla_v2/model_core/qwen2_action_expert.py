@@ -37,6 +37,8 @@ from transformers.models.qwen2.modeling_qwen2 import (  # noqa: E402
 )
 from transformers.processing_utils import Unpack  # noqa: E402
 
+from lerobot.policies.common.qwen_vision import is_exporting  # noqa: E402
+
 # from transformers.models.mistral.modeling_mistral import MistralMLP
 
 
@@ -104,13 +106,15 @@ class Qwen2FusedExperts(nn.Module):
         wd:  [E, I, H] — down projection transposed.
         Cached inference-only, keyed on parameter versions (in-place updates such as
         optimizer.step or load_state_dict bump ``_version``); rebuilt each call under
-        autograd so gradients flow into the Parameters.
+        autograd so gradients flow into the Parameters, and under torch.export in the
+        cache's layout, so the program reads the Parameters, matches eager exactly, and
+        tracing stores nothing in the cache.
         """
-        if torch.is_grad_enabled():
-            return (
-                torch.cat([self.gate_proj, self.up_proj], dim=1).transpose(1, 2),
-                self.down_proj.transpose(1, 2),
-            )
+        exporting = is_exporting()
+        if torch.is_grad_enabled() or exporting:
+            gate_up = torch.cat([self.gate_proj, self.up_proj], dim=1).transpose(1, 2)
+            down = self.down_proj.transpose(1, 2)
+            return (gate_up.contiguous(), down.contiguous()) if exporting else (gate_up, down)
         cache_key = (self.gate_proj._version, self.up_proj._version, self.down_proj._version)
         if self._gate_up_proj_cache is None or self._sparse_cache_key != cache_key:
             with torch.no_grad():

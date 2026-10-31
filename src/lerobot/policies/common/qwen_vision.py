@@ -200,10 +200,12 @@ def qwen_image_rope_index(
     Text tokens count up by one. An image's tokens get `(start, start + row, start + col)` and move the
     next start by `max(rows, cols)`. Padding gets 0. `image_grid_thw` lists the
     (t, h, w) grid of every image in `input_ids`, in order, as Python ints, and every image keeps its own
-    grid, hidden by `attention_mask` or not. That equals eager rope positions when only padding is hidden;
-    `check_visible_images` refuses the other masks. Each image must be one run of tokens inside one sample,
-    right after a `vision_start_token_id` token when that is given, as the processors write images: eager
-    rope positions place other layouts differently or fail on them. Only still images (t == 1) are
+    grid, hidden by `attention_mask` or not. That equals eager rope positions when only padding is hidden,
+    the masks `check_visible_images` allows. It also equals eager code that drops the grids of hidden
+    images, as long as the visible images stay apart: each after its own vision start token, or one visible
+    image per sample, which such a caller must check. Each image must be one run of tokens inside one
+    sample, right after a `vision_start_token_id` token when that is given, as the processors write images:
+    eager rope positions place other layouts differently or fail on them. Only still images (t == 1) are
     supported, as the image processors produce them; video grids raise.
     """
     if any(t != 1 for t, _, _ in image_grid_thw):
