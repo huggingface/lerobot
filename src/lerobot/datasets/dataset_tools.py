@@ -1131,7 +1131,26 @@ def _copy_episodes_metadata_and_stats(
     episodes_dir = src_dataset.root / "meta/episodes"
     dst_episodes_dir = dst_meta.root / "meta/episodes"
     if episodes_dir.exists():
-        shutil.copytree(episodes_dir, dst_episodes_dir, dirs_exist_ok=True)
+        if set(dst_meta.features) == set(src_dataset.meta.features):
+            shutil.copytree(episodes_dir, dst_episodes_dir, dirs_exist_ok=True)
+        else:
+            for src_path in episodes_dir.glob("*/*.parquet"):
+                table = pq.read_table(src_path)
+                columns = [
+                    column
+                    for column in table.column_names
+                    if not column.startswith("stats/")
+                    or column.removeprefix("stats/").rsplit("/", 1)[0] in dst_meta.features
+                ]
+                columns = [
+                    column
+                    for column in columns
+                    if not column.startswith("videos/")
+                    or column.removeprefix("videos/").rsplit("/", 1)[0] in dst_meta.video_keys
+                ]
+                dst_path = dst_episodes_dir / src_path.relative_to(episodes_dir)
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                pq.write_table(table.select(columns), dst_path)
 
     dst_meta.info.total_episodes = src_dataset.meta.total_episodes
     dst_meta.info.total_frames = src_dataset.meta.total_frames
