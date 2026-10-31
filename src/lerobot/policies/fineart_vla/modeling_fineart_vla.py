@@ -184,14 +184,14 @@ class FineARTVLAPytorch(PI05Pytorch):  # see openpi `PI0Pytorch`
 
         return functional.mse_loss(u_t, v_t, reduction="none")
 
-    def denoise_step(
+    def suffix_features(
         self,
-        prefix_pad_masks,
-        past_key_values,
-        x_t,
-        timestep,
-    ):
-        """Apply one denoising step of the noise `x_t` at a given timestep."""
+        prefix_pad_masks: Tensor,
+        past_key_values: Any,
+        x_t: Tensor,
+        timestep: Tensor,
+    ) -> Tensor:
+        """Return features using FineART's typed masks and prefix-cache cropping."""
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep)
 
         suffix_len = suffix_pad_masks.shape[1]
@@ -222,6 +222,17 @@ class FineARTVLAPytorch(PI05Pytorch):  # see openpi `PI0Pytorch`
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
+        return suffix_out
+
+    def denoise_step(
+        self,
+        prefix_pad_masks: Tensor,
+        past_key_values: Any,
+        x_t: Tensor,
+        timestep: Tensor,
+    ) -> Tensor:
+        """Apply one denoising step of the noise `x_t` at a given timestep."""
+        suffix_out = self.suffix_features(prefix_pad_masks, past_key_values, x_t, timestep)
         return self.action_out_proj(suffix_out)
 
     def sample_actions(
