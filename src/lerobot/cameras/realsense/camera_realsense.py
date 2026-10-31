@@ -318,6 +318,9 @@ class RealSenseCamera(Camera):
             OSError: If pyrealsense2 is not installed.
             ImportError: If pyrealsense2 is not installed.
         """
+        # ``rs`` is None when pyrealsense2 is missing; without this guard the caller sees
+        # "'NoneType' object has no attribute 'context'" instead of the real cause.
+        require_package(pkg_name, extra="intelrealsense", import_name="pyrealsense2")
         found_cameras_info = []
         context = rs.context()
         devices = context.query_devices()
