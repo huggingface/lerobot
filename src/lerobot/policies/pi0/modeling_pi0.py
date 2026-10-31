@@ -1153,10 +1153,6 @@ class PI0Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
 
-        loss_dict = {
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
-        }
-
         # Padded steps repeat the episode's last action; keep them out of the loss.
         actions_is_pad = batch.get("action_is_pad")
         if actions_is_pad is not None:
@@ -1167,6 +1163,12 @@ class PI0Policy(PreTrainedPolicy):
                     f"got {tuple(actions_is_pad.shape)}"
                 )
             losses = losses * (~actions_is_pad).unsqueeze(-1)
+
+        if actions_is_pad is None:
+            loss_per_dim = losses.mean(dim=(0, 1))
+        else:
+            loss_per_dim = losses.sum(dim=(0, 1)) / (~actions_is_pad).sum().clamp_min(1)
+        loss_dict = {"loss_per_dim": loss_per_dim.detach().cpu().numpy().tolist()}
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over valid (time, action) entries

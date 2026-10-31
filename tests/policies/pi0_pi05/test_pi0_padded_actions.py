@@ -154,3 +154,13 @@ def test_cpu_padding_mask_with_cuda_losses():
     loss, _ = policy.forward(_batch(_tail_padded()))
 
     torch.testing.assert_close(loss.cpu(), torch.tensor(26.0 / 12.0))
+
+
+def test_loss_per_dim_excludes_padded_steps():
+    policy = _LossHarness(_losses())
+
+    _, loss_dict = policy.forward(_batch(_tail_padded()))
+
+    # Same valid steps as the loss: sample 0 steps [1, 2] and sample 1 steps [1, 2, 3, 4].
+    loss_per_dim = torch.tensor(loss_dict["loss_per_dim"])
+    torch.testing.assert_close(loss_per_dim, torch.full((ACTION_DIM,), 13.0 / 6.0))
