@@ -17,9 +17,18 @@ import importlib
 import importlib.metadata
 import importlib.util
 import logging
+import os
+import shutil
+import sys
+from pathlib import Path
 from typing import Any, Literal, overload
 
 from draccus.choice_types import ChoiceRegistry
+
+# Handles returned by ``os.add_dll_directory`` must outlive the call, otherwise the
+# directory is unregistered again as soon as the handle is garbage collected.
+_ffmpeg_dll_handles: list[Any] = []
+_ffmpeg_dll_dirs: list[str] | None = None
 
 
 @overload
@@ -88,8 +97,106 @@ def is_package_available(
         return package_exists
 
 
+def _windows_ffmpeg_dll_candidates() -> list[Path]:
+    """Directories that may hold FFmpeg shared libraries, most explicit first."""
+    candidates: list[Path] = []
+    for variable in ("LEROBOT_FFMPEG_DLL_DIR", "FFMPEG_DLL_DIR", "FFMPEG_BIN"):
+        value = os.environ.get(variable)
+        if value:
+            candidates.append(Path(value))
+
+    # A shared build keeps ffmpeg.exe next to (or one level below/above) its DLLs.
+    ffmpeg_exe = shutil.which("ffmpeg")
+    if ffmpeg_exe:
+        exe_dir = Path(ffmpeg_exe).parent
+        candidates.extend([exe_dir, exe_dir.parent / "bin", exe_dir.parent / "lib"])
+
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if entry:
+            candidates.append(Path(entry))
+
+    common_roots = [
+        Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "ffmpeg",
+        Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "ffmpeg",
+        Path(r"C:\ffmpeg"),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "ffmpeg",
+        Path(os.environ.get("USERPROFILE", "")) / "ffmpeg",
+    ]
+    for root in common_roots:
+        candidates.extend([root, root / "bin", root / "lib"])
+        # e.g. C:\ffmpeg\ffmpeg-7.1-full_build-shared\bin, one level deep only.
+        try:
+            for child in root.iterdir():
+                if child.is_dir():
+                    candidates.extend([child, child / "bin"])
+        except OSError:
+            continue
+
+    dll_dirs: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if candidate.is_dir() and any(candidate.glob("avcodec-*.dll")):
+                dll_dirs.append(candidate)
+        except OSError:
+            continue
+    return dll_dirs
+
+
+def prepare_torchcodec_ffmpeg_dlls() -> list[str]:
+    """Make FFmpeg's shared DLLs loadable before ``torchcodec`` is imported (Windows only).
+
+    The ``torchcodec`` wheel loads a ``libtorchcodec_core<N>.dll`` that links against
+    FFmpeg's *shared* libraries (``avcodec-<major>.dll`` and friends). Those are not
+    bundled with the wheel, and the ``ffmpeg.exe`` that most Windows users install is a
+    static build with no DLLs at all, so the import fails with "Could not load this
+    library" and the dataset pipeline silently drops to the slower PyAV decoder.
+
+    Python 3.8+ no longer searches ``PATH`` for an extension module's dependencies, so
+    the directories have to be registered explicitly (and the returned handles kept
+    alive). The search honours ``LEROBOT_FFMPEG_DLL_DIR`` / ``FFMPEG_DLL_DIR`` /
+    ``FFMPEG_BIN`` first, then the directory of the ``ffmpeg`` on ``PATH``, then the
+    usual install locations.
+
+    Returns:
+        The directories that were registered, empty on other platforms or when no
+        FFmpeg shared library could be found.
+    """
+    if sys.platform != "win32":
+        return []
+
+    global _ffmpeg_dll_dirs
+    if _ffmpeg_dll_dirs is not None:
+        return _ffmpeg_dll_dirs
+
+    added: list[str] = []
+    for dll_dir in _windows_ffmpeg_dll_candidates():
+        try:
+            # Keep the handle: closing it (i.e. dropping the reference) unregisters the
+            # directory and breaks a later torchcodec import in the same process.
+            _ffmpeg_dll_handles.append(os.add_dll_directory(str(dll_dir)))
+        except (OSError, AttributeError):  # pragma: no cover - defensive
+            continue
+        added.append(str(dll_dir))
+        # Some builds resolve their own dependencies through PATH instead of the DLL
+        # search path, so prepend the directory there as well.
+        os.environ["PATH"] = str(dll_dir) + os.pathsep + os.environ.get("PATH", "")
+
+    if added:
+        logging.getLogger(__name__).debug(
+            "Registered FFmpeg shared-library directories for torchcodec: %s", added
+        )
+    _ffmpeg_dll_dirs = added
+    return added
+
+
 def get_safe_default_video_backend():
     logger = logging.getLogger(__name__)
+    prepare_torchcodec_ffmpeg_dlls()
     if importlib.util.find_spec("torchcodec"):
         # Despite being installed, torchcodec may not be loadable at runtime.
         try:

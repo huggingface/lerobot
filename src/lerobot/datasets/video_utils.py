@@ -47,7 +47,7 @@ from lerobot.configs import (
     depth_encoder_defaults,
     rgb_encoder_defaults,
 )
-from lerobot.utils.import_utils import get_safe_default_video_backend
+from lerobot.utils.import_utils import get_safe_default_video_backend, prepare_torchcodec_ffmpeg_dlls
 
 from .depth_utils import MM_PER_METRE, dequantize_depth, quantize_depth
 from .pyav_utils import get_pix_fmt_channels
@@ -355,6 +355,10 @@ class VideoDecoderCache:
     def get_decoder(self, video_path: str):
         """Get a cached decoder or create a new one, evicting LRU if at capacity."""
         if importlib.util.find_spec("torchcodec"):
+            # On Windows the wheel's native library links against FFmpeg's shared DLLs,
+            # which are not bundled; registering their directory first is what makes the
+            # import succeed (see prepare_torchcodec_ffmpeg_dlls).
+            prepare_torchcodec_ffmpeg_dlls()
             from torchcodec.decoders import VideoDecoder
         else:
             raise ImportError(
