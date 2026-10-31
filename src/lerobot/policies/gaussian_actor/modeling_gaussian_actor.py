@@ -17,6 +17,7 @@
 
 from collections.abc import Callable
 from dataclasses import asdict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -42,6 +43,7 @@ class GaussianActorPolicy(
     def __init__(
         self,
         config: GaussianActorConfig | None = None,
+        **kwargs: Any,
     ) -> None:
         if config is None:
             # Same error PreTrainedPolicy.__init__ raises, kept for the legacy no-argument constructor.
