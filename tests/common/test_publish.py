@@ -154,6 +154,23 @@ class TestGenerateModelCard:
         assert card.data.datasets == "user/dataset"
         assert "lerobot" in card.data.tags
 
+    def test_card_carries_a_robustness_section(self, monkeypatch):
+        """The card must carry the optional robustness section with the paired-rate schema
+        (benign + adversarial envelope-exit rates, n_per_arm), so a checkpoint's safety
+        envelope is visible on the Hub even before anyone fills it in."""
+        monkeypatch.setattr(train_utils.ModelCard, "validate", lambda self: None)
+        policy = make_dummy_policy(repo_id="user/policy")
+        rendered = str(generate_model_card(policy.config, cfg=make_cfg(), dataset_meta=None))
+        assert "### Robustness (optional)" in rendered
+        for field in (
+            "benign_envelope_exit_rate",
+            "adversarial_envelope_exit_rate",
+            "n_per_arm",
+            "safe_region_definition",
+            "evaluated_by",
+        ):
+            assert f"`{field}`" in rendered
+
     def test_hub_parent_becomes_base_model_and_lends_its_license(self, monkeypatch):
         monkeypatch.setattr(train_utils.ModelCard, "validate", lambda self: None)
         monkeypatch.setattr(train_utils, "is_offline_mode", lambda: False)
