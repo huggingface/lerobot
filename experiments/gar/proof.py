@@ -1099,7 +1099,8 @@ def _body_z(problem, name: str) -> float:
 
 
 def _in_basket(problem, name: str) -> bool:
-    return bool(problem._eval_predicate(["In", name, BASKET_REGION]))  # noqa: SLF001
+    # scan_tokens lowercases the BDDL file. The predicate table key is "in".
+    return bool(problem._eval_predicate(["in", name, BASKET_REGION]))  # noqa: SLF001
 
 
 def _write_video(path: Path, frames: list) -> None:
