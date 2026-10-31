@@ -26,6 +26,8 @@ from packaging import version
 pytest.importorskip("peft")
 pytest.importorskip("transformers")
 
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import eager_attention_forward  # noqa: E402
+
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.common.qwen2_5_vision import Qwen2_5VisionGrid  # noqa: E402
 from lerobot.policies.common.qwen_vision import qwen_image_rope_index  # noqa: E402
@@ -49,6 +51,7 @@ from lerobot.policies.wall_x.qwen_model import (  # noqa: E402
     Qwen2_5_VLMoEModel,
     Qwen2_5_VLTextConfig,
 )
+from lerobot.policies.wall_x.qwen_model.qwen2_5_vl_moe import WALL_X_ATTENTION  # noqa: E402
 from lerobot.policies.wall_x.utils import get_wallx_normal_text, preprocesser_call  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     RenderRuntimeMessagesStep,
@@ -157,6 +160,89 @@ def test_moe_model_captures_requested_hidden_states_and_attentions():
 
     assert len(output.hidden_states) == config.num_hidden_layers + 1
     assert len(output.attentions) == config.num_hidden_layers
+
+
+def test_moe_model_attention_keeps_bfloat16_scores_in_float32():
+    hidden_size, num_heads = 128, 2
+    head_dim = hidden_size // num_heads
+    expert_config = {"hidden_size": hidden_size, "intermediate_size": 64, "hidden_act": "silu"}
+    config = Qwen2_5_VLTextConfig(
+        vocab_size=32,
+        hidden_size=hidden_size,
+        intermediate_size=64,
+        num_hidden_layers=1,
+        num_attention_heads=num_heads,
+        num_key_value_heads=num_heads,
+        max_position_embeddings=64,
+        layer_types=["full_attention"],
+        rope_parameters={"rope_type": "default", "rope_theta": 1_000_000.0, "mrope_section": [16, 8, 8]},
+        num_experts=2,
+        experts=[expert_config, expert_config],
+        dim_inputs=(hidden_size, hidden_size),
+        mlp_moe=True,
+    )
+    model = Qwen2_5_VLMoEModel(config)
+    module = model.layers[0].self_attn
+    torch.manual_seed(0)
+    # Large scores: rounding them to bfloat16 before the softmax moves the output by about 0.12 here.
+    query, key = (4 * torch.randn(1, 32, hidden_size).bfloat16() for _ in range(2))
+    value = torch.randn(1, 32, hidden_size).bfloat16()
+    # The layer's own projections give these queries, keys and values, so the attention it picks sees them.
+    for projection, states in ((module.q_proj, query), (module.k_proj, key), (module.v_proj, value)):
+        projection.register_forward_hook(lambda *_, states=states: states)
+    torch.nn.init.eye_(module.o_proj.weight)
+    model.bfloat16()
+    hidden = torch.zeros(1, 32, hidden_size, dtype=torch.bfloat16)
+    # At position 0 the rotary embedding leaves the queries and keys as they are.
+    positions = torch.zeros(3, 1, 32, dtype=torch.long)
+    rotary = model.rotary_emb(hidden, positions)
+
+    def heads(states):
+        return states.view(1, 32, num_heads, head_dim).transpose(1, 2).float()
+
+    expected, _ = eager_attention_forward(
+        module, heads(query), heads(key), heads(value), None, head_dim**-0.5
+    )
+    expected = expected.reshape(1, 32, hidden_size)
+    with torch.no_grad():
+        output = module(hidden, attention_mask=None, position_embeddings=rotary)[0]
+        assert output.dtype == torch.bfloat16
+        assert (output.float() - expected).abs().max() < 0.03
+        # Mixed-precision training runs it under bfloat16 autocast, which must not round the scores either.
+        with torch.autocast("cpu", dtype=torch.bfloat16):
+            output = module(hidden, attention_mask=None, position_embeddings=rotary)[0]
+    assert (output.float() - expected).abs().max() < 0.03
+
+
+def test_built_model_runs_wall_x_attention_with_its_mask():
+    model = _tiny_diffusion_model(bfloat16=False)
+    # The parent config asks for "eager", which must not reach the text model's attention layers.
+    assert {layer.self_attn.config._attn_implementation for layer in model.model.layers} == {WALL_X_ATTENTION}
+    # A padding token, three text tokens, three action tokens and a text token after them.
+    attention_mask = torch.tensor([[0, 1, 1, 1, 1, 1, 1, 1]])
+    moe_token_types = torch.tensor([[0, 0, 0, 0, 1, 1, 1, 0]])
+    torch.manual_seed(0)
+    embeds = torch.randn(1, 8, 32)
+
+    def hidden(changed_position):
+        inputs = embeds.clone()
+        if changed_position is not None:
+            inputs[0, changed_position] += 1
+        with torch.no_grad():
+            return model.model(
+                inputs_embeds=inputs, attention_mask=attention_mask, moe_token_types=moe_token_types
+            ).last_hidden_state[0]
+
+    # The padding token's own output is not compared: it sees no token, so its softmax spreads over all of them.
+    reference = hidden(None)[1:]
+    # The padding token is hidden from every other token.
+    assert torch.equal(hidden(0)[1:], reference)
+    # The last text token is hidden from every earlier token.
+    assert torch.equal(hidden(7)[1:7], reference[:6])
+    # The last action token is hidden from the text before it, but seen by the first action token.
+    changed = hidden(6)[1:]
+    assert torch.equal(changed[:3], reference[:3])
+    assert not torch.allclose(changed[3], reference[3])
 
 
 def test_moe_model_routes_by_token_counts_like_the_token_mask():

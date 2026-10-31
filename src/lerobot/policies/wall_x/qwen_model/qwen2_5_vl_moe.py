@@ -40,13 +40,15 @@ from lerobot.policies.common.input_checks import check_input
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
+    from transformers import AttentionInterface, AttentionMaskInterface
     from transformers.activations import ACT2FN
     from transformers.cache_utils import Cache, DynamicCache
-    from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
+    from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask, eager_mask
     from transformers.modeling_outputs import BaseModelOutputWithPast, ModelOutput
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
         Qwen2_5_VLDecoderLayer,
         Qwen2_5_VLTextModel,
+        eager_attention_forward,
     )
     from transformers.utils.generic import merge_with_config_defaults
     from transformers.utils.output_capturing import capture_outputs
@@ -69,6 +71,30 @@ else:
 
 
 from .configuration_qwen2_5_vl import Qwen2_5_VLConfig, Qwen2_5_VLTextConfig
+
+# Wall-X's text attention: eager attention, which carries the action-token islands, computed in float32.
+WALL_X_ATTENTION = "wall_x_eager"
+
+
+def float32_eager_attention_forward(
+    module, query, key, value, attention_mask, scaling, dropout=0.0, **kwargs
+):
+    """Eager attention in float32, its output returned in the input dtype.
+
+    Stock eager attention rounds bfloat16 scores before the softmax, which the FlashAttention-2 kernel Wall-X
+    was released with never does; on a bfloat16 policy that moves the actions far from the float32 policy.
+    Autocast is off here, or mixed-precision training would multiply the queries and keys in bfloat16.
+    """
+    with torch.autocast(query.device.type, enabled=False):
+        output, weights = eager_attention_forward(
+            module, query.float(), key.float(), value.float(), attention_mask, scaling, dropout, **kwargs
+        )
+    return output.to(query.dtype), weights
+
+
+if _transformers_available:
+    AttentionInterface.register(WALL_X_ATTENTION, float32_eager_attention_forward)
+    AttentionMaskInterface.register(WALL_X_ATTENTION, eager_mask)
 
 
 @dataclass
@@ -241,7 +267,7 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
         # Transformers selects SDPA automatically when no implementation is
         # requested. Wall-X's action-token islands require an explicit 4D
         # mask, so opt into eager before PreTrainedModel performs that choice.
-        text_config._attn_implementation = "eager"
+        text_config._attn_implementation = WALL_X_ATTENTION
         super().__init__(text_config)
         # Free the parent-allocated dense layers before replacing them (pi_gemma.py precedent).
         del self.layers
@@ -256,7 +282,7 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
 
     @staticmethod
     def _require_eager_attention(attn_implementation: str | None) -> None:
-        if attn_implementation not in {None, "eager"}:
+        if attn_implementation not in {None, "eager", WALL_X_ATTENTION}:
             raise ValueError(
                 "Wall-X currently supports only attn_implementation='eager'. "
                 "Its bidirectional action-token islands cannot be represented "
