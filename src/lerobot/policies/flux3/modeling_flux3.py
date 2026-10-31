@@ -40,6 +40,7 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.policies.checkpoint import SafetensorsCheckpoint
+from lerobot.policies.chunk import ChunkPolicySpec
 from lerobot.policies.flux3.configuration_flux3 import Flux3Config
 from lerobot.policies.flux3.f3 import (
     REQUIRED_CONTENT_STREAMS,
@@ -239,6 +240,25 @@ class Flux3Policy(PreTrainedPolicy):
 
     def reset(self) -> None:
         self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Serve a frame checkpoint chunk by chunk from the current observation.
+
+        The future video frames in ``observation_delta_indices`` are training targets: a frame checkpoint
+        predicts its chunk from the current frame alone. History checkpoints keep image, state and command
+        history in their processors, and relative actions need RTC, so neither is served this way.
+        """
+        if self.config.conditioning != "frame":
+            raise ValueError("FLUX3 chunk serving requires frame conditioning.")
+        if self.config.use_relative_actions:
+            raise ValueError(
+                "FLUX3 relative-action execution requires RTC, which is not implemented yet. "
+                "predict_action_chunk is available for offline evaluation."
+            )
+        return ChunkPolicySpec(
+            prediction_steps=self.config.chunk_size,
+            execution_steps=self.config.n_action_steps,
+        )
 
     def _get_default_peft_targets(self) -> dict[str, Any]:
         """LoRA on every attention / MLP projection of the DiT; the fresh heads train in full."""

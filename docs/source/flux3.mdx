@@ -229,7 +229,12 @@ The preprocessor buffers observation/command history. The postprocessor undoes n
 deltas and updates shared command history on every tick. The first command is anchored to measured
 state; later commands integrate from the preceding command. Direct policy outputs are normalized and
 must be postprocessed. Reset the policy and both processors at episode boundaries or after intervention;
-LeRobot's synchronous runner does this. RTC/asynchronous inference is not supported.
+LeRobot's synchronous runner does this.
+
+A frame checkpoint with absolute actions, such as the DROID one, also runs asynchronously
+(`--inference.type=rtc --inference.rtc.enabled=false`) and on the remote policy server. History checkpoints
+run only synchronously. Relative-action checkpoints need RTC, which FLUX3 does not implement, so they run
+only offline, through `predict_action_chunk`.
 
 For the default single-timestep policy, current images and measured state are sufficient. For offline
 prediction with an explicit delta anchor, supply `observation.command_history` with one preceding command;
