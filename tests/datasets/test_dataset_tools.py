@@ -1715,3 +1715,23 @@ def test_reencode_dataset_multi_key_multiprocessing(
     for vk in dataset.meta.video_keys:
         persisted_encoder = RGBEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg
+
+
+def test_remove_camera_then_split_dataset(sample_dataset, tmp_path):
+    """A removed camera must not leave stats that break a later split."""
+    camera = "observation.images.top"
+    clean = remove_feature(sample_dataset, feature_names=camera, output_dir=tmp_path / "clean")
+    for path in (clean.root / "meta/episodes").glob("*/*.parquet"):
+        assert not any(column.startswith(f"stats/{camera}/") for column in pq.read_schema(path).names)
+    outputs = split_dataset(clean, splits={"train": [0, 2, 4], "val": [1, 3]}, output_dir=tmp_path / "splits")
+    for name, expected in (("train", 3), ("val", 2)):
+        output = outputs[name]
+        assert output.num_episodes == expected
+        assert output.num_frames == expected * 10
+        assert camera not in output.meta.features
+        assert camera not in output.meta.stats
+        assert output[0]["action"].shape == (6,)
+        for path in (output.root / "meta/episodes").glob("*/*.parquet"):
+            assert not any(column.startswith(f"stats/{camera}/") for column in pq.read_schema(path).names)
+    assert camera in sample_dataset.meta.features
+    assert camera in sample_dataset.meta.stats
