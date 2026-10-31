@@ -82,9 +82,12 @@ class RobotController(Protocol):
 
     - ``kp`` / ``kd``: ``(29,)`` PD gains published with the targets, overriding the config.
     - ``default_angles``: ``(29,)`` home pose that residual actions are applied onto.
+    - ``default_base_pose``: ``(7,)`` pelvis ``[x, y, z, qw, qx, qy, qz]`` the simulated robot
+      is placed at on reset when the elastic band is off.
     - ``action_ft`` / ``observation_ft``: feature dicts that take over the robot's default
       29-DoF action space and proprioceptive state (SONIC's 64-D latent token).
     - ``observation_state()``: current values for the keys advertised in ``observation_ft``.
+    - ``from_robot_config(config)``: classmethod building the controller from the robot config.
     """
 
     control_dt: float
@@ -99,20 +102,29 @@ class RobotController(Protocol):
         ...
 
 
-def make_robot_controller(name: str | None) -> RobotController | None:
-    """Instantiate a robot controller by class name. Returns None if name is None."""
+def make_robot_controller(name: str | None, config: UnitreeG1Config | None = None) -> RobotController | None:
+    """Instantiate a robot controller by class name. Returns None if name is None.
+
+    Controllers with a ``from_robot_config`` classmethod are built from ``config``.
+    """
     if name is None:
         return None
     controllers = {
         "GrootLocomotionController": "lerobot.robots.unitree_g1.controllers.gr00t_locomotion",
         "HolosomaLocomotionController": "lerobot.robots.unitree_g1.controllers.holosoma_locomotion",
         "SonicWholeBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
+        "SuperMimicController": "lerobot.robots.unitree_g1.controllers.supermimic_tracking",
     }
     module_path = controllers.get(name)
     if module_path is None:
         raise ValueError(f"Unknown controller: {name!r}. Available: {list(controllers)}")
-    module = importlib.import_module(module_path)
-    return getattr(module, name)()
+    controller_cls = getattr(importlib.import_module(module_path), name)
+    from_config = getattr(controller_cls, "from_robot_config", None)
+    if from_config is not None:
+        if config is None:
+            raise ValueError(f"{name} is configured from the robot config; pass it to make_robot_controller")
+        return from_config(config)
+    return controller_cls()
 
 
 # DDS topic names follow Unitree SDK naming conventions
@@ -198,13 +210,15 @@ class UnitreeG1(Robot):
         # Decides who may drive the joints over a span of time: one controller tick, or a whole
         # reset sweep. Coarser than _lowcmd_lock, which only makes a single command atomic.
         self._control_lock = threading.Lock()
+        # Serializes physics steps against resets that rewrite the sim state.
+        self._sim_lock = threading.Lock()
         self._shutdown_event = threading.Event()
         self.subscribe_thread: threading.Thread | None = None
 
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
         # Controller loaded dynamically
-        self.controller: RobotController | None = make_robot_controller(config.controller)
+        self.controller: RobotController | None = make_robot_controller(config.controller, config)
         # Only a token controller (SONIC) can be held: re-sending the last token keeps the
         # decoder balancing. Locomotion controllers take joystick velocities, which cannot.
         self.supports_position_hold = getattr(self.controller, "action_ft", None) is not None
@@ -223,7 +237,8 @@ class UnitreeG1(Robot):
 
             # Step simulation if in simulation mode
             if self.config.is_simulation and self.sim_env is not None:
-                self.sim_env.step()
+                with self._sim_lock:
+                    self.sim_env.step()
 
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
@@ -390,6 +405,11 @@ class UnitreeG1(Robot):
             self._env_wrapper = make_env(self.config.sim_env, trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
+            band = getattr(self._sim_physics(), "elastic_band", None)
+            if band is not None:
+                band.enable = self.config.sim_elastic_band
+            elif self.config.sim_elastic_band:
+                logger.warning("The simulation has no elastic band; the robot starts unsupported")
         else:
             self._ChannelFactoryInitialize(0, config=self.config)
 
@@ -498,15 +518,14 @@ class UnitreeG1(Robot):
                 # Force-kill the image publish subprocess first to avoid long waits
                 if hasattr(self.sim_env, "simulator") and hasattr(self.sim_env.simulator, "sim_env"):
                     sim_env_inner = self.sim_env.simulator.sim_env
-                    if hasattr(sim_env_inner, "image_publish_process"):
-                        proc = sim_env_inner.image_publish_process
-                        if proc.process and proc.process.is_alive():
-                            logger.info("Force-terminating image publish subprocess...")
-                            proc.stop_event.set()
-                            proc.process.terminate()
-                            proc.process.join(timeout=1)
-                            if proc.process.is_alive():
-                                proc.process.kill()
+                    proc = getattr(sim_env_inner, "image_publish_process", None)
+                    if proc is not None and proc.process and proc.process.is_alive():
+                        logger.info("Force-terminating image publish subprocess...")
+                        proc.stop_event.set()
+                        proc.process.terminate()
+                        proc.process.join(timeout=1)
+                        if proc.process.is_alive():
+                            proc.process.kill()
                 self.sim_env.close()
             except Exception as e:
                 logger.warning(f"Error closing sim_env: {e}")
@@ -637,6 +656,40 @@ class UnitreeG1(Robot):
     def cameras(self) -> dict:
         return self._cameras
 
+    def _sim_physics(self):
+        """The hub simulation's MuJoCo environment (model, data, elastic band), if it exposes one."""
+        return getattr(getattr(self.sim_env, "unwrapped", self.sim_env), "sim_env", None)
+
+    def _place_sim_robot(self, joint_positions: np.ndarray) -> None:
+        """Pose the freshly reset sim robot standing at rest, its lowest collision geometry on the floor.
+
+        The pelvis takes the controller's ``default_base_pose`` when it has one, else the model's
+        initial pose.
+        """
+        import mujoco
+
+        physics = self._sim_physics()
+        if physics is None:
+            raise RuntimeError("The simulation does not expose its MuJoCo state; keep sim_elastic_band=true")
+        model, data = physics.mj_model, physics.mj_data
+        for motor in self.joint_index:
+            data.qpos[physics.body_qpos_index[motor.value]] = joint_positions[motor.value]
+        base_pose = getattr(self.controller, "default_base_pose", None)
+        if base_pose is not None:
+            data.qpos[:7] = base_pose
+        data.qvel[:] = 0.0
+        mujoco.mj_forward(model, data)
+
+        world = model.geom_bodyid == 0
+        planes = world & (model.geom_type == mujoco.mjtGeom.mjGEOM_PLANE)
+        floor = float(data.geom_xpos[planes, 2].max()) if planes.any() else 0.0
+        robot = ~world & ((model.geom_contype | model.geom_conaffinity) != 0)
+        vertical = data.geom_xmat[robot].reshape(-1, 3, 3)[:, 2, :]
+        center, half = model.geom_aabb[robot, :3], model.geom_aabb[robot, 3:]
+        lowest = data.geom_xpos[robot, 2] + (vertical * center).sum(-1) - (np.abs(vertical) * half).sum(-1)
+        data.qpos[2] += floor - float(lowest.min())
+        mujoco.mj_forward(model, data)
+
     def reset(
         self,
         control_dt: float | None = None,
@@ -656,7 +709,10 @@ class UnitreeG1(Robot):
         # publishing its own targets throughout, and the robot is driven by two writers at once.
         with self._control_lock:
             if self.config.is_simulation and self.sim_env is not None:
-                self.sim_env.reset()
+                with self._sim_lock:
+                    self.sim_env.reset()
+                    if not self.config.sim_elastic_band:
+                        self._place_sim_robot(default_positions)
                 self.publish_lowcmd(
                     {f"{motor.name}.q": float(default_positions[motor.value]) for motor in self.joint_index}
                 )
