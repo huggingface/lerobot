@@ -48,9 +48,14 @@ class LeKiwi(Robot):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = SerialMotorsBus(
-            port=self.config.port,
-            motors={
+        motors = {
+            # base
+            "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
+            "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
+            "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
+        }
+        if not config.teleop_base_only:
+            motors = {
                 # arm
                 "arm_shoulder_pan": Motor(1, "sts3215", norm_mode_body),
                 "arm_shoulder_lift": Motor(2, "sts3215", norm_mode_body),
@@ -58,11 +63,11 @@ class LeKiwi(Robot):
                 "arm_wrist_flex": Motor(4, "sts3215", norm_mode_body),
                 "arm_wrist_roll": Motor(5, "sts3215", norm_mode_body),
                 "arm_gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
-                # base
-                "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
-            },
+                **motors,
+            }
+        self.bus = SerialMotorsBus(
+            port=self.config.port,
+            motors=motors,
             calibration=self.calibration,
         )
         self.arm_motors = [motor for motor in self.bus.motors if motor.startswith("arm")]
@@ -77,20 +82,9 @@ class LeKiwi(Robot):
 
     @property
     def _state_ft(self) -> dict[str, type]:
-        return dict.fromkeys(
-            (
-                "arm_shoulder_pan.pos",
-                "arm_shoulder_lift.pos",
-                "arm_elbow_flex.pos",
-                "arm_wrist_flex.pos",
-                "arm_wrist_roll.pos",
-                "arm_gripper.pos",
-                "x.vel",
-                "y.vel",
-                "theta.vel",
-            ),
-            float,
-        )
+        features = {f"{motor}.pos": float for motor in self.arm_motors}
+        features.update(dict.fromkeys(("x.vel", "y.vel", "theta.vel"), float))
+        return features
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -133,9 +127,11 @@ class LeKiwi(Robot):
         if self._keep_calibration_file(self.bus):
             return
 
-        arm_calibration = self.bus.record_calibration(
-            "position", full_turn_motors=["arm_wrist_roll"], motors=self.arm_motors
-        )
+        arm_calibration = {}
+        if self.arm_motors:
+            arm_calibration = self.bus.record_calibration(
+                "position", full_turn_motors=["arm_wrist_roll"], motors=self.arm_motors
+            )
         # The wheels turn endlessly: no homing, the whole encoder.
         wheels_calibration = {
             name: MotorCalibration(
@@ -307,9 +303,12 @@ class LeKiwi(Robot):
     def get_observation(self) -> RobotObservation:
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
-        arm_pos = self.bus.sync_read(
-            "Present_Position", self.arm_motors, num_retry=self.config.num_read_retries
-        )
+        arm_state = {}
+        if self.arm_motors:
+            arm_pos = self.bus.sync_read(
+                "Present_Position", self.arm_motors, num_retry=self.config.num_read_retries
+            )
+            arm_state = {f"{k}.pos": v for k, v in arm_pos.items()}
         base_wheel_vel = self.bus.sync_read(
             "Present_Velocity", self.base_motors, num_retry=self.config.num_read_retries
         )
@@ -319,8 +318,6 @@ class LeKiwi(Robot):
             base_wheel_vel["base_back_wheel"],
             base_wheel_vel["base_right_wheel"],
         )
-
-        arm_state = {f"{k}.pos": v for k, v in arm_pos.items()}
 
         obs_dict = {**arm_state, **base_vel}
 
@@ -360,7 +357,7 @@ class LeKiwi(Robot):
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
-        if self.config.max_relative_target is not None:
+        if self.arm_motors and self.config.max_relative_target is not None:
             present_pos = self.bus.sync_read(
                 "Present_Position", self.arm_motors, num_retry=self.config.num_read_retries
             )
@@ -372,8 +369,9 @@ class LeKiwi(Robot):
             arm_goal_pos = arm_safe_goal_pos
 
         # Send goal position to the actuators
-        arm_goal_pos_raw = {k.replace(".pos", ""): v for k, v in arm_goal_pos.items()}
-        self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
+        if arm_goal_pos:
+            arm_goal_pos_raw = {k.replace(".pos", ""): v for k, v in arm_goal_pos.items()}
+            self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
         self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
 
         return {**arm_goal_pos, **base_goal_vel}
