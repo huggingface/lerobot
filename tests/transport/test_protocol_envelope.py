@@ -114,7 +114,12 @@ def test_both_clients_use_the_shared_reply_rules(service, failure):
         from lerobot.env_server.client import EnvClient
 
         client = EnvClient.__new__(EnvClient)
-        client.instance, client.session, client.generation, client.timeout_s = "instance", "session", 4, 1
+        client.instance_id, client.session_id, client.generation, client.timeout_s = (
+            "instance",
+            "session",
+            4,
+            1,
+        )
         client.transport = SimpleNamespace(query=query)
 
         def invoke():

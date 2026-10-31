@@ -70,7 +70,7 @@ def test_factory(env_name):
     obs, _ = env.reset()
     obs = (
         prepare_canonical_observation(obs)
-        if getattr(env, "canonical_observations", False)
+        if env.metadata.get("canonical_observations", False)
         else preprocess_observation(obs)
     )
 

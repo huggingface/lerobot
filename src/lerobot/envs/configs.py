@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import draccus
 import gymnasium as gym
@@ -54,9 +54,13 @@ class EnvServerConfig:
     handshake_timeout_s: float = 10.0
     # Zenoh JSON5 file with TLS and access-control settings, as for remote inference.
     zenoh_config_path: str | None = None
-    # "raw" or "jpeg". JPEG (at jpeg_quality) sends camera frames with less bandwidth but lower quality.
-    encoding: str = "raw"
+    # JPEG (at jpeg_quality) sends camera frames with less bandwidth but lower quality.
+    encoding: Literal["raw", "jpeg"] = "raw"
     jpeg_quality: int = 90
+
+    def __post_init__(self):
+        if self.encoding not in {"raw", "jpeg"} or not 1 <= self.jpeg_quality <= 100:
+            raise ValueError("Env server encoding must be raw or jpeg, with jpeg_quality in [1, 100]")
 
 
 @dataclass
@@ -170,8 +174,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                     n_envs,
                     group,
                     task_id,
-                    descriptor,
                     use_async_envs and n_envs > 1,
+                    descriptor,
                 )
         else:
             sim = self.sim_config()

@@ -55,6 +55,19 @@ logger = logging.getLogger(__name__)
 _REPLY_HEADROOM_BYTES = 64 * 1024
 
 
+def _checked_seeds(value: Any, num_envs: int) -> list[int | None] | None:
+    """Return reset seeds that are absent or one int (or None) per env; reject anything else."""
+    if value is not None and (
+        not isinstance(value, list)
+        or len(value) != num_envs
+        or not all(seed is None or type(seed) is int for seed in value)
+    ):
+        raise ProtocolError(
+            ErrorCode.INCOMPATIBLE, f"Expected one seed per env ({num_envs}), each an int or None"
+        )
+    return value
+
+
 @dataclass
 class ServerConfig:
     """Simulator to serve, resource limits and Zenoh endpoints."""
@@ -108,8 +121,9 @@ class _Session:
         if self.fault is not None:
             raise ProtocolError(ErrorCode.EXECUTION, self.fault)
         if operation == "reset":
+            seeds = _checked_seeds(body.get("seeds"), self.env.num_envs)
             try:
-                self.env.reset(seed=body.get("seeds"))
+                self.env.reset(seed=seeds)
             except Exception as exc:
                 self.fault = f"Simulator reset failed: {exc}"
                 logger.exception(self.fault)
@@ -161,7 +175,7 @@ class EnvServer:
         self.config = config
         if config.max_envs < 1 or config.max_sessions < 1:
             raise ValueError("Server resource bounds must be positive")
-        self.instance = uuid.uuid4().hex
+        self.instance_id = uuid.uuid4().hex
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
         # Built at startup to read the descriptor, then reused by the first session asking for the same batch.
@@ -179,7 +193,7 @@ class EnvServer:
             self._startup_env = LocalVectorEnv(self.config.sim)
             self.descriptor = self._startup_env.descriptor
             root = deployment_prefix(self.config.deployment)
-            instance = instance_prefix(self.config.deployment, self.instance)
+            instance = instance_prefix(self.config.deployment, self.instance_id)
             describe = self.transport.declare_queryable(
                 root + "/describe", reply_timeout=self.config.request_timeout_s
             )
@@ -248,12 +262,12 @@ class EnvServer:
         if key in (deployment_prefix(self.config.deployment) + "/describe", ANY_DEPLOYMENT_DESCRIBE):
             return {
                 "deployment": self.config.deployment,
-                "instance": self.instance,
+                "instance_id": self.instance_id,
                 "descriptor": encode_descriptor(self.descriptor),
             }
-        if message.instance_id != self.instance:
+        if message.instance_id != self.instance_id:
             raise ProtocolError(ErrorCode.STALE, "Simulator boot changed")
-        if key == instance_prefix(self.config.deployment, self.instance) + "/open":
+        if key == instance_prefix(self.config.deployment, self.instance_id) + "/open":
             return self._open(message.body)
         session = self.sessions.get(message.session_id)
         if session is None or not key.startswith(session.prefix + "/"):
@@ -279,6 +293,7 @@ class EnvServer:
             raise ProtocolError(
                 ErrorCode.UNSUPPORTED, "Image encoding must be raw or jpeg, quality in [1, 100]"
             )
+        seeds = _checked_seeds(body.get("seeds"), count)
         batch_bytes = count * sum(
             int(np.prod(f.shape)) * np.dtype(f.dtype).itemsize for f in self.descriptor.features
         )
@@ -292,20 +307,20 @@ class EnvServer:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Observation batch exceeds transport payload budget")
         if len(self.sessions) >= self.config.max_sessions:
             raise ProtocolError(ErrorCode.BUSY, "Simulator capacity is owned by another session")
-        env = self._session_env(count, body.get("task_group"), body.get("task_id", 0), use_async_envs)
+        env = self._session_env(count, body.get("task_group"), body.get("task_id"), use_async_envs)
         session_id = uuid.uuid4().hex
         session = _Session(
             self,
-            session_prefix(self.config.deployment, self.instance, session_id),
+            session_prefix(self.config.deployment, self.instance_id, session_id),
             env,
-            body.get("seeds"),
+            seeds,
             encoding,
             jpeg_quality,
         )
         self.sessions[session_id] = session
         return session.encode(
             {
-                "session": session_id,
+                "session_id": session_id,
                 "result": encode_step_result(env.latest),
                 "generation": 0,
                 "descriptor": encode_descriptor(env.descriptor),
@@ -313,12 +328,14 @@ class EnvServer:
         )
 
     def _session_env(
-        self, count: int, task_group: str | None, task_id: int, use_async_envs: bool
+        self, count: int, task_group: str | None, task_id: int | None, use_async_envs: bool
     ) -> LocalVectorEnv:
         """Return the startup env if it matches the request; otherwise close it and build a new one."""
         env, self._startup_env = self._startup_env, None
         if env is not None:
-            asked = (count, task_group or env.task_group, task_id, use_async_envs)
+            # No task_id means the group's first task, which the startup env runs.
+            task = env.task_id if task_id is None else task_id
+            asked = (count, task_group or env.task_group, task, use_async_envs)
             if asked == (env.num_envs, env.task_group, env.task_id, env.use_async_envs):
                 return env
             env.close()

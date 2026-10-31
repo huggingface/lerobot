@@ -72,7 +72,7 @@ def check(config_path: Path, steps: int = 5):
                             log.seek(0)
                             raise RuntimeError("Simulator startup failed:\n" + log.read()) from None
                 actual = [client.open(1, seeds=[123])]
-                actual.extend(client.request("step", actions=action)["result"] for action in actions)
+                actual.extend(client.request("step", actions=action) for action in actions)
                 for reference, remote in zip(expected, actual, strict=True):
                     np.testing.assert_equal(remote.task, reference.task)
                     for key in reference.obs:

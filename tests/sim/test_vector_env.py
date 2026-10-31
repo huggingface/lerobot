@@ -180,7 +180,7 @@ def test_a_filtered_suite_starts_with_its_first_task():
             env.close()
 
 
-def test_local_and_served_environments_default_to_the_same_task():
+def test_local_and_served_environments_agree_on_tasks():
     from lerobot.env_server.client import EnvClient, RemoteVectorEnv
     from lerobot.sim.vector_env import LocalVectorEnv
 
@@ -189,6 +189,11 @@ def test_local_and_served_environments_default_to_the_same_task():
         # Nothing is opened before the first reset, so no server is needed.
         served = RemoteVectorEnv(EnvClient("tcp/127.0.0.1:7448"), descriptor=local.descriptor)
         assert local.task_id == served.task_id == 3
+        # Both reject a task the filtered suite doesn't have.
+        with pytest.raises(ValueError, match="Unknown task"):
+            LocalVectorEnv(local.config, task_id=0, descriptor=local.descriptor)
+        with pytest.raises(ValueError, match="Unknown task"):
+            RemoteVectorEnv(EnvClient("tcp/127.0.0.1:7448"), task_id=0, descriptor=local.descriptor)
     finally:
         local.close()
 
@@ -228,6 +233,9 @@ def test_env_server_options_are_one_optional_group():
     assert (config.server.endpoint, config.server.encoding) == ("tcp/127.0.0.1:7448", "jpeg")
     with pytest.raises(draccus.utils.DecodingError, match="endpoint"):
         draccus.parse(ToyEnvConfig, args=["--server.encoding=jpeg"])
+    # A typo fails while parsing the command line, not when the client starts.
+    with pytest.raises(SystemExit):
+        draccus.parse(ToyEnvConfig, args=["--server.endpoint=tcp/127.0.0.1:7448", "--server.encoding=jpg"])
 
 
 def test_env_config_saves_only_its_settings():

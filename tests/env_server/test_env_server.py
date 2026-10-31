@@ -65,15 +65,15 @@ def test_batch_terminal_freeze_and_seed_parity(sim_server, use_async_envs):
         descriptor = with_client.describe()
         assert descriptor.action_feature.shape == (2,)
         with_client.open(2, use_async_envs=use_async_envs)
-        first = with_client.request("reset", seeds=[10, 20])["result"]
-        second = with_client.request("reset", seeds=[10, 20])["result"]
+        first = with_client.request("reset", seeds=[10, 20])
+        second = with_client.request("reset", seeds=[10, 20])
         np.testing.assert_array_equal(first.obs["observation.state"], second.obs["observation.state"])
-        ended = with_client.request("step", actions=np.array([[2, 0], [0, 0]], np.float32))["result"]
+        ended = with_client.request("step", actions=np.array([[2, 0], [0, 0]], np.float32))
         assert ended.is_success.tolist() == [True, False]
         assert ended.reward.tolist() == [1.0, 0.0]
         frozen = ended.obs["observation.state"][0].copy()
         for _ in range(5):
-            result = with_client.request("step", actions=np.ones((2, 2), np.float32) * 0.1)["result"]
+            result = with_client.request("step", actions=np.ones((2, 2), np.float32) * 0.1)
         np.testing.assert_array_equal(result.obs["observation.state"][0], frozen)
         assert result.reward[0] == 0.0  # The terminal reward is earned once, as with the old freeze wrapper.
         assert result.elapsed_steps.tolist() == [1, 5]
@@ -106,7 +106,7 @@ def test_admission_and_stale_generation(sim_server):
         other.close()
 
 
-def test_malformed_actions_are_rejected_without_failing_the_simulator(sim_server):
+def test_malformed_actions_and_seeds_are_rejected_without_failing_the_simulator(sim_server):
     client = EnvClient(sim_server[1])
     try:
         client.open(1)
@@ -115,7 +115,13 @@ def test_malformed_actions_are_rejected_without_failing_the_simulator(sim_server
         assert error.value.code == ErrorCode.INCOMPATIBLE
         # The client stops after any error; the session on the server still steps.
         client.failed = False
-        assert client.request("step", actions=np.zeros((1, 2), np.float32))["result"].elapsed_steps[0] == 1
+        assert client.request("step", actions=np.zeros((1, 2), np.float32)).elapsed_steps[0] == 1
+        # Bad seeds are rejected the same way, before the simulator resets.
+        with pytest.raises(ProtocolError, match="one seed per env") as error:
+            client.request("reset", seeds=[1, 2])
+        assert error.value.code == ErrorCode.INCOMPATIBLE
+        client.failed = False
+        assert client.request("step", actions=np.zeros((1, 2), np.float32)).elapsed_steps[0] == 2
     finally:
         client.close()
 
@@ -136,7 +142,24 @@ def test_jpeg_observations_match_raw(sim_server):
     assert np.abs(jpeg.astype(int) - raw.astype(int)).mean() < 8
     np.testing.assert_array_equal(obs["jpeg"]["observation.state"], obs["raw"]["observation.state"])
     with pytest.raises(ValueError, match="raw or jpeg"):
-        EnvClient(endpoint, encoding="png")
+        EnvServerConfig(endpoint, encoding="png")
+    # The server checks the encoding too, since it comes over the network.
+    client = EnvClient(endpoint, encoding="png")
+    with pytest.raises(ProtocolError, match="raw or jpeg"):
+        client.open(1)
+    client.close()
+
+
+def test_served_reset_takes_seeds_as_any_sequence(sim_server):
+    from lerobot.env_server.client import RemoteVectorEnv
+
+    env = RemoteVectorEnv(EnvClient(sim_server[1]), num_envs=2)
+    try:
+        first, _ = env.reset(seed=range(10, 12))
+        second, _ = env.reset(seed=[10, 11])
+        np.testing.assert_array_equal(first["observation.state"], second["observation.state"])
+    finally:
+        env.close()
 
 
 def test_server_loss_fails_session(sim_server):
@@ -151,6 +174,17 @@ def test_server_loss_fails_session(sim_server):
         assert client.failed
     finally:
         client.close()
+
+
+def test_closing_after_the_server_is_gone_neither_waits_nor_raises(sim_server):
+    running, endpoint = sim_server
+    client = EnvClient(endpoint, timeout_s=60, handshake_timeout_s=0.5)
+    client.open(1)
+    running.stop.set()
+    time.sleep(0.05)
+    start = time.monotonic()
+    client.close()
+    assert time.monotonic() - start < 5 and not client.session_id
 
 
 def test_client_loss_releases_ownership(sim_server):
@@ -249,7 +283,7 @@ def test_first_vector_reset_does_not_skip_initial_state(sim_server, monkeypatch)
     env = RemoteVectorEnv(EnvClient(sim_server[1]))
     try:
         env.reset(seed=123)
-        served = sim_server[0].sessions[env.client.session].env
+        served = sim_server[0].sessions[env.client.session_id].env
         assert served._envs[0].reset_count == 1
         env.reset(seed=123)
         assert served._envs[0].reset_count == 2
@@ -301,10 +335,38 @@ def test_first_session_uses_the_environment_built_to_describe(sim_server):
         env.close()
 
 
+def test_a_session_without_a_task_id_runs_the_first_task_on_the_startup_env(sim_server):
+    before = ToyEnv.builds
+    client = EnvClient(sim_server[1])
+    try:
+        client.open(1)
+        assert ToyEnv.builds == before
+    finally:
+        client.close()
+
+
+def test_a_bad_first_result_fails_the_session(sim_server, monkeypatch):
+    from lerobot.env_server import client as client_module
+
+    def reject(*args):
+        raise ValueError("bad first result")
+
+    monkeypatch.setattr(client_module, "validate_result", reject)
+    client = EnvClient(sim_server[1])
+    try:
+        with pytest.raises(ValueError, match="bad first result"):
+            client.open(1)
+        assert client.failed
+    finally:
+        client.close()
+
+
 def test_a_wrong_deployment_names_the_one_served(sim_server):
     config = ToyEnvConfig(server=EnvServerConfig(sim_server[1], deployment="other", handshake_timeout_s=0.5))
-    with pytest.raises(ProtocolError, match="serves deployment 'toy', not 'other'"):
+    with pytest.raises(ProtocolError, match="serves deployment 'toy', not 'other'") as error:
         config.create_envs(n_envs=1)
+    assert "--env.server.deployment=toy" in str(error.value)
+    assert "start a server for 'other'" in str(error.value)
 
 
 def test_a_server_that_finishes_starting_during_the_handshake_is_described(monkeypatch):

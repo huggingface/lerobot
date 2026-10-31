@@ -205,7 +205,6 @@ class LocalVectorEnv(gym.vector.VectorEnv):
     one worker process.
     """
 
-    canonical_observations = True
     closed = False
 
     def __init__(
@@ -253,7 +252,11 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         self.single_action_space = self.descriptor.action_space()
         self.observation_space = batch_space(self.single_observation_space, num_envs)
         self.action_space = batch_space(self.single_action_space, num_envs)
-        self.metadata = {"render_fps": config.fps, "autoreset_mode": _NO_AUTORESET}
+        self.metadata = {
+            "render_fps": config.fps,
+            "autoreset_mode": _NO_AUTORESET,
+            "canonical_observations": True,
+        }
         self.render_mode = "rgb_array"
 
     def build(self) -> None:
@@ -436,7 +439,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             raise RuntimeError("Reset before reading the environment")
         return self._latest
 
-    def render(self) -> list[np.ndarray]:
+    def render(self) -> tuple[np.ndarray, ...]:
         """Return each env's latest RGB frame, taken from the last observation instead of a new render."""
         return self.latest.frames()
 
@@ -452,7 +455,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         if name == "task_description":
             return self.latest.task
         if name == "render":
-            return tuple(self.render())
+            return self.render()
         raise AttributeError(f"Environment attribute is not exposed: {name}")
 
     def get_attr(self, name: str) -> tuple[Any, ...]:
