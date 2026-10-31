@@ -15,6 +15,8 @@
 # limitations under the License.
 
 import json
+import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -1651,6 +1653,132 @@ def test_state_file_naming_with_indices():
         ]
         actual_names = [f.name for f in state_files]
         assert actual_names == expected_names
+
+
+def test_plugin_cannot_take_a_builtin_step_name():
+    name, builtin = "observation_processor", "VanillaObservationProcessorStep"
+    # A fresh interpreter has no built-in step registered yet, like a command importing its plugins.
+    code = f"""
+from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
+
+try:
+    @ProcessorStepRegistry.register({name!r})
+    class PluginStep(ProcessorStep):
+        pass
+except ValueError:
+    print("REJECTED")
+print(ProcessorStepRegistry.get({name!r}).__name__)
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[-2:] == ["REJECTED", builtin]
+
+    # Overriding a built-in step the documented way, unregister then register, still works.
+    override = f"""
+from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
+
+ProcessorStepRegistry.unregister({name!r})
+
+@ProcessorStepRegistry.register({name!r})
+class PluginStep(ProcessorStep):
+    pass
+
+print(ProcessorStepRegistry.get({name!r}).__name__)
+"""
+    result = subprocess.run([sys.executable, "-c", override], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[-1] == "PluginStep"
+
+
+def test_builtin_step_table_matches_the_processor_steps():
+    # Using every export imports every lerobot.processor step module, so the table cannot drift unnoticed.
+    # tests/configs/test_policy_registration.py checks the policy entries.
+    code = """
+import json
+import lerobot.processor
+from lerobot.processor.pipeline import BUILTIN_STEP_MODULES, ProcessorStepRegistry
+
+for export in lerobot.processor.__all__:
+    getattr(lerobot.processor, export)
+registered = {n: c.__module__ for n, c in ProcessorStepRegistry._registry.items()}
+registered = {n: m for n, m in registered.items() if m.startswith("lerobot.processor.")}
+table = {n: "lerobot." + m for n, m in BUILTIN_STEP_MODULES.items() if m.startswith("processor.")}
+print(json.dumps([registered, table]))
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    registered, table = json.loads(result.stdout.splitlines()[-1])
+    assert registered == table
+
+
+def test_list_includes_every_processor_step_in_a_fresh_interpreter():
+    # Nothing has imported a step module yet, so list() itself has to load them.
+    code = """
+from lerobot.processor.pipeline import BUILTIN_STEP_MODULES, ProcessorStepRegistry
+
+listed = set(ProcessorStepRegistry.list())
+print(sorted(n for n, m in BUILTIN_STEP_MODULES.items() if m.startswith("processor.") and n not in listed))
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "[]"
+
+
+def test_get_waits_for_a_step_module_another_thread_is_importing(tmp_path):
+    # The step registers before its module finishes running, so get() has to wait for the whole module.
+    (tmp_path / "slow_step_module.py").write_text(
+        "import __main__\n"
+        "from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry\n"
+        "@ProcessorStepRegistry.register('slow_step')\n"
+        "class SlowStep(ProcessorStep):\n"
+        "    pass\n"
+        "__main__.registered.set()\n"
+        "__main__.release.wait(60)\n"
+        "LOADED = True\n"
+    )
+    code = f"""
+import sys, threading
+import lerobot.processor
+from lerobot.processor.pipeline import BUILTIN_STEP_MODULES, ProcessorStepRegistry
+
+lerobot.processor.__path__.append({str(tmp_path)!r})
+BUILTIN_STEP_MODULES["slow_step"] = "processor.slow_step_module"
+registered, release, seen = threading.Event(), threading.Event(), {{}}
+importer = threading.Thread(target=__import__, args=("lerobot.processor.slow_step_module",))
+importer.start()
+assert registered.wait(60)
+
+def lookup():
+    ProcessorStepRegistry.get("slow_step")
+    seen["loaded"] = getattr(sys.modules["lerobot.processor.slow_step_module"], "LOADED", False)
+
+looker = threading.Thread(target=lookup)
+looker.start()
+looker.join(1)
+release.set()
+importer.join(60)
+looker.join(60)
+print("LOADED", seen["loaded"])
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "LOADED True"
+
+
+def test_plugin_step_registers_without_importing_torch():
+    code = """
+import sys
+from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
+
+@ProcessorStepRegistry.register("plugin_custom_step")
+class PluginStep(ProcessorStep):
+    pass
+
+print("TORCH", "torch" in sys.modules)
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    assert "TORCH False" in result.stdout
 
 
 def test_state_file_naming_with_registry():
