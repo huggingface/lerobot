@@ -4,6 +4,8 @@
 
 import json
 from concurrent.futures import Executor, Future
+from threading import Event, Thread
+from typing import Any
 
 import pytest
 import torch
@@ -402,6 +404,75 @@ def test_prefix_target_at_start_and_later_launch():
     assert prefix_target(chunk, 8)[0, :16, 0].tolist() == list(range(8, 24))
     assert prefix_target(chunk, 16)[0, :16, 0].tolist() == list(range(16, 32))
     assert not prefix_target(chunk, 32).any()
+
+
+@pytest.mark.parametrize("operation", ["reset", "close"])
+@pytest.mark.parametrize("worker_fails", [False, True])
+def test_running_thread_is_drained_before_episode_cleanup(
+    monkeypatch: pytest.MonkeyPatch, operation: str, worker_fails: bool
+) -> None:
+    started, release, waiting, finished = Event(), Event(), Event(), Event()
+    errors: list[Exception] = []
+
+    def predict(batch: dict[str, Any], previous: torch.Tensor | None) -> torch.Tensor:
+        if previous is None:
+            return torch.zeros(1, 32, 1)
+        started.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release worker")
+        if worker_fails:
+            raise RuntimeError("running inference failed")
+        return previous.clone()
+
+    controller = StreamingController(predict)
+    cleanup = None
+    try:
+        for _ in range(9):
+            controller.next_action({})
+            controller.mark_action_executed()
+        assert started.wait(5)
+        pending = controller._future
+        assert pending is not None
+        original_result = pending.result
+
+        def observed_result(timeout: float | None = None) -> Completion:
+            waiting.set()
+            return original_result(timeout=timeout)
+
+        monkeypatch.setattr(pending, "result", observed_result)
+
+        def clean_up() -> None:
+            try:
+                getattr(controller, operation)()
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                finished.set()
+
+        cleanup = Thread(target=clean_up)
+        cleanup.start()
+        assert waiting.wait(5), "cleanup did not wait for running inference"
+        assert not finished.is_set()
+        release.set()
+        cleanup.join(timeout=5)
+        assert not cleanup.is_alive()
+        assert controller.count_queued_actions() == 0
+        assert controller._future is None
+        assert controller.inference_ms == []
+        assert len(errors) == int(worker_fails)
+        if worker_fails:
+            assert str(errors[0]) == "running inference failed"
+        if operation == "reset":
+            assert torch.equal(controller.next_action({}), torch.zeros(1, 1))
+            controller.mark_action_executed()
+        else:
+            with pytest.raises(RuntimeError, match="closed"):
+                controller.next_action({})
+    finally:
+        release.set()
+        if cleanup is not None:
+            cleanup.join(timeout=5)
+        controller.close()
 
 
 def test_checkpoint_mapping_rejects_metadata_keys_shapes_and_dtypes():
