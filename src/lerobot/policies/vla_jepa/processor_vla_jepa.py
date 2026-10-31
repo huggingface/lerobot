@@ -49,7 +49,7 @@ class ImagePrepProcessorStep(ObservationProcessorStep):
     prepped and newer ones no-op there.
 
     Mirrors `Qwen3VLInterface.to_pixel_values` plus the `F.interpolate(mode="area")` resize in
-    `VLAJEPAPolicy._prepare_model_inputs`/`predict_action`, and does not clamp (neither does the model
+    `VLAJEPAPolicy._prepare_model_inputs`, and does not clamp (neither does the model
     path), so values stay bit-identical. Handles [C,H,W], [B,C,H,W]/[T,C,H,W] and [B,T,C,H,W].
     """
 

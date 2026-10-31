@@ -42,13 +42,14 @@ from conftest import (  # noqa: E402
     N_ACTION_STEPS,
     QWEN_HIDDEN_SIZE,
     STATE_DIM,
+    TINY_QWEN_IMAGE_SIZE,
     make_config,
     make_inference_batch,
     make_train_batch,
     set_seed_all,
 )
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig  # noqa: E402
-from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAModel, VLAJEPAPolicy  # noqa: E402
+from lerobot.policies.vla_jepa.modeling_vla_jepa import QWEN_INPUTS, VLAJEPAModel, VLAJEPAPolicy  # noqa: E402
 from lerobot.utils.constants import ACTION  # noqa: E402
 
 PRETRAINED_REPO_ID = "ginwind/VLA-JEPA"
@@ -142,6 +143,30 @@ def test_action_generation_shape(patch_vla_jepa_external_models: None) -> None:
     assert tuple(a1.shape) == EXPECTED_SELECT_ACTION_SHAPE
     assert tuple(a2.shape) == EXPECTED_SELECT_ACTION_SHAPE
     assert torch.isfinite(a1).all() and torch.isfinite(a2).all()
+
+
+def test_predict_action_chunk_runs_on_the_qwen_inputs_a_preprocessor_step_made(
+    tiny_qwen_config: VLAJEPAConfig,
+) -> None:
+    """With the tensors `qwen_inputs` makes in the batch, the chunk equals the one the policy makes itself."""
+    set_seed_all(0)
+    policy = VLAJEPAPolicy(tiny_qwen_config).eval()
+    batch = make_inference_batch(batch_size=1, image_size=TINY_QWEN_IMAGE_SIZE)
+    qwen_inputs = policy.qwen_inputs(batch)
+    assert sorted(qwen_inputs) == sorted(QWEN_INPUTS)
+    noise = torch.randn(1, ACTION_HORIZON, ACTION_DIM)
+    with torch.no_grad():
+        expected = policy.predict_action_chunk(batch, noise=noise)
+        actual = policy.predict_action_chunk(batch | qwen_inputs, noise=noise)
+    assert torch.equal(actual, expected)
+
+
+def test_a_batch_with_some_of_the_qwen_inputs_is_refused(patch_vla_jepa_external_models: None) -> None:
+    """The policy would run on them in place of the ones it makes, without the rest."""
+    policy = VLAJEPAPolicy(make_config()).eval()
+    batch = make_inference_batch() | {"input_ids": torch.ones(BATCH_SIZE, 4, dtype=torch.long)}
+    with pytest.raises(ValueError, match="only some of the Qwen3-VL processor tensors"):
+        policy.predict_action_chunk(batch)
 
 
 @torch.no_grad()

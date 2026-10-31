@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -112,9 +113,10 @@ def make_train_batch(
 def make_inference_batch(
     batch_size: int = BATCH_SIZE,
     state_dim: int = STATE_DIM,
+    image_size: int = IMAGE_SIZE,
 ) -> dict[str, Tensor | list[str]]:
     return {
-        f"{OBS_IMAGES}.laptop": torch.rand(batch_size, 3, IMAGE_SIZE, IMAGE_SIZE),
+        f"{OBS_IMAGES}.laptop": torch.rand(batch_size, 3, image_size, image_size),
         OBS_STATE: torch.randn(batch_size, state_dim),
         "task": ["pick up the cube"] * batch_size,
     }
@@ -265,8 +267,80 @@ class _FakeVideoProcessor:
 
 
 # ---------------------------------------------------------------------------
+# A tiny random Qwen3-VL saved with its processor (the real Qwen path, without a download)
+# ---------------------------------------------------------------------------
+
+QWEN_SPECIAL_TOKENS = [
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|vision_start|>",
+    "<|vision_end|>",
+    "<|image_pad|>",
+    "<|video_pad|>",
+]
+QWEN_CHAT_TEMPLATE = (
+    "{%- for message in messages -%}<|im_start|>{{ message['role'] }}\n"
+    "{% for content in message['content'] %}{% if content['type'] == 'image' %}"
+    "<|vision_start|><|image_pad|><|vision_end|>{% elif content['type'] == 'text' %}{{ content['text'] }}"
+    "{% endif %}{% endfor %}<|im_end|>\n{% endfor -%}"
+)
+# The tiny image processor upsamples this camera size to 16x16: a grid of 4x4 patches, 4 image tokens.
+TINY_QWEN_IMAGE_SIZE = 12
+
+
+def save_tiny_qwen(path: Path) -> None:
+    """A tiny random Qwen3-VL with a word-level tokenizer and the Qwen3-VL processors, as a local checkpoint."""
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast, Qwen2VLImageProcessor, Qwen3VLForConditionalGeneration
+    from transformers.models.qwen3_vl.video_processing_qwen3_vl import Qwen3VLVideoProcessor
+
+    from tests.policies.common.qwen3_vl_helpers import tiny_qwen3_vl_config
+
+    # The words of the test tasks; the rest of the prompt is unknown words. With the action tokens VLA-JEPA
+    # adds, this fits the 32 embedding rows of the tiny model.
+    words = ["<|endoftext|>", "[UNK]", "pick", "up", "the", "red", "cube", "stop"]
+    vocab = {token: i for i, token in enumerate(words + QWEN_SPECIAL_TOKENS)}
+    tokenizer = Tokenizer(models.WordLevel(vocab, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer.add_special_tokens(QWEN_SPECIAL_TOKENS)
+    fast = PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="[UNK]", pad_token="<|endoftext|>")
+    fast.chat_template = QWEN_CHAT_TEMPLATE
+    fast.save_pretrained(path)
+    pixels = {"patch_size": 4, "temporal_patch_size": 2, "merge_size": 2}
+    # size, not min_pixels/max_pixels: in transformers 5.5.4 those change the class default for later tests.
+    Qwen2VLImageProcessor(
+        **pixels,
+        size={"shortest_edge": 8 * 8, "longest_edge": 16 * 16},
+        image_mean=[0.5] * 3,
+        image_std=[0.5] * 3,
+    ).save_pretrained(path)
+    Qwen3VLVideoProcessor(**pixels).save_pretrained(path)
+    config = tiny_qwen3_vl_config()
+    config.image_token_id = vocab["<|image_pad|>"]
+    config.video_token_id = vocab["<|video_pad|>"]
+    config.vision_start_token_id = vocab["<|vision_start|>"]
+    config.vision_end_token_id = vocab["<|vision_end|>"]
+    torch.manual_seed(0)
+    Qwen3VLForConditionalGeneration(config).save_pretrained(path)
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tiny_qwen_config(tmp_path: Path) -> VLAJEPAConfig:
+    """`make_config` on `save_tiny_qwen`, without a world model, with a camera of `TINY_QWEN_IMAGE_SIZE`."""
+    save_tiny_qwen(tmp_path)
+    config = make_config()
+    config.qwen_model_name = str(tmp_path)
+    config.enable_world_model = False
+    size = TINY_QWEN_IMAGE_SIZE
+    config.input_features[f"{OBS_IMAGES}.laptop"] = PolicyFeature(
+        type=FeatureType.VISUAL, shape=(3, size, size)
+    )
+    return config
 
 
 @pytest.fixture
