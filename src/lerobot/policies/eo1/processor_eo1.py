@@ -337,6 +337,11 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         complementary_data["mm_token_type_ids"] = inputs["mm_token_type_ids"]
         complementary_data["state_token_id"] = self._state_token_id
         complementary_data["action_token_id"] = self._action_token_id
+        if padding_side == "left":
+            # Left padding puts every row's action span at the same position.
+            action_tokens = inputs["input_ids"][0] == self._action_token_id
+            if action_tokens.any():
+                complementary_data["action_token_start"] = int(action_tokens.int().argmax())
         if has_text_targets:
             complementary_data["text_labels"] = _targeted_assistant_labels(
                 self._processor.tokenizer,

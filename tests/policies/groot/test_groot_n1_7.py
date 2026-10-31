@@ -17,6 +17,7 @@
 import inspect
 import json
 import sys
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -217,6 +218,126 @@ def test_n1_7_backbone_preserves_missing_qwen_optional_dependency_error(monkeypa
             select_layer=0,
             use_flash_attention=False,
         )
+
+
+def _tiny_n1_7_backbone(monkeypatch):
+    from transformers import Qwen3VLForConditionalGeneration
+
+    import lerobot.policies.groot.groot_n1_7 as groot_n1_7
+    from tests.policies.common.qwen3_vl_helpers import tiny_qwen3_vl_config
+
+    torch.manual_seed(0)
+    qwen = Qwen3VLForConditionalGeneration(tiny_qwen3_vl_config()).eval()
+    monkeypatch.setattr(
+        groot_n1_7.Qwen3VLForConditionalGeneration, "from_pretrained", lambda *args, **kwargs: deepcopy(qwen)
+    )
+    return groot_n1_7.Qwen3Backbone(select_layer=2).eval()
+
+
+def test_n1_7_backbone_exports_a_prepared_image_grid_with_legacy_positions(monkeypatch):
+    pytest.importorskip("transformers")
+
+    from transformers.feature_extraction_utils import BatchFeature
+
+    from lerobot.policies.common.qwen_vision import prepare_image_grid
+    from tests.policies.common.fixed_grid_checks import count_grid_builds, data_dependent_nodes, save_and_load
+    from tests.policies.common.qwen3_vl_helpers import STOCK_DEEPSTACK_NODES, image_prompts
+
+    backbone = _tiny_n1_7_backbone(monkeypatch)
+    prompts = image_prompts(backbone.model.config)
+    positions = []
+
+    def record_positions(module, args, kwargs):
+        positions.append(kwargs["position_ids"])
+
+    backbone.language_model.register_forward_pre_hook(record_positions, with_kwargs=True)
+
+    class Backbone(torch.nn.Module):
+        def __init__(self, keys):
+            super().__init__()
+            self.keys = keys
+
+        def forward(self, *tensors):
+            return backbone(BatchFeature(dict(zip(self.keys, tensors, strict=True))))["backbone_features"]
+
+    keys = sorted(prompts)
+    inputs = tuple(prompts[key] for key in keys)
+    builds = count_grid_builds(monkeypatch)
+    # The runtime asserts must not depend on transformers' own checks, which this switch turns off.
+    monkeypatch.setenv("TRANSFORMERS_DISABLE_TORCH_CHECK", "1")
+    with torch.no_grad():
+        expected = backbone(BatchFeature(prompts))["backbone_features"]
+        with prepare_image_grid():
+            assert torch.equal(Backbone(keys)(*inputs), expected)
+        program = torch.export.export(Backbone(keys), inputs, strict=False)
+        torch.testing.assert_close(program.module()(*inputs), expected, rtol=0, atol=0)
+        # The second image of each prompt transposed: same token counts, so only the grid check refuses it.
+        changed = {**prompts, "image_grid_thw": prompts["image_grid_thw"].clone()}
+        changed["image_grid_thw"][1::2, 1:] = changed["image_grid_thw"][1::2, 1:].flip(-1)
+        for lowered in (program, save_and_load(program), program.run_decompositions()):
+            # The decompositions round differently.
+            torch.testing.assert_close(lowered.module()(*inputs), expected)
+            with pytest.raises(RuntimeError, match="Runtime assertion failed"):
+                lowered.module()(*(changed[key] for key in keys))
+        with pytest.raises(ValueError, match="image inputs only"):
+            torch.export.export(
+                Backbone([*keys, "pixel_values_videos"]), (*inputs, prompts["pixel_values"]), strict=False
+            )
+    # The stock path adds the legacy text row as a fourth row; the exported path must pass the same.
+    assert torch.equal(backbone._fixed_grid_position_ids(prompts, backbone._vision_grid), positions[0])
+    assert positions[-1].shape == positions[0].shape
+    assert len(builds) == 1
+    assert data_dependent_nodes(program) == STOCK_DEEPSTACK_NODES
+
+
+def test_n1_7_backbone_refuses_hidden_image_tokens_also_after_export(monkeypatch):
+    pytest.importorskip("transformers")
+
+    from transformers.feature_extraction_utils import BatchFeature
+
+    from lerobot.policies.common.qwen_vision import prepare_image_grid
+    from tests.policies.common.qwen3_vl_helpers import IMAGE_TOKEN_ID, image_prompts
+
+    backbone = _tiny_n1_7_backbone(monkeypatch)
+    prompts = image_prompts(backbone.model.config)
+    keys = sorted(prompts)
+    image_tokens = (prompts["input_ids"][1] == IMAGE_TOKEN_ID).nonzero()[:, 0].tolist()
+
+    def hide(tokens):
+        attention_mask = prompts["attention_mask"].clone()
+        attention_mask[1, tokens] = 0
+        return tuple({**prompts, "attention_mask": attention_mask}[key] for key in keys)
+
+    class Backbone(torch.nn.Module):
+        def forward(self, *tensors):
+            return backbone(BatchFeature(dict(zip(keys, tensors, strict=True))))["backbone_features"]
+
+    # In the second prompt: an image token, the text token between its images (eager would join them into one
+    # image), and every token.
+    refused = (hide(image_tokens[:1]), hide([image_tokens[3] + 1]), hide(slice(None)))
+    # The same prompts with the second image of each transposed, refused for a hidden image token.
+    transposed = {**prompts, "image_grid_thw": prompts["image_grid_thw"].clone()}
+    transposed["image_grid_thw"][1::2, 1:] = transposed["image_grid_thw"][1::2, 1:].flip(-1)
+    transposed["attention_mask"] = prompts["attention_mask"].clone()
+    transposed["attention_mask"][1, image_tokens[0]] = 0
+    with torch.no_grad():
+        with prepare_image_grid():
+            Backbone()(*(prompts[key] for key in keys))
+            prepared = backbone._vision_grid
+            for inputs in refused:
+                with pytest.raises(ValueError, match="must hide only padding"):
+                    Backbone()(*inputs)
+            # A refused call on another grid keeps the prepared grid.
+            with pytest.raises(ValueError, match="must hide only padding"):
+                Backbone()(*(transposed[key] for key in keys))
+        assert backbone._vision_grid is prepared
+        program = torch.export.export(Backbone(), tuple(prompts[key] for key in keys), strict=False).module()
+        for inputs in refused:
+            with pytest.raises(RuntimeError, match="Runtime assertion failed"):
+                program(*inputs)
+        # Hiding the first token of the unpadded prompt only adds padding.
+        more_padding = hide([0])
+        torch.testing.assert_close(program(*more_padding), Backbone()(*more_padding))
 
 
 def _write_raw_n1_7_libero_checkpoint(path):

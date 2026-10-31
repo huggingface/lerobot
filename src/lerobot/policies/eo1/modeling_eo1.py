@@ -39,6 +39,14 @@ from ..common.flow_matching import (
     sample_noise,
     sample_time_beta,
 )
+from ..common.input_checks import check_input
+from ..common.qwen2_5_vision import Qwen2_5VisionGrid, qwen2_5_image_temporal_scale, qwen2_5_vision_forward
+from ..common.qwen_vision import (
+    check_visible_images,
+    is_exporting,
+    is_preparing_image_grid,
+    qwen_image_rope_index,
+)
 from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
@@ -47,12 +55,10 @@ from .processor_eo1 import EO1_SPECIAL_TOKENS
 if TYPE_CHECKING or _transformers_available:
     from transformers.activations import ACT2FN
     from transformers.models.qwen2_5_vl import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
-    from transformers.utils import torch_compilable_check
 else:
     ACT2FN = None
     Qwen2_5_VLForConditionalGeneration = None
     Qwen2_5_VLProcessor = None
-    torch_compilable_check = None
 
 logger = logging.getLogger(__name__)
 
@@ -279,9 +285,17 @@ class EO1VisionFlowMatchingModel(nn.Module):
         self.action_time_mlp_in = nn.Linear(self.hidden_size * 2, self.hidden_size, dtype=torch.float32)
         self.action_time_mlp_out = nn.Linear(self.hidden_size, self.hidden_size, dtype=torch.float32)
         self.gradient_checkpointing_enabled = False
+        self._vision_grid: Qwen2_5VisionGrid | None = None
+        self._image_temporal_scale: int | None = None
 
     def get_input_embeddings(self):
         return self.vlm_backbone.get_input_embeddings()
+
+    def _rope_temporal_scale(self) -> int:
+        """The still-image temporal scale of the installed `get_rope_index`, probed once while preparing an export."""
+        if self._image_temporal_scale is None:
+            self._image_temporal_scale = qwen2_5_image_temporal_scale(self.vlm_backbone.model)
+        return self._image_temporal_scale
 
     def flow_head_autocast_context(self):
         if self.config.force_fp32_autocast:
@@ -355,9 +369,9 @@ class EO1VisionFlowMatchingModel(nn.Module):
             special_state_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
         )
         if state_features is not None:
-            torch_compilable_check(
-                inputs_embeds[special_state_mask].numel() == state_features.numel(),
-                f"State features and state tokens do not match, tokens: {n_state_tokens}, features: {state_features.shape[0]}",
+            check_input(
+                special_state_mask.sum() == state_features.numel(),
+                lambda: f"State features and state tokens do not match, tokens: {n_state_tokens}, features: {state_features.shape[0]}",
             )
 
         n_action_tokens = special_action_mask.sum()
@@ -365,9 +379,9 @@ class EO1VisionFlowMatchingModel(nn.Module):
             special_action_mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
         )
         if action_features is not None:
-            torch_compilable_check(
-                inputs_embeds[special_action_mask].numel() == action_features.numel(),
-                f"Action features and action tokens do not match, tokens: {n_action_tokens}, features: {action_features.shape[0]}",
+            check_input(
+                special_action_mask.sum() == action_features.numel(),
+                lambda: f"Action features and action tokens do not match, tokens: {n_action_tokens}, features: {action_features.shape[0]}",
             )
 
         return special_state_mask, special_action_mask
@@ -592,9 +606,15 @@ class EO1VisionFlowMatchingModel(nn.Module):
         state_token_id: int,
         action_token_id: int,
         noise: Tensor | None = None,
+        action_token_start: int | None = None,
         **kwargs,
     ) -> Tensor:
-        """Sample actions from the model."""
+        """Sample actions from the model.
+
+        `action_token_start` is where the action tokens start in the left-padded rollout prompt, as
+        `EO1QwenProcessorStep` reports it. When it is None, it is read from `input_ids`, which `torch.export`
+        cannot trace, so an export needs it.
+        """
         if input_ids is None:
             raise ValueError("input_ids are required for EO1 action sampling.")
         if attention_mask is None:
@@ -621,18 +641,32 @@ class EO1VisionFlowMatchingModel(nn.Module):
         )
         action_mask = action_placeholder_mask[..., 0]
         token_counts = action_mask.sum(dim=1)
-        if not torch.all(token_counts == chunk_size):
-            raise ValueError(
-                f"Each sample must contain exactly {chunk_size} action tokens, got {token_counts.tolist()}."
-            )
-        if action_mask.ne(action_mask[:1]).any():
-            raise ValueError(
-                "Batch inference expects all samples to share the same action token mask after left padding."
-            )
-        act_start = int(action_mask[0].to(torch.int64).argmax().item())
+        check_input(
+            token_counts == chunk_size,
+            lambda: f"Each sample must contain exactly {chunk_size} action tokens, got {token_counts.tolist()}.",
+        )
+        check_input(
+            action_mask.eq(action_mask[:1]),
+            "Batch inference expects all samples to share the same action token mask after left padding.",
+        )
+        act_start = action_token_start
+        if act_start is None:
+            if is_exporting():
+                raise ValueError(
+                    "Exporting EO-1 sampling needs action_token_start, which EO1QwenProcessorStep reports for "
+                    "left-padded prompts."
+                )
+            act_start = int(action_mask[0].to(torch.int64).argmax().item())
         act_end = act_start + self.config.chunk_size
-        if not torch.all(action_mask[:, act_start:act_end]):
-            raise ValueError("Action tokens must form a contiguous chunk of length chunk_size.")
+        if act_start < 0 or act_end > input_ids.shape[1]:
+            raise ValueError(
+                f"action_token_start must place a full action chunk inside input_ids: got {act_start} "
+                f"for a chunk of {self.config.chunk_size} in {input_ids.shape[1]} tokens."
+            )
+        check_input(
+            action_mask[:, act_start:act_end],
+            "Action tokens must form a contiguous chunk of length chunk_size.",
+        )
         act_slice = slice(act_start, act_end)
 
         # 2. Encode the fixed prefix once and cache its KV state.
@@ -640,12 +674,41 @@ class EO1VisionFlowMatchingModel(nn.Module):
         device = inputs_embeds.device
         attention_mask = attention_mask.to(device)
         mm_token_type_ids = mm_token_type_ids.to(device)
-        position_ids, _ = self.vlm_backbone.model.get_rope_index(
-            input_ids,
-            image_grid_thw=image_grid_thw,
-            attention_mask=attention_mask,
-            mm_token_type_ids=mm_token_type_ids,
-        )
+        vlm = self.vlm_backbone.model
+        grid = Qwen2_5VisionGrid.track(self._vision_grid, vlm.visual, image_grid_thw)
+        if grid is not None and (is_preparing_image_grid() or is_exporting()):
+            check_visible_images(input_ids, attention_mask, vlm.config)
+            # Probed while preparing, because the export cannot run `get_rope_index`.
+            image_temporal_scale = self._rope_temporal_scale()
+        if is_exporting():
+            if grid is None or pixel_values is None:
+                raise ValueError(
+                    "EO-1 exports prompts with images only: pass pixel_values and image_grid_thw."
+                )
+            position_ids = qwen_image_rope_index(
+                input_ids,
+                attention_mask,
+                grid.grid_thw,
+                vlm.visual.spatial_merge_size,
+                vlm.config.image_token_id,
+                image_temporal_scale=image_temporal_scale,
+            )
+            image_embeds = qwen2_5_vision_forward(vlm.visual, pixel_values.type(vlm.visual.dtype), grid)
+            image_mask = input_ids == vlm.config.image_token_id
+            check_input(
+                image_mask.sum() == image_embeds.shape[0], "Image features and image tokens do not match."
+            )
+            image_mask = image_mask.unsqueeze(-1).expand_as(inputs_embeds)
+            inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds.to(inputs_embeds.dtype))
+            # The images are in `inputs_embeds` now, so the backbone call below skips its vision tower.
+            pixel_values = None
+        else:
+            position_ids, _ = vlm.get_rope_index(
+                input_ids,
+                image_grid_thw=image_grid_thw,
+                attention_mask=attention_mask,
+                mm_token_type_ids=mm_token_type_ids,
+            )
         position_ids = position_ids.to(device)
 
         outputs = self.vlm_backbone.model(
@@ -690,4 +753,7 @@ class EO1VisionFlowMatchingModel(nn.Module):
             return v_t.reshape(input_x_t.shape).to(input_x_t.dtype)
 
         x_t = euler_integrate(denoise_fn, x_t, self.config.num_denoise_steps)
+        if grid is not None:
+            # Kept only now, so a call that fails while preparing leaves the prepared grid in place.
+            self._vision_grid = grid
         return x_t
