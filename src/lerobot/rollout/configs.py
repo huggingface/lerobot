@@ -29,7 +29,6 @@ from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.inference import InferenceEngineConfig, RemoteInferenceConfig, SyncInferenceConfig
 from lerobot.robots.config import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
-from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
 from .planner import PlannerConfig
 
@@ -352,6 +351,8 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
+
         if not math.isfinite(self.status_interval_s) or self.status_interval_s < 0:
             raise ValueError("status_interval_s must be finite and >= 0")
         if self.interpolation_multiplier < 1:

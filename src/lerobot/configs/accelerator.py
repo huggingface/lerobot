@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from lerobot.configs.parallelism import ParallelismConfig
+from lerobot.configs.parser import register_torch_dtype_codecs
 
 if TYPE_CHECKING:
     from accelerate import Accelerator
@@ -38,6 +39,9 @@ if TYPE_CHECKING:
         GradScalerKwargs,
     )
     from torch.distributed.fsdp import MixedPrecisionPolicy
+
+# MixedPrecisionPolicyConfig holds torch.dtype fields that draccus parses.
+register_torch_dtype_codecs()
 
 
 @dataclass
