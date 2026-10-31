@@ -38,6 +38,7 @@ from lerobot.processor import (
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import normalize_semantic_messages
+from lerobot.utils.transition import move_state_dict_to_device
 
 from .configuration_eo1 import EO1_DEFAULT_SYSTEM_MESSAGE, EO1Config
 
@@ -312,6 +313,10 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         # Rollout batches use left padding so action spans stay aligned across samples.
         # Supervised batches use right padding to match standard training collation.
         padding_side = "right" if self.transition.get(TransitionKey.ACTION) is not None else "left"
+
+        if not self.use_fast_processor:
+            # The slow image processor needs CPU images, and the batch may already be on the policy device.
+            messages = move_state_dict_to_device(messages, "cpu")
 
         inputs = self._processor.apply_chat_template(
             messages,

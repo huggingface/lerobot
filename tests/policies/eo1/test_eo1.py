@@ -462,6 +462,48 @@ def test_model_messages_use_recipe_system_prompt_and_only_fall_back_for_action_i
         ]
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.parametrize(("use_fast_processor", "image_device"), [(False, "cpu"), (True, "cuda")])
+def test_qwen_step_gives_only_the_slow_processor_cpu_images(monkeypatch, use_fast_processor, image_device):
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.eo1.processor_eo1 import EO1PrepareModelMessagesStep, EO1QwenProcessorStep
+    from lerobot.processor.converters import create_transition
+
+    class RecordingTextProcessor(DummyTextProcessor):
+        def apply_chat_template(self, messages, **kwargs):
+            self.images = [b["image"] for row in messages for m in row for b in m["content"] if "image" in b]
+            return super().apply_chat_template(messages, **kwargs)
+
+    processor = RecordingTextProcessor()
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.processor_eo1.Qwen2_5_VLProcessor.from_pretrained",
+        lambda *args, **kwargs: processor,
+    )
+    config = make_eo1_config()
+    camera_keys = ["observation.images.image", "observation.images.wrist"]
+    input_features = {**config.input_features, camera_keys[1]: config.input_features[camera_keys[0]]}
+    images = {key: torch.rand(2, 3, 8, 8, device="cuda") for key in camera_keys}
+    transition = create_transition(
+        observation={OBS_STATE: torch.zeros(2, STATE_DIM, device="cuda"), **images},
+        complementary_data={"task": ["tidy", "stack"]},
+    )
+    transition = EO1PrepareModelMessagesStep(input_features, CHUNK_SIZE)(transition)
+    EO1QwenProcessorStep(use_fast_processor=use_fast_processor)(transition)
+
+    expected = [
+        images[key][row].clamp(0, 1).mul(255.0).round().to(torch.uint8)
+        for row in range(2)
+        for key in camera_keys
+    ]
+    assert [img.device.type for img in processor.images] == [image_device] * 4
+    assert [img.dtype for img in processor.images] == [torch.uint8] * 4
+    for img, exp in zip(processor.images, expected, strict=True):
+        assert torch.equal(img.to(exp.device), exp)
+    messages = transition[TransitionKey.COMPLEMENTARY_DATA]["messages"]
+    kept = [b["image"] for row in messages for m in row for b in m["content"] if "image" in b]
+    assert [img.device.type for img in kept] == ["cuda"] * 4
+
+
 def test_saved_message_processor_registry_name_still_loads():
     from lerobot.policies.eo1.processor_eo1 import EO1PrepareModelMessagesStep
     from lerobot.processor import PolicyProcessorPipeline
