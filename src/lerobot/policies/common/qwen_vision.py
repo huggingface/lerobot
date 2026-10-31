@@ -196,20 +196,55 @@ def qwen_image_rope_index(
 ) -> Tensor:
     """The 3D rope positions of Qwen-VL `get_rope_index` for still images, with tensor ops only.
 
+    `qwen_image_rope_positions` computes them; `config` is the Qwen-VL config with the token ids and the vision
+    config. Every image keeps its own grid, which equals eager rope positions only when the attention mask hides
+    nothing but padding, so `check_visible_images` runs first. Each image must also follow a vision start token,
+    as the processors write images: eager rope positions read two images back to back as one image and fail.
+    """
+    check_visible_images(input_ids, attention_mask, config)
+    image_token_id = config.image_token_id
+    position_ids = qwen_image_rope_positions(
+        input_ids,
+        attention_mask,
+        image_grid_thw,
+        config.vision_config.spatial_merge_size,
+        image_token_id,
+        padding_position,
+    )
+    # Every image is one run of image tokens, so one run per image means no two images touch.
+    is_image = input_ids == image_token_id
+    previous = torch.cat([input_ids.new_full((input_ids.shape[0], 1), -1), input_ids[:, :-1]], dim=1)
+    run_starts = is_image & (previous != image_token_id)
+    check_input(
+        (run_starts.sum() == len(image_grid_thw))
+        & (~run_starts | (previous == config.vision_start_token_id)).all(),
+        "Each image must follow a vision start token.",
+    )
+    return position_ids
+
+
+def qwen_image_rope_positions(
+    input_ids: Tensor,
+    attention_mask: Tensor,
+    image_grid_thw: list[list[int]],
+    spatial_merge_size: int,
+    image_token_id: int,
+    padding_position: int = 0,
+) -> Tensor:
+    """The rope positions of `qwen_image_rope_index`, without its checks of the attention mask and the vision
+    start tokens.
+
     Text tokens count up by one. An image's tokens get `(start, start + row, start + col)` and move the
     next start by `max(rows, cols)`. Padding gets `padding_position`. `image_grid_thw` lists the
-    (t, h, w) grid of every image in `input_ids`, in order, as Python ints. `config` is the Qwen-VL config
-    with the token ids and the vision config. Every image keeps its own grid, which equals eager rope
-    positions only when the attention mask hides nothing but padding, so `check_visible_images` runs first.
-    Each image must be one run of tokens inside one sample, right after a vision start token, as the
-    processors write images: eager rope positions place other layouts differently or fail on them. Only
-    still images (t == 1) are supported, as the image processors produce them; video grids raise.
+    (t, h, w) grid of every image in `input_ids`, in order, as Python ints, and every image keeps its own
+    grid, hidden by `attention_mask` or not. Each image must be one run of tokens inside one sample. Besides
+    the masks `qwen_image_rope_index` takes, the positions equal eager code that drops the grids of hidden
+    images, as long as the visible images stay apart: each after its own vision start token, or one visible
+    image per sample, which such a caller must check. Only still images (t == 1) are supported, as the image
+    processors produce them; video grids raise.
     """
     if any(t != 1 for t, _, _ in image_grid_thw):
-        raise ValueError(f"qwen_image_rope_index supports still images only (t == 1), got {image_grid_thw}.")
-    check_visible_images(input_ids, attention_mask, config)
-    spatial_merge_size = config.vision_config.spatial_merge_size
-    image_token_id = config.image_token_id
+        raise ValueError(f"Fixed-grid rope positions: still images only (t == 1), got {image_grid_thw}.")
     device = input_ids.device
     valid = attention_mask.bool()
     is_image = input_ids == image_token_id
@@ -239,10 +274,6 @@ def qwen_image_rope_index(
     check_input(
         ~is_image | starts_image | (previous == image_token_id),
         "Each image of the image grid must be one run of image tokens inside one sample.",
-    )
-    check_input(
-        ~starts_image | (previous == config.vision_start_token_id),
-        "Each image must follow a vision start token.",
     )
 
     steps = torch.ones_like(input_ids).masked_scatter(is_image, advances) * valid
