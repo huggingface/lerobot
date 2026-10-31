@@ -16,6 +16,7 @@
 import contextlib
 import glob
 import importlib.util
+import io
 import logging
 import os
 import queue
@@ -688,6 +689,51 @@ def reencode_video(
 
     if not output_video_path.exists():
         raise OSError(f"Video re-encoding did not work. File not found: {output_video_path}.")
+
+
+def extract_video_clip(video_path: Path | str, start_s: float, end_s: float) -> bytes:
+    """Copy an independently decodable MP4 segment, rebasing its timestamps to zero.
+
+    No frames are decoded or re-encoded. Reject cuts that need packets outside
+    the requested interval so callers can fall back without including other episodes.
+    """
+    if not np.isfinite([start_s, end_s]).all() or not 0 <= start_s < end_s:
+        raise ValueError("Video clip requires finite timestamps with 0 <= start < end")
+
+    buffer = io.BytesIO()
+    with av.open(str(video_path)) as source, av.open(buffer, "w", format="mp4") as output:
+        if not source.streams.video:
+            raise ValueError("Video clip requires a video stream")
+        stream = source.streams.video[0]
+        if stream.time_base is None:
+            raise ValueError("Video stream has no time base")
+        start_pts = round(start_s / stream.time_base)
+        end_pts = round(end_s / stream.time_base)
+        source.seek(start_pts, stream=stream, backward=True, any_frame=False)
+        target = output.add_stream_from_template(stream, opaque=True)
+        target.time_base = stream.time_base
+        copied_end_pts = None
+        for packet in source.demux(stream):
+            if packet.size == 0:
+                continue
+            if packet.pts is None or packet.dts is None:
+                raise ValueError("Video packet has no presentation or decode timestamp")
+            if copied_end_pts is None and (packet.pts != start_pts or not packet.is_keyframe):
+                raise ValueError("Video clip must start at an independent keyframe")
+            if packet.pts >= end_pts:
+                if not packet.is_keyframe:
+                    raise ValueError("Video clip ends inside a group of dependent frames")
+                break
+            if packet.pts < start_pts:
+                raise ValueError("Video clip depends on frames before its start")
+            copied_end_pts = max(copied_end_pts or start_pts, packet.pts + packet.duration)
+            packet.pts -= start_pts
+            packet.dts -= start_pts
+            packet.stream = target
+            output.mux(packet)
+        if copied_end_pts != end_pts:
+            raise ValueError("Video packets do not cover the requested clip interval")
+    return buffer.getvalue()
 
 
 def concatenate_video_files(
