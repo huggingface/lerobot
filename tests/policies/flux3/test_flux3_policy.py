@@ -682,6 +682,110 @@ def test_policy_single_layout_relative_actions_and_cfg_one(fake_vae):
     assert torch.isfinite(loss) and info["n_valid_windows"] == 2
 
 
+def test_euler_schedule_follows_settings_and_survives_a_failed_export(fake_vae):
+    config = single_config(sampler="cosmos_unipc", num_inference_steps=1, sampler_shift=1.0)
+    policy = Flux3Policy(config).eval()
+    policy.config.sampler = "euler"
+    gen = torch.Generator().manual_seed(2)
+    obs = {
+        "observation.images.top": torch.rand(1, 3, 64, 96, generator=gen),
+        OBS_STATE: torch.rand(1, 6, generator=gen),
+        "task": ["stack the cubes"],
+    }
+
+    def velocity(samples, t):  # a stand-in for the DiT
+        return {"x": samples["x"] * float(t)}
+
+    class EulerSampler(nn.Module):
+        def forward(self, x):
+            return sampling.euler({"x": x}, velocity, timesteps=policy._euler_timesteps())["x"]
+
+    sampler, x = EulerSampler(), torch.randn(4)
+    # A freshly built policy exports its sampler without an eager prediction first.
+    assert torch.equal(torch.export.export(sampler, (x,), strict=False).module()(x), sampler(x))
+    # dx/dt = x * t with no shift: one step from t=1 to 0 gives 0, two steps give 3x/8.
+    torch.testing.assert_close(sampler(x), torch.zeros_like(x))
+    policy.predict_action_chunk(obs)
+    policy.config.num_inference_steps = 2
+    with pytest.raises(RuntimeError, match="does not match"):
+        torch.export.export(sampler, (x,), strict=False)
+    fresh = Flux3Policy(single_config(sampler="euler", num_inference_steps=2, sampler_shift=1.0)).eval()
+    fresh.load_state_dict(policy.state_dict())
+    assert torch.equal(policy.predict_action_chunk(obs), fresh.predict_action_chunk(obs))
+    assert torch.equal(torch.export.export(sampler, (x,), strict=False).module()(x), sampler(x))
+    torch.testing.assert_close(sampler(x), 3 * x / 8)
+    # An eager prediction with the default sampler also refreshes the grid for a later Euler export.
+    policy.config.sampler, policy.config.num_inference_steps = "cosmos_unipc", 1
+    policy.predict_action_chunk(obs)
+    policy.config.sampler = "euler"
+    assert torch.equal(torch.export.export(sampler, (x,), strict=False).module()(x), sampler(x))
+    torch.testing.assert_close(sampler(x), torch.zeros_like(x))
+
+
+def test_exported_policy_takes_its_noise_as_inputs_and_leaves_eager_inference_intact(fake_vae):
+    policy = Flux3Policy(single_config(sampler="euler", num_inference_steps=2)).eval()
+    twin = Flux3Policy(single_config(sampler="euler", num_inference_steps=2)).eval()
+    twin.load_state_dict(policy.state_dict())
+    cfg, gen = policy.config, torch.Generator().manual_seed(3)
+    images, state = torch.rand(1, 3, 64, 96, generator=gen), torch.rand(1, 6, generator=gen)
+    n_pred = policy.packer.predicted_latent_frames(cfg)
+
+    def draw_noise():
+        return {
+            "noise": torch.randn(1, cfg.action_dim, cfg.chunk_size, generator=gen),
+            "video_noise": torch.randn(1, packing.LATENT_CHANNELS, n_pred, *cfg.latent_hw, generator=gen),
+        }
+
+    class Predict(nn.Module):
+        def __init__(self, policy, task="stack the cubes"):
+            super().__init__()
+            # Kept outside the module tree, so export does not roll back the policy's Python state afterwards.
+            object.__setattr__(self, "policy", policy)
+            self.task = task
+
+        def forward(self, images, state, noise=None, video_noise=None):
+            batch = {"observation.images.top": images, OBS_STATE: state, "task": [self.task]}
+            return self.policy.predict_action_chunk(batch, noise=noise, video_noise=video_noise)
+
+    model, noise = Predict(policy), draw_noise()
+    with pytest.raises(ValueError, match="noise and video_noise"):
+        torch.export.export(model, (images, state), strict=False)
+    # A fresh policy has no text context cached, and tracing must not compute one.
+    with pytest.raises(RuntimeError, match="No text context"):
+        torch.export.export(model, (images, state), kwargs=noise, strict=False)
+    expected = Predict(twin)(images, state, **noise)
+    assert torch.equal(model(images, state, **noise), expected)
+    exported = torch.export.export(model, (images, state), kwargs=noise, strict=False).module()
+    assert torch.equal(exported(images, state, **noise), expected)
+    assert torch.equal(exported(images, state, **noise), expected)
+    other = draw_noise()
+    assert torch.equal(exported(images, state, **other), model(images, state, **other))
+    # A stale schedule stops export, and the eager prediction its error asks for gives the right result.
+    policy.config.num_inference_steps = twin.config.num_inference_steps = 3
+    with pytest.raises(RuntimeError, match="does not match"):
+        torch.export.export(model, (images, state), kwargs=noise, strict=False)
+    new_task = Predict(policy, "a new task")(images, state, **noise)
+    assert torch.equal(new_task, Predict(twin, "a new task")(images, state, **noise))
+
+
+def test_torch_compile_keeps_the_text_context_cache(fake_vae):
+    # Main passes this too. It guards that the export checks leave torch.compile alone, which on PyTorch 2.11
+    # also reports is_exporting().
+    policy = Flux3Policy(single_config(sampler="euler", num_inference_steps=2)).eval()
+    gen = torch.Generator().manual_seed(2)
+    obs = {
+        "observation.images.top": torch.rand(1, 3, 64, 96, generator=gen),
+        OBS_STATE: torch.rand(1, 6, generator=gen),
+        "task": ["stack the cubes"],
+    }
+    eager = policy.predict_action_chunk(obs)
+    captions = set(policy._ctx_cache)
+    policy._ctx_cache.clear()
+    compiled = torch.compile(policy.predict_action_chunk, backend="eager")
+    assert torch.equal(compiled(obs), eager)
+    assert captions and set(policy._ctx_cache) == captions
+
+
 def test_gripper_flip_is_applied_symmetrically(fake_vae):
     cfg = droid_config()
     policy = Flux3Policy(cfg)

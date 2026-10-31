@@ -38,7 +38,7 @@ def rope_apply(x, grid_sizes, freqs):
 
     # loop over samples
     output = []
-    for i, (f, h, w) in enumerate(grid_sizes.tolist()):
+    for i, (f, h, w) in enumerate(grid_sizes):
         seq_len = f * h * w
 
         # precompute multipliers
@@ -298,9 +298,9 @@ class WanModel(nn.Module):
         Args:
             x (List[Tensor]):
                 List of patchified features, each with shape [L, C_out * prod(patch_size)]
-            grid_sizes (Tensor):
+            grid_sizes (list[tuple[int, int, int]]):
                 Original spatial-temporal grid dimensions before patching,
-                    shape [B, 3] (3 dimensions correspond to F_patches, H_patches, W_patches)
+                    one (F_patches, H_patches, W_patches) per sample
 
         Returns:
             List[Tensor]:
@@ -309,7 +309,7 @@ class WanModel(nn.Module):
 
         c = self.out_dim
         out = []
-        for u, v in zip(x, grid_sizes.tolist(), strict=False):
+        for u, v in zip(x, grid_sizes, strict=False):
             u = u[: math.prod(v)].view(*v, *self.patch_size, c)
             u = torch.einsum("fhwpqrc->cfphqwr", u)
             u = u.reshape(c, *[i * j for i, j in zip(v, self.patch_size, strict=False)])

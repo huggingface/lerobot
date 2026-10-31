@@ -38,6 +38,7 @@ from torch import Tensor
 
 from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
+from ..common.ddpm_scheduler import ExportableDDPMScheduler
 from .configuration_multi_task_dit import MultiTaskDiTConfig
 from .processor_multi_task_dit import OBS_LANGUAGE_ROW_INDEX
 
@@ -683,7 +684,7 @@ class DiffusionObjective(nn.Module):
         }
 
         if config.noise_scheduler_type == "DDPM":
-            self.noise_scheduler: DDPMScheduler | DDIMScheduler = DDPMScheduler(**scheduler_kwargs)
+            self.noise_scheduler: DDPMScheduler | DDIMScheduler = ExportableDDPMScheduler(**scheduler_kwargs)
         elif config.noise_scheduler_type == "DDIM":
             self.noise_scheduler = DDIMScheduler(**scheduler_kwargs)
         else:
@@ -694,6 +695,18 @@ class DiffusionObjective(nn.Module):
             if config.num_inference_steps is not None
             else self.noise_scheduler.config.num_train_timesteps
         )
+
+    @property
+    def num_inference_steps(self) -> int:
+        return self._num_inference_steps
+
+    @num_inference_steps.setter
+    def num_inference_steps(self, value: int) -> None:
+        if value < 1:
+            raise ValueError(f"num_inference_steps must be at least 1, got {value}")
+        self._num_inference_steps = value
+        # Also set here, because a traced sampling call cannot run set_timesteps.
+        self.noise_scheduler.set_timesteps(value)
 
     def compute_loss(self, model: nn.Module, batch: dict[str, Tensor], conditioning_vec: Tensor) -> Tensor:
         clean_actions = batch[ACTION]
@@ -738,8 +751,15 @@ class DiffusionObjective(nn.Module):
             )
         sample = noise.to(device=device, dtype=dtype)
 
-        self.noise_scheduler.set_timesteps(self.num_inference_steps)
-        for t in self.noise_scheduler.timesteps:
+        if not torch.compiler.is_compiling():
+            self.noise_scheduler.set_timesteps(self.num_inference_steps)
+        elif self.noise_scheduler.num_inference_steps != self.num_inference_steps:
+            raise RuntimeError(
+                "The noise scheduler is not set to num_inference_steps, for example after it was replaced. "
+                "Assign num_inference_steps again, or run one eager sample, before tracing. To trace DDPM, "
+                "the replacement must be lerobot's ExportableDDPMScheduler."
+            )
+        for t in self.noise_scheduler.timesteps.tolist():
             model_output = model(
                 sample,
                 torch.full(sample.shape[:1], t, dtype=torch.long, device=sample.device),

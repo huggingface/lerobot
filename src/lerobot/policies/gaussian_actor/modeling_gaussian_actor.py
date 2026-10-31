@@ -21,7 +21,7 @@ from dataclasses import asdict
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
+from torch.distributions import Independent, Normal, TanhTransform, Transform, TransformedDistribution
 
 from lerobot.configs import PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
@@ -654,7 +654,12 @@ class RescaleFromTanh(Transform):
 
 class TanhMultivariateNormalDiag(TransformedDistribution):
     def __init__(self, loc, scale_diag, low=None, high=None):
-        base_dist = MultivariateNormal(loc, torch.diag_embed(scale_diag))
+        # scale_diag is used as the covariance diagonal, so each action dimension is an independent normal with
+        # its square root as the standard deviation. That needs no factorization, triangular solve or matrix
+        # product. With validation on, torch.export still needs PyTorch 2.15 for the remaining distribution
+        # checks. The root is computed in at least float32, so log_prob keeps its precision under autocast.
+        cov_diag = scale_diag.to(torch.promote_types(scale_diag.dtype, torch.float32))
+        base_dist = Independent(Normal(loc, cov_diag.sqrt()), 1)
 
         transforms = [TanhTransform(cache_size=1)]
 

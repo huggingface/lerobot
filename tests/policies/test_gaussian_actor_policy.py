@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import pytest
+from packaging.version import Version
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
@@ -81,6 +82,51 @@ def test_mlp_with_custom_final_activation():
     y = mlp(x)
     assert y.shape == (1, 256)
     assert (y >= -1).all() and (y <= 1).all()
+
+
+class _Actor(nn.Module):
+    def __init__(self, actor: nn.Module):
+        super().__init__()
+        self.actor = actor
+
+    def forward(self, state: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        return self.actor({OBS_STATE: state}, None)
+
+
+def test_actor_exports_without_linear_algebra_ops(monkeypatch):
+    monkeypatch.setattr(torch.distributions.Distribution, "_validate_args", False)
+    policy = GaussianActorPolicy(config=create_default_config(state_dim=10, continuous_action_dim=6)).eval()
+    program = torch.export.export(_Actor(policy.actor), (torch.rand(2, 10),), strict=False)
+    targets = [str(n.target) for n in program.run_decompositions().graph.nodes]
+    assert not [t for t in targets if "cholesky" in t or "linalg" in t or "triangular" in t]
+
+
+@pytest.mark.skipif(
+    Version(torch.__version__).release < (2, 15),
+    reason="torch.export traces the distribution argument checks from PyTorch 2.15 (2.11 fails)",
+)
+def test_actor_exports_with_distribution_validation(monkeypatch):
+    monkeypatch.setattr(torch.distributions.Distribution, "_validate_args", True)
+    policy = GaussianActorPolicy(config=create_default_config(state_dim=10, continuous_action_dim=6)).eval()
+    actor, state = _Actor(policy.actor), torch.rand(2, 10)
+    exported = torch.export.export(actor, (state,), strict=False).module()
+    torch.manual_seed(0)
+    expected = actor(state)
+    torch.manual_seed(0)
+    for out, ref in zip(exported(state), expected, strict=True):
+        assert torch.equal(out, ref)
+
+
+def test_actor_log_prob_stays_float32_with_finite_gradients_under_fp16_autocast():
+    # Without the float32 promotion of the variance, log_prob comes out float16 here.
+    policy = GaussianActorPolicy(config=create_default_config(state_dim=10, continuous_action_dim=6))
+    nn.init.zeros_(policy.actor.std_layer.weight)
+    nn.init.constant_(policy.actor.std_layer.bias, -11.0)  # a small std, still above the default std_min
+    with torch.autocast("cpu", dtype=torch.float16):
+        _, log_probs, _ = policy.actor({OBS_STATE: torch.rand(1, 10)}, None)
+    assert log_probs.dtype == torch.float32
+    log_probs.mean().backward()
+    assert all(p.grad is None or torch.isfinite(p.grad).all() for p in policy.actor.parameters())
 
 
 def test_gaussian_actor_policy_with_default_args():

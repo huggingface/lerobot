@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+import io
+from types import SimpleNamespace
+
 import pytest
 import torch
 from torch import nn
@@ -23,11 +26,13 @@ from torch import nn
 import lerobot.policies.evo1.evo1_model as evo1_model
 import lerobot.policies.evo1.modeling_evo1 as modeling_evo1
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.evo1 import internvl3_embedder
 from lerobot.policies.evo1.configuration_evo1 import Evo1Config
 from lerobot.policies.evo1.flow_matching import FlowmatchingActionHead
 from lerobot.policies.evo1.internvl3_embedder import (
     IMAGENET_MEAN,
     IMAGENET_STD,
+    InternVL3Embedder,
     _batched_pixel_values,
 )
 from lerobot.policies.evo1.processor_evo1 import (
@@ -910,3 +915,94 @@ def test_evo1_batched_pixel_values_shape_and_zero_padding():
     assert not torch.allclose(
         grouped[:, 0], expected_pad.expand(batch_size, 3, image_size, image_size), atol=1e-3
     )
+
+
+def test_internvl3_embedder_loads_default_rope_that_matches_dynamic_and_exports(monkeypatch):
+    transformers = pytest.importorskip("transformers")
+    from transformers.models.qwen2.modeling_qwen2 import Qwen2RotaryEmbedding
+
+    rope = {"rope_type": "dynamic", "type": "dynamic", "factor": 2.0, "rope_theta": 1e6}
+    text = transformers.Qwen2Config(
+        hidden_size=32, num_attention_heads=2, max_position_embeddings=2048, rope_parameters=rope
+    )
+    loaded = {}
+
+    def load_model(name, *, config, **kwargs):  # stop once the config is final
+        loaded["config"] = config
+        raise RuntimeError("config captured")
+
+    monkeypatch.setattr(internvl3_embedder.AutoTokenizer, "from_pretrained", lambda *a, **k: None)
+    monkeypatch.setattr(
+        internvl3_embedder.AutoConfig,
+        "from_pretrained",
+        lambda *a, **k: transformers.InternVLConfig(text_config=text.to_dict()),
+    )
+    monkeypatch.setattr(internvl3_embedder.AutoModel, "from_pretrained", load_model)
+    with pytest.raises(RuntimeError, match="config captured"):
+        InternVL3Embedder(device="cpu", use_flash_attn=False, max_text_length=1024)
+    default = loaded["config"].text_config
+    assert default.rope_parameters == {"rope_type": "default", "rope_theta": 1e6}
+    # Past max_position_embeddings dynamic RoPE rescales its frequencies, so a longer prompt keeps it.
+    with pytest.raises(RuntimeError, match="config captured"):
+        InternVL3Embedder(device="cpu", use_flash_attn=False, max_text_length=4096)
+    assert loaded["config"].text_config.rope_parameters["rope_type"] == "dynamic"
+
+    x, positions = torch.zeros(1, 1024, 32), torch.arange(1024)[None]
+    expected = Qwen2RotaryEmbedding(text)(x, positions)
+    rotary = Qwen2RotaryEmbedding(default)
+    assert all(torch.equal(a, b) for a, b in zip(rotary(x, positions), expected, strict=True))
+    exported = torch.export.export(rotary, (x, positions), strict=False).module()
+    assert all(torch.equal(a, b) for a, b in zip(exported(x, positions), expected, strict=True))
+
+
+def test_internvl3_embedder_checks_truncated_image_tokens_and_exports_a_full_length_prompt():
+    transformers = pytest.importorskip("transformers")
+
+    class Tokenizer:  # one id per image placeholder, then one per word
+        def __call__(self, prompts, *, max_length, **kwargs):
+            rows = []
+            for prompt in prompts:
+                words = prompt.rsplit("\n", 1)[-1].split()
+                ids = [7] * prompt.count(internvl3_embedder.IMG_CONTEXT_TOKEN) + [3] * len(words)
+                rows.append(ids[:max_length])
+            tokens = torch.tensor(rows)
+            mask = torch.ones_like(tokens)
+            return transformers.BatchEncoding({"input_ids": tokens, "attention_mask": mask})
+
+    class VLM(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = nn.Embedding(8, 4)
+
+        def forward(self, input_ids, pixel_values, attention_mask, **kwargs):
+            hidden = self.embed(input_ids) * attention_mask[..., None] + pixel_values.mean()
+            return SimpleNamespace(hidden_states=(hidden,))
+
+    embedder = InternVL3Embedder.__new__(InternVL3Embedder)
+    nn.Module.__init__(embedder)
+    embedder.tokenizer, embedder.model = Tokenizer(), VLM()
+    embedder.num_image_token, embedder.img_context_token_id = 2, 7
+
+    class Embed(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embedder = embedder
+
+        def forward(self, pixel_values, image_masks):
+            batch_size, num_views = image_masks.shape
+            tiles, prompts = [[1] * num_views] * batch_size, ["pick up the cube"] * batch_size
+            return self.embedder._forward_vlm(pixel_values, tiles, image_masks, prompts, True)[0]
+
+    model, pixels, masks = Embed(), torch.rand(2, 3, 8, 8), torch.tensor([[True, False]])
+    embedder.max_text_length = 3  # cuts into the 4 image tokens of the two views
+    with pytest.raises(ValueError, match="cut into the image placeholder tokens"):
+        model(pixels, masks)
+    with pytest.raises(RuntimeError, match="cut into the image placeholder tokens"):
+        torch.export.export(model, (pixels, masks), strict=False).module()(pixels, masks)
+    embedder.max_text_length = 8  # exactly the prompt, so the check runs and passes
+    program = torch.export.export(model, (pixels, masks), strict=False)
+    buffer = io.BytesIO()
+    torch.export.save(program, buffer)
+    buffer.seek(0)
+    for exported in (torch.export.load(buffer).module(), program.run_decompositions().module()):
+        assert torch.equal(exported(pixels, masks), model(pixels, masks))

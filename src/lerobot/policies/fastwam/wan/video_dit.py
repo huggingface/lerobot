@@ -211,7 +211,7 @@ def _rope_pair_axis_counts(c: int) -> tuple[int, int, int]:
 def retract_video_rope(
     keys: torch.Tensor,
     video_freqs: torch.Tensor,
-    grid_sizes: torch.Tensor,
+    grid_sizes: list[tuple[int, int, int]],
     action_freqs: torch.Tensor | None = None,
     temporal_positions: torch.Tensor | None = None,
 ) -> torch.Tensor:
@@ -235,7 +235,7 @@ def retract_video_rope(
     Args:
         keys: [B, S, H*D] fused (or per-layer) video keys, heads flattened last.
         video_freqs: complex [max_seq, c] unit rotators as used by ``rope_apply``.
-        grid_sizes: [B, 3] per-sample (frames f, grid height h, grid width w); the first
+        grid_sizes: per-sample (frames f, grid height h, grid width w); the first
             f*h*w tokens of each sample carry the 3D rotation, remaining tokens are
             unrotated padding and are passed through unchanged.
         action_freqs: complex [max_seq, c] action 1D rotators (``ActionDiT.freqs``).
@@ -258,12 +258,8 @@ def retract_video_rope(
         raise ValueError(
             f"`action_freqs` must be the 2D [max_seq, num_pairs] rope grid, got shape {tuple(action_freqs.shape)}"
         )
-    if grid_sizes.ndim != 2 or grid_sizes.shape[1] != 3:
-        raise ValueError(f"`grid_sizes` must be [B, 3], got shape {tuple(grid_sizes.shape)}")
-    if grid_sizes.shape[0] != keys.shape[0]:
-        raise ValueError(
-            f"`grid_sizes` batch {grid_sizes.shape[0]} does not match keys batch {keys.shape[0]}"
-        )
+    if len(grid_sizes) != keys.shape[0]:
+        raise ValueError(f"`grid_sizes` batch {len(grid_sizes)} does not match keys batch {keys.shape[0]}")
     c_t, c_h, c_w = _rope_pair_axis_counts(video_freqs.shape[1])
     if c_t + c_h + c_w != video_freqs.shape[1]:
         raise ValueError("`video_freqs` pair count does not match its axis split.")
@@ -272,17 +268,17 @@ def retract_video_rope(
     c = c_t + c_h + c_w
     pools = video_freqs.split([c_t, c_h, c_w], dim=1)
     out = keys.clone()
-    for i, (f, h, w) in enumerate(grid_sizes.tolist()):
-        seq_len_i = int(f) * int(h) * int(w)
+    for i, (f, h, w) in enumerate(grid_sizes):
+        seq_len_i = f * h * w
         if seq_len_i > seq_len:
             raise ValueError(
                 f"`grid_sizes[{i}]` expands to {seq_len_i} tokens, more than the {seq_len} provided."
             )
         # Token coordinates in `rope_apply`'s t-major, y-then-x expansion order.
-        t = torch.arange(int(f), device=keys.device).repeat_interleave(int(h) * int(w))
-        rem = torch.arange(seq_len_i, device=keys.device) % (int(h) * int(w))
-        y = rem.div(int(w), rounding_mode="floor")
-        x = rem % int(w)
+        t = torch.arange(f, device=keys.device).repeat_interleave(h * w)
+        rem = torch.arange(seq_len_i, device=keys.device) % (h * w)
+        y = rem.div(w, rounding_mode="floor")
+        x = rem % w
         coords = (t, y, x)
         counts = (c_t, c_h, c_w)
         multiplier = torch.ones(seq_len_i, c, dtype=torch.complex128, device=keys.device)
@@ -437,7 +433,7 @@ class FastWAMAttentionBlock(WanAttentionBlock):
         return shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp
 
     def project_self_attention(
-        self, x: torch.Tensor, freqs: torch.Tensor | dict[str, torch.Tensor]
+        self, x: torch.Tensor, freqs: torch.Tensor | dict[str, Any]
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         q = self.self_attn.norm_q(self.self_attn.q(x))
         k = self.self_attn.norm_k(self.self_attn.k(x))
@@ -855,7 +851,8 @@ class WanVideoDiT(WanModel):
             context_mask = context_mask.unsqueeze(1).expand(-1, f * h * w, -1)
 
         x_tokens = rearrange(x, "b c f h w -> b (f h w) c").contiguous()
-        grid_sizes = torch.tensor([[f, h, w]] * batch_size, dtype=torch.long, device=x_tokens.device)
+        # Python ints, not a tensor: rope and unpatchify slice by them, and reading a tensor back is a device sync.
+        grid_sizes = [(f, h, w)] * batch_size
         freqs = {"grid_sizes": grid_sizes, "freqs": self.freqs.to(x_tokens.device)}
 
         return {

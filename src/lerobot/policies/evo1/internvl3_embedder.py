@@ -27,9 +27,10 @@ from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoModel, AutoTokenizer
+    from transformers import AutoConfig, AutoModel, AutoTokenizer
     from transformers.utils import is_flash_attn_2_available
 else:
+    AutoConfig = None
     AutoModel = None
     AutoTokenizer = None
     is_flash_attn_2_available = None
@@ -141,8 +142,24 @@ class InternVL3Embedder(nn.Module):
                 "Flash Attention 2 is unavailable on this runtime. Falling back to eager attention."
             )
 
+        config = AutoConfig.from_pretrained(model_name, **hub_kwargs)
+        text_config = config.text_config
+        rope_parameters = text_config.rope_parameters
+        # Below max_position_embeddings dynamic RoPE equals default RoPE, and export cannot trace its update.
+        if (
+            rope_parameters.get("rope_type") == "dynamic"
+            and max_text_length <= text_config.max_position_embeddings
+        ):
+            # Default RoPE takes no "factor", and "type" is the legacy name of "rope_type". Keep the rest,
+            # such as partial_rotary_factor.
+            text_config.rope_parameters = {
+                **{k: v for k, v in rope_parameters.items() if k not in ("factor", "type")},
+                "rope_type": "default",
+            }
+
         self.model = AutoModel.from_pretrained(
             model_name,
+            config=config,
             torch_dtype=model_dtype,
             attn_implementation=attn_implementation,
             low_cpu_mem_usage=True,
@@ -330,12 +347,18 @@ class InternVL3Embedder(nn.Module):
             # of letting the VLM crash on a placeholder/vision-feature count mismatch.
             expected_image_tokens = self.num_image_token * sum(batch_num_tiles_list[0])
             image_token_counts = (input_ids == self.img_context_token_id).sum(dim=1)
-            if not bool((image_token_counts == expected_image_tokens).all()):
-                raise ValueError(
-                    f"Prompt truncation at max_text_length={self.max_text_length} cut into the "
-                    f"image placeholder tokens ({expected_image_tokens} expected per sample). "
-                    "Increase max_text_length or reduce max_views."
-                )
+            intact = (image_token_counts == expected_image_tokens).all()
+            message = (
+                f"Prompt truncation at max_text_length={self.max_text_length} cut into the "
+                f"image placeholder tokens ({expected_image_tokens} expected per sample). "
+                "Increase max_text_length or reduce max_views."
+            )
+            # Not torch_compilable_check: on PyTorch 2.11 its traced check can be neither saved nor
+            # decomposed, and TRANSFORMERS_DISABLE_TORCH_CHECK=1 would turn this check off.
+            if torch.compiler.is_compiling():
+                torch._assert_async(intact, message)
+            elif not intact:
+                raise ValueError(message)
         attention_mask = self._mask_absent_image_tokens(
             input_ids, model_inputs["attention_mask"], image_masks, batch_num_tiles_list
         )
