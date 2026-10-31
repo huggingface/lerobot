@@ -63,6 +63,7 @@ from lerobot.policies.lawam.vlas.qwen3vl import (
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import NormalizerProcessorStep, TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
+from tests.utils import require_cuda
 
 
 def make_config() -> LaWAMConfig:
@@ -658,6 +659,23 @@ def test_natural_time_grid_uses_dataset_frequency() -> None:
     assert torch.allclose(grid, torch.tensor([[0.0, 0.05, 0.1], [0.0, 0.04, 0.08]]))
 
 
+def test_natural_time_grid_rejects_a_frequency_that_is_not_a_number() -> None:
+    with pytest.raises(ValueError, match=r"got hz\[1\]="):
+        build_time_grid(hz=torch.tensor([20.0, float("nan")]), seq_len=3)
+
+
+def test_exported_time_grid_rejects_a_frequency_that_is_not_positive() -> None:
+    class TimeGrid(nn.Module):
+        def forward(self, hz):
+            return build_time_grid(hz=hz, seq_len=3)
+
+    hz = torch.tensor([20.0, 25.0])
+    program = torch.export.export(TimeGrid(), (hz,), strict=False)
+    torch.testing.assert_close(program.module()(hz), build_time_grid(hz=hz, seq_len=3), rtol=0, atol=0)
+    with pytest.raises(RuntimeError, match="Runtime assertion failed"):
+        program.module()(torch.tensor([20.0, 0.0]))
+
+
 def test_dataset_sampling_uses_the_configured_action_horizon() -> None:
     cfg = make_config()
     cfg.chunk_size = 50
@@ -930,3 +948,198 @@ def test_select_action_uses_action_queue_before_refill() -> None:
     assert first.shape == (1, 7)
     assert second.shape == (1, 7)
     assert not torch.equal(first, second)
+
+
+def _bare_backend(**attributes):
+    from lerobot.policies.lawam.vlas.lawam import LatentWorldPolicyBackend
+
+    backend = LatentWorldPolicyBackend.__new__(LatentWorldPolicyBackend)
+    nn.Module.__init__(backend)
+    for name, value in attributes.items():
+        setattr(backend, name, value)
+    return backend
+
+
+def _vlm_stage_setup(act_token: int = 10, flow_token: int = 11, num_queries: int = 2):
+    from transformers import Qwen3VLForConditionalGeneration
+
+    from tests.policies.common.qwen3_vl_helpers import image_prompts, tiny_qwen3_vl_config
+
+    torch.manual_seed(0)
+    qwen = Qwen3VLForConditionalGeneration(tiny_qwen3_vl_config()).eval()
+    act_query, flow_query = torch.randn(2, num_queries, qwen.config.text_config.hidden_size)
+
+    def backend():
+        return _bare_backend(
+            vlm=qwen,
+            num_action_queries=num_queries,
+            vlm_to_lam=nn.Identity(),
+        )
+
+    prompts = image_prompts(qwen.config, suffix=(act_token, act_token, flow_token, flow_token))
+    input_ids = prompts["input_ids"]
+    # The second sample interleaves its queries, so the samples place their action tokens differently.
+    input_ids[1, -3:-1] = torch.tensor([flow_token, act_token])
+    inputs = {
+        "input_ids": input_ids,
+        "attention_mask": prompts["attention_mask"],
+        "pixel_values": prompts["pixel_values"],
+        "image_grid_thw": prompts["image_grid_thw"],
+        "act_placeholder_mask": input_ids == act_token,
+        "flow_placeholder_mask": input_ids == flow_token,
+        "act_query": act_query,
+        "flow_query": flow_query,
+    }
+    return qwen, backend, inputs
+
+
+@require_cuda
+def test_vlm_stage_takes_placeholder_masks_on_the_host() -> None:
+    qwen, backend, inputs = _vlm_stage_setup()
+    qwen.cuda()
+    masks = ("act_placeholder_mask", "flow_placeholder_mask")
+    inputs = {key: value if key in masks else value.cuda() for key, value in inputs.items()}
+    with torch.no_grad():
+        output = backend()._run_vlm_stage(**inputs)
+    action_hidden = output["h_vlm"][inputs["act_placeholder_mask"].cuda()].view(2, 2, -1)
+    assert torch.equal(output["pred_latent"], action_hidden)
+
+
+def test_vlm_stage_on_a_vision_grid_exports_and_matches_stock_qwen() -> None:
+    from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid
+    from tests.policies.common.fixed_grid_checks import data_dependent_nodes
+    from tests.policies.common.qwen3_vl_helpers import STOCK_DEEPSTACK_NODES
+
+    qwen, backend, inputs = _vlm_stage_setup()
+    num_queries = inputs["act_query"].shape[0]
+    stock, fixed = backend(), backend()
+    with torch.no_grad():
+        expected = stock._run_vlm_stage(**inputs)
+    action_hidden = expected["h_vlm"][inputs["act_placeholder_mask"]].view(2, num_queries, -1)
+    assert torch.equal(expected["pred_latent"], action_hidden)
+
+    text_inputs = []
+    qwen.model.language_model.register_forward_pre_hook(
+        lambda module, args, kwargs: text_inputs.append(kwargs["inputs_embeds"]), with_kwargs=True
+    )
+    grid = Qwen3VisionGrid.build(qwen.model.visual, inputs["image_grid_thw"])
+    keys = sorted(inputs)
+
+    class VLMStage(nn.Module):
+        def forward(self, *tensors):
+            output = fixed._run_vlm_stage(**dict(zip(keys, tensors, strict=True)), vision_grid=grid)
+            return output["h_vlm"], output["pred_latent"]
+
+    with torch.no_grad():
+        actual = VLMStage()(*(inputs[key] for key in keys))
+        torch.testing.assert_close(actual, (expected["h_vlm"], action_hidden), rtol=0, atol=0)
+    with torch.no_grad():
+        # Eager positions are 0, 1, 2, ... as in the exported program only while no call with `input_ids`
+        # (or `generate`) has cached rope deltas on the model; LaWAM makes no such call.
+        assert qwen.model.rope_deltas is None
+        program = torch.export.export(VLMStage(), tuple(inputs[key] for key in keys), strict=False)
+    assert data_dependent_nodes(program) == STOCK_DEEPSTACK_NODES
+    # One placeholder moved from the second sample to the first: the total is right, the samples are not.
+    moved = {**inputs, "act_placeholder_mask": inputs["act_placeholder_mask"].clone()}
+    moved["act_placeholder_mask"][1, moved["act_placeholder_mask"][1].nonzero()[0, 0]] = False
+    moved["act_placeholder_mask"][0, 0] = True
+    with torch.no_grad():
+        torch.testing.assert_close(
+            program.module()(*(inputs[key] for key in keys)),
+            (expected["h_vlm"], action_hidden),
+            rtol=0,
+            atol=0,
+        )
+        with pytest.raises(ValueError, match="mismatch for sample 0"):
+            stock._run_vlm_stage(**moved)
+        with pytest.raises(RuntimeError, match="Runtime assertion failed"):
+            program.module()(*(moved[key] for key in keys))
+    # Each sample's placeholders hold the queries in order, wherever the sample put its tokens.
+    for name in ("act", "flow"):
+        filled = text_inputs[0][inputs[f"{name}_placeholder_mask"]]
+        assert torch.equal(filled, inputs[f"{name}_query"].repeat(2, 1))
+
+
+def test_vlm_stage_backpropagates_like_boolean_mask_indexing(monkeypatch) -> None:
+    """Training runs the query writes and the action read; their gradients must match boolean indexing."""
+    from lerobot.policies.lawam.vlas.lawam import LatentWorldPolicyBackend
+
+    qwen, backend, inputs = _vlm_stage_setup()
+
+    def gradients(read_actions):
+        qwen.zero_grad(set_to_none=True)
+        queries = {name: inputs[name].clone().requires_grad_() for name in ("act_query", "flow_query")}
+        output = backend()._run_vlm_stage(**{**inputs, **queries})
+        hidden, actions = output["h_vlm"], read_actions(output)
+        torch.manual_seed(1)
+        ((hidden * torch.randn_like(hidden)).sum() + (actions * torch.randn_like(actions)).sum()).backward()
+        return [queries["act_query"].grad, queries["flow_query"].grad] + [
+            parameter.grad for parameter in qwen.parameters() if parameter.grad is not None
+        ]
+
+    actual = gradients(lambda output: output["pred_latent"])
+
+    def boolean_inject(self, *, inputs_embeds, placeholder_mask, queries, num_queries, name):
+        inputs_embeds[placeholder_mask] = queries.repeat(inputs_embeds.shape[0], 1)
+
+    monkeypatch.setattr(LatentWorldPolicyBackend, "_inject_queries", boolean_inject)
+    action_mask = inputs["act_placeholder_mask"]
+    expected = gradients(lambda output: output["h_vlm"][action_mask].view(2, -1, output["h_vlm"].shape[-1]))
+    assert all(grad is not None and grad.abs().sum() > 0 for grad in actual[:2])
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+def test_vlm_stage_refuses_zero_action_queries() -> None:
+    """With no action query the QFormer gets no context, and its latent would ignore the observation."""
+    qwen, _, inputs = _vlm_stage_setup()
+    stage = _bare_backend(vlm=qwen, num_action_queries=0, vlm_to_lam=nn.Identity())
+    # Refused before the placeholder count check, which these placeholders would fail.
+    with torch.no_grad(), pytest.raises(ValueError, match="num_action_queries is 0"):
+        stage._run_vlm_stage(**inputs)
+
+
+def test_vlm_stage_export_refuses_flash_attention() -> None:
+    from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid
+
+    qwen, backend, inputs = _vlm_stage_setup()
+    stage, keys = backend(), sorted(inputs)
+    grid = Qwen3VisionGrid.build(qwen.model.visual, inputs["image_grid_thw"])
+
+    class VLMStage(nn.Module):
+        def forward(self, *tensors):
+            return stage._run_vlm_stage(**dict(zip(keys, tensors, strict=True)), vision_grid=grid)["h_vlm"]
+
+    # Set after building, which would need the flash kernels; export refuses before attention runs.
+    qwen.model.language_model.config._attn_implementation = "flash_attention_3"
+    with torch.no_grad(), pytest.raises(ValueError, match="needs SDPA attention"):
+        torch.export.export(VLMStage(), tuple(inputs[key] for key in keys), strict=False)
+
+
+def test_vlm_stage_refuses_a_vision_grid_built_for_another_grid() -> None:
+    from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid
+
+    qwen, backend, inputs = _vlm_stage_setup()
+    stage = backend()
+    grid = Qwen3VisionGrid.build(qwen.model.visual, inputs["image_grid_thw"])
+    # The second image transposed: same image and token counts, other shape.
+    changed = {**inputs, "image_grid_thw": inputs["image_grid_thw"].clone()}
+    changed["image_grid_thw"][1, 1:] = changed["image_grid_thw"][1, 1:].flip(0)
+    keys = sorted(inputs)
+
+    class VLMStage(nn.Module):
+        def __init__(self, grid):
+            super().__init__()
+            self.grid = grid
+
+        def forward(self, *tensors):
+            return stage._run_vlm_stage(**dict(zip(keys, tensors, strict=True)), vision_grid=self.grid)[
+                "h_vlm"
+            ]
+
+    with torch.no_grad():
+        with pytest.raises(ValueError, match="differs from the one the vision grid was built for"):
+            stage._run_vlm_stage(**changed, vision_grid=grid)
+        with pytest.raises(ValueError, match="vision_grid needs pixel_values and image_grid_thw"):
+            stage._run_vlm_stage(**{**inputs, "pixel_values": None}, vision_grid=grid)
+        with pytest.raises(ValueError, match="needs a vision_grid, which only the VLM stage takes so far"):
+            torch.export.export(VLMStage(None), tuple(inputs[key] for key in keys), strict=False)

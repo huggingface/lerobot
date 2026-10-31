@@ -16,6 +16,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as functional
 
+from lerobot.policies.common.input_checks import check_input
+
 from .cross_attention_dit import AlternateVLDiT, DiT
 
 
@@ -54,9 +56,12 @@ def build_time_grid(
     device = hz.device
     bsz = hz.shape[0]
     hz_f = hz.to(device=device, dtype=torch.float32)
-    if torch.any(hz_f <= 0):
-        bad_idx = int(torch.nonzero(hz_f <= 0, as_tuple=False)[0].item())
-        raise ValueError(f"`hz` must be > 0 for all samples, got hz[{bad_idx}]={float(hz_f[bad_idx])}.")
+
+    def hz_not_positive() -> str:
+        bad_idx = int(torch.nonzero(~(hz_f > 0), as_tuple=False)[0].item())
+        return f"`hz` must be > 0 for all samples, got hz[{bad_idx}]={float(hz_f[bad_idx])}."
+
+    check_input(hz_f > 0, hz_not_positive)
 
     token_idx = torch.arange(int(seq_len), dtype=torch.float32, device=device).unsqueeze(0).expand(bsz, -1)
     return token_idx / hz_f.unsqueeze(1)
