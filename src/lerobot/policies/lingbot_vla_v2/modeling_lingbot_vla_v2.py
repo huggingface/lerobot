@@ -32,6 +32,9 @@ from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.qwen3_vl.modeling_qwen3_vl import apply_rotary_pos_emb
 
 from lerobot.policies.common.flow_matching import FlowConvention, make_flow_matching_inputs
+from lerobot.policies.common.input_checks import check_input
+from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid, qwen3_vision_forward
+from lerobot.policies.common.qwen_vision import is_exporting, qwen_image_rope_index
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.utils import populate_queues
@@ -302,6 +305,25 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             video_grid_thw=video_grid_thw,
             attention_mask=attention_mask,
         )
+        return self._pad_positions_as_trained(position_ids, attention_mask)
+
+    def build_fixed_grid_position_ids(self, input_ids, attention_mask, grid_thw: list[list[int]]):
+        """`build_prefix_position_ids` for `torch.export`, which cannot read the image grid on the host.
+
+        `grid_thw` is the grid of every camera as Python ints, including cameras hidden by `attention_mask`.
+        """
+        vlm_cfg = self.qwenvl.config
+        position_ids = qwen_image_rope_index(
+            input_ids,
+            attention_mask,
+            grid_thw,
+            vlm_cfg.vision_config.spatial_merge_size,
+            vlm_cfg.image_token_id,
+        )
+        return self._pad_positions_as_trained(position_ids, attention_mask)
+
+    @staticmethod
+    def _pad_positions_as_trained(position_ids, attention_mask):
         # transformers 4.57 (which the 6B checkpoint was trained under) filled masked
         # (padding) rope positions with 1; transformers 5.5 fills them with 0. Restore the
         # 4.57 convention so cached-prefix rope matches the trained weights exactly.
@@ -597,6 +619,7 @@ class FlowMatchingV2(FlowMatchingV1):
 
         self._init_align(config.align_params, vlm_config.text_config.hidden_size)
         self.set_requires_grad()
+        self._vision_grid: Qwen3VisionGrid | None = None
 
     def _init_align(self, params: dict, llm_hidden_size: int):
         """Dual-query modules (upstream ``init_depth_heads`` / ``init_video_heads``, same build order).
@@ -816,6 +839,7 @@ class FlowMatchingV2(FlowMatchingV1):
         lang_masks,
         image_grid_thw=None,
         vision_outputs=None,
+        vision_grid=None,
     ):
         if image_grid_thw is None:
             raise ValueError("LingbotVLAV2Policy requires image_grid_thw from the Qwen3-VL image processor.")
@@ -835,7 +859,21 @@ class FlowMatchingV2(FlowMatchingV1):
         else:
             flat_grid_thw = image_grid_thw
 
-        if vision_outputs is None:
+        if vision_outputs is None and is_exporting():
+            # Export cannot read the grid on the host, so the tower runs on the grid prepared for it. Every image
+            # gives the same number of tokens, so the features split per image as `embed_image` stacks them.
+            visual = self.qwenvl_with_expert.qwenvl.model.visual
+            if visual.config._attn_implementation == "flash_attention_2" and visual.dtype == torch.float32:
+                # The vendored attention runs float32 flash attention in bfloat16; the export replay does not.
+                raise ValueError(
+                    "Exporting LingBot's vision tower with flash_attention_2 needs bfloat16 weights; set "
+                    "vit_attn_implementation='sdpa' to export a float32 model."
+                )
+            features, deepstack = qwen3_vision_forward(visual, images, vision_grid)
+            per_image = (images.shape[0], -1)
+            img_emb = features.unflatten(0, per_image)
+            deepstack_embs = [level.unflatten(0, per_image) for level in deepstack]
+        elif vision_outputs is None:
             img_emb, deepstack_embs = self.qwenvl_with_expert.embed_image(
                 images,
                 flat_grid_thw,
@@ -921,16 +959,30 @@ class FlowMatchingV2(FlowMatchingV1):
         else:
             att_masks = torch.zeros((bsize, embs.shape[1]), device=device, dtype=torch.bool)
 
-        flat_img_masks = einops.rearrange(img_masks, "b n -> (b n)")
-        rope_grid_thw = flat_grid_thw[flat_img_masks]
-        if rope_grid_thw.numel() == 0:
-            rope_grid_thw = flat_grid_thw[:1]
-        prefix_position_ids = self.qwenvl_with_expert.build_prefix_position_ids(
-            prefix_input_ids,
-            pad_masks.long(),
-            image_grid_thw=rope_grid_thw,
-            video_grid_thw=None,
-        )
+        if not self.config.qwen3vl_use_vision_boundaries:
+            # Without boundary tokens, visible cameras form one image block that transformers'
+            # `get_rope_index` cannot place, so such prompts stay refused as before.
+            check_input(
+                img_masks.sum(dim=1) <= 1,
+                "qwen3vl_use_vision_boundaries=False supports at most one visible camera per sample.",
+            )
+        if is_exporting():
+            # Eager rope positions fail on a sample with no visible token.
+            check_input(pad_masks.any(dim=1), "Every sample needs a visible prefix token.")
+            prefix_position_ids = self.qwenvl_with_expert.build_fixed_grid_position_ids(
+                prefix_input_ids, pad_masks.long(), vision_grid.grid_thw
+            )
+        else:
+            flat_img_masks = einops.rearrange(img_masks, "b n -> (b n)")
+            rope_grid_thw = flat_grid_thw[flat_img_masks]
+            if rope_grid_thw.numel() == 0:
+                rope_grid_thw = flat_grid_thw[:1]
+            prefix_position_ids = self.qwenvl_with_expert.build_prefix_position_ids(
+                prefix_input_ids,
+                pad_masks.long(),
+                image_grid_thw=rope_grid_thw,
+                video_grid_thw=None,
+            )
         # Dense (capture-safe) deepstack layout: zero-masked per-camera embeds
         # laid out over the full prefix length instead of bool-filtered rows.
         # _apply_deepstack then does a plain shape-static add; the old filtered
@@ -963,6 +1015,16 @@ class FlowMatchingV2(FlowMatchingV1):
             dense_deepstack,
         )
         return result
+
+    def _track_vision_grid(self, image_grid_thw):
+        """`Qwen3VisionGrid.track` on this call's grid.
+
+        Callers store the result only at the end of their call, so a call that fails keeps the prepared grid.
+        """
+        if image_grid_thw is None:
+            return None  # `embed_prefix` refuses it.
+        visual = self.qwenvl_with_expert.qwenvl.model.visual
+        return Qwen3VisionGrid.track(self._vision_grid, visual, image_grid_thw.flatten(0, -2))
 
     def _build_full_position_ids(self, prefix_position_ids, prefix_pad_masks, suffix_pad_masks):
         valid_prefix_pos = prefix_position_ids.masked_fill(~prefix_pad_masks.unsqueeze(0), 0)
@@ -997,6 +1059,7 @@ class FlowMatchingV2(FlowMatchingV1):
             actions, noise, time, convention=FlowConvention.NOISE_AT_ONE
         )
 
+        vision_grid = self._track_vision_grid(image_grid_thw)
         (
             prefix_embs,
             prefix_pad_masks,
@@ -1010,6 +1073,7 @@ class FlowMatchingV2(FlowMatchingV1):
             lang_tokens,
             lang_masks,
             image_grid_thw=image_grid_thw,
+            vision_grid=vision_grid,
         )
         time_embs, suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
 
@@ -1052,9 +1116,10 @@ class FlowMatchingV2(FlowMatchingV1):
             router_logits_list, losses, collect_metrics=collect_metrics
         )
         align_losses = self._align_losses(prefix_out, align_targets) if align_targets is not None else {}
+        self._vision_grid = vision_grid
         return losses, seq_wise_loss, router_z_loss, moe_metrics, align_losses
 
-    def _embed_and_fill_prefix(self, images, img_masks, lang_tokens, lang_masks, image_grid_thw):
+    def _embed_and_fill_prefix(self, images, img_masks, lang_tokens, lang_masks, image_grid_thw, vision_grid):
         """Prefix half of sample_actions: embed_prefix
         (vision tower + language embedding + mrope position ids) followed by the
         36-layer KV fill. Returns exactly what the denoise loop consumes."""
@@ -1071,6 +1136,7 @@ class FlowMatchingV2(FlowMatchingV1):
             lang_tokens,
             lang_masks,
             image_grid_thw=image_grid_thw,
+            vision_grid=vision_grid,
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         _, past_key_values, _ = self.qwenvl_with_expert.forward(
@@ -1129,17 +1195,20 @@ class FlowMatchingV2(FlowMatchingV1):
             )
             noise = torch.randn(actions_shape, device=device, dtype=dtype)
 
+        vision_grid = self._track_vision_grid(image_grid_thw)
         if self.config.use_cudagraph_prefix or self.config.use_cudagraph_prefix_full:
             # CUDA-graphed prefix (see config docs). Falls back to the
             # eager prefix only for the non-CUDA / use_cache
             # guards; capture failures finish eagerly from the already-run
             # embed_prefix (no second vision pass).
-            got = self._prefix_graphed(images, img_masks, lang_tokens, lang_masks, image_grid_thw)
+            got = self._prefix_graphed(
+                images, img_masks, lang_tokens, lang_masks, image_grid_thw, vision_grid
+            )
             if got is not None:
                 prefix_pad_masks, prefix_position_ids, past_key_values = got
             else:
                 prefix_pad_masks, prefix_position_ids, past_key_values = self._embed_and_fill_prefix(
-                    images, img_masks, lang_tokens, lang_masks, image_grid_thw
+                    images, img_masks, lang_tokens, lang_masks, image_grid_thw, vision_grid
                 )
         else:
             prefix_pad_masks, prefix_position_ids, past_key_values = self._embed_and_fill_prefix(
@@ -1148,6 +1217,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 lang_tokens,
                 lang_masks,
                 image_grid_thw,
+                vision_grid,
             )
 
         dt = torch.tensor(-1.0 / self.config.num_steps, dtype=dtype, device=device)
@@ -1188,6 +1258,7 @@ class FlowMatchingV2(FlowMatchingV1):
             )
             if graphed is not None:
                 logger.debug("Denoised %s steps (single CUDA graph replay)", len(time_values))
+                self._vision_grid = vision_grid
                 return graphed
             # Shape change or capture failure — fall through to the plain loop.
 
@@ -1236,6 +1307,7 @@ class FlowMatchingV2(FlowMatchingV1):
 
             x_t += dt * v_t
         logger.debug("Denoised %s steps%s", count, " (RTC guided)" if guided else "")
+        self._vision_grid = vision_grid
         return x_t
 
     @torch.no_grad()
@@ -1597,6 +1669,7 @@ class FlowMatchingV2(FlowMatchingV1):
         lang_tokens,
         lang_masks,
         image_grid_thw,
+        vision_grid,
     ):
         """Run the prefix 36-layer KV fill as one captured CUDA graph.
 
@@ -1649,6 +1722,7 @@ class FlowMatchingV2(FlowMatchingV1):
             lang_masks,
             image_grid_thw=image_grid_thw,
             vision_outputs=vision_outputs,
+            vision_grid=vision_grid,
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
 
