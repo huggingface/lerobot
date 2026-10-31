@@ -48,10 +48,17 @@ from lerobot.processor import (  # noqa: E402
 )
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
+from tests.processor.test_tokenizer_processor import (  # noqa: E402
+    _assert_tiny_action_processor,
+    _save_action_processor,
+)
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
 
-def test_from_pretrained_logs_non_strict_state_dict_keys(monkeypatch):
+@pytest.fixture
+def fake_wall_x_model(monkeypatch):
+    """Fakes the config, processor and weights `from_pretrained` loads; records what it builds and logs."""
+
     class FakeConfig:
         text_config = SimpleNamespace(pad_token_id=None)
         pad_token_id = None
@@ -74,11 +81,14 @@ def test_from_pretrained_logs_non_strict_state_dict_keys(monkeypatch):
         def from_pretrained(*args, **kwargs):
             return FakeProcessor()
 
+    built = {}
+    logged = []
+
     class FakeModel(Qwen2_5_VLMoEForAction):
         config_class = FakeConfig
 
-        def __init__(self, *args, **kwargs):
-            pass
+        def __init__(self, *args, action_tokenizer=None, **kwargs):
+            built["action_tokenizer"] = action_tokenizer
 
         def resize_token_embeddings(self, *args, **kwargs):
             pass
@@ -87,7 +97,6 @@ def test_from_pretrained_logs_non_strict_state_dict_keys(monkeypatch):
             assert kwargs["strict"] is False
             return ["missing.weight"], ["unexpected.weight"]
 
-    logged = []
     monkeypatch.setattr(
         modeling_wall_x.Qwen2_5_VLMoEModel,
         "_require_eager_attention",
@@ -101,10 +110,26 @@ def test_from_pretrained_logs_non_strict_state_dict_keys(monkeypatch):
         "log_model_loading_keys",
         lambda missing, unexpected: logged.append((missing, unexpected)),
     )
+    return SimpleNamespace(model=FakeModel, built=built, logged=logged)
 
-    FakeModel.from_pretrained("example/wall-x")
 
-    assert logged == [(["missing.weight"], ["unexpected.weight"])]
+def test_from_pretrained_logs_non_strict_state_dict_keys(fake_wall_x_model):
+    fake_wall_x_model.model.from_pretrained("example/wall-x")
+
+    assert fake_wall_x_model.logged == [(["missing.weight"], ["unexpected.weight"])]
+
+
+def test_from_pretrained_loads_action_tokenizer_saved_by_transformers_4(
+    fake_wall_x_model, monkeypatch, tmp_path
+):
+    import transformers.dynamic_module_utils
+
+    monkeypatch.setattr(transformers.dynamic_module_utils, "HF_MODULES_CACHE", str(tmp_path / "modules"))
+    _save_action_processor(tmp_path / "legacy_fast")
+
+    fake_wall_x_model.model.from_pretrained("example/wall-x", action_tokenizer_path=tmp_path / "legacy_fast")
+
+    _assert_tiny_action_processor(fake_wall_x_model.built["action_tokenizer"])
 
 
 def test_moe_model_captures_requested_hidden_states_and_attentions():

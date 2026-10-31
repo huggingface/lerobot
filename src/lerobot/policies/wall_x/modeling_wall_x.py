@@ -49,6 +49,7 @@ from safetensors.torch import load_file
 from torch import Tensor
 from torch.nn import CrossEntropyLoss
 
+from lerobot.processor.tokenizer_processor import load_action_tokenizer
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
@@ -342,7 +343,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             use_fast=True,
         )
         if action_tokenizer_path is not None:
-            action_tokenizer = AutoProcessor.from_pretrained(action_tokenizer_path, trust_remote_code=True)
+            action_tokenizer = load_action_tokenizer(action_tokenizer_path, trust_remote_code=True)
             processor.action_processor = action_tokenizer
         else:
             action_tokenizer = None

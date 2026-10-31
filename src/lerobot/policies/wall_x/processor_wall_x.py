@@ -34,6 +34,7 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.processor.tokenizer_processor import load_action_tokenizer
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import normalize_semantic_messages, semantic_message_content_text
@@ -394,7 +395,7 @@ class WallXTokenizerStep(ProcessorStep):
             if self.use_fast_tokenizer:
                 if self.action_tokenizer_name is None:
                     raise ValueError("Fast WALL-X tokenization requires action_tokenizer_name.")
-                self._action_tokenizer = AutoProcessor.from_pretrained(
+                self._action_tokenizer = load_action_tokenizer(
                     self.action_tokenizer_name, trust_remote_code=True
                 )
         return self._processor, self._action_tokenizer

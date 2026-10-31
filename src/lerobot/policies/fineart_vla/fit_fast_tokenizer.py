@@ -34,7 +34,7 @@ from huggingface_hub import snapshot_download
 from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoProcessor
+    from transformers import AutoProcessor, ProcessorMixin
     from transformers.dynamic_module_utils import get_class_from_dynamic_module
 # pyarrow ships with the dataset extra; tokenizer fitting reads training parquet shards.
 if TYPE_CHECKING or _datasets_available:
@@ -203,20 +203,25 @@ def _validate_fast_reconstruction(
 
 
 def _load_fast_fitter(base_tokenizer_name: str) -> Any:
-    """Load FAST's fitting implementation without requiring its universal BPE weights."""
+    """Load FAST's fitting implementation without requiring its universal BPE tokenizer.
+
+    FAST's `fit` is a classmethod, so when the processor does not load, for example from the layout transformers 4
+    saved, its remote class is enough.
+    """
     try:
         return AutoProcessor.from_pretrained(base_tokenizer_name, trust_remote_code=True)
-    except ValueError as error:
-        if base_tokenizer_name != "physical-intelligence/fast":
+    except (ImportError, ValueError) as error:
+        try:
+            processor_dict, _ = ProcessorMixin.get_processor_dict(base_tokenizer_name)
+            class_reference = processor_dict["auto_map"]["AutoProcessor"]
+            fitter = get_class_from_dynamic_module(class_reference, base_tokenizer_name)
+        except Exception:
+            fitter = None
+        # Without a callable fit the class is of no use here, so the AutoProcessor error is the one to show.
+        if not callable(getattr(fitter, "fit", None)):
             raise
-        logger.warning(
-            "Could not load the universal FAST tokenizer backend; loading its fitting class directly: %s",
-            error,
-        )
-        return get_class_from_dynamic_module(
-            "processing_action_tokenizer.UniversalActionProcessor",
-            base_tokenizer_name,
-        )
+        logger.warning("Could not load the FAST processor; fitting with its class directly: %s", error)
+        return fitter
 
 
 def fit_fast_tokenizer(

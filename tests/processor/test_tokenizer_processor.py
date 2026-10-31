@@ -369,6 +369,31 @@ def test_load_action_tokenizer_names_the_extra_when_transformers_is_missing(tmp_
             _require_package_cache.clear()
 
 
+@skip_if_package_missing("transformers")
+def test_wall_x_loads_action_tokenizer_saved_by_transformers_4(tmp_path, monkeypatch):
+    import transformers.dynamic_module_utils
+
+    from lerobot.policies.wall_x.processor_wall_x import WallXTokenizerStep
+
+    monkeypatch.setattr(transformers.dynamic_module_utils, "HF_MODULES_CACHE", str(tmp_path / "modules"))
+    _save_action_processor(tmp_path / "legacy_fast")
+    _save_tiny_tokenizer(tmp_path / "text")
+    step = WallXTokenizerStep(
+        processor_name=str(tmp_path / "text"),
+        image_keys=[],
+        chunk_size=1,
+        max_state_dim=1,
+        max_action_dim=1,
+        output_action_dim=1,
+        use_fast_tokenizer=True,
+        action_tokenizer_name=str(tmp_path / "legacy_fast"),
+    )
+
+    _, action_tokenizer = step._get_processors()
+
+    _assert_tiny_action_processor(action_tokenizer)
+
+
 @pytest.fixture
 def mock_tokenizer():
     """Provide a mock tokenizer for testing."""
