@@ -192,6 +192,9 @@ class ActionCudaGraphManager:
         action_model = self.model
         if not self.enabled:
             return False
+        # A replayed graph would hide the flow loop from torch.compile and torch.export.
+        if torch.compiler.is_compiling():
+            return False
         if action_model.training or action_model._require_action_expert().training:
             return False
         if inputs.trajectory.device.type != "cuda":

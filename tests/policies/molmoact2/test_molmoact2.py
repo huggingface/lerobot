@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 import math
 from collections import deque
@@ -56,7 +57,12 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
     _position_ids_from_attention_mask,
 )
 from lerobot.policies.molmoact2.molmoact2_hf_model import (
+    inference as hf_molmoact2_inference,
     modeling_molmoact2 as hf_molmoact2_modeling,
+)
+from lerobot.policies.molmoact2.molmoact2_hf_model.configuration_molmoact2 import (
+    MolmoAct2AdapterConfig,
+    MolmoAct2VitConfig,
 )
 from lerobot.policies.molmoact2.molmoact2_hf_model.modeling_molmoact2 import (
     ActionExpert,
@@ -1887,6 +1893,26 @@ def test_cuda_graph_managers_are_inference_only():
     assert policy.model.depth_decode_cuda_graph_manager.enabled is False
 
 
+def test_action_cuda_graph_is_not_replayed_while_compiling(monkeypatch):
+    action_model = SimpleNamespace(
+        training=False, _require_action_expert=lambda: SimpleNamespace(training=False)
+    )
+    on_cuda = SimpleNamespace(device=torch.device("cuda"))
+    inputs = SimpleNamespace(
+        trajectory=on_cuda,
+        context=SimpleNamespace(
+            kv_contexts=[], cross_mask=None, self_mask=None, valid_action=None, rope_cache=None
+        ),
+        action_dim_is_pad=None,
+        modulations=[],
+    )
+    manager = hf_molmoact2_inference.ActionCudaGraphManager(action_model)
+    assert manager.can_use_action_flow(inputs)
+
+    monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True)
+    assert not manager.can_use_action_flow(inputs)
+
+
 def test_lora_targets_exclude_action_expert():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
@@ -3170,6 +3196,221 @@ def test_both_action_expert_mask_retains_checkpoint_span_masking():
 
     assert torch.equal(mask, torch.tensor([[False, False, False, False, True]]))
     assert policy.model.model.calls == 1
+
+
+def test_discrete_output_span_mask_exports():
+    model = object.__new__(hf_molmoact2_modeling.MolmoAct2Model)
+    torch.nn.Module.__init__(model)
+    model.config = SimpleNamespace(
+        action_mode="both", eos_token_id=None, action_start_token_id=7, action_end_token_id=9
+    )
+
+    class EncoderAttentionMask(torch.nn.Module):
+        def forward(self, input_ids):
+            return model._get_encoder_attention_mask(input_ids, None)
+
+    input_ids = torch.tensor(
+        [
+            [1, 7, 2, 9, 3, 3],  # one span, both boundary tokens masked
+            [9, 1, 7, 2, 9, 3],  # an end token with no open span is ignored
+            [7, 7, 9, 1, 9, 3],  # a nested start extends the span to the next end
+            [1, 2, 7, 3, 3, 3],  # an unterminated span runs to the end
+        ]
+    )
+    program = torch.export.export(EncoderAttentionMask(), (input_ids,), strict=False)
+
+    expected = torch.tensor(
+        [
+            [True, False, False, False, True, True],
+            [True, True, False, False, False, True],
+            [False, False, False, False, False, True],
+            [True, True, False, False, False, False],
+        ]
+    )
+    assert torch.equal(program.module()(input_ids), expected)
+    # ExecuTorch releases up to 1.5 have no portable cummin kernel, so the program must not need it.
+    assert not any("cummin" in str(node.target) for node in program.graph.nodes)
+
+    # Longer random rows against the open-span counter the mask implements.
+    rows = torch.randint(0, 4, (8, 40), generator=torch.Generator().manual_seed(0))
+    rows = torch.tensor([7, 9, 1, 1])[rows]
+    reference = []
+    for row in rows.tolist():
+        depth, keep = 0, []
+        for token in row:
+            closes = token == 9 and depth > 0
+            depth = depth + 1 if token == 7 else max(depth - 1, 0) if token == 9 else depth
+            keep.append(depth == 0 and not closes)
+        reference.append(keep)
+    assert torch.equal(model._get_encoder_attention_mask(rows, None), torch.tensor(reference))
+
+    # A one-token row has no earlier position to floor the running minimum.
+    assert torch.equal(model._get_encoder_attention_mask(torch.tensor([[7]]), None), torch.tensor([[False]]))
+
+    # A token that both opens and closes a span masks only itself.
+    mask = torch.ones_like(input_ids, dtype=torch.bool)
+    assert torch.equal(model._mask_discrete_output_spans(input_ids, mask, 7, 7), input_ids != 7)
+
+
+def test_saved_both_checkpoint_continuous_inference_exports():
+    class DummyBackbone(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor(1.0))
+            self.config = SimpleNamespace(eos_token_id=2, action_start_token_id=3, action_end_token_id=4)
+
+        def _get_encoder_attention_mask(self, input_ids, attention_mask):
+            return attention_mask.to(dtype=torch.bool)
+
+        def generate_actions_from_inputs(self, *, encoder_attention_mask, noise, **kwargs):
+            return noise + encoder_attention_mask.sum(-1, dtype=noise.dtype)[:, None, None]
+
+    policy = object.__new__(MolmoAct2Policy)
+    torch.nn.Module.__init__(policy)
+    backbone = DummyBackbone()
+    policy.model = backbone
+    policy._backbone = lambda: backbone
+    policy.config = MolmoAct2Config(
+        action_mode="both",
+        inference_action_mode="continuous",
+        dtype=torch.float32,
+        chunk_size=2,
+        n_action_steps=2,
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
+    )
+    policy._checkpoint_action_mode = "both"
+    policy.rtc_processor = None
+    generator = torch.Generator().manual_seed(0)
+
+    class PredictActionChunk(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.policy = policy
+
+        def forward(self, input_ids, attention_mask, noise):
+            batch = {"input_ids": input_ids, "attention_mask": attention_mask}
+            return self.policy.predict_action_chunk(batch, noise=noise, generator=generator)
+
+    noise = torch.zeros(1, 2, 7)
+    with_span = (torch.tensor([[2, 3, 9, 4, 7]]), torch.ones(1, 5, dtype=torch.long), noise)
+    without_span = (torch.tensor([[1, 5, 9, 6, 7]]), torch.ones(1, 5, dtype=torch.long), noise)
+    module = PredictActionChunk()
+    program = torch.export.export(module, with_span, strict=False)
+
+    # The EOS token and the 3..4 action span are masked out of the first prompt only.
+    for inputs, unmasked in ((with_span, 1), (without_span, 5)):
+        expected = module(*inputs)
+        assert torch.equal(expected, torch.full((1, 2, 7), float(unmasked)))
+        assert torch.equal(program.module()(*inputs), expected)
+
+
+def test_single_example_image_inputs_export(monkeypatch):
+    torch.manual_seed(0)
+    end_id, patch_id = 5, 6
+    model = object.__new__(hf_molmoact2_modeling.MolmoAct2Model)
+    torch.nn.Module.__init__(model)
+    model.config = SimpleNamespace(image_end_token_id=end_id, image_patch_id=patch_id)
+    model.vision_backbone = hf_molmoact2_modeling.MolmoAct2VisionBackbone(
+        MolmoAct2VitConfig(
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            head_dim=4,
+            image_default_input_size=(28, 28),
+            image_num_pos=4,
+        ),
+        MolmoAct2AdapterConfig(
+            vit_layers=(-1,),
+            hidden_size=8,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            head_dim=4,
+            intermediate_size=16,
+            text_hidden_size=8,
+        ),
+    ).eval()
+    model.transformer = torch.nn.Module()
+    model.transformer.wte = torch.nn.Embedding(8, 8)
+    model.transformer.emb_drop = torch.nn.Identity()
+
+    class ImageEmbeddings(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = model
+
+        def forward(self, input_ids, pixel_values, image_token_pooling, image_grids, image_num_crops):
+            images, token_pooling = self.model.build_batched_images(
+                input_ids, pixel_values, image_token_pooling, image_grids, image_num_crops
+            )
+            return self.model.build_input_embeddings(input_ids, images, token_pooling)[0]
+
+    # Image 0 has one crop of four patches, image 1 has two crops; each pools into two tokens.
+    example = (
+        torch.tensor([[1, patch_id, patch_id, end_id, patch_id, patch_id, end_id, 2]]),
+        torch.randn(3, 4, 14 * 14 * 3),
+        torch.tensor([[0, 1], [2, -1], [0, 5], [7, -1]]),
+        torch.tensor([[1, 1, 1, 1], [1, 2, 0, 0]]),
+        torch.tensor([1, 2]),
+    )
+    embed = ImageEmbeddings()
+    program = torch.export.export(embed, example, strict=False)
+
+    for node in program.graph.nodes:
+        value = node.meta.get("val")
+        if isinstance(value, torch.Tensor):
+            assert all(isinstance(size, int) for size in value.shape), node.format_node()
+    with torch.no_grad():
+        embeddings = embed(*example)
+        # Reference: each image feature added to its image patch token, in order.
+        images, token_pooling = model.build_batched_images(*example)
+        expected = model.transformer.wte(example[0]).reshape(-1, 8)
+        expected[example[0].flatten() == patch_id] += model.vision_backbone(images, token_pooling)
+    assert torch.equal(embeddings, expected.reshape_as(embeddings))
+    assert torch.equal(program.module()(*example), embeddings)
+
+    # TensorRT and ExecuTorch lowering decompose the program, and saving it must work too.
+    buffer = io.BytesIO()
+    torch.export.save(program.run_decompositions(), buffer)
+    buffer.seek(0)
+    loaded = torch.export.load(buffer).module()
+    assert torch.equal(loaded(*example), embeddings)
+
+    # One image patch token too few must fail, in the program and in eager mode even with transformers checks off.
+    missing_patch = example[0].clone()
+    missing_patch[0, 5] = 1
+    with pytest.raises(RuntimeError, match="Image patch tokens do not match image features"):
+        loaded(missing_patch, *example[1:])
+    monkeypatch.setenv("TRANSFORMERS_DISABLE_TORCH_CHECK", "1")
+    with pytest.raises(RuntimeError, match="expected 3 image patch embeddings, got 4"):
+        embed(missing_patch, *example[1:])
+
+    # Strided pixels must embed exactly like contiguous ones under bfloat16 autocast.
+    strided = example[1].transpose(-1, -2).contiguous().transpose(-1, -2)
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        contiguous_bf16 = embed(*example)
+        strided_bf16 = embed(example[0], strided, *example[2:])
+    assert torch.equal(strided_bf16, contiguous_bf16)
+
+    # The same example batched with a one-image example, so the batch adds padding rows.
+    other = (
+        torch.tensor([[1, patch_id, patch_id, end_id, 2, -1, -1, -1]]),
+        torch.randn(1, 4, 14 * 14 * 3),
+        torch.tensor([[3, 2], [1, -1]]),
+        torch.tensor([[1, 1, 1, 1]]),
+        torch.tensor([1]),
+    )
+    with torch.no_grad():
+        batched = embed(*(torch.cat(pair) for pair in zip(example, other, strict=True)))
+    torch.testing.assert_close(batched[:1], embeddings)
+
+    if torch.cuda.is_available():
+        # Accelerate can return the text embeddings on a different device from input_ids.
+        model.transformer.wte.register_forward_hook(lambda module, args, output: output.cuda())
+        with torch.no_grad():
+            split = model.build_input_embeddings(example[0], *model.build_batched_images(*example))[0]
+        torch.testing.assert_close(split.cpu(), embeddings)
 
 
 def test_rtc_generation_uses_previous_chunk_prefix():
