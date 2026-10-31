@@ -27,7 +27,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
-from lerobot.utils.import_utils import get_safe_default_video_backend
+from lerobot.utils.import_utils import get_safe_default_video_backend, is_video_backend_available
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader, DatasetReader
@@ -245,7 +245,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_timestamps = delta_timestamps
         self.tolerance_s = tolerance_s
         self.revision: str | None = revision if revision else CODEBASE_VERSION
-        self._video_backend = video_backend if video_backend else get_safe_default_video_backend()
+        if video_backend:
+            # An explicitly requested backend must actually load; a broken one
+            # otherwise surfaces later as a silent hang on the first decode.
+            if not is_video_backend_available(video_backend):
+                raise ValueError(
+                    f"video_backend='{video_backend}' was requested but cannot be loaded in this "
+                    "environment (for torchcodec this usually means the native library failed, e.g. "
+                    "missing system ffmpeg). Either fix the backend's dependencies or use "
+                    "video_backend='pyav' (the 'av' wheel bundles its own ffmpeg)."
+                )
+            self._video_backend = video_backend
+        else:
+            self._video_backend = get_safe_default_video_backend()
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
         self._batch_encoding_size = batch_encoding_size
