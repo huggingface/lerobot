@@ -1,0 +1,123 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""PI05Policy.from_pretrained builds parameters on the meta device and matches the regular load."""
+
+import sys
+
+import pytest
+import torch
+
+pytest.importorskip("transformers")
+
+import transformers.utils  # noqa: E402
+
+from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
+from lerobot.policies.pi05 import PI05Config, PI05Policy, modeling_pi05  # noqa: E402
+from lerobot.utils import import_utils  # noqa: E402
+from tests.policies.common.meta_load import (  # noqa: E402
+    DOWNLOAD_ARGUMENTS,
+    add_unknown_weights,
+    assert_embedding_stored_first,
+    assert_same,
+    drop_projector_bias,
+    load,
+    save_checkpoint,
+    store_embedding,
+    use_tiny_backbone,
+)
+
+RENAMES = {f"time_mlp_in.{name}": f"action_time_mlp_in.{name}" for name in ("weight", "bias")}
+
+
+@pytest.fixture
+def config(monkeypatch):
+    use_tiny_backbone(monkeypatch, modeling_pi05)
+    config = PI05Config(image_resolution=(28, 28), device="cpu", dtype=torch.bfloat16)
+    config.input_features = {
+        "observation.images.base_0_rgb": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 28, 28)),
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(8,)),
+    }
+    config.output_features = {"action": PolicyFeature(type=FeatureType.ACTION, shape=(8,))}
+    return config
+
+
+def test_matches_regular_load(config, tmp_path, monkeypatch):
+    path = save_checkpoint(PI05Policy, config, tmp_path / "ckpt", RENAMES)
+    model, used_meta = load(PI05Policy, path, config, monkeypatch)
+    expected, _ = load(PI05Policy, path, config, monkeypatch, regular=True)
+    assert used_meta
+    assert_same(model, expected)
+
+
+def test_skips_weights_the_policy_does_not_have(config, tmp_path, monkeypatch, capsys):
+    path = save_checkpoint(PI05Policy, config, tmp_path / "ckpt", RENAMES, add_unknown_weights)
+    model, used_meta = load(PI05Policy, path, config, monkeypatch)
+    assert "Unexpected keys when loading state dict: 2 keys" in capsys.readouterr().out
+    expected, _ = load(PI05Policy, path, config, monkeypatch, regular=True)
+    assert used_meta
+    assert_same(model, expected)
+
+
+def test_stored_embedding_next_to_lm_head_matches_regular_load(config, tmp_path, monkeypatch):
+    path = save_checkpoint(PI05Policy, config, tmp_path / "ckpt", RENAMES, store_embedding)
+    assert_embedding_stored_first(path)
+    model, used_meta = load(PI05Policy, path, config, monkeypatch)
+    expected, _ = load(PI05Policy, path, config, monkeypatch, regular=True)
+    assert used_meta
+    assert_same(model, expected)
+
+
+@pytest.mark.parametrize("saved_with_memory", [True, False])
+def test_proprioceptive_memory(config, tmp_path, monkeypatch, saved_with_memory):
+    # A checkpoint saved without the memory projection keeps the regular path, which initializes it fresh.
+    config.use_proprioceptive_memory = saved_with_memory
+    path = save_checkpoint(PI05Policy, config, tmp_path / "ckpt", RENAMES)
+    config.use_proprioceptive_memory = True
+    model, used_meta = load(PI05Policy, path, config, monkeypatch)
+    expected, _ = load(PI05Policy, path, config, monkeypatch, regular=True)
+    assert used_meta == saved_with_memory
+    assert_same(model, expected)
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_download_arguments_reach_the_weights(config, tmp_path, monkeypatch, complete):
+    path = save_checkpoint(
+        PI05Policy, config, tmp_path / "ckpt", RENAMES, None if complete else drop_projector_bias
+    )
+    cached_file = transformers.utils.cached_file
+    calls = []
+
+    def record(*args, **kwargs):
+        calls.append(kwargs)
+        return cached_file(*args)
+
+    monkeypatch.setattr(transformers.utils, "cached_file", record)
+    _, used_meta = load(PI05Policy, path, config, monkeypatch, **DOWNLOAD_ARGUMENTS)
+    # One lookup, with every option, serves whichever path loads the weights.
+    assert calls == [DOWNLOAD_ARGUMENTS] and used_meta == complete
+
+
+def test_missing_weights_raise(config, tmp_path, monkeypatch):
+    with pytest.raises(OSError, match="model.safetensors"):
+        load(PI05Policy, tmp_path, config, monkeypatch)
+
+
+def test_missing_transformers_names_the_extra(config, tmp_path, monkeypatch):
+    monkeypatch.setitem(import_utils._require_package_cache, "transformers", False)
+    monkeypatch.setitem(sys.modules, "transformers.utils", None)
+    with pytest.raises(ImportError, match=r"lerobot\[pi\]"):
+        PI05Policy.from_pretrained(tmp_path, config=config)
