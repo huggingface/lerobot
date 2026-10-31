@@ -26,9 +26,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import numpy as np
-import torch
 
 from lerobot.lerobot_types import PolicyPrediction
 from lerobot.policies import (
@@ -36,6 +36,9 @@ from lerobot.policies import (
     ExecutionMode as ExecutionMode,
     FeatureSpec as FeatureSpec,
 )
+
+if TYPE_CHECKING:
+    import torch
 
 DEFAULT_MAX_TEXT_INPUT_CHARS = 4096
 DEFAULT_MAX_TEXT_OUTPUT_CHARS = 8192

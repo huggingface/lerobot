@@ -17,6 +17,8 @@ import importlib
 import importlib.metadata
 import importlib.util
 import logging
+import sys
+from collections.abc import Callable
 from typing import Any, Literal, overload
 
 from draccus.choice_types import ChoiceRegistry
@@ -176,6 +178,35 @@ _pygame_available = is_package_available("pygame")
 _qwen_vl_utils_available = is_package_available("qwen-vl-utils", import_name="qwen_vl_utils")
 _grpc_available = is_package_available("grpcio", import_name="grpc")
 _wallx_deps_available = _transformers_available and _peft_available and _qwen_vl_utils_available
+
+
+def lazy_exports(
+    module_name: str, exports: dict[str, str]
+) -> tuple[Callable[[str], Any], Callable[[], list[str]]]:
+    """Return a module `__getattr__` and `__dir__` (PEP 562) that import each name in `exports` on first use.
+
+    `exports` maps each name to the object it stands for, written `<module>.<attribute>` with the module
+    absolute or relative to the calling package. Import the same names under `if TYPE_CHECKING:` and assign
+    these in its `else:` branch, so type checkers read the real imports and still report names that do not
+    exist. The names never become module globals, so the module's own code imports them where it uses them,
+    and `typing.get_type_hints` cannot resolve an annotation that uses them.
+    """
+    module = sys.modules[module_name]
+
+    def module_getattr(name: str) -> Any:
+        if name not in exports:
+            raise AttributeError(f"module {module_name!r} has no attribute {name!r}")
+        module_path, _, attribute = exports[name].rpartition(".")
+        try:
+            return getattr(importlib.import_module(module_path, module.__package__), attribute)
+        except AttributeError as e:
+            # From a module __getattr__, Python reads AttributeError as a missing name and drops the cause.
+            raise ImportError(f"cannot import name {name!r} from {module_name!r}: {e}") from e
+
+    def module_dir() -> list[str]:
+        return sorted({*vars(module), *exports})
+
+    return module_getattr, module_dir
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:
