@@ -16,7 +16,8 @@
 
 import builtins
 import logging
-from collections import deque
+import threading
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
@@ -65,7 +66,6 @@ from ..common.flow_matching import (
     sample_time_beta,
 )
 from ..common.vla_utils import (
-    clone_past_key_values,
     create_sinusoidal_pos_embedding,
     make_att_2d_masks,
     pad_vector,
@@ -163,6 +163,76 @@ def _reduce_training_rtc_loss(
 
 def _no_grad_if(enabled: bool):
     return torch.no_grad() if enabled else nullcontext()
+
+
+class _ReadOnlyPrefixCache:
+    """One chunk's prefix keys and values, shared by its denoise steps.
+
+    Each step's suffix attends to the prefix plus its own keys, as with a ``DynamicCache``, but
+    nothing is appended, so the steps need no per-step copy of the prefix. Implements the two
+    calls Gemma's attention and mask code make on a cache.
+    """
+
+    def __init__(self, kv: list[tuple[Tensor, Tensor]]):
+        self.kv = kv
+        self.prefix_len = kv[0][0].shape[-2]
+
+    @classmethod
+    def from_cache(cls, cache) -> "_ReadOnlyPrefixCache":
+        return cls([(keys, values) for keys, values, _ in cache])
+
+    def get_seq_length(self, layer_idx: int = 0) -> int:
+        return self.prefix_len
+
+    def update(self, key_states: Tensor, value_states: Tensor, layer_idx: int, cache_kwargs=None):
+        keys, values = self.kv[layer_idx]
+        return torch.cat([keys, key_states], dim=-2), torch.cat([values, value_states], dim=-2)
+
+
+class _DenoiseGraph:
+    """``denoise_step`` captured in a CUDA graph for one batch size and prefix length.
+
+    Each chunk copies its prefix keys and values, suffix mask and position ids into the captured
+    buffers; each Euler step copies ``x_t`` and the timestep in and replays the graph. The buffers
+    are shared, so one model samples one chunk at a time, as ``select_action`` does.
+    """
+
+    def __init__(self, model: "PI05Pytorch", prefix_cache, suffix_attention, x_t: Tensor, timestep: Tensor):
+        self.device = x_t.device
+        self.cache = _ReadOnlyPrefixCache([(k.clone(), v.clone()) for k, v in prefix_cache.kv])
+        self.mask, self.position_ids = (t.clone() for t in suffix_attention)
+        self.x_t, self.timestep = x_t.clone(), timestep.clone()
+
+        def step():
+            return model.denoise_step(
+                None, self.cache, self.x_t, self.timestep, (self.mask, self.position_ids)
+            )
+
+        with torch.cuda.device(self.device):
+            # warm up on a side stream before capture, as torch.cuda.graph requires
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                for _ in range(2):
+                    step()
+            torch.cuda.current_stream().wait_stream(side)
+            self.graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(self.graph, stream=side):
+                self.out = step()
+
+    def load(self, prefix_cache: _ReadOnlyPrefixCache, suffix_attention: tuple[Tensor, Tensor]) -> None:
+        for (dst_k, dst_v), (k, v) in zip(self.cache.kv, prefix_cache.kv, strict=True):
+            dst_k.copy_(k)
+            dst_v.copy_(v)
+        self.mask.copy_(suffix_attention[0])
+        self.position_ids.copy_(suffix_attention[1])
+
+    def __call__(self, x_t: Tensor, timestep: Tensor) -> Tensor:
+        self.x_t.copy_(x_t)
+        self.timestep.copy_(timestep)
+        with torch.cuda.device(self.device):
+            self.graph.replay()
+        return self.out.clone()
 
 
 def _joint_attention(
@@ -643,6 +713,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     use_typed_attention_masks = False
     use_on_device_suffix_mask = False
     precompute_denoise_times = False
+    # captured denoise graphs kept per model (one per batch size and prefix length in use)
+    _MAX_DENOISE_GRAPHS = 4
 
     def __init__(self, config: PI05Config, rtc_processor: RTCProcessor | None = None):
         super().__init__()
@@ -824,8 +896,29 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
+        action_emb, adarms_cond = self._embed_suffix_tokens(noisy_actions, timestep)
         att_masks = []
 
+        bsize, action_time_dim = action_emb.shape[:2]
+        pad_masks = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
+
+        # Set attention masks so that image, language and state inputs do not attend to action tokens
+        att_masks += [1] + ([0] * (self.config.chunk_size - 1))
+
+        if self.use_on_device_suffix_mask:
+            n = len(att_masks)
+            att_masks = torch.zeros(n, dtype=action_emb.dtype, device=action_emb.device)
+            att_masks[0] = 1
+            att_masks = att_masks[None, :].expand(bsize, n)
+        else:
+            att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
+            att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+
+        return action_emb, pad_masks, att_masks, adarms_cond
+
+    def _embed_suffix_tokens(self, noisy_actions, timestep):
+        """The suffix embeddings and AdaRMS condition; the masks ``embed_suffix`` adds don't depend
+        on the step, so the denoise loop builds them once per chunk (``_suffix_attention``)."""
         # Embed timestep using sine-cosine positional encoding
         time_emb = create_sinusoidal_pos_embedding(
             timestep,
@@ -849,24 +942,26 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             return F.silu(x)
 
         time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
-        adarms_cond = time_emb
+        return action_emb, time_emb
 
-        bsize, action_time_dim = action_emb.shape[:2]
-        pad_masks = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
+    def _suffix_attention(self, prefix_pad_masks: Tensor) -> tuple[Tensor, Tensor]:
+        """The denoise steps' 4D attention mask and position ids. They depend only on the prefix
+        padding and the chunk size, so one chunk's ten steps share them."""
+        batch_size, prefix_len = prefix_pad_masks.shape
+        suffix_len = self.config.chunk_size
+        device = prefix_pad_masks.device
+        suffix_pad_masks = torch.ones(batch_size, suffix_len, dtype=torch.bool, device=device)
+        # the first action token starts a new block, as in embed_suffix
+        suffix_att_masks = torch.zeros(batch_size, suffix_len, device=device)
+        suffix_att_masks[:, 0] = 1
 
-        # Set attention masks so that image, language and state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.chunk_size - 1))
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
 
-        if self.use_on_device_suffix_mask:
-            n = len(att_masks)
-            att_masks = torch.zeros(n, dtype=action_emb.dtype, device=action_emb.device)
-            att_masks[0] = 1
-            att_masks = att_masks[None, :].expand(bsize, n)
-        else:
-            att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
-            att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
-        return action_emb, pad_masks, att_masks, adarms_cond
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+        return self._prepare_attention_masks_4d(full_att_2d_masks), position_ids
 
     def forward(
         self,
@@ -1002,22 +1097,57 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     training_max_delay,
                 )
 
+        rtc_guided = self._rtc_enabled() and rtc_mode == "guided"
+        if type(self).denoise_step is not PI05Pytorch.denoise_step:
+            # a subclass with its own denoise_step keeps the four-argument contract and the
+            # prefill's cache it manages itself
+            def denoise(input_x_t, current_timestep):
+                return self.denoise_step(prefix_pad_masks, past_key_values, input_x_t, current_timestep)
+
+        else:
+            prefix_cache = _ReadOnlyPrefixCache.from_cache(past_key_values)
+            suffix_attention = self._suffix_attention(prefix_pad_masks)
+
+            def denoise(input_x_t, current_timestep):
+                return self.denoise_step(
+                    prefix_pad_masks, prefix_cache, input_x_t, current_timestep, suffix_attention
+                )
+
+            # the graph's timestep buffer is (batch,); trained RTC passes per-token times. Under
+            # torch.compile (compile_model) Inductor captures its own graphs, and nesting a
+            # capture in it fails, so a compiled call runs the plain loop.
+            if getattr(self.config, "denoise_cuda_graph", False) and noise.is_cuda:
+                if trained_prefix is not None or rtc_guided:
+                    if not self.__dict__.get("_warned_rtc_graph"):
+                        self.__dict__["_warned_rtc_graph"] = True
+                        logging.warning(
+                            "denoise_cuda_graph: RTC runs the denoise loop without the CUDA graph"
+                        )
+                elif not torch.compiler.is_compiling():
+                    # the graph's input buffers are shared: one chunk at a time per model
+                    with self.__dict__.setdefault("_denoise_graph_lock", threading.Lock()):
+                        denoise = self._denoise_graph(prefix_cache, suffix_attention, noise)
+                        actions = self._integrate(denoise, noise, num_steps, rtc_guided, None, None, kwargs)
+                        # replays are async: finish before another stream may reuse the buffers
+                        torch.cuda.current_stream(noise.device).synchronize()
+                        return actions
+
+        return self._integrate(
+            denoise, noise, num_steps, rtc_guided, trained_prefix, trained_prefix_mask, kwargs
+        )
+
+    def _integrate(self, denoise, noise, num_steps, rtc_guided, hard_prefix, hard_prefix_mask, kwargs):
         return euler_integrate(
-            lambda input_x_t, current_timestep: self.denoise_step(
-                prefix_pad_masks=prefix_pad_masks,
-                past_key_values=past_key_values,
-                x_t=input_x_t,
-                timestep=current_timestep,
-            ),
+            denoise,
             noise,
             num_steps,
             rtc_processor=self.rtc_processor,
-            rtc_enabled=self._rtc_enabled() and rtc_mode == "guided",
+            rtc_enabled=rtc_guided,
             inference_delay=kwargs.get("inference_delay"),
             prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
             execution_horizon=kwargs.get("execution_horizon"),
-            hard_prefix=trained_prefix,
-            hard_prefix_mask=trained_prefix_mask,
+            hard_prefix=hard_prefix,
+            hard_prefix_mask=hard_prefix_mask,
             precompute_times=self.precompute_denoise_times,
         )
 
@@ -1027,25 +1157,21 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         past_key_values,
         x_t,
         timestep,
+        suffix_attention: tuple[Tensor, Tensor] | None = None,
     ):
-        """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep)
+        """Apply one denoising step of the noise `x_t` at a given timestep.
 
-        suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-        prefix_len = prefix_pad_masks.shape[1]
-
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
-        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-
-        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+        ``sample_actions`` passes a ``_ReadOnlyPrefixCache`` and the chunk's ``suffix_attention``;
+        a caller that passes the prefill's ``DynamicCache`` and no mask gets the same result.
+        """
+        if not isinstance(past_key_values, _ReadOnlyPrefixCache):
+            past_key_values = _ReadOnlyPrefixCache.from_cache(past_key_values)
+        if suffix_attention is None:
+            suffix_attention = self._suffix_attention(prefix_pad_masks)
+        full_att_2d_masks_4d, position_ids = suffix_attention
+        suffix_embs, adarms_cond = self._embed_suffix_tokens(x_t, timestep)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        past_key_values = clone_past_key_values(past_key_values)
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -1059,6 +1185,49 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
         return self.action_out_proj(suffix_out)
+
+    def _denoise_graph(
+        self, prefix_cache: _ReadOnlyPrefixCache, suffix_attention: tuple[Tensor, Tensor], noise: Tensor
+    ) -> _DenoiseGraph:
+        """The captured denoise step for this chunk's batch size and prefix length, loaded with
+        the chunk's prefix. Captured on first use and kept for the ``_MAX_DENOISE_GRAPHS`` most
+        recent shapes; see ``reset_denoise_graphs`` for when to drop them."""
+        graphs = self.__dict__.setdefault("_denoise_graphs", OrderedDict())
+        # buffers made under inference_mode can't be written outside it, and autocast changes kernels
+        key = (
+            tuple(noise.shape),
+            prefix_cache.prefix_len,
+            noise.dtype,
+            noise.device,
+            torch.is_inference_mode_enabled(),
+            torch.get_autocast_dtype(noise.device.type)
+            if torch.is_autocast_enabled(noise.device.type)
+            else None,
+        )
+        graph = graphs.get(key)
+        if graph is None:
+            timestep = torch.ones(noise.shape[0], dtype=torch.float32, device=noise.device)
+            graph = graphs[key] = _DenoiseGraph(self, prefix_cache, suffix_attention, noise, timestep)
+            while len(graphs) > self._MAX_DENOISE_GRAPHS:
+                graphs.popitem(last=False)
+        graphs.move_to_end(key)
+        graph.load(prefix_cache, suffix_attention)
+        return graph
+
+    def reset_denoise_graphs(self) -> None:
+        """Drop the captured denoise graphs; the next chunk captures again.
+
+        A graph replays against the parameter storage it was captured with. Loading weights in
+        place (``load_state_dict`` with the default ``assign=False``) keeps that storage, and
+        ``.to()``/``.cuda()`` reset the graphs themselves. Call this after anything that replaces
+        parameter tensors instead: ``load_state_dict(assign=True)``, swapping submodules, or
+        attaching or merging adapters.
+        """
+        self.__dict__.pop("_denoise_graphs", None)
+
+    def _apply(self, fn, recurse=True):
+        self.reset_denoise_graphs()
+        return super()._apply(fn, recurse)
 
 
 class PI05Policy(PreTrainedPolicy):
