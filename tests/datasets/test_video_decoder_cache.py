@@ -21,12 +21,28 @@ unbounded growth when iterating over datasets with many distinct video files
 (observed: ~35 GB anon-rss per DataLoader worker on an 8 k-file dataset).
 """
 
+import importlib.util
 import shutil
 from pathlib import Path
 
 import pytest
 
-pytest.importorskip("torchcodec", reason="torchcodec is required (install lerobot[dataset])")
+if importlib.util.find_spec("torchcodec") is None:
+    pytest.skip("torchcodec is required (install lerobot[dataset])", allow_module_level=True)
+
+from lerobot.utils.import_utils import prepare_torchcodec_ffmpeg_dlls  # noqa: E402
+
+# On Windows the wheel links against FFmpeg's shared DLLs, which may be missing even
+# though the package itself imported. `importorskip` only catches ImportError, while an
+# unloadable native library raises OSError/RuntimeError, so check explicitly and skip.
+prepare_torchcodec_ffmpeg_dlls()
+try:
+    import torchcodec  # noqa: F401
+except (ImportError, OSError, RuntimeError) as exc:  # pragma: no cover - platform dependent
+    pytest.skip(
+        f"torchcodec is installed but cannot load its FFmpeg libraries: {exc}",
+        allow_module_level=True,
+    )
 
 from lerobot.datasets.video_utils import VideoDecoderCache  # noqa: E402
 
