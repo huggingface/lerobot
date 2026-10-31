@@ -1002,6 +1002,29 @@ def test_drop_stale_episode_feature_columns_matches_full_feature_name(tmp_path):
     assert "videos/old/feature_suffix/chunk_index" in output_columns
 
 
+def test_drop_stale_episode_feature_columns_rewrites_only_dirty_files(tmp_path):
+    """Only episode metadata files containing stale feature columns are decoded and rewritten."""
+    episodes_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    episodes_dir.mkdir(parents=True)
+    clean_path = episodes_dir / "episode-00000.parquet"
+    dirty_path = episodes_dir / "episode-00001.parquet"
+
+    pd.DataFrame({"stats/action/max": [1.0]}).to_parquet(clean_path)
+    pd.DataFrame({"stats/action/max": [1.0], "stats/removed_feature/max": [2.0]}).to_parquet(dirty_path)
+
+    with (
+        patch("lerobot.datasets.dataset_tools.pq.read_table", wraps=pq.read_table) as mock_read_table,
+        patch("lerobot.datasets.dataset_tools.pq.write_table", wraps=pq.write_table) as mock_write_table,
+    ):
+        stale_features = _drop_stale_episode_feature_columns(episodes_dir.parent, active_features={"action"})
+
+    assert stale_features == {"removed_feature"}
+    assert [call.args[-1] for call in mock_read_table.call_args_list] == [dirty_path]
+    assert [call.args[-1] for call in mock_write_table.call_args_list] == [dirty_path]
+    assert pq.read_schema(clean_path).names == ["stats/action/max"]
+    assert "stats/removed_feature/max" not in pq.read_schema(dirty_path).names
+
+
 def test_remove_feature_cleans_stale_episode_metadata(sample_dataset, tmp_path):
     """Removing a feature also removes its episode metadata and video artifacts."""
     camera_key = "observation.images.top"

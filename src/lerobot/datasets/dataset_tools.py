@@ -1148,14 +1148,15 @@ def _drop_stale_episode_feature_columns(episodes_dir: Path, active_features: set
 
     ``stats/`` and ``videos/`` column groups are keyed by feature names. Those
     names may themselves contain ``/``, so parse each column from the right
-    rather than matching a plain prefix.
+    rather than matching a plain prefix. Only parquet schemas are inspected up
+    front, so clean files keep the cheap copy-only path and are decoded only
+    when stale columns must be removed.
     """
     stale_features: set[str] = set()
 
     for path in sorted(episodes_dir.glob("*/*.parquet")):
-        table = pq.read_table(path)
         stale_columns = []
-        for column in table.column_names:
+        for column in pq.read_schema(path).names:
             for prefix in ("stats/", "videos/"):
                 parsed_column = _parse_episode_feature_column(column, prefix)
                 if parsed_column is None:
@@ -1168,7 +1169,7 @@ def _drop_stale_episode_feature_columns(episodes_dir: Path, active_features: set
                 break
 
         if stale_columns:
-            pq.write_table(table.drop(stale_columns), path)
+            pq.write_table(pq.read_table(path).drop(stale_columns), path)
 
     return stale_features
 
