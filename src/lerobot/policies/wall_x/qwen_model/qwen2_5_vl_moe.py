@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING
 import torch
 import torch.nn as nn
 
+from lerobot.policies.common.input_checks import check_input
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
@@ -112,7 +113,12 @@ class SparseMoeBlock(nn.Module):
 
         self.dim_inputs = config.dim_inputs
 
-    def forward(self, hidden_states: torch.Tensor, experts_indices: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        experts_indices: torch.Tensor,
+        experts_rows: tuple[torch.Tensor, ...] | None = None,
+    ) -> torch.Tensor:
         """
         Route different hidden_states to corresponding experts for processing.
 
@@ -120,6 +126,10 @@ class SparseMoeBlock(nn.Module):
             hidden_states (torch.Tensor): Tensor of shape (batch_size, seq_length, hidden_dim).
             experts_indices (torch.Tensor): Tensor of shape (batch_size, seq_length),
                 indicating the expert index assigned to each token.
+            experts_rows (tuple[torch.Tensor, ...], optional): Routing that replaces `experts_indices`:
+                for each expert, the positions of its tokens in every sample, in order, shape
+                (batch_size, tokens). Experts past the end of the tuple get no tokens. Routing then uses
+                fixed shapes and no host reads.
 
         Returns:
             output (torch.Tensor): Tensor of shape (batch_size, seq_length, hidden_dim).
@@ -128,6 +138,17 @@ class SparseMoeBlock(nn.Module):
         output = torch.zeros_like(hidden_states)
 
         for expert_idx, expert in enumerate(self.experts):
+            if experts_rows is not None:
+                if expert_idx >= len(experts_rows):
+                    continue
+                dim_input = self.dim_inputs[expert_idx]
+                index = experts_rows[expert_idx].unsqueeze(-1).expand(-1, -1, hidden_dim)
+                selected_hidden = hidden_states.gather(1, index).flatten(0, 1)
+                processed_hidden = expert(selected_hidden[:, :dim_input]).view(batch_size, -1, dim_input)
+                output = output.scatter(
+                    1, index, torch.nn.functional.pad(processed_hidden, (0, hidden_dim - dim_input))
+                )
+                continue
             mask = experts_indices == expert_idx
             if mask.sum() == 0:
                 continue
@@ -168,6 +189,7 @@ class Qwen2_5_VLDecoderLayer_with_MoE(Qwen2_5_VLDecoderLayer):  # noqa: N801
         token_types: torch.LongTensor | None = None,
         use_cache: bool | None = False,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+        token_rows: tuple[torch.Tensor, ...] | None = None,
         **kwargs,
     ) -> torch.Tensor:
         residual = hidden_states
@@ -193,7 +215,7 @@ class Qwen2_5_VLDecoderLayer_with_MoE(Qwen2_5_VLDecoderLayer):  # noqa: N801
         hidden_states = self.post_attention_layernorm(hidden_states)
         if self.mlp is None:  # using moe mlp
             hidden_states = hidden_states.to(self.moe.experts[0].down_proj.weight.dtype)
-            hidden_states = self.moe(hidden_states, token_types)
+            hidden_states = self.moe(hidden_states, token_types, token_rows)
         else:
             hidden_states = hidden_states.to(self.mlp.down_proj.weight.dtype)
             hidden_states = self.mlp(hidden_states)
@@ -261,8 +283,14 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
         moe_token_types: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         cache_position: torch.LongTensor | None = None,
+        moe_tokens_per_expert: tuple[int, ...] | None = None,
         **kwargs,
     ) -> BaseModelOutputWithPast:
+        """`moe_tokens_per_expert`, when given, is how many tokens of every sample each expert takes, in expert
+        order. The MLP experts then take their tokens from `moe_token_types` with static shapes, as
+        `torch.export` needs, instead of a boolean mask per expert; token types that do not match the counts
+        are refused.
+        """
         self._require_eager_attention(self.config._attn_implementation)
 
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -282,6 +310,9 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
                 f"{moe_token_types.shape[-1]} types for {inputs_embeds.shape[1]} tokens"
             )
         routing_token_types = moe_token_types[:, -inputs_embeds.shape[1] :]
+        token_rows = None
+        if moe_tokens_per_expert is not None:
+            token_rows = self._token_rows(routing_token_types, moe_tokens_per_expert)
 
         past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         if position_ids is None:
@@ -332,6 +363,7 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
                 token_types=routing_token_types,
                 use_cache=use_cache,
                 position_embeddings=position_embeddings,
+                token_rows=token_rows,
                 **kwargs,
             )
 
@@ -339,6 +371,26 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
+        )
+
+    @staticmethod
+    def _token_rows(
+        token_types: torch.Tensor, tokens_per_expert: tuple[int, ...]
+    ) -> tuple[torch.Tensor, ...]:
+        """The positions of each expert's tokens in every sample, in order, selected with static shapes."""
+        seq_length = token_types.shape[1]
+        experts = range(len(tokens_per_expert))
+        counts = torch.stack([(token_types == expert).sum(dim=1) for expert in experts], dim=1)
+        check_input(
+            (counts == counts.new_tensor(tokens_per_expert)).all(dim=1) & (counts.sum(dim=1) == seq_length),
+            f"moe_token_types must give the experts exactly {tokens_per_expert} tokens of every sample.",
+        )
+        positions = torch.arange(seq_length, device=token_types.device)
+        return tuple(
+            torch.where(token_types == expert, positions, seq_length)
+            .topk(count, dim=1, largest=False)
+            .indices
+            for expert, count in enumerate(tokens_per_expert)
         )
 
     @staticmethod

@@ -41,6 +41,7 @@ from os import PathLike
 from typing import TYPE_CHECKING, Any, Self, cast
 
 import numpy as np
+import packaging.version
 import torch
 import torch.nn as nn
 import torch.nn.functional as functional
@@ -64,12 +65,15 @@ from ..common.flow_matching import (
     sample_beta,
     sample_noise,
 )
+from ..common.input_checks import check_input
+from ..common.qwen2_5_vision import Qwen2_5VisionGrid, qwen2_5_vision_forward
+from ..common.qwen_vision import check_visible_images, is_exporting, qwen_image_rope_index
 from ..pretrained import PreTrainedPolicy
 from ..utils import log_model_loading_keys, populate_queues
 from .configuration_wall_x import WallXConfig
 from .constant import WALL_X_GENERATION_PROMPT_IDS
 from .qwen_model import Qwen2_5_VLConfig
-from .qwen_model.vision_attention import VisionAttentionBackend
+from .qwen_model.vision_attention import VisionAttentionBackend, replay_vision_attention
 
 if TYPE_CHECKING or _wallx_deps_available:
     from peft import LoraConfig, get_peft_model
@@ -1032,6 +1036,22 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             channel_loss_count_dict=channel_loss_count_dict,
         )
 
+    def _grid_position_ids(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor, vision_grid: Qwen2_5VisionGrid
+    ) -> torch.Tensor:
+        """The rope positions of `get_rope_index`, from `vision_grid`, for a prompt the checks accept."""
+        check_visible_images(input_ids, attention_mask, self.config)
+        position_ids = qwen_image_rope_index(
+            input_ids,
+            attention_mask,
+            vision_grid.grid_thw,
+            self.config.vision_config.spatial_merge_size,
+            self.config.image_token_id,
+            vision_start_token_id=self.config.vision_start_token_id,
+        )
+        # WALL-X's own get_rope_index puts padding at position 1.
+        return position_ids.masked_fill(attention_mask == 0, 1)
+
     def predict_action(self, predict_mode: str, **kwargs):
         """
         Predict actions using specified prediction mode.
@@ -1082,6 +1102,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         re_generate: bool = False,
         *,
         noise: torch.Tensor | None = None,
+        vision_grid: Qwen2_5VisionGrid | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
@@ -1122,6 +1143,9 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             re_generate (bool, optional): Whether to use sampling for regeneration
             noise (torch.Tensor, optional): Starting sample for diffusion mode, shape
                 (batch_size, pred_horizon, action_dim). Drawn from a standard normal when None.
+            vision_grid (Qwen2_5VisionGrid, optional): ``Qwen2_5VisionGrid.build(self.visual, image_grid_thw)``.
+                The vision tower and, unless ``position_ids`` are given, the rope positions then run from it,
+                without reading ``image_grid_thw`` on the host, as ``torch.export`` needs
             **kwargs: Additional keyword arguments
 
         Returns:
@@ -1143,6 +1167,33 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         if predict_mode in ["text", "fast"]:
             assert batch_size == 1, "predict only support batch size 1 for ar generation"
 
+        # By release number, so pre-release builds of 2.9 (NVIDIA containers, source builds) pass.
+        if (
+            predict_mode == "diffusion"
+            and is_exporting()
+            and packaging.version.parse(torch.__version__).release < (2, 9)
+        ):
+            raise RuntimeError(
+                "Exporting WALL-X needs PyTorch 2.9 or later: torch.export cannot trace transformers' causal "
+                "mask with WALL-X's action mask function before that."
+            )
+        if vision_grid is not None:
+            if predict_mode != "diffusion":
+                raise ValueError("vision_grid is for the diffusion mode only.")
+            if pixel_values is None or image_grid_thw is None:
+                raise ValueError("vision_grid needs pixel_values and image_grid_thw.")
+            if video_grid_thw is not None:
+                raise ValueError("vision_grid supports image inputs only.")
+            vision_grid.check(self.visual, image_grid_thw)
+            if position_ids is None:
+                if attention_mask is None or attention_mask.ndim != 2:
+                    raise ValueError("vision_grid needs a 2D attention_mask to build the rope positions.")
+                position_ids = self._grid_position_ids(input_ids, attention_mask, vision_grid)
+        elif is_exporting() and pixel_values is not None:
+            raise ValueError(
+                "Exporting WALL-X with images needs a vision_grid (see `WallXPolicy.predict_action_chunk`)."
+            )
+
         # Set output configuration from model config if not specified
         output_attentions = (
             output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1159,15 +1210,20 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             # Process image embeddings
             if pixel_values is not None:
                 pixel_values = pixel_values.type(self.visual.dtype)
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
+                if vision_grid is None:
+                    image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
+                else:
+                    image_embeds = qwen2_5_vision_forward(
+                        self.visual, pixel_values, image_grid_thw, vision_grid, replay_vision_attention
+                    )
                 n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
                 n_image_features = image_embeds.shape[0]
 
                 # Validate image token and feature count match
-                if n_image_tokens != n_image_features:
-                    raise ValueError(
-                        f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
-                    )
+                check_input(
+                    n_image_tokens == n_image_features,
+                    lambda: f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}",
+                )
 
                 mask = input_ids == self.config.image_token_id
                 mask_unsqueezed = mask.unsqueeze(-1)
@@ -1198,8 +1254,9 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
-            # Process proprioceptive data
-            if proprioception is not None:
+            # Process proprioceptive data. Only diffusion reads these embeddings: text and fast embed the
+            # state again in `generate`.
+            if proprioception is not None and predict_mode == "diffusion":
                 if agent_pos_mask is None:
                     raise ValueError("proprioception requires agent_pos_mask.")
                 proprioception = proprioception.to(inputs_embeds.device).to(inputs_embeds.dtype)
@@ -1209,8 +1266,22 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                     agent_pos_mask,
                 )
                 proprioception_mask = input_ids == self.action_token_id_set["propri_token_id"]
-                proprio_embed = proprio_embed.to(torch.bfloat16)
-                inputs_embeds[proprioception_mask] = proprio_embed.reshape(-1, inputs_embeds.shape[-1])
+                # masked_scatter would silently drop extra state rows, so check the rows and every sample's
+                # state tokens.
+                if proprio_embed.shape[0] != batch_size:
+                    raise ValueError(
+                        f"Proprioception has {proprio_embed.shape[0]} samples but input_ids has {batch_size}."
+                    )
+                tokens_per_sample = proprio_embed.shape[1:-1].numel()
+                check_input(
+                    proprioception_mask.sum(dim=1) == tokens_per_sample,
+                    f"Proprioception features and state tokens do not match: each sample needs "
+                    f"{tokens_per_sample} state tokens.",
+                )
+                inputs_embeds = inputs_embeds.masked_scatter(
+                    proprioception_mask.unsqueeze(-1).expand_as(inputs_embeds),
+                    proprio_embed.reshape(-1, inputs_embeds.shape[-1]).to(inputs_embeds.dtype),
+                )
 
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
@@ -1379,8 +1450,34 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             # Initialize with random noise
             if noise is None:
                 noise = sample_noise((batch_size, pred_horizon, action_dim), inputs_embeds.device)
+            elif noise.shape != (batch_size, pred_horizon, action_dim):
+                # masked_scatter would put one sample's extra noise rows into the next sample.
+                raise ValueError(
+                    f"noise must have shape {(batch_size, pred_horizon, action_dim)}, got {tuple(noise.shape)}."
+                )
+            if dof_mask.shape != noise.shape:
+                raise ValueError(
+                    f"dof_mask must have shape {tuple(noise.shape)}, as noise has, got {tuple(dof_mask.shape)}."
+                )
             noisy_action = noise.to(device=inputs_embeds.device, dtype=torch.float32)
             dof_mask = dof_mask.to(inputs_embeds.device).to(torch.float32)
+
+            action_mask = input_ids == self.action_token_id_set["action_token_id"]
+            check_input(
+                action_mask.sum(dim=1) == pred_horizon,
+                lambda: f"Expected {pred_horizon} action tokens per sample.",
+            )
+            if moe_token_types is None:
+                raise ValueError("moe_token_types must be provided for MoE routing")
+            check_input(
+                (moe_token_types == action_mask).all(),
+                "moe_token_types must mark exactly the action tokens.",
+            )
+            # The action tokens of each sample, in order, selected with static shapes.
+            seq_length = input_ids.shape[1]
+            positions = torch.arange(seq_length, device=input_ids.device)
+            action_positions = torch.where(action_mask, positions, seq_length)
+            action_positions = action_positions.topk(pred_horizon, dim=1, largest=False).indices
 
             def step(noisy_action, timestep):
                 """
@@ -1393,9 +1490,6 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 Returns:
                     torch.Tensor: Predicted clean action
                 """
-                action_mask = input_ids == self.action_token_id_set["action_token_id"]
-                assert action_mask.any(), "No action token found in input_ids"
-
                 action_embed = self.action_preprocessor.step(
                     timestep=timestep, noisy_action=noisy_action, dof_mask=dof_mask
                 )
@@ -1404,9 +1498,9 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 # Ensure action_embed has the correct dtype and device before assignment
                 action_embed = action_embed.to(dtype=inputs_embeds.dtype, device=inputs_embeds.device)
 
-                # Create temporary copy of embeddings (clone preserves dtype)
-                temp_inputs_embeds = inputs_embeds.clone()
-                temp_inputs_embeds[action_mask] = action_embed
+                temp_inputs_embeds = inputs_embeds.masked_scatter(
+                    action_mask.unsqueeze(-1).expand_as(inputs_embeds), action_embed
+                )
 
                 # Forward pass through transformer
                 transformer_outputs = self.model(
@@ -1420,12 +1514,14 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                     output_attentions=False,
                     output_hidden_states=False,
                     return_dict=True,
+                    moe_tokens_per_expert=(seq_length - pred_horizon, pred_horizon),
                 )
 
                 # Extract action predictions from hidden states
                 hidden_states = transformer_outputs.last_hidden_state
-                action_mask = input_ids == self.action_token_id_set["action_token_id"]
-                action_hidden_states = hidden_states[action_mask].to(torch.float32)
+                action_hidden_states = hidden_states.gather(
+                    1, action_positions.unsqueeze(-1).expand(-1, -1, hidden_states.shape[-1])
+                ).to(torch.float32)
                 pred = self.action_preprocessor.action_proj_back(action_hidden_states)
                 return pred.reshape(batch_size, pred_horizon, action_dim)
 
@@ -1967,11 +2063,23 @@ class WallXPolicy(PreTrainedPolicy):
         return require_single_text_output(outputs, policy_name="WALL-X")
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        vision_grid: Qwen2_5VisionGrid | None = None,
+    ) -> Tensor:
         """Predict action chunk for evaluation.
 
         `noise` is the optional starting sample of the diffusion mode, shape
         `(batch_size, chunk_size, max_action_dim)`. It is not used by the fast mode.
+
+        The diffusion mode can be exported with `torch.export` on PyTorch 2.9 or later, under `torch.no_grad()`,
+        given `vision_grid`, built once by `Qwen2_5VisionGrid.build(self.model.visual, batch["image_grid_thw"])`.
+        The program accepts only the batch size and prompt length it was exported with. With grad enabled,
+        export fails with a `SpecViolationError`: it wraps this method's `no_grad` region, and transformers'
+        vmap-based mask functions inside it do not survive that.
         """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
@@ -1991,6 +2099,7 @@ class WallXPolicy(PreTrainedPolicy):
                 mode="predict",
                 predict_mode="diffusion",
                 noise=noise,
+                vision_grid=vision_grid,
             )
         elif self.config.prediction_mode == "fast":
             if not isinstance(generation_prompt_ids, Tensor):
@@ -2004,6 +2113,7 @@ class WallXPolicy(PreTrainedPolicy):
                 pred_horizon=self.config.chunk_size,
                 mode="predict",
                 predict_mode="fast",
+                vision_grid=vision_grid,
             )
         else:
             raise NotImplementedError(f"Prediction mode {self.config.prediction_mode} not implemented")
