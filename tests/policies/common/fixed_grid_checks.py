@@ -31,6 +31,31 @@ def save_and_load(program: torch.export.ExportedProgram) -> torch.export.Exporte
     return torch.export.load(buffer)
 
 
+def export_prediction(policy, batch, noise, grid):
+    keys = sorted(key for key, value in batch.items() if isinstance(value, torch.Tensor))
+
+    class PredictActionChunk(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            # A submodule: the program holds its buffers, and export warns if tracing sets a tensor attribute.
+            self.policy = policy
+
+        def forward(self, noise, *tensors):
+            inputs = {**batch, **dict(zip(keys, tensors, strict=True))}
+            return self.policy.predict_action_chunk(inputs, noise=noise, vision_grid=grid)
+
+    # With grad enabled, export wraps the policy's `no_grad` region, which `torch.export.load` refuses.
+    with torch.no_grad():
+        program = torch.export.export(
+            PredictActionChunk(), (noise.clone(), *(batch[key] for key in keys)), strict=False
+        )
+
+    def run(inputs, noise=noise):
+        return program.module()(noise.clone(), *(inputs[key] for key in keys))
+
+    return program, run
+
+
 def data_dependent_nodes(program: torch.export.ExportedProgram) -> list[str]:
     """Nodes that depend on tensor values for a shape: `nonzero`, `masked_select`, boolean-mask
     indexing and other unbacked sizes.
