@@ -47,7 +47,7 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .pretrained import PreTrainedPolicy
-from .utils import validate_visual_features_consistency
+from .utils import check_action, check_state, validate_visual_features_consistency
 
 if TYPE_CHECKING or _peft_available:
     from peft import PeftConfig, PeftModel, get_peft_model
@@ -464,7 +464,14 @@ def make_policy(
 
     if not rename_map:
         validate_visual_features_consistency(cfg, features)
-        # TODO: (jadechoghari) - add a check_state(cfg, features) and check_action(cfg, features)
+
+    # The visual check compares two sides, which a rename map is meant to make disagree, hence the
+    # guard above. These read one side only -- the resolved `cfg.input_features` /
+    # `cfg.output_features` -- so they are well defined either way, and they are worth hearing with
+    # a rename map: a pretrained checkpoint carries whatever feature names it was trained on,
+    # including ones it never read.
+    check_state(cfg, features)
+    check_action(cfg, features)
 
     return policy
 
