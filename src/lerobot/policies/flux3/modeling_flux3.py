@@ -189,7 +189,7 @@ class Flux3Policy(PreTrainedPolicy):
         )
 
     def _build_video_vae(self, config: Flux3Config):
-        """Frozen Video VAE (needs NATTEN). Tests replace this hook with a shape-compatible fake."""
+        """Frozen Video VAE. Tests replace this hook with a shape-compatible fake."""
         return load_video_vae(config.video_vae_id, device="cpu", compile_model=config.compile_model)
 
     def _build_text_encoder(self, config: Flux3Config) -> nn.Module:
