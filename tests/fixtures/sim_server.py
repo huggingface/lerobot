@@ -46,6 +46,6 @@ def sim_server():
     thread.start()
     assert server.ready.wait(5)
     yield server, endpoint
-    server.stop.set()
+    server.stop()
     thread.join(5)
     assert not thread.is_alive()

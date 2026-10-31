@@ -212,11 +212,11 @@ def main() -> None:
     if "zenoh" in data:
         data["zenoh"] = ZenohConfig(**data["zenoh"])
     server = EnvServer(ServerConfig(**data))
-    signal.signal(signal.SIGTERM, lambda *_: server.stop.set())
+    signal.signal(signal.SIGTERM, lambda *_: server.stop())
     try:
         server.serve()
     except KeyboardInterrupt:
-        server.stop.set()
+        server.stop()
 
 
 if __name__ == "__main__":

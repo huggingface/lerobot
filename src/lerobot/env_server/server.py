@@ -68,6 +68,15 @@ def _checked_seeds(value: Any, num_envs: int) -> list[int | None] | None:
     return value
 
 
+def _checked_actions(value: Any, env: LocalVectorEnv) -> np.ndarray:
+    """Return the action batch if it matches the env's action feature and batch size."""
+    try:
+        validate_array(value, env.descriptor.action_feature, leading_shape=(env.num_envs,))
+    except ValueError as exc:
+        raise ProtocolError(ErrorCode.INCOMPATIBLE, "Action shape, dtype or values invalid") from exc
+    return cast(np.ndarray, value)
+
+
 @dataclass
 class ServerConfig:
     """Simulator to serve, resource limits and Zenoh endpoints.
@@ -104,85 +113,95 @@ class ServerConfig:
 
 
 class _Session:
-    """One client's batch of envs. The server closes it when the client goes away."""
+    """The envs one client opened. It stays open until the client closes it or goes away."""
 
     def __init__(
         self,
-        server: "EnvServer",
+        transport: ZenohTransport,
         prefix: str,
         env: LocalVectorEnv,
         seeds: list[int | None] | None,
         encoding: str,
         jpeg_quality: int,
     ):
+        """Reset the envs and start watching for the client. Closes the envs if this fails.
+
+        Args:
+            transport (`ZenohTransport`):
+                The server's transport, used to watch for the client and to announce the session.
+            prefix (`str`):
+                Key prefix of this session.
+            env (`LocalVectorEnv`):
+                The envs this session runs. The session closes them.
+            seeds (`list[int | None] | None`):
+                One seed per env for the first reset. `None` leaves the seeds to the simulator.
+            encoding (`str`):
+                How camera frames are sent: `"raw"` or `"jpeg"`.
+            jpeg_quality (`int`):
+                JPEG quality, from 1 to 100.
+        """
         self.env = env
         self.prefix = prefix
         self.encoding = encoding
         self.jpeg_quality = jpeg_quality
-        self.rgb = {f.name for f in env.descriptor.features if f.kind == "rgb"}
+        self.camera_keys = {f.name for f in env.descriptor.features if f.kind == "rgb"}
         # Each reset bumps the generation, so requests sent before it are rejected as stale.
         self.generation = 0
         # Set when the simulator fails; after that the session refuses every operation.
-        self.fault: str | None = None
-        self.seen_client = False
+        self.failure: str | None = None
+        self.presence_established = False
         with contextlib.ExitStack() as cleanup:
             cleanup.callback(env.close)
             env.reset(seed=seeds)
-            self.presence: BoundedSubscriber[PresenceEvent] = server.transport.subscribe_liveliness(
+            self.presence: BoundedSubscriber[PresenceEvent] = transport.subscribe_liveliness(
                 prefix + "/client_alive"
             )
             cleanup.callback(self.presence.close)
-            self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
+            self.token: PresenceToken = transport.declare_token(prefix + "/alive")
             cleanup.pop_all()
-        # The client announces itself once it has the open reply, sent right after this, so its timeout starts
-        # now: a first reset slower than the timeout must not close the session before the client can.
+        # Start the presence timeout only now: the client announces itself after it gets the open reply,
+        # and a slow first reset must not use up its time.
         self.opened_at = time.monotonic()
 
     def handle(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
         """Run a reset or step and return the reply body. A simulator error fails the session."""
-        if self.fault is not None:
-            raise ProtocolError(ErrorCode.EXECUTION, self.fault)
+        if self.failure is not None:
+            raise ProtocolError(ErrorCode.EXECUTION, self.failure)
         if operation == "reset":
             seeds = _checked_seeds(body.get("seeds"), self.env.num_envs)
             try:
                 self.env.reset(seed=seeds)
             except Exception as exc:
-                self.fault = f"Simulator reset failed: {exc}"
-                logger.exception(self.fault)
+                self.failure = f"Simulator reset failed: {exc}"
                 raise
             self.generation += 1
             return {"generation": self.generation, "result": encode_step_result(self.env.latest)}
         if operation == "step":
-            actions = self.actions(body.get("actions"))
+            actions = _checked_actions(body.get("actions"), self.env)
             try:
                 self.env.step(actions)
             except Exception as exc:
-                self.fault = f"Simulator step failed: {exc}"
-                logger.exception(self.fault)
+                self.failure = f"Simulator step failed: {exc}"
                 raise
             return {"result": encode_step_result(self.env.latest)}
         raise ProtocolError(ErrorCode.UNSUPPORTED, f"Unsupported operation: {operation}")
 
-    def actions(self, value: Any) -> np.ndarray:
-        """Check that an action batch matches the env's action feature and batch size."""
-        try:
-            validate_array(value, self.env.descriptor.action_feature, leading_shape=(self.env.num_envs,))
-        except ValueError as exc:
-            raise ProtocolError(ErrorCode.INCOMPATIBLE, "Action shape, dtype or values invalid") from exc
-        return cast(np.ndarray, value)
-
     def close(self) -> None:
-        """Close the envs."""
-        self.env.close()
+        """Close the envs and stop the presence signals."""
+        try:
+            self.env.close()
+        finally:
+            self.presence.close()
+            self.token.undeclare()
 
-    def encode(self, reply: dict[str, Any]) -> dict[str, Any]:
+    def with_jpeg_frames(self, reply: dict[str, Any]) -> dict[str, Any]:
         """Mark camera frames for JPEG encoding if the client asked for it at open."""
         result = reply.get("result")
         if self.encoding == "raw" or result is None:
             return reply
         obs = {
             name: [RGBImage(image, "jpeg", self.jpeg_quality) for image in value]
-            if name in self.rgb
+            if name in self.camera_keys
             else value
             for name, value in result["obs"].items()
         }
@@ -190,25 +209,24 @@ class _Session:
 
 
 class EnvServer:
-    """Serve one simulator's envs to clients. Only the thread running ``serve`` builds and steps them."""
+    """Serve one simulator's envs to clients. Only the thread running `serve` builds and steps them."""
 
     def __init__(self, config: ServerConfig):
-        """Create the transport. Simulators are built in ``serve``."""
+        """Create the transport. Envs are built in `serve`."""
         self.config = config
         self.instance_id = uuid.uuid4().hex
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
         # Built at startup to read the descriptor, then reused by the first session asking for the same batch.
         self._startup_env: LocalVectorEnv | None = None
-        self.ready = Event()
-        self.stop = Event()
         self.descriptor: EnvDescriptor
+        self.ready = Event()
+        self._stop = Event()
 
     def serve(self) -> None:
-        """Answer requests until ``stop`` is set. Every simulator call happens on this thread."""
+        """Answer requests until `stop` is called. Every simulator call happens on this thread."""
         try:
-            # Open the transport first, so clients that connect while a slow simulator starts wait
-            # instead of failing.
+            # Open the transport first, so a port already in use fails before the slow simulator build.
             self.transport.open()
             self._startup_env = LocalVectorEnv(self.config.sim)
             self.descriptor = self._startup_env.descriptor
@@ -234,7 +252,7 @@ class EnvServer:
                 ", ".join(zenoh.listen_endpoints or zenoh.connect_endpoints),
             )
             self.ready.set()
-            while not self.stop.is_set():
+            while not self._stop.is_set():
                 for channel in (describe, any_describe, requests):
                     for _ in range(8):
                         try:
@@ -243,16 +261,35 @@ class EnvServer:
                             break
                         self._reply(pending)
                 self._reap_sessions()
-                self.stop.wait(0.002)
+                self._stop.wait(0.002)
         finally:
             for session_id in list(self.sessions):
-                try:
-                    self._close_session(session_id)
-                except Exception:
-                    logger.exception("Failed to close simulator session %s", session_id)
+                self._close_session(session_id)
             if self._startup_env is not None:
                 self._startup_env.close()
             self.transport.close()
+
+    def stop(self) -> None:
+        """Ask `serve` to close every session and return. Safe to call from another thread."""
+        self._stop.set()
+
+    def _reply(self, pending: PendingQuery) -> None:
+        """Decode one request, pass it to `_dispatch`, and send back its answer or an error."""
+        message = None
+        try:
+            message = decode_message(pending.payload)
+            body = self._dispatch(pending.key, message)
+            reply = message.reply(MessageType.ACK if message.session_id else MessageType.ACCEPTED, body)
+        except Exception as exc:
+            if isinstance(exc, ProtocolError):
+                code = exc.code
+                logger.debug("Request %s rejected: %s", pending.key, exc)
+            else:
+                code = ErrorCode.EXECUTION
+                logger.exception("Request %s failed", pending.key)
+            # An undecodable request has no envelope to reply to, so reply with an empty one.
+            reply = (message or Envelope(MessageType.DESCRIBE)).error(code, str(exc))
+        self._send(pending, reply)
 
     @staticmethod
     def _send(pending: PendingQuery, reply: Envelope) -> None:
@@ -265,20 +302,8 @@ class EnvServer:
                 time.monotonic() - pending.deadline,
             )
 
-    def _reply(self, pending: PendingQuery) -> None:
-        message = None
-        try:
-            message = decode_message(pending.payload)
-            body = self._dispatch(pending.key, message)
-            reply = message.reply(MessageType.ACK if message.session_id else MessageType.ACCEPTED, body)
-        except Exception as exc:
-            code = exc.code if isinstance(exc, ProtocolError) else ErrorCode.EXECUTION
-            # An undecodable request has no envelope to reply to, so reply with an empty one.
-            reply = (message or Envelope(MessageType.DESCRIBE)).error(code, str(exc))
-            logger.debug("Simulator request failed", exc_info=True)
-        self._send(pending, reply)
-
     def _dispatch(self, key: str, message: Envelope) -> dict[str, Any]:
+        """Route a request by its key: describe, open, or a session's reset, step or close."""
         if key in (deployment_prefix(self.config.deployment) + "/describe", ANY_DEPLOYMENT_DESCRIBE):
             return {
                 "deployment": self.config.deployment,
@@ -286,7 +311,7 @@ class EnvServer:
                 "descriptor": encode_descriptor(self.descriptor),
             }
         if message.instance_id != self.instance_id:
-            raise ProtocolError(ErrorCode.STALE, "Simulator boot changed")
+            raise ProtocolError(ErrorCode.STALE, "Server instance does not match")
         if key == instance_prefix(self.config.deployment, self.instance_id) + "/open":
             return self._open(message.body)
         session = self.sessions.get(message.session_id)
@@ -298,23 +323,24 @@ class EnvServer:
         if operation == "close":
             self._close_session(message.session_id)
             return {}
-        return session.encode(session.handle(operation, message.body))
+        return session.with_jpeg_frames(session.handle(operation, message.body))
 
     def _open(self, body: dict[str, Any]) -> dict[str, Any]:
-        count = body.get("num_envs", 1)
+        """Check an open request and start a session for it."""
+        num_envs = body.get("num_envs", 1)
         use_async_envs = bool(body.get("use_async_envs", False))
         encoding = body.get("encoding", "raw")
         jpeg_quality = body.get("jpeg_quality", 90)
-        if type(count) is not int or not 1 <= count <= self.config.max_envs:
+        if type(num_envs) is not int or not 1 <= num_envs <= self.config.max_envs:
             raise ProtocolError(
-                ErrorCode.INCOMPATIBLE, f"Batch size {count!r} is not between 1 and {self.config.max_envs}"
+                ErrorCode.INCOMPATIBLE, f"Batch size {num_envs!r} is not between 1 and {self.config.max_envs}"
             )
         if encoding not in {"raw", "jpeg"} or type(jpeg_quality) is not int or not 1 <= jpeg_quality <= 100:
             raise ProtocolError(
                 ErrorCode.UNSUPPORTED, "Image encoding must be raw or jpeg, quality in [1, 100]"
             )
-        seeds = _checked_seeds(body.get("seeds"), count)
-        batch_bytes = count * sum(
+        seeds = _checked_seeds(body.get("seeds"), num_envs)
+        batch_bytes = num_envs * sum(
             int(np.prod(f.shape)) * np.dtype(f.dtype).itemsize for f in self.descriptor.features
         )
         # JPEG frames are far smaller on the wire, but the client still decodes them to full size.
@@ -326,11 +352,11 @@ class EnvServer:
         if batch_bytes + _REPLY_HEADROOM_BYTES > budget:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Observation batch exceeds transport payload budget")
         if len(self.sessions) >= self.config.max_sessions:
-            raise ProtocolError(ErrorCode.BUSY, "Simulator capacity is owned by another session")
-        env = self._session_env(count, body.get("task_group"), body.get("task_id"), use_async_envs)
+            raise ProtocolError(ErrorCode.BUSY, "Server is busy with another session")
+        env = self._session_env(num_envs, body.get("task_group"), body.get("task_id"), use_async_envs)
         session_id = uuid.uuid4().hex
         session = _Session(
-            self,
+            self.transport,
             session_prefix(self.config.deployment, self.instance_id, session_id),
             env,
             seeds,
@@ -338,50 +364,53 @@ class EnvServer:
             jpeg_quality,
         )
         self.sessions[session_id] = session
-        return session.encode(
+        return session.with_jpeg_frames(
             {
                 "session_id": session_id,
                 "result": encode_step_result(env.latest),
-                "generation": 0,
+                "generation": session.generation,
                 "descriptor": encode_descriptor(env.descriptor),
             }
         )
 
     def _session_env(
-        self, count: int, task_group: str | None, task_id: int | None, use_async_envs: bool
+        self, num_envs: int, task_group: str | None, task_id: int | None, use_async_envs: bool
     ) -> LocalVectorEnv:
         """Return the startup env if it matches the request; otherwise close it and build a new one."""
         env, self._startup_env = self._startup_env, None
         if env is not None:
             # No task_id means the group's first task, which the startup env runs.
             task = env.task_id if task_id is None else task_id
-            asked = (count, task_group or env.task_group, task, use_async_envs)
+            asked = (num_envs, task_group or env.task_group, task, use_async_envs)
             if asked == (env.num_envs, env.task_group, env.task_id, env.use_async_envs):
                 return env
             env.close()
-        return LocalVectorEnv(self.config.sim, count, task_group, task_id, use_async_envs)
+        return LocalVectorEnv(self.config.sim, num_envs, task_group, task_id, use_async_envs)
 
     def _reap_sessions(self) -> None:
+        """Close sessions whose client left or never showed up."""
         now = time.monotonic()
         for session_id, session in list(self.sessions.items()):
             lost = session.presence.dropped > 0
             while True:
                 try:
                     event = session.presence.get()
-                    if event.alive:
-                        session.seen_client = True
-                    elif session.seen_client:
-                        lost = True
                 except Empty:
                     break
+                if event.alive:
+                    session.presence_established = True
+                elif session.presence_established:
+                    lost = True
             elapsed = now - session.opened_at
-            if lost or (not session.seen_client and elapsed > self.config.initial_presence_timeout_s):
+            if lost or (
+                not session.presence_established and elapsed > self.config.initial_presence_timeout_s
+            ):
                 self._close_session(session_id)
 
     def _close_session(self, session_id: str) -> None:
+        """Remove a session and close it. A failed close is logged, so it never stops the server."""
         session = self.sessions.pop(session_id)
         try:
             session.close()
-        finally:
-            session.presence.close()
-            session.token.undeclare()
+        except Exception:
+            logger.exception("Failed to close session %s", session_id)

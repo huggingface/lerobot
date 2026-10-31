@@ -167,7 +167,7 @@ def test_server_loss_fails_session(sim_server):
     client = EnvClient(endpoint, timeout_s=0.1)
     try:
         client.open(1)
-        running.stop.set()
+        running.stop()
         time.sleep(0.03)
         with pytest.raises((TimeoutError, ProtocolError)):
             client.request("step", actions=np.zeros((1, 2), np.float32))
@@ -180,7 +180,7 @@ def test_closing_after_the_server_is_gone_neither_waits_nor_raises(sim_server):
     running, endpoint = sim_server
     client = EnvClient(endpoint, timeout_s=60, handshake_timeout_s=0.5)
     client.open(1)
-    running.stop.set()
+    running.stop()
     time.sleep(0.05)
     start = time.monotonic()
     client.close()
@@ -401,7 +401,7 @@ def test_a_server_that_finishes_starting_during_the_handshake_is_described(monke
         assert client.describe().sim_type == "toy"
     finally:
         client.close()
-        server.stop.set()
+        server.stop()
         thread.join(5)
 
 
