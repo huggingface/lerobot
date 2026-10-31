@@ -162,3 +162,47 @@ def test_configure_writes_position_pid_coefficients():
     bus_mock.write.assert_any_call("P_Coefficient", "shoulder_pan", 32)
     bus_mock.write.assert_any_call("I_Coefficient", "shoulder_pan", 1)
     bus_mock.write.assert_any_call("D_Coefficient", "shoulder_pan", 16)
+
+
+@pytest.mark.parametrize(
+    "overrides, expected",
+    [
+        ({}, (500, 250, 25)),
+        (
+            {
+                "gripper_max_torque_limit": 800,
+                "gripper_protection_current": 320,
+                "gripper_overload_torque": 60,
+            },
+            (800, 320, 60),
+        ),
+    ],
+)
+def test_configure_writes_gripper_protection(overrides, expected):
+    bus_mock = _make_bus_mock()
+    bus_mock.motors = ["shoulder_pan", "gripper"]
+    robot = MagicMock()
+    robot.bus = bus_mock
+    robot.config = SO100FollowerConfig(port="/dev/null", **overrides)
+
+    SO100Follower.configure(robot)
+
+    registers = ("Max_Torque_Limit", "Protection_Current", "Overload_Torque")
+    for register, value in zip(registers, expected, strict=True):
+        bus_mock.write.assert_any_call(register, "gripper", value)
+    written = {(c.args[0], c.args[1]) for c in bus_mock.write.call_args_list}
+    assert not {(register, "shoulder_pan") for register in registers} & written
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("gripper_max_torque_limit", 1001),
+        ("gripper_protection_current", 512),
+        ("gripper_overload_torque", 101),
+        ("gripper_overload_torque", -1),
+    ],
+)
+def test_gripper_protection_out_of_range_raises(field, value):
+    with pytest.raises(ValueError, match=field):
+        SO100FollowerConfig(port="/dev/null", **{field: value})
