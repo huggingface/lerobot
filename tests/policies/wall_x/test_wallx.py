@@ -20,12 +20,15 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from packaging import version
 
 # Skip if required dependencies are not available
 pytest.importorskip("peft")
 pytest.importorskip("transformers")
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
+from lerobot.policies.common.qwen2_5_vision import Qwen2_5VisionGrid  # noqa: E402
+from lerobot.policies.common.qwen_vision import prepare_image_grid  # noqa: E402
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors  # noqa: E402
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.policies.wall_x import (
@@ -38,7 +41,12 @@ from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
     WallXPromptProcessorStep,
     make_wall_x_pre_post_processors,
 )
-from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
+from lerobot.policies.wall_x.qwen_model import (  # noqa: E402
+    Qwen2_5_VLConfig,
+    Qwen2_5_VLMoEModel,
+    Qwen2_5_VLTextConfig,
+    SparseMoeBlock,
+)
 from lerobot.policies.wall_x.utils import get_wallx_normal_text, preprocesser_call  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     RenderRuntimeMessagesStep,
@@ -48,6 +56,11 @@ from lerobot.processor import (  # noqa: E402
 )
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
+from tests.policies.common.fixed_grid_checks import (  # noqa: E402
+    count_grid_builds,
+    data_dependent_nodes,
+    save_and_load,
+)
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
 
@@ -148,6 +161,20 @@ def test_moe_model_captures_requested_hidden_states_and_attentions():
     assert len(output.attentions) == config.num_hidden_layers
 
 
+def test_moe_block_with_token_counts_routes_like_the_token_mask():
+    def expert(size):
+        return {"hidden_size": size, "intermediate_size": 32, "hidden_act": "silu"}
+
+    # The third expert gets no tokens and has no width, as with the class defaults of 4 experts and 2 widths.
+    config = SimpleNamespace(experts=[expert(16), expert(8), expert(8)], dim_inputs=(16, 8))
+    block = SparseMoeBlock(config, num_experts=3)
+    hidden_states = torch.randn(2, 7, 16)
+    token_types = torch.tensor([[0, 0, 0, 0, 1, 1, 1], [0, 0, 1, 1, 1, 0, 0]])
+
+    with torch.no_grad():
+        assert torch.equal(block(hidden_states, token_types, (4, 3)), block(hidden_states, token_types))
+
+
 def _make_unloaded_policy(**config_values):
     policy = WallXPolicy.__new__(WallXPolicy)
     torch.nn.Module.__init__(policy)
@@ -155,6 +182,370 @@ def _make_unloaded_policy(**config_values):
     config_values.setdefault("text_top_p", 1.0)
     policy.config = SimpleNamespace(chunk_size=3, **config_values)
     return policy
+
+
+def _tiny_diffusion_model(
+    bfloat16: bool = True, vision_attn_implementation: str = "sdpa"
+) -> Qwen2_5_VLMoEForAction:
+    def expert(size):
+        return {"hidden_size": size, "intermediate_size": 2 * size, "hidden_act": "silu"}
+
+    config = Qwen2_5_VLConfig(
+        text_config={
+            "vocab_size": 64,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "pad_token_id": 0,
+            "eos_token_id": 2,
+            "rope_parameters": {"rope_type": "default", "mrope_section": [2, 1, 1]},
+            "num_experts": 2,
+            "experts": [expert(32), expert(16)],
+            "dim_inputs": [32, 16],
+            "mlp_moe": True,
+            "dof_config": {"arm": 3},
+        },
+        vision_config={
+            "depth": 2,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_heads": 4,
+            "out_hidden_size": 32,
+            "patch_size": 2,
+            "window_size": 8,
+            "fullatt_block_indexes": [0],
+        },
+        agent_pos_config={"arm": 4},
+        image_token_id=40,
+        video_token_id=43,
+        vision_start_token_id=41,
+        vision_end_token_id=42,
+    )
+    config._attn_implementation = "eager"
+    token_ids = {"<|action|>": 31, "<|propri|>": 32}
+    processor = SimpleNamespace(tokenizer=SimpleNamespace(convert_tokens_to_ids=token_ids.__getitem__))
+    torch.manual_seed(0)
+    model = Qwen2_5_VLMoEForAction(
+        config, processor=processor, vision_attn_implementation=vision_attn_implementation
+    ).eval()
+    if bfloat16:
+        model.to_bfloat16_for_selected_params()
+    return model
+
+
+def _diffusion_batch(horizon: int) -> dict[str, torch.Tensor]:
+    # The second prompt is left padded, which WALL-X positions differently from text.
+    prompt = [41, 40, 40, 42, 7, 32, *[31] * horizon, 2]
+    input_ids = torch.tensor([[4, *prompt], [0, *prompt]])
+    return {
+        "input_ids": input_ids,
+        "attention_mask": input_ids.ne(0).long(),
+        "moe_token_types": input_ids.eq(31),
+        "pixel_values": torch.randn(16, 3 * 2 * 2 * 2),
+        "image_grid_thw": torch.tensor([[1, 2, 4], [1, 2, 4]]),
+        "dof_mask": torch.ones(2, horizon, 3),
+        "proprioception": torch.randn(2, 4),
+        "agent_pos_mask": torch.ones(2, 4),
+    }
+
+
+def test_diffusion_prediction_runs_with_float32_weights():
+    model = _tiny_diffusion_model(bfloat16=False)
+    batch = _diffusion_batch(3)
+    text_inputs = []
+    model.model.register_forward_pre_hook(
+        lambda module, args, kwargs: text_inputs.append(kwargs["inputs_embeds"]), with_kwargs=True
+    )
+    actions = model.predict(
+        **batch, predict_mode="diffusion", pred_horizon=3, action_dim=3, num_inference_timesteps=2
+    )["predict_action"]
+    assert actions.shape == (2, 3, 3)
+    assert actions.isfinite().all()
+    # The state embedding goes in at float32, not rounded through bfloat16.
+    state = model.action_preprocessor.proprioception_proj(batch["proprioception"], batch["agent_pos_mask"])
+    state_tokens = batch["input_ids"] == model.action_token_id_set["propri_token_id"]
+    assert torch.equal(text_inputs[0][state_tokens], state.reshape(-1, state.shape[-1]))
+
+
+def _diffusion_policy(model):
+    policy = _make_unloaded_policy(
+        prediction_mode="diffusion",
+        max_action_dim=3,
+        output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+    )
+    policy._queues = {}
+    policy._vision_grid = None
+    policy.model = model
+    return policy
+
+
+requires_torch_2_9 = pytest.mark.skipif(
+    version.parse(torch.__version__) < version.parse("2.9.0"),
+    reason="torch.export before PyTorch 2.9 cannot trace transformers' causal mask with WALL-X's action mask function",
+)
+
+
+def _export_prediction(policy, batch, noise):
+    keys = sorted(batch)
+
+    class Predict(torch.nn.Module):
+        def forward(self, noise, *tensors):
+            return policy.predict_action_chunk(dict(zip(keys, tensors, strict=True)), noise=noise)
+
+    # The public entry point exports under no_grad: with grad enabled, transformers' causal-mask code
+    # does not trace.
+    with torch.no_grad():
+        program = torch.export.export(Predict(), (noise.clone(), *(batch[key] for key in keys)), strict=False)
+
+    def run(inputs, lowered=program):
+        return lowered.module()(noise.clone(), *(inputs[key] for key in keys))
+
+    return program, run
+
+
+@requires_torch_2_9
+def test_prepared_diffusion_prediction_exports_and_matches_eager(monkeypatch):
+    model = _tiny_diffusion_model()
+    batch = _diffusion_batch(3)
+    input_ids = batch["input_ids"]
+    policy = _diffusion_policy(model)
+    torch.manual_seed(0)
+    noise = torch.randn(2, 3, 3)
+    expected = policy.predict_action_chunk(batch, noise=noise.clone())
+    with pytest.raises(ValueError, match="moe_token_types must mark exactly the action tokens"):
+        policy.predict_action_chunk({**batch, "moe_token_types": input_ids.eq(32)}, noise=noise.clone())
+
+    grid = Qwen2_5VisionGrid.build(model.visual, batch["image_grid_thw"])
+    static = policy._static_grid_inputs(batch, grid)
+    stock_positions, _ = model.get_rope_index(
+        input_ids, batch["image_grid_thw"], attention_mask=batch["attention_mask"]
+    )
+    assert torch.equal(static["position_ids"], stock_positions)
+    with pytest.raises(ValueError, match="image inputs only"):
+        policy._static_grid_inputs({**batch, "video_grid_thw": batch["image_grid_thw"]}, grid)
+
+    builds = count_grid_builds(monkeypatch)
+    with prepare_image_grid():
+        for _ in range(2):  # The second call reuses the prepared grid.
+            assert torch.equal(policy.predict_action_chunk(batch, noise=noise.clone()), expected)
+    assert len(builds) == 1
+
+    # The switch that turns off the transformers checks must leave the exported checks in place.
+    monkeypatch.setenv("TRANSFORMERS_DISABLE_TORCH_CHECK", "1")
+    program, run = _export_prediction(policy, batch, noise)
+    torch.testing.assert_close(run(batch), expected, rtol=0, atol=0)
+    assert len(builds) == 1
+    # Boolean-mask writes and reads of the action and proprioception tokens would make shapes data-dependent.
+    assert data_dependent_nodes(program) == []
+    # torch.export cannot save the vmap in transformers' mask code until the program is decomposed.
+    lowered = save_and_load(program.run_decompositions())
+    # The decompositions round differently in bfloat16.
+    torch.testing.assert_close(run(batch, lowered), expected, rtol=0, atol=2e-3)
+    # Each malformed input trips one check, since the exported program raises without the check's message: one
+    # image token fewer than image features, a state token moved to the other sample, and moe_token_types that
+    # mark the state tokens.
+    fewer_images = {**batch, "input_ids": input_ids.clone()}
+    fewer_images["input_ids"][:, 2] = 7
+    moved_state = {**batch, "input_ids": input_ids.clone()}
+    moved_state["input_ids"][0, 6], moved_state["input_ids"][1, 5] = 7, 32
+    wrong_routing = {**batch, "moe_token_types": input_ids.eq(32)}
+    for exported in (program, lowered):
+        for wrong in (fewer_images, moved_state, wrong_routing):
+            with pytest.raises(RuntimeError, match="Runtime assertion failed"):
+                run(wrong, exported)
+    # The eager check raises with the switch set, too.
+    with pytest.raises(ValueError, match="Image features and image tokens do not match"):
+        policy.predict_action_chunk(fewer_images, noise=noise.clone())
+
+
+@requires_torch_2_9
+def test_preparation_and_export_refuse_hidden_vision_tokens():
+    policy = _diffusion_policy(_tiny_diffusion_model())
+    batch = {**_diffusion_batch(3), "image_grid_thw": torch.tensor([[1, 2, 4], [1, 4, 2]])}
+    noise = torch.randn(2, 3, 3)
+
+    def hide(tokens):
+        attention_mask = batch["attention_mask"].clone()
+        attention_mask[0, tokens] = 0
+        return {**batch, "attention_mask": attention_mask}
+
+    # In the first prompt: the vision start token, an image token, the vision end token, and every token.
+    refused = (hide(1), hide(2), hide(4), hide(slice(None)))
+    with prepare_image_grid():
+        policy.predict_action_chunk(batch, noise=noise.clone())
+        for inputs in refused:
+            with pytest.raises(ValueError, match="must hide only padding"):
+                policy.predict_action_chunk(inputs, noise=noise.clone())
+
+    _, run = _export_prediction(policy, batch, noise)
+    for inputs in refused:
+        with pytest.raises(RuntimeError, match="Runtime assertion failed"):
+            run(inputs)
+
+
+@require_cuda
+@pytest.mark.skipif(
+    version.parse(torch.__version__) < version.parse("2.10.0"),
+    reason="WALL-X's packed varlen vision attention needs PyTorch 2.10",
+)
+def test_export_keeps_the_packed_varlen_vision_attention():
+    model = _tiny_diffusion_model(vision_attn_implementation="auto").to("cuda")
+    policy = _diffusion_policy(model)
+    # Images of 8 and 24 patches, so the packed sequences differ in length, and the second image does not
+    # divide into whole attention windows.
+    prompts = [[41, *[40] * tokens, 42, 7, 32, 31, 31, 31, 2] for tokens in (2, 6)]
+    input_ids = torch.tensor([[0] * 4 + prompts[0], prompts[1]])
+    batch = {
+        **_diffusion_batch(3),
+        "input_ids": input_ids,
+        "attention_mask": input_ids.ne(0).long(),
+        "moe_token_types": input_ids.eq(31),
+        "pixel_values": torch.randn(32, 3 * 2 * 2 * 2),
+        "image_grid_thw": torch.tensor([[1, 2, 4], [1, 6, 4]]),
+    }
+    batch = {key: value.cuda() for key, value in batch.items()}
+    noise = torch.randn(2, 3, 3, device="cuda")
+    with prepare_image_grid():
+        expected = policy.predict_action_chunk(batch, noise=noise.clone())
+    if {block.attn._resolved_backend for block in model.visual.blocks} != {"varlen"}:
+        pytest.skip("this GPU runs WALL-X vision attention on SDPA")
+
+    program, run = _export_prediction(policy, batch, noise)
+    torch.testing.assert_close(run(batch), expected, rtol=0, atol=0)
+    # The exported vision tower runs the same packed varlen kernel as eager, not an SDPA stand-in.
+    targets = {
+        str(node.target)
+        for module in program.graph_module.modules()
+        if hasattr(module, "graph")
+        for node in module.graph.nodes
+    }
+    assert any("varlen_attn" in target for target in targets)
+
+
+def test_eager_diffusion_prediction_builds_no_rope_positions(monkeypatch):
+    model = _tiny_diffusion_model()
+    batch = _diffusion_batch(3)
+    calls = []
+
+    class Model:
+        def __init__(self):
+            self.visual, self.config = model.visual, model.config
+
+        def __call__(self, **inputs):
+            calls.append(inputs)
+            return {"predict_action": torch.zeros(2, 3, 3)}
+
+    def no_rope_positions(*args, **kwargs):
+        raise AssertionError("eager prediction uses the model's own rope positions")
+
+    monkeypatch.setattr("lerobot.policies.wall_x.modeling_wall_x.qwen_image_rope_index", no_rope_positions)
+    policy = _diffusion_policy(Model())
+    policy.predict_action_chunk(batch)
+    assert policy._vision_grid is None  # nothing is cached outside the preparation
+    with prepare_image_grid():
+        policy.predict_action_chunk(batch)
+    assert policy._vision_grid.grid_thw == batch["image_grid_thw"].tolist()
+    assert all("vision_grid" not in call and "position_ids" not in call for call in calls)
+
+
+def test_diffusion_rejects_a_sample_without_its_state_token():
+    model = _tiny_diffusion_model()
+    batch = _diffusion_batch(3)
+    batch["input_ids"] = batch["input_ids"].clone()
+    assert batch["input_ids"][0, 6] == 32
+    batch["input_ids"][0, 6] = 7  # sample 0 loses its state token; its state must not go to sample 1
+    moved = batch["input_ids"].clone()
+    moved[1, 5] = 32  # and sample 1 gets a second one, so only the per-sample count is wrong
+    for input_ids in (batch["input_ids"], moved):
+        with pytest.raises(ValueError, match="Proprioception features and state tokens do not match"):
+            model.predict(
+                **{**batch, "input_ids": input_ids},
+                predict_mode="diffusion",
+                pred_horizon=3,
+                action_dim=3,
+                num_inference_timesteps=2,
+            )
+
+
+def test_diffusion_reads_the_action_hidden_states_in_token_order():
+    model = _tiny_diffusion_model()
+    batch = _diffusion_batch(3)
+    hidden_states, read = [], []
+    model.model.register_forward_hook(
+        lambda module, args, output: hidden_states.append(output.last_hidden_state)
+    )
+    model.action_preprocessor.action_proj_back.register_forward_pre_hook(
+        lambda module, args: read.append(args[0])
+    )
+    model.predict(**batch, predict_mode="diffusion", pred_horizon=3, action_dim=3, num_inference_timesteps=2)
+    action_mask = batch["input_ids"] == 31
+    assert read
+    for hidden, actions in zip(hidden_states[-len(read) :], read, strict=True):
+        assert torch.equal(actions, hidden[action_mask].view(2, 3, -1).float())
+
+
+def test_diffusion_checks_the_action_token_count_per_sample():
+    model = _tiny_diffusion_model()
+    batch = _diffusion_batch(3)
+    input_ids = batch["input_ids"].clone()
+    input_ids[0, 7], input_ids[1, 5] = 7, 31  # one action token moves from sample 0 to sample 1
+    batch = {**batch, "input_ids": input_ids, "moe_token_types": input_ids.eq(31)}
+    with pytest.raises(ValueError, match="Expected 3 action tokens per sample"):
+        model.predict(
+            **batch, predict_mode="diffusion", pred_horizon=3, action_dim=3, num_inference_timesteps=2
+        )
+
+
+def test_diffusion_refuses_inputs_that_do_not_fit_the_prompts():
+    model = _tiny_diffusion_model()
+    batch = _diffusion_batch(1)
+    settings = {"predict_mode": "diffusion", "pred_horizon": 1, "action_dim": 3, "num_inference_timesteps": 2}
+    # The writes of the noise, the dof mask and the state rows would put one sample's extra rows into the next.
+    with pytest.raises(ValueError, match="noise must have shape"):
+        model.predict(**batch, **settings, noise=torch.randn(2, 3, 3))
+    with pytest.raises(RuntimeError, match="Sizes of tensors must match"):
+        model.predict(**{**batch, "dof_mask": torch.ones(2, 3, 3)}, **settings)
+    extra_state = {**batch, "proprioception": torch.randn(3, 4), "agent_pos_mask": torch.ones(3, 4)}
+    with pytest.raises(ValueError, match="Proprioception has 3 samples but input_ids has 2"):
+        model.predict(**extra_state, **settings)
+    with pytest.raises(ValueError, match="moe_token_types must be provided"):
+        model.predict(**{**batch, "moe_token_types": None}, **settings)
+
+
+def test_export_before_pytorch_2_9_explains(monkeypatch):
+    policy = _diffusion_policy(_tiny_diffusion_model())
+    monkeypatch.setattr(torch, "__version__", "2.8.0")
+    with pytest.raises(RuntimeError, match="needs PyTorch 2.9 or later"):
+        _export_prediction(policy, _diffusion_batch(3), torch.randn(2, 3, 3))
+
+
+@requires_torch_2_9
+def test_preparation_keeps_its_grid_through_calls_without_images_or_that_fail():
+    policy = _diffusion_policy(_tiny_diffusion_model())
+    batch = _diffusion_batch(3)
+    noise = torch.randn(2, 3, 3)
+    expected = policy.predict_action_chunk(batch, noise=noise.clone())
+    text_ids = batch["input_ids"].masked_fill(torch.isin(batch["input_ids"], torch.tensor([40, 41, 42])), 7)
+    text_only = {**batch, "input_ids": text_ids, "pixel_values": None, "image_grid_thw": None}
+    # Another grid with the same image and token counts, in calls that fail after the grid is built: one hides
+    # the vision start tokens, one passes noise of the wrong shape.
+    changed = {**batch, "image_grid_thw": torch.tensor([[1, 4, 2], [1, 4, 2]])}
+    hidden_start = {
+        **changed,
+        "attention_mask": changed["attention_mask"].index_fill(1, torch.tensor([1]), 0),
+    }
+    with prepare_image_grid():
+        policy.predict_action_chunk(batch, noise=noise.clone())
+        policy.predict_action_chunk(text_only, noise=noise.clone())
+        with pytest.raises(ValueError, match="must hide only padding"):
+            policy.predict_action_chunk(hidden_start, noise=noise.clone())
+        with pytest.raises(ValueError, match="noise must have shape"):
+            policy.predict_action_chunk(changed, noise=torch.randn(2, 4, 3))
+    policy.predict_action_chunk(text_only, noise=noise.clone())
+    _, run = _export_prediction(policy, batch, noise)
+    torch.testing.assert_close(run(batch), expected)
 
 
 def _model_inputs() -> dict[str, torch.Tensor]:
