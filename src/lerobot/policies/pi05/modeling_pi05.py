@@ -144,21 +144,21 @@ def _sample_training_rtc_prefix_mask(
 
 def _reduce_training_rtc_loss(
     losses: Tensor,
-    prefix_mask: Tensor | None,
+    loss_mask: Tensor | None,
     reduction: str,
 ) -> Tensor:
-    """Average flow loss over predicted postfix actions, excluding the clean RTC prefix."""
+    """Average flow loss over actions not in `loss_mask` (clean RTC prefix and padded steps)."""
     if reduction not in {"mean", "none"}:
         raise ValueError(f"Unsupported loss reduction: {reduction!r}")
-    if prefix_mask is None:
+    if loss_mask is None:
         return losses.mean() if reduction == "mean" else losses.mean(dim=(1, 2))
 
-    postfix_mask = (~prefix_mask).unsqueeze(-1).expand_as(losses)
+    valid_mask = (~loss_mask).unsqueeze(-1).expand_as(losses)
     if reduction == "none":
-        numerator = (losses * postfix_mask).sum(dim=(1, 2))
-        denominator = postfix_mask.sum(dim=(1, 2))
+        numerator = (losses * valid_mask).sum(dim=(1, 2))
+        denominator = valid_mask.sum(dim=(1, 2))
         return numerator / denominator.clamp(min=1)
-    return (losses * postfix_mask).sum() / postfix_mask.sum().clamp(min=1)
+    return (losses * valid_mask).sum() / valid_mask.sum().clamp(min=1)
 
 
 def _no_grad_if(enabled: bool):
@@ -1598,19 +1598,31 @@ class PI05Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
 
-        if prefix_mask is None:
+        # Leave out the clean RTC prefix and padded steps past the episode end.
+        loss_mask = prefix_mask
+        actions_is_pad = batch.get("action_is_pad")
+        if actions_is_pad is not None:
+            actions_is_pad = torch.as_tensor(actions_is_pad, dtype=torch.bool, device=losses.device)
+            if actions_is_pad.shape != losses.shape[:2]:
+                raise ValueError(
+                    f"action_is_pad must have shape {tuple(losses.shape[:2])}, "
+                    f"got {tuple(actions_is_pad.shape)}"
+                )
+            loss_mask = actions_is_pad if loss_mask is None else loss_mask | actions_is_pad
+
+        if loss_mask is None:
             loss_per_dim = losses.mean(dim=(0, 1))
         else:
-            postfix_mask = (~prefix_mask).unsqueeze(-1).expand_as(losses)
-            loss_per_dim = (losses * postfix_mask).sum(dim=(0, 1)) / postfix_mask.sum(dim=(0, 1)).clamp(min=1)
+            valid_mask = (~loss_mask).unsqueeze(-1).expand_as(losses)
+            loss_per_dim = (losses * valid_mask).sum(dim=(0, 1)) / valid_mask.sum(dim=(0, 1)).clamp(min=1)
         loss_dict = {"loss_per_dim": loss_per_dim.detach().cpu().numpy().tolist()}
 
         if reduction == "none":
-            per_sample_loss = _reduce_training_rtc_loss(losses, prefix_mask, reduction="none")
+            per_sample_loss = _reduce_training_rtc_loss(losses, loss_mask, reduction="none")
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
 
-        loss = _reduce_training_rtc_loss(losses, prefix_mask, reduction="mean")
+        loss = _reduce_training_rtc_loss(losses, loss_mask, reduction="mean")
         loss_dict["loss"] = loss.item()
         return loss, loss_dict
 
