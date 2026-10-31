@@ -29,21 +29,25 @@ from __future__ import annotations
 import inspect
 import logging
 from functools import lru_cache
+from itertools import accumulate
 from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 import torch.nn as nn
 
+from lerobot.policies.common.qwen_vision import chunked_vision_attention
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
         Qwen2_5_VLVisionAttention,
         apply_rotary_pos_emb_vision,
+        eager_attention_forward,
     )
 else:
     Qwen2_5_VLVisionAttention = nn.Module
     apply_rotary_pos_emb_vision = None
+    eager_attention_forward = None
 
 if TYPE_CHECKING:
     from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLVisionConfig
@@ -56,6 +60,7 @@ except ImportError:  # torch<2.10
 _VARLEN_USES_WINDOW_SIZE = (
     _varlen_attn is not None and "window_size" in inspect.signature(_varlen_attn).parameters
 )
+_VARLEN_TAKES_SCALE = _varlen_attn is not None and "scale" in inspect.signature(_varlen_attn).parameters
 
 
 VisionAttentionBackend = Literal["auto", "sdpa", "varlen"]
@@ -148,14 +153,25 @@ class WallXVisionAttention(Qwen2_5_VLVisionAttention):
                 **kwargs,
             )
 
+        if position_embeddings is None:
+            # `_resolve_backend` only selects varlen when the embeddings were precomputed.
+            raise RuntimeError("Wall-X packed varlen attention requires precomputed position embeddings.")
+        if cu_seqlens.dtype != torch.int32:
+            cu_seqlens = cu_seqlens.to(dtype=torch.int32)
+        max_seqlen = int((cu_seqlens[1:] - cu_seqlens[:-1]).max().item())
+        return self._varlen_forward(hidden_states, position_embeddings, cu_seqlens, max_seqlen)
+
+    def _varlen_forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
+    ) -> torch.Tensor:
         seq_length = hidden_states.shape[0]
         query_states, key_states, value_states = (
             self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
         )
-
-        if position_embeddings is None:
-            # `_resolve_backend` only selects varlen when the embeddings were precomputed.
-            raise RuntimeError("Wall-X packed varlen attention requires precomputed position embeddings.")
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb_vision(
             query_states,
@@ -164,10 +180,8 @@ class WallXVisionAttention(Qwen2_5_VLVisionAttention):
             sin,
         )
 
-        if cu_seqlens.dtype != torch.int32:
-            cu_seqlens = cu_seqlens.to(dtype=torch.int32)
-        max_seqlen = int((cu_seqlens[1:] - cu_seqlens[:-1]).max().item())
-        varlen_kwargs = {"scale": self.scaling}
+        # PyTorch 2.10's varlen_attn takes no scale; its default, 1 / sqrt(head_dim), equals self.scaling.
+        varlen_kwargs = {"scale": self.scaling} if _VARLEN_TAKES_SCALE else {}
         if _VARLEN_USES_WINDOW_SIZE:
             varlen_kwargs["window_size"] = (-1, -1)
         else:  # Stable PyTorch 2.10 API; pre-release variants used window_size.
@@ -184,6 +198,34 @@ class WallXVisionAttention(Qwen2_5_VLVisionAttention):
         )
         attn_output = attn_output.reshape(seq_length, -1).contiguous()
         return self.proj(attn_output)
+
+
+def replay_vision_attention(
+    attn: nn.Module,
+    hidden_states: torch.Tensor,
+    position_embeddings: tuple[torch.Tensor, torch.Tensor],
+    lengths: list[int],
+) -> torch.Tensor:
+    """A WALL-X vision attention with the chunk lengths given as Python ints, for `qwen2_5_vision_forward`.
+
+    The fixed-grid forward runs it in eager mode too. When WALL-X's packed varlen kernel is installed and
+    selected, it gets the lengths as constants instead of reading them from a tensor; otherwise the attention
+    runs chunk by chunk.
+    """
+    if (
+        isinstance(attn, WallXVisionAttention)
+        and attn._resolve_backend(hidden_states, position_embeddings) == "varlen"
+    ):
+        cu_seqlens = torch.tensor([0, *accumulate(lengths)], dtype=torch.int32, device=hidden_states.device)
+        return attn._varlen_forward(hidden_states, position_embeddings, cu_seqlens, max(lengths))
+    return chunked_vision_attention(
+        attn,
+        hidden_states,
+        position_embeddings,
+        lengths,
+        apply_rotary_pos_emb_vision,
+        eager_attention_forward,
+    )
 
 
 def configure_wall_x_vision_attention(
