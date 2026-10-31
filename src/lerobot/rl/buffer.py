@@ -15,6 +15,9 @@
 # limitations under the License.
 
 import functools
+import logging
+import shutil
+import sys
 import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
@@ -27,6 +30,26 @@ from tqdm import tqdm
 from lerobot.datasets import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD
 from lerobot.utils.transition import Transition
+
+logger = logging.getLogger(__name__)
+
+
+def _maybe_compile(fn: Callable) -> Callable:
+    """``torch.compile(fn)`` where that can actually work, else ``fn`` unchanged.
+
+    On Windows ``torch.compile`` compiles its kernels through MSVC (``cl.exe``). Without
+    a C++ toolchain installed — the common case for a pip-only Windows setup — the very
+    first call raises ``InductorError: Compiler: cl is not found``. The eager function is
+    a few times slower but correct, so fall back to it instead of dying on the first
+    sampled batch.
+    """
+    if sys.platform == "win32" and shutil.which("cl") is None:
+        logger.info(
+            "torch.compile is skipped (no MSVC cl.exe found): using the eager image "
+            "augmentation. Install Visual Studio Build Tools to enable it."
+        )
+        return fn
+    return torch.compile(fn)
 
 
 class BatchTransition(TypedDict):
@@ -128,7 +151,7 @@ class ReplayBuffer:
 
         if image_augmentation_function is None:
             base_function = functools.partial(random_shift, pad=4)
-            self.image_augmentation_function = torch.compile(base_function)
+            self.image_augmentation_function = _maybe_compile(base_function)
         self.use_drq = use_drq
 
     def _initialize_storage(
@@ -347,33 +370,42 @@ class ReplayBuffer:
 
         data_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         shutdown_event = threading.Event()
+        # An exception raised while sampling is stored here and re-raised in the consumer.
+        # Swallowing it (the previous behaviour) left the consumer blocked on an empty
+        # queue forever: the process idled at 0% CPU with no traceback at all.
+        failures: list[BaseException] = []
 
         def producer() -> None:
             """Continuously put sampled batches into the queue until shutdown."""
-            while not shutdown_event.is_set():
-                try:
+            try:
+                while not shutdown_event.is_set():
                     batch = self.sample(batch_size)
                     # The timeout ensures the thread unblocks if the queue is full
                     # and the shutdown event gets set meanwhile.
-                    data_queue.put(batch, block=True, timeout=0.5)
-                except queue.Full:
-                    # Queue is full – loop again (will re-check shutdown_event)
-                    continue
-                except Exception:
-                    # Surface any unexpected error and terminate the producer.
-                    shutdown_event.set()
+                    while not shutdown_event.is_set():
+                        try:
+                            data_queue.put(batch, block=True, timeout=0.5)
+                            break
+                        except queue.Full:
+                            continue
+            except BaseException as exc:  # noqa: BLE001 - re-raised in the consumer
+                failures.append(exc)
+                logger.exception("ReplayBuffer prefetch thread failed")
+                shutdown_event.set()
 
-        producer_thread = threading.Thread(target=producer, daemon=True)
+        producer_thread = threading.Thread(target=producer, daemon=True, name="ReplayBufferProducer")
         producer_thread.start()
 
         try:
-            while not shutdown_event.is_set():
+            while True:
+                if failures:
+                    raise failures[0]
                 try:
-                    yield data_queue.get(block=True)
-                except Exception:
-                    # If the producer already set the shutdown flag we exit.
+                    yield data_queue.get(block=True, timeout=0.2)
+                except queue.Empty:
                     if shutdown_event.is_set():
-                        break
+                        # Producer finished and the queue is drained: nothing left to yield.
+                        return
         finally:
             shutdown_event.set()
             # Drain the queue quickly to help the thread exit if it's blocked on `put`.
