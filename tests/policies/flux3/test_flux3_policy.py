@@ -24,6 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pytest
 import torch
 from safetensors import safe_open
@@ -34,6 +35,7 @@ from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.inference import FeatureSpec, ObservationSnapshot, PolicyRunner
 from lerobot.optim.ema import EMA, ConstantEMAConfig
 from lerobot.optim.schedulers import FrozenWarmupConstantSchedulerConfig
 from lerobot.policies import factory
@@ -961,6 +963,53 @@ def test_unsupported_relative_execution_and_rtc_arguments_fail_early(fake_vae):
     for method in (absolute.select_action, absolute.predict_action_chunk):
         with pytest.raises(NotImplementedError, match="RTC inference arguments"):
             method({}, inference_delay=1, prev_chunk_left_over=None)
+
+
+def test_chunk_serving_takes_frame_checkpoints(fake_vae):
+    spec = Flux3Policy(droid_config(n_action_steps=8)).chunk_inference_spec()
+    assert (spec.prediction_steps, spec.execution_steps) == (32, 8)
+    assert spec.current_observation_only
+    history, relative = Flux3Policy(task_config()), Flux3Policy(single_config(use_relative_actions=True))
+    with pytest.raises(ValueError, match="requires frame conditioning"):
+        history.chunk_inference_spec()
+    with pytest.raises(ValueError, match="requires RTC"):
+        relative.chunk_inference_spec()
+
+
+def test_frame_checkpoint_serves_through_the_policy_runner(fake_vae):
+    cams = {
+        "observation.images.a": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 48, 64)),
+        "observation.images.b": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32)),
+    }
+    cfg = single_config(
+        n_action_steps=4,
+        input_features={**cams, OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+        camera_layout="grid",
+        canvas_hw=(64, 96),
+        dit_config=TINY_DIT,
+        dtype=torch.float32,
+        video_vae_id=None,
+        device="cpu",
+    )
+    cameras = tuple(
+        FeatureSpec(key, (*feature.shape[1:], 3), "uint8", kind="rgb", semantics="camera")
+        for key, feature in cams.items()
+    )
+    runner = PolicyRunner(
+        Flux3Policy(cfg),
+        *make_flux3_pre_post_processors(cfg),
+        action_interval=1 / 15,
+        features=(*cameras, FeatureSpec(OBS_STATE, (6,), "float32", semantics="joints")),
+        action_feature=FeatureSpec(ACTION, (6,), "float32", semantics="joints"),
+    )
+    frames = {camera.name: np.zeros(camera.shape, dtype=np.uint8) for camera in cameras}
+    chunk = runner.predict(
+        ObservationSnapshot(
+            features={**frames, OBS_STATE: np.zeros(6, dtype=np.float32)}, capture_time=0.0, task="sort"
+        )
+    )
+    assert chunk.canonical_actions.shape == (4, 6) and torch.isfinite(chunk.canonical_actions).all()
 
 
 def test_lora_update_ema_resume_and_reload(tmp_path, fake_vae):
