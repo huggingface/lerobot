@@ -36,6 +36,13 @@ from ..common.flow_matching import (
     sample_beta,
     sample_noise,
 )
+from ..common.qwen3_vision import Qwen3VisionGrid, qwen3_vl_forward
+from ..common.qwen_vision import (
+    check_visible_images,
+    is_exporting,
+    is_preparing_image_grid,
+    qwen_image_rope_index,
+)
 from .action_head.cross_attention_dit import AlternateVLDiT, DiT, SelfAttentionTransformer
 from .configuration_groot import N1_7_DEFAULT_IMAGE_CROP_SIZE, N1_7_DEFAULT_IMAGE_TARGET_SIZE
 
@@ -312,6 +319,7 @@ class Qwen3Backbone(nn.Module):
             self.language_model.layers.pop(-1)
 
         self.select_layer = select_layer
+        self._vision_grid: Qwen3VisionGrid | None = None
         self.set_trainable_parameters(tune_llm, tune_visual, tune_top_llm_layers)
         if load_bf16 and trainable_params_fp32:
             for parameter in self.parameters():
@@ -418,7 +426,9 @@ class Qwen3Backbone(nn.Module):
 
         model_input["position_ids"] = position_ids
 
-    def _last_decoder_layer_output(self, model_input: dict[str, torch.Tensor]) -> torch.Tensor:
+    def _last_decoder_layer_output(
+        self, model_input: dict[str, torch.Tensor], grid: Qwen3VisionGrid | None
+    ) -> torch.Tensor:
         """Return the pre-final-norm decoder output consumed by the N1.7 action head.
 
         Older Transformers releases exposed this tensor as ``hidden_states[-1]``.
@@ -439,11 +449,46 @@ class Qwen3Backbone(nn.Module):
 
         hook = self.language_model.layers[-1].register_forward_hook(capture_output)
         try:
+            if grid is not None and is_exporting():
+                self._qwen_on_fixed_grid(model_input, grid)
+                return captured["features"]
             outputs = self.model(**model_input, output_hidden_states=True)
         finally:
             hook.remove()
 
         return captured.get("features", outputs.hidden_states[-1])
+
+    def _qwen_on_fixed_grid(self, model_input: dict[str, torch.Tensor], grid: Qwen3VisionGrid) -> None:
+        """Run `Qwen3VLModel` under `torch.export` on the prepared grid metadata.
+
+        Like the stock call, it hands its result to the caller's last-layer hook.
+        """
+        if model_input.get("pixel_values_videos") is not None:
+            raise ValueError("GR00T exports image inputs only.")
+        qwen = getattr(self.model, "model", self.model)
+        input_ids = model_input["input_ids"]
+        qwen3_vl_forward(
+            qwen,
+            qwen.get_input_embeddings()(input_ids),
+            model_input["attention_mask"],
+            model_input["pixel_values"],
+            grid,
+            image_mask=input_ids == qwen.config.image_token_id,
+            position_ids=self._fixed_grid_position_ids(model_input, grid),
+        )
+
+    def _fixed_grid_position_ids(
+        self, model_input: dict[str, torch.Tensor], grid: Qwen3VisionGrid
+    ) -> torch.Tensor:
+        """The position ids of `_ensure_legacy_qwen3_position_ids`, from the prepared grid."""
+        position_ids = qwen_image_rope_index(
+            model_input["input_ids"],
+            model_input["attention_mask"],
+            grid.grid_thw,
+            self.visual.spatial_merge_size,
+            self.model.config.image_token_id,
+        )
+        return torch.cat([position_ids[:1], position_ids], dim=0)
 
     def forward(self, vl_input: BatchFeature) -> BatchFeature:
         self.set_frozen_modules_to_eval_mode()
@@ -451,9 +496,16 @@ class Qwen3Backbone(nn.Module):
         optional_keys = ["mm_token_type_ids", "pixel_values_videos", "video_grid_thw"]
         model_input = {key: vl_input[key] for key in keys_to_use}
         model_input.update({key: vl_input[key] for key in optional_keys if key in vl_input})
-        self._ensure_mm_token_type_ids(model_input)
-        self._ensure_legacy_qwen3_position_ids(model_input)
-        features = self._last_decoder_layer_output(model_input)
+        grid = Qwen3VisionGrid.track(self._vision_grid, self.visual, model_input["image_grid_thw"])
+        if grid is not None and (is_preparing_image_grid() or is_exporting()):
+            check_visible_images(model_input["input_ids"], model_input["attention_mask"], self.model.config)
+        if not is_exporting():
+            self._ensure_mm_token_type_ids(model_input)
+            self._ensure_legacy_qwen3_position_ids(model_input)
+        features = self._last_decoder_layer_output(model_input, grid)
+        if grid is not None:
+            # Kept only now, so a call that fails while preparing leaves the prepared grid in place.
+            self._vision_grid = grid
         image_mask = model_input["input_ids"] == self.model.config.image_token_id
         attention_mask = model_input["attention_mask"] == 1
         return BatchFeature(
