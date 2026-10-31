@@ -931,8 +931,8 @@ class Cosmos3VFMNetwork(nn.Module):
     # Action modules: trained at `optimizer_action_lr_multiplier` times the learning rate, not loaded with
     # `load_action_modules` false.
     _action_modules = ["action2llm", "llm2action", "action_modality_embed"]
-    # Generation pathway modules of the backbone (the native "moe_gen" modules), the only backbone modules
-    # that train with `train_gen_stream_only`. `k_norm_und_for_gen` of Cosmos3 Edge stays frozen.
+    # Generation pathway modules of the backbone (the native "moe_gen" modules and `k_norm_und_for_gen` of
+    # Cosmos3 Edge), the only backbone modules that train with `train_gen_stream_only`.
     _gen_stream_modules = [
         "q_proj_gen",
         "k_proj_gen",
@@ -940,6 +940,7 @@ class Cosmos3VFMNetwork(nn.Module):
         "o_proj_gen",
         "q_norm_gen",
         "k_norm_gen",
+        "k_norm_und_for_gen",
         "mlp_gen",
         "input_layernorm_gen",
         "post_attention_layernorm_gen",
