@@ -166,7 +166,7 @@ def test_native_server_listens_on_localhost_unless_told_otherwise(tmp_path, monk
             configs.append(config)
             self.stop = types.SimpleNamespace(set=lambda: None)
 
-        def serve(self):
+        def serve(self, should_stop=None):
             pass
 
     monkeypatch.setattr(lerobot_env_server, "EnvServer", Server)
