@@ -28,6 +28,7 @@ import hashlib
 import json
 import math
 import weakref
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ from torch import Tensor, nn
 
 from .vla_utils import make_att_2d_masks, prepare_attention_masks_4d
 
-FORMAT = "lerobot-gar-v1"
+FORMAT = "lerobot-gar-v2"
 EPSILON_SEED = 17
 READOUT_TIME = 1.0
 VARIANCE_HIDDEN = 128
@@ -87,6 +88,11 @@ def state_dict_sha256(module: nn.Module) -> str:
     module = _flow_model(module)
     digest = hashlib.sha256()
     state = module.state_dict()
+    # Rotary embeddings and other inference buffers may intentionally be excluded
+    # from checkpoints, but still form part of a readout's teacher identity.
+    for name, tensor in module.named_buffers():
+        if name not in state:
+            state[f"@buffer/{name}"] = tensor
     for key in sorted(state):
         tensor = state[key]
         digest.update(key.encode())
@@ -512,7 +518,7 @@ def load_gaussian_readout(path: str | Path, teacher: Any, processor_sha256: str)
         raise ValueError("readout chunk or padded action size does not match the policy config")
 
     # Initialization is overwritten by the artifact; preserve the caller's CPU RNG.
-    with torch.random.fork_rng(devices=[]):
+    with torch.inference_mode(False), torch.random.fork_rng(devices=[]):
         readout = GaussianReadout(
             feature_dim,
             chunk_size=chunk_size,
@@ -667,31 +673,84 @@ def evaluate_time_one_features(
     return features, raw
 
 
-def _teacher_cache_token(
-    model: Any,
-) -> tuple[tuple[object, ...], tuple[weakref.ReferenceType[Tensor], ...]] | None:
-    """Witness ordinary PyTorch mutations without copying weights to the CPU.
+def prepare_gaussian_readout_teacher(model: Any) -> None:
+    """Replace inference tensors once with version-tracked copies, retaining ties.
 
-    Weak references detect parameter replacement without retaining old weights. Version
-    counters cover tracked in-place writes, including optimizer steps and normal
-    load_state_dict. Inference tensors have no counter: validate them every time.
-    Direct .data/storage writes and concurrent mutation are outside this fast
-    path's contract; callers must clear _gar_cache after such changes. The bound
-    processor digest and artifact path must continue to identify immutable data.
+    Call this explicitly before creating optimizers or other parameter references
+    if the teacher was constructed inside ``torch.inference_mode()``. This costs
+    one tensor copy per inference tensor, rather than hashing all weights per chunk.
+    Ordinary teachers require no preparation.
     """
-    state = model.state_dict(keep_vars=True)
-    if any(torch.is_inference(value) for value in state.values()):
-        return None
-    signature = (
-        model.config.chunk_size,
-        model.config.max_action_dim,
-        model.action_out_proj.in_features,
-        tuple(
-            (name, value._version, tuple(value.shape), value.dtype, value.device)
-            for name, value in state.items()
-        ),
+    model = _flow_model(model)
+    replacements: dict[int, Tensor] = {}
+    with torch.inference_mode(False):
+        for module in model.modules():
+            for name, tensor in chain(module._parameters.items(), module._buffers.items()):
+                if tensor is None or not torch.is_inference(tensor):
+                    continue
+                if id(tensor) not in replacements:
+                    copied = tensor.detach().clone()
+                    replacements[id(tensor)] = (
+                        nn.Parameter(copied, requires_grad=tensor.requires_grad)
+                        if isinstance(tensor, nn.Parameter)
+                        else copied
+                    )
+                setattr(module, name, replacements[id(tensor)])
+    model._gar_cache = None
+
+
+def _module_cache_token(model: nn.Module) -> tuple[tuple[Any, ...], ...]:
+    """Witness tracked writes and storage replacement without reading tensor data.
+
+    Direct writes through .data, storage, NumPy or external memory and concurrent
+    mutation require explicit cache clearing. No cheap version witness can detect
+    arbitrary writes to existing memory.
+    """
+    entries = []
+    for prefix, module in model.named_modules():
+        for name, value in chain(module._parameters.items(), module._buffers.items()):
+            if value is None:
+                continue
+            if torch.is_inference(value):
+                raise ValueError(
+                    "Gaussian readout inference tensors require prepare_gaussian_readout_teacher() once"
+                )
+            entries.append(
+                (
+                    prefix,
+                    name,
+                    id(value),
+                    value._version,
+                    value.data_ptr(),
+                    value.storage_offset(),
+                    value.shape,
+                    value.dtype,
+                    value.device,
+                    weakref.ref(value),
+                )
+            )
+    return tuple(entries)
+
+
+def _teacher_cache_token(model: Any) -> tuple[Any, ...]:
+    settings = tuple(
+        getattr(model.config, key, None)
+        for key in (
+            "chunk_size",
+            "max_action_dim",
+            "max_state_dim",
+            "min_period",
+            "max_period",
+            "use_cache",
+        )
     )
-    return signature, tuple(weakref.ref(value) for value in state.values())
+    return (
+        settings,
+        repr(getattr(model.config, "output_features", None)),
+        model.action_out_proj.in_features,
+        getattr(model, "use_typed_attention_masks", None),
+        _module_cache_token(model),
+    )
 
 
 def _cached_readout(model: Any, path: str) -> GaussianReadout:
@@ -701,20 +760,21 @@ def _cached_readout(model: Any, path: str) -> GaussianReadout:
     if not isinstance(processor_sha256, str) or not processor_sha256:
         raise ValueError("Gaussian readout requires a bound processor hash")
     token = _teacher_cache_token(model)
+    stat = Path(path).stat()
+    artifact = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
     cache = getattr(model, "_gar_cache", None)
     if (
         cache is not None
         and cache[0] == path
         and cache[1] == processor_sha256
-        and token is not None
-        and cache[3] is not None
-        and token[0] == cache[3][0]
-        and all(old() is not None and old() is new() for old, new in zip(cache[3][1], token[1], strict=True))
+        and token == cache[3]
+        and artifact == cache[4]
+        and _module_cache_token(cache[2]) == cache[5]
     ):
         return cache[2]
     model._gar_cache = None
     readout = load_gaussian_readout(path, model, processor_sha256)
-    model._gar_cache = (path, processor_sha256, readout, token)
+    model._gar_cache = (path, processor_sha256, readout, token, artifact, _module_cache_token(readout))
     return readout
 
 

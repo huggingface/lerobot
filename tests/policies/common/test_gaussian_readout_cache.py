@@ -18,6 +18,7 @@ The tiny fixture follows upstream test_gaussian_readout.py (Apache-2.0,
 Copyright 2025 The HuggingFace Inc. team). No policy weights or rollouts are used.
 """
 
+import os
 import weakref
 from types import SimpleNamespace
 
@@ -138,10 +139,13 @@ def test_valid_reload_revalidates_then_reuses(bound_teacher, monkeypatch):
     assert len(calls) == 1
 
 
-def test_inference_tensor_falls_back_to_full_validation(bound_teacher):
+def test_inference_tensor_requires_explicit_preparation(bound_teacher):
     teacher, path = bound_teacher
     with torch.inference_mode():
         teacher.action_out_proj.weight = nn.Parameter(teacher.action_out_proj.weight.clone())
+        with pytest.raises(ValueError, match="prepare_gaussian_readout_teacher"):
+            gar._cached_readout(teacher, path)
+        gar.prepare_gaussian_readout_teacher(teacher)
         gar._cached_readout(teacher, path)
         gar._cached_readout(teacher, path)
         teacher.action_out_proj.weight.add_(1)
@@ -212,3 +216,69 @@ def test_untracked_write_requires_explicit_cache_clear(bound_teacher):
     teacher._gar_cache = None
     with pytest.raises(ValueError, match="teacher hash"):
         gar._cached_readout(teacher, path)
+
+
+def test_data_storage_replacement_revalidates(bound_teacher):
+    teacher, path = bound_teacher
+    gar._cached_readout(teacher, path)
+    saved = teacher.action_out_proj.weight.data
+    teacher.action_out_proj.weight.data = saved + 1
+    with pytest.raises(ValueError, match="teacher hash"):
+        gar._cached_readout(teacher, path)
+
+
+def test_nonpersistent_buffer_changes_teacher_hash(bound_teacher):
+    teacher, path = bound_teacher
+    loaded = gar._cached_readout(teacher, path)
+    teacher.register_buffer("rotary_frequency", torch.ones(8), persistent=False)
+    before = gar.state_dict_sha256(teacher)
+    gar.save_readout(loaded, path, teacher_sha256=before, processor_sha256="processor-hash")
+    gar._cached_readout(teacher, path)
+    teacher.rotary_frequency.mul_(0)
+    assert gar.state_dict_sha256(teacher) != before
+    with pytest.raises(ValueError, match="teacher hash"):
+        gar._cached_readout(teacher, path)
+
+
+def test_artifact_replacement_and_cached_readout_mutation(bound_teacher):
+    teacher, path = bound_teacher
+    original = gar._cached_readout(teacher, path)
+    with torch.no_grad():
+        original.affine_bias.fill_(5)
+    restored = gar._cached_readout(teacher, path)
+    assert restored is not original
+    assert (restored.affine_bias == 0).all()
+    with torch.no_grad():
+        restored.affine_bias.fill_(7)
+    stamp = os.stat(path).st_mtime_ns + 1_000_000_000
+    gar.save_readout(
+        restored, path, teacher_sha256=gar.state_dict_sha256(teacher), processor_sha256="processor-hash"
+    )
+    os.utime(path, ns=(stamp, stamp))
+    loaded = gar._cached_readout(teacher, path)
+    assert loaded is not restored
+    assert (loaded.affine_bias == 7).all()
+
+
+def test_prepared_inference_teacher_reuses_without_rehash(bound_teacher, monkeypatch):
+    teacher, path = bound_teacher
+    with torch.inference_mode():
+        teacher.action_out_proj.weight = nn.Parameter(teacher.action_out_proj.weight.clone())
+    old = teacher.action_out_proj.weight
+    gar.prepare_gaussian_readout_teacher(teacher)
+    assert teacher.action_out_proj.weight is not old
+    assert not torch.is_inference(teacher.action_out_proj.weight)
+    loaded = gar._cached_readout(teacher, path)
+    monkeypatch.setattr(gar, "state_dict_sha256", lambda *_: pytest.fail("unneeded full hash"))
+    with torch.inference_mode():
+        assert gar._cached_readout(teacher, path) is loaded
+
+
+@pytest.mark.parametrize("field", ["min_period", "max_period", "use_typed_attention_masks"])
+def test_inference_settings_in_cache_token(bound_teacher, field):
+    teacher, _ = bound_teacher
+    owner = teacher if field == "use_typed_attention_masks" else teacher.config
+    setattr(owner, field, 1)
+    before = gar._teacher_cache_token(teacher)
+    setattr(owner, field, 2)
+    assert gar._teacher_cache_token(teacher) != before
