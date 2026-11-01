@@ -309,6 +309,7 @@ def record_loop(
 
     no_action_count = 0
     record_sent_action = _uses_identity_action_processor(robot_action_processor)
+    warned_incomplete_action = False
     timestamp = 0.0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -380,6 +381,17 @@ def record_loop(
             with timer.section("record"):
                 # Matching keys alone does not guarantee matching units or coordinates.
                 recorded_action = sent_action if record_sent_action else action_values
+                if record_sent_action:
+                    missing_keys = set(dataset.features[ACTION]["names"]) - sent_action.keys()
+                    if missing_keys:
+                        recorded_action = action_values
+                        if not warned_incomplete_action:
+                            logging.warning(
+                                "send_action() omitted dataset action keys %s; "
+                                "recording the requested action for affected frames.",
+                                sorted(missing_keys),
+                            )
+                            warned_incomplete_action = True
                 action_frame = build_dataset_frame(dataset.features, recorded_action, prefix=ACTION)
                 frame = {**observation_frame, **action_frame, "task": single_task}
                 dataset.add_frame(frame)

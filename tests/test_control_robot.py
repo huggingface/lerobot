@@ -31,7 +31,7 @@ from lerobot.scripts.lerobot_record import RecordConfig, record, record_loop
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
 from tests.fixtures.constants import DUMMY_REPO_ID
-from tests.mocks.mock_robot import MockRobotConfig
+from tests.mocks.mock_robot import MockRobot, MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
 
@@ -210,6 +210,39 @@ def test_record_saves_action_returned_by_robot(tmp_path):
     )
 
     assert dataset[0]["action"].tolist() == [1.0, 2.0, 3.0]
+
+
+@pytest.mark.parametrize("returned_action", [{}, {"motor_1.pos": 1.0, "motor_2.pos": 2.0}])
+def test_record_preserves_episodes_with_incomplete_returned_action(tmp_path, caplog, returned_action):
+    """A plugin robot's incomplete response must not discard a recording episode."""
+    cfg = RecordConfig(
+        robot=MockRobotConfig(random_values=False, static_values=[2.0, 4.0, 6.0]),
+        teleop=MockTeleopConfig(random_values=False, static_values=[2.0, 4.0, 6.0]),
+        dataset=DatasetRecordConfig(
+            repo_id=DUMMY_REPO_ID,
+            single_task="Dummy task",
+            root=tmp_path / "incomplete_action",
+            num_episodes=2,
+            episode_time_s=0.1,
+            reset_time_s=0.1,
+            push_to_hub=False,
+        ),
+        play_sounds=False,
+    )
+
+    with (
+        patch.object(MockRobot, "send_action", return_value=returned_action),
+        patch("lerobot.scripts.lerobot_record.init_logging"),  # Preserve caplog's handler.
+    ):
+        dataset = record(cfg)
+
+    assert dataset.num_episodes == 2
+    assert dataset.num_frames > dataset.num_episodes
+    for frame in dataset:
+        # Keep the entire requested action, rather than mixing it with clipped values.
+        assert frame["action"].tolist() == [2.0, 4.0, 6.0]
+    warnings = [message for message in caplog.messages if "send_action() omitted" in message]
+    assert len(warnings) == 2  # Once per recorded episode, never during the reset phase.
 
 
 def test_record_and_replay(tmp_path, cadence_log):
