@@ -309,6 +309,8 @@ def test_a_wrong_deployment_names_the_one_served(sim_server):
 
 def test_a_server_that_finishes_starting_during_the_handshake_is_described(monkeypatch):
     # A slow simulator (e.g. Isaac Sim) can come up after the client's first describe query has timed out.
+    pytest.importorskip("zenoh")
+    pytest.importorskip("msgpack")
     import socket
     import threading
 
