@@ -102,7 +102,15 @@ class EnvClient:
                         self.handshake_timeout_s,
                     )
                 except TimeoutError:
-                    raise self._wrong_deployment() from None
+                    # The endpoint serves another deployment, or the server finished starting after the query.
+                    body = self._describe_any()
+                    if body["deployment"] != self.deployment:
+                        raise ProtocolError(
+                            ErrorCode.INCOMPATIBLE,
+                            f"The env server at {self.endpoint} serves deployment {body['deployment']!r}, not "
+                            f"{self.deployment!r}: set --env.server.deployment={body['deployment']} "
+                            "(--robot.env.server.deployment for a sim robot)",
+                        ) from None
             else:
                 body = self._query(
                     ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s
@@ -112,20 +120,14 @@ class EnvClient:
             self.descriptor = decode_descriptor(body["descriptor"])
             return self.descriptor
 
-    def _wrong_deployment(self) -> Exception:
-        """Return an error naming the deployment this endpoint serves, or a timeout if no server answers."""
+    def _describe_any(self) -> dict[str, Any]:
+        """Describe whichever deployment the endpoint serves; a timeout if no server answers."""
         try:
-            body = self._query(ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s)
+            return self._query(ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s)
         except (TimeoutError, ProtocolError):
-            return TimeoutError(
+            raise TimeoutError(
                 f"No env server answered at {self.endpoint} within {self.handshake_timeout_s:g} s"
-            )
-        return ProtocolError(
-            ErrorCode.INCOMPATIBLE,
-            f"The env server at {self.endpoint} serves deployment {body['deployment']!r}, not "
-            f"{self.deployment!r}: set --env.server.deployment={body['deployment']} "
-            "(--robot.env.server.deployment for a sim robot)",
-        )
+            ) from None
 
     @property
     def prefix(self) -> str:
