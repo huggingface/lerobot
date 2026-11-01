@@ -178,6 +178,11 @@ def test_a_filtered_suite_starts_with_its_first_task():
     finally:
         for env in envs.values():
             env.close()
+    env = ToyEnvConfig(task_ids=(3, 5)).create_env()
+    try:
+        assert env.task_id == 3
+    finally:
+        env.close()
 
 
 def test_local_and_served_environments_agree_on_tasks():
