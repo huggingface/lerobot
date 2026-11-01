@@ -244,7 +244,7 @@ def env_fns(
     front_camera_name: str = "camera1",
     wrist_camera_name: str = "camera2",
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """Return ``n_envs`` env factories per RoboMME task, as ``{suite: {task_id: [factory, ...]}}``.
+    """Return `n_envs` env factories per RoboMME task, as `{suite: {task_id: [factory, ...]}}`.
 
     `task` may be a single RoboMME task name (e.g. "PickXtimes") or a
     comma-separated list (e.g. "PickXtimes,BinFill,StopCube"). Each task

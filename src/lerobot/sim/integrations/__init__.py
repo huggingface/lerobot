@@ -14,16 +14,16 @@
 
 """Simulator integrations: one module per simulator, imported only when used.
 
-Each defines ``env_fns(task, n_envs, **kwargs)``, returning ``{suite: {task_id: [factory, ...]}}``, and
-``canonical_observation(obs)``, mapping observations to LeRobot keys. ``conventions(kwargs)`` is
+Each defines `env_fns(task, n_envs, **kwargs)`, returning `{suite: {task_id: [factory, ...]}}`, and
+`canonical_observation(obs)`, mapping observations to LeRobot keys. `conventions(kwargs)` is
 optional: the sim's default fps, control mode, names and robot type.
 
 A simulator that steps a whole batch at once (one GPU world with many envs) defines
-``vector_env_fns(task, n_envs, **kwargs)`` instead, returning ``{suite: {task_id: factory}}``: each
-factory builds one Gymnasium vector env of ``n_envs`` envs, like Gymnasium's ``vector_entry_point``. That
-env must not autoreset (``metadata["autoreset_mode"]`` is ``AutoresetMode.DISABLED``), takes one seed per
-env in ``reset``, returns batched observations and ``info["is_success"]`` per env, and has
-``_max_episode_steps`` and ``task_description`` attributes. ``canonical_observation`` still maps one env's
+`vector_env_fns(task, n_envs, **kwargs)` instead, returning `{suite: {task_id: factory}}`: each
+factory builds one Gymnasium vector env of `n_envs` envs, like Gymnasium's `vector_entry_point`. That
+env must not autoreset (`metadata["autoreset_mode"]` is `AutoresetMode.DISABLED`), takes one seed per
+env in `reset`, returns batched observations and `info["is_success"]` per env, and has
+`_max_episode_steps` and `task_description` attributes. `canonical_observation` still maps one env's
 observation.
 """
 
@@ -34,7 +34,7 @@ from importlib.metadata import metadata
 
 @contextlib.contextmanager
 def simulator_required(sim_type: str) -> Iterator[None]:
-    """Turn a missing package in ``sim_type``'s integration into an error with install instructions.
+    """Turn a missing package in `sim_type`'s integration into an error with install instructions.
 
     Wrap every call into integration code: some integrations import their simulator lazily.
     """
@@ -47,8 +47,15 @@ def simulator_required(sim_type: str) -> Iterator[None]:
         install = (
             f"pip install 'lerobot[{sim_type}]'" if sim_type.replace("_", "-") in extras else "install it"
         )
-        raise ModuleNotFoundError(
-            f"The {sim_type} simulator is not installed ('{error.name}' is missing): {install}, "
-            "or serve it from its Docker image with lerobot-env-server --docker=true",
-            name=error.name,
-        ) from error
+        message = f"The {sim_type} simulator is not installed ('{error.name}' is missing): {install}"
+        # Plain Gymnasium envs have no Docker image; every other simulator does.
+        if sim_type == "envhub":
+            message += (
+                ", or serve it from a Docker image with lerobot-env-server --envhub=<user/repo> --docker=true"
+            )
+        elif sim_type != "gym":
+            message += (
+                ", or serve it from its Docker image with lerobot-env-server "
+                f"--config_path=docker/sim/configs/{sim_type}.yaml --docker=true"
+            )
+        raise ModuleNotFoundError(message, name=error.name) from error

@@ -32,7 +32,7 @@ from .config_sim_robot import SimRobotConfig
 
 if TYPE_CHECKING:
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
 
 class SimRobot(Robot):

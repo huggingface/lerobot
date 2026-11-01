@@ -30,7 +30,7 @@ from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_env_config_creates_vector_envs_locally_or_served(where, request):
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     config = ToyEnvConfig(
         server=EnvClientConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
@@ -50,7 +50,7 @@ def test_env_config_creates_vector_envs_locally_or_served(where, request):
 
 
 def test_environments_in_separate_processes_match_sequential_environments():
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     results = []
     for use_async_envs in (False, True):
@@ -74,7 +74,7 @@ def test_environments_in_separate_processes_match_sequential_environments():
 @pytest.mark.parametrize("use_async_envs", [False, True])
 def test_a_batched_simulator_runs_like_one_env_per_batch_entry(use_async_envs):
     # A GPU simulator steps its whole batch, finished envs included; they must still look finished.
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     toy = ToyEnvConfig().sim_config()
     # Env 0 succeeds on the first step, env 1 on the third, and env 2 is truncated after five.
@@ -105,7 +105,7 @@ def test_a_batched_simulator_runs_like_one_env_per_batch_entry(use_async_envs):
 
 
 def test_a_batched_simulator_that_autoresets_is_rejected():
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     config = replace(ToyEnvConfig().sim_config(), type="toy_vector", kwargs={"autoreset_mode": "NEXT_STEP"})
     with pytest.raises(ValueError, match="must not autoreset"):
@@ -187,7 +187,7 @@ def test_a_filtered_suite_starts_with_its_first_task():
 
 def test_local_and_served_environments_agree_on_tasks():
     from lerobot.env_server.client import EnvClient, RemoteVectorEnv
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     local = LocalVectorEnv(ToyEnvConfig(task_ids=(3, 5)).sim_config())
     try:
@@ -205,7 +205,7 @@ def test_local_and_served_environments_agree_on_tasks():
 
 def test_other_tasks_build_their_simulators_on_first_use():
     # lerobot-eval creates every task's environment up front; each builds its simulator on its first reset.
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     config = ToyEnvConfig()
     first = config.create_env(n_envs=2)
@@ -258,7 +258,7 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
 
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations.utils import canonical_observation
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     class Reach(gym.Env):
         observation_space = gym.spaces.Dict({"agent_pos": gym.spaces.Box(-1, 1, (2,), np.float32)})
@@ -293,7 +293,7 @@ class _CrashingEnv(ToyEnv):
 
 def test_a_dead_environment_process_is_reported():
     # MuJoCo rendering can kill worker processes (macOS): say so instead of raising a bare EOFError.
-    from lerobot.sim.vector_env import _ProcessEnv
+    from lerobot.sim.local_vector_env import _ProcessEnv
 
     env = _ProcessEnv(_CrashingEnv)
     try:
@@ -306,7 +306,7 @@ def test_a_dead_environment_process_is_reported():
 
 def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
     from lerobot.sim.config import SimConfig
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     # LIBERO imports its simulator with the integration, and has an extra to install.
     monkeypatch.setitem(sys.modules, "libero", None)
@@ -336,7 +336,7 @@ def test_vector_env_delegates_native_observation_conventions(monkeypatch) -> Non
     from gymnasium import spaces
 
     from lerobot.sim.config import SimConfig
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     class NativeEnv:
         observation_space = spaces.Dict({"native_state": spaces.Box(-1, 1, (1,), np.float32)})

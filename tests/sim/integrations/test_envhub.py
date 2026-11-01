@@ -55,7 +55,7 @@ def make_env(n_envs=1, use_async_envs=False):
 def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     env_file = tmp_path / "env.py"
     env_file.write_text(_ENVHUB_ENV)
@@ -69,7 +69,7 @@ def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
     )
     env = LocalVectorEnv(config, num_envs=2)
     try:
-        assert env.tasks == {"reach_suite": ["0"]}
+        assert env.tasks == {"reach_suite": [0]}
         assert {f.name: (f.shape, f.kind) for f in env.descriptor.features} == {
             "observation.images.front": ((8, 8, 3), "rgb"),
             "observation.state": ((2,), "tensor"),
@@ -90,7 +90,7 @@ def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
 def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch):
     from lerobot.envs.configs import HubEnvConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     # The repository's make_env sizes its camera from an option of its own.
     env_file = tmp_path / "env.py"
@@ -124,7 +124,7 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
 def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     (tmp_path / "env.py").write_text(_ENVHUB_ENV)
 
@@ -141,7 +141,7 @@ def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
         )
     )
     try:
-        assert env.tasks == {"reach_suite": ["0"]}
+        assert env.tasks == {"reach_suite": [0]}
     finally:
         env.close()
 
@@ -151,7 +151,7 @@ def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
 
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     # A simulator app that can start only once per process (e.g. Isaac Sim) lives in module state.
     env_file = tmp_path / "env.py"
@@ -175,7 +175,7 @@ def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
 def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
     from lerobot.sim.config import SimConfig
     from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
     env_file = tmp_path / "env.py"
     # A flat array observation, which local LeRobot execution does not accept either.

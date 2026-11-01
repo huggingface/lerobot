@@ -37,7 +37,7 @@ def test_torch_free_import():
 import sys
 sys.modules['torch'] = None
 import numpy as np
-import lerobot.env_server.server, lerobot.sim.vector_env, lerobot.sim.integrations.envhub
+import lerobot.env_server.server, lerobot.sim.local_vector_env, lerobot.sim.integrations.envhub
 import lerobot.scripts.lerobot_env_server
 from lerobot.transport.protocol.client import query_reply, decode_reply
 from lerobot.utils.feature_spec import FeatureSpec, validate_array

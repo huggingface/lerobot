@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simulators behind sim envs.
+"""Simulators for LeRobot envs, run locally or by an env server.
 
-A ``SimConfig`` names an integration (``lerobot.sim.integrations.<type>``) and its options.
-``LocalVectorEnv`` runs it, and ``lerobot.env_server`` serves it. Simulator packages are imported only
+A `SimConfig` names an integration (`lerobot.sim.integrations.<type>`) and its options.
+`LocalVectorEnv` runs it, and `lerobot.env_server` serves it. Simulator packages are imported only
 when used.
 """

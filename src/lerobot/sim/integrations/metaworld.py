@@ -288,7 +288,7 @@ def env_fns(
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """Return ``n_envs`` env factories per Meta-World task, as ``{group: {task_id: [factory, ...]}}``.
+    """Return `n_envs` env factories per Meta-World task, as `{group: {task_id: [factory, ...]}}`.
 
     Notes:
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).

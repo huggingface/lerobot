@@ -304,8 +304,8 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         self.task_group = task_group or next(iter(self.descriptor.tasks))
         tasks = self.descriptor.tasks.get(self.task_group, [])
         # Default to the group's first task, like a local env.
-        self.task_id: int = int(next(iter(tasks), 0)) if task_id is None else task_id
-        if str(self.task_id) not in tasks:
+        self.task_id: int = next(iter(tasks), 0) if task_id is None else task_id
+        if self.task_id not in tasks:
             raise ValueError(f"Unknown task: {self.task_group}/{self.task_id}")
         self.metadata = {
             "render_fps": self.descriptor.fps,

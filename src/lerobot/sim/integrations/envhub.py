@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""EnvHub envs: load a Hub repository's ``env.py`` and build its envs."""
+"""EnvHub envs: load a Hub repository's `env.py` and build its envs."""
 
 import importlib.util
 import logging
@@ -53,7 +53,7 @@ def _load_module_from_path(path: str, module_name: str | None = None):
 
 
 def _parse_hub_url(hub_uri: str):
-    """Split ``user/repo[@revision][:path]`` into repo id, revision and path (default ``env.py``)."""
+    """Split `user/repo[@revision][:path]` into repo id, revision and path (default `env.py`)."""
     revision = None
     file_path = "env.py"
     if "@" in hub_uri:
@@ -74,7 +74,7 @@ def _download_hub_file(
     trust_remote_code: bool,
     hub_cache_dir: str | None,
 ) -> tuple[str, str, str, str | None]:
-    """Find (downloading if needed) the ``env.py`` ``cfg_str`` points to; needs ``trust_remote_code``."""
+    """Find (downloading if needed) the `env.py` `cfg_str` points to; needs `trust_remote_code`."""
     if not trust_remote_code:
         raise RuntimeError(
             f"Refusing to execute remote code from the Hub for '{cfg_str}'. "
@@ -136,7 +136,7 @@ _MODULES: dict[tuple[str, int, int], Any] = {}
 
 
 def _load_hub_module(hub_path: str, trust_remote_code: bool, hub_cache_dir: str | None) -> tuple[str, Any]:
-    """Import a Hub ``env.py`` at most once per process, so it can keep process-wide state."""
+    """Import a Hub `env.py` at most once per process, so it can keep process-wide state."""
     repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)
     stat = os.stat(local_file)
     key = (os.path.realpath(local_file), stat.st_mtime_ns, stat.st_size)
@@ -146,7 +146,7 @@ def _load_hub_module(hub_path: str, trust_remote_code: bool, hub_cache_dir: str 
 
 
 def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: Any | None, **kwargs: Any) -> Any:
-    """Call the module's ``make_env``, passing ``kwargs`` as repository-specific options."""
+    """Call the module's `make_env`, passing `kwargs` as repository-specific options."""
     if not hasattr(module, "make_env"):
         raise AttributeError(
             f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
@@ -157,7 +157,7 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: Any | No
 
 
 def _suite_name(env: Any) -> str:
-    """Return the env's registered Gymnasium id, or ``hub_env`` if it has none."""
+    """Return the env's registered Gymnasium id, or `hub_env` if it has none."""
     return getattr(getattr(env, "spec", None), "id", None) or "hub_env"
 
 
@@ -200,7 +200,7 @@ def make_envs(
 
 
 def _env_factories(vec: Any, n_envs: int) -> list[Callable[[], Any]]:
-    """Return a vector env's per-env factories and close it; ``LocalVectorEnv`` builds the envs again."""
+    """Return a vector env's per-env factories and close it; `LocalVectorEnv` builds the envs again."""
     try:
         if type(vec) not in {gym.vector.SyncVectorEnv, gym.vector.AsyncVectorEnv}:
             raise ValueError(
@@ -223,7 +223,7 @@ def env_fns(
     hub_cache_dir: str | None = None,
     make_env_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """Return factories for a Hub repo's envs from ``make_env(**make_env_kwargs)``; ``task`` is unused."""
+    """Return factories for a Hub repo's envs from `make_env(**make_env_kwargs)`; `task` is unused."""
     _, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
     options = make_env_kwargs or {}
     result = _call_make_env(module, n_envs=n_envs, use_async_envs=False, cfg=None, **options)
@@ -240,7 +240,7 @@ def env_fns(
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Return the repo's ``LEROBOT_SIM`` over ``SIM_DEFAULTS``; an unknown key raises, naming the closest."""
+    """Return the repo's `LEROBOT_SIM` over `SIM_DEFAULTS`; an unknown key raises, naming the closest."""
     repo_id, module = _load_hub_module(
         kwargs["hub_path"], kwargs.get("trust_remote_code", False), kwargs.get("hub_cache_dir")
     )

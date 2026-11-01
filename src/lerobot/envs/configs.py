@@ -36,7 +36,7 @@ from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 if TYPE_CHECKING:
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         for group in groups:
             if group not in descriptor.tasks:
                 raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
-            result[group] = {int(task_id): make(group, int(task_id)) for task_id in descriptor.tasks[group]}
+            result[group] = {task_id: make(group, task_id) for task_id in descriptor.tasks[group]}
         return result
 
     def create_env(
@@ -133,7 +133,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         group = task_group or next(iter(descriptor.tasks))
         if group not in descriptor.tasks:
             raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
-        task_ids = [int(value) for value in descriptor.tasks[group]]
+        task_ids = descriptor.tasks[group]
         if task_id is None:
             task_id = task_ids[0]
         if task_id not in task_ids:
@@ -147,7 +147,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         task_group: str | None = None,
         task_id: int | None = None,
     ) -> tuple[EnvDescriptor, Callable[[str, int], LocalVectorEnv | RemoteVectorEnv]]:
-        from lerobot.sim.vector_env import LocalVectorEnv
+        from lerobot.sim.local_vector_env import LocalVectorEnv
 
         settings = self.sim_settings()
         server = self.server

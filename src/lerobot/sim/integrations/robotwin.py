@@ -586,16 +586,17 @@ def env_fns(
     episode_length: int = DEFAULT_EPISODE_LENGTH,
     action_mode: str = "joint",
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """Return ``n_envs`` env factories per RoboTwin 2.0 task, as ``{task_name: {0: [factory, ...]}}``.
+    """Return `n_envs` env factories per RoboTwin 2.0 task, as `{task_name: {0: [factory, ...]}}`.
 
     Args:
-        task: Comma-separated list of task names (e.g. ``"beat_block_hammer"``
-            or ``"beat_block_hammer,click_bell"``).
+        task: Comma-separated list of task names (e.g. `"beat_block_hammer"`
+            or `"beat_block_hammer,click_bell"`).
         n_envs: Number of parallel rollouts per task.
         camera_names: Cameras to include in observations.
         observation_height: Pixel height for all cameras.
         observation_width: Pixel width for all cameras.
         episode_length: Max steps before truncation.
+        action_mode: `"joint"` (14-D joint positions) or `"ee"` (16-D end-effector poses, needs scipy).
     """
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")

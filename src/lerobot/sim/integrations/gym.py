@@ -40,6 +40,6 @@ def env_fns(
     gym_kwargs: dict[str, Any] | None = None,
     disable_env_checker: bool = True,
 ) -> dict[str, dict[int, list[Callable[[], gym.Env]]]]:
-    """Return ``n_envs`` factories that call ``gym.make(gym_id)``, as ``{task: {0: [factory, ...]}}``."""
+    """Return `n_envs` factories that call `gym.make(gym_id)`, as `{task: {0: [factory, ...]}}`."""
     make = partial(_make, gym_id, dict(gym_kwargs or {}), disable_env_checker)
     return {task: {0: [make] * n_envs}}

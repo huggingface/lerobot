@@ -27,7 +27,7 @@ import yaml
 
 from lerobot.env_server.client import EnvClient
 from lerobot.sim.config import SimConfig
-from lerobot.sim.vector_env import LocalVectorEnv
+from lerobot.sim.local_vector_env import LocalVectorEnv
 from lerobot.utils import init_logging
 
 
