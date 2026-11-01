@@ -64,7 +64,7 @@ If access is restricted, authenticate with `hf auth login` using an account with
 Run from the LeRobot checkout:
 
 ```bash
-python -m lerobot.scripts.lerobot_train \
+lerobot-train \
   --config_path=examples/flux3/lora.json \
   --policy.path=black-forest-labs/flux-3-action-so101 --policy.device=cuda \
   --dataset.repo_id=YOUR_ORG/YOUR_SO101_DATASET \

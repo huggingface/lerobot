@@ -15,6 +15,7 @@
 # limitations under the License.
 """Tests for dataset tools utilities."""
 
+import shutil
 from unittest.mock import patch
 
 import numpy as np
@@ -38,24 +39,24 @@ from lerobot.datasets.dataset_tools import (
     split_dataset,
 )
 from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
-from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
+from tests.fixtures.constants import DEFAULT_FPS, DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY, DUMMY_REPO_ID
 from tests.fixtures.dataset_factories import add_frames
 
+pytestmark = pytest.mark.dataset
 
-@pytest.fixture
-def sample_dataset(tmp_path, empty_lerobot_dataset_factory):
-    """Create a sample dataset for testing."""
+
+@pytest.fixture(scope="module")
+def sample_dataset_template(tmp_path_factory):
+    """Build the sample dataset once per module; `sample_dataset` hands each test its own copy."""
     features = {
         "action": {"dtype": "float32", "shape": (6,), "names": None},
         "observation.state": {"dtype": "float32", "shape": (4,), "names": None},
         "observation.images.top": {"dtype": "image", "shape": (224, 224, 3), "names": None},
     }
-
-    dataset = empty_lerobot_dataset_factory(
-        root=tmp_path / "test_dataset",
-        features=features,
-    )
+    root = tmp_path_factory.mktemp("sample_dataset_template") / "test_dataset"
+    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, root=root, features=features)
 
     for ep_idx in range(5):
         for _ in range(10):
@@ -69,7 +70,15 @@ def sample_dataset(tmp_path, empty_lerobot_dataset_factory):
         dataset.save_episode()
 
     dataset.finalize()
-    return dataset
+    return root
+
+
+@pytest.fixture
+def sample_dataset(tmp_path, sample_dataset_template):
+    """A private copy of the sample dataset, so tests can modify it freely."""
+    root = tmp_path / "test_dataset"
+    shutil.copytree(sample_dataset_template, root)
+    return LeRobotDataset(DUMMY_REPO_ID, root=root)
 
 
 def test_delete_single_episode(sample_dataset, tmp_path):

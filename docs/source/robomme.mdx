@@ -25,7 +25,7 @@
 ### Native (Linux)
 
 ```bash
-pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
+uv pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
   -e '.[smolvla,av-dep]' \
   'robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main'
 ```

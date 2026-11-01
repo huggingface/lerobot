@@ -14,6 +14,8 @@
 
 """Deterministic timing/continuation tests shared by local and remote execution."""
 
+from dataclasses import replace
+
 import torch
 
 from lerobot.inference import (
@@ -89,6 +91,23 @@ def test_reset_and_timeout_make_late_results_ineligible():
     assert not rt.accept(request, chunk(request), task_version=0)
     assert rt.failure == "Action request deadline exceeded"
     assert rt.begin(observation(clock)) is None
+
+
+def test_prediction_is_served_once_and_cleared_with_its_chunk():
+    rt, clock = runtime()
+    request = rt.begin(observation(clock))
+    assert rt.accept(
+        request, replace(chunk(request), prediction={"language": {"subtask": ["reach"]}}), task_version=0
+    )
+    assert rt.take_prediction() == {"language": {"subtask": ["reach"]}}
+    assert rt.take_prediction() is None
+    rt.invalidate()
+    request = rt.begin(observation(clock))
+    assert rt.accept(
+        request, replace(chunk(request), prediction={"language": {"subtask": ["grasp"]}}), task_version=0
+    )
+    rt.invalidate()
+    assert rt.take_prediction() is None
 
 
 def test_trained_rtc_rejects_unconditioned_actual_progress():

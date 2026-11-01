@@ -19,7 +19,7 @@ VLAs, with only ~450M parameters and significantly less training.
 Multitask DiT Policy has additional dependencies. Install it with:
 
 ```bash
-pip install lerobot[multi_task_dit]
+pip install 'lerobot[multi_task_dit]'
 ```
 
 This will install all necessary dependencies including the HuggingFace Transformers library for CLIP models.
@@ -49,7 +49,7 @@ lerobot-train \
   --policy.type=multi_task_dit \
   --policy.device=cuda \
   --policy.repo_id="HF_USER/multitask-dit-your-robot" \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 
 ### Recommended Hyperparameters and Dataset Details (30Hz Control Frequency)
@@ -70,7 +70,7 @@ lerobot-train \
   --policy.noise_scheduler_type=DDPM \
   --policy.num_train_timesteps=100 \
   --policy.repo_id="HF_USER/multitask-dit-your-robot" \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 
 **Key Parameters:**
@@ -90,21 +90,33 @@ Choose between diffusion and flow matching:
 ```bash
 # Diffusion objective (default)
 --policy.objective=diffusion \
---policy.noise_scheduler_type=DDPM \  # or "DDIM"
+--policy.noise_scheduler_type=DDPM \
 --policy.num_train_timesteps=100 \
---policy.num_inference_steps=10 \  # For faster inference
---policy.beta_schedule=squaredcos_cap_v2 \  # Noise schedule type
---policy.prediction_type=epsilon \  # "epsilon" (predict noise) or "sample" (predict clean)
---policy.clip_sample=true \  # Clip samples during denoising
---policy.clip_sample_range=1.0  # Clipping range [-x, x]
+--policy.num_inference_steps=10 \
+--policy.beta_schedule=squaredcos_cap_v2 \
+--policy.prediction_type=epsilon \
+--policy.clip_sample=true \
+--policy.clip_sample_range=1.0
 
 # Flow matching objective
 --policy.objective=flow_matching \
---policy.timestep_sampling_strategy=beta \  # or "uniform" | the beta sampling strategy performance appears much better in practice
+--policy.timestep_sampling_strategy=beta \
 --policy.num_integration_steps=100 \
---policy.integration_method=euler \  # or "rk4"
---policy.sigma_min=0.0  # Minimum noise in flow interpolation path
+--policy.integration_method=euler \
+--policy.sigma_min=0.0
 ```
+
+| Flag                                  | Notes                                                                            |
+| ------------------------------------- | -------------------------------------------------------------------------------- |
+| `--policy.noise_scheduler_type`       | `DDPM` or `DDIM`                                                                 |
+| `--policy.num_inference_steps`        | Fewer steps give faster inference                                                |
+| `--policy.beta_schedule`              | Noise schedule type                                                              |
+| `--policy.prediction_type`            | `epsilon` (predict noise) or `sample` (predict clean)                            |
+| `--policy.clip_sample`                | Clip samples during denoising                                                    |
+| `--policy.clip_sample_range`          | Clipping range `[-x, x]`                                                         |
+| `--policy.timestep_sampling_strategy` | `beta` or `uniform`; the `beta` strategy appears to work much better in practice |
+| `--policy.integration_method`         | `euler` or `rk4`                                                                 |
+| `--policy.sigma_min`                  | Minimum noise in the flow interpolation path                                     |
 
 #### Transformer Architecture
 
@@ -159,8 +171,8 @@ The model supports two positional encoding methods for action sequences:
 # be wary of increased VRAM footprint.
 --policy.use_separate_rgb_encoder_per_camera=true
 
-# Image preprocessing
---policy.image_resize_shape=[XXX,YYY] \ # you may need to resize your images for inference speed ups
+# Image preprocessing (you may need to resize your images for inference speed ups)
+--policy.image_resize_shape=[XXX,YYY] \
 --policy.image_crop_shape=[224,224] \
 --policy.image_crop_is_random=true  # Random during training, center at inference
 ```
@@ -327,21 +339,21 @@ lerobot-train \
   --policy.image_resize_shape=[320,240] \
   --policy.image_crop_shape=[224,224] \
   --policy.repo_id="HF_USER/multitask-dit-your-robot" \
-  --wandb.enable=true \
-  --wandb.project=multitask_dit
+  --trackio.enable=true \
+  --trackio.project=multitask_dit
 ```
 
 ## Libero Results
 
 ```
-python -m lerobot.scripts.lerobot_train \
+lerobot-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --policy.type=multi_task_dit \
   --policy.push_to_hub=false \
   --output_dir="./outputs/multitask_dit_libero" \
   --job_name="multitask-dit-libero" \
-  --wandb.enable=true \
-  --wandb.project=multitask_dit_libero \
+  --trackio.enable=true \
+  --trackio.project=multitask_dit_libero \
   --dataset.image_transforms.enable=true \
   --dataset.image_transforms.max_num_transforms=4 \
   --dataset.image_transforms.tfs='{"brightness":{"type":"ColorJitter","kwargs":{"brightness":[0.75,1.25]}},"contrast":{"type":"ColorJitter","kwargs":{"contrast":[0.6,1.4]}},"saturation":{"type":"ColorJitter","kwargs":{"saturation":[0.8,1.2]}},"hue":{"type":"ColorJitter","kwargs":{"hue":[-0.05,0.05]}},"sharpness":{"type":"SharpnessJitter","kwargs":{"sharpness":[0.6,1.4]}},"rotation":{"type":"RandomRotation","kwargs":{"degrees":[-5,5]}},"translation":{"type":"RandomAffine","kwargs":{"degrees":0,"translate":[0.1,0.1]}}}' \

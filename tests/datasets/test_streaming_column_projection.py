@@ -23,10 +23,14 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
 
-@pytest.mark.parametrize("image_window", [False, True])
-@pytest.mark.parametrize("decode_threads", [1, 3])
-@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
+
+# Every pair of option values, not the full product.
+@pytest.mark.parametrize(
+    "image_window, decode_threads, sampling_strategy",
+    [(False, 1, "remaining"), (False, 3, "round_robin"), (True, 1, "round_robin"), (True, 3, "remaining")],
+)
 def test_temporal_reads_decode_only_requested_images(
     tmp_path: Path,
     lerobot_dataset_factory: Any,

@@ -359,6 +359,7 @@ def test_generator_makes_the_augmentation_reproducible(frames):
     assert not torch.equal(first, transform(frames, generator=_generator(6)))
 
 
+@pytest.mark.gpu
 def test_generator_leaves_the_default_rng_untouched(frames):
     """The policy's own sampling must not move because augmentation ran in front of it."""
     with seeded_context(7):

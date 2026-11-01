@@ -46,6 +46,8 @@ from tests.fixtures.constants import (
 )
 from tests.fixtures.dataset_factories import add_frames
 
+pytestmark = pytest.mark.dataset
+
 _, H, W = DUMMY_CHW
 
 

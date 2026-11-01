@@ -28,6 +28,8 @@ from tests.remote_inference import helpers as engine_helpers
 from tests.remote_inference.helpers import capture
 from tests.utils import wait_for
 
+pytestmark = pytest.mark.dataset
+
 
 def test_oversized_generated_subtask_stops_sequencer_without_fault_and_resumes_fresh(session):
     engine, client = session

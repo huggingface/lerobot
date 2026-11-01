@@ -391,3 +391,23 @@ def test_cycle_timer_episode_boundary_inside_a_loop_body_belongs_to_the_closing_
     # ...and the next episode is not slandered by a stall it never paid for.
     assert episode_2.startswith("Cadence (final episode): 10.00 Hz vs 10 Hz target · 4 ticks, 0.3 s measured")
     assert "9 ticks" in run and "effective cadence: 10.00 Hz over" in run
+
+
+def test_snapshots_survive_episode_boundaries_without_consuming_summaries(clock, cadence_log):
+    timer = CycleTimer(10, 2)
+    _drive(timer, clock, ticks=4)
+    timer.note_starved_tick()
+    before = timer.snapshot()
+    timer.log_episode_summary("first")
+    clock.advance(5)  # reset time is excluded from cadence
+    timer.restart()
+    _drive(timer, clock, ticks=4, work=0.06)
+    total = timer.snapshot()
+    assert total.span - before.span == pytest.approx(0.18)
+    assert total.groups_over - before.groups_over == 1
+    assert total.starved_ticks == before.starved_ticks == 1
+    assert before.groups_judged == 1 and total.groups_judged == 2
+    timer.log_run_summary()
+    assert timer.snapshot() == total
+    assert "starved ticks: 1" in cadence_log[0]
+    assert "8 ticks" in cadence_log[-1]

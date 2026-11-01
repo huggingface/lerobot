@@ -25,7 +25,9 @@ import os
 from typing import TYPE_CHECKING
 
 from lerobot.configs.parallelism import world_size_from_env
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
+
+from .utils import unwrap_peft_model
 
 if TYPE_CHECKING:
     from accelerate import Accelerator
@@ -89,7 +91,10 @@ def make_accelerator(cfg: TrainPipelineConfig) -> "Accelerator":
     # sentinel counts as sharded; it may resolve to an unsharded run (e.g. -1 at world size 1).
     # Re-check against the concrete degrees so the recorded format never lies about the
     # artifacts a checkpoint will actually contain.
-    if cfg.checkpoint_format.wants_dcp and not cfg.parallelism.is_sharded:
+    if (
+        cfg.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP)
+        and not cfg.parallelism.is_sharded
+    ):
         raise ValueError(
             f"checkpoint_format={cfg.checkpoint_format.value} requires a sharded run, but the "
             f"topology resolved to a non-sharded one (dp_replicate={cfg.parallelism.dp_replicate}, "
@@ -116,6 +121,7 @@ def set_fsdp_wrap_modules(accelerator: "Accelerator", policy: "PreTrainedPolicy"
         accelerator (Accelerator): The accelerator whose FSDP plugin receives the wrap-unit
             class names.
         policy (PreTrainedPolicy): The trainable whose class may declare `_fsdp_wrap_modules`.
+            Under PEFT the declaration is read from the policy the `PeftModel` wraps.
 
     Raises:
         ValueError: If sharded class-based wrapping is configured but neither a user override
@@ -126,6 +132,7 @@ def set_fsdp_wrap_modules(accelerator: "Accelerator", policy: "PreTrainedPolicy"
         return
     if plugin.transformer_cls_names_to_wrap:  # user override, set at build time
         return
+    policy = unwrap_peft_model(policy)
     # getattr, not attribute access: non-policy trainables (no `_fsdp_wrap_modules` attribute)
     # must reach the actionable error below, not an AttributeError.
     declared = getattr(type(policy), "_fsdp_wrap_modules", None)

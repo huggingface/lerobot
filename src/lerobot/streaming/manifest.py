@@ -13,13 +13,16 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import os
+import tempfile
 from collections import defaultdict
-from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Generator, Iterable, Sequence
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from zipfile import BadZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 import numpy as np
 from numpy.typing import NDArray
@@ -33,6 +36,7 @@ from .mp4 import (
 )
 from .range_fetch import make_range_fetcher
 from .sidecar_utils import (
+    ARRAY_NAMES,
     SidecarSpec,
     mapped_arrays,
     mapped_sidecar,
@@ -221,6 +225,33 @@ class EpisodeVideoManifest:
         token: str | bool | None,
     ) -> list[VideoFileRecord]:
         """Index unique source files concurrently and return records sorted by path."""
+        with closing(
+            EpisodeVideoManifest._iter_file_records(
+                sorted(rel_paths),
+                data_root,
+                range_backend=range_backend,
+                workers=workers,
+                header_probe_bytes=header_probe_bytes,
+                max_probe_bytes=max_probe_bytes,
+                token=token,
+            )
+        ) as indexed:
+            return [record for _file_idx, record in sorted(indexed)]
+
+    @staticmethod
+    def _iter_file_records(
+        rel_paths: list[str],
+        data_root: str | Path,
+        *,
+        range_backend: str,
+        workers: int,
+        header_probe_bytes: int,
+        max_probe_bytes: int,
+        token: str | bool | None,
+    ) -> Generator[tuple[int, VideoFileRecord]]:
+        """Yield completed indices with at most workers live parse results."""
+        if workers < 1:
+            raise ValueError("workers must be positive")
         fetcher = make_range_fetcher(
             data_root,
             range_backend=range_backend,
@@ -242,14 +273,38 @@ class EpisodeVideoManifest:
 
         try:
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = {pool.submit(build_file, path): path for path in rel_paths}
-                records = []
-                progress_interval = max(1, len(futures) // 20)
-                for completed, future in enumerate(as_completed(futures), start=1):
-                    records.append(future.result())
-                    if completed == len(futures) or completed % progress_interval == 0:
-                        logging.info("Indexed %d/%d MP4 files for streaming sidecar", completed, len(futures))
-                return sorted(records, key=lambda record: record.file_path)
+                pending: dict[Future[VideoFileRecord], int] = {}
+                paths = iter(enumerate(rel_paths))
+                completed = 0
+                progress_interval = max(1, len(rel_paths) // 20)
+                try:
+                    for file_idx, path in paths:
+                        pending[pool.submit(build_file, path)] = file_idx
+                        if len(pending) == workers:
+                            break
+                    while pending:
+                        ready = wait(pending, return_when=FIRST_COMPLETED)[0]
+                        # Remove each completed Future before handing its arrays to the writer.
+                        while ready:
+                            future = ready.pop()
+                            file_idx = pending.pop(future)
+                            record = future.result()
+                            del future
+                            completed += 1
+                            if completed == len(rel_paths) or completed % progress_interval == 0:
+                                logging.info(
+                                    "Indexed %d/%d MP4 files for streaming sidecar", completed, len(rel_paths)
+                                )
+                            yield file_idx, record
+                            del record
+                            # Refill only after the consumer releases this record.
+                            next_path = next(paths, None)
+                            if next_path is not None:
+                                next_idx, path = next_path
+                                pending[pool.submit(build_file, path)] = next_idx
+                finally:
+                    for future in pending:
+                        future.cancel()
         finally:
             fetcher.close()
 
@@ -268,16 +323,18 @@ class EpisodeVideoManifest:
         token: str | bool | None = None,
     ) -> None:
         """Index source files and write a reusable sidecar."""
-        records = cls._build_file_records(
-            sorted(set(rel_paths)),
-            data_root,
-            range_backend=range_backend,
-            workers=workers,
-            header_probe_bytes=header_probe_bytes,
-            max_probe_bytes=max_probe_bytes,
-            token=token,
-        )
-        cls.save_file_sidecar(sidecar_path, records, spec=spec)
+        with closing(
+            cls._iter_file_records(
+                sorted(set(rel_paths)),
+                data_root,
+                range_backend=range_backend,
+                workers=workers,
+                header_probe_bytes=header_probe_bytes,
+                max_probe_bytes=max_probe_bytes,
+                token=token,
+            )
+        ) as records:
+            cls._save_file_sidecar(sidecar_path, records, spec=spec)
 
     @staticmethod
     def save_file_sidecar(
@@ -287,27 +344,68 @@ class EpisodeVideoManifest:
         spec: SidecarSpec,
     ) -> None:
         """Serialize source records and sample arrays to an NPZ sidecar."""
+        EpisodeVideoManifest._save_file_sidecar(sidecar_path, enumerate(records), spec=spec)
+
+    @staticmethod
+    def _save_file_sidecar(
+        sidecar_path: str | Path,
+        records: Iterable[tuple[int, VideoFileRecord]],
+        *,
+        spec: SidecarSpec,
+    ) -> None:
+        """Write one index at a time and preserve the previous output on failure."""
         sidecar_path = Path(sidecar_path)
+        if not str(sidecar_path).endswith(".npz"):
+            sidecar_path = Path(f"{sidecar_path}.npz")
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "version": 3,
-            "sidecar": spec.with_source_files(
-                tuple((record.file_path, record.file_size) for record in records)
-            ).to_dict(),
-            "files": [
-                {"file_path": record.file_path, "file_size": record.file_size, "mp4": record.mp4.to_dict()}
-                for record in records
-            ],
-        }
-        arrays: dict[str, Any] = {}
-        for file_idx, record in enumerate(records):
-            arrays[f"{file_idx}/sample_pts"] = record.mp4.sample_pts
-            arrays[f"{file_idx}/sample_durations"] = record.mp4.sample_durations
-            arrays[f"{file_idx}/sample_composition_offsets"] = record.mp4.sample_composition_offsets
-            arrays[f"{file_idx}/sample_sizes"] = record.mp4.sample_sizes
-            arrays[f"{file_idx}/sample_offsets"] = record.mp4.sample_offsets
-            arrays[f"{file_idx}/sync_samples"] = record.mp4.sync_samples
-        np.savez_compressed(sidecar_path, manifest_json=json.dumps(payload).encode("utf-8"), **arrays)
+        with tempfile.NamedTemporaryFile(
+            dir=sidecar_path.parent, prefix=f".{sidecar_path.name}.", suffix=".tmp.npz", delete=False
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+        try:
+            files: dict[int, dict[str, Any]] = {}
+            with ZipFile(temporary_path, "w", compression=ZIP_DEFLATED, allowZip64=True) as archive:
+                for file_idx, record in records:
+                    files[file_idx] = {
+                        "file_path": record.file_path,
+                        "file_size": record.file_size,
+                        "mp4": record.mp4.to_dict(),
+                    }
+                    for name in ARRAY_NAMES:
+                        array = getattr(record.mp4, name)
+                        if name == "sample_pts":
+                            if array.dtype.kind != "f" or array.dtype.itemsize != 8:
+                                raise ValueError("MP4 presentation timestamps must be float64")
+                        else:
+                            if array.dtype.kind not in "iu":
+                                raise ValueError(f"MP4 sample array must contain integers: {name}")
+                            if (
+                                array.dtype.kind == "u"
+                                and array.size
+                                and int(array.max()) > np.iinfo(np.int64).max
+                            ):
+                                raise ValueError(f"MP4 sample array exceeds int64: {name}")
+                            # Schema 3 readers use int64 arithmetic. Widen only this member.
+                            array = array.astype(np.int64, copy=False)
+                        with archive.open(f"{file_idx}/{name}.npy", "w", force_zip64=True) as member:
+                            np.lib.format.write_array(member, array, allow_pickle=False)
+                        del array
+                    del record
+                ordered_files = [files[file_idx] for file_idx in sorted(files)]
+                payload = {
+                    "version": 3,
+                    "sidecar": spec.with_source_files(
+                        tuple((item["file_path"], item["file_size"]) for item in ordered_files)
+                    ).to_dict(),
+                    "files": ordered_files,
+                }
+                with archive.open("manifest_json.npy", "w", force_zip64=True) as member:
+                    np.lib.format.write_array(
+                        member, np.asarray(json.dumps(payload).encode("utf-8")), allow_pickle=False
+                    )
+            os.replace(temporary_path, sidecar_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     @staticmethod
     def load_file_sidecar_metadata(sidecar_path: str | Path) -> dict[str, Any]:

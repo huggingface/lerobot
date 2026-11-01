@@ -498,6 +498,7 @@ class RoboTwinEnv(gym.Env):
 
         with torch.enable_grad():
             if self.action_mode == "ee":
+                assert self._init_eef_pose is not None, "EEF reference pose must be initialized by reset()"
                 ee_action = _add_init_eef_pose(np.asarray(action, dtype=np.float64), self._init_eef_pose)
                 self._env.take_action(ee_action, action_type="ee")
             elif hasattr(self._env, "take_action"):

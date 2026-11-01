@@ -43,6 +43,7 @@ def test_pi05_memory_delta_indices_are_modality_specific():
     assert memory.state_observation_delta_indices == [-50, -40, -30, -20, -10, 0]
 
 
+@pytest.mark.dataset
 def test_delta_timestamps_respect_raw_robomme_rename_map():
     pytest.importorskip("datasets")
     from lerobot.datasets.factory import resolve_delta_timestamps
@@ -99,6 +100,7 @@ def test_inference_history_rejects_a_too_short_queue():
         sample_observation_history(history, num_frames=3, stride=5, steps_seen=99)
 
 
+@pytest.mark.dataset
 def test_visual_memory_requires_a_matching_image_key():
     pytest.importorskip("datasets")
     from lerobot.datasets.factory import resolve_delta_timestamps

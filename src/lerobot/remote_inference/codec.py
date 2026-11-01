@@ -67,7 +67,7 @@ class RGBImage:
     quality: int = 90
 
 
-_DTYPES = {
+_DTYPES: dict[str, np.dtype[Any]] = {
     np.dtype(name).name: np.dtype(name)
     for name in (
         "bool",

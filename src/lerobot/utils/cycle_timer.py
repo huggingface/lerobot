@@ -44,7 +44,7 @@ class _SectionStat:
 
 
 @dataclasses.dataclass
-class _CadenceStats:
+class CadenceStats:
     """Cadence counters accumulated over one reporting window.
 
     A window is the stretch of loop between two episode boundaries; the run-level
@@ -79,7 +79,7 @@ class _CadenceStats:
         stat.total += elapsed
         stat.worst = max(stat.worst, elapsed)
 
-    def fold(self, other: _CadenceStats) -> None:
+    def fold(self, other: CadenceStats) -> None:
         """Merge a finished window into this cumulative one."""
         self.ticks += other.ticks
         self.work += other.work
@@ -233,8 +233,8 @@ class CycleTimer:
         # Statistics: ``_window`` is the episode in progress, ``_run`` every window
         # closed so far.  Only ``_window`` is touched per tick, so the per-tick
         # bookkeeping stays on one object; boundaries fold it into ``_run``.
-        self._window = _CadenceStats()
-        self._run = _CadenceStats()
+        self._window = CadenceStats()
+        self._run = CadenceStats()
         self._windows_closed = 0
         self._prev_tick_start: float | None = None
         # Boundary effects take hold at the next ``tick()`` — see :meth:`tick`.
@@ -435,7 +435,18 @@ class CycleTimer:
     # Cadence summaries
     # ------------------------------------------------------------------
 
-    def _effective_hz(self, stats: _CadenceStats) -> float | None:
+    def snapshot(self) -> CadenceStats:
+        """Copy cumulative statistics on the control thread without consuming summaries.
+
+        Additive counters can be compared across snapshots, including episode
+        boundaries. Elapsed spans retain the timer's restart/idle-gap exclusions.
+        """
+        stats = CadenceStats()
+        stats.fold(self._run)
+        stats.fold(self._window)
+        return stats
+
+    def _effective_hz(self, stats: CadenceStats) -> float | None:
         """Achieved *command* rate in Hz, or ``None`` when too little was measured."""
         if stats.span_ticks == 0 or stats.span <= 0:
             return None
@@ -453,7 +464,7 @@ class CycleTimer:
         """
         return "cycle" if self.multiplier > 1 else "tick"
 
-    def _summary_line(self, stats: _CadenceStats) -> str:
+    def _summary_line(self, stats: CadenceStats) -> str:
         """One-line digest of a window: cadence held, budget missed, elapsed."""
         ms = 1e3
         parts: list[str] = []
@@ -477,7 +488,7 @@ class CycleTimer:
             parts.append(f"starved ticks: {stats.starved_ticks}")
         return " · ".join(parts)
 
-    def _summary_lines(self, stats: _CadenceStats, heading: str) -> list[str]:
+    def _summary_lines(self, stats: CadenceStats, heading: str) -> list[str]:
         """Full multi-line report for a window (see :meth:`_judged` on *cycles* vs *ticks*)."""
         ms = 1e3
         # An interpolating loop has two budgets to state, a plain one has a single
@@ -558,7 +569,7 @@ class CycleTimer:
         self._windows_closed += 1
         self._report(f"Cadence ({label}): {self._summary_line(stats)}")
         self._run.fold(stats)
-        self._window = _CadenceStats()
+        self._window = CadenceStats()
 
     def log_episode_summary(self, label: str | None = None) -> None:
         """Mark an episode boundary; its one-line cadence digest goes to the report sink.
@@ -598,7 +609,7 @@ class CycleTimer:
                 self._close_window("final episode")
             else:
                 self._run.fold(self._window)
-                self._window = _CadenceStats()
+                self._window = CadenceStats()
         if self._run.ticks == 0:
             return
         closed = self._windows_closed

@@ -178,9 +178,9 @@ LeRobot provides **feature-scoped extras** that map to common workflows. If you 
 | Extra      | What it adds                                | Typical use case                    |
 | ---------- | ------------------------------------------- | ----------------------------------- |
 | `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | Loading & creating datasets         |
-| `training` | `dataset` + `accelerate`, `wandb`           | Training policies                   |
+| `training` | `dataset` + `accelerate`, `trackio`         | Training policies                   |
 | `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
-| `viz`      | `rerun-sdk`                                 | Visualization during recording/eval |
+| `viz`      | `rerun-sdk`, `foxglove-sdk`                 | Visualization during recording/eval |
 
 **Composite Extras** combine feature extras for common CLI scripts:
 
@@ -276,7 +276,7 @@ LeRobot provides optional extras for specific functionalities. Multiple extras c
 
 ### Simulations
 
-Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht)).
+Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht)), [`libero`](./libero) (Linux only) or [`metaworld`](./metaworld).
 These automatically include the `dataset` extra.
 
 ```bash
@@ -293,10 +293,34 @@ pip install -e ".[feetech]" # or "[dynamixel]" for example
 
 ### Experiment Tracking
 
-Weights and Biases is included in the `training` extra. To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with:
+[Trackio](https://huggingface.co/docs/trackio) is included in the `training` extra. Local runs need no account or login: they are stored in a local SQLite database under `~/.cache/huggingface/trackio`. Open the dashboard with:
 
 ```bash
-wandb login
+trackio show --project lerobot
 ```
 
-You can now assemble your robot if it's not ready yet, look for your robot type on the left. Then follow the link below to use Lerobot with your robot.
+To sync runs to a Hugging Face Space (created if missing), run `hf auth login` and pass `--trackio.space_id=<user>/<space>`. Remote jobs (`--job.target`) with tracking enabled require `space_id`, because the pod's local database is lost when the job ends.
+
+Space privacy defaults to `None`: new Spaces are public unless the organization's default is private. Pass `--trackio.private=true` to create a private Space.
+
+Each run records the command that launched it and its console output (prints, logs, tracebacks), both shown on the run's page in the dashboard. On a Space they are as visible as the Space itself; pass `--trackio.capture_console=false` to keep the console output out of the run.
+
+#### Migrating from Weights & Biases
+
+| W&B setting                     | Trackio setting                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `--wandb.enable=true`           | `--trackio.enable=true`                                                                          |
+| `--wandb.project=<project>`     | `--trackio.project=<project>`                                                                    |
+| `--wandb.disable_artifact=true` | Already the default; use `--trackio.disable_artifact=false` to opt in                            |
+| `--wandb.entity=<team>`         | Choose `--trackio.space_id=<user-or-org>/<space>` for hosted logging                             |
+| `--wandb.run_id=<id>`           | Use `--trackio.run_name=<name>` for an existing **Trackio** run                                  |
+| `--wandb.mode=offline`          | Omit `space_id` for local logging; also unset `TRACKIO_SPACE_ID` and `TRACKIO_SERVER_URL` if set |
+| `--wandb.mode=disabled`         | `--trackio.enable=false`                                                                         |
+| `--wandb.console=off`           | `--trackio.capture_console=false`                                                                |
+
+## Next steps
+
+- **Have a robot?** Assemble and calibrate it by following its page under **Robots** in the sidebar (for example [SO-101](./so101)), then record a dataset and train your first policy with the [imitation learning tutorial](./il_robots).
+- **No hardware yet?** Train and evaluate a policy in simulation with [LIBERO](./libero), or try the [Colab notebooks](./notebooks).
+- **Want to contribute?** Read the [contributing guide](./contributing).
+- Keep the [cheat sheet](./cheat-sheet) at hand: it lists every LeRobot command in one place.
