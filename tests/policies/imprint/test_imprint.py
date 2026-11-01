@@ -357,6 +357,16 @@ def test_predict_does_not_advance_memory_and_select_action_does() -> None:
     assert policy.finalized_chunk_counts().numel() == 0
 
 
+def test_rollout_continues_beyond_max_chunks() -> None:
+    config = tiny_config(max_chunks=3, chunk_frames=2)
+    policy = ImprintPolicy(config)
+    step = {CAM: _visual(1, 1), OBS_STATE: _state(1, 1)}
+    steps = 3 * config.max_chunks * config.chunk_frames
+    for _ in range(steps):
+        assert torch.isfinite(policy.select_action(step)).all()
+    assert int(policy.finalized_chunk_counts()[0]) == steps // config.chunk_frames
+
+
 def test_full_attention_rollout_has_no_chunk_counter() -> None:
     torch.manual_seed(6)
     policy = ImprintPolicy(tiny_config(encoder="full_attention"))

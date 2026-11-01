@@ -482,11 +482,6 @@ class RecurrentMemory(nn.Module):
         _, matrices, caches = self._scan(events, valid, state)
         accepted = token_valid.any(dim=1)
         count = state.chunk_count + accepted.to(dtype=torch.long)
-        if int(count.max()) > self.max_chunks:
-            raise ValueError(
-                f"IMPRINT recurrent memory exceeded max_chunks={self.max_chunks}. "
-                "Raise max_chunks or reset the episode."
-            )
         return RecurrentState(matrices, caches, count)
 
     def read(
@@ -537,8 +532,6 @@ class RecurrentMemory(nn.Module):
                 f"Expected {self.chunk_frames} action and proprio frames per chunk, "
                 f"got {chunk_action.shape[2]} and {chunk_proprio.shape[2]}."
             )
-        if int(positions.max()) >= self.max_chunks:
-            raise ValueError(f"Chunk index {int(positions.max())} is outside max_chunks={self.max_chunks}.")
         action = self.tok_action(chunk_action)
         proprio = self.tok_proprio(chunk_proprio)
         visual = self.proj_chunk(chunk_visual)
@@ -547,6 +540,7 @@ class RecurrentMemory(nn.Module):
         type_ids = self.type_ids.to(device=events.device)
         type_emb = self.event_type[type_ids]
         denom = max(self.max_chunks - 1, 1)
+        # The linear time projection extrapolates for episodes beyond max_chunks.
         time = self.time_proj((positions.float() / denom).unsqueeze(-1))
         events = events + type_emb.view(1, 1, self.events_per_chunk, -1)
         events = events + self.event_slot.view(1, 1, self.events_per_chunk, -1)
