@@ -64,6 +64,7 @@ def test_public_helpers_accept_policy_or_core(tmp_path: Path, readout: gar.Gauss
 def test_from_pretrained_with_own_processors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, readout: gar.GaussianReadout
 ) -> None:
+    pytest.importorskip("transformers")
     core, _ = tiny_flow.__wrapped__(SimpleNamespace(param="pi05"), monkeypatch)
 
     def make_core(config, **kwargs):
@@ -379,6 +380,7 @@ def test_save_rejects_mutated_codes(tmp_path, readout):
 
 
 def test_processor_digest_ignores_tokenizer_runtime_padding():
+    pytest.importorskip("tokenizers")
     from tokenizers import Tokenizer
     from tokenizers.models import WordLevel
 
