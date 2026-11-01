@@ -31,7 +31,8 @@ from lerobot.sim.local_vector_env import LocalVectorEnv
 from lerobot.utils import init_logging
 
 
-def check(config_path: Path, steps: int = 5):
+def check(config_path: Path, steps: int = 5) -> None:
+    """Check that `steps` seeded steps match locally and on an env server started from `config_path`."""
     config = yaml.safe_load(config_path.read_text())
     env = LocalVectorEnv(SimConfig.resolve(config["sim"]))
     try:
@@ -99,7 +100,7 @@ def check(config_path: Path, steps: int = 5):
                     server.wait()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=5)
