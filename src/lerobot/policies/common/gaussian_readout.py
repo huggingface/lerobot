@@ -230,6 +230,7 @@ class GaussianReadout(nn.Module):
 
     def sample_action(self, features: Tensor, raw_action: Tensor) -> Tensor:
         """Draw motion noise and a gripper latent. Padding stays zero."""
+        self._validate_shapes(features, raw_action)
         features = features.float()
         raw_action = raw_action.float()
         mean = self.continuous_mean(features, raw_action)
@@ -255,6 +256,9 @@ class GaussianReadout(nn.Module):
         Padding and unused coordinates are deterministic zeros. It is not a
         likelihood for the original flow policy or for transformed robot commands.
         """
+        self._validate_shapes(features, raw_action)
+        if action.shape != raw_action.shape:
+            raise ValueError(f"action shape must be {tuple(raw_action.shape)}, got {tuple(action.shape)}")
         features, raw_action = features.float(), raw_action.float()
         mean = self.continuous_mean(features, raw_action)
         variance = self.variance(features)
@@ -262,16 +266,24 @@ class GaussianReadout(nn.Module):
         continuous = -0.5 * ((motion - mean).square() / variance + variance.log() + math.log(2 * math.pi))
         command = action[..., self.gripper_index]
         latent = self.gripper_latent(features)
+        close = torch.isclose(command, self.close_normalized, rtol=1e-5, atol=1e-6)
+        opened = torch.isclose(command, self.open_normalized, rtol=1e-5, atol=1e-6)
         binary = torch.where(
-            command == self.close_normalized,
+            close,
             torch.special.log_ndtr(latent),
             torch.special.log_ndtr(-latent),
         )
-        valid = ((command == self.close_normalized) | (command == self.open_normalized)).all(dim=-1)
+        valid = (close | opened).all(dim=-1)
         valid = valid & (action[..., self.motion_dim : self.gripper_index] == 0).all(dim=(-2, -1))
         valid = valid & (action[..., self.gripper_index + 1 :] == 0).all(dim=(-2, -1))
         score = continuous.sum(dim=(-2, -1)) + binary.sum(dim=-1)
         return torch.where(valid, score, -torch.inf)
+
+    def _validate_shapes(self, features: Tensor, raw_action: Tensor) -> None:
+        if features.ndim != 3 or features.shape[1:] != (self.chunk_size, self.feature_dim):
+            raise ValueError(f"features shape must be (B, {self.chunk_size}, {self.feature_dim})")
+        if raw_action.shape != (features.shape[0], self.chunk_size, self.max_action_dim):
+            raise ValueError(f"raw action shape must be (B, {self.chunk_size}, {self.max_action_dim})")
 
 
 def solve_affine_residual(

@@ -126,3 +126,47 @@ def test_from_pretrained_with_own_processors(
         assert post(loaded.predict_action_chunk(batch)).shape == (1, 4, 7)
         loaded.reset()
         assert post(loaded.select_action(batch)).shape == (1, 7)
+
+
+@pytest.mark.parametrize("dimension", ["horizon", "padding", "features", "raw"])
+def test_density_rejects_broadcast_shapes(readout: gar.GaussianReadout, dimension: str) -> None:
+    features, raw = torch.ones(1, 4, 8), torch.zeros(1, 4, 8)
+    action = readout.sample_action(features, raw)
+    if dimension == "horizon":
+        action = action[:, :1]
+    elif dimension == "padding":
+        action = action[..., :7]
+    elif dimension == "features":
+        features = features[:, :1]
+    else:
+        raw = raw[:, :1]
+    with pytest.raises(ValueError, match="shape"):
+        readout.log_prob(features, raw, action)
+
+
+def test_density_accepts_float32_processor_roundtrip() -> None:
+    mean = torch.full((7,), -0.1940586119890213)
+    std = torch.full((7,), 0.6129239797592163)
+    readout = gar.GaussianReadout(
+        8,
+        chunk_size=4,
+        motion_dim=6,
+        gripper_index=6,
+        max_action_dim=8,
+        action_dim=7,
+        open_normalized=float(gar.normalized_command(-1, mean[6], std[6])),
+        close_normalized=float(gar.normalized_command(1, mean[6], std[6])),
+        action_mean=mean,
+        action_std=std,
+    )
+    features, raw = torch.ones(1, 4, 8), torch.zeros(1, 4, 8)
+    with torch.no_grad():
+        readout.gripper_bias.fill_(-10)
+    action = readout.sample_action(features, raw)
+    roundtrip = action.clone()
+    roundtrip[..., :7] = ((action[..., :7] * std + mean) - mean) / std
+    assert not torch.equal(action[..., 6], roundtrip[..., 6])
+    assert torch.isfinite(readout.log_prob(features, raw, roundtrip)).all()
+    torch.testing.assert_close(
+        readout.log_prob(features, raw, action), readout.log_prob(features, raw, roundtrip)
+    )
