@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -618,15 +619,52 @@ def evaluate_time_one_features(
     return features, raw
 
 
+def _teacher_cache_token(
+    model: Any,
+) -> tuple[tuple[object, ...], tuple[weakref.ReferenceType[Tensor], ...]] | None:
+    """Witness ordinary PyTorch mutations without copying weights to the CPU.
+
+    Weak references detect parameter replacement without retaining old weights. Version
+    counters cover tracked in-place writes, including optimizer steps and normal
+    load_state_dict. Inference tensors have no counter: validate them every time.
+    Direct .data/storage writes and concurrent mutation are outside this fast
+    path's contract; callers must clear _gar_cache after such changes. The bound
+    processor digest and artifact path must continue to identify immutable data.
+    """
+    state = model.state_dict(keep_vars=True)
+    if any(torch.is_inference(value) for value in state.values()):
+        return None
+    signature = (
+        model.config.chunk_size,
+        model.config.max_action_dim,
+        model.action_out_proj.in_features,
+        tuple(
+            (name, value._version, tuple(value.shape), value.dtype, value.device)
+            for name, value in state.items()
+        ),
+    )
+    return signature, tuple(weakref.ref(value) for value in state.values())
+
+
 def _cached_readout(model: Any, path: str) -> GaussianReadout:
     processor_sha256 = getattr(model, "_gar_processor_sha256", None)
     if not isinstance(processor_sha256, str) or not processor_sha256:
         raise ValueError("Gaussian readout requires a bound processor hash")
+    token = _teacher_cache_token(model)
     cache = getattr(model, "_gar_cache", None)
-    if cache is not None and cache[0] == path and cache[1] == processor_sha256:
+    if (
+        cache is not None
+        and cache[0] == path
+        and cache[1] == processor_sha256
+        and token is not None
+        and cache[3] is not None
+        and token[0] == cache[3][0]
+        and all(old() is not None and old() is new() for old, new in zip(cache[3][1], token[1], strict=True))
+    ):
         return cache[2]
+    model._gar_cache = None
     readout = load_gaussian_readout(path, model, processor_sha256)
-    model._gar_cache = (path, processor_sha256, readout)
+    model._gar_cache = (path, processor_sha256, readout, token)
     return readout
 
 
