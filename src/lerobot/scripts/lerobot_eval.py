@@ -111,6 +111,39 @@ else:
 logger = logging.getLogger(__name__)
 
 
+def _warn_on_visual_resolution_mismatch(policy_config, env_config) -> None:
+    """Warn when the environment's visual feature resolutions differ from the policy's input features.
+
+    Policies are sensitive to the resolution they were trained at: e.g. evaluating a policy trained on
+    256x256 images in an environment that renders 360x360 frames silently degrades performance.
+    """
+    policy_resolutions: set[tuple[int, int]] = set()
+    for ft in (getattr(policy_config, "input_features", None) or {}).values():
+        if ft.type is FeatureType.VISUAL and len(ft.shape) >= 2:
+            # Policy input features store images as (C, H, W).
+            policy_resolutions.add((int(ft.shape[-2]), int(ft.shape[-1])))
+
+    env_resolutions: set[tuple[int, int]] = set()
+    for ft in (getattr(env_config, "features", None) or {}).values():
+        if ft.type is FeatureType.VISUAL and len(ft.shape) >= 2:
+            # Environment features store images as (H, W, C).
+            env_resolutions.add((int(ft.shape[0]), int(ft.shape[1])))
+
+    if not policy_resolutions or not env_resolutions:
+        return
+
+    mismatched = sorted(env_resolutions - policy_resolutions)
+    if mismatched:
+        logging.warning(
+            "Environment visual feature resolution(s) %s do not match the policy input feature resolution(s) %s. "
+            "Evaluating a policy on observations at a different resolution than it was trained on can severely "
+            "degrade performance. Consider setting the environment resolution to match, e.g. "
+            "`--env.observation_height=<h> --env.observation_width=<w>`.",
+            mismatched,
+            sorted(policy_resolutions),
+        )
+
+
 def _env_features_to_dataset_features(env_features: dict[str, PolicyFeature]) -> dict[str, dict[str, Any]]:
     """Convert EnvConfig.features to the dict format expected by LeRobotDataset.create()."""
     features: dict[str, dict[str, Any]] = {}
@@ -812,6 +845,8 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     )
 
     policy.eval()
+
+    _warn_on_visual_resolution_mismatch(cfg.policy, cfg.env)
 
     # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
     preprocessor_overrides = {
