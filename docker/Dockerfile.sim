@@ -168,16 +168,20 @@ RUN apt-get update \
 USER user_lerobot
 # Accepts the NVIDIA Isaac Sim EULA, as RoboLab's own image does.
 ENV ACCEPT_EULA=Y OMNI_KIT_ACCEPT_EULA=YES
+# RoboLab's Isaac Sim 6 stack (its isaac60 extra), before RoboLab so that a new RoboLab commit reuses this layer.
+# Isaac Sim's wheels come from NVIDIA's index. It replaces some of the base's pins (numpy, gymnasium, huggingface-hub
+# through transformers), which the server also runs with. Isaac Sim 6.0.1 pins a pre-release, which uv selects only
+# when it is named.
+RUN UV_INDEX_STRATEGY=unsafe-best-match uv pip install --no-cache --extra-index-url https://pypi.nvidia.com \
+        "isaaclab[isaacsim]==3.0.0b2.post1" "tinyobjloader==2.0.0rc13"
 # RoboLab's assets (scenes, objects, robots; about 6 GB) are mostly CC BY-NC-SA 4.0, see its THIRD_PARTY_NOTICES.md.
-# They are fetched from NVlabs here and never published by LeRobot.
+# They are fetched from NVlabs here and never published by LeRobot. Git's copy of them goes with .git.
 ARG ROBOLAB_SHA=9cce00cadd5dc575fd2b8ea3836f5bdcde574229
 RUN git clone https://github.com/NVlabs/RoboLab.git ~/robolab \
     && git -C ~/robolab checkout ${ROBOLAB_SHA} \
-    && git -C ~/robolab lfs install --local && git -C ~/robolab lfs pull
-# RoboLab's Isaac Sim 6 stack (its isaac60 extra); Isaac Sim's wheels come from NVIDIA's index. It replaces some of
-# the base's pins (numpy, gymnasium, huggingface-hub through transformers), which the server also runs with.
-RUN UV_INDEX_STRATEGY=unsafe-best-match uv pip install --no-cache --extra-index-url https://pypi.nvidia.com \
-        "isaaclab[isaacsim]==3.0.0b2.post1" -e ~/robolab
+    && git -C ~/robolab lfs install --local && git -C ~/robolab lfs pull \
+    && rm -rf ~/robolab/.git \
+    && uv pip install --no-cache -e ~/robolab
 
 # ---------------------------------------------------------------------------- RoboMME
 FROM base AS robomme_native

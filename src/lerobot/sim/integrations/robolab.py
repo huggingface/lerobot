@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import tempfile
 from collections.abc import Callable
 from functools import partial
@@ -43,6 +44,8 @@ __all__ = ["canonical_observation", "conventions", "vector_env_fns"]
 # Isaac Lab steps physics at 120 Hz and applies each action for 8 steps (RoboLab's DROID registration).
 CONTROL_FPS = 15
 DEFAULT_CAMERAS = "WRIST_LEFT"
+# RoboLab's runner builds each task with seed 0; each reset reseeds with the episode's seed.
+CREATION_SEED = 0
 JOINT_NAMES = (*(f"joint_{i}.pos" for i in range(7)), "gripper.pos")
 
 # The Kit app Isaac Lab runs in: started once per process, before any isaaclab or omni import, and kept for the
@@ -89,11 +92,8 @@ class RoboLabVectorEnv(gym.vector.VectorEnv):
         instruction_type: str = "default",
         observation_height: int | None = None,
         observation_width: int | None = None,
-        device: str = "cuda:0",
-        seed: int = 0,
     ) -> None:
         _launch_app()
-        import gymnasium as gym_registry
         import robolab.constants
         from robolab.core.environments.config import parse_env_cfg
         from robolab.core.environments.runtime import create_env
@@ -101,11 +101,12 @@ class RoboLabVectorEnv(gym.vector.VectorEnv):
         from robolab.registrations.droid import camera_presets
         from robolab.registrations.droid.auto_env_registrations_jointpos import auto_register_droid_envs
 
-        # RoboLab writes each env's config to its output directory.
-        robolab.constants.set_output_dir(tempfile.mkdtemp(prefix="lerobot-robolab-"))
-        if task not in gym_registry.registry:
+        # RoboLab writes each env's config to its output directory; close() removes it.
+        self._output_dir = tempfile.mkdtemp(prefix="lerobot-robolab-")
+        robolab.constants.set_output_dir(self._output_dir)
+        if task not in gym.registry:
             auto_register_droid_envs(task=task, cameras=getattr(camera_presets, cameras))
-        env_cfg = parse_env_cfg(task, device=device, seed=seed, num_envs=num_envs, use_fabric=True)
+        env_cfg = parse_env_cfg(task, device="cuda:0", seed=CREATION_SEED, num_envs=num_envs, use_fabric=True)
         # No HDF5 recordings: LeRobot records episodes itself.
         env_cfg.recorders = None
         self.env, env_cfg = create_env(env_cfg, instruction_type=instruction_type)
@@ -117,7 +118,8 @@ class RoboLabVectorEnv(gym.vector.VectorEnv):
             (observation_height, observation_width) if observation_height and observation_width else None
         )
         self._cameras = list(self.env.observation_manager.active_terms["image_obs"])
-        height, width = self._image_size or self._native_size()
+        native = self.env.scene[self._cameras[0]].cfg
+        height, width = self._image_size or (int(native.height), int(native.width))
         self.single_observation_space = spaces.Dict(
             {
                 "pixels": spaces.Dict(
@@ -129,10 +131,6 @@ class RoboLabVectorEnv(gym.vector.VectorEnv):
         self.single_action_space = spaces.Box(-np.inf, np.inf, (len(JOINT_NAMES),), np.float32)
         self.observation_space = batch_space(self.single_observation_space, num_envs)
         self.action_space = batch_space(self.single_action_space, num_envs)
-
-    def _native_size(self) -> tuple[int, int]:
-        sensor = self.env.scene[self._cameras[0]]
-        return int(sensor.cfg.height), int(sensor.cfg.width)
 
     def _observation(self, obs: dict[str, Any]) -> dict[str, Any]:
         """Return batched NumPy observations from Isaac Lab's CUDA tensors."""
@@ -182,6 +180,7 @@ class RoboLabVectorEnv(gym.vector.VectorEnv):
     def close(self, **kwargs: Any) -> None:
         """Close the task's world; the Kit app stays up for the next task."""
         self.env.close()
+        shutil.rmtree(self._output_dir, ignore_errors=True)
 
 
 def vector_env_fns(
