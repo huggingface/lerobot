@@ -302,3 +302,27 @@ def test_save_nondefault_teacher_periods(tmp_path, readout):
         teacher=teacher,
     )
     assert isinstance(gar.load_gaussian_readout(path, teacher, "processors"), gar.GaussianReadout)
+
+
+@pytest.mark.parametrize("policy_type", ["pi0", "pi05"])
+@pytest.mark.parametrize("fail", [False, True])
+def test_prefix_restores_attention_backend(monkeypatch, policy_type, fail):
+    model, backbone = tiny_flow.__wrapped__(SimpleNamespace(param=policy_type), monkeypatch)
+    config = backbone.paligemma.model.language_model.config
+    config._attn_implementation = "sdpa"
+    forward = backbone.forward
+
+    def capture(**kwargs):
+        assert config._attn_implementation == "eager"
+        if fail:
+            raise RuntimeError("prefill failed")
+        return forward(**kwargs)
+
+    monkeypatch.setattr(backbone, "forward", capture)
+    args = (model, [], [], torch.zeros(1, 2, dtype=torch.long), torch.ones(1, 2, dtype=torch.bool))
+    if fail:
+        with pytest.raises(RuntimeError, match="prefill failed"):
+            gar.encode_prefix(*args)
+    else:
+        gar.encode_prefix(*args)
+    assert config._attn_implementation == "sdpa"

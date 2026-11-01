@@ -649,6 +649,10 @@ def encode_prefix(
     model = _flow_model(model)
     if not getattr(model.config, "use_cache", True):
         raise ValueError("Gaussian readout requires use_cache=True")
+    attention_config = None
+    if getattr(model.config, "type", "pi05") != "smolvla":
+        attention_config = model.paligemma_with_expert.paligemma.model.language_model.config
+        previous_attention = attention_config._attn_implementation
     previous = getattr(model, "_lang_causal_marks", None)
     if lang_causal_marks is not None:
         if model.config.type != "fineart_vla":
@@ -657,6 +661,8 @@ def encode_prefix(
     try:
         return _encode_prefix(model, images, img_masks, tokens, masks, states, state_masks)
     finally:
+        if attention_config is not None:
+            attention_config._attn_implementation = previous_attention
         if lang_causal_marks is not None:
             model._lang_causal_marks = previous
 
