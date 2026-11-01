@@ -364,3 +364,20 @@ def test_save_rejects_mutated_codes(tmp_path, readout):
     with pytest.raises(ValueError):
         gar.save_readout(readout, path, teacher_sha256="teacher", processor_sha256="processors")
     assert not path.exists()
+
+
+def test_processor_digest_ignores_tokenizer_runtime_padding():
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+
+    backend = Tokenizer(WordLevel({"tiny": 0}, unk_token="tiny"))
+    step = SimpleNamespace(
+        input_tokenizer=SimpleNamespace(backend_tokenizer=backend),
+        get_config=lambda: {"padding": "max_length", "max_length": 4},
+        state_dict=dict,
+    )
+    pipeline = SimpleNamespace(steps=[step])
+    before = gar.processor_sha256(pipeline)
+    backend.enable_padding(length=4)
+    backend.enable_truncation(max_length=4)
+    assert gar.processor_sha256(pipeline) == before

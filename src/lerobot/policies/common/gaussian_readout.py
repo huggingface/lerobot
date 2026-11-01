@@ -134,7 +134,15 @@ def processor_sha256(*pipelines: Any) -> str:
             if tokenizer is not None:
                 config.pop("tokenizer_name", None)
                 backend = getattr(tokenizer, "backend_tokenizer", None)
-                config["tokenizer"] = backend.to_str() if backend is not None else tokenizer.get_vocab()
+                if backend is not None:
+                    contents = json.loads(backend.to_str())
+                    # Fast tokenizers change these runtime fields on every call.
+                    # Their stable requested values already belong to the processor config.
+                    contents.pop("padding", None)
+                    contents.pop("truncation", None)
+                    config["tokenizer"] = contents
+                else:
+                    config["tokenizer"] = tokenizer.get_vocab()
                 config["special_tokens"] = getattr(tokenizer, "special_tokens_map", {})
             digest.update(json.dumps(config, sort_keys=True, default=str).encode())
             for name, tensor in sorted(step.state_dict().items()):
