@@ -155,10 +155,7 @@ from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.keyboard_input import init_keyboard_listener
-from lerobot.utils.utils import (
-    init_logging,
-    log_say,
-)
+from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import (
     init_visualization,
     log_visualization_data,

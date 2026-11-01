@@ -78,8 +78,7 @@ from lerobot.distributed import (
 )
 from lerobot.envs import EnvConfig, close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
-from lerobot.optim import make_optimizer_and_scheduler
-from lerobot.optim.ema import EMA
+from lerobot.optim import EMA, make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, ProcessorConfigKwargs, make_policy, make_pre_post_processors
 from lerobot.processor import ImageAugmentationProcessorStep, rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
@@ -94,13 +93,7 @@ from lerobot.utils.import_utils import (
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.sample_weighting import SampleWeighter
-from lerobot.utils.utils import (
-    cycle,
-    format_big_number,
-    has_method,
-    init_logging,
-    inside_slurm,
-)
+from lerobot.utils.utils import cycle, format_big_number, has_method, init_logging, inside_slurm
 
 if TYPE_CHECKING or _peft_available:
     from peft import PeftModel

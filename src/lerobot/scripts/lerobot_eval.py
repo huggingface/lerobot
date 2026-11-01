@@ -97,10 +97,7 @@ from lerobot.utils.eval_stats import success_summary
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.utils import (
-    init_logging,
-    inside_slurm,
-)
+from lerobot.utils.utils import init_logging, inside_slurm
 
 if TYPE_CHECKING or _peft_available:
     from peft import PeftModel
