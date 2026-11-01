@@ -48,6 +48,7 @@ from lerobot.policies.flux3.f3 import (
     packing,
     sampling,
     stream_of_key,
+    video_vae,
 )
 from lerobot.policies.flux3.f3.wiring import (
     head_parameter_names,
@@ -67,6 +68,7 @@ from tests.policies.flux3.helpers import (
     single_config,
     task_config,
 )
+from tests.utils import require_cuda
 
 if TYPE_CHECKING or _peft_available:
     from peft import PeftModel
@@ -481,6 +483,25 @@ def test_remap_shared_action_keys_and_fresh_heads():
     )
     params = action_dit_params(JointSingleSeqParams(**TINY_DIT), "myrobot", 16)
     assert params.in_channels["myrobot"] == 16 and params.sequence["x_myrobot_cond"] == "myrobot_cond"
+
+
+@require_cuda
+def test_natten_gets_one_dtype_under_cuda_autocast(monkeypatch):
+    dtypes = []
+
+    def kernel(q, k, v, **kwargs):  # stands in for NATTEN's na2d and na3d, which refuse mixed dtypes
+        dtypes.append({q.dtype, k.dtype, v.dtype})
+        return v
+
+    monkeypatch.setattr(video_vae, "na2d", kernel, raising=False)
+    monkeypatch.setattr(video_vae, "na3d", kernel, raising=False)
+    # A backend from the environment skips the probe, which needs NATTEN; a fresh cache keeps it in this test.
+    monkeypatch.setenv("F3_NATTEN_BACKEND", "cutlass-fna")
+    monkeypatch.setattr(video_vae, "_natten_backends", {}, raising=False)
+    block = video_vae.Natten3D(16, [3, 3, 3], 2, qk_norm=True).cuda()
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        block(torch.randn(1, 3, 4, 4, 16, device="cuda"))
+    assert dtypes == [{torch.bfloat16}]
 
 
 def test_frozen_warmup_constant_scheduler():
