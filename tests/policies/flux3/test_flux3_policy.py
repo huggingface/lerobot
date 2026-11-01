@@ -48,6 +48,7 @@ from lerobot.policies.flux3.f3 import (
     packing,
     sampling,
     stream_of_key,
+    video_vae,
 )
 from lerobot.policies.flux3.f3.wiring import (
     head_parameter_names,
@@ -503,6 +504,29 @@ def test_frozen_warmup_constant_scheduler():
         freeze_steps=0, num_warmup_steps=0, warmup_steps_heads=0, cooldown_steps=10
     ).lr_lambda(0, 0, cooldown=10, total_steps=100)
     assert cool(89) == 1.0 and math.isclose(cool(95), 0.5)
+
+
+def test_natten_kernels_get_the_backend_of_the_environment(monkeypatch):
+    calls = []
+
+    def kernel(q, k, v, kernel_size, is_causal=None, backend=None):  # stands in for NATTEN's na2d and na3d
+        # NATTEN takes batch, one axis per window axis, heads and channels.
+        assert q.dim() == k.dim() == v.dim() == len(kernel_size) + 3
+        calls.append(backend)
+        return v
+
+    monkeypatch.setattr(video_vae, "na2d", kernel, raising=False)
+    monkeypatch.setattr(video_vae, "na3d", kernel, raising=False)
+    # One layer for every call, so that no call can keep the backend of an earlier one.
+    layer = video_vae.Natten3D(16, [3, 3, 3], 2)
+    # A name NATTEN does not know goes through as it is, so that NATTEN reports it.
+    for frames, backend in [(1, None), (1, "flex-fna"), (3, "no-such-backend"), (3, None), (1, None)]:
+        if backend is None:
+            monkeypatch.delenv("F3_NATTEN_BACKEND", raising=False)
+        else:
+            monkeypatch.setenv("F3_NATTEN_BACKEND", backend)
+        layer(torch.randn(1, frames, 4, 4, 16))
+    assert calls == [None, "flex-fna", "no-such-backend", None, None]
 
 
 # ---------------------------------------------------------------- tiny end-to-end model
