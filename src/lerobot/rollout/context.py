@@ -426,6 +426,7 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * camera_count,
             )
             if not math.isclose(dataset.fps, cfg.fps):
+                dataset.finalize()
                 raise ValueError(
                     f"The resumed dataset records at {dataset.fps} fps: pass --fps={dataset.fps}"
                 )
