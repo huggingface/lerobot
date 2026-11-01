@@ -398,6 +398,8 @@ lerobot-eval --policy.path=<your_policy> \
   --eval.n_episodes=50
 ```
 
+The server needs Docker with GPU access, and `lerobot-eval` needs the `remote` extra (`uv sync --locked --extra remote ...`).
+
 A simulated environment can also be used through the robot interface: `lerobot-rollout --robot.type=sim --robot.env.type=libero ...`. See [`docs/source/simulation.mdx`](./docs/source/simulation.mdx) for camera renames, sim robots, and remote inference.
 
 ### 8.3 Target success rates
