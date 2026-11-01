@@ -158,6 +158,27 @@ RUN python -m robocasa.scripts.setup_macros && \
     yes y | python -m robocasa.scripts.download_kitchen_assets \
       --type tex tex_generative fixtures_lw objs_lw
 
+# ---------------------------------------------------------------------------- RoboLab
+FROM base AS robolab_native
+# Isaac Sim's Kit renders through X and OpenGL libraries the CUDA base lacks; RoboLab's assets are git LFS objects.
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libxt6 libopengl0 libglu1-mesa git-lfs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+USER user_lerobot
+# Accepts the NVIDIA Isaac Sim EULA, as RoboLab's own image does.
+ENV ACCEPT_EULA=Y OMNI_KIT_ACCEPT_EULA=YES
+# RoboLab's assets (scenes, objects, robots; about 6 GB) are mostly CC BY-NC-SA 4.0, see its THIRD_PARTY_NOTICES.md.
+# They are fetched from NVlabs here and never published by LeRobot.
+ARG ROBOLAB_SHA=9cce00cadd5dc575fd2b8ea3836f5bdcde574229
+RUN git clone https://github.com/NVlabs/RoboLab.git ~/robolab \
+    && git -C ~/robolab checkout ${ROBOLAB_SHA} \
+    && git -C ~/robolab lfs install --local && git -C ~/robolab lfs pull
+# RoboLab's Isaac Sim 6 stack (its isaac60 extra); Isaac Sim's wheels come from NVIDIA's index. It replaces some of
+# the base's pins (numpy, gymnasium, huggingface-hub through transformers), which the server also runs with.
+RUN UV_INDEX_STRATEGY=unsafe-best-match uv pip install --no-cache --extra-index-url https://pypi.nvidia.com \
+        "isaaclab[isaacsim]==3.0.0b2.post1" -e ~/robolab
+
 # ---------------------------------------------------------------------------- RoboMME
 FROM base AS robomme_native
 # ManiSkill/SAPIEN render with Vulkan: install the loader and point it at the NVIDIA driver.
@@ -347,7 +368,7 @@ RUN case "${SIM}" in libero|robocerebra|libero_plus) \
 # The server must import without torch, except in images whose simulator ships its own.
 RUN case "${SIM}" in \
         libero|robocerebra|libero_plus) module=libero ;; \
-        robomme|robotwin) module= ;; \
+        robolab|robomme|robotwin) module= ;; \
         *) module=${SIM} ;; \
     esac \
     && if [ -n "$module" ]; then python -c "import sys; sys.modules['torch'] = None; \
@@ -355,6 +376,7 @@ import lerobot.scripts.lerobot_env_server; import lerobot.sim.integrations.$modu
 # Simulators with their own torch import environment dependencies lazily; import those here. A build has
 # no GPU driver, so RoboTwin's planner (CuRobo's motion generator) is only importable at runtime.
 RUN case "${SIM}" in \
+        robolab) python -c "import lerobot.env_server.server, lerobot.sim.integrations.robolab, robolab.constants, isaacsim" ;; \
         robomme) python -c "import lerobot.env_server.server, scipy.sparse, trimesh, mani_skill.utils.common" ;; \
         robotwin) python -c "import lerobot.env_server.server, warp, sapien.core, mplib, toppra, open3d, cv2, \
 pytorch3d, trimesh; warp.torch; from curobo.types.math import Pose" ;; \
