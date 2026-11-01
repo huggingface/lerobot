@@ -18,7 +18,7 @@ A benchmark is a simulator that LeRobot drives in one place, `lerobot.sim`, so t
 Both paths expose the same environment behavior:
 
 ```text
-native simulator → local vector env or environment service → canonical NumPy observations
+native simulator → LocalVectorEnv, locally or on an env server → canonical NumPy observations
   → batched env or sim robot → one-time image/tensor preparation → saved policy preprocessing
   → policy → saved action postprocessing → native simulator
 ```
@@ -147,7 +147,7 @@ Pinning rules:
 
 - **Always pin** benchmark packages to exact versions for reproducibility (e.g. `metaworld==3.0.0`).
 - **Add platform markers** when needed (e.g. `; sys_platform == 'linux'`).
-- **Pin fragile transitive deps** if known (e.g. `gymnasium==1.1.0` for Meta-World).
+- **Pin fragile transitive deps** if known (e.g. the Meta-World image pins `mujoco==3.15.0`, since MuJoCo 3.17 breaks its mocap welds).
 - **Document constraints** in your benchmark doc page. When the dependencies conflict with LeRobot's, the served path is the supported one.
 
 ## Writing a benchmark doc page

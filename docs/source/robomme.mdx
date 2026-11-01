@@ -42,7 +42,7 @@ uv pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
 
 ### Docker (recommended)
 
-Run RoboMME in its own simulator image, so its `numpy`/`gymnasium` pins never meet LeRobot's:
+Run RoboMME in its own simulator image, so its `numpy`/`gymnasium` pins never meet the policy's:
 
 ```bash
 lerobot-env-server --config_path=docker/sim/configs/robomme.yaml --docker=true
