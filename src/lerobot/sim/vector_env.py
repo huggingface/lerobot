@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 _ENV_ATTRS = ("task_description", "task", "num_envs")
 # Episode limit for an env that declares none.
 _DEFAULT_MAX_EPISODE_STEPS = 500
+# Gymnasium 0.29, which some simulators pin (RoboMME's ManiSkill), has no AutoresetMode; there a vector env always
+# autoresets, so none from vector_env_fns is accepted.
+_NO_AUTORESET = getattr(getattr(gym.vector, "AutoresetMode", None), "DISABLED", "disabled")
 
 
 def _max_episode_steps(env: Any) -> int | None:
@@ -74,7 +77,7 @@ def _build_env(sim_type: str, make: Callable[[], Any]) -> Any:
         env = make()
     if isinstance(env, gym.vector.VectorEnv):
         mode = env.metadata.get("autoreset_mode")
-        if mode is not gym.vector.AutoresetMode.DISABLED:
+        if mode is not _NO_AUTORESET:
             env.close()
             raise ValueError(
                 f"A vector env from vector_env_fns must not autoreset; set metadata['autoreset_mode'] to "
@@ -203,6 +206,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
     """
 
     canonical_observations = True
+    closed = False
 
     def __init__(
         self,
@@ -249,7 +253,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         self.single_action_space = self.descriptor.action_space()
         self.observation_space = batch_space(self.single_observation_space, num_envs)
         self.action_space = batch_space(self.single_action_space, num_envs)
-        self.metadata = {"render_fps": config.fps, "autoreset_mode": gym.vector.AutoresetMode.DISABLED}
+        self.metadata = {"render_fps": config.fps, "autoreset_mode": _NO_AUTORESET}
         self.render_mode = "rgb_array"
 
     def build(self) -> None:
@@ -461,6 +465,12 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             for env in envs:
                 stack.callback(env.close)
 
-    def close_extras(self, **kwargs: Any) -> None:
-        """Release simulator resources."""
-        self._close_envs()
+    def close(self, **kwargs: Any) -> None:
+        """Release simulator resources, once.
+
+        Defined here rather than through Gymnasium's ``close_extras``: Gymnasium 0.29's ``close`` reads attributes
+        its ``VectorEnv.__init__`` sets, which isn't called here.
+        """
+        if not self.closed:
+            self._close_envs()
+            self.closed = True
