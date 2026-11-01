@@ -33,6 +33,7 @@ from torch import Tensor, nn
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.optim.optimizers import OptimizerParams
+from lerobot.policies.chunk import ChunkPolicySpec
 from lerobot.policies.common.flow_matching import euler_integrate, sample_noise, sample_time_beta
 from lerobot.policies.common.vla_utils import create_sinusoidal_pos_embedding
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -320,6 +321,9 @@ class ImprintPolicy(PreTrainedPolicy):
         if self.config.training_stage == "memory":
             return self._memory_forward(batch, reduction)
         return self._joint_forward(batch, reduction)
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        raise ValueError("IMPRINT chunk serving is unsupported: episode memory requires select_action().")
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:

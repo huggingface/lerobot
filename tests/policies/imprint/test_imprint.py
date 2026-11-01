@@ -382,6 +382,13 @@ def test_joint_without_memory_still_trains() -> None:
     _assert_grad(policy.expert.out_proj.weight)
 
 
+@pytest.mark.parametrize("history", [1, 4])
+def test_chunk_serving_requires_select_action(history: int) -> None:
+    policy = ImprintPolicy(tiny_config(history_length=history))
+    with pytest.raises(ValueError, match=r"episode memory requires select_action\(\)"):
+        policy.chunk_inference_spec()
+
+
 def test_predict_does_not_advance_memory_and_select_action_does() -> None:
     torch.manual_seed(5)
     config = tiny_config()
