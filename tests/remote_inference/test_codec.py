@@ -30,7 +30,7 @@ from lerobot.remote_inference.protocol import (
     ProtocolError,
     deployment_prefix,
 )
-from lerobot.transport.wire import codec as wire_codec
+from lerobot.transport.protocol import codec as protocol_codec
 
 
 def message(body=None):
@@ -76,17 +76,17 @@ def test_torch_adapter_matches_numpy_wire_bytes_and_cross_decoding(dtype):
     array = np.arange(12).astype(dtype).reshape(3, 4).T
     numpy_message = message({"values": {"state": array}, "task": "reach"})
     torch_message = message({"values": {"state": torch.from_numpy(array)}, "task": "reach"})
-    numpy_bytes = wire_codec.encode_message(numpy_message)
+    numpy_bytes = protocol_codec.encode_message(numpy_message)
     assert encode_message(numpy_message) == numpy_bytes
     assert encode_message(torch_message) == numpy_bytes
-    for decode in (decode_message, wire_codec.decode_message):
+    for decode in (decode_message, protocol_codec.decode_message):
         actual = decode(numpy_bytes).body["values"]["state"]
         np.testing.assert_array_equal(actual, array)
         assert actual.flags.writeable
         assert not np.shares_memory(actual, array)
 
 
-@pytest.mark.parametrize("encoder", [encode_message, wire_codec.encode_message])
+@pytest.mark.parametrize("encoder", [encode_message, protocol_codec.encode_message])
 def test_both_encoders_enforce_payload_limits(encoder):
     with pytest.raises(ProtocolError) as exc:
         encoder(message({"state": np.zeros(32, np.float32)}), replace(CodecLimits(), max_payload_bytes=64))

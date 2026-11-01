@@ -36,7 +36,9 @@ def test_cli_signal_closes_active_world(tmp_path, interrupt_wait, shutdown_signa
         sock.bind(("127.0.0.1", 0))
         endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
     config = tmp_path / "server.yaml"
-    config.write_text(f'sim:\n  type: toy\n  control: delta\nzenoh:\n  listen_endpoints: ["{endpoint}"]\n')
+    config.write_text(
+        f'sim:\n  type: toy\n  task: reach\n  control_mode: delta\nzenoh:\n  listen_endpoints: ["{endpoint}"]\n'
+    )
     arm = tmp_path / "arm"
     injected = tmp_path / "injected"
     closed = tmp_path / "closed"
@@ -52,7 +54,7 @@ import signal
 import sys
 import threading
 
-from lerobot.sims.backend import Backend
+from tests.fixtures.toy_env import ToyEnv
 
 arm = Path(os.environ['SHUTDOWN_ARM'])
 injected = Path(os.environ['SHUTDOWN_INJECTED'])
@@ -63,12 +65,12 @@ def check_handler():
     if signal.getsignal(signal.SIGTERM) == original_handler:
         restored.touch()
 atexit.register(check_handler)
-original_close = Backend.close
+original_close = ToyEnv.close
 def close_and_record(self):
     original_close(self)
     with closed.open('a') as marker:
         marker.write('closed\\n')
-Backend.close = close_and_record
+ToyEnv.close = close_and_record
 source, first_line = inspect.getsourcelines(threading.Event.wait)
 locked_line = first_line + next(i for i, line in enumerate(source) if 'signaled = self._flag' in line)
 fired = False
@@ -90,7 +92,8 @@ sys.settrace(trace)
     env = os.environ.copy()
     # Import the checked-out source even when pytest uses an editable installation elsewhere.
     source = str(Path(__file__).resolve().parents[2] / "src")
-    env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), source, env.get("PYTHONPATH", "")])
+    root = str(Path(__file__).resolve().parents[2])
+    env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), source, root, env.get("PYTHONPATH", "")])
     env.update(
         SHUTDOWN_ARM=str(arm),
         SHUTDOWN_INJECTED=str(injected),
@@ -116,9 +119,9 @@ sys.settrace(trace)
                 time.sleep(0.02)
             else:
                 pytest.fail("The environment server did not listen within ten seconds")
-            client.open(1, "lockstep", seeds=[42])
+            client.open(1, seeds=[42])
             result = client.request("step", actions=np.zeros((1, 2), np.float32))["result"]
-            assert result["step"].tolist() == [1]
+            assert result.elapsed_steps.tolist() == [1]
             if interrupt_wait:
                 arm.touch()
             else:
@@ -126,8 +129,8 @@ sys.settrace(trace)
             assert process.wait(timeout=5) == 0
             assert injected.exists() == interrupt_wait
             assert restored.exists()
-            # The descriptor probe and the active session both close their backend.
-            assert closed.read_text().splitlines() == ["closed", "closed"]
+            # The startup environment is reused by the active session and closed once.
+            assert closed.read_text().splitlines() == ["closed"]
         finally:
             client.transport.close()
             if process.poll() is None:

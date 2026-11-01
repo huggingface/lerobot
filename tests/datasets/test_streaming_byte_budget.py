@@ -19,6 +19,8 @@ from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import parse_mp4_index, synthesized_mp4_size
 from tests.datasets.test_episode_video_streaming import _fetch_episode, _minimal_mp4
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.fixture
 def bounded_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[EpisodeByteCache]:

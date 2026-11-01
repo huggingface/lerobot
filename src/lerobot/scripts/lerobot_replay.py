@@ -32,8 +32,8 @@ Example replay with bimanual so100:
 ```shell
 lerobot-replay \
   --robot.type=bi_so_follower \
-  --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
-  --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
+  --robot.left_arm_config.port=/dev/tty.usbmodem5A460851411 \
+  --robot.right_arm_config.port=/dev/tty.usbmodem5A460812391 \
   --robot.id=bimanual_follower \
   --dataset.repo_id=${HF_USER}/bimanual-so100-handover-cube \
   --dataset.episode=0
@@ -66,11 +66,11 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
-    sim,
+    sim_robot,
     so_follower,
     unitree_g1,
 )
-from lerobot.robots.sim import check_control_rate
+from lerobot.robots.sim_robot import check_control_rate, episode_ended
 from lerobot.utils.constants import ACTION
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -137,6 +137,12 @@ def replay(cfg: ReplayConfig):
             with timer.section("send"):
                 processed_action = robot_action_processor((action, robot_obs))
                 _ = robot.send_action(processed_action)
+
+            if episode_ended(robot):
+                logging.info(
+                    "Sim episode ended at frame %d of %d, stopping the replay", idx + 1, dataset.num_frames
+                )
+                break
 
             timer.wait()
     finally:

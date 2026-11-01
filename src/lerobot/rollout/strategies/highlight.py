@@ -23,6 +23,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event as ThreadingEvent, Lock
 
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.processor import transition_to_robot_action
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -32,7 +33,7 @@ from lerobot.utils.utils import log_say
 from ..configs import HighlightStrategyConfig, RolloutConfig
 from ..context import RolloutContext
 from ..ring_buffer import RolloutRingBuffer
-from .core import RolloutStrategy, safe_push_to_hub, send_next_action, world_finished
+from .core import RolloutStrategy, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,6 @@ class HighlightStrategy(RolloutStrategy):
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
 
-        self._reset_sim_world(ctx)
         engine.resume()
         play_sounds = cfg.play_sounds
 
@@ -122,19 +122,18 @@ class HighlightStrategy(RolloutStrategy):
 
                     with timer.section("observe"):
                         obs = robot.get_observation()
-                    if world_finished(robot):
-                        break
                     with timer.section("process_obs"):
                         obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
                     if self._handle_warmup(cfg.use_torch_compile, timer):
                         continue
 
-                    action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                    step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
-                    if action_dict is not None:
+                    if step is not None:
+                        action_dict = transition_to_robot_action(step)
                         with timer.section("telemetry"):
-                            self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                            self._log_telemetry(obs_processed, step, ctx.runtime)
 
                         if self._push_requested.is_set():
                             self._push_requested.clear()

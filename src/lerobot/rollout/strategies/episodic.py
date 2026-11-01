@@ -40,7 +40,8 @@ from lerobot.common.control_utils import (
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
-from lerobot.robots.sim.world import get_world
+from lerobot.processor import transition_to_robot_action
+from lerobot.robots.sim_robot import episode_ended
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -53,7 +54,7 @@ from lerobot.utils.visualization_utils import log_visualization_data
 from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
 from ..robot_wrapper import ThreadSafeRobot
-from .core import RolloutStrategy, safe_push_to_hub, send_next_action, world_finished
+from .core import RolloutStrategy, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,6 @@ class EpisodicStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         """Main multi-episode recording loop."""
-        engine = self._require_engine()
         interpolator = self._require_interpolator()
         events = self._events
         if events is None:
@@ -135,8 +135,6 @@ class EpisodicStrategy(RolloutStrategy):
         # the run summary averages across them without the untimed reset phases.
         timer = CycleTimer(fps, interpolator.multiplier)
 
-        # A simulated world resets itself at each episode start: no manual reset phase.
-        simulated = get_world(robot.inner) is not None
         with VideoEncodingManager(dataset):
             try:
                 recorded_episodes = 0
@@ -144,15 +142,7 @@ class EpisodicStrategy(RolloutStrategy):
                     if ctx.runtime.shutdown_event.is_set():
                         break
 
-                    # Reset policy state at episode start (discard leftover hidden state / queue)
-                    self._reset_sim_world(ctx)
-                    engine.reset()
-                    interpolator.reset()
-                    # A reset interpolator re-primes over two consecutive inference
-                    # ticks, exactly like loop start-up, so exempt the group that
-                    # spans them instead of reporting a healthy episode as slow.
-                    timer.restart()
-                    engine.resume()
+                    self._start_episode(robot, timer)
 
                     log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
                     self._policy_loop(
@@ -166,10 +156,8 @@ class EpisodicStrategy(RolloutStrategy):
                     )
 
                     # Reset phase, skip after the last episode (but run when re-recording)
-                    if (
-                        not simulated
-                        and not events["stop_recording"]
-                        and (recorded_episodes < num_episodes - 1 or events["rerecord_episode"])
+                    if not events["stop_recording"] and (
+                        recorded_episodes < num_episodes - 1 or events["rerecord_episode"]
                     ):
                         log_say("Reset the environment", play_sounds)
 
@@ -278,11 +266,12 @@ class EpisodicStrategy(RolloutStrategy):
             if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, timer):
                 continue
 
-            action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+            step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
-            if action_dict is not None:
+            if step is not None:
+                action_dict = transition_to_robot_action(step)
                 with timer.section("telemetry"):
-                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                    self._log_telemetry(obs_processed, step, ctx.runtime)
                 # Record once per interpolation cycle so the dataset cadence
                 # matches its declared fps; interpolated ticks only send
                 # commands to the robot.
@@ -294,11 +283,13 @@ class EpisodicStrategy(RolloutStrategy):
                             {**obs_frame, **action_frame, "task": self._require_engine().dispatched_task}
                         )
 
+            # End the recorded episode when the sim robot's episode ends (success, failure or step limit).
+            if episode_ended(robot.inner):
+                break
+
             self._require_engine().pump_query(obs_processed)
             timer.wait()
             timestamp = time.perf_counter() - start_t
-            if world_finished(robot):
-                break
 
     def _reset_loop(
         self,

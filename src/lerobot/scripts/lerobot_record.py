@@ -129,12 +129,11 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
-    sim,
+    sim_robot,
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.robots.sim import check_control_rate, check_teleop_clock
-from lerobot.robots.sim.world import get_world
+from lerobot.robots.sim_robot import check_control_rate, episode_ended, start_episode
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -295,7 +294,6 @@ def record_loop(
         timer = CycleTimer(fps, records_data=dataset is not None)
 
     no_action_count = 0
-    world = get_world(robot)
     timestamp = 0.0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -381,11 +379,13 @@ def record_loop(
                     compress_images=display_compressed_images,
                 )
 
+        # End the recorded episode when the sim robot's episode ends (success, failure or step limit).
+        if dataset is not None and episode_ended(robot):
+            break
+
         timer.wait()
 
         timestamp = time.perf_counter() - start_episode_t
-        if world is not None and (world.episode_status.terminated or world.episode_status.truncated):
-            break
 
 
 @parser.wrap()
@@ -407,10 +407,8 @@ def record(
         else cfg.display_compressed_images
     )
 
-    check_teleop_clock(cfg.robot, cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
-    check_control_rate(robot, cfg.dataset.fps)
-    world = get_world(robot)
+    check_control_rate(robot, cfg.dataset.fps, "--dataset.fps")
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     # Fall back to identity pipelines when the caller doesn't supply processors.
@@ -509,8 +507,7 @@ def record(
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 episode_index = dataset.num_episodes
-                if world is not None:
-                    world.reset_world()
+                start_episode(robot)
                 log_say(f"Recording episode {episode_index}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -530,11 +527,9 @@ def record(
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
-                # Skip reset for the last episode to be recorded, and for a simulated world, which resets itself
-                if (
-                    world is None
-                    and not events["stop_recording"]
-                    and ((recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"])
+                # Skip reset for the last episode to be recorded
+                if not events["stop_recording"] and (
+                    (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
 

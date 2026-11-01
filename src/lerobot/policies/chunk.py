@@ -17,7 +17,7 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from lerobot.transport.wire.features import FeatureSpec as FeatureSpec
+from lerobot.utils.feature_spec import FeatureSpec as FeatureSpec
 
 
 class ExecutionMode(StrEnum):

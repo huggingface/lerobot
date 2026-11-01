@@ -22,6 +22,7 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
+import math
 from collections import deque
 from collections.abc import Callable
 from copy import copy
@@ -37,7 +38,7 @@ from lerobot.datasets import (
     aggregate_pipeline_dataset_features,
     create_initial_features,
 )
-from lerobot.env_server.admission import validate_checkpoint
+from lerobot.envs.utils import validate_checkpoint
 from lerobot.inference import (
     FeatureSpec,
     InferenceEngine,
@@ -53,6 +54,7 @@ from lerobot.policies import (
     make_pre_post_processors,
     validate_trained_rtc_horizon,
 )
+from lerobot.policies.factory import has_peft_adapter_config
 from lerobot.processor import (
     PolicyProcessorPipeline,
     RenderRuntimeMessagesStep,
@@ -65,10 +67,8 @@ from lerobot.processor import (
 )
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
 from lerobot.robots import Robot, make_robot_from_config
-from lerobot.robots.sim import SimRobot, check_control_rate, check_teleop_clock
-from lerobot.robots.sim.world import get_world
+from lerobot.robots.sim_robot import SimRobot, check_control_rate
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
-from lerobot.transport.wire.features import feature_mismatch
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
@@ -282,7 +282,8 @@ def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy
     pretrained_revision = policy_config.pretrained_revision
     policy_class = get_policy_class(policy_config.type)
 
-    if not policy_config.use_peft:
+    # A `use_peft=True` config can still point at a base model (see `has_peft_adapter_config`).
+    if not (policy_config.use_peft and has_peft_adapter_config(pretrained_path, pretrained_revision)):
         return policy_class.from_pretrained(
             pretrained_path,
             config=policy_config,
@@ -322,43 +323,56 @@ def _disconnect_setup_hardware(robot: Robot, teleop: Teleoperator | None) -> Non
     """Release each connected device without masking the original setup failure."""
     for name, resource in (("teleoperator", teleop), ("robot", robot)):
         try:
+            # A sim robot builds its sim in __init__, so close it even if it never connected.
             if resource is not None and (resource.is_connected or isinstance(resource, SimRobot)):
                 resource.disconnect()
         except Exception:
             logger.exception("Could not close %s after rollout setup failed", name)
 
 
-def _connect_rollout_hardware(
+def _prepare_rollout_devices(
     cfg: RolloutConfig,
     *,
     require_hold: bool = False,
-    simulator_admission: Callable[[SimRobot], None] | None = None,
-) -> HardwareContext:
-    """Connect devices and capture the initial pose after policy/descriptor validation."""
+    validate_simulator: Callable[[SimRobot], None] | None = None,
+) -> tuple[ThreadSafeRobot, Teleoperator | None]:
+    """Construct rollout devices without opening their hardware resources.
+
+    A sim robot builds its simulator here, so its control rate and descriptor are checked before anything
+    connects or loads.
+    """
     if cfg.robot is None:
         raise ValueError("--robot.type is required for rollout")
-    check_teleop_clock(cfg.robot, cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
     wrapper = ThreadSafeRobot(robot)
-    teleop = None
     try:
-        check_control_rate(robot, cfg.fps)
+        check_control_rate(robot, cfg.fps, "--fps", cfg.interpolation_multiplier)
         if isinstance(robot, SimRobot):
-            if simulator_admission is not None:
-                simulator_admission(robot)
+            if validate_simulator is not None:
+                validate_simulator(robot)
             elif cfg.policy is not None:
                 validate_checkpoint(robot.descriptor, cfg.policy, cfg.rename_map)
         if require_hold:
             wrapper.configure_hold()
-        logger.info("Connecting robot (%s)...", cfg.robot.type)
+        teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    except BaseException:
+        _disconnect_setup_hardware(robot, None)
+        raise
+    return wrapper, teleop
+
+
+def _connect_rollout_hardware(wrapper: ThreadSafeRobot, teleop: Teleoperator | None) -> HardwareContext:
+    """Connect prepared devices and capture the robot's initial position."""
+    robot = wrapper.inner
+    try:
+        logger.info("Connecting robot (%s)...", wrapper.robot_type)
         robot.connect()
         logger.info("Robot connected: %s", robot.name)
         initial_obs = wrapper.get_observation()
         initial_position = {key: value for key, value in initial_obs.items() if key.endswith(".pos")}
         logger.info("Captured initial robot position (%d keys)", len(initial_position))
-        if cfg.teleop is not None:
-            logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
-            teleop = make_teleoperator_from_config(cfg.teleop)
+        if teleop is not None:
+            logger.info("Connecting teleoperator (%s)...", teleop.name)
             teleop.connect()
             logger.info("Teleoperator connected")
         return HardwareContext(wrapper, teleop, initial_position)
@@ -411,6 +425,10 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * camera_count,
             )
+            if not math.isclose(dataset.fps, cfg.fps):
+                raise ValueError(
+                    f"The resumed dataset records at {dataset.fps} fps: pass --fps={dataset.fps}"
+                )
         else:
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
             if not repo_name.startswith("rollout_"):
@@ -476,6 +494,9 @@ def build_rollout_context(
 
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
 
     if policy_config.type == "vqbet" and cfg.device == "mps":
         raise NotImplementedError(
@@ -520,18 +541,20 @@ def build_rollout_context(
     processors = _resolve_robot_processors(
         teleop_action_processor, robot_action_processor, robot_observation_processor
     )
-    hardware = _connect_rollout_hardware(cfg)
-    robot_wrapper = hardware.robot_wrapper
+    robot_wrapper, teleop = _prepare_rollout_devices(cfg)
     robot = robot_wrapper.inner
+    dataset: LeRobotDataset | None = None
+    hardware: HardwareContext | None = None
 
     try:
         # Retain position and base-velocity channels for mobile manipulators, plus cameras.
+        # Keep every state and action component of a sim robot, whatever its name.
+        keep_all = isinstance(robot, SimRobot)
         all_obs_features = robot.observation_features
         observation_features_hw: dict[str, type | tuple] = {
             k: v
             for k, v in all_obs_features.items()
-            if isinstance(v, tuple)
-            or (v is float and (isinstance(robot, SimRobot) or k.endswith((".pos", ".vel"))))
+            if isinstance(v, tuple) or (v is float and (keep_all or k.endswith((".pos", ".vel"))))
         }
         policy_action_names = getattr(policy_config, "action_feature_names", None)
         checkpoint_order = list(policy_action_names) if policy_action_names else None
@@ -539,9 +562,7 @@ def build_rollout_context(
             observation_features_hw, checkpoint_order, what="state"
         )
         action_features_hw = {
-            k: v
-            for k, v in robot.action_features.items()
-            if isinstance(robot, SimRobot) or k.endswith((".pos", ".vel"))
+            k: v for k, v in robot.action_features.items() if keep_all or k.endswith((".pos", ".vel"))
         }
         action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
 
@@ -606,12 +627,7 @@ def build_rollout_context(
             "Creating inference engine (type=%s)...",
             cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
         )
-        world = get_world(robot)
-        task_str = (
-            world.task_description
-            if world is not None
-            else (cfg.dataset.single_task if cfg.dataset else cfg.task)
-        )
+        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         inference_strategy = create_inference_engine(
             cfg.inference,
             policy=policy,
@@ -628,6 +644,9 @@ def build_rollout_context(
             shutdown_event=shutdown_event,
         )
         _attach_planner(cfg, inference_strategy, robot_wrapper, preprocessor, policy_config)
+
+        # Keep hardware closed while loading resources that may block robot control threads.
+        hardware = _connect_rollout_hardware(robot_wrapper, teleop)
 
         logger.info("Rollout context assembled successfully")
         return RolloutContext(
@@ -648,7 +667,13 @@ def build_rollout_context(
             ),
         )
     except BaseException:
-        _disconnect_setup_hardware(robot, hardware.teleop)
+        # Also before connecting: a sim robot holds its simulator from construction.
+        _disconnect_setup_hardware(robot, hardware.teleop if hardware is not None else teleop)
+        if dataset is not None:
+            try:
+                dataset.finalize()
+            except Exception:
+                logger.exception("Could not close dataset after rollout setup failed")
         raise
 
 
@@ -751,7 +776,7 @@ def build_remote_rollout_context(
         def validate_simulator(robot: SimRobot) -> None:
             if config.semantics != robot.descriptor.semantics:
                 raise ValueError("Remote deployment semantics differ from simulator semantics")
-            if feature_mismatch(action, robot.descriptor.action_feature):
+            if action != robot.descriptor.action_feature:
                 raise ValueError("Remote action declaration differs from simulator declaration")
             names = robot.feature_names(cfg.rename_map)
             declared = {names[f.name]: f for f in robot.descriptor.features}
@@ -759,15 +784,14 @@ def build_remote_rollout_context(
                 actual = declared.get(feature.name)
                 if actual is None:
                     raise ValueError("Remote observation declaration missing from simulator")
-                if feature_mismatch(replace(actual, name=feature.name), feature):
+                if replace(actual, name=feature.name) != feature:
                     raise ValueError("Remote observation declaration differs from simulator declaration")
 
-        hardware = _connect_rollout_hardware(cfg, require_hold=True, simulator_admission=validate_simulator)
-        wrapper = hardware.robot_wrapper
+        wrapper, teleop = _prepare_rollout_devices(
+            cfg, require_hold=True, validate_simulator=validate_simulator
+        )
+        hardware = _connect_rollout_hardware(wrapper, teleop)
         robot = wrapper.inner
-        world = get_world(robot)
-        if world is not None:
-            task = world.task_description
 
         observation_hw: dict[str, type | tuple] = {
             key: value

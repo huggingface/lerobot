@@ -20,9 +20,12 @@ from lerobot.rollout.strategies.base import BaseStrategy
 from lerobot.rollout.strategies.core import send_next_action
 from lerobot.utils.action_interpolator import ActionInterpolator
 
+pytestmark = pytest.mark.dataset
+
 
 class PositionRobot:
     supports_position_hold = True
+    supports_command_hold = False
     action_features = {"joint.pos": float}
     robot_type = "test_position_robot"
     is_connected = True

@@ -27,8 +27,9 @@ from lerobot.configs import DatasetRecordConfig
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
-from lerobot.lerobot_types import RobotObservation
-from lerobot.robots.sim.world import get_world
+from lerobot.lerobot_types import EnvTransition, PolicyPrediction, RobotObservation
+from lerobot.processor import create_transition, transition_to_robot_action
+from lerobot.robots.sim_robot import start_episode
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
@@ -45,17 +46,9 @@ if TYPE_CHECKING:
         RolloutContext,
         RuntimeContext,
     )
+    from ..robot_wrapper import ThreadSafeRobot
 
 logger = logging.getLogger(__name__)
-
-
-def world_finished(robot) -> bool:
-    """Read terminal status from the latest serialized simulator observation."""
-    world = get_world(robot.inner)
-    if world is not None:
-        status = world.episode_status
-        return status.success or status.terminated or status.truncated
-    return False
 
 
 class RolloutStrategy(abc.ABC):
@@ -175,6 +168,19 @@ class RolloutStrategy(abc.ABC):
         if hw.robot_wrapper.supports_hold and hw.robot_wrapper.hardware_failure is None:
             hw.robot_wrapper.hold()
             self._require_engine().acknowledge_hold()
+
+    def _start_episode(self, robot: ThreadSafeRobot, timer: CycleTimer) -> None:
+        """Start a new episode with a fresh policy: no hidden state, no queued actions.
+
+        A sim robot also resets its world. Call it from the control loop.
+        """
+        engine = self._require_engine()
+        start_episode(robot.inner)
+        engine.reset()
+        self._require_interpolator().reset()
+        # As at start-up, the interpolator needs two inference ticks to refill; don't report them as slow.
+        timer.restart()
+        engine.resume()
 
     @contextlib.contextmanager
     def _pause_for_recording(
@@ -353,39 +359,20 @@ class RolloutStrategy(abc.ABC):
     @staticmethod
     def _log_telemetry(
         obs_processed: dict | None,
-        action_dict: dict | None,
+        step: EnvTransition | None,
         runtime_ctx: RuntimeContext,
     ) -> None:
-        """Log observation/action telemetry to the visualization backend if display_data is enabled."""
+        """Log the observation and the step's action and prediction if display_data is enabled."""
         cfg = runtime_ctx.cfg
         if not cfg.display_data:
             return
         log_visualization_data(
             cfg.display_mode,
             observation=obs_processed,
-            action=action_dict,
+            action=transition_to_robot_action(step) if step is not None else None,
             compress_images=cfg.display_compressed_images,
+            policy_step=step,
         )
-
-    def _reset_sim_world(self, ctx: RolloutContext) -> str | None:
-        """Start a new world, discard previous inference, and return the task followed (None on hardware).
-
-        The policy follows the world's task unless the operator chose another instruction
-        (interactive ``/subtask``), which a world reset must not overwrite.
-        """
-        robot = ctx.hardware.robot_wrapper
-        world = get_world(robot.inner)
-        if world is None:
-            return None
-        engine = self._require_engine()
-        previous_world_task = world.task_description
-        engine.pause()
-        robot.reset_world()
-        engine.reset()
-        self._require_interpolator().reset()
-        if engine.task in ("", previous_world_task):
-            engine.set_task(world.task_description)
-        return engine.task
 
     def setup(self, ctx: RolloutContext) -> None:
         """Strategy-specific initialisation (keyboard listeners, buffers, etc.).
@@ -507,7 +494,7 @@ def send_next_action(
     ctx: RolloutContext,
     interpolator: ActionInterpolator,
     timer: CycleTimer | None = None,
-) -> dict | None:
+) -> EnvTransition | None:
     """Dispatch the next action to the robot.
 
     Pulls the next action tensor from the inference engine, feeds the
@@ -527,8 +514,9 @@ def send_next_action(
     queue pull — inference runs off-thread, so its latency surfaces as starved
     ticks rather than as loop-body time.
 
-    Returns the canonical action dict for a dispatched policy action, or ``None``
-    while waiting or faulted. A supported hold command may still have been sent.
+    Returns the step as a transition: the canonical action dict for a dispatched policy
+    action, plus the policy's prediction on the tick that pulled it from the engine.
+    ``None`` while waiting or faulted. A supported hold command may still have been sent.
     """
     engine = ctx.policy.inference
     wrapper = ctx.hardware.robot_wrapper
@@ -541,6 +529,8 @@ def send_next_action(
         if wrapper.supports_hold:
             wrapper.hold()
 
+    predictions: list[PolicyPrediction] = []
+
     # The gate/hold/acknowledge order is shared with other control loops through
     # ``lerobot.inference``; this helper adds the frame, processor and cadence stats.
     interp = next_interpolated_action(
@@ -549,6 +539,7 @@ def send_next_action(
         lambda: build_dataset_frame(ctx.data.dataset_features, obs_processed, prefix=OBS_STR),
         hold=hold,
         timer=timer,
+        on_prediction=predictions.append,
     )
     if interp is None:
         return None
@@ -560,4 +551,4 @@ def send_next_action(
         processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
         if not commit_action(engine, interpolator, lambda: wrapper.send_action(processed), hold=hold):
             return None
-    return action_dict
+    return create_transition(action=action_dict, prediction=predictions[-1] if predictions else None)

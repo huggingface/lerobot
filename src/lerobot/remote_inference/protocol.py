@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Inference addressing and admission errors over the shared wire contract."""
+"""Remote inference keys and admission errors; re-exports the shared envelope types."""
 
 import math
 from typing import Any
 
-from lerobot.transport.wire.protocol import (
-    PROTOCOL_VERSION,
+from lerobot.transport.protocol.envelope import (
     Envelope,
     ErrorCode,
     MessageType,
@@ -40,6 +39,8 @@ __all__ = [
     "session_prefix",
 ]
 
+# Remote inference protocol version, used in its keys. Separate from the envelope version.
+PROTOCOL_VERSION = 1
 IDENTITY_KEYS = ("artifact_identity", "observation_id", "capture_time", "task", "task_version")
 
 

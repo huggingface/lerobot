@@ -24,7 +24,6 @@ import pytest
 
 pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
 
-import lerobot.distributed.checkpoint as dist_checkpoint
 from lerobot.scripts.lerobot_convert_dcp import (
     ConvertDcpConfig,
     _locate_pretrained_dir,
@@ -32,6 +31,7 @@ from lerobot.scripts.lerobot_convert_dcp import (
     convert_checkpoint,
 )
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
+from tests.fixtures.dummy_checkpoint_policy import DummyCheckpointConfig
 
 
 @pytest.fixture
@@ -49,12 +49,15 @@ def fake_merge(monkeypatch):
     monkeypatch.setattr(accelerate.utils, "merge_fsdp_weights", merge)
 
 
-def make_dcp_checkpoint(tmp_path: Path) -> Path:
+def make_dcp_checkpoint(tmp_path: Path, config: DummyCheckpointConfig | None = None) -> Path:
     pretrained = tmp_path / PRETRAINED_MODEL_DIR
     dcp_dir = pretrained / "pytorch_model_fsdp_0"
     dcp_dir.mkdir(parents=True)
     (dcp_dir / "__0_0.distcp").write_bytes(b"shard")
-    (pretrained / "config.json").write_text("{}")
+    if config is None:
+        (pretrained / "config.json").write_text("{}")
+    else:
+        config.save_pretrained(pretrained)
     return tmp_path
 
 
@@ -66,15 +69,24 @@ class TestConvert:
         assert _locate_pretrained_dir(pretrained) == pretrained
 
     def test_convert_keeps_dcp_by_default(self, tmp_path, fake_merge):
-        step_dir = make_dcp_checkpoint(tmp_path)
+        step_dir = make_dcp_checkpoint(tmp_path, DummyCheckpointConfig(device="cpu"))
         out = convert_checkpoint(ConvertDcpConfig(checkpoint_dir=step_dir))
         assert out.read_bytes() == b"merged"
         assert (step_dir / PRETRAINED_MODEL_DIR / "pytorch_model_fsdp_0").is_dir()
 
     def test_convert_delete_dcp(self, tmp_path, fake_merge):
-        step_dir = make_dcp_checkpoint(tmp_path)
+        step_dir = make_dcp_checkpoint(tmp_path, DummyCheckpointConfig(device="cpu"))
         convert_checkpoint(ConvertDcpConfig(checkpoint_dir=step_dir, delete_dcp=True))
         assert not (step_dir / PRETRAINED_MODEL_DIR / "pytorch_model_fsdp_0").exists()
+
+    def test_convert_names_a_peft_adapter(self, tmp_path, fake_merge):
+        pytest.importorskip("peft")
+        step_dir = make_dcp_checkpoint(tmp_path, DummyCheckpointConfig(device="cpu", use_peft=True))
+        pretrained = step_dir / PRETRAINED_MODEL_DIR
+        out = convert_checkpoint(ConvertDcpConfig(checkpoint_dir=step_dir))
+        assert out == pretrained / "adapter_model.safetensors"
+        assert out.read_bytes() == b"merged"
+        assert not (pretrained / "model.safetensors").exists()
 
     def test_missing_shards_error_names_the_format(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="checkpoint_format=dcp"):
@@ -113,11 +125,3 @@ class TestPublishGracefulDegradation:
         assert set(calls["allow_patterns"]) == {"*.safetensors", "*.json", "*.yaml", "*.md"}
         # config.json is not parseable as a policy config here -> card skipped with a warning
         assert any("model card" in m for m in caplog.messages)
-
-    def test_dcp_to_safetensors_passes_str_paths(self, tmp_path, fake_merge):
-        """accelerate 1.14's DCP helpers do string containment checks."""
-        dcp_dir = tmp_path / "pytorch_model_fsdp_0"
-        dcp_dir.mkdir()
-        out = dist_checkpoint.dcp_to_safetensors(dcp_dir, tmp_path, delete_dcp=True)
-        assert out == tmp_path / "model.safetensors"
-        assert not dcp_dir.exists()

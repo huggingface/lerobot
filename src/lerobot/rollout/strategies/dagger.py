@@ -62,6 +62,7 @@ from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine
 from lerobot.lerobot_types import RobotAction
+from lerobot.processor import robot_action_to_transition, transition_to_robot_action
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import ACTION, OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
@@ -77,7 +78,6 @@ from .core import (
     estimate_max_episode_seconds,
     safe_push_to_hub,
     send_next_action,
-    world_finished,
 )
 
 logger = logging.getLogger(__name__)
@@ -368,8 +368,6 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
-        # Correction frames carry the simulated world's task, like the autonomous frames.
-        task_str = self._reset_sim_world(ctx) or task_str
         engine.reset()
         interpolator.reset()
         events.reset()
@@ -420,8 +418,6 @@ class DAggerStrategy(RolloutStrategy):
                     phase = events.phase
                     with timer.section("observe"):
                         obs = robot.get_observation()
-                    if world_finished(robot):
-                        break
 
                     # --- CORRECTING: human teleop control ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
@@ -440,7 +436,9 @@ class DAggerStrategy(RolloutStrategy):
                             robot.send_action(robot_action_to_send)
                         last_action = robot_action_to_send
                         with timer.section("telemetry"):
-                            self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
+                            self._log_telemetry(
+                                obs_processed, robot_action_to_transition(processed_teleop), ctx.runtime
+                            )
                         if correction_tick % correction_stride == 0:
                             with timer.section("record"):
                                 obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
@@ -471,10 +469,11 @@ class DAggerStrategy(RolloutStrategy):
                         if self._handle_warmup(cfg.use_torch_compile, timer):
                             continue
 
-                        action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
-                        if action_dict is not None:
+                        step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                        if step is not None:
+                            action_dict = transition_to_robot_action(step)
                             with timer.section("telemetry"):
-                                self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                                self._log_telemetry(obs_processed, step, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
                             if interpolator.emitted_policy_action:
                                 with timer.section("record"):
@@ -561,8 +560,6 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
-        # Correction frames carry the simulated world's task, like the autonomous frames.
-        task_str = self._reset_sim_world(ctx) or task_str
         engine.reset()
         interpolator.reset()
         events.reset()
@@ -638,8 +635,6 @@ class DAggerStrategy(RolloutStrategy):
                     phase = events.phase
                     with timer.section("observe"):
                         obs = robot.get_observation()
-                    if world_finished(robot):
-                        break
 
                     # --- CORRECTING: human teleop control + recording ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
@@ -658,7 +653,9 @@ class DAggerStrategy(RolloutStrategy):
                             robot.send_action(robot_action_to_send)
                         last_action = robot_action_to_send
                         with timer.section("telemetry"):
-                            self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
+                            self._log_telemetry(
+                                obs_processed, robot_action_to_transition(processed_teleop), ctx.runtime
+                            )
 
                         if correction_tick % correction_stride == 0:
                             with timer.section("record"):
@@ -691,10 +688,11 @@ class DAggerStrategy(RolloutStrategy):
                         if self._handle_warmup(cfg.use_torch_compile, timer):
                             continue
 
-                        action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
-                        if action_dict is not None:
+                        step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                        if step is not None:
+                            action_dict = transition_to_robot_action(step)
                             with timer.section("telemetry"):
-                                self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                                self._log_telemetry(obs_processed, step, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
 
                         engine.pump_query(obs_processed)

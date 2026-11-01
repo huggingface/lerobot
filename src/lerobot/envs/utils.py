@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 import warnings
 from collections.abc import Mapping, Sequence
 from functools import singledispatch
@@ -24,22 +25,23 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 
-# Compatibility exports of the torch-free Hub loader, shared with the simulator server.
-from lerobot.sims.native.envhub import (
+# Keep these importable from here: envhub.mdx uses these helpers to test an env.py locally, and
+# parse_camera_names is part of this module's public API.
+from lerobot.sim.integrations.envhub import (
     _call_make_env as _call_make_env,
-    _download_hub_file as _download_hub_file,
-    _import_hub_module as _import_hub_module,
     _load_module_from_path as _load_module_from_path,
     _normalize_hub_result as _normalize_hub_result,
-    _parse_hub_url as _parse_hub_url,
 )
-from lerobot.sims.native.utils import parse_camera_names as parse_camera_names
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
+from lerobot.sim.integrations.utils import parse_camera_names as parse_camera_names
+from lerobot.sim.types import EnvDescriptor
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 
 from .configs import EnvConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _convert_nested_dict(d):
@@ -78,12 +80,11 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             # This is the case for human-in-the-loop RL where there is only one environment.
             if img_tensor.ndim == 3:
                 img_tensor = img_tensor.unsqueeze(0)
-            # sanity check that images are channel last
             _, h, w, c = img_tensor.shape
-            assert c < h and c < w, f"expect channel last images, but instead got {img_tensor.shape=}"
-
-            # sanity check that images are uint8
-            assert img_tensor.dtype == torch.uint8, f"expect torch.uint8, but instead {img_tensor.dtype=}"
+            if not (c < h and c < w):
+                raise ValueError(f"Expected channel-last images, got shape {tuple(img_tensor.shape)}")
+            if img_tensor.dtype != torch.uint8:
+                raise ValueError(f"Expected uint8 images, got {img_tensor.dtype}")
 
             # convert to channel first of type float32 in range [0,1]
             img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous()
@@ -138,6 +139,19 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     return return_observations
 
 
+def prepare_canonical_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+    """Convert batched sim observations to tensors; uint8 BHWC images become float BCHW in [0, 1]."""
+    result = {}
+    for name, value in observations.items():
+        tensor = torch.from_numpy(value)
+        if value.dtype == np.uint8 and value.ndim == 4:
+            tensor = tensor.permute(0, 3, 1, 2).contiguous().float() / 255
+        elif tensor.is_floating_point():
+            tensor = tensor.float()
+        result[name] = tensor
+    return result
+
+
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     # TODO(jadechoghari, imstevenpmwork): remove this hardcoding of keys and just use the nested keys as is
     # (need to also refactor preprocess_observation and externalize normalization from policies)
@@ -158,11 +172,44 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     return policy_features
 
 
+def validate_checkpoint(
+    descriptor: EnvDescriptor, config: PreTrainedConfig, rename_map: dict[str, str]
+) -> None:
+    """Raise if the checkpoint's features don't match the sim's ``descriptor``, after ``rename_map``.
+
+    Image sizes and the policy's placeholder cameras (``empty_cameras``) are not checked.
+    """
+    available = {rename_map.get(f.name, f.name): f for f in descriptor.features}
+    placeholders = {f"{OBS_IMAGES}.empty_camera_{i}" for i in range(getattr(config, "empty_cameras", 0))}
+    for name, expected in (config.input_features or {}).items():
+        if name in placeholders:
+            continue
+        if name not in available:
+            raise ValueError(f"Checkpoint feature missing from the simulator (check --rename_map): {name}")
+        actual = available[name]
+        shape: tuple[int, ...]
+        if actual.kind == "rgb":
+            compatible = len(expected.shape) == 3 and expected.shape[0] == actual.shape[2]
+            shape = (actual.shape[2], actual.shape[0], actual.shape[1])
+        else:
+            compatible = tuple(expected.shape) == actual.shape
+            shape = actual.shape
+        if not compatible:
+            raise ValueError(
+                f"Checkpoint feature shape mismatch for {name}: expected {expected.shape}, got {shape}"
+            )
+    action = (config.output_features or {}).get(ACTION)
+    if action is None:
+        raise ValueError("Checkpoint must declare the canonical action feature")
+    if tuple(action.shape) != descriptor.action_feature.shape:
+        raise ValueError("Checkpoint action dimension differs from the simulator")
+
+
 def _sub_env_has_attr(env: gym.vector.VectorEnv, attr: str) -> bool:
     try:
         env.get_attr(attr)
         return True
-    except (AttributeError, Exception):
+    except Exception:
         return False
 
 
@@ -182,7 +229,7 @@ def _close_single_env(env: Any) -> None:
     try:
         env.close()
     except Exception as exc:
-        print(f"Exception while closing env {env}: {exc}")
+        logger.warning("Failed to close env %s: %s", env, exc)
 
 
 @singledispatch

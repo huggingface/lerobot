@@ -163,7 +163,7 @@ Where the robot supports the rollout position hold, a pause refreshes the last p
 
 | Flag                                 | Description                                                                                                                                                    |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--strategy.num_episodes`            | Number of correction episodes to record (default: 10)                                                                                                          |
+| `--strategy.num_episodes`            | Number of correction episodes to record (default: `--dataset.num_episodes`)                                                                                    |
 | `--strategy.record_autonomous`       | Record autonomous frames too (default: false)                                                                                                                  |
 | `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)                                                                                                                      |
 | `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard)                                                                                                        |
@@ -182,7 +182,7 @@ lerobot-rollout \
     --robot.port=/dev/ttyACM0 \
     --teleop.type=so100_leader \
     --teleop.port=/dev/ttyACM1 \
-    --dataset.repo_id=${HF_USER}/my_eval_data \
+    --dataset.repo_id=${HF_USER}/rollout_eval_data \
     --dataset.num_episodes=20 \
     --dataset.episode_time_s=30 \
     --dataset.reset_time_s=10 \
@@ -243,6 +243,7 @@ The config declares what the engine arranges on the strategy's behalf, so nothin
 | `dataset_mode`                  | `"none"` (default) rejects `--dataset.*` flags, `"optional"` records when they are given, `"required"` makes `--dataset.repo_id` mandatory |
 | `requires_teleop`               | Makes `--teleop.type` mandatory                                                                                                            |
 | `supports_interactive`          | Allows `--interactive=true`; `run()` must then honour the restartable contract documented on `RolloutStrategy`                             |
+| `supports_sim_robot`            | Allows `--robot.type=sim`; `run()` must then start a new episode whenever one ends (see `lerobot.robots.sim_robot`)                        |
 | `requires_streaming_encoding()` | Return `True` when frames are written from inside the control loop: `--dataset.streaming_encoding` is forced on                            |
 | `extra_dataset_features()`      | Strategy-owned dataset columns (DAgger's `intervention`, for instance); every recorded frame must carry them                               |
 
@@ -268,6 +269,18 @@ For asynchronous backends, the dispatch contract is mandatory. Publish each capt
 Wrap known blocking mid-run recording work in `self._pause_for_recording(ctx)`, including ring-buffer drains and episode finalization. This invalidates asynchronous motion before the recording stall and resumes only if the run is still healthy and active. Strategies with operator-controlled phases must pass their current motion permission as `resume_allowed`. The next action must come from a fresh observation; saved work must not revive a paused, stopped or faulted run.
 
 ---
+
+## Visualizing policy predictions
+
+With `--display_data`, the viewer also shows what the policy predicts besides actions: a world
+model's imagined camera frames, a predicted subtask, bounding boxes drawn over a camera. Each policy
+decides what it predicts and turns it on through its own config, for example
+`--policy.return_predicted_video=true` for LingBot-VA. A prediction is named after what it predicts:
+Rerun shows a predicted `observation.images.top` as `prediction.images.top`, a predicted subtask as
+`prediction.subtask`, and boxes under their camera (`<camera>/prediction`); Foxglove publishes them
+on `/prediction/...` topics and `<camera topic>/prediction` image annotations. With RTC, the
+prediction refreshes once per chunk. See [Bring your own policy](./bring_your_own_policies) to return
+a prediction from a policy.
 
 ## Inference Backends
 

@@ -585,7 +585,6 @@ class VLAFlowMatching(nn.Module):
 
         # Compile model if requested
         if config.compile_model:
-            torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)  # type: ignore[method-assign]
             self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 

@@ -30,7 +30,9 @@ Usage:
         --policy pepijn223/smolvla_libero
 
 Writes <artifacts-dir>/metrics.json. The CI workflow then uploads this file
-as a GitHub Actions artifact named "<env>-metrics".
+as a GitHub Actions artifact named "<env>-metrics". When given, it also records the checkpoint
+revision, simulator image tag and tested commit. A run with --max-episode-steps is marked "smoke":
+it checks that evaluation runs, not how good the policy is.
 """
 
 from __future__ import annotations
@@ -67,17 +69,13 @@ def _extract_metrics(info: dict) -> tuple[float | None, int | None, float | None
         if key not in info:
             continue
         agg = info[key]
-        pc = agg.get("pc_success")
-        n = agg.get("n_episodes")
-        reward = agg.get("avg_sum_reward")
-        eval_s = agg.get("eval_s")
-
-        if pc is not None and not math.isnan(pc):
+        pc = _safe_float(agg.get("pc_success"))
+        if pc is not None:
             return (
-                float(pc),
-                _safe_int(n),
-                _safe_float(reward),
-                _safe_float(eval_s),
+                pc,
+                _safe_int(agg.get("n_episodes")),
+                _safe_float(agg.get("avg_sum_reward")),
+                _safe_float(agg.get("eval_s")),
             )
 
     return None, None, None, None
@@ -91,6 +89,10 @@ def main() -> int:
     parser.add_argument("--env", required=True, help="Environment name (e.g. libero)")
     parser.add_argument("--task", required=True, help="Task name (e.g. libero_spatial)")
     parser.add_argument("--policy", required=True, help="Policy hub path (e.g. pepijn223/smolvla_libero)")
+    parser.add_argument("--policy-revision", help="Checkpoint revision evaluated")
+    parser.add_argument("--sim-tag", help="Content tag of the simulator image")
+    parser.add_argument("--commit", help="LeRobot commit tested")
+    parser.add_argument("--max-episode-steps", type=int, help="Episode cap of the evaluation, if any")
     args = parser.parse_args()
 
     artifacts_dir = Path(args.artifacts_dir)
@@ -128,6 +130,12 @@ def main() -> int:
         "env": args.env,
         "task": args.task,
         "policy": args.policy,
+        "policy_revision": args.policy_revision,
+        "sim_tag": args.sim_tag,
+        "commit": args.commit,
+        "max_episode_steps": args.max_episode_steps,
+        # Capped episodes only check that evaluation runs; the success rate is not a policy score.
+        "smoke": args.max_episode_steps is not None,
         "pc_success": pc_success,
         "n_episodes": n_episodes,
         "avg_sum_reward": avg_sum_reward,
@@ -141,13 +149,7 @@ def main() -> int:
     print(f"[parse_eval_metrics] Written: {out_path}")
     print(json.dumps(metrics, indent=2))
 
-    if (
-        pc_success is None
-        or not math.isfinite(pc_success)
-        or not 0 <= pc_success <= 100
-        or n_episodes is None
-        or n_episodes <= 0
-    ):
+    if pc_success is None or not 0 <= pc_success <= 100 or n_episodes is None or n_episodes <= 0:
         print("[parse_eval_metrics] Missing or invalid success/episode metrics", file=sys.stderr)
         return 1
     return 0

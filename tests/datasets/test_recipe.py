@@ -16,6 +16,8 @@ from lerobot.datasets.recipe import (  # noqa: E402
     resolve_recipe_override,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def _minimal_message_turn(content: str = "${task}") -> MessageTurn:
     return MessageTurn(role="user", content=content, stream="high_level")

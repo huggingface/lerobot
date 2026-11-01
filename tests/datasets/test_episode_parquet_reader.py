@@ -23,6 +23,8 @@ import pyarrow.parquet as pq
 
 from lerobot.streaming.episode_parquet import EpisodeParquetReader
 
+pytestmark = pytest.mark.dataset
+
 
 def _table(episodes: list[int]) -> pa.Table:
     frame_counts: dict[int, int] = {}

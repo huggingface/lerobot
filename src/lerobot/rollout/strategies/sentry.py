@@ -24,6 +24,7 @@ from threading import Event, Lock
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.processor import transition_to_robot_action
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -36,7 +37,6 @@ from .core import (
     estimate_max_episode_seconds,
     safe_push_to_hub,
     send_next_action,
-    world_finished,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,6 @@ class SentryStrategy(RolloutStrategy):
         # Per-segment timer, never hoisted onto the instance (see ``RolloutStrategy.run``).
         timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
 
-        self._reset_sim_world(ctx)
         engine.resume()
         episode_duration_s = self._episode_duration_s
 
@@ -131,19 +130,18 @@ class SentryStrategy(RolloutStrategy):
 
                 with timer.section("observe"):
                     obs = robot.get_observation()
-                if world_finished(robot):
-                    break
                 with timer.section("process_obs"):
                     obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
                 if self._handle_warmup(cfg.use_torch_compile, timer):
                     continue
 
-                action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
-                if action_dict is not None:
+                if step is not None:
+                    action_dict = transition_to_robot_action(step)
                     with timer.section("telemetry"):
-                        self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                        self._log_telemetry(obs_processed, step, ctx.runtime)
                     # Record once per interpolation cycle so the dataset cadence
                     # matches its declared fps; interpolated ticks only send
                     # commands to the robot.

@@ -20,7 +20,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from queue import Empty
 from typing import Any
 from uuid import uuid4
@@ -47,9 +47,8 @@ from lerobot.transport import (
     ZenohConfig,
     ZenohTransport,
 )
-from lerobot.transport.wire.client import decode_reply, query_reply
-from lerobot.transport.wire.features import feature_mismatch
-from lerobot.transport.wire.protocol import validate_reply
+from lerobot.transport.protocol.client import decode_reply, query_reply
+from lerobot.transport.protocol.envelope import validate_reply
 
 from .chunk_contract import (
     RTC_MODEL_SPACE,
@@ -88,9 +87,14 @@ def parse_capabilities(value: dict[str, Any]) -> PolicyCapabilities:
 
 def _compare_feature(actual: FeatureSpec, expected: FeatureSpec) -> None:
     """Identify the first incompatible field without dumping unrelated schemas."""
-    mismatch = feature_mismatch(actual, expected)
-    if mismatch:
-        raise ProtocolError(ErrorCode.INCOMPATIBLE, mismatch)
+    for field in fields(FeatureSpec):
+        actual_value, expected_value = getattr(actual, field.name), getattr(expected, field.name)
+        if actual_value != expected_value:
+            raise ProtocolError(
+                ErrorCode.INCOMPATIBLE,
+                f"Feature {expected.name!r} field {field.name!r} differs: "
+                f"client={actual_value!r}, server={expected_value!r}",
+            )
 
 
 class RemoteClient:

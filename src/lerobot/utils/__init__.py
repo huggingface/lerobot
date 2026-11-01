@@ -20,6 +20,8 @@ to ``lerobot.common``. ``visualization_utils`` remains here but is
 intentionally NOT re-exported to avoid pulling in optional dependencies.
 """
 
+from typing import TYPE_CHECKING
+
 from .constants import (
     ACTION,
     DEFAULT_FEATURES,
@@ -38,6 +40,10 @@ from .decorators import check_if_already_connected, check_if_not_connected
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from .import_utils import is_package_available, register_third_party_plugins, require_package
 from .utils import init_logging
+
+if TYPE_CHECKING:
+    from .action_interpolator import ActionInterpolator
+    from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
 
 __all__ = [
     # Constants
@@ -74,7 +80,7 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    # Torch-backed helpers load on first use so torch-free images (simulator servers) can import utils.
+    # Import torch helpers on first use, so images without torch (simulator servers) can import utils.
     if name == "ActionInterpolator":
         from .action_interpolator import ActionInterpolator
 
@@ -83,4 +89,4 @@ def __getattr__(name: str):
         from . import device_utils
 
         return getattr(device_utils, name)
-    raise AttributeError(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

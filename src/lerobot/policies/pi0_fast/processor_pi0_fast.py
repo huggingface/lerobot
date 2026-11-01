@@ -69,8 +69,8 @@ class Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
 
         # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        state_np = state.cpu().numpy()
-        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+        state_np: np.ndarray = state.cpu().numpy()
+        discretized_states = np.asarray(np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1])) - 1
 
         full_prompts = []
         for i, task in enumerate(tasks):

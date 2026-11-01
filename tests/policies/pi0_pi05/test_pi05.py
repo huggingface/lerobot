@@ -89,8 +89,9 @@ def test_policy_instantiation():
         },
     }
 
-    # Instantiate policy
-    policy = PI05Policy(config)
+    # Instantiate policy on the GPU: initializing the 3B weights on the CPU takes over a minute
+    with torch.device("cuda"):
+        policy = PI05Policy(config)
     # Test forward pass with dummy data
     batch_size = 1
     preprocessor, postprocessor = make_pi05_pre_post_processors(config=config, dataset_stats=dataset_stats)
