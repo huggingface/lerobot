@@ -294,7 +294,8 @@ class _GatedDeltaBlock(nn.Module):
         conv_cache: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
         batch, length, _ = features.shape
-        mixed, next_cache = self.conv(self.norm_in(features), conv_cache)
+        normalized = self.norm_in(features).masked_fill(~valid.unsqueeze(-1), 0)
+        mixed, next_cache = self.conv(normalized, conv_cache)
         mixed = F.silu(mixed)
 
         def split_heads(value: Tensor) -> Tensor:
@@ -434,6 +435,10 @@ class RecurrentMemory(nn.Module):
         recent_action: Tensor,
         recent_proprio: Tensor,
         lang: Tensor | None,
+        chunk_event_valid: Tensor | None = None,
+        recent_visual_valid: Tensor | None = None,
+        recent_action_valid: Tensor | None = None,
+        recent_proprio_valid: Tensor | None = None,
     ) -> tuple[Tensor, RecurrentState]:
         """Scan every finalized chunk, then read with the recent tail.
 
@@ -444,6 +449,8 @@ class RecurrentMemory(nn.Module):
         state = self.init_state(batch, chunk_visual.device, chunk_visual.dtype)
         if chunk_visual.shape[1] > 0:
             events, valid = self._decorate_all(chunk_visual, chunk_action, chunk_proprio)
+            if chunk_event_valid is not None:
+                valid = valid & chunk_event_valid.flatten(1, 2)
             _, matrices, caches = self._scan(events, valid, state)
             count = torch.full(
                 (batch,),
@@ -452,7 +459,16 @@ class RecurrentMemory(nn.Module):
                 device=chunk_visual.device,
             )
             state = RecurrentState(matrices, caches, count)
-        tokens = self.read(state, recent_visual, recent_action, recent_proprio, lang)
+        tokens = self.read(
+            state,
+            recent_visual,
+            recent_action,
+            recent_proprio,
+            lang,
+            recent_visual_valid,
+            recent_action_valid,
+            recent_proprio_valid,
+        )
         return tokens, state
 
     def update_incremental(

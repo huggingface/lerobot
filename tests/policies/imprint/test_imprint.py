@@ -314,6 +314,55 @@ def test_joint_stage_backward_recurrent_and_full() -> None:
         _assert_grad(policy.memory.proj_chunk.weight)
 
 
+@pytest.mark.parametrize("stage", ["memory", "joint"])
+def test_padded_causal_actions_are_zero(stage: str) -> None:
+    policy = ImprintPolicy(tiny_config(training_stage=stage))
+    length = 4 if stage == "memory" else 8
+    batch = {ACTION: torch.full((1, length, 4), 10.0), "action_is_pad": torch.zeros(1, length).bool()}
+    batch["action_is_pad"][:, :4] = True
+    causal = policy._causal_from_batch(batch, 4, 1, torch.device("cpu"), torch.float32)
+    assert torch.equal(causal, torch.zeros_like(causal))
+    if stage == "joint":
+        target, causal = policy._split_joint_action(batch, 4)
+        assert torch.equal(causal, torch.zeros_like(causal))
+        assert torch.equal(target, batch[ACTION][:, 4:])
+
+
+@pytest.mark.parametrize("encoder", ["recurrent", "full_attention"])
+@pytest.mark.parametrize("history", [1, 4, 5])
+def test_padded_history_cannot_change_memory(encoder: str, history: int) -> None:
+    policy = ImprintPolicy(tiny_config(encoder=encoder, history_length=history)).eval()
+    batch = {CAM: _visual(2, history), OBS_STATE: _state(2, history), ACTION: _action(2, history)}
+    for key in (CAM, OBS_STATE, ACTION):
+        batch[f"{key}_is_pad"] = torch.zeros(2, history, dtype=torch.bool)
+        batch[f"{key}_is_pad"][:, :-1] = True
+
+    def encode() -> torch.Tensor:
+        return policy._encode_memory(
+            policy._encode_visual(batch), batch[ACTION], batch[OBS_STATE], None, batch
+        )[0]
+
+    original = encode()
+    for key in (CAM, OBS_STATE, ACTION):
+        batch[key][:, :-1] = 100
+    torch.testing.assert_close(encode(), original)
+
+
+def test_joint_loss_ignores_padded_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    policy = ImprintPolicy(tiny_config())
+    batch = {CAM: _visual(2, 4), OBS_STATE: _state(2, 4), ACTION: torch.full((2, 8, 4), 10.0)}
+    batch["action_is_pad"] = torch.zeros(2, 8, dtype=torch.bool)
+    batch["action_is_pad"][0, 5:] = True
+    batch["action_is_pad"][1, 4:] = True
+    monkeypatch.setattr(
+        "lerobot.policies.imprint.modeling_imprint.sample_noise",
+        lambda shape, device: torch.zeros(shape, device=device),
+    )
+    monkeypatch.setattr(policy.expert, "forward", lambda noisy, *args, **kwargs: torch.zeros_like(noisy))
+    loss, _ = policy(batch, reduction="none")
+    torch.testing.assert_close(loss, torch.tensor([25.0, 0.0]))
+
+
 def test_joint_without_memory_still_trains() -> None:
     torch.manual_seed(4)
     config = tiny_config(use_memory=False)

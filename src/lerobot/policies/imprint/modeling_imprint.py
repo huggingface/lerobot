@@ -334,7 +334,9 @@ class ImprintPolicy(PreTrainedPolicy):
         _check_aligned(visual, state)
         causal = self._causal_from_batch(batch, visual.shape[1], state.shape[0], state.device, state.dtype)
         obs = self._obs_token(visual[:, -1], state[:, -1])
-        memory, valid = self._encode_memory(visual, causal, state, _language(batch, self.config.lang_dim))
+        memory, valid = self._encode_memory(
+            visual, causal, state, _language(batch, self.config.lang_dim), batch
+        )
         return self._sample_actions(obs, memory, valid)
 
     @torch.no_grad()
@@ -380,7 +382,9 @@ class ImprintPolicy(PreTrainedPolicy):
         _check_aligned(visual, state)
         target, causal = self._split_joint_action(batch, visual.shape[1])
         obs = self._obs_token(visual[:, -1], state[:, -1])
-        memory, valid = self._encode_memory(visual, causal, state, _language(batch, self.config.lang_dim))
+        memory, valid = self._encode_memory(
+            visual, causal, state, _language(batch, self.config.lang_dim), batch
+        )
         time = sample_time_beta(
             target.shape[0],
             target.device,
@@ -392,7 +396,9 @@ class ImprintPolicy(PreTrainedPolicy):
         noise = sample_noise(target.shape, target.device)
         noisy = time[:, None, None] * noise + (1.0 - time[:, None, None]) * target
         velocity = self.expert(noisy, time, obs, memory, valid, use_memory=self.config.use_memory)
-        per_sample = (velocity - (noise - target)).square().flatten(1).mean(dim=-1)
+        loss = (velocity - (noise - target)).square().mean(dim=-1)
+        target_valid = _valid_steps(batch, ACTION, batch[ACTION])[:, self.config.history_length :]
+        per_sample = (loss * target_valid).mean(dim=-1)
         logs = {"loss_action": float(per_sample.mean().detach())}
         if reduction == "none":
             return per_sample, logs
@@ -413,7 +419,9 @@ class ImprintPolicy(PreTrainedPolicy):
         state = _with_time(batch[OBS_STATE], name=OBS_STATE)
         _check_aligned(visual, state)
         causal = self._causal_from_batch(batch, visual.shape[1], state.shape[0], state.device, state.dtype)
-        memory, _valid = self._encode_memory(visual, causal, state, _language(batch, self.config.lang_dim))
+        memory, _valid = self._encode_memory(
+            visual, causal, state, _language(batch, self.config.lang_dim), batch
+        )
         if memory is None:
             raise RuntimeError("Stage-1 IMPRINT requires use_memory=True.")
         steps = self._query_steps(batch, visual.shape[1], state.shape[0], state.device)
@@ -466,20 +474,53 @@ class ImprintPolicy(PreTrainedPolicy):
         return torch.cat(encoded, dim=2)
 
     def _encode_memory(
-        self, visual: Tensor, causal: Tensor, state: Tensor, lang: Tensor | None
+        self,
+        visual: Tensor,
+        causal: Tensor,
+        state: Tensor,
+        lang: Tensor | None,
+        batch: dict[str, Tensor] | None = None,
     ) -> tuple[Tensor | None, Tensor | None]:
         if not self.config.use_memory or self.memory is None:
             return None, None
+        batch = {} if batch is None else batch
+        visual_valid = torch.stack([_valid_steps(batch, key, visual) for key in self.image_keys], dim=-1)
+        visual_valid = visual_valid.repeat_interleave(self.config.tokens_per_view, dim=-1)
+        action_valid = _valid_steps(batch, ACTION, causal)
+        proprio_valid = _valid_steps(batch, OBS_STATE, state)
+        frames = self.config.chunk_frames
+        final = visual.shape[1] // frames * frames
+        grouped_valid = visual_valid[:, :final].reshape(
+            visual.shape[0], final // frames, frames, visual.shape[2]
+        )
+        chunk_valid = grouped_valid.any(dim=2)
+        recent_valid = visual_valid[:, final:].flatten(1, 2)
         chunk_v, recent_v, chunk_a, recent_a, chunk_p, recent_p = _split_history(
-            self.to_chunk(visual),
+            self.to_chunk(visual).masked_fill(~visual_valid.unsqueeze(-1), 0),
             self.to_recent(visual),
             causal,
             state,
             self.config.chunk_frames,
         )
+        # Average only real frames within each finalized visual chunk.
+        chunk_v = chunk_v * (frames / grouped_valid.sum(dim=2).clamp_min(1)).unsqueeze(-1)
         if isinstance(self.memory, RecurrentMemory):
+            step_valid = torch.stack([action_valid[:, :final], proprio_valid[:, :final]], dim=-1)
+            event_valid = torch.cat(
+                [step_valid.reshape(visual.shape[0], final // frames, 2 * frames), chunk_valid], dim=-1
+            )
             tokens, _state = self.memory.forward_sequence(
-                chunk_v, chunk_a, chunk_p, recent_v, recent_a, recent_p, lang
+                chunk_v,
+                chunk_a,
+                chunk_p,
+                recent_v,
+                recent_a,
+                recent_p,
+                lang,
+                event_valid,
+                recent_valid,
+                action_valid[:, final:],
+                proprio_valid[:, final:],
             )
         else:
             if not isinstance(self.memory, FullAttentionMemory):
@@ -490,6 +531,10 @@ class ImprintPolicy(PreTrainedPolicy):
                 _merge_steps(chunk_a, recent_a),
                 _merge_steps(chunk_p, recent_p),
                 lang,
+                chunk_valid=chunk_valid.flatten(1, 2),
+                recent_valid=recent_valid,
+                action_valid=action_valid,
+                proprio_valid=proprio_valid,
             )
         valid = torch.ones(tokens.shape[:2], dtype=torch.bool, device=tokens.device)
         return tokens, valid
@@ -581,7 +626,8 @@ class ImprintPolicy(PreTrainedPolicy):
                 f"Joint IMPRINT expects {history} observation steps, got {time_steps}. "
                 "That window is history_length, ending at the current frame."
             )
-        return action[:, history:], action[:, :history]
+        causal = action[:, :history].masked_fill(~_valid_steps(batch, ACTION, action)[:, :history, None], 0)
+        return action[:, history:], causal
 
     def _causal_from_batch(
         self,
@@ -601,11 +647,13 @@ class ImprintPolicy(PreTrainedPolicy):
                     f"(B, history_length, A) = (B, {self.config.history_length}, {self.action_dim}). "
                     f"Got {tuple(action.shape)}."
                 )
-            return action
+            return action.masked_fill(~_valid_steps(batch, ACTION, action).unsqueeze(-1), 0)
         joint_length = self.config.history_length + self.config.chunk_size
         action = _action_tensor(batch)
         if action is not None and action.ndim == 3 and action.shape[1] == joint_length:
-            return action[:, : self.config.history_length]
+            return action[:, : self.config.history_length].masked_fill(
+                ~_valid_steps(batch, ACTION, action)[:, : self.config.history_length, None], 0
+            )
         return torch.zeros(batch_size, time_steps, self.action_dim, device=device, dtype=dtype)
 
     def _query_steps(
@@ -636,6 +684,13 @@ def _check_aligned(visual: Tensor, state: Tensor) -> None:
             "Visual and state observations must share batch and time, "
             f"got visual {tuple(visual.shape[:2])} and state {tuple(state.shape[:2])}."
         )
+
+
+def _valid_steps(batch: dict[str, Tensor], key: str, reference: Tensor) -> Tensor:
+    mask = batch.get(f"{key}_is_pad")
+    if mask is None:
+        return torch.ones(reference.shape[:2], dtype=torch.bool, device=reference.device)
+    return ~mask[:, : reference.shape[1]].to(device=reference.device, dtype=torch.bool)
 
 
 def _action_tensor(batch: dict[str, Tensor]) -> Tensor | None:
