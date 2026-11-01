@@ -126,6 +126,18 @@ def test_from_pretrained_with_own_processors(
         assert post(loaded.predict_action_chunk(batch)).shape == (1, 4, 7)
         loaded.reset()
         assert post(loaded.select_action(batch)).shape == (1, 7)
+    from lerobot.scripts.lerobot_fit_gaussian_readout import fit_readout
+
+    loaded.config.gaussian_readout_path = None
+    fitted_path = tmp_path / "fitted.safetensors"
+    contexts = [{"observation.state": torch.full((8,), float(i)), "task": "pick"} for i in range(5)]
+    report = fit_readout(loaded, pre, post, contexts[:3], contexts[3:], fitted_path, draws=2, updates=2)
+    assert report["fit_contexts"] == 3 and report["tune_contexts"] == 2
+    assert report["tune_motion_mean_mse"] >= 0
+    assert report["one_step_tune_motion_mean_mse"] >= 0
+    loaded.config.gaussian_readout_path = str(fitted_path)
+    with torch.inference_mode():
+        assert post(loaded.predict_action_chunk(pre(contexts[0]))).shape == (1, 4, 7)
 
 
 @pytest.mark.parametrize("dimension", ["horizon", "padding", "features", "raw"])
@@ -381,3 +393,28 @@ def test_processor_digest_ignores_tokenizer_runtime_padding():
     backend.enable_padding(length=4)
     backend.enable_truncation(max_length=4)
     assert gar.processor_sha256(pipeline) == before
+
+
+def test_fitting_cli_rejects_overlapping_episodes(monkeypatch, tmp_path):
+    from lerobot.scripts.lerobot_fit_gaussian_readout import main
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "fit-readout",
+            "--policy",
+            "unused",
+            "--dataset",
+            "unused",
+            "--fit-episodes",
+            "1",
+            "--tune-episodes",
+            "1",
+            "--output",
+            str(tmp_path / "readout.safetensors"),
+        ],
+    )
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert not (tmp_path / "readout.safetensors").exists()
