@@ -94,50 +94,65 @@ pip install -e "."
 
 ### 3. Install RoboTwin 2.0
 
+Check out the RoboTwin commit that LeRobot's RoboTwin Docker image uses, and download its assets:
+
 ```bash
 git clone https://github.com/RoboTwin-Platform/RoboTwin.git
 cd RoboTwin
-bash script/_install.sh
+git checkout 0aeea2d669c0f8516f4d5785f0aa33ba812c14b4
 bash script/_download_assets.sh
 ```
 
-The install script handles the Python dependencies, including SAPIEN, CuRobo, mplib and pytorch3d. Its CuRobo build fails on PyTorch 2.12 and newer, and its pytorch3d build on PyTorch 2.14 and newer, so build those two with the steps below.
-
 <Tip warning={true}>
-With PyTorch 2.12 or newer, which a default install gets, the automated install fails, so install manually.
 
-Two of the packages below need a small edit to build, for different reasons. From PyTorch 2.12, CUDA sources are compiled as C++20, and CuRobo's own `lerp` then clashes with the standard one. From PyTorch 2.14, the PyTorch headers need C++20, but PyTorch3D pins C++17 for its own extension. Both edits have to happen before the build that needs them, so the steps are ordered here to do that.
+Do not run RoboTwin's `script/_install.sh`. Its requirements pin torch 2.4.1, and its CuRobo and PyTorch3D builds fail on the PyTorch that LeRobot installs. Instead, run the commands below from the `RoboTwin` folder. They install the same package versions as LeRobot's RoboTwin Docker image.
+
+</Tip>
+
+Two of the packages need a small edit to build, for different reasons. From PyTorch 2.12, CUDA sources are compiled as C++20, and CuRobo's own `lerp` then clashes with the standard one. From PyTorch 2.14, the PyTorch headers need C++20, but PyTorch3D pins C++17 for its own extension. Each edit happens before the build that needs it.
 
 ```bash
-pip install -r requirements.txt
+pip install "sapien==3.0.0b1" "mplib==0.2.1" "transforms3d==0.4.2" "trimesh==4.4.3" \
+    "open3d==0.19.0" "imageio==2.34.2" termcolor zarr pydantic h5py
 
 # PyTorch3D pins C++17 for its own extension, and that pin wins over what PyTorch asks for.
 # V0.7.8 is the release the `stable` tag points to; the edit below expects its setup.py.
+rm -rf pytorch3d
 git clone --branch V0.7.8 --depth 1 https://github.com/facebookresearch/pytorch3d.git
 sed -i 's/"-std=c++17"/"-std=c++20"/g' pytorch3d/setup.py
+grep -c '"-std=c++20"' pytorch3d/setup.py  # prints 2 when the edit landed
 # The CUDA 13 nvcc makes kernel templates private to their source file, which breaks V0.7.8's link.
 NVCC_FLAGS="-static-global-template-stub=false" pip install ./pytorch3d --no-build-isolation
 
-# The install script may have cloned an unpatched CuRobo already.
-cd envs && rm -rf curobo && git clone --branch v0.7.8 --depth 1 https://github.com/NVlabs/curobo.git && cd curobo
+rm -rf envs/curobo
+git clone --branch v0.7.8 --depth 1 https://github.com/NVlabs/curobo.git envs/curobo
 # CuRobo declares its own `lerp` for plain floats, which now clashes with the standard library
 # one. Guard only that overload; the float2, float3 and float4 ones take different argument
 # types, so they do not clash and must stay.
 python - <<'PATCH'
 import pathlib
-p = pathlib.Path("src/curobo/curobolib/cpp/helper_math.h")
+p = pathlib.Path("envs/curobo/src/curobo/curobolib/cpp/helper_math.h")
 s = p.read_text()
 d = "inline __device__ __host__ float lerp(float a, float b, float t)"
+if d not in s:
+    raise SystemExit(f"{p} has no scalar lerp to guard; check that CuRobo is at v0.7.8")
 i = s.index(d)
 j = s.index("}", i) + 1
 p.write_text(s[:i] + "#if __cplusplus < 202002L\n" + s[i:j] + "\n#endif" + s[j:])
 PATCH
-pip install -e . --no-build-isolation
+# mplib 0.2.1 crashes with numpy 2, so keep numpy below 2 when CuRobo's dependencies install.
+pip install -e envs/curobo --no-build-isolation "numpy<2"
+
+# The sapien and mplib fixes from RoboTwin's script/_install.sh.
+SAPIEN=$(pip show sapien | awk '/^Location:/{print $2}')/sapien
+sed -i -E 's/("r")(\))( as)/\1, encoding="utf-8") as/g' "$SAPIEN/wrapper/urdf_loader.py"
+grep -c 'encoding="utf-8") as' "$SAPIEN/wrapper/urdf_loader.py"  # prints 2 when the edit landed
+MPLIB=$(pip show mplib | awk '/^Location:/{print $2}')/mplib
+sed -i -E 's/(if np.linalg.norm\(delta_twist\) < 1e-4 )(or collide )(or not within_joint_limit:)/\1\3/g' "$MPLIB/planner.py"
+grep -c 'delta_twist) < 1e-4 or not within_joint_limit:' "$MPLIB/planner.py"  # prints 1 when the edit landed
 ```
 
-Then apply the required mplib fix: in `mplib/planner.py` line 807, remove `or collide` from the conditional.
-
-</Tip>
+Afterwards numpy is 1.26, below the numpy 2 that LeRobot asks for, because RoboTwin's pinned `mplib==0.2.1` crashes with numpy 2. So `pip check` reports numpy conflicts for LeRobot and `opencv-python-headless`. LeRobot's RoboTwin Docker image also runs with numpy 1.26.
 
 ### 4. Add RoboTwin to PYTHONPATH
 
