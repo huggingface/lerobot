@@ -31,7 +31,12 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
-from lerobot.inference import QueryAnswer, QueryKind, RemoteInferenceConfig, RTCInferenceConfig
+from lerobot.inference import (
+    QueryAnswer,
+    QueryKind,
+    RemoteInferenceConfig,
+    RTCInferenceConfig,
+)
 from lerobot.utils.stdin_input import StdinCommandListener
 from lerobot.utils.utils import log_say
 
