@@ -304,7 +304,7 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(sim_server, tmp_path):
         reader = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root)
         sample = reader[0]
         np.testing.assert_allclose(
-            sample["observation.state"].numpy(), [observation[n] for n in robot._state.names]
+            sample["observation.state"].numpy(), [observation[n] for n in robot._state_feature.names]
         )
         np.testing.assert_array_equal(sample["action"].numpy(), [0, 0])
         image = sample["observation.images.image"].permute(1, 2, 0).numpy()
@@ -374,7 +374,7 @@ def test_sim_robot_local_inference_engines(sim_server, tmp_path, mode):
     )
     wrapper = ThreadSafeRobot(robot)
     names = list(robot.action_features)
-    state_names = list(robot._state.names)
+    state_names = list(robot._state_feature.names)
     features = {
         "observation.state": {"dtype": "float32", "shape": (2,), "names": state_names},
         "action": {"dtype": "float32", "shape": (2,), "names": names},

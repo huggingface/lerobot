@@ -16,10 +16,11 @@
 
 import math
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.sim.types import EnvDescriptor, StepResult
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -61,17 +62,17 @@ class SimRobot(Robot):
         if state is None or not state.names:
             self._env.close()
             raise ValueError(f"A sim robot needs an {OBS_STATE} feature with component names")
-        self._state: FeatureSpec = state
-        self._camera_keys: dict[str, str] = {
+        self._state_feature: FeatureSpec = state
+        self._camera_names: dict[str, str] = {
             feature.name: feature.name.removeprefix(f"{OBS_IMAGES}.").removeprefix(f"{OBS_STR}.")
             for feature in descriptor.features
             if feature.kind == "rgb"
         }
-        # Robot cameras use dataset names (observation.images.<camera>); eval envs keep benchmark names.
+        # Name cameras like a real robot's dataset (observation.images.<camera>), whatever the env calls them.
         self.descriptor: EnvDescriptor = replace(
             descriptor,
             features=tuple(
-                replace(feature, name=f"{OBS_IMAGES}.{self._camera_keys[feature.name]}")
+                replace(feature, name=f"{OBS_IMAGES}.{self._camera_names[feature.name]}")
                 if feature.kind == "rgb"
                 else feature
                 for feature in descriptor.features
@@ -81,18 +82,23 @@ class SimRobot(Robot):
     @property
     def cameras(self) -> dict[str, str]:
         """Map each camera name to its observation feature, keyed like a real robot's cameras."""
-        return {camera: f"{OBS_IMAGES}.{camera}" for camera in self._camera_keys.values()}
+        return {camera: f"{OBS_IMAGES}.{camera}" for camera in self._camera_names.values()}
+
+    @property
+    def _state_ft(self) -> dict[str, type]:
+        return dict.fromkeys(self._state_feature.names, float)
+
+    @property
+    def _cameras_ft(self) -> dict[str, tuple[int, ...]]:
+        return {
+            f.name.removeprefix(f"{OBS_IMAGES}."): f.shape
+            for f in self.descriptor.features
+            if f.kind == "rgb"
+        }
 
     @property
     def observation_features(self) -> dict[str, type | tuple[int, ...]]:
-        return {
-            **dict.fromkeys(self._state.names, float),
-            **{
-                f.name.removeprefix(f"{OBS_IMAGES}."): f.shape
-                for f in self.descriptor.features
-                if f.kind == "rgb"
-            },
-        }
+        return {**self._state_ft, **self._cameras_ft}
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -123,18 +129,18 @@ class SimRobot(Robot):
         self._connected = True
 
     @check_if_not_connected
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         result = self._env.latest
-        return {
-            **{
-                key: float(value)
-                for key, value in zip(self._state.names, result.obs[self._state.name][0], strict=True)
-            },
-            **{camera: result.obs[name][0] for name, camera in self._camera_keys.items()},
+        state = result.obs[self._state_feature.name][0]
+        obs_dict: RobotObservation = {
+            name: float(value) for name, value in zip(self._state_feature.names, state, strict=True)
         }
+        for feature_name, cam_key in self._camera_names.items():
+            obs_dict[cam_key] = result.obs[feature_name][0]
+        return obs_dict
 
     @check_if_not_connected
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         names = self.descriptor.action_feature.names
         if set(action) != set(names):
             raise ValueError(
