@@ -22,7 +22,7 @@ services:
         - CMD
         - python
         - -c
-        - "import yaml; from lerobot.env_server.client import EnvClient; d=yaml.safe_load(open('/config/sim.yaml')); c=EnvClient('tcp/127.0.0.1:7448', d.get('deployment', 'default'), handshake_timeout_s=5); c.describe(); c.close()"
+        - "import yaml; from lerobot.env_server.client import EnvClient; d=yaml.safe_load(open('/config/sim.yaml')); c=EnvClient('tcp/127.0.0.1:7448', d['deployment'], handshake_timeout_s=5); c.describe(); c.close()"
       interval: 5s
       timeout: 10s
       start_period: ${SIM_START_PERIOD:-60s}
