@@ -26,7 +26,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "env_fns"]
+__all__ = ["canonical_observation", "conventions", "env_fns", "make_envs"]
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +183,20 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
         "Hub `make_env` must return either a mapping {suite: {task_id: vec_env}}, "
         "a gym.vector.VectorEnv, or a single gym.Env."
     )
+
+
+def make_envs(
+    hub_path: str,
+    n_envs: int,
+    use_async_envs: bool,
+    trust_remote_code: bool = False,
+    hub_cache_dir: str | None = None,
+    cfg: Any | None = None,
+    **options: Any,
+) -> dict[str, dict[int, gym.vector.VectorEnv]]:
+    """Return the envs of a Hub repo's `make_env`, called with `options` and, if given, `cfg`."""
+    _, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
+    return _normalize_hub_result(_call_make_env(module, n_envs, use_async_envs, cfg, **options))
 
 
 def _env_factories(vec: Any, n_envs: int) -> list[Callable[[], Any]]:

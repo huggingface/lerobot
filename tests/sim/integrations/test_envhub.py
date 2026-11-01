@@ -245,36 +245,47 @@ def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it() -> None:
     assert env.closed
 
 
-def test_envhub_native_batch_preserves_provider_and_options(monkeypatch) -> None:
-    import gymnasium as gym
-    import pytest
+_NATIVE_BATCH_ENV = """
+import builtins
 
-    from lerobot.envs import EnvClientConfig, HubEnvConfig, factory
+import gymnasium as gym
 
-    calls = []
+builtins.envhub_imports += 1
 
-    class Provider:
-        @staticmethod
-        def make_env(n_envs, use_async_envs, bonus):
-            calls.append((n_envs, use_async_envs, bonus))
-            return gym.wrappers.vector.TransformReward(
-                gym.vector.SyncVectorEnv([lambda: gym.make("CartPole-v1")] * n_envs),
-                lambda reward: reward + bonus,
-            )
 
-    monkeypatch.setattr(factory, "_download_hub_file", lambda *args: ("user/repo", "env.py", "unused", None))
-    monkeypatch.setattr(factory, "_import_hub_module", lambda *args: Provider)
+def make_env(n_envs, use_async_envs, bonus):
+    env = gym.wrappers.vector.TransformReward(
+        gym.vector.SyncVectorEnv([lambda: gym.make("CartPole-v1")] * n_envs), lambda reward: reward + bonus
+    )
+    env.made_with = (n_envs, use_async_envs, bonus)
+    return env
+"""
+
+
+def test_envhub_native_batch_preserves_provider_and_options(tmp_path, monkeypatch) -> None:
+    import builtins
+
+    from lerobot.envs import EnvClientConfig, HubEnvConfig
+    from lerobot.sim.integrations import envhub
+
+    env_file = tmp_path / "env.py"
+    env_file.write_text(_NATIVE_BATCH_ENV)
+    monkeypatch.setattr(builtins, "envhub_imports", 0, raising=False)
+    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
     config = HubEnvConfig(
         hub_path="user/repo", trust_remote_code=True, use_native_batch=True, make_env_kwargs={"bonus": 50}
     )
-    env = next(iter(config.create_envs(2).values()))[0]
-    try:
-        env.reset(seed=2)
-        assert env.step(np.zeros(2, dtype=np.int64))[1].tolist() == [51, 51]
-        assert calls == [(2, False, 50)]
-        assert not hasattr(env, "descriptor")
-    finally:
-        env.close()
+    for _ in range(2):
+        env = next(iter(config.create_envs(2).values()))[0]
+        try:
+            env.reset(seed=2)
+            assert env.step(np.zeros(2, dtype=np.int64))[1].tolist() == [51, 51]
+            assert env.made_with == (2, False, 50)
+            assert not hasattr(env, "descriptor")
+        finally:
+            env.close()
+    # Like the shared path, the native batch imports the repo's env.py once per process.
+    assert builtins.envhub_imports == 1
     config.server = EnvClientConfig("tcp/127.0.0.1:7448")
     with pytest.raises(ValueError, match="env server"):
         config.create_envs(1)

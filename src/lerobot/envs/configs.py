@@ -29,6 +29,7 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.sim.config import SimConfig
+from lerobot.sim.integrations import envhub
 from lerobot.sim.types import EnvDescriptor
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -263,9 +264,17 @@ class HubEnvConfig(EnvConfig):
             raise ValueError("use_native_batch runs locally; it cannot use an env server")
         if not self.hub_path:
             raise ValueError("--env.hub_path is required for an EnvHub environment")
-        from .factory import make_hub_envs
-
-        return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
+        # Provider configs (Isaac Lab Arena, Unitree G1) subclass this one and also pass themselves as `cfg`,
+        # since their options are config fields.
+        provider = None if type(self) is HubEnvConfig else self
+        return envhub.make_envs(
+            self.hub_path,
+            n_envs,
+            use_async_envs,
+            self.trust_remote_code,
+            cfg=provider,
+            **self.make_env_kwargs,
+        )
 
     def sim_settings(self) -> dict[str, Any]:
         if self.use_native_batch:
