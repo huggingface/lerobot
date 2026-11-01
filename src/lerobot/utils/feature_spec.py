@@ -35,27 +35,30 @@ class FeatureSpec:
         """Convert `shape` and `names` to tuples and reject invalid metadata."""
         object.__setattr__(self, "shape", tuple(self.shape))
         object.__setattr__(self, "names", tuple(self.names))
-        if (
-            not isinstance(self.name, str)
-            or not self.name.strip()
-            or not isinstance(self.semantics, str)
-            or not self.semantics.strip()
-        ):
-            raise ValueError("Feature names and explicit semantic conventions are required.")
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("Feature names must be nonempty strings.")
+        prefix = f"Feature {self.name!r}"
+        if not isinstance(self.semantics, str) or not self.semantics.strip():
+            raise ValueError(f"{prefix}: an explicit semantic convention is required.")
         if self.kind not in {"tensor", "rgb"}:
-            raise ValueError(f"Unsupported feature modality: {self.kind!r}")
+            raise ValueError(f"{prefix}: unsupported modality {self.kind!r}.")
         if len(self.shape) > 4 or any(type(dim) is not int or dim <= 0 for dim in self.shape):
-            raise ValueError(f"Invalid feature shape: {self.shape!r}")
+            raise ValueError(f"{prefix}: invalid shape {self.shape!r}.")
         if self.dtype not in {"bool", "uint8", "int32", "int64", "float32", "float64"}:
-            raise ValueError(f"Unsupported feature dtype: {self.dtype!r}")
+            raise ValueError(f"{prefix}: unsupported dtype {self.dtype!r}.")
         if self.kind == "rgb" and (len(self.shape) != 3 or self.shape[-1] != 3 or self.dtype != "uint8"):
-            raise ValueError("RGB features require HWC uint8 with three channels.")
+            raise ValueError(
+                f"{prefix}: RGB features need HWC uint8 with three channels, got {self.shape}, {self.dtype}."
+            )
         if self.names and (len(self.shape) != 1 or len(self.names) != self.shape[0]):
-            raise ValueError("Ordered component names must match a one-dimensional feature.")
+            raise ValueError(
+                f"{prefix}: ordered component names must match a one-dimensional feature, "
+                f"got {len(self.names)} names for shape {self.shape}."
+            )
         if any(not isinstance(name, str) or not name.strip() for name in self.names):
-            raise ValueError("Feature component names must be nonempty strings.")
+            raise ValueError(f"{prefix}: component names must be nonempty strings.")
         if len(set(self.names)) != len(self.names):
-            raise ValueError("Feature component names must be unique.")
+            raise ValueError(f"{prefix}: component names must be unique.")
 
 
 def validate_array(value: Any, feature: FeatureSpec, *, leading_shape: tuple[int, ...] = ()) -> None:
