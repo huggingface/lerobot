@@ -28,7 +28,6 @@ def test_hardware_gate_rejects_without_approval(monkeypatch):
 
 def test_hardware_gate_dispatches_through_checked_wrapper(monkeypatch):
     monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
-    monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
     robot = FakeRobotWrapper()
     action = {"joint": 1}
 
