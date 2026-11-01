@@ -36,7 +36,7 @@ def test_vae_dependency_errors(failure):
         original_import = builtins.__import__
 
         def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == "natten":
+            if name == "natten" or name.startswith("natten."):
                 if failure == "missing":
                     raise AssertionError("Missing NATTEN should not be imported")
                 raise ImportError("incompatible NATTEN wheel")

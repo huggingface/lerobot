@@ -27,6 +27,8 @@ pip install 'natten==0.21.7+torch2130cu130' --find-links https://whl.natten.org
 
 For an NVIDIA driver older than 580.65, use the CUDA 12.6 build instead: the `cu126` index, the `+cu126` torch and torchvision tags, and `natten==0.21.7+torch2130cu126`. For another torch version, use the NATTEN wheel whose tag matches it, such as `natten==0.21.6+torch2110cu130` for torch 2.11 with CUDA 13.0.
 
+NATTEN picks the fastest backend that your GPU and wheel support, and `NATTEN_LOG_LEVEL=DEBUG` logs its choice, except in a VAE compiled with `--policy.compile_model=true`. To choose a backend yourself, set `F3_NATTEN_BACKEND` to `blackwell-fna`, `hopper-fna` or `cutlass-fna`. `flex-fna` runs everywhere but is much slower and needs far more memory: a full-size chunk can run out of GPU memory, and with `--policy.compile_model=true` it can fail to compile.
+
 ## SO-101 task adaptation
 
 Use a LeRobot v3 dataset at **30 Hz**, with six absolute commanded-action channels and six measured-state
