@@ -114,7 +114,7 @@ RUN uv pip install "metaworld==3.0.0" "mujoco==3.15.0"
 
 # ---------------------------------------------------------------------------- EnvHub
 # Any EnvHub repository (user/repo[@revision][:env.py]), from the `envhub` build context that
-# `lerobot-env-server --docker --envhub` downloads on the host. Each layer is rebuilt only when the files it
+# `lerobot-env-server --envhub=... --docker=true` downloads on the host. Each layer is rebuilt only when the files it
 # copies change: apt packages (packages.txt, as in Hugging Face Spaces), Python requirements (resolved across
 # indexes as pip does), then the rest of the repository.
 FROM base AS envhub_native
@@ -355,4 +355,4 @@ pytorch3d, trimesh; warp.torch; from curobo.types.math import Pose" ;; \
 ENV SIM_WORKDIR=${SIM_WORKDIR:-/lerobot}
 WORKDIR ${SIM_WORKDIR}
 # Inside its container the server listens on all interfaces; Docker decides what reaches it.
-CMD ["sh", "-c", "exec lerobot-env-server --config /lerobot/docker/sim/configs/${SIM}.yaml --listen tcp/0.0.0.0:7448"]
+CMD ["sh", "-c", "exec lerobot-env-server --config_path=/lerobot/docker/sim/configs/${SIM}.yaml '--zenoh.listen_endpoints=[tcp/0.0.0.0:7448]'"]

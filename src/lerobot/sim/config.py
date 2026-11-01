@@ -59,3 +59,21 @@ class SimConfig:
             conventions = getattr(integration, "conventions", None)
             declared = conventions(settings.get("kwargs") or {}) if conventions else {}
         return cls(**{**declared, **{key: value for key, value in settings.items() if value is not None}})
+
+
+@dataclass
+class SimSettings:
+    """A simulator's settings as a config file gives them; `SimConfig.resolve` fills in the unset (`None`) ones.
+
+    They come from the integration's conventions, so a file only names the simulator, its task and its options.
+    """
+
+    type: str = ""
+    task: str = ""
+    fps: float | None = None
+    control_mode: str | None = None
+    semantics: str | None = None
+    kwargs: dict[str, Any] = field(default_factory=dict)
+    state_names: list[str] | None = None
+    action_names: list[str] | None = None
+    robot_type: str | None = None

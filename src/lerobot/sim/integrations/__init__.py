@@ -49,6 +49,6 @@ def simulator_required(sim_type: str) -> Iterator[None]:
         )
         raise ModuleNotFoundError(
             f"The {sim_type} simulator is not installed ('{error.name}' is missing): {install}, "
-            "or serve it from its Docker image with lerobot-env-server --docker",
+            "or serve it from its Docker image with lerobot-env-server --docker=true",
             name=error.name,
         ) from error

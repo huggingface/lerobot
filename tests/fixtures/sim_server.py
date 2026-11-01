@@ -26,6 +26,7 @@ def sim_server():
     pytest.importorskip("zenoh")
     pytest.importorskip("msgpack")
     from lerobot.env_server.server import EnvServer, EnvServerConfig
+    from lerobot.sim.config import SimSettings
     from lerobot.transport.zenoh import ZenohConfig
     from tests.fixtures.toy_env import ToyEnvConfig
 
@@ -35,7 +36,7 @@ def sim_server():
     endpoint = f"tcp/127.0.0.1:{port}"
     server = EnvServer(
         EnvServerConfig(
-            sim=ToyEnvConfig().sim_config(),
+            sim=SimSettings(**ToyEnvConfig().sim_settings()),
             # Served env configs address the deployment named after their --env.type.
             deployment="toy",
             zenoh=ZenohConfig(listen_endpoints=[endpoint]),

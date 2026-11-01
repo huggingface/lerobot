@@ -18,18 +18,24 @@ import contextlib
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from queue import Empty
 from threading import Event
 from typing import Any, cast
 
 import numpy as np
 
-from lerobot.sim.config import SimConfig
+from lerobot.sim.config import SimConfig, SimSettings
 from lerobot.sim.types import EnvDescriptor
 from lerobot.sim.vector_env import LocalVectorEnv
 from lerobot.transport.protocol.codec import CodecLimits, RGBImage, decode_message, encode_message
-from lerobot.transport.protocol.envelope import Envelope, ErrorCode, MessageType, ProtocolError
+from lerobot.transport.protocol.envelope import (
+    Envelope,
+    ErrorCode,
+    MessageType,
+    ProtocolError,
+    validate_segment,
+)
 from lerobot.transport.zenoh import (
     BoundedSubscriber,
     PendingQuery,
@@ -82,10 +88,11 @@ class EnvServerConfig:
     """Simulator to serve, resource limits and Zenoh endpoints.
 
     Args:
-        sim (`SimConfig`):
-            The simulator to serve.
-        deployment (`str`):
-            Name clients find this server under, e.g. `libero`.
+        sim (`SimSettings`, *optional*):
+            The simulator to serve. Settings left unset come from its integration's conventions when the server
+            starts. `sim.type` is required.
+        deployment (`str`, *optional*, defaults to `""`):
+            Name clients find this server under, e.g. `libero`. Required.
         zenoh (`ZenohConfig`, *optional*):
             Network settings. Listens on `tcp/127.0.0.1:7448` by default.
         max_envs (`int`, *optional*, defaults to `32`):
@@ -98,8 +105,8 @@ class EnvServerConfig:
             How long a new session waits for its client to announce itself before it is closed.
     """
 
-    sim: SimConfig
-    deployment: str
+    sim: SimSettings = field(default_factory=SimSettings)
+    deployment: str = ""
     zenoh: ZenohConfig = field(default_factory=lambda: ZenohConfig(listen_endpoints=["tcp/127.0.0.1:7448"]))
     max_envs: int = 32
     max_sessions: int = 1
@@ -107,9 +114,14 @@ class EnvServerConfig:
     initial_presence_timeout_s: float = 10
 
     def __post_init__(self):
-        """Check the resource limits."""
+        """Reject a missing simulator or deployment, bad resource limits and bad endpoints."""
+        if not self.sim.type or not self.deployment:
+            raise ValueError("sim.type and deployment are required")
+        validate_segment(self.deployment, "deployment")
         if self.max_envs < 1 or self.max_sessions < 1:
             raise ValueError("Server resource bounds must be positive")
+        # Checked here so a bad endpoint fails at parse time, before the simulator builds.
+        self.zenoh.validate()
 
 
 class _Session:
@@ -219,6 +231,8 @@ class EnvServer:
         self.sessions: dict[str, _Session] = {}
         # Built at startup to read the descriptor, then reused by the first session asking for the same batch.
         self._startup_env: LocalVectorEnv | None = None
+        # The simulator's full config, with its integration's conventions filled in at startup.
+        self.sim: SimConfig
         self.descriptor: EnvDescriptor
         self.ready = Event()
         self._stop = Event()
@@ -228,7 +242,8 @@ class EnvServer:
         try:
             # Open the transport first, so a port already in use fails before the slow simulator build.
             self.transport.open()
-            self._startup_env = LocalVectorEnv(self.config.sim)
+            self.sim = SimConfig.resolve(asdict(self.config.sim))
+            self._startup_env = LocalVectorEnv(self.sim)
             self.descriptor = self._startup_env.descriptor
             root = deployment_prefix(self.config.deployment)
             instance = instance_prefix(self.config.deployment, self.instance_id)
@@ -246,8 +261,8 @@ class EnvServer:
             zenoh = self.config.zenoh
             logger.info(
                 "Serving %s task %r as deployment %r on %s",
-                self.config.sim.type,
-                self.config.sim.task,
+                self.sim.type,
+                self.sim.task,
                 self.config.deployment,
                 ", ".join(zenoh.listen_endpoints or zenoh.connect_endpoints),
             )
@@ -385,7 +400,7 @@ class EnvServer:
             if asked == (env.num_envs, env.task_group, env.task_id, env.use_async_envs):
                 return env
             env.close()
-        return LocalVectorEnv(self.config.sim, num_envs, task_group, task_id, use_async_envs)
+        return LocalVectorEnv(self.sim, num_envs, task_group, task_id, use_async_envs)
 
     def _reap_sessions(self) -> None:
         """Close sessions whose client left or never showed up."""

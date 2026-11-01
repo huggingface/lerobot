@@ -286,7 +286,7 @@ The hub URL format supports several patterns:
 By default, EnvHub environments run inside the evaluation process: `make_env` downloads the repository's `env.py`, and its dependencies are installed next to LeRobot. To keep an environment's dependencies away from your policy's, serve it with the [simulator server](./simulation) instead. One command builds an image with the repository and its `requirements.txt`, and starts the server:
 
 ```bash
-lerobot-env-server --docker --envhub=username/my-env@<commit>
+lerobot-env-server --envhub=username/my-env@<commit> --docker=true
 ```
 
 Besides `requirements.txt` (installed with pip's rules, so `--extra-index-url` lines work), the image installs the apt packages listed in an optional `packages.txt`, one per line, as in Hugging Face Spaces.
@@ -302,7 +302,7 @@ lerobot-eval --policy.path=<checkpoint> \
 
 Without `--env.server.endpoint`, the same command runs the environment locally (with `--trust_remote_code=true`); a sim robot takes the same options under `--robot.env.*`.
 
-The server reads the control rate, action convention and component names from the repository's [`LEROBOT_SIM`](#optional-files), and uses the defaults for anything it does not declare. Override a value with `--set`, which wins over the repository, e.g. `--set sim.fps=15`.
+The server reads the control rate, action convention and component names from the repository's [`LEROBOT_SIM`](#optional-files), and uses the defaults for anything it does not declare. Override a value on the command line, which wins over the repository, e.g. `--sim.fps=15`.
 
 To be served, an environment must follow these conventions:
 
@@ -315,7 +315,7 @@ To be served, an environment must follow these conventions:
 
 For examples, see the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments-6ad0f5bf3fac8dbe626c17dc): [`lerobot/so101-tabletop-mujoco`](https://huggingface.co/lerobot/so101-tabletop-mujoco) (MuJoCo) and [`lerobot/so101-tabletop-isaac`](https://huggingface.co/lerobot/so101-tabletop-isaac) (Isaac Sim, installed through `requirements.txt` and `packages.txt`) serve the same SO-101 scene with the same observations, actions and `LEROBOT_SIM`.
 
-The repository is downloaded on your machine with your Hugging Face login (`HF_TOKEN` or `hf auth login`), so private repositories work too, and the image build never sees a token. `--envhub` also takes a local directory holding `env.py`, to serve an environment before pushing it: `lerobot-env-server --docker --envhub=./my-env`. `--build` rebuilds only what changed: the apt packages when `packages.txt` changes, the requirements when `requirements.txt` changes, and otherwise just the repository's files. Test a new environment locally first (see [Step 2: Test Locally](#step-2-test-locally)).
+The repository is downloaded on your machine with your Hugging Face login (`HF_TOKEN` or `hf auth login`), so private repositories work too, and the image build never sees a token. `--envhub` also takes a local directory holding `env.py`, to serve an environment before pushing it: `lerobot-env-server --envhub=./my-env --docker=true`. `--build=true` rebuilds only what changed: the apt packages when `packages.txt` changes, the requirements when `requirements.txt` changes, and otherwise just the repository's files. Test a new environment locally first (see [Step 2: Test Locally](#step-2-test-locally)).
 
 ## Multi-Task Environments
 

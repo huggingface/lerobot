@@ -56,7 +56,12 @@ def check(config_path: Path, steps: int = 5):
         server_config.write_text(yaml.safe_dump(config))
         with (Path(directory) / "server.log").open("w+") as log:
             server = subprocess.Popen(
-                [sys.executable, "-m", "lerobot.scripts.lerobot_env_server", "--config", str(server_config)],
+                [
+                    sys.executable,
+                    "-m",
+                    "lerobot.scripts.lerobot_env_server",
+                    f"--config_path={server_config}",
+                ],
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
