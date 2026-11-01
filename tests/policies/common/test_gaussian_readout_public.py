@@ -1,0 +1,128 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Public inference, artifact and fitting contracts on CPU."""
+
+from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import torch
+from torch import nn
+
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.policies.common import gaussian_readout as gar
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+from tests.policies.common.test_gaussian_readout import tiny_flow
+
+
+@pytest.fixture
+def readout() -> gar.GaussianReadout:
+    return gar.GaussianReadout(
+        8,
+        chunk_size=4,
+        motion_dim=6,
+        gripper_index=6,
+        max_action_dim=8,
+        action_dim=7,
+        open_normalized=-1,
+        close_normalized=1,
+        action_mean=torch.zeros(7),
+        action_std=torch.ones(7),
+    )
+
+
+def test_public_helpers_accept_policy_or_core(tmp_path: Path, readout: gar.GaussianReadout) -> None:
+    core = nn.Module()
+    core.action_out_proj = nn.Linear(8, 8)
+    core.config = SimpleNamespace(chunk_size=4, max_action_dim=8)
+    policy = nn.Module()
+    policy.model = core
+    gar.bind_processor_sha256(policy, "processors")
+    assert core._gar_processor_sha256 == "processors"
+    assert gar.state_dict_sha256(policy) == gar.state_dict_sha256(core)
+    path = tmp_path / "readout.safetensors"
+    gar.save_readout(
+        readout, path, teacher_sha256=gar.state_dict_sha256(policy), processor_sha256="processors"
+    )
+    assert isinstance(gar.load_gaussian_readout(path, policy, "processors"), gar.GaussianReadout)
+
+
+def test_from_pretrained_with_own_processors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, readout: gar.GaussianReadout
+) -> None:
+    core, _ = tiny_flow.__wrapped__(SimpleNamespace(param="pi05"), monkeypatch)
+
+    def make_core(config, **kwargs):
+        model = deepcopy(core)
+        model.config = config
+        return model
+
+    class TinyPolicy(PI05Policy):
+        use_native_pretrained_loader = True
+        model_class = staticmethod(make_core)
+
+        def _preprocess_images(self, batch):
+            return [], []
+
+    class Tokenizer:
+        def get_vocab(self):
+            return {"tiny": 0}
+
+        def save_pretrained(self, path):
+            Path(path).mkdir(parents=True, exist_ok=True)
+            (Path(path) / "tokenizer_config.json").write_text("{}")
+
+        def __call__(self, text, **kwargs):
+            return {
+                "input_ids": torch.zeros(len(text), 2, dtype=torch.long),
+                "attention_mask": torch.ones(len(text), 2, dtype=torch.long),
+            }
+
+    monkeypatch.setattr(
+        "lerobot.processor.tokenizer_processor.AutoTokenizer.from_pretrained",
+        lambda *args, **kwargs: Tokenizer(),
+    )
+    config = core.config
+    config.input_features = {"observation.state": PolicyFeature(FeatureType.STATE, (8,))}
+    config.output_features = {"action": PolicyFeature(FeatureType.ACTION, (7,))}
+    config.normalization_mapping = {"STATE": NormalizationMode.MEAN_STD, "ACTION": NormalizationMode.MEAN_STD}
+    config.use_relative_actions = False
+    config.text_tokenizer_name = "tiny-local-tokenizer"
+    policy = TinyPolicy(config)
+    policy.save_pretrained(tmp_path)
+    stats = {
+        key: {"mean": torch.zeros(dim), "std": torch.ones(dim)}
+        for key, dim in (("observation.state", 8), ("action", 7))
+    }
+    pre, post = make_pre_post_processors(policy.config, dataset_stats=stats)
+    pre.save_pretrained(tmp_path)
+    post.save_pretrained(tmp_path)
+    path = tmp_path / "readout.safetensors"
+    gar.save_readout(
+        readout,
+        path,
+        teacher_sha256=gar.state_dict_sha256(policy),
+        processor_sha256=policy.config._gar_processor_sha256,
+    )
+    loaded = TinyPolicy.from_pretrained(tmp_path, local_files_only=True)
+    loaded.config.gaussian_readout_path = str(path)
+    pre, post = make_pre_post_processors(loaded.config, pretrained_path=tmp_path)
+    batch = pre({"observation.state": torch.zeros(8), "task": "pick"})
+    with torch.inference_mode():
+        assert post(loaded.predict_action_chunk(batch)).shape == (1, 4, 7)
+        loaded.reset()
+        assert post(loaded.select_action(batch)).shape == (1, 7)

@@ -25,6 +25,7 @@ time 1 and uses velocity ``noise - actions``, so the raw single-step action is
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import weakref
 from pathlib import Path
@@ -83,6 +84,7 @@ def _tensor_bytes(tensor: Tensor) -> bytes:
 
 def state_dict_sha256(module: nn.Module) -> str:
     """Hash a module state dict in key order, including raw dtype bytes."""
+    module = _flow_model(module)
     digest = hashlib.sha256()
     state = module.state_dict()
     for key in sorted(state):
@@ -96,7 +98,49 @@ def state_dict_sha256(module: nn.Module) -> str:
 
 def bind_processor_sha256(model: Any, digest: str) -> None:
     """Record the live processor hash the next readout load must match."""
+    model = _flow_model(model)
     model._gar_processor_sha256 = digest
+
+
+def _flow_model(model: Any) -> Any:
+    """Accept a public policy wrapper or its flow core."""
+    if not hasattr(model, "action_out_proj") and hasattr(model, "model"):
+        return model.model
+    return model
+
+
+def processor_sha256(*pipelines: Any) -> str:
+    """Hash ordered processor steps, their configuration and statistics.
+
+    Device placement is excluded so moving the same processors between CPU and GPU
+    does not change their identity. Rebuild the pair after changing processor contents.
+    """
+    digest = hashlib.sha256()
+    for index, pipeline in enumerate(pipelines):
+        digest.update(str(index).encode())
+        for step in pipeline.steps:
+            digest.update(f"{type(step).__module__}.{type(step).__name__}".encode())
+            config = dict(step.get_config())
+            config.pop("device", None)
+            tokenizer = getattr(step, "input_tokenizer", None)
+            if tokenizer is not None:
+                config.pop("tokenizer_name", None)
+                backend = getattr(tokenizer, "backend_tokenizer", None)
+                config["tokenizer"] = backend.to_str() if backend is not None else tokenizer.get_vocab()
+                config["special_tokens"] = getattr(tokenizer, "special_tokens_map", {})
+            digest.update(json.dumps(config, sort_keys=True, default=str).encode())
+            for name, tensor in sorted(step.state_dict().items()):
+                digest.update(name.encode())
+                digest.update(str((tuple(tensor.shape), tensor.dtype)).encode())
+                digest.update(_tensor_bytes(tensor))
+    return digest.hexdigest()
+
+
+def bind_policy_processors(config: Any, pipelines: tuple[Any, Any]) -> tuple[Any, Any]:
+    """Bind the factory's real processor pair to the shared policy/core config."""
+    if getattr(config, "type", None) in {"pi0", "pi05", "smolvla", "fineart_vla"}:
+        config._gar_processor_sha256 = processor_sha256(*pipelines)
+    return pipelines
 
 
 def flow_raw_action(epsilon: Tensor, velocity: Tensor) -> Tensor:
@@ -434,6 +478,7 @@ def _require_meta(metadata: dict[str, str], key: str) -> str:
 
 def load_gaussian_readout(path: str | Path, teacher: Any, processor_sha256: str) -> GaussianReadout:
     """Load a readout and reject a hash, shape, mask, or probe that does not match this teacher."""
+    teacher = _flow_model(teacher)
     with safe_open(str(path), framework="pt", device="cpu") as handle:
         metadata = handle.metadata() or {}
         tensors = {}
@@ -542,6 +587,7 @@ def encode_prefix(
     state_masks: Tensor | None = None,
 ) -> tuple[Tensor, Any]:
     """Prefix prefill copied from the Euler sampler, including its eager attention flag."""
+    model = _flow_model(model)
     policy_type = getattr(model.config, "type", "pi05")
     if policy_type == "smolvla":
         prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(
@@ -588,6 +634,7 @@ def encode_prefix(
 
 def project_velocity(model: Any, features: Tensor) -> Tensor:
     """Apply ``action_out_proj`` in FP32 without writing the teacher weights."""
+    model = _flow_model(model)
     projection = model.action_out_proj
     bias = None if projection.bias is None else projection.bias.detach().float()
     return F.linear(features.float(), projection.weight.detach().float(), bias)
@@ -604,6 +651,7 @@ def evaluate_time_one_features(
     epsilon: Tensor,
 ) -> tuple[Tensor, Tensor]:
     """One suffix evaluation at time 1. Returns features and the raw single-step action."""
+    model = _flow_model(model)
     prefix_pad_masks, past_key_values = encode_prefix(
         model, images, img_masks, tokens, masks, states, state_masks
     )
@@ -647,7 +695,9 @@ def _teacher_cache_token(
 
 
 def _cached_readout(model: Any, path: str) -> GaussianReadout:
-    processor_sha256 = getattr(model, "_gar_processor_sha256", None)
+    processor_sha256 = getattr(model.config, "_gar_processor_sha256", None) or getattr(
+        model, "_gar_processor_sha256", None
+    )
     if not isinstance(processor_sha256, str) or not processor_sha256:
         raise ValueError("Gaussian readout requires a bound processor hash")
     token = _teacher_cache_token(model)
@@ -683,6 +733,7 @@ def sample_gaussian_actions(
     **kwargs: Any,
 ) -> Tensor:
     """Sample one action chunk from the readout. Rejects modes the Euler sampler still accepts."""
+    model = _flow_model(model)
     _reject_unsupported(model, noise, num_steps, kwargs)
     path = model.config.gaussian_readout_path
     if not isinstance(path, str) or not path.strip():

@@ -46,6 +46,7 @@ from lerobot.utils.constants import (
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
+from .common.gaussian_readout import bind_policy_processors
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -204,9 +205,9 @@ def make_pre_post_processors(
             postprocessor_config_filename=postprocessor_config_filename,
         )
         if custom_processors is not None:
-            return custom_processors
+            return bind_policy_processors(policy_cfg, custom_processors)
 
-        return load_pretrained_policy_processors(
+        pipelines = load_pretrained_policy_processors(
             pretrained_path,
             revision=pretrained_revision,
             preprocessor_overrides=kwargs.get("preprocessor_overrides"),
@@ -214,14 +215,16 @@ def make_pre_post_processors(
             preprocessor_config_filename=preprocessor_config_filename,
             postprocessor_config_filename=postprocessor_config_filename,
         )
+        return bind_policy_processors(policy_cfg, pipelines)
 
     # Create new processors from the policy config, resolving the per-policy factory
     # function by naming convention (lazy import keeps optional dependencies optional).
-    return _make_processors_from_policy_config(
+    pipelines = _make_processors_from_policy_config(
         config=policy_cfg,
         dataset_stats=kwargs.get("dataset_stats"),
         dataset_meta=kwargs.get("dataset_meta"),
     )
+    return bind_policy_processors(policy_cfg, pipelines)
 
 
 def has_peft_adapter_config(
