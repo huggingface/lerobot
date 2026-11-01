@@ -17,10 +17,13 @@
 import logging
 import time
 from functools import cached_property
+from os import environ
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.motors_bus import SerialMotorsBus
+from .so101_safe_bus import SO101SafeSerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -66,7 +69,16 @@ class SOFollower(Robot):
         self.config = config
         # choose normalization mode depending on config if available
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = SerialMotorsBus(
+        if config.type == "so101_follower":
+            bus_class = SO101SafeSerialMotorsBus
+        elif config.type == "so100_follower":
+            bus_class = SerialMotorsBus
+        else:
+            raise ValueError(
+                f"Unsupported SO follower type: {config.type}"
+            )
+
+        self.bus = bus_class(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
@@ -109,23 +121,48 @@ class SOFollower(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """
-        We assume that at connection time, arm is in a rest position,
-        and torque can be safely disabled to run calibration.
-        """
+        """Connect the bus and cameras transactionally."""
+        attempted_cameras = []
 
-        self.bus.connect()
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+        try:
+            self.bus.connect()
 
-        for cam in self.cameras.values():
-            cam.connect()
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor "
+                    "and the calibration file or no calibration file found"
+                )
+                self.calibrate()
 
-        self.configure()
-        logger.info(f"{self} connected.")
+            for cam in self.cameras.values():
+                # Include the camera before connect(): connect itself may
+                # partially acquire resources before raising.
+                attempted_cameras.append(cam)
+                cam.connect()
+
+            self.configure()
+            logger.info(f"{self} connected.")
+
+        except Exception as original_error:
+            for cam in reversed(attempted_cameras):
+                try:
+                    cam.disconnect()
+                except Exception as cleanup_error:
+                    original_error.add_note(
+                        f"Camera rollback failed: {cleanup_error!r}"
+                    )
+
+            try:
+                if self.bus.is_connected:
+                    self.bus.disconnect(
+                        self.config.disable_torque_on_disconnect
+                    )
+            except Exception as cleanup_error:
+                original_error.add_note(
+                    f"Motor bus rollback failed: {cleanup_error!r}"
+                )
+
+            raise
 
     @property
     def is_calibrated(self) -> bool:
@@ -143,18 +180,18 @@ class SOFollower(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
-        with self.bus.torque_disabled():
-            self.bus.configure_motors()
-            for motor in self.bus.motors:
-                self.bus.set_operating_mode("position", motor)
-                self.bus.write("P_Coefficient", motor, self.config.position_p_coefficient)
-                self.bus.write("I_Coefficient", motor, self.config.position_i_coefficient)
-                self.bus.write("D_Coefficient", motor, self.config.position_d_coefficient)
+        self.bus.disable_torque()
+        self.bus.configure_motors()
+        for motor in self.bus.motors:
+            self.bus.set_operating_mode("position", motor)
+            self.bus.write("P_Coefficient", motor, self.config.position_p_coefficient)
+            self.bus.write("I_Coefficient", motor, self.config.position_i_coefficient)
+            self.bus.write("D_Coefficient", motor, self.config.position_d_coefficient)
 
-                if motor == "gripper":
-                    self.bus.write("Max_Torque_Limit", motor, 500)  # 50% of max torque to avoid burnout
-                    self.bus.write("Protection_Current", motor, 250)  # 50% of max current to avoid burnout
-                    self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
+            if motor == "gripper":
+                self.bus.write("Max_Torque_Limit", motor, 500)  # 50% of max torque to avoid burnout
+                self.bus.write("Protection_Current", motor, 250)  # 50% of max current to avoid burnout
+                self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
 
     def setup_motors(self) -> None:
         self.bus.setup_motors()
@@ -199,6 +236,12 @@ class SOFollower(Robot):
             RobotAction: the action sent to the motors, potentially clipped.
         """
 
+        # SO101_DRIVER_ACTION_GATE_B36
+        if environ.get("SO101_HARDWARE_APPROVED") != "1":
+            raise RuntimeError(
+                "SO101 safety gate: hardware dispatch disabled"
+            )
+
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
@@ -212,13 +255,38 @@ class SOFollower(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    @check_if_not_connected
     def disconnect(self):
-        self.bus.disconnect(self.config.disable_torque_on_disconnect)
-        for cam in self.cameras.values():
-            cam.disconnect()
+        """Attempt cleanup of every connected camera and the motor bus."""
+        errors = []
 
-        logger.info(f"{self} disconnected.")
+        for cam in reversed(list(self.cameras.values())):
+            try:
+                if (
+                    getattr(cam, "is_connected", False)
+                    or getattr(cam, "thread", None) is not None
+                ):
+                    cam.disconnect()
+            except Exception as exc:
+                errors.append(("camera", exc))
+
+        try:
+            if self.bus.is_connected:
+                self.bus.disconnect(
+                    self.config.disable_torque_on_disconnect
+                )
+        except Exception as exc:
+            errors.append(("motor bus", exc))
+
+        if errors:
+            first_name, first_error = errors[0]
+
+            for name, error in errors[1:]:
+                first_error.add_note(
+                    f"{name} disconnect also failed: {error!r}"
+                )
+
+            raise first_error
+
 
 
 SO100Follower = SOFollower

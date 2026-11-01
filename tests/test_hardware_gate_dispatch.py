@@ -17,7 +17,7 @@ class FakeRobotWrapper:
 
 
 def test_hardware_gate_rejects_without_approval(monkeypatch):
-    monkeypatch.delenv("S0101_HARDWARE_APPROVED", raising=False)
+    monkeypatch.delenv("SO101_HARDWARE_APPROVED", raising=False)
     robot = FakeRobotWrapper()
 
     with pytest.raises(RuntimeError, match="hardware dispatch disabled"):
@@ -28,7 +28,7 @@ def test_hardware_gate_rejects_without_approval(monkeypatch):
 
 def test_hardware_gate_dispatches_through_checked_wrapper(monkeypatch):
     monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
-    monkeypatch.setenv("S0101_HARDWARE_APPROVED", "1")
+    monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
     robot = FakeRobotWrapper()
     action = {"joint": 1}
 
@@ -79,32 +79,10 @@ def test_episodic_action_dispatch_uses_hardware_gate():
 
 
 
-# SOFOLLOWER_SEND_ACTION_REGRESSION_TESTS
 
-def test_real_sofollower_interface_fallback_requires_approval(monkeypatch):
+
+def test_real_sofollower_without_checked_dispatch_is_rejected(monkeypatch):
     monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
-
-    class FakeSOFollower:
-        def __init__(self):
-            self.actions = []
-
-        def send_action(self, action):
-            self.actions.append(action)
-            return {"sent": action}
-
-    robot = FakeSOFollower()
-    action = {"joint": 1}
-
-    result = send_action_checked_with_approval(robot, action)
-
-    assert result == {"sent": action}
-    assert robot.actions == [action]
-
-
-def test_real_sofollower_interface_fallback_rejects_without_approval(
-    monkeypatch,
-):
-    monkeypatch.delenv("SO101_HARDWARE_APPROVED", raising=False)
 
     class FakeSOFollower:
         def __init__(self):
@@ -117,8 +95,12 @@ def test_real_sofollower_interface_fallback_rejects_without_approval(
     robot = FakeSOFollower()
 
     with pytest.raises(
-        RuntimeError, match="hardware dispatch disabled"
+        RuntimeError,
+        match="checked action dispatch unavailable",
     ):
-        send_action_checked_with_approval(robot, {"joint": 1})
+        send_action_checked_with_approval(
+            robot,
+            {"joint": 1},
+        )
 
     assert robot.actions == []

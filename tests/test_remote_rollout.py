@@ -185,12 +185,18 @@ def test_command_failure_is_latched_and_does_not_treat_interrupt_as_io_failure(m
     with pytest.raises(OSError):
         wrapper.send_action({"joint.pos": 1.0})
     failure = wrapper.hardware_failure
-    monkeypatch.setattr(wrapper.inner, "send_action", original_send)
-    wrapper.send_action({"joint.pos": 1.0})
-    assert wrapper.hardware_failure == failure
-    monkeypatch.setattr(wrapper.inner, "send_action", Mock(side_effect=OSError("later write failed")))
-    with pytest.raises(OSError):
+    # A latched hardware fault must reject every subsequent action.
+    monkeypatch.setattr(wrapper.inner, "send_action", Mock())
+    with pytest.raises(RuntimeError, match="Hardware failure latched"):
         wrapper.send_action({"joint.pos": 1.0})
+    wrapper.inner.send_action.assert_not_called()
+    assert wrapper.hardware_failure == failure
+
+    # Later commands must not overwrite the first recorded fault.
+    monkeypatch.setattr(wrapper.inner, "send_action", Mock(side_effect=OSError("later write failed")))
+    with pytest.raises(RuntimeError, match="Hardware failure latched"):
+        wrapper.send_action({"joint.pos": 1.0})
+    wrapper.inner.send_action.assert_not_called()
     assert wrapper.hardware_failure == failure
 
 
