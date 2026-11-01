@@ -22,7 +22,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class FeatureSpec:
-    """Schema of one named value: shape, dtype, kind (``tensor`` or ``rgb``), component names, semantics."""
+    """Schema of one named value: shape, dtype, kind (`tensor` or `rgb`), component names, semantics."""
 
     name: str
     shape: tuple[int, ...]
@@ -32,7 +32,7 @@ class FeatureSpec:
     semantics: str = ""
 
     def __post_init__(self) -> None:
-        """Convert ``shape`` and ``names`` to tuples and reject invalid metadata."""
+        """Convert `shape` and `names` to tuples and reject invalid metadata."""
         object.__setattr__(self, "shape", tuple(self.shape))
         object.__setattr__(self, "names", tuple(self.names))
         if (
@@ -59,9 +59,15 @@ class FeatureSpec:
 
 
 def validate_array(value: Any, feature: FeatureSpec, *, leading_shape: tuple[int, ...] = ()) -> None:
-    """Check ``value`` against ``feature``, allowing extra leading dims such as batch or horizon."""
+    """Raise `ValueError` unless `value` is an array with `feature`'s shape and dtype and finite values.
+
+    `leading_shape` adds dims in front, such as the batch.
+    """
     shape = (*leading_shape, *feature.shape)
     if not isinstance(value, np.ndarray) or value.shape != shape or value.dtype.name != feature.dtype:
-        raise ValueError(f"Feature {feature.name!r} shape/dtype mismatch: expected {shape}, {feature.dtype}")
+        got = f"{value.shape}, {value.dtype}" if isinstance(value, np.ndarray) else type(value).__name__
+        raise ValueError(
+            f"Feature {feature.name!r} shape/dtype mismatch: expected {shape}, {feature.dtype}; got {got}"
+        )
     if value.dtype.kind == "f" and not np.isfinite(value).all():
         raise ValueError(f"Non-finite feature values: {feature.name}")

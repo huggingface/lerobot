@@ -20,7 +20,7 @@ to ``lerobot.common``. ``visualization_utils`` remains here but is
 intentionally NOT re-exported to avoid pulling in optional dependencies.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .constants import (
     ACTION,
@@ -79,8 +79,8 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
-    # Import torch helpers on first use, so images without torch (simulator servers) can import utils.
+def __getattr__(name: str) -> Any:
+    # Import torch helpers on first use, so the env server image, which has no torch, can import utils.
     if name == "ActionInterpolator":
         from .action_interpolator import ActionInterpolator
 

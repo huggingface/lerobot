@@ -33,7 +33,7 @@ from gymnasium.vector.utils import CloudpickleWrapper, batch_space
 from lerobot.sim.config import SimConfig
 from lerobot.sim.integrations import simulator_required
 from lerobot.sim.types import EnvDescriptor, StepResult
-from lerobot.utils.feature_spec import FeatureSpec
+from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
 logger = logging.getLogger(__name__)
 
@@ -364,9 +364,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         if not self._last:
             raise RuntimeError("Reset before stepping")
         actions = np.asarray(actions, dtype=np.float32)
-        expected = (self.num_envs, *self.descriptor.action_feature.shape)
-        if actions.shape != expected or not np.isfinite(actions).all():
-            raise ValueError(f"Expected finite floating-point actions of shape {expected}")
+        validate_array(actions, self.descriptor.action_feature, leading_shape=(self.num_envs,))
         running = []
         for i, last in enumerate(self._last):
             if last[2] or last[3]:

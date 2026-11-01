@@ -87,7 +87,7 @@ def _checked_actions(value: Any, env: LocalVectorEnv) -> np.ndarray:
     try:
         validate_array(value, env.descriptor.action_feature, leading_shape=(env.num_envs,))
     except ValueError as exc:
-        raise ProtocolError(ErrorCode.INCOMPATIBLE, "Action shape, dtype or values invalid") from exc
+        raise ProtocolError(ErrorCode.INCOMPATIBLE, f"Invalid actions: {exc}") from exc
     return cast(np.ndarray, value)
 
 

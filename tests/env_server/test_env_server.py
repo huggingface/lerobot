@@ -123,7 +123,7 @@ def test_malformed_actions_and_seeds_are_rejected_without_failing_the_simulator(
     client = EnvClient(sim_server[1])
     try:
         client.open(1)
-        with pytest.raises(ProtocolError) as error:
+        with pytest.raises(ProtocolError, match=r"got \(1, 3\), float32") as error:
             client.request("step", actions=np.zeros((1, 3), np.float32))
         assert error.value.code == ErrorCode.INCOMPATIBLE
         # The client stops after any error; the session on the server still steps.
