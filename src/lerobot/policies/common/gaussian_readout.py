@@ -900,7 +900,8 @@ def _cached_readout(model: Any, path: str) -> GaussianReadout:
     ):
         return cache[2]
     model._gar_cache = None
-    readout = load_gaussian_readout(path, model, processor_sha256)
+    with torch.inference_mode(False):
+        readout = load_gaussian_readout(path, model, processor_sha256).to(model.action_out_proj.weight.device)
     model._gar_cache = (path, processor_sha256, readout, token, artifact, _module_cache_token(readout))
     return readout
 
@@ -926,8 +927,6 @@ def sample_gaussian_actions(
     if not isinstance(path, str) or not path.strip():
         raise ValueError("gaussian_readout_path must be a file path when the readout sampler is selected")
     readout = _cached_readout(model, path)
-    device = tokens.device
-    readout = readout.to(device)
     features, raw = evaluate_time_one_features(
         model, images, img_masks, tokens, masks, states, state_masks, readout.epsilon_star
     )

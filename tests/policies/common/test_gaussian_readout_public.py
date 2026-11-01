@@ -418,3 +418,29 @@ def test_fitting_cli_rejects_overlapping_episodes(monkeypatch, tmp_path):
         main()
     assert error.value.code == 2
     assert not (tmp_path / "readout.safetensors").exists()
+
+
+def test_cache_records_head_after_device_placement(monkeypatch, tmp_path, readout):
+    from tests.policies.common.test_gaussian_readout import _call_euler, _ReadoutFake
+
+    path = str(tmp_path / "placed.safetensors")
+    model = _ReadoutFake(path)
+    gar.bind_processor_sha256(model, "processors")
+    gar.save_readout(
+        readout, path, teacher_sha256=gar.state_dict_sha256(model), processor_sha256="processors"
+    )
+    placements = []
+    original_to = gar.GaussianReadout.to
+
+    def place(head, *args, **kwargs):
+        # Model the tensor identity change caused by moving a cold CPU head to a GPU.
+        head.affine_weight = nn.Parameter(head.affine_weight.detach().clone())
+        placements.append(head)
+        return original_to(head, *args, **kwargs)
+
+    monkeypatch.setattr(gar.GaussianReadout, "to", place)
+    _call_euler(model)
+    cached = model._gar_cache[2]
+    _call_euler(model)
+    assert model._gar_cache[2] is cached
+    assert placements == [cached]
