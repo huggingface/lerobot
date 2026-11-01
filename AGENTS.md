@@ -36,6 +36,8 @@ pre-commit run --all-files                           # Lint + format (ruff, typo
 - **`datasets/`** — `LeRobotDataset` (episode-aware sampling + video decoding) and `LeRobotDatasetMetadata`.
 - **`envs/`** — `EnvConfig` base in `configs.py`, factory in `factory.py`. Each env subclass defines `gym_kwargs` and `create_envs()`.
 - **`robots/`, `motors/`, `cameras/`, `teleoperators/`** — Hardware abstraction layers.
+- **`utils/`** — Low-level helpers (constants, import flags, device, hub). Importing `lerobot.utils` pulls in only base dependencies and no other lerobot package. Import from its modules, not from the package (`from lerobot.utils.constants import ACTION`).
+- **`common/`** — Code that bridges packages (checkpointing, robot control, Trackio logging). May import other lerobot packages and optional extras. Import from its modules, not from the package (`from lerobot.common.train_utils import save_checkpoint`).
 - **`types.py`** and **`configs/types.py`** — Core type aliases and feature type definitions.
 
 ## Repository Structure (outside `src/`)
@@ -51,7 +53,8 @@ pre-commit run --all-files                           # Lint + format (ruff, typo
 ## Notes
 
 - **Mypy**: one ruleset (`[tool.mypy]` in `pyproject.toml`) checks the paths in its `files` setting, except `lerobot.rl`, the vendored `molmoact2_hf_model` and the generated `*_pb2` modules. Run it with `pre-commit run mypy --all-files`. Add type annotations when modifying code.
-- **Imports**: prefer top-level imports; relative (`from .sibling import X`) across sibling files within a module, absolute (`from lerobot.module import X`) across modules.
+- **Package `__init__.py`**: each top-level package's `__init__.py` imports every symbol other packages use and lists it in `__all__`. A symbol deliberately left out gets a comment there naming the module to import it from.
+- **Imports**: prefer module-level imports. Within a package, use relative imports (`from .sibling import X`). Across packages, import from the package (`from lerobot.policies import PreTrainedPolicy`), never from its files or subpackages. Exceptions: `tests/`, `lerobot.utils` and `lerobot.common` (see above), and symbols left out of a package's `__init__.py` (import them from the module its comment names).
 - **Optional dependencies**: many policies, envs, and robots are behind extras (e.g., `lerobot[aloha]`, see `pyproject.toml`). Guard optional imports with `TYPE_CHECKING or _foo_available` at module top + a `require_package(...)` check at use time. Reuse the `_foo_available` flags in `utils/import_utils.py`; don't call `is_package_available`.
 - **Video decoding**: datasets can store observations as video files. `LeRobotDataset` handles frame extraction, but tests need ffmpeg installed.
 - **Prioritize use of `uv run`** to execute Python commands (not raw `python` or `pip`).
