@@ -29,6 +29,8 @@ from tests.inference.rtc_helpers import make_engine
 from tests.remote_inference.helpers import ControlledClient
 from tests.utils import wait_for
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.fixture(params=["local_rtc", "blended"])
 def backend(request: pytest.FixtureRequest) -> Iterator[SimpleNamespace]:

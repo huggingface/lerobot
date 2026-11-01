@@ -145,6 +145,7 @@ class TestStrategy(RolloutStrategy):
         del sys.modules[name]
 
 
+@pytest.mark.dataset
 def test_wrap_and_create_strategy_with_plugin(strategy_plugin_dir: Path):
     from lerobot.rollout import RolloutStrategyConfig, create_strategy
 

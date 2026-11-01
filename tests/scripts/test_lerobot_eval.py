@@ -28,6 +28,8 @@ from lerobot.scripts.lerobot_eval import rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.policies.flux3.helpers import task_config
 
+pytestmark = pytest.mark.dataset
+
 
 class _TwoStepEnv(gym.Env):
     """Seed selects an episode with distinct images and measured robot positions."""

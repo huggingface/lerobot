@@ -25,6 +25,8 @@ pytest.importorskip("msgpack")
 from tests.remote_inference.helpers import capture
 from tests.utils import wait_for
 
+pytestmark = pytest.mark.dataset
+
 
 def test_inflight_retarget_holds_and_resumes_only_from_fresh_capture(session):
     engine, client = session

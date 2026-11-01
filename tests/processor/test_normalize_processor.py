@@ -1981,6 +1981,7 @@ def test_pipeline_from_pretrained_with_stats_overrides():
         assert isinstance(override_result[ACTION], torch.Tensor)
 
 
+@pytest.mark.gpu
 def test_dtype_adaptation_device_processor_bfloat16_normalizer_float32():
     """Test policy pipeline scenario: DeviceProcessor(bfloat16) + NormalizerProcessor(float32) → bfloat16 output"""
     from lerobot.processor import DeviceProcessorStep

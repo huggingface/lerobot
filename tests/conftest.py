@@ -15,10 +15,14 @@
 # limitations under the License.
 
 import functools
+import re
 import traceback
+from collections.abc import Iterator
+from pathlib import Path
 
 import draccus.wrappers.docstring as _draccus_docstring
 import pytest
+import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.utils.import_utils import is_package_available
@@ -45,6 +49,74 @@ if is_package_available("datasets"):
         "tests.fixtures.files",
         "tests.fixtures.hub",
     ]
+
+
+@pytest.fixture
+def restore_torch_backend_flags() -> Iterator[None]:
+    """Restore training's global backend settings without monkeypatching dynamic attributes."""
+    benchmark = torch.backends.cudnn.benchmark
+    deterministic = torch.backends.cudnn.deterministic
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        yield
+    finally:
+        torch.backends.cudnn.benchmark = benchmark
+        torch.backends.cudnn.deterministic = deterministic
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32
+
+
+# Marks selecting the tests of each Fast Tests tier (`-m dataset`, see .github/workflows/fast_tests.yml);
+# every other test is marked `base`. Marks only select tests: skipping when an extra is missing is still
+# done by `pytest.importorskip` and friends.
+TIER_MARKS = ("dataset", "hardware", "viz")
+
+
+# The GPU Tests job (`-m gpu`, see .github/workflows/full_tests.yml) only runs tests marked `gpu`. The mark is added
+# to policy tests, `require_cuda` tests and tests skipped without CUDA; other tests that use CUDA mark themselves.
+# An unmarked test that skips for lack of CUDA fails instead, so it cannot silently miss the GPU job.
+POLICY_TESTS = Path(__file__).parent / "policies"
+NEEDS_GPU_REASON = re.compile(r"cuda|gpu|accelerator", re.IGNORECASE)
+
+
+def _needs_gpu(item) -> bool:
+    if item.path.is_relative_to(POLICY_TESTS) or getattr(
+        getattr(item, "function", None), "requires_cuda", False
+    ):
+        return True
+    return any(NEEDS_GPU_REASON.search(mark.kwargs.get("reason", "")) for mark in item.iter_markers("skipif"))
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "base: Fast Tests base tier (added to tests without a tier mark)")
+    for mark in TIER_MARKS:
+        config.addinivalue_line("markers", f"{mark}: Fast Tests tier that installs the `{mark}` extra")
+    config.addinivalue_line(
+        "markers", "gpu: run by the GPU Tests job (added to policy tests and `require_cuda` tests)"
+    )
+
+
+@pytest.hookimpl(tryfirst=True)  # before `-m` deselects by mark
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if not any(mark.name in TIER_MARKS for mark in item.iter_markers()):
+            item.add_marker(pytest.mark.base)
+        if _needs_gpu(item):
+            item.add_marker(pytest.mark.gpu)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.skipped and isinstance(report.longrepr, tuple) and item.get_closest_marker("gpu") is None:
+        reason = report.longrepr[2]
+        if NEEDS_GPU_REASON.search(reason):
+            report.outcome = "failed"
+            report.longrepr = (
+                f"{item.nodeid} skips without CUDA ({reason}) but is not marked `gpu`: add `@pytest.mark.gpu`"
+            )
 
 
 def pytest_collection_finish():

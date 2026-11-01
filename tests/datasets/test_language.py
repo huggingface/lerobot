@@ -27,6 +27,8 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset  # noqa: 
 from lerobot.datasets.utils import DEFAULT_DATA_PATH  # noqa: E402
 from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 
+pytestmark = pytest.mark.dataset
+
 
 def test_language_arrow_schema_has_expected_fields():
     persistent_row_type = language_persistent_arrow_type().value_type

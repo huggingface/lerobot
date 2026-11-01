@@ -95,6 +95,7 @@ def require_cuda(func):
             pytest.skip("requires cuda")
         return func(*args, **kwargs)
 
+    wrapper.requires_cuda = True  # read by tests/conftest.py to mark the test `gpu`
     return wrapper
 
 

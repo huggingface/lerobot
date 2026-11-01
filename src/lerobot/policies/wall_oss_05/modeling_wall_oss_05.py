@@ -943,13 +943,14 @@ class WallOSS05Policy(PreTrainedPolicy):
         return loss, metrics
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
-        del kwargs
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+        """`noise` is the optional starting sample, shape `(batch_size, chunk_size, max_action_dim)`."""
         inputs = self._pretokenized_inputs(batch)
         output = self.model.generate_flow_action(
             action_horizon=self.config.chunk_size,
             action_dim=self.config.max_action_dim,
             num_inference_timesteps=self.config.num_inference_timesteps,
+            noise=noise,
             **inputs,
         )
         return output["predict_action"]
@@ -983,8 +984,8 @@ class WallOSS05Policy(PreTrainedPolicy):
         return require_single_text_output(outputs, policy_name="Wall-OSS-0.5")
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         if not self._queues[ACTION]:
-            chunk = self.predict_action_chunk(batch, **kwargs)
+            chunk = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(chunk[:, : self.config.n_action_steps].transpose(0, 1))
         return self._queues[ACTION].popleft()

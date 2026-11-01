@@ -30,6 +30,7 @@ from types import MappingProxyType
 import numpy as np
 import torch
 
+from lerobot.lerobot_types import PolicyPrediction
 from lerobot.policies import (
     ChunkPolicySpec as ChunkPolicySpec,
     ExecutionMode as ExecutionMode,
@@ -135,3 +136,4 @@ class ActionChunk:
     provenance: ActionProvenance
     execution_steps: int
     server_durations: dict[str, float] = field(default_factory=dict)
+    prediction: PolicyPrediction | None = None

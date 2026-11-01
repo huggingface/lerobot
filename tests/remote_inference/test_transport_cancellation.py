@@ -43,6 +43,8 @@ from tests.remote_inference.helpers import admit
 from tests.remote_inference.network_helpers import ACTION_NAMES
 from tests.utils import wait_for
 
+pytestmark = pytest.mark.dataset
+
 
 def test_cancelled_matching_query_is_not_published(transports):
     server, client = transports

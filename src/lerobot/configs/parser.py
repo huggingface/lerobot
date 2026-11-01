@@ -26,6 +26,7 @@ from types import ModuleType
 from typing import Any, TypeVar, cast
 
 import draccus
+import torch
 import yaml
 from draccus.help_formatter import SimpleHelpFormatter
 from draccus.utils import DecodingError
@@ -48,6 +49,27 @@ _config_path_args: dict[str, str] = {}
 
 # Storage for non-path YAML overrides so validate() can pass them to from_pretrained.
 _config_yaml_overrides: dict[str, list[str]] = {}
+
+
+# Register draccus encode/decode functions for the torch.dtype values held by dtype fields.
+@draccus.decode.register(torch.dtype)
+def _decode_dtype(value: Any, path: Sequence[str] = ()) -> torch.dtype:
+    """Resolve a dtype name coming from config.json or the command line.
+
+    Args:
+        value: The raw serialized value, e.g. "bfloat16".
+        path: The field breadcrumb draccus prefixes onto error messages, e.g. ("policy", "dtype").
+    """
+    dtype = getattr(torch, str(value).removeprefix("torch."), None)
+    if not isinstance(dtype, torch.dtype):
+        raise ValueError(f"Invalid dtype {value!r}: expected a torch dtype name.")
+    return dtype
+
+
+@draccus.encode.register(torch.dtype)
+def _encode_dtype(value: torch.dtype, declared_type: type | None = None) -> str:
+    """Serialize a dtype to its bare name, e.g. torch.bfloat16 -> "bfloat16"."""
+    return str(value).removeprefix("torch.")
 
 
 def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:

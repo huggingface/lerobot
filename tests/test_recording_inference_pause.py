@@ -16,6 +16,15 @@ from lerobot.utils.action_interpolator import ActionInterpolator
 from tests.inference.test_aligned_execution import initial, result, runtime, sample
 from tests.test_rollout import _make_loop_ctx, _make_sentry
 
+pytestmark = pytest.mark.dataset
+
+
+@pytest.fixture(autouse=True)
+def _authorize_mock_recording_dispatch(monkeypatch):
+    """Authorize mocked dispatch only within this test module."""
+    monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
+
+
 
 def setup_strategy(*, sync=False):
     ctx, dataset = _make_loop_ctx(fps=200, multiplier=2, num_ticks=8)

@@ -64,7 +64,7 @@ test-act-ete-train:
 		--save_freq=2 \
 		--save_checkpoint=true \
 		--log_freq=1 \
-		--wandb.enable=false \
+		--trackio.enable=false \
 		--output_dir=tests/outputs/act/
 
 test-act-ete-train-resume:
@@ -102,7 +102,7 @@ test-diffusion-ete-train:
 		--save_checkpoint=true \
 		--save_freq=2 \
 		--log_freq=1 \
-		--wandb.enable=false \
+		--trackio.enable=false \
 		--output_dir=tests/outputs/diffusion/
 
 test-diffusion-ete-eval:
@@ -132,7 +132,7 @@ test-tdmpc-ete-train:
 		--save_checkpoint=true \
 		--save_freq=2 \
 		--log_freq=1 \
-		--wandb.enable=false \
+		--trackio.enable=false \
 		--output_dir=tests/outputs/tdmpc/
 
 test-tdmpc-ete-eval:
@@ -167,7 +167,7 @@ test-smolvla-ete-train:
 		--save_freq=2 \
 		--save_checkpoint=true \
 		--log_freq=1 \
-		--wandb.enable=false \
+		--trackio.enable=false \
 		--output_dir=tests/outputs/smolvla/
 
 test-smolvla-ete-eval:
