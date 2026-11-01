@@ -36,7 +36,7 @@ LeRobot provides the two released sizes as two policy types:
 | Parameters (trained by default) | 16.5B (7.0B)                                                        | 4.6B (1.4B)                                                         |
 | Backbone                        | MoT initialized from Qwen3-VL, 36 layers, hidden size 4096          | MoT with a dense 2B transformer, 28 layers, hidden size 2048        |
 | Tokenizer                       | [nvidia/Cosmos3-Nano](https://huggingface.co/nvidia/Cosmos3-Nano)   | [nvidia/Cosmos3-Edge](https://huggingface.co/nvidia/Cosmos3-Edge)   |
-| Base checkpoint                 | [lerobot/cosmos3-nano](https://huggingface.co/lerobot/cosmos3-nano) | [lerobot/cosmos3-edge](https://huggingface.co/lerobot/cosmos3-edge) |
+| Base checkpoint                 | [lerobot/Cosmos3-Nano](https://huggingface.co/lerobot/Cosmos3-Nano) | [lerobot/Cosmos3-Edge](https://huggingface.co/lerobot/Cosmos3-Edge) |
 
 ## Installation Requirements
 
@@ -63,14 +63,14 @@ Cosmos3 uses the PyTorch scaled dot product attention backend (`sdpa`) by defaul
 
 ## Checkpoints
 
-| Checkpoint                                                                              | Size | Training data                                                                          | Use                  |
-| --------------------------------------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------- | -------------------- |
-| [lerobot/cosmos3-nano](https://huggingface.co/lerobot/cosmos3-nano)                     | Nano | Release of [nvidia/Cosmos3-Nano](https://huggingface.co/nvidia/Cosmos3-Nano)           | Base for fine-tuning |
-| [lerobot/cosmos3-edge](https://huggingface.co/lerobot/cosmos3-edge)                     | Edge | Release of [nvidia/Cosmos3-Edge](https://huggingface.co/nvidia/Cosmos3-Edge)           | Base for fine-tuning |
-| [lerobot/cosmos3-nano-libero](https://huggingface.co/lerobot/cosmos3-nano-libero)       | Nano | [lerobot/libero-cosmos3](https://huggingface.co/datasets/lerobot/libero-cosmos3)       | LIBERO evaluation    |
-| [lerobot/cosmos3-edge-libero](https://huggingface.co/lerobot/cosmos3-edge-libero)       | Edge | [lerobot/libero-cosmos3](https://huggingface.co/datasets/lerobot/libero-cosmos3)       | LIBERO evaluation    |
-| [lerobot/cosmos3-nano-libero-10](https://huggingface.co/lerobot/cosmos3-nano-libero-10) | Nano | [lerobot/libero_10-cosmos3](https://huggingface.co/datasets/lerobot/libero_10-cosmos3) | LIBERO-10 evaluation |
-| [lerobot/cosmos3-edge-libero-10](https://huggingface.co/lerobot/cosmos3-edge-libero-10) | Edge | [lerobot/libero_10-cosmos3](https://huggingface.co/datasets/lerobot/libero_10-cosmos3) | LIBERO-10 evaluation |
+| Checkpoint                                                                                            | Size | Training data                                                                          | Use                  |
+| ----------------------------------------------------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------- | -------------------- |
+| [lerobot/Cosmos3-Nano](https://huggingface.co/lerobot/Cosmos3-Nano)                                   | Nano | Release of [nvidia/Cosmos3-Nano](https://huggingface.co/nvidia/Cosmos3-Nano)           | Base for fine-tuning |
+| [lerobot/Cosmos3-Edge](https://huggingface.co/lerobot/Cosmos3-Edge)                                   | Edge | Release of [nvidia/Cosmos3-Edge](https://huggingface.co/nvidia/Cosmos3-Edge)           | Base for fine-tuning |
+| [lerobot/Cosmos3-Nano-Policy-LIBERO](https://huggingface.co/lerobot/Cosmos3-Nano-Policy-LIBERO)       | Nano | [lerobot/LIBERO-Cosmos3](https://huggingface.co/datasets/lerobot/LIBERO-Cosmos3)       | LIBERO evaluation    |
+| [lerobot/Cosmos3-Edge-Policy-LIBERO](https://huggingface.co/lerobot/Cosmos3-Edge-Policy-LIBERO)       | Edge | [lerobot/LIBERO-Cosmos3](https://huggingface.co/datasets/lerobot/LIBERO-Cosmos3)       | LIBERO evaluation    |
+| [lerobot/Cosmos3-Nano-Policy-LIBERO_10](https://huggingface.co/lerobot/Cosmos3-Nano-Policy-LIBERO_10) | Nano | [lerobot/LIBERO_10-Cosmos3](https://huggingface.co/datasets/lerobot/LIBERO_10-Cosmos3) | LIBERO-10 evaluation |
+| [lerobot/Cosmos3-Edge-Policy-LIBERO_10](https://huggingface.co/lerobot/Cosmos3-Edge-Policy-LIBERO_10) | Edge | [lerobot/LIBERO_10-Cosmos3](https://huggingface.co/datasets/lerobot/LIBERO_10-Cosmos3) | LIBERO-10 evaluation |
 
 - The base checkpoints hold the released weights in the LeRobot format. Their action modules (`action2llm`, `llm2action`, `action_modality_embed`) are not trained for a robot yet, so start fine-tuning with `--policy.load_action_modules=false` (see [Fine-tuning on LIBERO](#fine-tuning-on-libero)).
 - The `config.json` of the base checkpoints holds the native DROID post-training recipe, and the class defaults of the policy types are the native LIBERO recipe.
@@ -88,8 +88,8 @@ The class defaults are the LIBERO recipe of the technical report: chunks of 16 a
 
 The recipe trains on the LIBERO data converted to the Cosmos3 layout:
 
-- [lerobot/libero-cosmos3](https://huggingface.co/datasets/lerobot/libero-cosmos3): the four suites (Spatial, Object, Goal, 10), 1693 episodes.
-- [lerobot/libero_10-cosmos3](https://huggingface.co/datasets/lerobot/libero_10-cosmos3): LIBERO-10 only, 379 episodes.
+- [lerobot/LIBERO-Cosmos3](https://huggingface.co/datasets/lerobot/LIBERO-Cosmos3): the four suites (Spatial, Object, Goal, 10), 1693 episodes.
+- [lerobot/LIBERO_10-Cosmos3](https://huggingface.co/datasets/lerobot/LIBERO_10-Cosmos3): LIBERO-10 only, 379 episodes.
 
 Both come from [nvidia/LIBERO_LeRobot_v3](https://huggingface.co/datasets/nvidia/LIBERO_LeRobot_v3), the data of the native recipe. The actions are 10D `[delta position (3), rot6d (6), gripper]` instead of the 7D axis angle actions of LIBERO, the two cameras `observation.images.image` (third person) and `observation.images.image2` (wrist) are 256x256 at 20 FPS, and the action statistics are the ones of the native recipe. During evaluation the LIBERO environment converts the actions back (see [Evaluation](#evaluation)).
 
@@ -100,11 +100,11 @@ The native LIBERO recipe trains with a global batch of 2048 samples for 2000 ite
 ```bash
 accelerate launch --num_processes=8 $(which lerobot-train) \
   --policy.type=cosmos3_nano \
-  --policy.pretrained_path=lerobot/cosmos3-nano \
+  --policy.pretrained_path=lerobot/Cosmos3-Nano \
   --policy.load_action_modules=false \
   --policy.gradient_checkpointing=true \
-  --policy.repo_id=${HF_USER}/cosmos3_nano_libero_10 \
-  --dataset.repo_id=lerobot/libero_10-cosmos3 \
+  --policy.repo_id=${HF_USER}/Cosmos3-Nano-Policy-LIBERO_10 \
+  --dataset.repo_id=lerobot/LIBERO_10-Cosmos3 \
   --parallelism.dp_shard=8 \
   --accelerator.fsdp.mixed_precision_policy.param_dtype=bfloat16 \
   --accelerator.fsdp.mixed_precision_policy.reduce_dtype=bfloat16 \
@@ -124,7 +124,7 @@ accelerate launch --num_processes=8 $(which lerobot-train) \
   --trackio.enable=true
 ```
 
-For the four suites use `--dataset.repo_id=lerobot/libero-cosmos3` and `--steps=40000` (5000 iterations). For Cosmos3 Edge use `--policy.type=cosmos3_edge --policy.pretrained_path=lerobot/cosmos3-edge`.
+For the four suites use `--dataset.repo_id=lerobot/LIBERO-Cosmos3` and `--steps=40000` (5000 iterations). For Cosmos3 Edge use `--policy.type=cosmos3_edge --policy.pretrained_path=lerobot/Cosmos3-Edge`.
 
 ### Key training parameters
 
@@ -145,11 +145,11 @@ On a single GPU or with DDP, replace the FSDP2 flags (`--parallelism.dp_shard` a
 ```bash
 lerobot-train \
   --policy.type=cosmos3_edge \
-  --policy.pretrained_path=lerobot/cosmos3-edge \
+  --policy.pretrained_path=lerobot/Cosmos3-Edge \
   --policy.load_action_modules=false \
   --policy.gradient_checkpointing=true \
-  --policy.repo_id=${HF_USER}/cosmos3_edge_libero_10 \
-  --dataset.repo_id=lerobot/libero_10-cosmos3 \
+  --policy.repo_id=${HF_USER}/Cosmos3-Edge-Policy-LIBERO_10 \
+  --dataset.repo_id=lerobot/LIBERO_10-Cosmos3 \
   --accelerator.mixed_precision=bf16 \
   --accelerator.gradient_accumulation.steps=64 \
   --tf32=false \
@@ -230,11 +230,11 @@ The native recipe trains with a global batch of 8192 samples for 10000 iteration
 
 ```bash
 accelerate launch --num_processes=8 $(which lerobot-train) \
-  --policy.path=lerobot/cosmos3-nano \
+  --policy.path=lerobot/Cosmos3-Nano \
   --policy.load_action_modules=false \
   --policy.gradient_checkpointing=true \
-  --policy.repo_id=${HF_USER}/cosmos3_nano_droid \
-  --dataset.repo_id=${HF_USER}/droid_cosmos3 \
+  --policy.repo_id=${HF_USER}/Cosmos3-Nano-Policy-DROID \
+  --dataset.repo_id=${HF_USER}/DROID-Cosmos3 \
   --parallelism.dp_shard=8 \
   --accelerator.fsdp.mixed_precision_policy.param_dtype=bfloat16 \
   --accelerator.fsdp.mixed_precision_policy.reduce_dtype=bfloat16 \
@@ -262,7 +262,7 @@ For a new robot, start from the class defaults with `--policy.type` and set the 
 ```bash
 lerobot-train \
   --policy.type=cosmos3_edge \
-  --policy.pretrained_path=lerobot/cosmos3-edge \
+  --policy.pretrained_path=lerobot/Cosmos3-Edge \
   --policy.load_action_modules=false \
   --policy.domain_id=0 \
   --policy.chunk_size=32 \
@@ -289,16 +289,16 @@ Cosmos3 supports LoRA through the LeRobot [PEFT integration](./peft_training) (`
 ```bash
 lerobot-train \
   --policy.type=cosmos3_nano \
-  --policy.pretrained_path=lerobot/cosmos3-nano \
+  --policy.pretrained_path=lerobot/Cosmos3-Nano \
   --policy.load_action_modules=false \
   --policy.gradient_checkpointing=true \
-  --policy.repo_id=${HF_USER}/cosmos3_nano_libero_10_lora \
+  --policy.repo_id=${HF_USER}/Cosmos3-Nano-Policy-LIBERO_10-LoRA \
   --peft.method_type=lora \
   --peft.r=16 \
   --peft.lora_alpha=32 \
   --policy.optimizer_lr=5e-4 \
   --policy.optimizer_weight_decay=0 \
-  --dataset.repo_id=lerobot/libero_10-cosmos3 \
+  --dataset.repo_id=lerobot/LIBERO_10-Cosmos3 \
   --accelerator.mixed_precision=bf16 \
   --tf32=false \
   --ema.type=power \
@@ -322,7 +322,7 @@ Evaluate a LIBERO checkpoint on the four suites:
 
 ```bash
 lerobot-eval \
-  --policy.path=lerobot/cosmos3-nano-libero \
+  --policy.path=lerobot/Cosmos3-Nano-Policy-LIBERO \
   --policy.dtype=bfloat16 \
   --tf32=false \
   --env.type=libero \
@@ -358,15 +358,15 @@ _Cosmos3 Edge on the LIBERO-10 task "put the black bowl in the bottom drawer of 
 
 ### LIBERO
 
-| Models                 | Libero-Spatial  |  Libero-Object  |   Libero-Goal   |    Libero-10    | Average |
-| ---------------------- | :-------------: | :-------------: | :-------------: | :-------------: | :-----: |
-| Cosmos-Nano-Libero     | 98.0% (490/500) | 99.4% (497/500) | 97.4% (487/500) | 96.8% (484/500) | 97.90%  |
-| Cosmos-Edge-Libero     | 98.6% (493/500) | 99.4% (497/500) | 97.2% (486/500) | 96.6% (483/500) | 97.95%  |
-| Cosmos-Nano-Libero_10  |       N/A       |       N/A       |       N/A       | 97.6% (488/500) | 97.60%  |
-| Cosmos-Edge-Libero_10  |       N/A       |       N/A       |       N/A       | 95.2% (476/500) | 95.20%  |
-| Cosmos-Nano-TechReport |       N/A       |       N/A       |       N/A       |      97.4%      | 97.40%  |
+| Models                        | Libero-Spatial  |  Libero-Object  |   Libero-Goal   |    Libero-10    | Average |
+| ----------------------------- | :-------------: | :-------------: | :-------------: | :-------------: | :-----: |
+| Cosmos3-Nano-Policy-LIBERO    | 98.0% (490/500) | 99.4% (497/500) | 97.4% (487/500) | 96.8% (484/500) | 97.90%  |
+| Cosmos3-Edge-Policy-LIBERO    | 98.6% (493/500) | 99.4% (497/500) | 97.2% (486/500) | 96.6% (483/500) | 97.95%  |
+| Cosmos3-Nano-Policy-LIBERO_10 |       N/A       |       N/A       |       N/A       | 97.6% (488/500) | 97.60%  |
+| Cosmos3-Edge-Policy-LIBERO_10 |       N/A       |       N/A       |       N/A       | 95.2% (476/500) | 95.20%  |
+| Cosmos-Nano-TechReport        |       N/A       |       N/A       |       N/A       |      97.4%      | 97.40%  |
 
-_Closed-loop success rates on LIBERO. Cosmos-Nano-Libero and Cosmos-Edge-Libero are trained on the four LIBERO suites ([lerobot/cosmos3-nano-libero](https://huggingface.co/lerobot/cosmos3-nano-libero), [lerobot/cosmos3-edge-libero](https://huggingface.co/lerobot/cosmos3-edge-libero)). Cosmos-Nano-Libero_10 and Cosmos-Edge-Libero_10 are trained on LIBERO-10 only ([lerobot/cosmos3-nano-libero-10](https://huggingface.co/lerobot/cosmos3-nano-libero-10), [lerobot/cosmos3-edge-libero-10](https://huggingface.co/lerobot/cosmos3-edge-libero-10)), and the training setup of Cosmos-Nano-Libero_10 follows the LIBERO-10 recipe reported in the technical report. Cosmos-Nano-TechReport is the LIBERO-10 success rate of Cosmos3 Nano trained on LIBERO-10 only, as reported in Table 20 of the [technical report](https://arxiv.org/abs/2606.02800) (MT-init, iteration 2000, 500 rollouts)._
+_Closed-loop success rates on LIBERO. Cosmos3-Nano-Policy-LIBERO and Cosmos3-Edge-Policy-LIBERO are trained on the four LIBERO suites ([lerobot/Cosmos3-Nano-Policy-LIBERO](https://huggingface.co/lerobot/Cosmos3-Nano-Policy-LIBERO), [lerobot/Cosmos3-Edge-Policy-LIBERO](https://huggingface.co/lerobot/Cosmos3-Edge-Policy-LIBERO)). Cosmos3-Nano-Policy-LIBERO_10 and Cosmos3-Edge-Policy-LIBERO_10 are trained on LIBERO-10 only ([lerobot/Cosmos3-Nano-Policy-LIBERO_10](https://huggingface.co/lerobot/Cosmos3-Nano-Policy-LIBERO_10), [lerobot/Cosmos3-Edge-Policy-LIBERO_10](https://huggingface.co/lerobot/Cosmos3-Edge-Policy-LIBERO_10)), and the training setup of Cosmos3-Nano-Policy-LIBERO_10 follows the LIBERO-10 recipe reported in the technical report. Cosmos-Nano-TechReport is the LIBERO-10 success rate of Cosmos3 Nano trained on LIBERO-10 only, as reported in Table 20 of the [technical report](https://arxiv.org/abs/2606.02800) (MT-init, iteration 2000, 500 rollouts)._
 
 ## Citation
 

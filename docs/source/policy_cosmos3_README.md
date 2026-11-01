@@ -17,11 +17,11 @@ Fine-tune Cosmos3 Edge from the base checkpoint on LIBERO-10 with one GPU:
 ```bash
 lerobot-train \
   --policy.type=cosmos3_edge \
-  --policy.pretrained_path=lerobot/cosmos3-edge \
+  --policy.pretrained_path=lerobot/Cosmos3-Edge \
   --policy.load_action_modules=false \
   --policy.gradient_checkpointing=true \
-  --policy.repo_id=${HF_USER}/cosmos3_edge_libero_10 \
-  --dataset.repo_id=lerobot/libero_10-cosmos3 \
+  --policy.repo_id=${HF_USER}/Cosmos3-Edge-Policy-LIBERO_10 \
+  --dataset.repo_id=lerobot/LIBERO_10-Cosmos3 \
   --accelerator.mixed_precision=bf16 \
   --output_dir=outputs/train/cosmos3_edge_libero_10
 ```
