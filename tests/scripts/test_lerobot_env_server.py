@@ -130,7 +130,7 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     command, options = calls[-1]
     assert command[-5:] == ["up", "-d", "--wait", "--build", "sim"]
     env = options["env"]
-    assert (env["SIM"], env["SIM_TAG"], env["SIM_START_PERIOD"]) == ("envhub", "user-my-env-v1", "600s")
+    assert (env["SIM"], env["SIM_TAG"]) == ("envhub", "user-my-env-v1")
     # Downloaded on the host, then copied as plain files into the build context.
     assert downloads == [("User/My-Env", "v1")]
     assert (Path(env["ENVHUB_DIR"]) / "env.py").is_file() and Path(env["ENVHUB_DIR"]) != snapshot

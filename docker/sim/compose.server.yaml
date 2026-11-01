@@ -26,5 +26,6 @@ services:
         - "import yaml; from lerobot.env_server.client import EnvClient; d=yaml.safe_load(open('/config/sim.yaml')); c=EnvClient(d.get('zenoh', {}).get('listen_endpoints', ['tcp/127.0.0.1:7448'])[0], d['deployment'], handshake_timeout_s=5); c.describe(); c.close()"
       interval: 5s
       timeout: 10s
-      start_period: ${SIM_START_PERIOD:-60s}
+      # A simulator may take minutes to start (e.g. Isaac Sim compiling shaders); the server is healthy once it answers.
+      start_period: ${SIM_START_PERIOD:-600s}
       retries: 12
