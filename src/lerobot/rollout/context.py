@@ -778,8 +778,7 @@ def build_remote_rollout_context(
                 raise ValueError("Remote deployment semantics differ from simulator semantics")
             if action != robot.descriptor.action_feature:
                 raise ValueError("Remote action declaration differs from simulator declaration")
-            names = robot.feature_names(cfg.rename_map)
-            declared = {names[f.name]: f for f in robot.descriptor.features}
+            declared = {cfg.rename_map.get(f.name, f.name): f for f in robot.descriptor.features}
             for feature in expected:
                 actual = declared.get(feature.name)
                 if actual is None:
