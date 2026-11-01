@@ -23,11 +23,10 @@ from lerobot.transport.protocol.codec import (
     RGBImage,
     decode_message,
     encode_message as _encode_message,
-    peek_envelope,
 )
 from lerobot.transport.protocol.envelope import Envelope, ErrorCode, ProtocolError
 
-__all__ = ["CodecLimits", "RGBImage", "decode_message", "encode_message", "peek_envelope"]
+__all__ = ["CodecLimits", "RGBImage", "decode_message", "encode_message"]
 
 
 def _tensor_to_numpy(value: Any) -> Any:

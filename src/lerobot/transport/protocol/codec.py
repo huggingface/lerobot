@@ -91,7 +91,7 @@ def _malformed(message: str) -> ProtocolError:
 
 
 class _Budget:
-    def __init__(self, limits: CodecLimits, tensor_converter: Callable | None = None):
+    def __init__(self, limits: CodecLimits, tensor_converter: Callable[[Any], Any] | None = None):
         self.tensor_converter = tensor_converter
         self.limits = limits
         self.nodes = 0
@@ -318,7 +318,10 @@ def _reject_extension(code: int, data: bytes) -> None:
 
 
 def encode_message(
-    envelope: Envelope, limits: CodecLimits = CodecLimits(), *, tensor_converter: Callable | None = None
+    envelope: Envelope,
+    limits: CodecLimits = CodecLimits(),
+    *,
+    tensor_converter: Callable[[Any], Any] | None = None,
 ) -> bytes:
     """Encode only supported, finite values into an explicitly typed envelope."""
     require_package("msgpack", "remote")
