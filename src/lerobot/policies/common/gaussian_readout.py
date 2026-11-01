@@ -176,9 +176,10 @@ class GaussianReadout(nn.Module):
         epsilon_seed: int = EPSILON_SEED,
     ):
         super().__init__()
-        if not 0 <= motion_dim <= gripper_index < action_dim <= max_action_dim:
+        if not 1 <= motion_dim == gripper_index == action_dim - 1 < max_action_dim:
             raise ValueError(
-                "action layout must satisfy 0 <= motion_dim <= gripper_index < action_dim <= max_action_dim, "
+                "single-gripper action layout requires 1 <= motion_dim == gripper_index == action_dim - 1 "
+                "and action_dim <= max_action_dim, "
                 f"got motion_dim={motion_dim}, gripper_index={gripper_index}, action_dim={action_dim}, "
                 f"max_action_dim={max_action_dim}"
             )
@@ -241,7 +242,9 @@ class GaussianReadout(nn.Module):
         command_noise = torch.randn(latent.shape, device=latent.device, dtype=latent.dtype)
         close = (latent + command_noise) >= 0
         gripper = torch.where(
-            close, self.close_normalized.to(mean.dtype), self.open_normalized.to(mean.dtype)
+            close,
+            self.close_normalized.to(device=mean.device, dtype=mean.dtype),
+            self.open_normalized.to(device=mean.device, dtype=mean.dtype),
         )
         action = raw_action.new_zeros(features.shape[0], self.chunk_size, self.max_action_dim)
         action[..., : self.motion_dim] = motion
@@ -284,6 +287,8 @@ class GaussianReadout(nn.Module):
             raise ValueError(f"features shape must be (B, {self.chunk_size}, {self.feature_dim})")
         if raw_action.shape != (features.shape[0], self.chunk_size, self.max_action_dim):
             raise ValueError(f"raw action shape must be (B, {self.chunk_size}, {self.max_action_dim})")
+        if features.device != self.affine_weight.device or raw_action.device != features.device:
+            raise ValueError("readout and input tensors must share a device; call readout.to(device)")
 
 
 def solve_affine_residual(
@@ -528,6 +533,9 @@ def load_gaussian_readout(path: str | Path, teacher: Any, processor_sha256: str)
         )
     if chunk_size != config.chunk_size or max_action_dim != config.max_action_dim:
         raise ValueError("readout chunk or padded action size does not match the policy config")
+    action_feature = (getattr(config, "output_features", None) or {}).get("action")
+    if action_feature is not None and action_dim != action_feature.shape[0]:
+        raise ValueError("readout active action dimension does not match the policy output feature")
 
     # Initialization is overwritten by the artifact; preserve the caller's CPU RNG.
     with torch.inference_mode(False), torch.random.fork_rng(devices=[]):

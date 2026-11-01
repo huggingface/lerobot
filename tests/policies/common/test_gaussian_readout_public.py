@@ -170,3 +170,40 @@ def test_density_accepts_float32_processor_roundtrip() -> None:
     torch.testing.assert_close(
         readout.log_prob(features, raw, action), readout.log_prob(features, raw, roundtrip)
     )
+
+
+@pytest.mark.parametrize(("motion", "gripper", "active"), [(0, 0, 1), (5, 6, 7), (6, 6, 8)])
+def test_rejects_unsupported_action_layouts(motion: int, gripper: int, active: int) -> None:
+    with pytest.raises(ValueError, match="layout"):
+        gar.GaussianReadout(
+            8,
+            chunk_size=4,
+            motion_dim=motion,
+            gripper_index=gripper,
+            max_action_dim=8,
+            action_dim=active,
+            open_normalized=-1,
+            close_normalized=1,
+            action_mean=torch.zeros(active),
+            action_std=torch.ones(active),
+        )
+
+
+def test_loader_checks_active_action_feature(tmp_path: Path, readout: gar.GaussianReadout) -> None:
+    teacher = nn.Module()
+    teacher.action_out_proj = nn.Linear(8, 8)
+    teacher.config = SimpleNamespace(
+        chunk_size=4, max_action_dim=8, output_features={"action": PolicyFeature(FeatureType.ACTION, (6,))}
+    )
+    path = tmp_path / "readout.safetensors"
+    gar.save_readout(
+        readout, path, teacher_sha256=gar.state_dict_sha256(teacher), processor_sha256="processors"
+    )
+    with pytest.raises(ValueError, match="active action"):
+        gar.load_gaussian_readout(path, teacher, "processors")
+
+
+def test_standalone_sampling_reports_device_mismatch(readout: gar.GaussianReadout) -> None:
+    readout.to("meta")
+    with pytest.raises(ValueError, match="device"):
+        readout.sample_action(torch.ones(1, 4, 8), torch.zeros(1, 4, 8))
