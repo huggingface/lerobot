@@ -22,8 +22,9 @@ import numpy as np
 import pytest
 
 from lerobot.env_server.client import EnvClient
+from lerobot.env_server.protocol import instance_prefix
 from lerobot.envs import EnvClientConfig
-from lerobot.transport.protocol.envelope import ErrorCode, ProtocolError
+from lerobot.transport.protocol.envelope import ErrorCode, MessageType, ProtocolError
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
 
 
@@ -44,8 +45,8 @@ from lerobot.transport.protocol.envelope import Envelope, MessageType, correlate
 feature = FeatureSpec('state', (2,), 'float32', semantics='state-v1')
 validate_array(np.zeros(2, np.float32), feature)
 request = Envelope(MessageType.DESCRIBE, request_id='request')
-reply = request.reply(MessageType.ACCEPTED, {})
-validate_reply(reply, request, MessageType.ACCEPTED)
+reply = request.reply(MessageType.DESCRIPTOR, {})
+validate_reply(reply, request, MessageType.DESCRIPTOR)
 for prefix in ('torch', 'lerobot.policies', 'lerobot.remote_inference'):
     assert not any(
         module is not None and (name == prefix or name.startswith(prefix + '.'))
@@ -104,6 +105,18 @@ def test_admission_and_stale_generation(sim_server):
     finally:
         client.close()
         other.close()
+
+
+def test_a_request_of_the_wrong_type_for_its_key_is_rejected(sim_server):
+    client = EnvClient(sim_server[1])
+    try:
+        client.describe()
+        open_key = instance_prefix(client.deployment, client.instance_id) + "/open"
+        with pytest.raises(ProtocolError, match="takes open requests, not describe") as error:
+            client._query(open_key, MessageType.DESCRIBE, {}, 5, MessageType.ACCEPTED)
+        assert error.value.code == ErrorCode.MALFORMED
+    finally:
+        client.close()
 
 
 def test_malformed_actions_and_seeds_are_rejected_without_failing_the_simulator(sim_server):

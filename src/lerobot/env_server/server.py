@@ -61,6 +61,14 @@ logger = logging.getLogger(__name__)
 _REPLY_HEADROOM_BYTES = 64 * 1024
 
 
+def _check_request_type(message: Envelope, expected: MessageType) -> None:
+    """Reject a request whose type is not the one its key takes."""
+    if message.message_type is not expected:
+        raise ProtocolError(
+            ErrorCode.MALFORMED, f"This key takes {expected} requests, not {message.message_type}"
+        )
+
+
 def _checked_seeds(value: Any, num_envs: int) -> list[int | None] | None:
     """Return reset seeds that are absent or one int (or None) per env; reject anything else."""
     if value is not None and (
@@ -293,8 +301,7 @@ class EnvServer:
         message = None
         try:
             message = decode_message(pending.payload)
-            body = self._dispatch(pending.key, message)
-            reply = message.reply(MessageType.ACK if message.session_id else MessageType.ACCEPTED, body)
+            reply = self._dispatch(pending.key, message)
         except Exception as exc:
             if isinstance(exc, ProtocolError):
                 code = exc.code
@@ -317,18 +324,24 @@ class EnvServer:
                 time.monotonic() - pending.deadline,
             )
 
-    def _dispatch(self, key: str, message: Envelope) -> dict[str, Any]:
-        """Route a request by its key: describe, open, or a session's reset, step or close."""
+    def _dispatch(self, key: str, message: Envelope) -> Envelope:
+        """Answer a request by its key: describe, open, or a session's reset, step or close."""
         if key in (deployment_prefix(self.config.deployment) + "/describe", ANY_DEPLOYMENT_DESCRIBE):
-            return {
-                "deployment": self.config.deployment,
-                "instance_id": self.instance_id,
-                "descriptor": encode_descriptor(self.descriptor),
-            }
+            _check_request_type(message, MessageType.DESCRIBE)
+            return message.reply(
+                MessageType.DESCRIPTOR,
+                {
+                    "deployment": self.config.deployment,
+                    "instance_id": self.instance_id,
+                    "descriptor": encode_descriptor(self.descriptor),
+                },
+            )
         if message.instance_id != self.instance_id:
             raise ProtocolError(ErrorCode.STALE, "Server instance does not match")
         if key == instance_prefix(self.config.deployment, self.instance_id) + "/open":
-            return self._open(message.body)
+            _check_request_type(message, MessageType.OPEN)
+            return message.reply(MessageType.ACCEPTED, self._open(message.body))
+        _check_request_type(message, MessageType.CONTROL)
         session = self.sessions.get(message.session_id)
         if session is None or not key.startswith(session.prefix + "/"):
             raise ProtocolError(ErrorCode.STALE, "Unknown simulator session")
@@ -337,8 +350,10 @@ class EnvServer:
         operation = key.rsplit("/", 1)[-1]
         if operation == "close":
             self._close_session(message.session_id)
-            return {}
-        return session.with_jpeg_frames(session.handle(operation, message.body))
+            return message.reply(MessageType.ACK, {})
+        return message.reply(
+            MessageType.ACK, session.with_jpeg_frames(session.handle(operation, message.body))
+        )
 
     def _open(self, body: dict[str, Any]) -> dict[str, Any]:
         """Check an open request and start a session for it."""

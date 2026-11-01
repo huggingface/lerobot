@@ -114,6 +114,7 @@ class EnvClient:
                         MessageType.DESCRIBE,
                         {},
                         self.handshake_timeout_s,
+                        MessageType.DESCRIPTOR,
                     )
                 except TimeoutError:
                     # The endpoint serves another deployment, or the server finished starting after the query.
@@ -128,7 +129,11 @@ class EnvClient:
                         ) from None
             else:
                 body = self._query(
-                    ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s
+                    ANY_DEPLOYMENT_DESCRIBE,
+                    MessageType.DESCRIBE,
+                    {},
+                    self.handshake_timeout_s,
+                    MessageType.DESCRIPTOR,
                 )
             self.deployment = body["deployment"]
             self.instance_id = body["instance_id"]
@@ -138,7 +143,13 @@ class EnvClient:
     def _describe_any(self) -> dict[str, Any]:
         """Describe whichever deployment the endpoint serves; a timeout if no server answers."""
         try:
-            return self._query(ANY_DEPLOYMENT_DESCRIBE, MessageType.DESCRIBE, {}, self.handshake_timeout_s)
+            return self._query(
+                ANY_DEPLOYMENT_DESCRIBE,
+                MessageType.DESCRIBE,
+                {},
+                self.handshake_timeout_s,
+                MessageType.DESCRIPTOR,
+            )
         except (TimeoutError, ProtocolError):
             raise TimeoutError(
                 f"No env server answered at {self.endpoint} within {self.handshake_timeout_s:g} s"
@@ -177,6 +188,7 @@ class EnvClient:
                     "jpeg_quality": self.jpeg_quality,
                 },
                 self.setup_timeout_s,
+                MessageType.ACCEPTED,
             )
             opened_descriptor = decode_descriptor(body["descriptor"])
             if not opened_descriptor.same_schema(descriptor):
@@ -209,7 +221,7 @@ class EnvClient:
             key = f"{self.prefix}/{operation}"
             try:
                 timeout = self.setup_timeout_s if operation == "reset" else self.timeout_s
-                reply = self._query(key, MessageType.CONTROL, body, timeout)
+                reply = self._query(key, MessageType.CONTROL, body, timeout, MessageType.ACK)
                 result = decode_step_result(reply["result"])
                 validate_result(result, descriptor, self.num_envs)
                 self.generation = reply.get("generation", self.generation)
@@ -224,7 +236,13 @@ class EnvClient:
             try:
                 if self.session_id and not self.failed:
                     # Short limit: if this is lost, the server still frees the session when the connection closes.
-                    self._query(f"{self.prefix}/close", MessageType.CONTROL, {}, self.handshake_timeout_s)
+                    self._query(
+                        f"{self.prefix}/close",
+                        MessageType.CONTROL,
+                        {},
+                        self.handshake_timeout_s,
+                        MessageType.ACK,
+                    )
             except Exception as error:
                 logger.warning("Could not close the env server session cleanly: %s", error)
             finally:
@@ -235,15 +253,15 @@ class EnvClient:
                 self.failed = False
 
     def _query(
-        self, key: str, kind: MessageType, body: dict[str, Any], timeout: float | None = None
+        self, key: str, kind: MessageType, body: dict[str, Any], timeout: float, expected: MessageType
     ) -> dict[str, Any]:
         message = Envelope(kind, self.instance_id, self.session_id, self.generation, uuid.uuid4().hex, body)
         response = query_reply(
             self.transport,
             key,
             message,
-            self.timeout_s if timeout is None else timeout,
-            MessageType.ACK if message.session_id else MessageType.ACCEPTED,
+            timeout,
+            expected,
             max_replies=1,
             # Requests are never retried, so a reply dropped under congestion would fail the session.
             congestion_control="block",
