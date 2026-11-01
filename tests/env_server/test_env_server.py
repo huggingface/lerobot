@@ -16,15 +16,20 @@
 
 import subprocess
 import sys
+import threading
 import time
 
 import numpy as np
 import pytest
 
-from lerobot.env_server.client import EnvClient
-from lerobot.env_server.protocol import instance_prefix
+from lerobot.env_server.client import EnvClient, RemoteVectorEnv
+from lerobot.env_server.protocol import decode_descriptor, encode_descriptor, instance_prefix
+from lerobot.env_server.server import EnvServer, EnvServerConfig
 from lerobot.envs import EnvClientConfig
+from lerobot.sim.config import SimSettings
 from lerobot.transport.protocol.envelope import ErrorCode, MessageType, ProtocolError
+from lerobot.transport.zenoh import ZenohConfig
+from tests.fixtures.sim_server import free_port
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
 
 
@@ -58,23 +63,31 @@ for prefix in ('torch', 'lerobot.policies', 'lerobot.remote_inference'):
     )
 
 
+def test_a_client_ignores_descriptor_fields_it_does_not_know():
+    # A newer server may describe more than this client knows.
+    env = ToyEnvConfig().create_env()
+    env.close()
+    wire = {**encode_descriptor(env.descriptor), "joint_units": ["rad", "rad"]}
+    assert decode_descriptor(wire) == env.descriptor
+
+
 @pytest.mark.parametrize("use_async_envs", [False, True])
 def test_batch_terminal_freeze_and_seed_parity(sim_server, use_async_envs):
     _, endpoint = sim_server
-    with_client = EnvClient(endpoint)
+    client = EnvClient(endpoint)
     try:
-        descriptor = with_client.describe()
+        descriptor = client.describe()
         assert descriptor.action_feature.shape == (2,)
-        with_client.open(2, use_async_envs=use_async_envs)
-        first = with_client.request("reset", seeds=[10, 20])
-        second = with_client.request("reset", seeds=[10, 20])
+        client.open(2, use_async_envs=use_async_envs)
+        first = client.request("reset", seeds=[10, 20])
+        second = client.request("reset", seeds=[10, 20])
         np.testing.assert_array_equal(first.obs["observation.state"], second.obs["observation.state"])
-        ended = with_client.request("step", actions=np.array([[2, 0], [0, 0]], np.float32))
+        ended = client.request("step", actions=np.array([[2, 0], [0, 0]], np.float32))
         assert ended.is_success.tolist() == [True, False]
         assert ended.reward.tolist() == [1.0, 0.0]
         frozen = ended.obs["observation.state"][0].copy()
         for _ in range(5):
-            result = with_client.request("step", actions=np.ones((2, 2), np.float32) * 0.1)
+            result = client.request("step", actions=np.ones((2, 2), np.float32) * 0.1)
         np.testing.assert_array_equal(result.obs["observation.state"][0], frozen)
         assert result.reward[0] == 0.0  # The terminal reward is earned once, as with the old freeze wrapper.
         assert result.elapsed_steps.tolist() == [1, 5]
@@ -82,7 +95,7 @@ def test_batch_terminal_freeze_and_seed_parity(sim_server, use_async_envs):
         frames = result.frames()
         assert len(frames) == 2 and frames[0].shape == (8, 8, 3)
     finally:
-        with_client.close()
+        client.close()
 
 
 def test_admission_and_stale_generation(sim_server):
@@ -140,8 +153,6 @@ def test_malformed_actions_and_seeds_are_rejected_without_failing_the_simulator(
 
 
 def test_jpeg_observations_match_raw(sim_server):
-    from lerobot.env_server.client import RemoteVectorEnv
-
     _, endpoint = sim_server
     obs = {}
     for encoding in ("raw", "jpeg"):
@@ -161,18 +172,6 @@ def test_jpeg_observations_match_raw(sim_server):
     with pytest.raises(ProtocolError, match="raw or jpeg"):
         client.open(1)
     client.close()
-
-
-def test_served_reset_takes_seeds_as_any_sequence(sim_server):
-    from lerobot.env_server.client import RemoteVectorEnv
-
-    env = RemoteVectorEnv(EnvClient(sim_server[1]), num_envs=2)
-    try:
-        first, _ = env.reset(seed=range(10, 12))
-        second, _ = env.reset(seed=[10, 11])
-        np.testing.assert_array_equal(first["observation.state"], second["observation.state"])
-    finally:
-        env.close()
 
 
 def test_server_loss_fails_session(sim_server):
@@ -222,8 +221,8 @@ def test_eval_loop_accepts_canonical_observations(sim_server):
 
     import torch
 
-    from lerobot.env_server.client import RemoteVectorEnv
     from lerobot.processor import PolicyProcessorPipeline
+    from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
     from lerobot.scripts.lerobot_eval import rollout
 
     class Policy(torch.nn.Module):
@@ -237,11 +236,8 @@ def test_eval_loop_accepts_canonical_observations(sim_server):
             assert observation["observation.image"].shape == (2, 3, 8, 8)
             return torch.ones((2, 2), dtype=torch.float32) * 0.5
 
-    _, endpoint = sim_server
-    env = RemoteVectorEnv(EnvClient(endpoint), num_envs=2)
+    env = RemoteVectorEnv(EnvClient(sim_server[1]), num_envs=2)
     identity = PolicyProcessorPipeline(steps=[])
-    from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
-
     action_identity = PolicyProcessorPipeline(
         steps=[], to_transition=policy_action_to_transition, to_output=transition_to_policy_action
     )
@@ -284,22 +280,21 @@ def test_a_session_whose_first_reset_outlasts_the_presence_timeout_stays_open(si
 
 
 def test_first_vector_reset_does_not_skip_initial_state(sim_server, monkeypatch):
-    from lerobot.env_server.client import RemoteVectorEnv
-
+    # The first reset opens the session, which resets the simulator once; it must not reset it twice.
+    resets = []
     original = ToyEnv.reset
 
     def reset(self, seed=None):
-        self.reset_count = getattr(self, "reset_count", 0) + 1
+        resets.append(seed)
         return original(self, seed=seed)
 
     monkeypatch.setattr(ToyEnv, "reset", reset)
     env = RemoteVectorEnv(EnvClient(sim_server[1]))
     try:
         env.reset(seed=123)
-        served = sim_server[0].sessions[env.client.session_id].env
-        assert served._envs[0].reset_count == 1
+        assert resets == [123]
         env.reset(seed=123)
-        assert served._envs[0].reset_count == 2
+        assert resets == [123, 123]
     finally:
         env.close()
 
@@ -335,36 +330,24 @@ def test_served_env_must_be_the_env_the_command_describes(sim_server):
         config.create_envs(n_envs=1)
 
 
-def test_first_session_uses_the_environment_built_to_describe(sim_server):
-    from lerobot.env_server.client import RemoteVectorEnv
-
-    before = ToyEnv.builds
-    env = RemoteVectorEnv(EnvClient(sim_server[1]))
-    try:
-        env.reset(seed=1)
-        env.step(np.zeros((1, 2), np.float32))
-        assert ToyEnv.builds == before
-    finally:
-        env.close()
-
-
-def test_a_session_without_a_task_id_runs_the_first_task_on_the_startup_env(sim_server):
+@pytest.mark.parametrize("task_id", [None, 0])
+def test_the_first_session_reuses_the_environment_built_to_describe(sim_server, task_id):
+    # Without a task ID a session runs the suite's first task, which the startup env already runs.
     before = ToyEnv.builds
     client = EnvClient(sim_server[1])
     try:
-        client.open(1)
+        client.open(1, task_id=task_id)
+        client.request("step", actions=np.zeros((1, 2), np.float32))
         assert ToyEnv.builds == before
     finally:
         client.close()
 
 
 def test_a_bad_first_result_fails_the_session(sim_server, monkeypatch):
-    from lerobot.env_server import client as client_module
-
     def reject(*args):
         raise ValueError("bad first result")
 
-    monkeypatch.setattr(client_module, "validate_result", reject)
+    monkeypatch.setattr("lerobot.env_server.client.validate_result", reject)
     client = EnvClient(sim_server[1])
     try:
         with pytest.raises(ValueError, match="bad first result"):
@@ -386,12 +369,6 @@ def test_a_server_that_finishes_starting_during_the_handshake_is_described(monke
     # A slow simulator (e.g. Isaac Sim) can come up after the client's first describe query has timed out.
     pytest.importorskip("zenoh")
     pytest.importorskip("msgpack")
-    import socket
-    import threading
-
-    from lerobot.env_server.server import EnvServer, EnvServerConfig
-    from lerobot.transport.zenoh import ZenohConfig
-
     original = ToyEnv.__init__
 
     def slow_init(self):
@@ -399,12 +376,12 @@ def test_a_server_that_finishes_starting_during_the_handshake_is_described(monke
         original(self)
 
     monkeypatch.setattr(ToyEnv, "__init__", slow_init)
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
+    endpoint = f"tcp/127.0.0.1:{free_port()}"
     server = EnvServer(
         EnvServerConfig(
-            sim=ToyEnvConfig().sim_config(), deployment="toy", zenoh=ZenohConfig(listen_endpoints=[endpoint])
+            sim=SimSettings(**ToyEnvConfig().sim_settings()),
+            deployment="toy",
+            zenoh=ZenohConfig(listen_endpoints=[endpoint]),
         )
     )
     thread = threading.Thread(target=server.serve)
@@ -416,16 +393,12 @@ def test_a_server_that_finishes_starting_during_the_handshake_is_described(monke
         client.close()
         server.stop()
         thread.join(5)
+    assert not thread.is_alive()
 
 
 def test_an_absent_server_is_reported_within_the_handshake_timeout():
     pytest.importorskip("zenoh")
-    import socket
-
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    client = EnvClient(f"tcp/127.0.0.1:{port}", "toy", handshake_timeout_s=0.5)
+    client = EnvClient(f"tcp/127.0.0.1:{free_port()}", "toy", handshake_timeout_s=0.5)
     start = time.monotonic()
     try:
         with pytest.raises(ConnectionError, match="Could not connect to an env server"):
