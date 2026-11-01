@@ -17,7 +17,8 @@
 import logging
 import time
 
-from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.robots.so_follower.so101_safe_bus import SO101SafeSerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -57,7 +58,7 @@ class SOLeader(Teleoperator):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = SerialMotorsBus(
+        self.bus = SO101SafeSerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
@@ -84,15 +85,30 @@ class SOLeader(Teleoperator):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        self.bus.connect()
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+        try:
+            self.bus.connect()
 
-        self.configure()
-        logger.info(f"{self} connected.")
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
+
+            self.configure()
+            logger.info(f"{self} connected.")
+
+        except Exception as original_error:
+            # A calibration/configuration failure must not leave
+            # an already-open serial bus behind.
+            try:
+                if self.bus.is_connected:
+                    self.bus.disconnect()
+            except Exception as cleanup_error:
+                original_error.add_note(
+                    f"SOLeader connection rollback also failed: "
+                    f"{cleanup_error!r}"
+                )
+            raise
 
     @property
     def is_calibrated(self) -> bool:

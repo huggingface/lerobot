@@ -75,3 +75,31 @@ def test_episodic_action_dispatch_uses_hardware_gate():
         "ctx.hardware.robot_wrapper, robot_action)"
     ) in source
     assert "robot.send_action(robot_action)" not in source
+
+
+
+
+
+def test_real_sofollower_without_checked_dispatch_is_rejected(monkeypatch):
+    monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
+
+    class FakeSOFollower:
+        def __init__(self):
+            self.actions = []
+
+        def send_action(self, action):
+            self.actions.append(action)
+            return {"sent": action}
+
+    robot = FakeSOFollower()
+
+    with pytest.raises(
+        RuntimeError,
+        match="checked action dispatch unavailable",
+    ):
+        send_action_checked_with_approval(
+            robot,
+            {"joint": 1},
+        )
+
+    assert robot.actions == []

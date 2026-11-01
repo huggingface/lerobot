@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
-from ..so_follower import SOFollowerConfig
+from ..so_follower import SOFollowerRobotConfig
 
 
 @RobotConfig.register_subclass("bi_so_follower")
@@ -27,8 +27,8 @@ from ..so_follower import SOFollowerConfig
 class BiSOFollowerConfig(RobotConfig):
     """Configuration class for Bi SO Follower robots."""
 
-    left_arm_config: SOFollowerConfig
-    right_arm_config: SOFollowerConfig
+    left_arm_config: SOFollowerRobotConfig
+    right_arm_config: SOFollowerRobotConfig
 
     # Top-level cameras not attached to a specific side. Keys are kept as-is in
     # observations (no `left_`/`right_` prefix). Per-arm cameras (declared on
