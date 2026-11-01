@@ -45,7 +45,7 @@ from huggingface_hub.utils import httpx
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from lerobot.__version__ import __version__
+from lerobot import __version__
 from lerobot.configs import PolicyFeature, PreTrainedConfig, RewardModelConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.distributed import (
