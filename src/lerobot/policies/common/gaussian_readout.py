@@ -212,8 +212,41 @@ class GaussianReadout(nn.Module):
         self.register_buffer("pad_mask", pad_mask)
         self.register_buffer("open_normalized", torch.tensor(float(open_normalized), dtype=torch.float32))
         self.register_buffer("close_normalized", torch.tensor(float(close_normalized), dtype=torch.float32))
-        self.register_buffer("action_mean", action_mean.detach().float().reshape(action_dim).cpu())
-        self.register_buffer("action_std", action_std.detach().float().reshape(action_dim).cpu())
+        self.register_buffer("action_mean", action_mean.detach().float().reshape(action_dim).cpu().clone())
+        self.register_buffer("action_std", action_std.detach().float().reshape(action_dim).cpu().clone())
+        self.validate_artifact()
+
+    def validate_artifact(self) -> None:
+        """Reject invalid or inconsistent artifacts before use or serialization."""
+        if self.epsilon_seed != EPSILON_SEED:
+            raise ValueError("readout probe seed is not 17")
+        if self.feature_dim <= 0 or self.chunk_size <= 0:
+            raise ValueError("readout feature and chunk dimensions must be positive")
+        if not all(torch.isfinite(value).all() for value in self.state_dict().values()):
+            raise ValueError("readout tensors must be finite")
+        if not (self.action_std > 0).all():
+            raise ValueError("readout action standard deviations must be positive")
+        if torch.isclose(self.open_normalized, self.close_normalized, rtol=1e-5, atol=1e-6):
+            raise ValueError("readout open and close codes are identical or indistinguishable")
+        if not all(
+            math.isfinite(value) for value in (self.open_command, self.close_command, self.gripper_threshold)
+        ):
+            raise ValueError("readout physical gripper commands and threshold must be finite")
+        if (
+            not min(self.open_command, self.close_command)
+            < self.gripper_threshold
+            < max(self.open_command, self.close_command)
+        ):
+            raise ValueError("readout threshold must lie between the physical gripper commands")
+        for command, code in (
+            (self.open_command, self.open_normalized),
+            (self.close_command, self.close_normalized),
+        ):
+            expected = normalized_command(
+                command, self.action_mean[self.gripper_index], self.action_std[self.gripper_index]
+            )
+            if not torch.isclose(code, expected, rtol=1e-5, atol=1e-6):
+                raise ValueError("readout gripper codes do not match the action normalization statistics")
 
     def variance(self, features: Tensor) -> Tensor:
         """Diagonal variance from features averaged across the chunk. Shape ``(B, T, motion)``."""
@@ -493,6 +526,7 @@ def save_readout(
     teacher: Any | None = None,
 ) -> None:
     """Write an artifact. Pass the teacher when using nondefault timestep periods."""
+    readout.validate_artifact()
     tensors = {key: value.detach().cpu().contiguous() for key, value in readout.state_dict().items()}
     metadata = {
         "min_period": str(
@@ -575,16 +609,17 @@ def load_gaussian_readout(path: str | Path, teacher: Any, processor_sha256: str)
             gripper_index=gripper_index,
             max_action_dim=max_action_dim,
             action_dim=action_dim,
-            open_normalized=0.0,
-            close_normalized=1.0,
-            action_mean=torch.zeros(action_dim),
-            action_std=torch.ones(action_dim),
+            open_normalized=float(tensors["open_normalized"]),
+            close_normalized=float(tensors["close_normalized"]),
+            action_mean=tensors["action_mean"],
+            action_std=tensors["action_std"],
             gripper_threshold=float(_require_meta(metadata, "gripper_threshold")),
             open_command=float(_require_meta(metadata, "open_command")),
             close_command=float(_require_meta(metadata, "close_command")),
             epsilon_seed=EPSILON_SEED,
         )
     readout.load_state_dict(tensors, strict=True)
+    readout.validate_artifact()
     expected_probe = make_epsilon_star(chunk_size, max_action_dim, EPSILON_SEED)
     if not torch.equal(readout.epsilon_star, expected_probe):
         raise ValueError("readout fixed noise does not match the seed-17 probe")

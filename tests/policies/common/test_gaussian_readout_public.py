@@ -326,3 +326,41 @@ def test_prefix_restores_attention_backend(monkeypatch, policy_type, fail):
     else:
         gar.encode_prefix(*args)
     assert config._attn_implementation == "sdpa"
+
+
+@pytest.mark.parametrize("change", ["same", "nan", "seed", "std", "mean", "codes"])
+def test_constructor_rejects_invalid_artifact_contract(change):
+    kwargs = {
+        "feature_dim": 8,
+        "chunk_size": 4,
+        "motion_dim": 6,
+        "gripper_index": 6,
+        "max_action_dim": 8,
+        "action_dim": 7,
+        "open_normalized": -1,
+        "close_normalized": 1,
+        "action_mean": torch.zeros(7),
+        "action_std": torch.ones(7),
+    }
+    if change == "same":
+        kwargs["open_normalized"] = 1
+    elif change == "nan":
+        kwargs["open_normalized"] = float("nan")
+    elif change == "seed":
+        kwargs["epsilon_seed"] = 42
+    elif change == "std":
+        kwargs["action_std"][0] = 0
+    elif change == "mean":
+        kwargs["action_mean"][0] = float("inf")
+    else:
+        kwargs["open_normalized"] = -2
+    with pytest.raises(ValueError):
+        gar.GaussianReadout(**kwargs)
+
+
+def test_save_rejects_mutated_codes(tmp_path, readout):
+    readout.open_normalized.copy_(readout.close_normalized)
+    path = tmp_path / "invalid.safetensors"
+    with pytest.raises(ValueError):
+        gar.save_readout(readout, path, teacher_sha256="teacher", processor_sha256="processors")
+    assert not path.exists()
