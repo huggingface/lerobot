@@ -186,7 +186,7 @@ class LiberoEnv(gym.Env):
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
 
         # Map raw camera names to "image1" and "image2".
-        # The preprocessing step `preprocess_observation` will then prefix these with `.images.*`,
+        # `canonical_observation` will then prefix these with `observation.images.*`,
         # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
         # This ensures the policy consistently receives observations in the
         # expected format regardless of the original camera naming.

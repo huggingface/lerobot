@@ -26,15 +26,6 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
-
-# Keep these importable from here: envhub.mdx uses these helpers to test an env.py locally, and
-# parse_camera_names is part of this module's public API.
-from lerobot.sim.integrations.envhub import (
-    _call_make_env as _call_make_env,
-    _load_module_from_path as _load_module_from_path,
-    _normalize_hub_result as _normalize_hub_result,
-)
-from lerobot.sim.integrations.utils import parse_camera_names as parse_camera_names
 from lerobot.sim.types import EnvDescriptor
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
@@ -175,9 +166,9 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
 def validate_checkpoint(
     descriptor: EnvDescriptor, config: PreTrainedConfig, rename_map: dict[str, str]
 ) -> None:
-    """Raise if the checkpoint's features don't match the sim's ``descriptor``, after ``rename_map``.
+    """Raise if the checkpoint's features don't match the sim's `descriptor`, after `rename_map`.
 
-    Image sizes and the policy's placeholder cameras (``empty_cameras``) are not checked.
+    Image sizes and the policy's placeholder cameras (`empty_cameras`) are not checked.
     """
     available = {rename_map.get(f.name, f.name): f for f in descriptor.features}
     placeholders = {f"{OBS_IMAGES}.empty_camera_{i}" for i in range(getattr(config, "empty_cameras", 0))}

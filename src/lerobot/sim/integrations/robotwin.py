@@ -332,8 +332,8 @@ class RoboTwinEnv(gym.Env):
     Observations
     ------------
     The ``pixels`` dict uses the raw RoboTwin camera names as keys (e.g.
-    ``"head_camera"``, ``"left_camera"``). ``preprocess_observation`` in
-    ``envs/utils.py`` then converts these to ``observation.images.<cam>``.
+    ``"head_camera"``, ``"left_camera"``). ``canonical_observation`` in
+    ``sim/integrations/utils.py`` then converts these to ``observation.images.<cam>``.
 
     Actions
     -------
