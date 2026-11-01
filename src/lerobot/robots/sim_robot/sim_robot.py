@@ -156,7 +156,7 @@ class SimRobot(Robot):
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
 
     def start_episode(self, seed: int | None = None) -> None:
-        """Reset the world; a `seed` makes the episode repeatable."""
+        """Reset the environment; a `seed` makes the episode repeatable."""
         self._env.reset(seed=seed)
         self.latest = self._env.latest
 
@@ -187,7 +187,7 @@ def check_control_rate(robot: Robot, fps: float, flag: str | None = None, multip
 
 
 def start_episode(robot: Robot) -> None:
-    """Start a new episode. A sim robot resets its world; a real robot's scene is reset by hand."""
+    """Start a new episode. A sim robot resets its environment; a real robot's scene is reset by hand."""
     if isinstance(robot, SimRobot):
         robot.start_episode()
 

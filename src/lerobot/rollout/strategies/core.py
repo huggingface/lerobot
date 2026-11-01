@@ -172,7 +172,7 @@ class RolloutStrategy(abc.ABC):
     def _start_episode(self, robot: ThreadSafeRobot, timer: CycleTimer) -> None:
         """Start a new episode with a fresh policy: no hidden state, no queued actions.
 
-        A sim robot also resets its world. Call it from the control loop.
+        A sim robot also resets its environment. Call it from the control loop.
         """
         engine = self._require_engine()
         start_episode(robot.inner)
