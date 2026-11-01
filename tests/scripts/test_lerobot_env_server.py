@@ -153,10 +153,10 @@ def test_server_configs_serve_what_their_env_options_describe(path, monkeypatch)
 
 
 def test_native_server_listens_on_localhost_unless_told_otherwise(tmp_path, monkeypatch):
-    from lerobot.env_server.server import ServerConfig
+    from lerobot.env_server.server import EnvServerConfig
     from tests.fixtures import toy_env  # noqa: F401  (registers the toy simulator)
 
-    assert ServerConfig.__dataclass_fields__["zenoh"].default_factory().listen_endpoints == [
+    assert EnvServerConfig.__dataclass_fields__["zenoh"].default_factory().listen_endpoints == [
         "tcp/127.0.0.1:7448"
     ]
     configs = []

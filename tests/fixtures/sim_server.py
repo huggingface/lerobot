@@ -25,7 +25,7 @@ def sim_server():
     # Live-server tests need the `remote` extra; the base-dependency tier skips them.
     pytest.importorskip("zenoh")
     pytest.importorskip("msgpack")
-    from lerobot.env_server.server import EnvServer, ServerConfig
+    from lerobot.env_server.server import EnvServer, EnvServerConfig
     from lerobot.transport.zenoh import ZenohConfig
     from tests.fixtures.toy_env import ToyEnvConfig
 
@@ -34,7 +34,7 @@ def sim_server():
         port = sock.getsockname()[1]
     endpoint = f"tcp/127.0.0.1:{port}"
     server = EnvServer(
-        ServerConfig(
+        EnvServerConfig(
             sim=ToyEnvConfig().sim_config(),
             # Served env configs address the deployment named after their --env.type.
             deployment="toy",

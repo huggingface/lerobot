@@ -44,8 +44,8 @@ SERVED_TIMEOUT_S = 120.0
 
 
 @dataclass
-class EnvServerConfig:
-    """Address of a `lerobot-env-server` that runs the env, and how the client talks to it."""
+class EnvClientConfig:
+    """How the client reaches the `lerobot-env-server` that runs the env."""
 
     endpoint: str
     # Deployment name on the server. Defaults to the env type, which is how server configs name it.
@@ -72,8 +72,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     features_map: dict[str, str] = field(default_factory=dict)
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
-    # Env server that runs this env. When unset, the env runs in this process.
-    server: EnvServerConfig | None = None
+    # Env server that runs this env, and how to reach it. When unset, the env runs locally.
+    server: EnvClientConfig | None = None
 
     @property
     def type(self) -> str:

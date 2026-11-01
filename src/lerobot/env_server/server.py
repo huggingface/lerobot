@@ -78,7 +78,7 @@ def _checked_actions(value: Any, env: LocalVectorEnv) -> np.ndarray:
 
 
 @dataclass
-class ServerConfig:
+class EnvServerConfig:
     """Simulator to serve, resource limits and Zenoh endpoints.
 
     Args:
@@ -211,7 +211,7 @@ class _Session:
 class EnvServer:
     """Serve one simulator's envs to clients. Only the thread running `serve` builds and steps them."""
 
-    def __init__(self, config: ServerConfig):
+    def __init__(self, config: EnvServerConfig):
         """Create the transport. Envs are built in `serve`."""
         self.config = config
         self.instance_id = uuid.uuid4().hex

@@ -34,7 +34,7 @@ import yaml
 from huggingface_hub import snapshot_download
 
 import lerobot
-from lerobot.env_server.server import EnvServer, ServerConfig
+from lerobot.env_server.server import EnvServer, EnvServerConfig
 from lerobot.sim.config import SimConfig
 from lerobot.transport.zenoh import ZenohConfig
 from lerobot.utils.constants import HF_LEROBOT_HOME
@@ -211,7 +211,7 @@ def main() -> None:
         data.setdefault("zenoh", {})["listen_endpoints"] = [args.listen]
     if "zenoh" in data:
         data["zenoh"] = ZenohConfig(**data["zenoh"])
-    server = EnvServer(ServerConfig(**data))
+    server = EnvServer(EnvServerConfig(**data))
     signal.signal(signal.SIGTERM, lambda *_: server.stop())
     try:
         server.serve()

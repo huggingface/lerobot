@@ -23,7 +23,7 @@ import draccus
 import numpy as np
 import pytest
 
-from lerobot.envs.configs import EnvServerConfig
+from lerobot.envs import EnvClientConfig
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
 
 
@@ -33,7 +33,7 @@ def test_env_config_creates_vector_envs_locally_or_served(where, request):
     from lerobot.sim.vector_env import LocalVectorEnv
 
     config = ToyEnvConfig(
-        server=EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+        server=EnvClientConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
     )
     env = config.create_envs(n_envs=2)["reach"][0]
     try:
@@ -114,7 +114,7 @@ def test_a_batched_simulator_that_autoresets_is_rejected():
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_reset_options_are_rejected_locally_and_served(where, request):
-    server = EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+    server = EnvClientConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
     env = ToyEnvConfig(server=server).create_env()
     try:
         with pytest.raises(ValueError, match="does not define reset options"):
@@ -125,7 +125,7 @@ def test_reset_options_are_rejected_locally_and_served(where, request):
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_stepping_or_reading_before_reset_fails_locally_and_served(where, request):
-    server = EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+    server = EnvClientConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
     env = ToyEnvConfig(server=server).create_env()
     try:
         with pytest.raises(RuntimeError, match="Reset before stepping"):
@@ -138,7 +138,7 @@ def test_stepping_or_reading_before_reset_fails_locally_and_served(where, reques
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_attributes_take_no_arguments_locally_and_served(where, request):
-    server = EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+    server = EnvClientConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
     env = ToyEnvConfig(server=server).create_env()
     try:
         with pytest.raises(TypeError, match="do not take arguments"):

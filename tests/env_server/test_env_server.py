@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from lerobot.env_server.client import EnvClient
-from lerobot.envs.configs import EnvServerConfig
+from lerobot.envs import EnvClientConfig
 from lerobot.transport.protocol.envelope import ErrorCode, ProtocolError
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
 
@@ -142,7 +142,7 @@ def test_jpeg_observations_match_raw(sim_server):
     assert np.abs(jpeg.astype(int) - raw.astype(int)).mean() < 8
     np.testing.assert_array_equal(obs["jpeg"]["observation.state"], obs["raw"]["observation.state"])
     with pytest.raises(ValueError, match="raw or jpeg"):
-        EnvServerConfig(endpoint, encoding="png")
+        EnvClientConfig(endpoint, encoding="png")
     # The server checks the encoding too, since it comes over the network.
     client = EnvClient(endpoint, encoding="png")
     with pytest.raises(ProtocolError, match="raw or jpeg"):
@@ -305,7 +305,7 @@ def _episode(config: ToyEnvConfig) -> list[tuple]:
 
 def test_local_environment_matches_the_server(sim_server):
     local = _episode(ToyEnvConfig())
-    served = _episode(ToyEnvConfig(server=EnvServerConfig(sim_server[1])))
+    served = _episode(ToyEnvConfig(server=EnvClientConfig(sim_server[1])))
     for expected, actual in zip(local, served, strict=True):
         for expected_array, actual_array in zip(expected[1:4], actual[1:4], strict=True):
             np.testing.assert_array_equal(actual_array, expected_array)
@@ -317,7 +317,7 @@ def test_local_environment_matches_the_server(sim_server):
 
 
 def test_served_env_must_be_the_env_the_command_describes(sim_server):
-    config = ToyEnvConfig(server=EnvServerConfig(sim_server[1]), fps=30)  # the server's toy runs at 20 fps
+    config = ToyEnvConfig(server=EnvClientConfig(sim_server[1]), fps=30)  # the server's toy runs at 20 fps
     with pytest.raises(ValueError, match="fps: server 20"):
         config.create_envs(n_envs=1)
 
@@ -362,7 +362,7 @@ def test_a_bad_first_result_fails_the_session(sim_server, monkeypatch):
 
 
 def test_a_wrong_deployment_names_the_one_served(sim_server):
-    config = ToyEnvConfig(server=EnvServerConfig(sim_server[1], deployment="other", handshake_timeout_s=0.5))
+    config = ToyEnvConfig(server=EnvClientConfig(sim_server[1], deployment="other", handshake_timeout_s=0.5))
     with pytest.raises(ProtocolError, match="serves deployment 'toy', not 'other'") as error:
         config.create_envs(n_envs=1)
     assert "--env.server.deployment=toy" in str(error.value)
@@ -376,7 +376,7 @@ def test_a_server_that_finishes_starting_during_the_handshake_is_described(monke
     import socket
     import threading
 
-    from lerobot.env_server.server import EnvServer, ServerConfig
+    from lerobot.env_server.server import EnvServer, EnvServerConfig
     from lerobot.transport.zenoh import ZenohConfig
 
     original = ToyEnv.__init__
@@ -390,7 +390,7 @@ def test_a_server_that_finishes_starting_during_the_handshake_is_described(monke
         sock.bind(("127.0.0.1", 0))
         endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
     server = EnvServer(
-        ServerConfig(
+        EnvServerConfig(
             sim=ToyEnvConfig().sim_config(), deployment="toy", zenoh=ZenohConfig(listen_endpoints=[endpoint])
         )
     )

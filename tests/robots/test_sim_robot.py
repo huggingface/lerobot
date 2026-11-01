@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from lerobot.envs.configs import EnvServerConfig
+from lerobot.envs import EnvClientConfig
 from lerobot.envs.utils import validate_checkpoint
 from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
 from lerobot.transport.zenoh import ZenohConfig
@@ -69,7 +69,7 @@ def test_sim_robot_registration(tmp_path):
 def test_sim_robot_advances_once_per_action(where, request, tmp_path):
     if where == "served":
         config = SimRobotConfig(
-            env=ToyEnvConfig(server=EnvServerConfig(request.getfixturevalue("sim_server")[1]))
+            env=ToyEnvConfig(server=EnvClientConfig(request.getfixturevalue("sim_server")[1]))
         )
     else:
         config = SimRobotConfig(env=ToyEnvConfig())
@@ -114,7 +114,7 @@ def test_rollout_holds_a_sim_robot_with_its_own_hold(tmp_path):
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_a_finished_sim_episode_stays_until_the_next_one_starts(where, request, tmp_path):
     config = ToyEnvConfig(
-        server=EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+        server=EnvClientConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
     )
     robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
     try:
@@ -216,7 +216,7 @@ def test_sim_robot_names_the_actions_it_takes(tmp_path):
 
 def test_sim_robot_actions_follow_controller_order(sim_server, tmp_path):
     robot = SimRobot(
-        SimRobotConfig(env=ToyEnvConfig(server=EnvServerConfig(sim_server[1])), calibration_dir=tmp_path)
+        SimRobotConfig(env=ToyEnvConfig(server=EnvClientConfig(sim_server[1])), calibration_dir=tmp_path)
     )
     try:
         assert (
@@ -246,7 +246,7 @@ def test_sim_robot_records_the_body_its_env_declares(sim_server, tmp_path):
         finally:
             robot.disconnect()
     # Served, a server simulating another body is refused: its datasets would record the wrong robot.
-    config = ToyEnvConfig(robot_type="so_follower", server=EnvServerConfig(sim_server[1]))
+    config = ToyEnvConfig(robot_type="so_follower", server=EnvClientConfig(sim_server[1]))
     with pytest.raises(ValueError, match="robot_type: server ''"):
         SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
 
@@ -264,7 +264,7 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(sim_server, tmp_path):
 
     robot = SimRobot(
         SimRobotConfig(
-            env=ToyEnvConfig(server=EnvServerConfig(sim_server[1])), calibration_dir=tmp_path / "calibration"
+            env=ToyEnvConfig(server=EnvClientConfig(sim_server[1])), calibration_dir=tmp_path / "calibration"
         )
     )
     dataset = None
@@ -325,7 +325,7 @@ def test_rollout_rejects_checkpoint_schema_before_opening_environment(sim_server
     from lerobot.rollout import context
 
     robot = SimRobot(
-        SimRobotConfig(env=ToyEnvConfig(server=EnvServerConfig(sim_server[1])), calibration_dir=tmp_path)
+        SimRobotConfig(env=ToyEnvConfig(server=EnvClientConfig(sim_server[1])), calibration_dir=tmp_path)
     )
     monkeypatch.setattr(context, "make_robot_from_config", lambda _: robot)
     cfg = SimpleNamespace(
@@ -370,7 +370,7 @@ def test_sim_robot_local_inference_engines(sim_server, tmp_path, mode):
     from tests.utils import wait_for
 
     robot = SimRobot(
-        SimRobotConfig(env=ToyEnvConfig(server=EnvServerConfig(sim_server[1])), calibration_dir=tmp_path)
+        SimRobotConfig(env=ToyEnvConfig(server=EnvClientConfig(sim_server[1])), calibration_dir=tmp_path)
     )
     wrapper = ThreadSafeRobot(robot)
     names = list(robot.action_features)
@@ -441,7 +441,7 @@ def test_sim_robot_remote_inference_engine(sim_server, tmp_path):
     from tests.utils import wait_for
 
     robot = SimRobot(
-        SimRobotConfig(env=ToyEnvConfig(server=EnvServerConfig(sim_server[1])), calibration_dir=tmp_path)
+        SimRobotConfig(env=ToyEnvConfig(server=EnvClientConfig(sim_server[1])), calibration_dir=tmp_path)
     )
     wrapper = ThreadSafeRobot(robot)
     state = next(f for f in robot.descriptor.features if f.name == "observation.state")
@@ -541,7 +541,7 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
     from tests.mocks.mock_teleop import MockTeleopConfig
 
     env = ToyEnvConfig(
-        server=EnvServerConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
+        server=EnvClientConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
     )
     robot = SimRobot(SimRobotConfig(env=env, calibration_dir=tmp_path / "calibration"))
     teleop = MagicMock(spec=Teleoperator)

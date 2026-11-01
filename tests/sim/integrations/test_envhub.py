@@ -249,8 +249,7 @@ def test_envhub_native_batch_preserves_provider_and_options(monkeypatch) -> None
     import gymnasium as gym
     import pytest
 
-    from lerobot.envs import factory
-    from lerobot.envs.configs import EnvServerConfig, HubEnvConfig
+    from lerobot.envs import EnvClientConfig, HubEnvConfig, factory
 
     calls = []
 
@@ -276,7 +275,7 @@ def test_envhub_native_batch_preserves_provider_and_options(monkeypatch) -> None
         assert not hasattr(env, "descriptor")
     finally:
         env.close()
-    config.server = EnvServerConfig("tcp/127.0.0.1:7448")
+    config.server = EnvClientConfig("tcp/127.0.0.1:7448")
     with pytest.raises(ValueError, match="env server"):
         config.create_envs(1)
     config.server = None
