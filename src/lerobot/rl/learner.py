@@ -106,10 +106,7 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
 from lerobot.utils.random_utils import load_rng_state, set_seed
-from lerobot.utils.utils import (
-    format_big_number,
-    init_logging,
-)
+from lerobot.utils.utils import format_big_number, init_logging
 
 from .algorithms.base import RLAlgorithm
 from .algorithms.factory import make_algorithm

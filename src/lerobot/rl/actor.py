@@ -93,14 +93,8 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.transition import (
-    Transition,
-    move_transition_to_device,
-)
-from lerobot.utils.utils import (
-    TimerManager,
-    init_logging,
-)
+from lerobot.utils.transition import Transition, move_transition_to_device
+from lerobot.utils.utils import TimerManager, init_logging
 
 from .algorithms.base import RLAlgorithm
 from .algorithms.factory import make_algorithm
