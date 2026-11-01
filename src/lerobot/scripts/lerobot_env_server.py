@@ -64,12 +64,12 @@ ENVHUB_CONFIG: dict[str, Any] = {
 
 
 def load_config(path: str | Path, overrides: list[str]) -> dict[str, Any]:
-    """Read a YAML config and apply ``key=value`` overrides; typos and malformed keys raise ``ValueError``."""
+    """Read a YAML config and apply `key=value` overrides; typos and malformed keys raise `ValueError`."""
     return apply_overrides(yaml.safe_load(Path(path).read_text()), overrides)
 
 
 def envhub_config(repo: str, overrides: list[str], path: str | Path | None = None) -> dict[str, Any]:
-    """Return the config to serve an EnvHub repo, based on ``path`` if given; this trusts its ``env.py``."""
+    """Return the config to serve an EnvHub repo, based on `path` if given; this trusts its `env.py`."""
     data = yaml.safe_load(Path(path).read_text()) if path else copy.deepcopy(ENVHUB_CONFIG)
     serve = [f"sim.kwargs.hub_path={repo}", "sim.kwargs.trust_remote_code=true"]
     return apply_overrides(data, [*serve, *overrides])
@@ -112,7 +112,7 @@ def envhub_context(hub_path: str, directory: Path) -> Path:
 
 
 def run_in_docker(data: dict[str, Any], build: bool = False, stop: bool = False) -> None:
-    """Start (or ``stop``) the server for ``data`` in its Docker image on localhost, building it if needed."""
+    """Start (or `stop`) the server for `data` in its Docker image on localhost, building it if needed."""
     root = Path(lerobot.__file__).resolve().parents[2]
     if not (root / DOCKERFILE).is_file():
         raise RuntimeError(
