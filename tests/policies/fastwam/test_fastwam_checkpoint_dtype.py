@@ -35,6 +35,7 @@ from lerobot.policies.fastwam import modeling_fastwam
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.wan import LiteKVFusion
+from lerobot.policies.fastwam.wan.model import Head, run_in_float32
 
 DOT_FLAGS = {
     "action_expert_layers": 1,
@@ -168,6 +169,52 @@ def test_public_dtype_train_infer_and_checkpoint(offline_components, tmp_path, f
     assert torch.isfinite(action).all()
     torch.testing.assert_close(reloaded_action, action, rtol=0, atol=0)
     assert loaded.config.dtype == dtype
+
+
+def test_bfloat16_policy_trains_on_the_cpu_without_autocast(offline_components):
+    # No autocast: CUDA autocast covers no CPU tensor.
+    torch.manual_seed(1234)
+    policy = FastWAMPolicy(tiny_config(dtype=torch.bfloat16))
+    loss, _ = policy(training_batch())
+    loss.backward()
+    assert torch.isfinite(loss)
+    # The bfloat16 weights get their gradients through the float32 copies.
+    video = policy.model.video_expert
+    for module in (video.time_embedding, video.time_projection, video.head.head):
+        for parameter in module.parameters():
+            assert parameter.dtype == torch.bfloat16
+            assert torch.isfinite(parameter.grad).all() and parameter.grad.abs().sum() > 0
+    # The time embedding, its projection and the head compute in float32 from the bfloat16 weights cast up,
+    # as under CUDA autocast. Wan starts the head at zero, which would hide its dtype.
+    nn.init.normal_(video.head.head.weight)
+    reference = deepcopy(video).float()
+    inputs = {
+        "x": torch.randn(1, 4, 2, 8, 16),
+        "timestep": torch.tensor([500.0]),
+        "context": torch.randn(1, 4, 8),
+        "fuse_vae_embedding_in_latents": True,
+    }
+    with torch.no_grad():
+        state, expected = video.pre_dit(**inputs), reference.pre_dit(**inputs)
+        torch.testing.assert_close(state["t"], expected["t"], rtol=0, atol=0)
+        torch.testing.assert_close(state["t_mod"], expected["t_mod"].bfloat16(), rtol=0, atol=0)
+        head = video.head(state["tokens"], state["t"])
+        torch.testing.assert_close(head, reference.head(state["tokens"], state["t"]), rtol=0, atol=0)
+
+
+def test_float32_regions_cast_the_weights_only_without_autocast():
+    # Under autocast the layer runs as before, e.g. with the weights FSDP2's hooks gather.
+    weights = []
+    layer = nn.Linear(2, 2).to(torch.bfloat16)
+    layer.register_forward_pre_hook(lambda module, args: weights.append(module.weight.dtype))
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        run_in_float32(layer, torch.randn(1, 2))
+    run_in_float32(layer, torch.randn(1, 2))
+    # Autocast does not know the meta device, used for example to count FLOPs.
+    run_in_float32(layer.to("meta"), torch.empty(1, 2, device="meta"))
+    assert weights == [torch.bfloat16, torch.float32, torch.float32]
+    # A float32 model runs as before, so it can still be traced.
+    torch.fx.symbolic_trace(Head(2, 2, (1, 1, 1)))
 
 
 def test_cli_backbone_conversion_loads_weights_and_trains(offline_components, tmp_path, monkeypatch):
