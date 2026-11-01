@@ -18,13 +18,17 @@
 
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 import pytest
 import torch
 
 pytest.importorskip("diffusers")  # the model code lives in modeling_lingbot_va, which imports diffusers
 
 from lerobot.policies.lingbot_va.modeling_lingbot_va import FlowMatchScheduler
-from lerobot.policies.lingbot_va.utils import data_seq_to_patch, get_mesh_id
+from lerobot.policies.lingbot_va.utils import WanAttention, data_seq_to_patch, get_mesh_id
+from tests.utils import require_cuda
 
 
 def test_flow_match_scheduler_timesteps_monotone_decreasing() -> None:
@@ -70,6 +74,24 @@ def test_data_seq_to_patch_roundtrip_shape() -> None:
     seq = torch.arange(b * f * h * w * c, dtype=torch.float32).reshape(b, f * h * w, c)
     out = data_seq_to_patch((1, 2, 2), seq, f, h, w, batch_size=b)
     assert out.shape == (b, c, f, h, w)
+
+
+@require_cuda
+def test_flashattn_gets_one_dtype_under_cuda_autocast(monkeypatch) -> None:
+    dtypes = []
+
+    def flash_attn_func(q, k, v):  # stands in for flash-attn, which refuses mixed dtypes
+        dtypes.append({q.dtype, k.dtype, v.dtype})
+        return torch.zeros_like(q)
+
+    monkeypatch.setitem(sys.modules, "flash_attn_interface", SimpleNamespace(flash_attn_func=flash_attn_func))
+    attn = WanAttention(64, heads=2, dim_head=32, attn_mode="flashattn")
+    attn = attn.to("cuda", torch.bfloat16)  # the policy runs the transformer in bf16
+    attn.init_kv_cache("pos", 16, 2, 32, "cuda", torch.bfloat16, 1)
+    x = torch.randn(1, 8, 64, device="cuda", dtype=torch.bfloat16)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        attn(x, x, x, None, update_cache=1)
+    assert dtypes == [{torch.bfloat16}]
 
 
 def test_training_step_reduces_loss_tiny_flex() -> None:
