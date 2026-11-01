@@ -232,3 +232,73 @@ def test_variance_loss_balances_each_coordinate() -> None:
     loss = gar.variance_loss(predicted, target, scale)
     assert loss.ndim == 0
     torch.testing.assert_close(loss, expected)
+
+
+@pytest.mark.parametrize("field", ["min_period", "max_period"])
+def test_artifact_binds_timestep_periods(tmp_path, readout, field):
+    teacher = nn.Module()
+    teacher.action_out_proj = nn.Linear(8, 8)
+    teacher.config = SimpleNamespace(chunk_size=4, max_action_dim=8, min_period=0.004, max_period=4.0)
+    gar.bind_processor_sha256(teacher, "processors")
+    path = str(tmp_path / "periods.safetensors")
+    gar.save_readout(
+        readout, path, teacher_sha256=gar.state_dict_sha256(teacher), processor_sha256="processors"
+    )
+    gar._cached_readout(teacher, path)
+    setattr(teacher.config, field, getattr(teacher.config, field) * 2)
+    with pytest.raises(ValueError, match="period"):
+        gar.load_gaussian_readout(path, teacher, "processors")
+    with pytest.raises(ValueError, match="period"):
+        gar._cached_readout(teacher, path)
+
+
+def test_smolvla_requires_prefix_cache(monkeypatch):
+    model, _ = tiny_flow.__wrapped__(SimpleNamespace(param="smolvla"), monkeypatch)
+    model.config.use_cache = False
+    with pytest.raises(ValueError, match="use_cache"):
+        gar.encode_prefix(
+            model,
+            [],
+            [],
+            torch.zeros(1, 2, dtype=torch.long),
+            torch.ones(1, 2, dtype=torch.bool),
+            torch.zeros(1, 8),
+        )
+
+
+def test_fineart_feature_helpers_preserve_causal_language_marks(monkeypatch):
+    model, backbone = tiny_flow.__wrapped__(SimpleNamespace(param="fineart_vla"), monkeypatch)
+    tokens, masks = torch.zeros(1, 3, dtype=torch.long), torch.ones(1, 3, dtype=torch.bool)
+    marks = torch.tensor([[False, True, True]])
+    seen = []
+    forward = backbone.forward
+
+    def capture(**kwargs):
+        if kwargs["inputs_embeds"][0] is not None:
+            seen.append(kwargs["attention_mask"].clone())
+        return forward(**kwargs)
+
+    monkeypatch.setattr(backbone, "forward", capture)
+    previous = torch.zeros_like(marks)
+    model._lang_causal_marks = previous
+    gar.evaluate_time_one_features(
+        model, [], [], tokens, masks, None, None, gar.make_epsilon_star(4, 8), lang_causal_marks=marks
+    )
+    assert model._lang_causal_marks is previous
+    gar.encode_prefix(model, [], [], tokens, masks)
+    assert not torch.equal(seen[0], seen[1])
+
+
+def test_save_nondefault_teacher_periods(tmp_path, readout):
+    teacher = nn.Module()
+    teacher.action_out_proj = nn.Linear(8, 8)
+    teacher.config = SimpleNamespace(chunk_size=4, max_action_dim=8, min_period=0.008, max_period=8.0)
+    path = tmp_path / "periods.safetensors"
+    gar.save_readout(
+        readout,
+        path,
+        teacher_sha256=gar.state_dict_sha256(teacher),
+        processor_sha256="processors",
+        teacher=teacher,
+    )
+    assert isinstance(gar.load_gaussian_readout(path, teacher, "processors"), gar.GaussianReadout)

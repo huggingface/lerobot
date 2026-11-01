@@ -490,10 +490,17 @@ def save_readout(
     *,
     teacher_sha256: str,
     processor_sha256: str,
+    teacher: Any | None = None,
 ) -> None:
-    """Write the readout tensors and the hashes needed to reject a mismatched teacher."""
+    """Write an artifact. Pass the teacher when using nondefault timestep periods."""
     tensors = {key: value.detach().cpu().contiguous() for key, value in readout.state_dict().items()}
     metadata = {
+        "min_period": str(
+            getattr(_flow_model(teacher).config, "min_period", 0.004) if teacher is not None else 0.004
+        ),
+        "max_period": str(
+            getattr(_flow_model(teacher).config, "max_period", 4.0) if teacher is not None else 4.0
+        ),
         "format": FORMAT,
         "teacher_sha256": teacher_sha256,
         "processor_sha256": processor_sha256,
@@ -545,6 +552,9 @@ def load_gaussian_readout(path: str | Path, teacher: Any, processor_sha256: str)
     max_action_dim = int(_require_meta(metadata, "max_action_dim"))
     action_dim = int(_require_meta(metadata, "action_dim"))
     config = teacher.config
+    for key, default in (("min_period", 0.004), ("max_period", 4.0)):
+        if float(_require_meta(metadata, key)) != getattr(config, key, default):
+            raise ValueError(f"readout timestep {key} does not match the teacher period")
     projection = teacher.action_out_proj
     if feature_dim != projection.in_features:
         raise ValueError(
@@ -603,6 +613,8 @@ def _reject_unsupported(
     if num_steps is not None:
         raise ValueError("Gaussian readout rejects an explicit step count")
     config = model.config
+    if not getattr(config, "use_cache", True):
+        raise ValueError("Gaussian readout requires use_cache=True")
     if config.compile_model:
         raise ValueError("Gaussian readout rejects compilation")
     if getattr(config, "use_visual_memory", False) or getattr(config, "use_proprioceptive_memory", False):
@@ -630,9 +642,34 @@ def encode_prefix(
     masks: Tensor,
     states: Tensor | None = None,
     state_masks: Tensor | None = None,
+    *,
+    lang_causal_marks: Tensor | None = None,
 ) -> tuple[Tensor, Any]:
-    """Prefix prefill copied from the Euler sampler, including its eager attention flag."""
+    """Prefill the prefix, with optional FineART causal language marks."""
     model = _flow_model(model)
+    if not getattr(model.config, "use_cache", True):
+        raise ValueError("Gaussian readout requires use_cache=True")
+    previous = getattr(model, "_lang_causal_marks", None)
+    if lang_causal_marks is not None:
+        if model.config.type != "fineart_vla":
+            raise ValueError("causal language marks require a FineART-VLA teacher")
+        model._lang_causal_marks = lang_causal_marks
+    try:
+        return _encode_prefix(model, images, img_masks, tokens, masks, states, state_masks)
+    finally:
+        if lang_causal_marks is not None:
+            model._lang_causal_marks = previous
+
+
+def _encode_prefix(
+    model: Any,
+    images: Any,
+    img_masks: Any,
+    tokens: Tensor,
+    masks: Tensor,
+    states: Tensor | None,
+    state_masks: Tensor | None,
+) -> tuple[Tensor, Any]:
     policy_type = getattr(model.config, "type", "pi05")
     if policy_type == "smolvla":
         prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(
@@ -694,11 +731,13 @@ def evaluate_time_one_features(
     states: Tensor | None,
     state_masks: Tensor | None,
     epsilon: Tensor,
+    *,
+    lang_causal_marks: Tensor | None = None,
 ) -> tuple[Tensor, Tensor]:
     """One suffix evaluation at time 1. Returns features and the raw single-step action."""
     model = _flow_model(model)
     prefix_pad_masks, past_key_values = encode_prefix(
-        model, images, img_masks, tokens, masks, states, state_masks
+        model, images, img_masks, tokens, masks, states, state_masks, lang_causal_marks=lang_causal_marks
     )
     batch = tokens.shape[0]
     device = tokens.device
