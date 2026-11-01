@@ -16,6 +16,7 @@
 
 import math
 from dataclasses import replace
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -96,11 +97,11 @@ class SimRobot(Robot):
             if f.kind == "rgb"
         }
 
-    @property
+    @cached_property
     def observation_features(self) -> dict[str, type | tuple[int, ...]]:
         return {**self._state_ft, **self._cameras_ft}
 
-    @property
+    @cached_property
     def action_features(self) -> dict[str, type]:
         return dict.fromkeys(self.descriptor.action_feature.names, float)
 
@@ -155,6 +156,7 @@ class SimRobot(Robot):
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
 
     def start_episode(self, seed: int | None = None) -> None:
+        """Reset the world; a `seed` makes the episode repeatable."""
         self._env.reset(seed=seed)
         self.latest = self._env.latest
 
