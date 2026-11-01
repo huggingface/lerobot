@@ -207,3 +207,28 @@ def test_standalone_sampling_reports_device_mismatch(readout: gar.GaussianReadou
     readout.to("meta")
     with pytest.raises(ValueError, match="device"):
         readout.sample_action(torch.ones(1, 4, 8), torch.zeros(1, 4, 8))
+
+
+@pytest.mark.parametrize("head", ["variance", "gripper"])
+def test_fit_preserves_rng_and_trainability(readout: gar.GaussianReadout, head: str) -> None:
+    features = torch.randn(8, 4, 8)
+    target = torch.ones(8, 4, 6) if head == "variance" else torch.full((8, 4), 0.5)
+    readout.affine_weight.requires_grad_(False)
+    flags = [p.requires_grad for p in readout.parameters()]
+    readout.train()
+    before = torch.random.get_rng_state().clone()
+    fit = gar.fit_variance_head if head == "variance" else gar.fit_gripper_head
+    fit(readout, features, target, features, target, updates=2)
+    assert torch.equal(torch.random.get_rng_state(), before)
+    assert [p.requires_grad for p in readout.parameters()] == flags
+    assert readout.training
+
+
+def test_variance_loss_balances_each_coordinate() -> None:
+    target = torch.tensor([[[1.0, 10.0]]])
+    predicted = 2 * target
+    scale = target.mean(dim=(0, 1), keepdim=True).square()
+    expected = torch.tensor(1.0) + gar.VARIANCE_LOG_WEIGHT * torch.log(torch.tensor(2.0)).square()
+    loss = gar.variance_loss(predicted, target, scale)
+    assert loss.ndim == 0
+    torch.testing.assert_close(loss, expected)

@@ -28,6 +28,8 @@ import hashlib
 import json
 import math
 import weakref
+from collections.abc import Callable
+from functools import wraps
 from itertools import chain
 from pathlib import Path
 from typing import Any
@@ -316,9 +318,9 @@ def solve_affine_residual(
 
 def variance_loss(predicted: Tensor, target: Tensor, scale: Tensor) -> Tensor:
     """Normalized squared variance error plus a log penalty. ``scale`` is the training-set factor."""
-    squared = (predicted - target).pow(2).mean()
+    squared = ((predicted - target).pow(2) / scale).mean()
     ratio = predicted.clamp_min(VARIANCE_FLOOR).log() - target.clamp_min(VARIANCE_FLOOR).log()
-    return squared / scale + VARIANCE_LOG_WEIGHT * ratio.pow(2).mean()
+    return squared + VARIANCE_LOG_WEIGHT * ratio.pow(2).mean()
 
 
 def gripper_loss(latent: Tensor, frequency: Tensor) -> Tensor:
@@ -342,6 +344,23 @@ def _snapshot(module: nn.Module) -> dict[str, Tensor]:
     return {key: value.detach().cpu().clone() for key, value in module.state_dict().items()}
 
 
+def _preserve_fit_state(function: Callable[..., int]) -> Callable[..., int]:
+    @wraps(function)
+    def fit(readout: GaussianReadout, *args: Any, **kwargs: Any) -> int:
+        flags = [(parameter, parameter.requires_grad) for parameter in readout.parameters()]
+        modes = [(module, module.training) for module in readout.modules()]
+        try:
+            return function(readout, *args, **kwargs)
+        finally:
+            for parameter, requires_grad in flags:
+                parameter.requires_grad_(requires_grad)
+            for module, training in modes:
+                module.training = training
+
+    return fit
+
+
+@_preserve_fit_state
 def fit_variance_head(
     readout: GaussianReadout,
     features: Tensor,
@@ -361,10 +380,10 @@ def fit_variance_head(
     target = target.detach().float().clamp_min(VARIANCE_FLOOR)
     tune_features = tune_features.detach().float()
     tune_target = tune_target.detach().float().clamp_min(VARIANCE_FLOOR)
-    scale = target.mean().pow(2).clamp_min(VARIANCE_FLOOR).detach()
+    # Each chunk position/joint is a separate motion coordinate (paper Eq. 25).
+    scale = target.mean(dim=0, keepdim=True).square().clamp_min(VARIANCE_FLOOR**2).detach()
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
-    torch.manual_seed(seed)
     for parameter in readout.parameters():
         parameter.requires_grad_(False)
     for parameter in list(readout.var_in.parameters()) + list(readout.var_out.parameters()):
@@ -408,6 +427,7 @@ def fit_variance_head(
     return selected
 
 
+@_preserve_fit_state
 def fit_gripper_head(
     readout: GaussianReadout,
     features: Tensor,
@@ -429,7 +449,6 @@ def fit_gripper_head(
     tune_frequency = tune_frequency.detach().float()
     generator = torch.Generator(device="cpu")
     generator.manual_seed(seed)
-    torch.manual_seed(seed)
     for parameter in readout.parameters():
         parameter.requires_grad_(False)
     readout.gripper_weight.requires_grad_(True)
