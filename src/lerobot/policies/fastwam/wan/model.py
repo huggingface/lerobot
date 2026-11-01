@@ -18,6 +18,21 @@ def sinusoidal_embedding_1d(dim, position):
     return x
 
 
+def run_in_float32(module: nn.Module, x: torch.Tensor) -> torch.Tensor:
+    """`module(x)` for a linear layer or a sequence of layers, with float32 copies of the linear weights.
+
+    Wan computes its time embedding and output head in float32 even when the model is bfloat16. Its CUDA autocast
+    regions cast the weights up on a GPU, and do nothing on the CPU.
+    """
+    for layer in module if isinstance(module, nn.Sequential) else [module]:
+        if isinstance(layer, nn.Linear):
+            bias = layer.bias.float() if layer.bias is not None else None
+            x = nn.functional.linear(x, layer.weight.float(), bias)
+        else:
+            x = layer(x)
+    return x
+
+
 @torch.amp.autocast("cuda", enabled=False)
 def rope_params(max_seq_len, dim, theta=10000):
     if dim % 2 != 0:
@@ -167,7 +182,7 @@ class Head(nn.Module):
         """
         with torch.amp.autocast("cuda", dtype=torch.float32):
             e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
-            x = self.head(self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2))
+            x = run_in_float32(self.head, self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2))
         return x
 
 
