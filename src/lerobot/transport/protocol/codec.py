@@ -323,7 +323,10 @@ def encode_message(
     *,
     tensor_converter: Callable[[Any], Any] | None = None,
 ) -> bytes:
-    """Encode only supported, finite values into an explicitly typed envelope."""
+    """Encode only supported, finite values into an explicitly typed envelope.
+
+    ``tensor_converter`` turns other array types, such as torch tensors, into NumPy arrays first.
+    """
     require_package("msgpack", "remote")
     envelope.__post_init__()
     record = {

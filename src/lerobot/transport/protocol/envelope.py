@@ -25,7 +25,7 @@ _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
 
 class MessageType(StrEnum):
-    """The operation tags understood by protocol major one."""
+    """The message types of envelope version 1."""
 
     DESCRIBE = "describe"
     DESCRIPTOR = "descriptor"
@@ -85,7 +85,7 @@ class Envelope:
     def __post_init__(self) -> None:
         """Validate correlation fields before decoding potentially large bodies."""
         if type(self.version) is not int or self.version != ENVELOPE_VERSION:
-            raise ProtocolError(ErrorCode.PROTOCOL, f"Unsupported protocol version: {self.version!r}")
+            raise ProtocolError(ErrorCode.PROTOCOL, f"Unsupported envelope version: {self.version!r}")
         try:
             object.__setattr__(self, "message_type", MessageType(self.message_type))
         except (ValueError, TypeError) as exc:
