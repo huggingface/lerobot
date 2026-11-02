@@ -15,16 +15,18 @@
 # limitations under the License.
 
 import logging
+import math
 import time
 from functools import cached_property
 from typing import Any
 
-from lerobot.robots.asimov.asimov import ARM_ACTIONS
+from lerobot.robots.asimov.asimov import ARM_ACTIONS, BASE_ACTIONS
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from ..unitree_g1.exo_serial import ExoskeletonArm
+from ..unitree_g1.unitree_g1 import RemoteController
 from .config_asimov_exo import AsimovExoTeleoperatorConfig
 from .exo_ik import AsimovExoIKHelper
 
@@ -37,7 +39,8 @@ class AsimovExoTeleoperator(Teleoperator):
 
     Uses the same exoskeleton hardware and calibration as the Unitree G1 teleoperator:
     exoskeleton FK computes end-effector poses, Asimov IK solves for joint angles.
-    Drive it with ``--robot.control_mode=arms``.
+    Drive it with ``--robot.control_mode=arms``. With ``control_mode=velocity`` (on both robot
+    and teleop) the exo joysticks drive locomotion instead and the arms are not commanded.
     """
 
     config_class = AsimovExoTeleoperatorConfig
@@ -74,9 +77,13 @@ class AsimovExoTeleoperator(Teleoperator):
         self.ik_helper: AsimovExoIKHelper | None = None
         self.ema_alpha = 2 / (config.ema_window + 1)
         self._ema: dict[str, dict[str, float]] = {"left": {}, "right": {}}
+        # side -> raw ADC (x, y) of the centered stick, read at connect.
+        self._stick_center: dict[str, tuple[int, int]] = {}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        if self.config.control_mode == "velocity":
+            return dict.fromkeys(BASE_ACTIONS, float)
         return dict.fromkeys(ARM_ACTIONS, float)
 
     @cached_property
@@ -104,6 +111,28 @@ class AsimovExoTeleoperator(Teleoperator):
         self._ema = {"left": {}, "right": {}}
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
+        if self.config.control_mode == "velocity":
+            time.sleep(0.1)  # Give serial time to populate buffer
+            # Sticks must be untouched here: their current position becomes the center.
+            self._stick_center = {}
+            for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
+                raw = arm.read_raw()
+                # The button channel idles high; a missing joystick reads low.
+                if (
+                    raw is None
+                    or len(raw) < 16
+                    or raw[RemoteController.JOYSTICK_BTN_IDX] <= RemoteController.ADC_HALF
+                ):
+                    self.disconnect()
+                    raise RuntimeError(
+                        f"Velocity mode needs a joystick on the {side} exo arm; none detected."
+                    )
+                self._stick_center[side] = (
+                    raw[RemoteController.JOYSTICK_X_IDX],
+                    raw[RemoteController.JOYSTICK_Y_IDX],
+                )
+                logger.info(f"{side} exo joystick center: {self._stick_center[side]}")
+            return
         self.ik_helper = self._make_ik_helper()
         logger.info("IK helper initialized")
         time.sleep(0.1)  # Give serial time to populate buffer
@@ -128,9 +157,42 @@ class AsimovExoTeleoperator(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, float]:
+        if self.config.control_mode == "velocity":
+            return self._joystick_velocity()
         if self.ik_helper is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         return self.ik_helper.compute_asimov_joints_from_exo(*self._read_smoothed_angles())
+
+    def _joystick_velocity(self) -> dict[str, float]:
+        """Left stick: forward/strafe; right stick x: turn. A missed read stops the robot."""
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        left_raw, right_raw = self.left_arm.read_raw(), self.right_arm.read_raw()
+        if left_raw is None or right_raw is None or len(left_raw) < 16 or len(right_raw) < 16:
+            return dict.fromkeys(BASE_ACTIONS, 0.0)
+
+        def stick(side: str, raw: list[int]) -> tuple[float, float]:
+            cx, cy = self._stick_center[side]
+            return (raw[RemoteController.JOYSTICK_X_IDX] - cx) / RemoteController.ADC_HALF, (
+                raw[RemoteController.JOYSTICK_Y_IDX] - cy
+            ) / RemoteController.ADC_HALF
+
+        lx, ly = stick("left", left_raw)
+        rx, _ = stick("right", right_raw)
+
+        def axis(value: float) -> float:
+            dz = self.config.joystick_deadzone
+            if abs(value) <= dz:
+                return 0.0
+            # Rescale so output ramps from 0 at the deadzone edge to 1 at full deflection.
+            return math.copysign(min(1.0, (abs(value) - dz) / (1 - dz)), value)
+
+        cfg = self.config
+        return {
+            "x.vel": axis(ly) * cfg.max_linear_velocity,
+            "y.vel": -axis(lx) * cfg.max_lateral_velocity,
+            "theta.vel": -axis(rx) * cfg.max_angular_velocity,
+        }
 
     def _smooth(self, side: str, angles: dict[str, float]) -> dict[str, float]:
         """Per-joint EMA; a missed serial read keeps the last smoothed angles."""
