@@ -278,6 +278,8 @@ def save_checkpoint(
         checkpoint_dir / PRETRAINED_MODEL_DIR, cfg, policy_to_save, preprocessor, postprocessor, accelerator
     )
     if ema is not None:
+        if accelerator is not None:
+            accelerator.wait_for_everyone()
         with ema.average_parameters(policy_to_save):
             save_pretrained_model(
                 checkpoint_dir / PRETRAINED_MODEL_EMA_DIR,
@@ -734,6 +736,8 @@ def publish_trained_model(
     else:
         with ema.average_parameters(model if peft_model is None else peft_model):
             commit_info = _push_bundle(cfg, model, preprocessor, postprocessor, dataset_meta, peft_model)
+        if dist.is_initialized():
+            dist.barrier()
         _push_bundle(cfg, model, preprocessor, postprocessor, dataset_meta, peft_model, branch="live")
     if commit_info is not None:
         # Contract: lerobot.jobs.hf.submit_to_hf watches for this exact "Model pushed to <url>"
