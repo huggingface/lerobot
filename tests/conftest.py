@@ -21,10 +21,12 @@ import re
 import shutil
 import tempfile
 import traceback
+from collections.abc import Iterator
 from pathlib import Path
 
 import draccus.wrappers.docstring as _draccus_docstring
 import pytest
+import torch
 import yaml
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
@@ -53,6 +55,22 @@ if is_package_available("datasets"):
         "tests.fixtures.files",
         "tests.fixtures.hub",
     ]
+
+
+@pytest.fixture
+def restore_torch_backend_flags() -> Iterator[None]:
+    """Restore training's global backend settings without monkeypatching dynamic attributes."""
+    benchmark = torch.backends.cudnn.benchmark
+    deterministic = torch.backends.cudnn.deterministic
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        yield
+    finally:
+        torch.backends.cudnn.benchmark = benchmark
+        torch.backends.cudnn.deterministic = deterministic
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32
 
 
 # Marks selecting the tests of each Fast Tests tier (`-m dataset`, see .github/workflows/fast_tests.yml);
