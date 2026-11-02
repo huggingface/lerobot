@@ -92,7 +92,6 @@ def _yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
     if config.gripper_closed_deg is None or config.gripper_open_deg is None:
         raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
     return MitArmParams(
-        motor_names=MOTOR_NAMES,
         joint_limits=_JOINT_LIMITS,
         joint_feedback_tolerance_rad=_JOINT_FEEDBACK_TOLERANCE_RAD,
         joint_signs=np.asarray(config.joint_signs, dtype=float),
@@ -165,6 +164,8 @@ class _YamBus:
     because MotorBridge's cached states carry no receive time.
     """
 
+    motor_names: tuple[str, ...] = MOTOR_NAMES
+
     def __init__(
         self, port: str, feedback_timeout_s: float, expected_adapter_serial: str | None = None
     ) -> None:
@@ -196,7 +197,7 @@ class _YamBus:
         self.controller = Controller(channel=self.port)
         self.motors = {
             name: self.controller.add_damiao_motor(i + 1, i + 17, "4340" if i < 3 else "4310")
-            for i, name in enumerate(MOTOR_NAMES)
+            for i, name in enumerate(self.motor_names)
         }
         self._last_feedback.clear()
         self._last_status.clear()
@@ -205,9 +206,9 @@ class _YamBus:
         """Return the raw states of the seven motors, once every motor has fresh feedback."""
         states = self._wait_for_fresh_states()
         return MotorStates(
-            position=np.asarray([states[name].pos for name in MOTOR_NAMES], dtype=float),
-            velocity=np.asarray([states[name].vel for name in MOTOR_NAMES], dtype=float),
-            torque=np.asarray([states[name].torq for name in MOTOR_NAMES], dtype=float),
+            position=np.asarray([states[name].pos for name in self.motor_names], dtype=float),
+            velocity=np.asarray([states[name].vel for name in self.motor_names], dtype=float),
+            torque=np.asarray([states[name].torq for name in self.motor_names], dtype=float),
         )
 
     def set_mit_mode(self) -> None:
@@ -230,7 +231,7 @@ class _YamBus:
         controller = self.controller
         if controller is None:
             raise RuntimeError(f"{self.port} bus is not open")
-        for name, value in zip(MOTOR_NAMES, hold, strict=True):
+        for name, value in zip(self.motor_names, hold, strict=True):
             self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
         self.enabled = True
         controller.enable_all()

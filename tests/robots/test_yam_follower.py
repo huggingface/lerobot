@@ -290,10 +290,10 @@ def test_slew_gripper_torque_and_gravity_feedforward(robot):
     command, packet = mit_control._control_step(
         params(robot), position, position + 0.1, position, gravity=np.ones(6), dt=0.01
     )
-    assert_mit_command(packet["joint_1"], position=0.003, velocity=0, kp=80, kd=5, torque=1)
-    assert packet["joint_2"].torque == pytest.approx(1.1)
+    assert_mit_command(packet[0], position=0.003, velocity=0, kp=80, kd=5, torque=1)
+    assert packet[1].torque == pytest.approx(1.1)
     assert command[6] == pytest.approx(0.52)  # gripper slews at 2 strokes/s
-    assert "gripper" not in packet  # commanded by its force limiter
+    assert len(packet) == 6  # the gripper has its own force limiter
 
 
 @pytest.mark.parametrize("polarity", [-1, 1])
@@ -327,10 +327,10 @@ def test_control_step_clamps_tracking_limits_and_gravity(robot):
     # joint_1 tracking band, joint_2 lower limit, joint_3 slew; the gripper slews freely.
     np.testing.assert_allclose(command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
     np.testing.assert_allclose(previous, [0.9, 0.0, 1.0, 0, 0, 0, 0.5])  # inputs are not mutated
-    assert_mit_command(packet["joint_1"], position=0.65, velocity=0, kp=80, kd=5, torque=10.0)
-    assert_mit_command(packet["joint_2"], position=0.0, velocity=0, kp=80, kd=5, torque=-2.2)
-    assert_mit_command(packet["joint_3"], position=1.015, velocity=0, kp=80, kd=5, torque=1.1)
-    assert_mit_command(packet["joint_4"], position=0.0, velocity=0, kp=10, kd=1.5, torque=1.2)
+    assert_mit_command(packet[0], position=0.65, velocity=0, kp=80, kd=5, torque=10.0)
+    assert_mit_command(packet[1], position=0.0, velocity=0, kp=80, kd=5, torque=-2.2)
+    assert_mit_command(packet[2], position=1.015, velocity=0, kp=80, kd=5, torque=1.1)
+    assert_mit_command(packet[3], position=0.0, velocity=0, kp=10, kd=1.5, torque=1.2)
 
 
 def test_gravity_model_is_loaded_from_bucket_cache(robot, monkeypatch, tmp_path):

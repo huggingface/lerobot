@@ -41,7 +41,6 @@ def gripper(closed=1.0, opened=3.0):
 
 def params(**overrides):
     values = {
-        "motor_names": ("shoulder", "elbow", "gripper"),
         "joint_limits": np.array([[-1.0, 1.0], [0.0, 2.0]]),
         "joint_feedback_tolerance_rad": 0.15,
         "joint_signs": np.array([1.0, -1.0]),
@@ -88,6 +87,7 @@ class FakeBus:
     """A bus whose motors sit at fixed raw positions; it can stop the servo after some reads."""
 
     def __init__(self, position=(0.2, -0.5, 2.0), stop_after=None):
+        self.motor_names = ("shoulder", "elbow", "gripper")
         self.enabled = False
         self.states = motor_states(position)
         self.error: Exception | None = None
@@ -159,9 +159,9 @@ def test_control_step_slews_tracks_clips_and_adds_gravity():
     # shoulder: tracking band; elbow: slew then lower limit; gripper: slew (0.1 stroke per 0.1 s).
     np.testing.assert_allclose(command, [0.3, 0.0, 0.6])
     np.testing.assert_allclose(previous, [0.6, 0.02, 0.5])  # inputs are not mutated
-    assert_mit_command(packet["shoulder"], position=0.3, velocity=0, kp=50, kd=2, torque=5.0)
-    assert_mit_command(packet["elbow"], position=0.0, velocity=0, kp=20, kd=1, torque=-3.0)
-    assert list(packet) == ["shoulder", "elbow"]  # the gripper has its own force limiter
+    assert_mit_command(packet[0], position=0.3, velocity=0, kp=50, kd=2, torque=5.0)
+    assert_mit_command(packet[1], position=0.0, velocity=0, kp=20, kd=1, torque=-3.0)
+    assert len(packet) == 2  # the gripper has its own force limiter
 
 
 def test_control_step_returns_from_past_a_limit_without_jumping():
@@ -288,10 +288,10 @@ def test_float_commands_compensate_gravity_and_friction_without_stiffness():
     )
     commands = mit_control._float_commands(params(), state, np.array([8.0, 1.5]))
     # Gravity 8 clipped to 5 Nm, plus friction 0.5 in the direction of motion.
-    assert_mit_command(commands["shoulder"], position=0.2, velocity=0, kp=0, kd=0.2, torque=5.5)
+    assert_mit_command(commands[0], position=0.2, velocity=0, kp=0, kd=0.2, torque=5.5)
     # Gravity -3 Nm and friction -0.2 Nm in the reversed elbow's motor frame.
-    assert_mit_command(commands["elbow"], position=-0.5, velocity=0, kp=0, kd=0.1, torque=-3.2)
-    assert list(commands) == ["shoulder", "elbow"]  # the gripper keeps its own limiter
+    assert_mit_command(commands[1], position=-0.5, velocity=0, kp=0, kd=0.1, torque=-3.2)
+    assert len(commands) == 2  # the gripper keeps its own limiter
 
 
 def run_cycles(servo, cycles):

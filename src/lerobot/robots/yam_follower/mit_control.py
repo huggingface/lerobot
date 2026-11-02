@@ -15,9 +15,9 @@
 """MIT control loop for arms whose motors run in impedance mode with gravity feed-forward.
 
 This module contains the hardware-independent part of the control stack. The robot supplies its
-motor order, calibration, limits and gains through ``MitArmParams``, implements ``MitArmBus`` to
-communicate with the motors, and provides a gravity-torque function. ``MitServo`` combines these
-pieces in a background control loop.
+calibration, limits and gains through `MitArmParams`, implements `MitArmBus` with the ordered motor
+names, and provides a gravity-torque function. `MitServo` combines these pieces in a background
+control loop.
 
 Internal units: joints in radians, the gripper from 0 (closed) to 1 (open).
 """
@@ -214,8 +214,6 @@ class MitArmParams:
     """Internal MIT control parameters for one arm.
 
     Args:
-        motor_names (`tuple[str, ...]`):
-            Motor order: arm joints followed by the gripper.
         joint_limits (`np.ndarray`):
             Lower and upper arm-joint limits in radians, shaped `(joints, 2)`.
         joint_feedback_tolerance_rad (`float`):
@@ -244,7 +242,6 @@ class MitArmParams:
             Per-joint Coulomb friction compensation in newton-metres; zeros disable it.
     """
 
-    motor_names: tuple[str, ...]
     joint_limits: np.ndarray
     joint_feedback_tolerance_rad: float
     joint_signs: np.ndarray
@@ -268,13 +265,15 @@ class MitArmParams:
 class MitArmBus(Protocol):
     """Motor-bus operations required by `MitServo`.
 
-    State arrays follow `MitArmParams.motor_names`: arm joints first, then the gripper.
+    State arrays follow `motor_names`: arm joints first, then the gripper.
     Positions and velocities use radians and radians per second; torques use newton-metres.
 
     **Attributes**:
+        - **motor_names** (`tuple[str, ...]`) -- Motor order: arm joints followed by the gripper.
         - **enabled** (`bool`) -- Whether torque is enabled for the arm.
     """
 
+    motor_names: tuple[str, ...]
     enabled: bool
 
     def read_states(self) -> MotorStates:
@@ -293,7 +292,7 @@ class MitArmBus(Protocol):
 
         Args:
             motor (`str`):
-                Name from `MitArmParams.motor_names`.
+                Name from `motor_names`.
             command (`MitCommand`):
                 Position, velocity, gains and feed-forward torque to send.
         """
@@ -373,7 +372,7 @@ def _control_step(
     command: np.ndarray,
     gravity: np.ndarray,
     dt: float,
-) -> tuple[np.ndarray, dict[str, MitCommand]]:
+) -> tuple[np.ndarray, tuple[MitCommand, ...]]:
     """Advance the speed- and tracking-limited pose and build the arm-joint commands."""
     n = params.num_joints
     # Move toward the target, inside the limits, no faster than the configured speeds.
@@ -391,16 +390,16 @@ def _control_step(
 
     goal = joint_to_motor(command, params)
     torque = _gravity_feedforward(params, gravity)
-    return command, {
-        name: MitCommand(
+    return command, tuple(
+        MitCommand(
             position=float(goal[i]),
             velocity=0.0,
             kp=float(params.kp[i]),
             kd=float(params.kd[i]),
             torque=float(torque[i]),
         )
-        for i, name in enumerate(params.motor_names[:n])
-    }
+        for i in range(n)
+    )
 
 
 def _gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
@@ -411,7 +410,7 @@ def _gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarra
     return np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
 
 
-def _float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray) -> dict[str, MitCommand]:
+def _float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray) -> tuple[MitCommand, ...]:
     """Build arm-joint commands that let the arm be moved by hand.
 
     The joints get no stiffness, light damping, the gravity torque of the measured pose and,
@@ -421,16 +420,16 @@ def _float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray
     goal = joint_to_motor(state.position, params)
     friction = params.coulomb_friction * np.sign(state.velocity[:n]) * params.joint_signs
     torque = _gravity_feedforward(params, gravity) + friction
-    return {
-        name: MitCommand(
+    return tuple(
+        MitCommand(
             position=float(goal[i]),
             velocity=0.0,
             kp=0.0,
             kd=float(params.float_kd[i]),
             torque=float(torque[i]),
         )
-        for i, name in enumerate(params.motor_names[:n])
-    }
+        for i in range(n)
+    )
 
 
 def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
@@ -660,14 +659,14 @@ class MitServo:
                         self.target = position.copy()
                         self.command = position.copy()
                         self.command_timed_out = True
-                    packet: dict[str, MitCommand] = {}
+                    joint_commands: tuple[MitCommand, ...] = ()
                     n = params.num_joints
                     if self.bus.enabled and self.idle and self.config.idle_mode == "float":
                         # The arm floats; the gripper keeps holding its commanded opening.
                         self.command[:n] = position[:n]
-                        packet = _float_commands(params, state, self.gravity(position))
+                        joint_commands = _float_commands(params, state, self.gravity(position))
                     elif self.bus.enabled:
-                        self.command, packet = _control_step(
+                        self.command, joint_commands = _control_step(
                             params,
                             position,
                             self.target,
@@ -675,15 +674,23 @@ class MitServo:
                             self.gravity(position),
                             min(started - previous, _MAX_CONTROL_DT_S),
                         )
+                    packet: list[tuple[str, MitCommand]] = []
+                    if self.bus.enabled:
+                        packet.extend(zip(self.bus.motor_names[:n], joint_commands, strict=True))
                     if self.bus.enabled and self._gripper is not None:
-                        packet[params.motor_names[n]] = self._gripper.command(
-                            float(position[n]),
-                            float(state.velocity[n]),
-                            float(state.torque[n]),
-                            float(self.command[n]),
-                            started,
+                        packet.append(
+                            (
+                                self.bus.motor_names[n],
+                                self._gripper.command(
+                                    float(position[n]),
+                                    float(state.velocity[n]),
+                                    float(state.torque[n]),
+                                    float(self.command[n]),
+                                    started,
+                                ),
+                            )
                         )
-                for name, command in packet.items():
+                for name, command in packet:
                     if self.stop_event.is_set():
                         break
                     self.bus.send_mit(name, command)
