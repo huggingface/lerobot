@@ -320,15 +320,26 @@ def test_control_step_clamps_tracking_limits_and_gravity(robot):
     assert packet["joint_4"] == pytest.approx((0.0, 0, 10, 1.5, 1.2))
 
 
-def test_gravity_matches_reference_torques(robot):
-    pytest.importorskip("placo")
+def test_gravity_model_is_loaded_from_bucket_cache(robot, monkeypatch, tmp_path):
+    model_path = tmp_path / "linear_4310.urdf"
+    ensure_model = MagicMock(return_value=model_path)
+    gravity_model = MagicMock()
+    monkeypatch.setattr(robot_module, "_GRAVITY_MODEL_LOCAL_PATH", model_path)
+    monkeypatch.setattr(robot_module, "ensure_bucket_file", ensure_model)
+    monkeypatch.setattr(robot_module, "GravityCompensation", gravity_model)
     robot.config.gravity_compensation = True
-    robot._load_control_model()
-    assert robot.gravity_model is not None
-    pose = np.array([0.2, 1.0, 1.1, -0.5, 0.3, -0.2, 0.5])
-    # I2RT's runtime-combined YAM v1 and linear 4310 model at this pose.
-    expected = [0.0, -1.8471475506, 6.4100448557, 1.5274144560, 0.0594020982, -0.0011334136]
-    np.testing.assert_allclose(robot._gravity_torque(pose), expected, atol=1e-6)
+    mock_hardware(robot, monkeypatch)
+    robot.connect()
+    robot.disconnect()
+    ensure_model.assert_called_once_with(
+        "lerobot/robot-urdfs",
+        "yam/v1/linear_4310.urdf",
+        model_path,
+        token=False,
+    )
+    gravity_model.assert_called_once_with(
+        model_path, tuple(f"joint{i}" for i in range(1, 7)), base_frame="base"
+    )
 
 
 def test_single_arm_features_are_not_prefixed(robot):

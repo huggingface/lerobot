@@ -27,9 +27,11 @@ import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.model.kinematics import GravityCompensation
+from lerobot.model import GravityCompensation
 from lerobot.motors import MotorCalibration
+from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.hub import ensure_bucket_file
 from lerobot.utils.import_utils import (
     _can_available,
     _motorbridge_available,
@@ -69,7 +71,9 @@ logger = logging.getLogger(__name__)
 _MODEL_ARM_JOINTS = tuple(f"joint{i}" for i in range(1, 7))
 _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
 _MODEL_GRIPPER_STROKE_M = 0.0475
-_GRAVITY_MODEL_PATH = Path(__file__).parent / "assets/yam_linear.xml"
+_GRAVITY_MODEL_BUCKET_ID = "lerobot/robot-urdfs"
+_GRAVITY_MODEL_REMOTE_PATH = "yam/v1/linear_4310.urdf"
+_GRAVITY_MODEL_LOCAL_PATH = HF_LEROBOT_HOME / "robot-urdfs" / _GRAVITY_MODEL_REMOTE_PATH
 _MAX_GRAVITY_TORQUE_NM = 10.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
 # Damiao register 9 stores the CAN loss-of-communication timeout in 50 us ticks.
@@ -552,9 +556,13 @@ class YamFollower(Robot):
     def _load_control_model(self) -> None:
         if not self.config.gravity_compensation or self.gravity_model is not None:
             return
-        self.gravity_model = GravityCompensation(
-            _GRAVITY_MODEL_PATH, _MODEL_ARM_JOINTS, base_frame="base", mjcf=True
+        model_path = ensure_bucket_file(
+            _GRAVITY_MODEL_BUCKET_ID,
+            _GRAVITY_MODEL_REMOTE_PATH,
+            _GRAVITY_MODEL_LOCAL_PATH,
+            token=False,
         )
+        self.gravity_model = GravityCompensation(model_path, _MODEL_ARM_JOINTS, base_frame="base")
 
     def _open_for_calibration(self) -> None:
         """Open the CAN interface without cameras, servo or torque."""

@@ -54,6 +54,8 @@ Connecting checks every configured arm and camera before enabling impedance cont
 
 Each arm runs a servo loop that applies position stiffness and gravity compensation while enforcing speed and tracking-error limits. The gripper limits its force after detecting that it is blocked on an object; `gripper_force_limit_n` defaults to 50 N.
 
+On first use, gravity compensation downloads the YAM dynamics model from the public [`lerobot/robot-urdfs`](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/yam/v1) bucket and caches it under `HF_LEROBOT_HOME/robot-urdfs/yam/v1`.
+
 The default `idle_mode=hold` holds the measured pose before the first action and after `command_timeout_s`. With `idle_mode=float`, the joints instead use gravity compensation and light damping so the arm can be moved by hand, while the gripper continues holding. Float mode requires `gravity_compensation`. Validate `gravity_factors` with your hardware because cameras and payloads are not included in the model and can cause drift.
 
 A motor fault or missing feedback stops commands. In a bimanual setup, a fault on either arm stops both. Actions and observations remain unavailable until the robot is disconnected and reconnected. Disconnecting explicitly disables torque.

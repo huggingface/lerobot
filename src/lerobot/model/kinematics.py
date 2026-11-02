@@ -157,30 +157,26 @@ class RobotKinematics:
 
 
 class GravityCompensation:
-    """Static gravity torques for a fixed-base robot model, computed with placo."""
+    """Static gravity torques for a fixed-base URDF model, computed with placo."""
 
     def __init__(
         self,
-        model_path: str | Path,
+        urdf_path: str | Path,
         joint_names: Sequence[str],
         base_frame: str,
-        mjcf: bool = False,
-    ):
+    ) -> None:
         """
         Load a robot model for gravity compensation.
 
         Args:
-            model_path: Path to the URDF (or MJCF when ``mjcf`` is True) model.
-            joint_names: Model joints to compensate, in the order torques are returned.
-            base_frame: Name of the fixed base frame in the model.
-            mjcf: Whether ``model_path`` is an MJCF file instead of a URDF.
+            urdf_path (`str` or `Path`): Path to the URDF model.
+            joint_names (`Sequence[str]`): Model joints to compensate, in the order torques are returned.
+            base_frame (`str`): Name of the fixed base frame in the model.
         """
         require_package("placo", extra="placo-dep")
         _raise_if_placo_unusable()
-        if mjcf and not hasattr(getattr(placo, "Flags", None), "mjcf"):
-            raise ImportError("MJCF gravity models require placo>=0.9.15; install lerobot[yam]")
 
-        self.robot = placo.RobotWrapper(str(model_path), placo.Flags.mjcf if mjcf else 0)
+        self.robot = placo.RobotWrapper(str(urdf_path))
         self.joint_names = list(joint_names)
         self.base_frame = base_frame
 
@@ -191,12 +187,12 @@ class GravityCompensation:
         Compute the torques that hold a configuration against gravity.
 
         Args:
-            joint_pos_rad: Positions of ``joint_names`` in radians.
-            extra_joint_pos: Positions of other model joints whose mass still loads the
-                compensated joints (e.g. gripper fingers), in model units.
+            joint_pos_rad (`np.ndarray`): Positions of `joint_names` in radians.
+            extra_joint_pos (`dict[str, float]`, *optional*): Positions of other model joints
+                whose mass still loads the compensated joints (e.g. gripper fingers), in model units.
 
         Returns:
-            Torques in Nm for each of ``joint_names``.
+            `np.ndarray`: Torques in Nm for each joint in `joint_names`.
         """
         for joint_name, position in zip(self.joint_names, joint_pos_rad, strict=True):
             self.robot.set_joint(joint_name, float(position))
