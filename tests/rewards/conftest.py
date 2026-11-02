@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import pytest
 import torch
 
@@ -24,9 +26,11 @@ def tiny_classifier_backbone(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     transformers = pytest.importorskip("transformers")
 
-    def from_pretrained(*args, **kwargs):
-        torch.manual_seed(0)
-        config = transformers.ResNetConfig(embedding_size=8, hidden_sizes=[8, 16], depths=[1, 1])
-        return transformers.ResNetModel(config)
+    def from_pretrained(*args: Any, **kwargs: Any) -> torch.nn.Module:
+        # Same backbone weights every time, without resetting the global RNG of the test.
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(0)
+            config = transformers.ResNetConfig(embedding_size=8, hidden_sizes=[8, 16], depths=[1, 1])
+            return transformers.ResNetModel(config)
 
     monkeypatch.setattr(transformers.AutoModel, "from_pretrained", from_pretrained)

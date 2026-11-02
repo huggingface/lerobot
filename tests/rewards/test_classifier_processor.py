@@ -16,9 +16,16 @@
 import logging
 import tempfile
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 import torch
+from huggingface_hub.errors import (
+    LocalEntryNotFoundError,
+    RemoteEntryNotFoundError,
+    RepositoryNotFoundError,
+)
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.processor import (
@@ -26,14 +33,15 @@ from lerobot.processor import (
     DeviceProcessorStep,
     IdentityProcessorStep,
     NormalizerProcessorStep,
+    PolicyProcessorPipeline,
     RewardClassifierProcessorStep,
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
 from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
+from lerobot.rewards.classifier.modeling_classifier import Classifier
 from lerobot.rewards.classifier.processor_classifier import make_classifier_processor
 from lerobot.utils.constants import OBS_IMAGE, OBS_IMAGES, OBS_STATE, REWARD
-from tests.utils import skip_if_package_missing
 
 
 def create_default_config():
@@ -345,10 +353,10 @@ def test_classifier_processor_postprocessor_identity():
 CAMERA_KEY = f"{OBS_IMAGES}.front"
 
 
-def _save_trained_classifier(path: Path, save_preprocessor: bool = True):
+def _save_trained_classifier(
+    path: Path, save_preprocessor: bool = True, image_stats: bool = True
+) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
     """Save a classifier and its preprocessor the way `lerobot-train` does; return the preprocessor."""
-    from lerobot.rewards.classifier.modeling_classifier import Classifier
-
     # Default normalization mapping: VISUAL -> MEAN_STD.
     config = RewardClassifierConfig(num_cameras=1)
     config.input_features = {
@@ -356,13 +364,12 @@ def _save_trained_classifier(path: Path, save_preprocessor: bool = True):
         OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
     }
     config.output_features = {REWARD: PolicyFeature(type=FeatureType.REWARD, shape=(1,))}
-    stats = {
-        CAMERA_KEY: {
+    stats = {OBS_STATE: {"mean": torch.zeros(6), "std": torch.ones(6)}}
+    if image_stats:
+        stats[CAMERA_KEY] = {
             "mean": torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1),
             "std": torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1),
-        },
-        OBS_STATE: {"mean": torch.zeros(6), "std": torch.ones(6)},
-    }
+        }
     preprocessor, _ = make_classifier_processor(config, dataset_stats=stats)
 
     Classifier(config).save_pretrained(path)
@@ -371,17 +378,16 @@ def _save_trained_classifier(path: Path, save_preprocessor: bool = True):
     return preprocessor
 
 
-@skip_if_package_missing("transformers")
 def test_reward_classifier_step_preprocesses_images_as_in_training(tiny_classifier_backbone, tmp_path):
     training_preprocessor = _save_trained_classifier(tmp_path)
     step = RewardClassifierProcessorStep(pretrained_path=str(tmp_path), device="cpu")
     assert step.reward_preprocessor is not None
     classifier = step.reward_classifier
 
-    classifier_inputs = {}
+    classifier_inputs: dict[str, torch.Tensor] = {}
     predict_reward = classifier.predict_reward
 
-    def spy_predict_reward(batch, threshold=0.5):
+    def spy_predict_reward(batch: dict[str, torch.Tensor], threshold: float = 0.5) -> torch.Tensor:
         classifier_inputs.update(batch)
         return predict_reward(batch, threshold=threshold)
 
@@ -411,7 +417,6 @@ def test_reward_classifier_step_preprocesses_images_as_in_training(tiny_classifi
     torch.testing.assert_close(result[TransitionKey.OBSERVATION][CAMERA_KEY], image)
 
 
-@skip_if_package_missing("transformers")
 def test_reward_classifier_step_without_saved_preprocessor_warns(tiny_classifier_backbone, tmp_path, caplog):
     _save_trained_classifier(tmp_path, save_preprocessor=False)
 
@@ -419,8 +424,10 @@ def test_reward_classifier_step_without_saved_preprocessor_warns(tiny_classifier
         step = RewardClassifierProcessorStep(pretrained_path=str(tmp_path), device="cpu")
 
     assert step.reward_preprocessor is None
-    assert "classifier_preprocessor.json" in caplog.text
+    assert "has no saved preprocessor ('classifier_preprocessor.json')" in caplog.text
     assert "will NOT be normalized" in caplog.text
+    # No advice to migrate the checkpoint, which does not apply to reward classifiers.
+    assert "migrat" not in caplog.text
 
     # The images are passed to the classifier as they are, as before.
     observation = {CAMERA_KEY: torch.rand(1, 3, 32, 32)}
@@ -429,3 +436,55 @@ def test_reward_classifier_step_without_saved_preprocessor_warns(tiny_classifier
         probs = step.reward_classifier.predict([observation[CAMERA_KEY]]).probabilities
     success = probs.item() > step.success_threshold
     assert result[TransitionKey.REWARD] == (step.success_reward if success else 0.0)
+
+
+def test_reward_classifier_step_warns_when_preprocessor_has_no_image_stats(
+    tiny_classifier_backbone, tmp_path, caplog
+):
+    _save_trained_classifier(tmp_path, image_stats=False)
+
+    with caplog.at_level(logging.WARNING):
+        step = RewardClassifierProcessorStep(pretrained_path=str(tmp_path), device="cpu")
+
+    assert step.reward_preprocessor is not None
+    assert "no normalization stats" in caplog.text
+    assert CAMERA_KEY in caplog.text
+
+
+def _hub_error(error_cls: type[Exception], status_code: int) -> Exception:
+    request = httpx.Request("GET", "https://huggingface.co/user/reward-classifier")
+    return error_cls("Hub error", response=httpx.Response(status_code, request=request))
+
+
+def test_reward_classifier_step_hub_repo_without_preprocessor_warns(monkeypatch, caplog):
+    def hf_hub_download(**kwargs: Any) -> str:
+        raise _hub_error(RemoteEntryNotFoundError, 404)
+
+    monkeypatch.setattr("lerobot.processor.hil_processor.hf_hub_download", hf_hub_download)
+    step = RewardClassifierProcessorStep()
+
+    with caplog.at_level(logging.WARNING):
+        assert step._load_reward_preprocessor("user/reward-classifier") is None
+    assert "has no saved preprocessor" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        LocalEntryNotFoundError("Offline and not in the cache"),
+        _hub_error(RepositoryNotFoundError, 401),
+        ConnectionError("Network unreachable"),
+    ],
+    ids=["offline_cache_miss", "unauthorized", "network"],
+)
+def test_reward_classifier_step_raises_when_preprocessor_lookup_fails(monkeypatch, error):
+    """Only a preprocessor file that does not exist falls back to unnormalized inputs."""
+
+    def hf_hub_download(**kwargs: Any) -> str:
+        raise error
+
+    monkeypatch.setattr("lerobot.processor.hil_processor.hf_hub_download", hf_hub_download)
+    step = RewardClassifierProcessorStep()
+
+    with pytest.raises(type(error)):
+        step._load_reward_preprocessor("user/reward-classifier")

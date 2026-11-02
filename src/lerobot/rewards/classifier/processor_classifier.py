@@ -26,6 +26,7 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
+from lerobot.utils.constants import REWARD_CLASSIFIER_PREPROCESSOR_DEFAULT_NAME
 
 from .configuration_classifier import RewardClassifierConfig
 
@@ -70,7 +71,7 @@ def make_classifier_processor(
     return (
         PolicyProcessorPipeline(
             steps=input_steps,
-            name="classifier_preprocessor",
+            name=REWARD_CLASSIFIER_PREPROCESSOR_DEFAULT_NAME,
         ),
         PolicyProcessorPipeline(
             steps=output_steps,

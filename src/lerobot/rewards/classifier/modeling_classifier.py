@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import cast
+from typing import Self, cast
 
 import torch
 from torch import Tensor, nn
@@ -206,6 +206,19 @@ class Classifier(PreTrainedRewardModel):
         """Whether the pretrained backbone has no trainable parameters (see `_freeze_encoder`)."""
         return not any(param.requires_grad for param in self.encoder.parameters())
 
+    def train(self, mode: bool = True) -> Self:
+        """Set the training mode, keeping a frozen backbone in eval mode.
+
+        A frozen backbone must compute the same features in training as at inference: its BatchNorm layers
+        keep their pretrained running stats instead of updating them and normalizing with batch stats, and
+        its dropout stays off. Otherwise the layers trained on top of it would fit features it never
+        produces at rollout.
+        """
+        super().train(mode)
+        if self._backbone_is_frozen():
+            self.encoder.eval()
+        return self
+
     def _get_encoder_output(self, x: torch.Tensor, image_key: str) -> torch.Tensor:
         """Extract the appropriate output from the encoder.
 
@@ -245,6 +258,7 @@ class Classifier(PreTrainedRewardModel):
 
         return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
 
+    @torch.no_grad()
     def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
         """Returns 1.0 for success, 0.0 for failure based on image observations."""
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
@@ -289,14 +303,18 @@ class Classifier(PreTrainedRewardModel):
 
         return loss, output_dict
 
-    def predict_reward(self, batch, threshold=0.5):
+    @torch.no_grad()
+    def predict_reward(self, batch: dict[str, Tensor], threshold: float = 0.5) -> Tensor:
         """Eval method. Returns predicted reward with the decision threshold as argument."""
         # Extract images from batch dict
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
 
+        probs = self.predict(images).probabilities
+        if probs is None:
+            raise ValueError("Classifier.predict() returned no probabilities")
+
         if self.config.num_classes == 2:
-            probs = self.predict(images).probabilities
             logging.debug(f"Predicted reward images: {probs}")
             return (probs > threshold).float()
         else:
-            return torch.argmax(self.predict(images).probabilities, dim=1)
+            return torch.argmax(probs, dim=1)

@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import torch
+from torch import nn
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
-from lerobot.rewards.classifier.modeling_classifier import ClassifierOutput
+from lerobot.rewards.classifier.modeling_classifier import Classifier, ClassifierOutput
 from lerobot.utils.constants import OBS_IMAGE, REWARD
 from tests.utils import skip_if_package_missing
 
@@ -36,8 +37,6 @@ def test_classifier_output():
 
 @skip_if_package_missing("transformers")
 def test_binary_classifier_with_default_params():
-    from lerobot.rewards.classifier.modeling_classifier import Classifier
-
     config = RewardClassifierConfig()
     config.input_features = {
         OBS_IMAGE: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
@@ -77,8 +76,6 @@ def test_binary_classifier_with_default_params():
 
 @skip_if_package_missing("transformers")
 def test_multiclass_classifier():
-    from lerobot.rewards.classifier.modeling_classifier import Classifier
-
     num_classes = 5
     config = RewardClassifierConfig()
     config.input_features = {
@@ -116,8 +113,6 @@ def test_multiclass_classifier():
 
 @skip_if_package_missing("transformers")
 def test_default_device():
-    from lerobot.rewards.classifier.modeling_classifier import Classifier
-
     config = RewardClassifierConfig()
     assert config.device is None or config.device == "cpu"
 
@@ -132,8 +127,6 @@ def test_default_device():
 
 @skip_if_package_missing("transformers")
 def test_explicit_device_setup():
-    from lerobot.rewards.classifier.modeling_classifier import Classifier
-
     config = RewardClassifierConfig(device="cpu")
     assert config.device == "cpu"
 
@@ -146,9 +139,7 @@ def test_explicit_device_setup():
         assert p.device == torch.device("cpu")
 
 
-def _make_tiny_classifier(num_cameras: int = 1):
-    from lerobot.rewards.classifier.modeling_classifier import Classifier
-
+def _make_tiny_classifier(num_cameras: int = 1) -> Classifier:
     config = RewardClassifierConfig(num_cameras=num_cameras)
     config.input_features = {
         f"{OBS_IMAGE}s.cam{i}": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32))
@@ -158,16 +149,19 @@ def _make_tiny_classifier(num_cameras: int = 1):
     return Classifier(config)
 
 
-@skip_if_package_missing("transformers")
 def test_classifier_trains_layers_on_top_of_frozen_backbone(tiny_classifier_backbone):
     classifier = _make_tiny_classifier()
     classifier.train()
     encoder = classifier.encoders[classifier.image_keys[0]]
     backbone, spatial_embeddings, projection, layer_norm = encoder[0], encoder[1], encoder[3], encoder[4]
     assert not any(p.requires_grad for p in backbone.parameters())
+    # The frozen backbone stays in eval mode (BatchNorm running stats, no dropout), the rest trains.
+    assert not any(module.training for module in backbone.modules())
+    assert spatial_embeddings.training and classifier.classifier_head.training
 
-    def snapshot(module):
-        return {name: p.detach().clone() for name, p in module.named_parameters()}
+    def snapshot(module: nn.Module) -> dict[str, torch.Tensor]:
+        tensors = [*module.named_parameters(), *module.named_buffers()]
+        return {name: tensor.detach().clone() for name, tensor in tensors}
 
     trainable = {"spatial_embeddings": spatial_embeddings, "projection": projection, "layer_norm": layer_norm}
     trainable_before = {module_name: snapshot(module) for module_name, module in trainable.items()}
@@ -188,15 +182,34 @@ def test_classifier_trains_layers_on_top_of_frozen_backbone(tiny_classifier_back
             assert not torch.equal(param, trainable_before[module_name][name]), (
                 f"{module_name}.{name} was not updated"
             )
-    for name, param in backbone.named_parameters():
-        assert param.grad is None
-        assert torch.equal(param, backbone_before[name]), f"frozen backbone parameter {name} changed"
+    assert all(param.grad is None for param in backbone.parameters())
+    assert any("running_mean" in name for name in backbone_before)
+    backbone_after = snapshot(backbone)
+    for name, tensor in backbone_before.items():
+        assert torch.equal(backbone_after[name], tensor), f"frozen backbone tensor {name} changed"
 
 
-@skip_if_package_missing("transformers")
+def test_classifier_inference_does_not_track_gradients(tiny_classifier_backbone):
+    classifier = _make_tiny_classifier()
+    batch = {f"{OBS_IMAGE}s.cam0": torch.rand(2, 3, 32, 32)}
+
+    # The rewards are thresholded, hence never require grad: check that no graph is built on the way.
+    head_grad_enabled: list[bool] = []
+    classifier.classifier_head.register_forward_hook(
+        lambda *_: head_grad_enabled.append(torch.is_grad_enabled())
+    )
+
+    assert torch.is_grad_enabled()
+    classifier.predict_reward(batch)
+    classifier.compute_reward(batch)
+    assert head_grad_enabled == [False, False]
+
+    # Training still gets gradients.
+    loss, _ = classifier({**batch, REWARD: torch.tensor([0.0, 1.0])})
+    assert loss.requires_grad
+
+
 def test_classifier_state_dict_keys_unchanged(tiny_classifier_backbone, tmp_path):
-    from lerobot.rewards.classifier.modeling_classifier import Classifier
-
     classifier = _make_tiny_classifier(num_cameras=2)
     keys = set(classifier.state_dict())
 
