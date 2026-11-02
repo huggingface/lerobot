@@ -287,8 +287,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self._storage_root is not None and self.meta.storage_format == DEFAULT_STORAGE_FORMAT:
             raise ValueError(
                 f"The dataset at {self._storage_root!r} has the default {DEFAULT_STORAGE_FORMAT!r} "
-                "storage format, which cannot be read in place from an object store. For HF Storage "
-                "Buckets, use repo_type='bucket' with dataset.streaming=true."
+                "storage format, which cannot be read in place from an object store. Stream it with "
+                "StreamingLeRobotDataset (dataset.streaming=true); for HF Storage Buckets, also set "
+                "repo_type='bucket'."
             )
 
         self.image_transforms = image_transforms

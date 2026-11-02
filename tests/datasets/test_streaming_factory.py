@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import fsspec
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
@@ -188,6 +189,32 @@ def test_make_dataset_streaming_resume_continues_same_seed_order(
     resumed_dataset.load_state_dict({"epoch": 0, "offset": offset, "batch_size": 1})
 
     assert _anchor_order(resumed_dataset, 60 - offset) == full[offset:]
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+def test_make_dataset_from_fsspec_root_requires_streaming(
+    tmp_path: Path, lerobot_dataset_factory, monkeypatch: pytest.MonkeyPatch, streaming: bool
+) -> None:
+    root = tmp_path / "source"
+    lerobot_dataset_factory(
+        root=root, repo_id=DUMMY_REPO_ID, total_episodes=2, total_frames=20, use_videos=False
+    )
+    namespace = f"factory-{tmp_path.parent.name}-{tmp_path.name}"
+    filesystem = fsspec.filesystem("memory")
+    for path in [*(root / "meta").rglob("*"), *(root / "data").rglob("*")]:
+        if path.is_file():
+            filesystem.put(str(path), f"{namespace}/{path.relative_to(root).as_posix()}")
+    monkeypatch.setattr("lerobot.datasets.storage.HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
+    cfg = _streaming_cfg(None, 0)
+    cfg.dataset.root = f"memory://{namespace}"
+    cfg.dataset.streaming = streaming
+
+    if streaming:
+        assert len(_anchor_order(factory.make_dataset(cfg), 20)) == 20
+    else:
+        with pytest.raises(ValueError, match="StreamingLeRobotDataset"):
+            factory.make_dataset(cfg)
 
 
 def test_is_bucket_root() -> None:

@@ -29,7 +29,6 @@ import bisect
 import io
 import multiprocessing
 import os
-import re
 import shutil
 from collections import OrderedDict
 from collections.abc import Callable
@@ -46,7 +45,7 @@ from lerobot.utils.import_utils import _lancedb_available, require_package
 if TYPE_CHECKING or _lancedb_available:
     import lancedb
 
-from .storage import is_remote_uri
+from .storage import is_remote_uri, remote_meta_cache_dir
 
 # Byte-index columns on the videos table: map a frame window to its byte ranges so a
 # batch's video fetch can be batched. Assume constant frame rate; mp4-only.
@@ -322,6 +321,7 @@ def localize_root(
     revision: str | None = None,
     token: str | bool | None = None,
     force_cache_sync: bool = False,
+    storage_options: dict | None = None,
 ) -> Path:
     """Materialize ``meta/`` for a remote Lance dataset and return the local dir holding it.
 
@@ -329,7 +329,12 @@ def localize_root(
     tables are never downloaded.
     """
     _, local_root = resolve_lance_root(
-        repo_id, root, revision=revision, token=token, force_cache_sync=force_cache_sync
+        repo_id,
+        root,
+        storage_options,
+        revision=revision,
+        token=token,
+        force_cache_sync=force_cache_sync,
     )
     return local_root
 
@@ -348,7 +353,7 @@ def resolve_lance_root(
         # Key the cache by revision too: an hf:// root at a non-default revision must not
         # reuse (or overwrite) another revision's materialized meta.
         cache_key = f"{db_uri}@{revision}" if revision else db_uri
-        local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
+        local_root = remote_meta_cache_dir(cache_key)
         if force_cache_sync:
             shutil.rmtree(local_root / "meta", ignore_errors=True)
         if not (local_root / "meta").exists():

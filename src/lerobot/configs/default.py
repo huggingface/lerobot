@@ -39,7 +39,9 @@ class DatasetConfig:
     repo_type: str = "dataset"
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
-    # With streaming=true, an 'hf://buckets/OWNER/BUCKET' URI is also accepted and implies repo_type="bucket".
+    # With streaming=true, an 'hf://buckets/OWNER/BUCKET' URI is also accepted and implies repo_type="bucket",
+    # and an 's3://bucket/path' URI streams from S3 (needs s3fs). S3 credentials come from the environment
+    # (AWS_PROFILE, AWS_*), never from this config, which is saved to train_config.json and pushed with the model.
     root: str | None = None
     episodes: list[int] | None = None
     # Episode indices to drop (e.g. corrupt or heterogeneous ones). Applied on top of `episodes`.

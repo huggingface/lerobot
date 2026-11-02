@@ -663,7 +663,7 @@ def test_storage_format_routing(video_dataset_roots):
         LeRobotDataset(DUMMY_REPO_ID, root=src_root)
 
 
-def test_repo_type_bucket_matrix(dataset_roots, monkeypatch):
+def test_repo_type_bucket_matrix(dataset_roots, monkeypatch, tmp_path):
     src_root, _ = dataset_roots
 
     # repo_type="bucket" without a root derives hf://buckets/{repo_id}
@@ -681,9 +681,11 @@ def test_repo_type_bucket_matrix(dataset_roots, monkeypatch):
     assert seen["root"] == f"hf://buckets/{DUMMY_REPO_ID}"
     monkeypatch.undo()
 
-    # a default-format dataset at an object-store root points at streaming
-    with pytest.raises(FileNotFoundError, match="streaming"):
-        localize_remote_root(DUMMY_REPO_ID, f"file://{src_root}")
+    # a default-format dataset at an object-store root localizes meta/, then points at streaming
+    monkeypatch.setattr("lerobot.datasets.storage.HF_LEROBOT_HOME", tmp_path / "cache")
+    assert (localize_remote_root(DUMMY_REPO_ID, f"file://{src_root}") / "meta" / "info.json").is_file()
+    with pytest.raises(ValueError, match="StreamingLeRobotDataset"):
+        LeRobotDataset(DUMMY_REPO_ID, root=f"file://{src_root}")
 
     # factory: bucket + default format without streaming keeps the old error
     import lerobot.datasets.factory as factory_module
