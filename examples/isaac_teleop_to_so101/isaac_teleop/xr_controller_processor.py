@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import RobotAction
 from lerobot.processor import ProcessorStepRegistry, RobotActionProcessorStep
 from lerobot.utils.rotation import Rotation

@@ -45,7 +45,7 @@ from typing import Protocol
 import numpy as np
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model import RobotKinematics
 from lerobot.processor import (
     RobotProcessorPipeline,
     robot_action_observation_to_transition,

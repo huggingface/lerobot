@@ -203,7 +203,7 @@ Point the LeRobot runner's `--policy.path` at the trained adapter checkpoint; it
 base and saved processors. For direct calls with a **complete base**, load the processors alongside it:
 
 ```python
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies import make_pre_post_processors
 from lerobot.policies.flux3 import Flux3Policy
 
 checkpoint = "black-forest-labs/flux-3-action-so101"

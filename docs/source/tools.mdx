@@ -45,7 +45,7 @@ Two layers.
 Read it via the dataset metadata accessor:
 
 ```python
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets import LeRobotDatasetMetadata
 
 meta = LeRobotDatasetMetadata(repo_id="pepijn/super_poulain_final_annotations")
 tools = meta.tools     # list[dict] — OpenAI tool schemas

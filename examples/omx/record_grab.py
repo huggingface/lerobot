@@ -29,8 +29,7 @@ import numpy as np
 
 from lerobot.cameras import CameraConfig  # noqa: F401
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.configs import parser
-from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.configs import DatasetRecordConfig, parser
 from lerobot.datasets import (
     LeRobotDataset,
     VideoEncodingManager,

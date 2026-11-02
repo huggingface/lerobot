@@ -602,7 +602,7 @@ For custom deployments (e.g. with kinematics processors), use the rollout module
 ```python
 from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
 from lerobot.inference import SyncInferenceConfig
-from lerobot.rollout.strategies import BaseStrategy
+from lerobot.rollout import BaseStrategy
 from lerobot.utils.process import ProcessSignalHandler
 
 cfg = RolloutConfig(

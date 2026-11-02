@@ -19,9 +19,8 @@ import time
 
 from lerobot.common.control_utils import predict_action
 from lerobot.datasets import LeRobotDataset
-from lerobot.policies import make_pre_post_processors
+from lerobot.policies import make_pre_post_processors, make_robot_action
 from lerobot.policies.act import ACTPolicy
-from lerobot.policies.utils import make_robot_action
 from lerobot.processor import make_default_processors
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.utils.constants import ACTION, OBS_STR

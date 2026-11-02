@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from lerobot.teleoperators.config import TeleoperatorConfig
+from lerobot.teleoperators import TeleoperatorConfig
 
 
 @dataclass(kw_only=True)

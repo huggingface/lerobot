@@ -6,8 +6,8 @@ import torch
 
 from lerobot.configs import FeatureType
 from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.policies import make_pre_post_processors
-from lerobot.policies.act import ACTConfig, ACTPolicy
+from lerobot.policies import ACTConfig, make_pre_post_processors
+from lerobot.policies.act import ACTPolicy
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
 

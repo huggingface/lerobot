@@ -2,9 +2,9 @@ import torch
 
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.datasets import LeRobotDatasetMetadata
-from lerobot.policies import make_pre_post_processors
+from lerobot.policies import make_pre_post_processors, make_robot_action
 from lerobot.policies.diffusion import DiffusionPolicy
-from lerobot.policies.utils import build_inference_frame, make_robot_action
+from lerobot.policies.utils import build_inference_frame
 from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
 
 MAX_EPISODES = 5

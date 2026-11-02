@@ -38,9 +38,9 @@ You can use `lerobot-rollout --strategy.type=base --inference.type=rtc` for RTC 
 The snippet below provides a simplified pseudo-example of how RTC operates with Pi0 in your pipeline:
 
 ```python
-from lerobot.policies.pi0 import PI0Policy, PI0Config
+from lerobot.policies.pi0 import PI0Policy
 from lerobot.configs import RTCAttentionSchedule
-from lerobot.policies.rtc import RTCConfig, ActionQueue
+from lerobot.policies import ActionQueue, PI0Config, RTCConfig
 
 # Load the Pi0 config so RTC can be enabled before the policy is built
 policy_cfg = PI0Config.from_pretrained("lerobot/pi0_base")
