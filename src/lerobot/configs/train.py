@@ -234,7 +234,6 @@ class TrainPipelineConfig(HubMixin):
         elif policy_path:
             overrides = parser.get_yaml_overrides("policy") + (parser.get_cli_overrides("policy") or [])
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=overrides)
-            self.policy.pretrained_path = Path(policy_path)
         elif self.resume:
             self._resolve_resume_checkpoint()
 

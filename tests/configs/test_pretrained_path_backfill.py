@@ -103,7 +103,7 @@ def test_from_pretrained_hub_id_backfills_repo_and_revision(monkeypatch, tmp_pat
     monkeypatch.setattr(policies_mod, "hf_hub_download", fake_download)
     cfg = PreTrainedConfig.from_pretrained("user/dummy_backfill", revision="v2")
     assert isinstance(cfg, _DummyBackfillConfig)
-    assert str(cfg.pretrained_path) == "user/dummy_backfill"
+    assert cfg.pretrained_path == "user/dummy_backfill"
     assert cfg.pretrained_revision == "v2"
 
 
