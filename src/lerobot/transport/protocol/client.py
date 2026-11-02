@@ -17,7 +17,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from .codec import decode_message, encode_message, peek_envelope
+from .codec import CodecLimits, decode_message, encode_message, peek_envelope
 from .envelope import (
     Envelope,
     ErrorCode,
@@ -37,15 +37,16 @@ def query_reply(
     expected: MessageType,
     *,
     encoder: Callable[[Envelope], bytes] = encode_message,
+    limits: CodecLimits = CodecLimits(),
     check_instance: bool = True,
     check_session: bool = True,
     **query_options: Any,
 ) -> Envelope:
-    """Send one query, without retries, and return its single checked reply."""
+    """Send one query, without retries, and return its single checked reply, decoded within `limits`."""
     replies = transport.query(key, encoder(request), timeout, **query_options)
     if len(replies) != 1:
         raise TimeoutError("Expected one reply within its deadline")
-    response = decode_message(replies[0])
+    response = decode_message(replies[0], limits)
     validate_reply(response, request, expected, check_instance=check_instance, check_session=check_session)
     return response
 

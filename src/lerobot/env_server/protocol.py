@@ -30,6 +30,10 @@ from lerobot.utils.feature_spec import FeatureSpec, validate_array
 PROTOCOL_VERSION = 1
 # Every server also answers describe here, for clients that do not name a deployment.
 ANY_DEPLOYMENT_DESCRIBE = f"lerobot/env/v{PROTOCOL_VERSION}/describe"
+# Largest message, in bytes, unless the server and the client raise it. Both ends size their `CodecLimits` from
+# their own bound: one tensor may fill a message and decoded images may take twice its size, the ratios of the
+# default `CodecLimits`.
+DEFAULT_MAX_PAYLOAD_BYTES = 32 * 1024 * 1024
 
 
 def deployment_prefix(deployment: str) -> str:

@@ -25,11 +25,13 @@ from gymnasium.vector.utils import batch_space
 
 from lerobot.sim.types import EnvDescriptor, StepResult
 from lerobot.transport.protocol.client import query_reply
+from lerobot.transport.protocol.codec import CodecLimits
 from lerobot.transport.protocol.envelope import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig, ZenohTransport
 
 from .protocol import (
     ANY_DEPLOYMENT_DESCRIBE,
+    DEFAULT_MAX_PAYLOAD_BYTES,
     decode_descriptor,
     decode_step_result,
     deployment_prefix,
@@ -54,6 +56,7 @@ class EnvClient:
         jpeg_quality: int = 90,
         handshake_timeout_s: float = 10.0,
         zenoh_config_path: str | None = None,
+        max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
     ):
         """Store the settings; nothing connects until `describe` or `open`.
 
@@ -74,6 +77,8 @@ class EnvClient:
                 Time limit for connecting and `describe`, so a missing server fails fast.
             zenoh_config_path (`str`, *optional*):
                 Zenoh JSON5 file with TLS and access-control settings.
+            max_payload_bytes (`int`, *optional*, defaults to `DEFAULT_MAX_PAYLOAD_BYTES`):
+                Largest reply in bytes. The server refuses a batch whose observations exceed it.
         """
         self.encoding = encoding
         self.jpeg_quality = jpeg_quality
@@ -82,8 +87,14 @@ class EnvClient:
             ZenohConfig(
                 connect_endpoints=[endpoint],
                 config_file=zenoh_config_path,
+                max_payload_bytes=max_payload_bytes,
                 open_timeout_s=handshake_timeout_s,
             )
+        )
+        self.limits = CodecLimits(
+            max_payload_bytes=max_payload_bytes,
+            max_tensor_bytes=max_payload_bytes,
+            max_decoded_bytes=2 * max_payload_bytes,
         )
         self.handshake_timeout_s = handshake_timeout_s
         self.deployment = deployment or ""
@@ -186,6 +197,7 @@ class EnvClient:
                     "use_async_envs": use_async_envs,
                     "encoding": self.encoding,
                     "jpeg_quality": self.jpeg_quality,
+                    "max_payload_bytes": self.limits.max_payload_bytes,
                 },
                 self.setup_timeout_s,
                 MessageType.ACCEPTED,
@@ -262,6 +274,7 @@ class EnvClient:
             message,
             timeout,
             expected,
+            limits=self.limits,
             max_replies=1,
             # Requests are never retried, so a reply dropped under congestion would fail the session.
             congestion_control="block",

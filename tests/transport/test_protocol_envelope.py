@@ -95,7 +95,7 @@ def test_both_clients_use_the_shared_reply_rules(service, failure):
     pytest.importorskip("msgpack")
     from types import SimpleNamespace
 
-    from lerobot.transport.protocol.codec import decode_message, encode_message
+    from lerobot.transport.protocol.codec import CodecLimits, decode_message, encode_message
 
     def query(_key, payload, *_args, **_kwargs):
         source = decode_message(payload)
@@ -115,6 +115,7 @@ def test_both_clients_use_the_shared_reply_rules(service, failure):
 
         client = EnvClient.__new__(EnvClient)
         client.instance_id, client.session_id, client.generation = "instance", "session", 4
+        client.limits = CodecLimits()
         client.transport = SimpleNamespace(query=query)
 
         def invoke():
