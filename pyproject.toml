@@ -117,6 +117,7 @@ dataset = [
     #   - macOS x86_64 (Intel) and linux armv7l: no wheels in any released version -> fall through to the PyAV decoder.
     # Each platform gets its own line so the resolver picks the minimum version that has a wheel for it.
 
+    # Other torch/torchcodec pairings (informational): 0.8.1 = ffmpeg>=8 support, 0.10 = system-wide ffmpeg support, 0.12+ supports any torch>=2.11.
     # TorchCodec doesn't declare its torch dependency: an older torch needs its matching TorchCodec release.
     "torchcodec>=0.3.0,<0.18.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
     "torchcodec>=0.7.0,<0.18.0; sys_platform == 'win32'",
