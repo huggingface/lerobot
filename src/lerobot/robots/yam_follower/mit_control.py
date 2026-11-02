@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 # Measured poses may exceed the model limits, which are not mechanical stops.
 FEEDBACK_LIMIT_TOLERANCE_RAD = 0.15
 GRIPPER_FEEDBACK_MARGIN = 0.10
+# Prevent a delayed servo cycle from producing a large speed-limited command step.
+_MAX_CONTROL_DT_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -492,7 +494,7 @@ class MitServo:
                             self.target,
                             self.command,
                             self.gravity(position),
-                            min(started - previous, 0.05),
+                            min(started - previous, _MAX_CONTROL_DT_S),
                         )
                     if self.bus.enabled and self._gripper is not None:
                         packet[params.motor_names[n]] = self._gripper.command(
