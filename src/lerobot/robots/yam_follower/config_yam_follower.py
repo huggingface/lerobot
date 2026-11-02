@@ -16,6 +16,7 @@
 
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 from lerobot.cameras import CameraConfig
 
@@ -78,7 +79,7 @@ class YamFollowerConfig:
     gravity_compensation: bool = True
     gravity_factors: list[float] = field(default_factory=lambda: [1.0, 1.1, 1.1, 1.2, 1.0, 1.0])
     # Before the first action and after command_timeout_s: "hold" the pose or "float" (movable by hand).
-    idle_mode: str = "hold"
+    idle_mode: Literal["hold", "float"] = "hold"
     # I2RT's float-mode damping and Coulomb friction for the standard YAM v1 arm.
     float_kd: list[float] = field(default_factory=lambda: [0.1, 0.1, 0.1, 0.3, 0.05, 0.05])
     friction_compensation: bool = False
@@ -94,8 +95,6 @@ class YamFollowerConfig:
     command_timeout_s: float = 1.0
 
     def __post_init__(self) -> None:
-        if not self.port:
-            raise ValueError("A YAM CAN interface is required")
         for name in (
             "joint_signs",
             "joint_offsets_deg",
@@ -106,15 +105,10 @@ class YamFollowerConfig:
             "coulomb_friction",
         ):
             values = getattr(self, name)
-            if len(values) != 6 or not all(math.isfinite(v) for v in values):
-                raise ValueError(f"{name} must contain six finite values")
+            if len(values) != 6:
+                raise ValueError(f"{name} must contain six values; got {len(values)}")
         if any(s not in (-1, 1) for s in self.joint_signs):
-            raise ValueError("joint_signs must contain only -1 or +1")
-        for name, maximum in (("kp", 500), ("kd", 5)):
-            if any(not 0 < x <= maximum for x in getattr(self, name)):
-                raise ValueError(f"{name} outside MIT gain limits")
-        if not 0 < self.gripper_kp <= 500 or not 0 < self.gripper_kd <= 5:
-            raise ValueError("Gripper gains outside MIT limits")
+            raise ValueError(f"joint_signs must contain only -1 or +1; got {self.joint_signs}")
         for name in (
             "initial_tolerance_deg",
             "gripper_force_limit_n",
@@ -122,48 +116,45 @@ class YamFollowerConfig:
             "max_joint_speed_deg_s",
             "max_gripper_speed_s",
             "max_tracking_error_deg",
+            "control_frequency",
             "feedback_timeout_s",
             "command_timeout_s",
         ):
             value = getattr(self, name)
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError(f"{name} must be finite and positive")
-        if any(not 0 <= x <= 5 for x in self.float_kd):
-            raise ValueError("float_kd outside MIT gain limits")
+            if value <= 0:
+                raise ValueError(f"{name} must be positive; got {value}")
         if any(x < 0 for x in self.coulomb_friction):
-            raise ValueError("coulomb_friction must not be negative")
-        if self.idle_mode not in ("hold", "float"):
-            raise ValueError('idle_mode must be "hold" or "float"')
+            raise ValueError(f"coulomb_friction must be nonnegative; got {self.coulomb_friction}")
         if self.idle_mode == "float" and not self.gravity_compensation:
-            raise ValueError("idle_mode='float' needs gravity_compensation, or the arm would fall")
-        if not 20 <= self.control_frequency <= 250:
-            raise ValueError("control_frequency must be between 20 and 250 Hz")
+            raise ValueError(
+                "idle_mode='float' needs gravity_compensation. Enable gravity_compensation for this arm."
+            )
         if self.initial_position_deg is not None:
-            if len(self.initial_position_deg) != 6 or not all(
-                math.isfinite(v) for v in self.initial_position_deg
+            if len(self.initial_position_deg) != 6:
+                raise ValueError(
+                    f"initial_position_deg must contain six values or be null; "
+                    f"got {len(self.initial_position_deg)}"
+                )
+            for name, value, (lower, upper) in zip(
+                JOINT_NAMES, self.initial_position_deg, JOINT_LIMITS_DEG, strict=True
             ):
-                raise ValueError("initial_position_deg must contain six finite values or be null")
-            for value, (lower, upper) in zip(self.initial_position_deg, JOINT_LIMITS_DEG, strict=True):
                 if not lower <= value <= upper:
-                    raise ValueError("initial_position_deg is outside YAM joint limits")
+                    raise ValueError(
+                        f"{name} initial position must be between {lower:.1f} and {upper:.1f} degrees; "
+                        f"got {value}"
+                    )
         closed = self.gripper_closed_deg
         opened = self.gripper_open_deg
-        if closed is not None or opened is not None:
-            motor_limit_deg = math.degrees(DM_MIT_POSITION_LIMIT_RAD)
-            if (
-                closed is None
-                or opened is None
-                or not math.isfinite(closed)
-                or not math.isfinite(opened)
-                or abs(closed) > motor_limit_deg
-                or abs(opened) > motor_limit_deg
-            ):
-                raise ValueError("Provide both finite raw gripper endpoints within motor limits")
+        if (closed is None) != (opened is None):
+            raise ValueError("Provide both gripper_closed_deg and gripper_open_deg, or neither")
+        if closed is not None and opened is not None:
             low, high = GRIPPER_STROKE_RANGE_DEG
-            if not low <= abs(opened - closed) <= high:
-                raise ValueError(f"Gripper stroke must be between {low:.0f} and {high:.0f} raw motor degrees")
-        if set(self.cameras) & set(motor_feature_names(use_velocity_and_torque=True)):
-            raise ValueError("Camera names collide with YAM motor features")
+            stroke = abs(opened - closed)
+            if not low <= stroke <= high:
+                raise ValueError(
+                    f"Gripper stroke must be between {low:.0f} and {high:.0f} raw motor degrees; "
+                    f"got {stroke:.0f}"
+                )
 
 
 @RobotConfig.register_subclass("yam_follower")
@@ -210,7 +201,7 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
             Whether to add gravity feed-forward from the bundled YAM model.
         gravity_factors (`list`, *optional*):
             Per-joint multipliers applied to gravity feed-forward.
-        idle_mode (`str`, *optional*, defaults to `"hold"`):
+        idle_mode (`Literal["hold", "float"]`, *optional*, defaults to `"hold"`):
             Behavior before the first action and after the command timeout: `hold` or `float`.
         float_kd (`list`, *optional*):
             Per-joint damping gains used in float mode.

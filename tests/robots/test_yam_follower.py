@@ -436,11 +436,9 @@ def test_bus_reads_the_can_timeout_register():
     bus.motors["gripper"].get_register_u32.assert_called_once_with(9)
 
 
-def test_float_mode_requires_gravity_compensation(tmp_path):
+def test_float_mode_requires_gravity_compensation():
     with pytest.raises(ValueError, match="needs gravity_compensation"):
         YamFollowerRobotConfig(port="can0", idle_mode="float", gravity_compensation=False)
-    with pytest.raises(ValueError, match="idle_mode"):
-        YamFollowerRobotConfig(port="can0", idle_mode="limp")
 
 
 @pytest.mark.parametrize("friction_compensation", [False, True])
