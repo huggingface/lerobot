@@ -29,13 +29,16 @@ from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.model import GravityCompensation
 from lerobot.motors import MotorCalibration
+from lerobot.utils import (
+    check_if_already_connected,
+    check_if_not_connected,
+    ensure_bucket_file,
+    require_package,
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
-from lerobot.utils.hub import ensure_bucket_file
 from lerobot.utils.import_utils import (
     _can_available,
     _motorbridge_available,
-    require_package,
 )
 
 from ..robot import Robot

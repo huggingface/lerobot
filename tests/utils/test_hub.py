@@ -16,7 +16,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from lerobot.utils.hub import ensure_bucket_file, find_latest_hub_checkpoint
+from lerobot.utils import ensure_bucket_file
+from lerobot.utils.hub import find_latest_hub_checkpoint
 
 
 def test_ensure_bucket_file_downloads_once(monkeypatch, tmp_path):
