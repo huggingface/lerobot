@@ -25,8 +25,15 @@ import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.configs.default import JobConfig
-from lerobot.configs.train import TrainJobConfig, TrainPipelineConfig
+from huggingface_hub.errors import (
+    HfHubHTTPError,
+    LocalEntryNotFoundError,
+    RemoteEntryNotFoundError,
+    RepositoryNotFoundError,
+)
+
+from lerobot.configs.default import DatasetConfig, JobConfig
+from lerobot.configs.train import TrainJobConfig, TrainPipelineConfig, default_resume_output_dir
 from lerobot.jobs.hf import (
     _build_resume_job,
     _pod_forwarded_args,
@@ -35,7 +42,9 @@ from lerobot.jobs.hf import (
     build_remote_config_file,
     build_repo_id,
     checkpoint_dp_world_size,
+    count_dataset_episodes,
     describe_batch_size,
+    describe_launch,
     flavor_gpu_count,
     follow_job,
     resolve_job_tags,
@@ -689,7 +698,7 @@ def test_flavor_gpu_count_matches_hf_jobs_catalogue(flavor, gpus):
     ],
 )
 def test_resolve_nproc_per_node(flavor, override, expected):
-    assert resolve_nproc_per_node(flavor, flavor_gpu_count(flavor), override) == expected
+    assert resolve_nproc_per_node(flavor, override) == expected
 
 
 @pytest.mark.parametrize(
@@ -699,7 +708,7 @@ def test_resolve_nproc_per_node(flavor, override, expected):
 def test_resolve_nproc_per_node_lets_an_explicit_value_exceed_the_name_count(caplog, flavor, override):
     """The GPU count only comes from the flavor name, so an explicit value wins, with a warning."""
     with caplog.at_level("WARNING"):
-        assert resolve_nproc_per_node(flavor, flavor_gpu_count(flavor), override) == override
+        assert resolve_nproc_per_node(flavor, override) == override
     assert "exceeds" in caplog.text
 
 
@@ -713,33 +722,32 @@ def test_resolve_nproc_per_node_lets_an_explicit_value_exceed_the_name_count(cap
     ],
 )
 def test_resolve_nproc_per_node_resume_defaults_to_the_checkpoint_world_size(flavor, recorded, expected):
-    gpus = flavor_gpu_count(flavor)
-    assert resolve_nproc_per_node(flavor, gpus, None, recorded=recorded, resume=True) == expected
+    assert resolve_nproc_per_node(flavor, None, recorded=recorded, resume=True) == expected
 
 
 def test_resolve_nproc_per_node_resume_with_unknown_world_size_runs_one_process(caplog):
     with caplog.at_level("WARNING"):
-        assert resolve_nproc_per_node("h200x8", 8, None, recorded=None, resume=True) == 1
+        assert resolve_nproc_per_node("h200x8", None, recorded=None, resume=True) == 1
     assert "--job.nproc_per_node" in caplog.text
 
 
 def test_resolve_nproc_per_node_resume_rejects_a_flavor_smaller_than_the_checkpoint():
     with pytest.raises(ValueError, match="trained on 4 processes"):
-        resolve_nproc_per_node("a10g-largex2", 2, None, recorded=4, resume=True)
+        resolve_nproc_per_node("a10g-largex2", None, recorded=4, resume=True)
 
 
 def test_resolve_nproc_per_node_resume_warns_when_an_explicit_value_changes_the_world(caplog):
     with caplog.at_level("WARNING"):
-        assert resolve_nproc_per_node("h200x4", 4, 4, recorded=1, resume=True) == 4
+        assert resolve_nproc_per_node("h200x4", 4, recorded=1, resume=True) == 4
     assert "effective batch size changes" in caplog.text
 
 
 def test_resolve_nproc_per_node_resume_rejects_a_world_change_on_streaming():
     """The trainer hard-fails a streaming resume on another dp world size; fail before submitting."""
     with pytest.raises(ValueError, match="streaming"):
-        resolve_nproc_per_node("h200x4", 4, 4, recorded=1, resume=True, streaming=True)
+        resolve_nproc_per_node("h200x4", 4, recorded=1, resume=True, streaming=True)
     # The matching size goes through.
-    assert resolve_nproc_per_node("h200x4", 4, 2, recorded=2, resume=True, streaming=True) == 2
+    assert resolve_nproc_per_node("h200x4", 2, recorded=2, resume=True, streaming=True) == 2
 
 
 @pytest.mark.parametrize("value", [0, -1])
@@ -850,10 +858,56 @@ def test_checkpoint_dp_world_size_fetches_only_the_step_file_of_a_hub_checkpoint
         return str(training_state_dir / TRAINING_STEP)
 
     monkeypatch.setattr("lerobot.configs.parser.parse_arg", lambda name, *a, **k: "alice/run")
-    monkeypatch.setattr("lerobot.jobs.hf.find_latest_hub_checkpoint", lambda repo_id: "checkpoints/000100")
-    monkeypatch.setattr("lerobot.jobs.hf.hf_hub_download", fake_download)
+    monkeypatch.setattr(
+        "lerobot.common.train_utils.find_latest_hub_checkpoint", lambda repo_id: "checkpoints/000100"
+    )
+    monkeypatch.setattr("lerobot.common.train_utils.hf_hub_download", fake_download)
     assert checkpoint_dp_world_size(_minimal_cfg()) == 4
     assert downloads == [("alice/run", f"checkpoints/000100/{TRAINING_STATE_DIR}/{TRAINING_STEP}")]
+
+
+def _patch_hub_checkpoint(monkeypatch, download):
+    monkeypatch.setattr("lerobot.configs.parser.parse_arg", lambda name, *a, **k: "alice/run")
+    monkeypatch.setattr(
+        "lerobot.common.train_utils.find_latest_hub_checkpoint", lambda repo_id: "checkpoints/000100"
+    )
+    monkeypatch.setattr("lerobot.common.train_utils.hf_hub_download", download)
+
+
+def test_checkpoint_dp_world_size_is_none_for_a_hub_checkpoint_without_the_step_file(monkeypatch):
+    def missing(repo_id, filename, **kwargs):
+        raise RemoteEntryNotFoundError("404", response=httpx.Response(404, request=httpx.Request("GET", "u")))
+
+    _patch_hub_checkpoint(monkeypatch, missing)
+    assert checkpoint_dp_world_size(_minimal_cfg()) is None
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("connection reset"),
+        HfHubHTTPError("429 rate limited", response=httpx.Response(429, request=httpx.Request("GET", "u"))),
+        # What hf_hub_download raises offline when the file isn't cached: not "missing on the Hub".
+        LocalEntryNotFoundError("cannot reach the Hub"),
+    ],
+    ids=["network", "rate_limit", "offline"],
+)
+def test_checkpoint_dp_world_size_propagates_hub_errors(monkeypatch, error):
+    """A failed read must not silently resume on 1 GPU of a paid multi-GPU flavor."""
+
+    def failing(repo_id, filename, **kwargs):
+        raise error
+
+    _patch_hub_checkpoint(monkeypatch, failing)
+    with pytest.raises(type(error)):
+        checkpoint_dp_world_size(_minimal_cfg())
+
+
+def test_checkpoint_dp_world_size_rejects_a_hub_repo_without_checkpoints(monkeypatch):
+    monkeypatch.setattr("lerobot.configs.parser.parse_arg", lambda name, *a, **k: "alice/run")
+    monkeypatch.setattr("lerobot.common.train_utils.find_latest_hub_checkpoint", lambda repo_id: None)
+    with pytest.raises(FileNotFoundError, match="No checkpoint found"):
+        checkpoint_dp_world_size(_minimal_cfg())
 
 
 @pytest.mark.parametrize(
@@ -873,13 +927,15 @@ def test_checkpoint_dp_world_size_is_none_when_unknown(monkeypatch, tmp_path, st
     assert checkpoint_dp_world_size(cfg) is None
 
 
-def _patch_submit_side_effects(monkeypatch, *, stage_config=None, recorded=None) -> list[dict]:
+def _patch_submit_side_effects(monkeypatch, *, stage_config=None, recorded=None, episodes=None) -> list[dict]:
     """Stub the Hub/Jobs calls of `submit_to_hf`; return the list `run_job` kwargs land in.
 
-    `recorded` is the data-parallel world size a resumed checkpoint reports.
+    `recorded` is the data-parallel world size a resumed checkpoint reports, `episodes` the
+    dataset's episode count (None: unknown).
     """
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
     monkeypatch.setattr("lerobot.jobs.hf.checkpoint_dp_world_size", lambda cfg: recorded)
+    monkeypatch.setattr("lerobot.jobs.hf.count_dataset_episodes", lambda dataset, api: episodes)
 
     class FakeHfApi:
         def __init__(self, token=None):
@@ -961,6 +1017,18 @@ def test_submit_single_process_keeps_plain_command(monkeypatch, capsys, flavor, 
     assert "= 16 samples per optimizer step" in capsys.readouterr().out
 
 
+FROZEN_NOW = dt.datetime(2026, 11, 2, 11, 11, 45, tzinfo=dt.UTC)
+
+
+def _freeze_now(monkeypatch) -> None:
+    class _FrozenDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return FROZEN_NOW
+
+    monkeypatch.setattr("lerobot.jobs.hf.dt", SimpleNamespace(datetime=_FrozenDateTime, UTC=dt.UTC))
+
+
 def _resume_cfg(monkeypatch, *job_args: str, streaming: bool = False) -> TrainPipelineConfig:
     """A `--resume` config on a Hub checkpoint repo, with the user's argv set to match."""
     argv = ["--config_path=alice/ckpt", "--resume=true", "--steps=500"]
@@ -991,6 +1059,7 @@ def _resume_cfg(monkeypatch, *job_args: str, streaming: bool = False) -> TrainPi
 )
 def test_submit_resume_keeps_the_checkpoint_world_size(monkeypatch, job_args, recorded, nproc):
     """The resume path replays the user's flags under the launcher, minus every --job.* flag."""
+    _freeze_now(monkeypatch)
 
     def _boom(*a, **kw):
         raise AssertionError("a resume must not stage a fresh config")
@@ -1002,6 +1071,9 @@ def test_submit_resume_keeps_the_checkpoint_world_size(monkeypatch, job_args, re
 
     (call,) = run_job_calls
     train_args = ["--resume=true", "--steps=500", "--config_path=alice/ckpt", "--job.target=local"]
+    if nproc > 1:
+        # Every rank resolves the resume into the same, submit-time directory.
+        train_args.append(f"--output_dir={default_resume_output_dir(FROZEN_NOW)}")
     command, env = build_launch(train_args, nproc)
     assert call["command"] == command
     assert call["env"] == env
@@ -1081,3 +1153,263 @@ def test_validate_warns_that_nproc_per_node_is_ignored_locally(caplog):
     with caplog.at_level("WARNING"):
         cfg.validate()
     assert "only sizes HF Jobs launches" in caplog.text
+
+
+def _resume_cfg_with(monkeypatch, cli: list[str], *, saved: list[str] = (), streaming: bool = False):
+    """A Hub `--resume` config whose checkpoint config was saved with `saved` (e.g. resolved degrees).
+
+    `cli` is what the user typed after `--config_path=alice/ckpt --resume=true`; it lands both in
+    `sys.argv` (forwarded to the pod) and in the parsed config, as the parser would apply it.
+    """
+    monkeypatch.setattr("sys.argv", ["lerobot-train", "--config_path=alice/ckpt", "--resume=true", *cli])
+
+    def fake_parse_arg(name, args=None):
+        if name == "config_path":
+            return "alice/ckpt"
+        for token in cli:
+            if token.startswith(f"--{name}="):
+                return token.split("=", 1)[1]
+        return None
+
+    monkeypatch.setattr("lerobot.configs.parser.parse_arg", fake_parse_arg)
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--resume", "true"]
+        + ["--dataset.streaming", str(streaming).lower(), *saved, *cli, "--job.detach=true"],
+    )
+    monkeypatch.setattr(cfg, "validate", lambda: None)
+    return cfg
+
+
+@pytest.mark.parametrize(
+    "nproc,flavor",
+    [(4, "h200x4"), (1, "a10g-largex2")],
+    ids=["grow", "shrink_to_one"],
+)
+def test_submit_resume_refits_a_ddp_checkpoint_to_an_explicit_process_count(monkeypatch, nproc, flavor):
+    """A 2-process DDP checkpoint saves dp_replicate=2; an explicit other count must still launch,
+    with the pod told the new degree (its saved config would fail WORLD_SIZE otherwise)."""
+    _freeze_now(monkeypatch)
+    run_job_calls = _patch_submit_side_effects(monkeypatch, recorded=2)
+    cfg = _resume_cfg_with(
+        monkeypatch,
+        [f"--job.target={flavor}", f"--job.nproc_per_node={nproc}"],
+        saved=["--parallelism.dp_replicate", "2"],
+    )
+
+    submit_to_hf(cfg)
+
+    (call,) = run_job_calls
+    assert f"--parallelism.dp_replicate={nproc}" in call["command"]
+    assert (f"--nproc-per-node={nproc}" in call["command"]) == (nproc > 1)
+    # The user's config object is left as parsed.
+    assert cfg.parallelism.dp_replicate == 2
+
+
+def test_submit_resume_keeps_an_explicit_dp_replicate(monkeypatch):
+    """A degree the user typed is theirs: a mismatch is reported, not silently overridden."""
+    run_job_calls = _patch_submit_side_effects(monkeypatch, recorded=2)
+    cfg = _resume_cfg_with(
+        monkeypatch,
+        ["--job.target=h200x4", "--job.nproc_per_node=4", "--parallelism.dp_replicate=2"],
+    )
+    with pytest.raises(ValueError, match="does not fit 4 process"):
+        submit_to_hf(cfg)
+    assert run_job_calls == []
+
+
+def test_submit_resume_leaves_a_matching_ddp_checkpoint_untouched(monkeypatch):
+    run_job_calls = _patch_submit_side_effects(monkeypatch, recorded=2)
+    cfg = _resume_cfg_with(monkeypatch, ["--job.target=h200x4"], saved=["--parallelism.dp_replicate", "2"])
+
+    submit_to_hf(cfg)
+
+    (call,) = run_job_calls
+    assert "--nproc-per-node=2" in call["command"]
+    assert not any(arg.startswith("--parallelism.") for arg in call["command"])
+
+
+def test_submit_resume_of_a_sharded_checkpoint_on_another_size_explains_the_fix(monkeypatch):
+    run_job_calls = _patch_submit_side_effects(monkeypatch, recorded=2)
+    cfg = _resume_cfg_with(
+        monkeypatch,
+        ["--job.target=h200x4", "--job.nproc_per_node=4"],
+        saved=["--parallelism.dp_shard", "2"],
+    )
+    with pytest.raises(ValueError, match=r"multiply to 4 \(e.g. --parallelism.dp_shard=-1"):
+        submit_to_hf(cfg)
+    assert run_job_calls == []
+
+
+def test_submit_resume_of_a_sharded_checkpoint_with_refit_degrees_launches(monkeypatch):
+    """DCP reshards across sizes: degrees that fit the new count go through, forwarded as typed."""
+    run_job_calls = _patch_submit_side_effects(monkeypatch, recorded=2)
+    cfg = _resume_cfg_with(
+        monkeypatch,
+        ["--job.target=h200x4", "--job.nproc_per_node=4", "--parallelism.dp_shard=-1"],
+        saved=["--parallelism.dp_shard", "2"],
+    )
+
+    submit_to_hf(cfg)
+
+    (call,) = run_job_calls
+    assert "--parallelism.dp_shard=-1" in call["command"]
+    assert "--nproc-per-node=4" in call["command"]
+
+
+def test_submit_multi_process_resume_keeps_a_user_output_dir(monkeypatch):
+    run_job_calls = _patch_submit_side_effects(monkeypatch, recorded=2)
+    cfg = _resume_cfg_with(monkeypatch, ["--job.target=h200x2", "--output_dir=outputs/train/mine"])
+
+    submit_to_hf(cfg)
+
+    (call,) = run_job_calls
+    assert [arg for arg in call["command"] if arg.startswith("--output_dir")] == [
+        "--output_dir=outputs/train/mine"
+    ]
+
+
+@pytest.mark.parametrize(
+    "nproc,requested,recorded,resume,flavor,expected",
+    [
+        (8, None, None, False, "h200x8", "torchrun, 8 processes (one per GPU; flavor has 8 GPUs)"),
+        (
+            2,
+            None,
+            2,
+            True,
+            "h200x4",
+            "torchrun, 2 processes (checkpoint was trained on 2; flavor has 4 GPUs)",
+        ),
+        (
+            4,
+            4,
+            2,
+            True,
+            "h200x4",
+            "torchrun, 4 processes (set by --job.nproc_per_node; flavor has 4 GPUs)",
+        ),
+        (
+            1,
+            None,
+            1,
+            True,
+            "a10g-largex2",
+            "single process, uses 1 of the flavor's 2 GPUs (checkpoint was trained on 1)",
+        ),
+        (
+            1,
+            None,
+            None,
+            True,
+            "a10g-largex2",
+            "single process, uses 1 of the flavor's 2 GPUs (checkpoint doesn't record its process count)",
+        ),
+        (
+            1,
+            1,
+            None,
+            False,
+            "a100x4",
+            "single process, uses 1 of the flavor's 4 GPUs (set by --job.nproc_per_node)",
+        ),
+        (1, None, None, False, "a10g-large", None),
+    ],
+    ids=[
+        "fresh",
+        "resume_auto",
+        "resume_explicit",
+        "resume_single",
+        "resume_unknown",
+        "opt_out",
+        "single_gpu",
+    ],
+)
+def test_describe_launch_says_where_the_process_count_came_from(
+    nproc, requested, recorded, resume, flavor, expected
+):
+    assert describe_launch(nproc, flavor, requested=requested, recorded=recorded, resume=resume) == expected
+
+
+def test_submit_resume_prints_the_checkpoint_as_the_source_of_the_count(monkeypatch, capsys):
+    _patch_submit_side_effects(monkeypatch, recorded=2)
+    cfg = _resume_cfg_with(monkeypatch, ["--job.target=h200x4"])
+    submit_to_hf(cfg)
+    assert "torchrun, 2 processes (checkpoint was trained on 2; flavor has 4 GPUs)" in capsys.readouterr().out
+
+
+# --- streaming episode pre-check ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("resume", [False, True], ids=["fresh", "resume"])
+def test_submit_rejects_a_streaming_dataset_with_fewer_episodes_than_processes(monkeypatch, resume):
+    def _boom(*a, **kw):
+        raise AssertionError("must fail before touching the Hub")
+
+    run_job_calls = _patch_submit_side_effects(monkeypatch, stage_config=_boom, recorded=4, episodes=3)
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", _boom)
+    if resume:
+        cfg = _resume_cfg_with(monkeypatch, ["--job.target=h200x4"], streaming=True)
+    else:
+        cfg = _remote_cfg("h200x4", "--dataset.streaming", "true")
+
+    with pytest.raises(ValueError, match="has 3 training episode"):
+        submit_to_hf(cfg)
+    assert run_job_calls == []
+
+
+@pytest.mark.parametrize(
+    "streaming,flavor,episodes",
+    [(True, "h200x4", 4), (True, "a10g-large", 0), (False, "h200x4", 1), (True, "h200x4", None)],
+    ids=["enough", "single_process", "map_style", "unknown"],
+)
+def test_submit_streaming_episode_check_lets_valid_runs_through(monkeypatch, streaming, flavor, episodes):
+    run_job_calls = _patch_submit_side_effects(monkeypatch, episodes=episodes)
+    cfg = _remote_cfg(flavor, "--dataset.streaming", str(streaming).lower())
+    submit_to_hf(cfg)
+    assert len(run_job_calls) == 1
+
+
+class _InfoApi:
+    """`HfApi.hf_hub_download` stand-in serving a dataset's info.json (or raising)."""
+
+    def __init__(self, info_file=None, error=None):
+        self.info_file, self.error, self.calls = info_file, error, []
+
+    def hf_hub_download(self, repo_id, filename, **kwargs):
+        self.calls.append((repo_id, filename, kwargs))
+        if self.error is not None:
+            raise self.error
+        return str(self.info_file)
+
+
+def _info_json(path, total_episodes):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"total_episodes": total_episodes}))
+    return path
+
+
+@pytest.mark.parametrize(
+    "episodes,exclude,expected",
+    [(None, None, 10), ([0, 1, 2], None, 3), (None, [0, 9], 8), ([0, 1, 2], [1], 2)],
+)
+def test_count_dataset_episodes_reads_only_info_json(tmp_path, episodes, exclude, expected):
+    api = _InfoApi(_info_json(tmp_path / "meta" / "info.json", 10))
+    dataset = DatasetConfig(repo_id="u/d", episodes=episodes, exclude_episodes=exclude, revision="v3.0")
+    assert count_dataset_episodes(dataset, api=api) == expected
+    assert api.calls == [("u/d", "meta/info.json", {"repo_type": "dataset", "revision": "v3.0"})]
+
+
+def test_count_dataset_episodes_falls_back_to_the_local_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr("lerobot.jobs.dataset.HF_LEROBOT_HOME", tmp_path)
+    error = RepositoryNotFoundError("404", response=httpx.Response(404, request=httpx.Request("GET", "u")))
+    dataset = DatasetConfig(repo_id="u/local_only")
+    assert count_dataset_episodes(dataset, api=_InfoApi(error=error)) is None
+    _info_json(tmp_path / "u" / "local_only" / "meta" / "info.json", 5)
+    assert count_dataset_episodes(dataset, api=_InfoApi(error=error)) == 5
+
+
+def test_count_dataset_episodes_propagates_network_errors():
+    api = _InfoApi(error=httpx.ConnectError("connection reset"))
+    with pytest.raises(httpx.ConnectError):
+        count_dataset_episodes(DatasetConfig(repo_id="u/d"), api=api)

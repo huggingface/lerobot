@@ -62,6 +62,18 @@ class CheckpointFormat(str, Enum):
     SAFETENSORS_DCP = "safetensors_dcp"
 
 
+def default_resume_output_dir(now: dt.datetime) -> Path:
+    """Return the run dir a Hub checkpoint is resumed into when no `--output_dir` is given.
+
+    Args:
+        now (dt.datetime): The time stamped into the directory name.
+
+    Returns:
+        Path: `outputs/train/<date>/<time>_resume`.
+    """
+    return Path("outputs/train") / f"{now:%Y-%m-%d}/{now:%H-%M-%S}_resume"
+
+
 def check_resolved_checkpoint_format(
     checkpoint_format: CheckpointFormat, parallelism: ParallelismConfig
 ) -> None:
@@ -319,8 +331,7 @@ class TrainPipelineConfig(HubMixin):
             if cli_output_dir:
                 self.output_dir = Path(cli_output_dir)
             else:
-                now = dt.datetime.now()
-                self.output_dir = Path("outputs/train") / f"{now:%Y-%m-%d}/{now:%H-%M-%S}_resume"
+                self.output_dir = default_resume_output_dir(dt.datetime.now())
             self.checkpoint_path = resolve_resume_checkpoint(config_path, self.output_dir)
         # `pretrained_path` keeps naming the model the run started from (the model card's
         # `base_model`); the resumed weights and processors load from `checkpoint_path`.

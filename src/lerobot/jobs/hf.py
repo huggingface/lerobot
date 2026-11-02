@@ -37,19 +37,21 @@ from huggingface_hub import (
     create_repo,
     fetch_job_logs,
     get_token,
-    hf_hub_download,
     inspect_job,
     run_job,
     upload_file,
 )
 
-from lerobot.common.train_utils import load_training_metadata, push_checkpoint_to_hub
+from lerobot.common.train_utils import (
+    load_hub_training_metadata,
+    load_training_metadata,
+    push_checkpoint_to_hub,
+)
 from lerobot.configs import parser
-from lerobot.configs.train import check_resolved_checkpoint_format
+from lerobot.configs.train import check_resolved_checkpoint_format, default_resume_output_dir
 from lerobot.utils.constants import TRAINING_STATE_DIR, TRAINING_STEP
-from lerobot.utils.hub import find_latest_hub_checkpoint
 
-from .dataset import ensure_dataset_available
+from .dataset import count_dataset_episodes, ensure_dataset_available
 
 if TYPE_CHECKING:
     from lerobot.configs.parallelism import ParallelismConfig
@@ -59,7 +61,7 @@ _SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 # HF Jobs names multi-GPU flavors `<gpu>x<count>` (`a10g-largex2`, `l4x4`, `h200x8`, `rtx-pro-6000x4`);
 # single-GPU flavors carry no count or `x1` (`a10g-large`, `l4x1`, `h200`), and CPU flavors start with
-# `cpu-`. `hf jobs hardware` lists the current catalogue.
+# `cpu-`. Every accelerator in the catalogue is an Nvidia GPU (`hf jobs hardware` lists it).
 _FLAVOR_GPU_COUNT_RE = re.compile(r"x(\d+)$")
 
 _TERMINAL_STAGES = {"COMPLETED", "CANCELED", "ERROR", "DELETED"}
@@ -90,14 +92,13 @@ def flavor_gpu_count(flavor: str) -> int:
 
 def resolve_nproc_per_node(
     flavor: str,
-    gpus: int,
     requested: int | None,
     *,
     recorded: int | None = None,
     resume: bool = False,
     streaming: bool = False,
 ) -> int:
-    """Return how many training processes a job on `flavor` (`gpus` GPUs) launches.
+    """Return how many training processes a job on `flavor` launches.
 
     A fresh run uses every GPU of the flavor unless `requested` (`--job.nproc_per_node`) says
     otherwise. A resume defaults to `recorded`, the data-parallel world size the checkpoint was
@@ -105,13 +106,14 @@ def resolve_nproc_per_node(
     streaming datasets). When that size is unknown (`recorded=None`), a resume runs one process,
     as every resumed job did before multi-GPU launches existed.
 
-    An explicit `requested` above `gpus` is allowed with a warning, since `gpus` is only read from
-    the flavor name.
+    An explicit `requested` above the flavor's GPUs is allowed with a warning, since the GPU count
+    is only read from the flavor name.
 
     Raises:
         ValueError: On a resume, if `recorded` exceeds the flavor's GPUs and no explicit value was
             given, or if an explicit value differs from `recorded` on a streaming dataset.
     """
+    gpus = flavor_gpu_count(flavor)
     available = max(gpus, 1)
     if requested is None:
         if not resume:
@@ -119,7 +121,7 @@ def resolve_nproc_per_node(
         if recorded is None:
             if available > 1:
                 logging.warning(
-                    "Could not read the data-parallel world size this checkpoint was trained with; "
+                    "This checkpoint doesn't record the data-parallel world size it was trained with; "
                     "resuming on 1 process. Pass --job.nproc_per_node=N to resume on N GPUs."
                 )
             return 1
@@ -158,26 +160,81 @@ def checkpoint_dp_world_size(cfg: TrainPipelineConfig) -> int | None:
     local `--config_path`, or (one small file) from the latest `checkpoints/<step>/` of a Hub repo.
     The checkpoint's train_config.json can't tell: a resolved `dp_replicate=1` looks the same as the
     unresolved default, and an interrupted job's repo root holds the staged, never-resolved config.
-    Returns None when the size isn't recorded (older checkpoints) or can't be read.
+    Returns None only when the checkpoint doesn't record the size (older checkpoints); Hub errors
+    (network, auth, a repo without checkpoints) propagate rather than silently resuming on 1 GPU.
     """
     config_path = parser.parse_arg("config_path")
     if not config_path:
         return None
-    try:
-        if Path(config_path).exists():  # the same local/Hub split as `_build_resume_job`
-            if cfg.checkpoint_path is None:
-                return None
-            training_state_dir = Path(cfg.checkpoint_path) / TRAINING_STATE_DIR
-        else:
-            latest = find_latest_hub_checkpoint(config_path)
-            if latest is None:
-                return None
-            step_file = hf_hub_download(config_path, f"{latest}/{TRAINING_STATE_DIR}/{TRAINING_STEP}")
-            training_state_dir = Path(step_file).parent
-        dp_world_size = load_training_metadata(training_state_dir)["dp_world_size"]
-    except (*_TRANSIENT_NET_ERRORS, KeyError, ValueError):
+    if Path(config_path).exists():  # the same local/Hub split as `_build_resume_job`
+        if cfg.checkpoint_path is None:
+            return None  # `_build_resume_job` reports it
+        training_state_dir = Path(cfg.checkpoint_path) / TRAINING_STATE_DIR
+        metadata = (
+            load_training_metadata(training_state_dir)
+            if (training_state_dir / TRAINING_STEP).is_file()
+            else None
+        )
+    else:
+        metadata = load_hub_training_metadata(config_path)
+    if metadata is None:
         return None
+    dp_world_size = metadata["dp_world_size"]
     return int(dp_world_size) if dp_world_size is not None else None
+
+
+def fit_resumed_ddp_degree(parallelism: ParallelismConfig, nproc_per_node: int) -> list[str]:
+    """Re-fit a resumed non-sharded run's `dp_replicate` to the launch; return the pod flags for it.
+
+    A checkpoint's config records its resolved degrees, so a 2-process DDP run saves
+    `dp_replicate=2`, which the pod would reject on any other world size. For plain DDP that degree
+    is just the process count (every rank holds the full model and optimizer state), so it is safe
+    to change on resume. A user's explicit `--parallelism.dp_replicate` is left alone, and sharded
+    topologies are never touched: their degrees decide how DCP reshards the state.
+
+    Args:
+        parallelism (ParallelismConfig): The resumed run's (unresolved) degrees, updated in place.
+        nproc_per_node (int): The processes the job launches.
+
+    Returns:
+        list[str]: The `--parallelism.dp_replicate=N` flag the pod needs, or nothing.
+    """
+    if (
+        parallelism.is_sharded
+        or parallelism.dp_replicate in (1, nproc_per_node)
+        or parser.parse_arg("parallelism.dp_replicate") is not None
+    ):
+        return []
+    parallelism.dp_replicate = nproc_per_node
+    return [f"--parallelism.dp_replicate={nproc_per_node}"]
+
+
+def describe_launch(
+    nproc_per_node: int,
+    flavor: str,
+    *,
+    requested: int | None,
+    recorded: int | None,
+    resume: bool,
+) -> str | None:
+    """Spell out how many processes the job launches and why; None for a plain single-GPU flavor."""
+    gpus = flavor_gpu_count(flavor)
+    if requested is not None:
+        reason = "set by --job.nproc_per_node"
+    elif resume:
+        reason = (
+            f"checkpoint was trained on {recorded}"
+            if recorded is not None
+            else "checkpoint doesn't record its process count"
+        )
+    else:
+        reason = "one per GPU"
+    gpu_count = f"{gpus} GPU{'' if gpus == 1 else 's'}"
+    if nproc_per_node > 1:
+        return f"torchrun, {nproc_per_node} processes ({reason}; flavor has {gpu_count})"
+    if gpus > 1:
+        return f"single process, uses 1 of the flavor's {gpu_count} ({reason})"
+    return None
 
 
 def build_launch(train_args: list[str], nproc_per_node: int) -> tuple[list[str], dict[str, str] | None]:
@@ -536,26 +593,45 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     if flavor is None:
         raise ValueError("submit_to_hf needs a remote --job.target (an HF Jobs flavor).")
     # Size the launch before anything is pushed to the Hub, so a bad topology fails for free.
-    gpus = flavor_gpu_count(flavor)
     # Training rejects context parallelism, so a checkpoint's dp world size is its process count.
+    recorded = checkpoint_dp_world_size(cfg) if cfg.resume else None
     nproc_per_node = resolve_nproc_per_node(
         flavor,
-        gpus,
         cfg.job.nproc_per_node,
-        recorded=checkpoint_dp_world_size(cfg) if cfg.resume else None,
+        recorded=recorded,
         resume=cfg.resume,
         streaming=cfg.dataset.streaming,
     )
     # The pod resolves the same degrees against torchrun's WORLD_SIZE; check them here instead.
     parallelism = copy.deepcopy(cfg.parallelism)
+    resume_overrides = fit_resumed_ddp_degree(parallelism, nproc_per_node) if cfg.resume else []
     try:
         parallelism.resolve(nproc_per_node)
         check_resolved_checkpoint_format(cfg.checkpoint_format, parallelism)
     except ValueError as e:
+        if cfg.resume and cfg.parallelism.is_sharded:
+            hint = (
+                f"A sharded checkpoint resumes on {nproc_per_node} process(es) only with "
+                f"--parallelism.* degrees that multiply to {nproc_per_node} (e.g. "
+                "--parallelism.dp_shard=-1; DCP reshards the state), or on its original size "
+                "with --job.nproc_per_node."
+            )
+        else:
+            hint = "Adjust --parallelism.*, --checkpoint_format, --job.nproc_per_node or --job.target."
         raise ValueError(
-            f"The run does not fit {nproc_per_node} process(es) on flavor {flavor!r}: {e} "
-            "Adjust --parallelism.*, --checkpoint_format, --job.nproc_per_node or --job.target."
+            f"The run does not fit {nproc_per_node} process(es) on flavor {flavor!r}: {e} {hint}"
         ) from e
+    if cfg.dataset.streaming and parallelism.dp_world_size > 1:
+        # The trainer splits a streaming dataset's episodes across the data-parallel ranks and
+        # fails on a rank left without one; catch that here from the dataset's info.json alone.
+        episodes = count_dataset_episodes(cfg.dataset, api=api)
+        if episodes is not None and episodes < parallelism.dp_world_size:
+            raise ValueError(
+                f"Streaming dataset {cfg.dataset.repo_id!r} has {episodes} training episode(s), "
+                f"fewer than the {parallelism.dp_world_size} data-parallel processes it is split "
+                f"across (each needs at least one). Launch at most {episodes} process(es) with "
+                "--job.nproc_per_node, or use a map-style dataset (--dataset.streaming=false)."
+            )
 
     secrets: dict[str, str] = {"HF_TOKEN": token}
     if cfg.trackio.enable and not cfg.trackio.space_id:
@@ -572,6 +648,11 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     if fresh_repo_id is None:
         # Resuming (fresh_repo_id is only set for fresh runs): the model repo comes from the checkpoint.
         repo_id, train_args = _build_resume_job(cfg, username)
+        train_args += resume_overrides
+        if nproc_per_node > 1 and parser.parse_arg("output_dir") is None:
+            # Each rank would otherwise stamp its own resume dir from its own clock; pin one dir
+            # for all of them.
+            train_args.append(f"--output_dir={default_resume_output_dir(now)}")
     else:
         config_repo_id = _stage_config_on_hub(cfg, fresh_repo_id, token, tags=tags)
         repo_id = fresh_repo_id
@@ -579,14 +660,16 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     command, env = build_launch(train_args, nproc_per_node)
 
     print(f"Submitting job to HF Jobs (flavor={flavor}, image={cfg.job.image}) ...")
+    launch = describe_launch(
+        nproc_per_node, flavor, requested=cfg.job.nproc_per_node, recorded=recorded, resume=cfg.resume
+    )
+    if launch is not None:
+        print(f"  Launch:     {launch}")
     if nproc_per_node > 1:
-        print(f"  Launch:     torchrun, {nproc_per_node} processes (one per GPU, {gpus} GPUs on the flavor)")
         print(
             "              --steps counts per-worker micro-batches; the learning rate and steps "
             "are not rescaled for the larger batch."
         )
-    elif gpus > 1:
-        print(f"  Launch:     single process, uses 1 of the flavor's {gpus} GPUs")
     print(f"  Batch size: {describe_batch_size(cfg, parallelism)}")
     job_info = run_job(
         image=cfg.job.image,

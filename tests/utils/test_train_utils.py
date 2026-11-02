@@ -187,6 +187,25 @@ def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypa
         train_utils.resolve_resume_checkpoint("u/run", tmp_path / "run")
 
 
+def test_load_hub_training_metadata_fetches_only_the_step_file(tmp_path, monkeypatch):
+    training_state_dir = tmp_path / TRAINING_STATE_DIR
+    training_state_dir.mkdir()
+    (training_state_dir / TRAINING_STEP).write_text('{"step": 7, "dp_world_size": 2}')
+    downloads = []
+
+    def fake_download(repo_id, filename, **kwargs):
+        downloads.append(filename)
+        return str(training_state_dir / TRAINING_STEP)
+
+    monkeypatch.setattr("lerobot.common.train_utils.hf_hub_download", fake_download)
+    monkeypatch.setattr(
+        "lerobot.common.train_utils.find_latest_hub_checkpoint", lambda repo_id: "checkpoints/000007"
+    )
+    metadata = train_utils.load_hub_training_metadata("u/run")
+    assert (metadata["step"], metadata["dp_world_size"]) == (7, 2)
+    assert downloads == [f"checkpoints/000007/{TRAINING_STATE_DIR}/{TRAINING_STEP}"]
+
+
 @pytest.mark.dataset
 @pytest.mark.skipif(not _datasets_available, reason="requires datasets")
 @pytest.mark.parametrize("frames,drop_first,drop_last,max_eval_samples", [(12, 2, 3, 3), (64, 0, 32, 0)])

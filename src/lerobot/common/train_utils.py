@@ -37,11 +37,12 @@ from huggingface_hub import (
     HfApi,
     ModelCard,
     ModelCardData,
+    hf_hub_download,
     is_offline_mode,
     model_info,
     snapshot_download,
 )
-from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled
+from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled, RemoteEntryNotFoundError
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -651,6 +652,32 @@ def push_checkpoint_to_hub(
         repo_type="model",
         exist_ok=True,
     )
+
+
+def load_hub_training_metadata(repo_id: str) -> dict[str, Any] | None:
+    """Read the `training_step.json` of a Hub training repo's latest checkpoint, without the rest.
+
+    Args:
+        repo_id (str): The Hub model repo holding `checkpoints/<step>/` subtrees.
+
+    Returns:
+        dict[str, Any] | None: The metadata, as `load_training_metadata` returns it, or None when
+            the checkpoint has no `training_step.json`.
+
+    Raises:
+        FileNotFoundError: If the repo contains no checkpoints under `checkpoints/`.
+    """
+    latest = find_latest_hub_checkpoint(repo_id)
+    if latest is None:
+        raise FileNotFoundError(
+            f"No checkpoint found in '{repo_id}' under '{CHECKPOINTS_DIR}/'. "
+            "Was the run trained with --save_checkpoint_to_hub?"
+        )
+    try:
+        step_file = hf_hub_download(repo_id, f"{latest}/{TRAINING_STATE_DIR}/{TRAINING_STEP}")
+    except RemoteEntryNotFoundError:
+        return None
+    return load_training_metadata(Path(step_file).parent)
 
 
 def resolve_resume_checkpoint(repo_id: str, output_dir: Path) -> Path:
