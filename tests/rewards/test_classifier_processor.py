@@ -13,7 +13,9 @@
 # limitations under the License.
 """Tests for Reward Classifier processor."""
 
+import logging
 import tempfile
+from pathlib import Path
 
 import pytest
 import torch
@@ -24,12 +26,14 @@ from lerobot.processor import (
     DeviceProcessorStep,
     IdentityProcessorStep,
     NormalizerProcessorStep,
+    RewardClassifierProcessorStep,
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, transition_to_batch
 from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
 from lerobot.rewards.classifier.processor_classifier import make_classifier_processor
-from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
+from lerobot.utils.constants import OBS_IMAGE, OBS_IMAGES, OBS_STATE, REWARD
+from tests.utils import skip_if_package_missing
 
 
 def create_default_config():
@@ -336,3 +340,92 @@ def test_classifier_processor_postprocessor_identity():
     # IdentityProcessor should leave values unchanged (except device)
     assert torch.allclose(processed.cpu(), reward.cpu())
     assert processed.device.type == "cpu"
+
+
+CAMERA_KEY = f"{OBS_IMAGES}.front"
+
+
+def _save_trained_classifier(path: Path, save_preprocessor: bool = True):
+    """Save a classifier and its preprocessor the way `lerobot-train` does; return the preprocessor."""
+    from lerobot.rewards.classifier.modeling_classifier import Classifier
+
+    # Default normalization mapping: VISUAL -> MEAN_STD.
+    config = RewardClassifierConfig(num_cameras=1)
+    config.input_features = {
+        CAMERA_KEY: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32)),
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+    }
+    config.output_features = {REWARD: PolicyFeature(type=FeatureType.REWARD, shape=(1,))}
+    stats = {
+        CAMERA_KEY: {
+            "mean": torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1),
+            "std": torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1),
+        },
+        OBS_STATE: {"mean": torch.zeros(6), "std": torch.ones(6)},
+    }
+    preprocessor, _ = make_classifier_processor(config, dataset_stats=stats)
+
+    Classifier(config).save_pretrained(path)
+    if save_preprocessor:
+        preprocessor.save_pretrained(path)
+    return preprocessor
+
+
+@skip_if_package_missing("transformers")
+def test_reward_classifier_step_preprocesses_images_as_in_training(tiny_classifier_backbone, tmp_path):
+    training_preprocessor = _save_trained_classifier(tmp_path)
+    step = RewardClassifierProcessorStep(pretrained_path=str(tmp_path), device="cpu")
+    assert step.reward_preprocessor is not None
+    classifier = step.reward_classifier
+
+    classifier_inputs = {}
+    predict_reward = classifier.predict_reward
+
+    def spy_predict_reward(batch, threshold=0.5):
+        classifier_inputs.update(batch)
+        return predict_reward(batch, threshold=threshold)
+
+    classifier.predict_reward = spy_predict_reward
+
+    # What the env pipeline hands the step: float images in [0, 1], batched, not normalized.
+    image = torch.rand(1, 3, 32, 32)
+    observation = {CAMERA_KEY: image.clone(), OBS_STATE: torch.rand(1, 6)}
+    result = step(create_transition(observation=observation, reward=0.0, done=False))
+
+    # The classifier gets the images exactly as the training preprocessor produces them.
+    trained_on = training_preprocessor({CAMERA_KEY: image.clone()})[CAMERA_KEY]
+    torch.testing.assert_close(classifier_inputs[CAMERA_KEY], trained_on)
+    assert not torch.allclose(trained_on, image)
+
+    # Hence the same probabilities, and the reward they imply.
+    with torch.inference_mode():
+        online_probs = classifier.predict([classifier_inputs[CAMERA_KEY]]).probabilities
+        training_probs = classifier.predict([trained_on]).probabilities
+        raw_probs = classifier.predict([image]).probabilities
+    torch.testing.assert_close(online_probs, training_probs)
+    assert not torch.allclose(online_probs, raw_probs)
+    success = training_probs.item() > step.success_threshold
+    assert result[TransitionKey.REWARD] == (step.success_reward if success else 0.0)
+
+    # Only the classifier's inputs are normalized, not the observation passed down the pipeline.
+    torch.testing.assert_close(result[TransitionKey.OBSERVATION][CAMERA_KEY], image)
+
+
+@skip_if_package_missing("transformers")
+def test_reward_classifier_step_without_saved_preprocessor_warns(tiny_classifier_backbone, tmp_path, caplog):
+    _save_trained_classifier(tmp_path, save_preprocessor=False)
+
+    with caplog.at_level(logging.WARNING):
+        step = RewardClassifierProcessorStep(pretrained_path=str(tmp_path), device="cpu")
+
+    assert step.reward_preprocessor is None
+    assert "classifier_preprocessor.json" in caplog.text
+    assert "will NOT be normalized" in caplog.text
+
+    # The images are passed to the classifier as they are, as before.
+    observation = {CAMERA_KEY: torch.rand(1, 3, 32, 32)}
+    result = step(create_transition(observation=observation, reward=0.0, done=False))
+    with torch.inference_mode():
+        probs = step.reward_classifier.predict([observation[CAMERA_KEY]]).probabilities
+    success = probs.item() > step.success_threshold
+    assert result[TransitionKey.REWARD] == (step.success_reward if success else 0.0)

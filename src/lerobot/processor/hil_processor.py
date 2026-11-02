@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import math
 import time
 from dataclasses import dataclass
@@ -33,8 +34,10 @@ from lerobot.lerobot_types import EnvTransition, TransitionKey
 
 from .pipeline import (
     ComplementaryDataProcessorStep,
+    DataProcessorPipeline,
     InfoProcessorStep,
     ObservationProcessorStep,
+    ProcessorMigrationError,
     ProcessorStep,
     ProcessorStepRegistry,
     TruncatedProcessorStep,
@@ -43,6 +46,9 @@ from .pipeline import (
 GRIPPER_KEY = "gripper"
 DISCRETE_PENALTY_KEY = "discrete_penalty"
 TELEOP_ACTION_KEY = "teleop_action"
+# File written by `lerobot-train` for the preprocessor named "classifier_preprocessor" in
+# `lerobot.rewards.classifier.processor_classifier.make_classifier_processor`.
+REWARD_CLASSIFIER_PREPROCESSOR_FILENAME = "classifier_preprocessor.json"
 
 
 @runtime_checkable
@@ -592,6 +598,10 @@ class RewardClassifierProcessorStep(ProcessorStep):
         success_reward: The reward value to assign on success.
         terminate_on_success: If True, terminates the episode upon successful classification.
         reward_classifier: The loaded classifier model instance.
+        reward_preprocessor: The classifier's own preprocessor (image normalization with the training
+            dataset stats), loaded from `pretrained_path`. It is applied to the classifier's inputs only, so
+            the classifier sees images preprocessed as during training. None when the checkpoint has no
+            saved preprocessor, in which case the images are passed to the classifier as they are.
     """
 
     pretrained_path: str | None = None
@@ -601,15 +611,44 @@ class RewardClassifierProcessorStep(ProcessorStep):
     terminate_on_success: bool = True
 
     reward_classifier: Any = None
+    reward_preprocessor: DataProcessorPipeline | None = None
 
     def __post_init__(self):
-        """Initializes the reward classifier model after the dataclass is created."""
+        """Initializes the reward classifier model and its preprocessor after the dataclass is created."""
         if self.pretrained_path is not None:
             from lerobot.rewards.classifier.modeling_classifier import Classifier
 
             self.reward_classifier = Classifier.from_pretrained(self.pretrained_path)
             self.reward_classifier.to(self.device)
             self.reward_classifier.eval()
+            if self.reward_preprocessor is None:
+                self.reward_preprocessor = self._load_reward_preprocessor(self.pretrained_path)
+
+    def _load_reward_preprocessor(self, pretrained_path: str) -> DataProcessorPipeline | None:
+        """Load the preprocessor saved next to the classifier by `lerobot-train`.
+
+        Args:
+            pretrained_path: Local directory or Hub repository of the reward classifier.
+
+        Returns:
+            The preprocessor, moving its outputs to `self.device`, or None if the checkpoint has none.
+        """
+        try:
+            return DataProcessorPipeline.from_pretrained(
+                pretrained_path,
+                config_filename=REWARD_CLASSIFIER_PREPROCESSOR_FILENAME,
+                overrides={"device_processor": {"device": str(self.device)}},
+            )
+        except (FileNotFoundError, ProcessorMigrationError) as e:
+            logging.warning(
+                "No '%s' found for the reward classifier at '%s' (%s). Its images will NOT be normalized, "
+                "so they may not match what the classifier saw during training. `lerobot-train` saves this "
+                "preprocessor alongside the classifier weights.",
+                REWARD_CLASSIFIER_PREPROCESSOR_FILENAME,
+                pretrained_path,
+                e,
+            )
+            return None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
@@ -632,6 +671,11 @@ class RewardClassifierProcessorStep(ProcessorStep):
 
         if not images:
             return new_transition
+
+        if self.reward_preprocessor is not None:
+            # Preprocess (normalize) the images as during training. Only the classifier's inputs are
+            # transformed: the observation passed down the pipeline is left untouched.
+            images = self.reward_preprocessor.process_observation(images)
 
         # Run reward classifier
         start_time = time.perf_counter()
