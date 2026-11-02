@@ -148,7 +148,10 @@ def make_policy_and_processors(case: dict):
 
 
 def make_batch(case: dict, training: bool) -> dict:
-    """Raw training batch (clips of `CHUNK_SIZE + 1` frames and actions) or observation (one frame)."""
+    """
+    Raw training batch (clips of `CHUNK_SIZE + 1` frames and actions, the second window past its episode end like
+    a streaming batch) or observation (one frame).
+    """
     action_dim = len(case["action_names"])
     frames = (CHUNK_SIZE + 1,) if training else ()
     batch = {key: torch.rand(BATCH_SIZE, *frames, 3, IMAGE_SIZE, IMAGE_SIZE) for key in case["camera_keys"]}
@@ -156,6 +159,11 @@ def make_batch(case: dict, training: bool) -> dict:
     batch["task"] = TASKS
     if training:
         batch[ACTION] = torch.randn(BATCH_SIZE, CHUNK_SIZE, action_dim)
+        batch[f"{ACTION}_is_pad"] = torch.zeros(BATCH_SIZE, CHUNK_SIZE, dtype=torch.bool)
+        batch[f"{ACTION}_is_pad"][1, -1] = True
+        for key in case["camera_keys"]:
+            batch[f"{key}_is_pad"] = torch.zeros(BATCH_SIZE, CHUNK_SIZE + 1, dtype=torch.bool)
+            batch[f"{key}_is_pad"][1, -2:] = True
     return batch
 
 
@@ -164,8 +172,18 @@ def test_cosmos3_training_step(case):
     set_seed(0)
     policy, preprocessor, _ = make_policy_and_processors(case)
     policy.train()
+    batch = make_batch(case, training=True)
 
-    loss, losses = policy.forward(preprocessor(make_batch(case, training=True)))
+    # The window past its episode end does not count: other frames in it give the same loss.
+    other = dict(batch)
+    for key in case["camera_keys"]:
+        other[key] = batch[key].clone()
+        other[key][1] = torch.rand_like(other[key][1])
+    set_seed(1)
+    other_loss, _ = policy.forward(preprocessor(other))
+    set_seed(1)
+    loss, losses = policy.forward(preprocessor(batch))
+    torch.testing.assert_close(loss, other_loss, rtol=0, atol=0)
     assert loss.ndim == 0
     assert torch.isfinite(loss)
     assert set(losses) == {"video_loss", "action_loss"}

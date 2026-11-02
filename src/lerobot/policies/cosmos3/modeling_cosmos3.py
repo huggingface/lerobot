@@ -234,6 +234,14 @@ class Cosmos3Policy(PreTrainedPolicy):
         """The action chunk in the action space of the model zero padded to `max_action_dim`."""
         return pad_vector(batch[ACTION], self.config.max_action_dim)
 
+    def prepare_loss_mask(self, batch: dict[str, Tensor]) -> Tensor:
+        """Samples whose clip and action chunk lie inside their episode `[batch]`, from the `*_is_pad` flags."""
+        in_episode = torch.ones(batch[ACTION].shape[0], dtype=torch.bool, device=batch[ACTION].device)
+        for key, value in batch.items():
+            if key.endswith("_is_pad"):
+                in_episode &= ~value.any(dim=-1)
+        return in_episode
+
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
         """Run the batch through the model and compute the joint video and action loss for training."""
         loss, losses = self.model(
@@ -249,6 +257,7 @@ class Cosmos3Policy(PreTrainedPolicy):
             pixel_values_videos=batch.get("pixel_values_videos"),
             image_grid_thw=batch.get("image_grid_thw"),
             video_grid_thw=batch.get("video_grid_thw"),
+            loss_mask=self.prepare_loss_mask(batch),
         )
         return loss, {name: value.item() for name, value in losses.items()}
 
@@ -419,6 +428,7 @@ class OmniMoTModel(nn.Module):
         noise: FlowState | None = None,
         video_sigmas: Tensor | None = None,
         action_sigmas: Tensor | None = None,
+        loss_mask: Tensor | None = None,
     ) -> tuple[Tensor, dict[str, Tensor]]:
         """
         Flow matching loss of a training batch.
@@ -443,6 +453,7 @@ class OmniMoTModel(nn.Module):
             video_sigmas: Noise level of the video of every sample `[batch]`, drawn with
                 `sample_training_sigmas` when None (both or neither with `action_sigmas`).
             action_sigmas: Noise level of the actions of every sample `[batch]`.
+            loss_mask: Boolean mask `[batch]` of the samples included in the loss. None includes every sample.
 
         Returns:
             The weighted sum of the video and the action losses, and both losses.
@@ -485,7 +496,7 @@ class OmniMoTModel(nn.Module):
             video_grid_thw=video_grid_thw,
         )
         target = FlowState(noise.video_latents - clean.video_latents, noise.actions - clean.actions)
-        video_loss, action_loss = self.flow_matching_loss(velocity, target, plan)
+        video_loss, action_loss = self.flow_matching_loss(velocity, target, plan, loss_mask)
         loss = self.config.video_loss_weight * video_loss + self.config.action_loss_weight * action_loss
         return loss, {"video_loss": video_loss.detach(), "action_loss": action_loss.detach()}
 
@@ -782,20 +793,27 @@ class OmniMoTModel(nn.Module):
         return FlowState(video_latents, actions)
 
     def flow_matching_loss(
-        self, velocity: FlowState, target: FlowState, plan: SequencePlan
+        self, velocity: FlowState, target: FlowState, plan: SequencePlan, loss_mask: Tensor | None = None
     ) -> tuple[Tensor, Tensor]:
         """
-        Mean squared error of the velocity on the noisy frames and actions, averaged over the samples. As in the
-        native loss, the video error is averaged over all latent elements of a sample (the condition frames count
-        as zero error), and the action error over all actions and the real channels (`original_action_dim`).
+        Mean squared error of the velocity on the noisy frames and actions, averaged over the samples of
+        `loss_mask`. As in the native loss, the video error is averaged over all latent elements of a sample (the
+        condition frames count as zero error), and the action error over all actions and the real channels
+        (`original_action_dim`).
         """
         noisy_frames = ~plan.video_condition_mask[:, None, :, None, None]  # [B,1,T,1,1]
         video_error = (velocity.video_latents - target.video_latents) ** 2 * noisy_frames
-        video_loss = video_error.mean(dim=(1, 2, 3, 4)).mean()
+        video_losses = video_error.mean(dim=(1, 2, 3, 4))  # [B]
 
         noisy_actions = ~plan.action_condition_mask[:, :, None]  # [B,T_act,1]
         action_error = (velocity.actions - target.actions)[..., : self.config.original_action_dim]
-        action_loss = (action_error**2 * noisy_actions).mean(dim=(1, 2)).mean()
+        action_losses = (action_error**2 * noisy_actions).mean(dim=(1, 2))  # [B]
+
+        if loss_mask is None:
+            loss_mask = torch.ones_like(video_losses, dtype=torch.bool)
+        num_samples = loss_mask.sum().clamp(min=1)
+        video_loss = video_losses.where(loss_mask, 0.0).sum() / num_samples
+        action_loss = action_losses.where(loss_mask, 0.0).sum() / num_samples
         return video_loss, action_loss
 
     def predict_velocity(
