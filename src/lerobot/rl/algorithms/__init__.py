@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .qf3 import QF3Algorithm, QF3AlgorithmConfig
 from .sac import SACAlgorithm, SACAlgorithmConfig
 
 __all__ = [
+    "QF3Algorithm",
+    "QF3AlgorithmConfig",
     "SACAlgorithm",
     "SACAlgorithmConfig",
 ]

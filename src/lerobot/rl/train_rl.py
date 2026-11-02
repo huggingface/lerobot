@@ -23,6 +23,7 @@ from lerobot.configs.train import TrainPipelineConfig
 
 from .algorithms.configs import RLAlgorithmConfig
 from .algorithms.factory import make_algorithm_config
+from .algorithms.qf3 import QF3AlgorithmConfig  # noqa: F401
 from .algorithms.sac import SACAlgorithmConfig  # noqa: F401
 
 
@@ -43,7 +44,10 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     def validate(self) -> None:
         super().validate()
 
-        if self.algorithm is None:
+        if self.algorithm is None and getattr(self.policy, "type", None) == "flow_actor":
+            # SAC cannot train a flow actor. Copy Euler steps from the policy.
+            self.algorithm = QF3AlgorithmConfig.from_policy_config(self.policy)
+        elif self.algorithm is None:
             self.algorithm = make_algorithm_config("sac")
 
         if getattr(self.algorithm, "policy_config", None) is None:
