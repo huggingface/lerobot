@@ -879,7 +879,7 @@ class RoboMMEEnvConfig(EnvConfig):
 
 @EnvConfig.register_subclass("robolab")
 @dataclass
-class RoboLabEnv(EnvConfig):
+class RoboLabEnvConfig(EnvConfig):
     """NVIDIA RoboLab: 120 tabletop tasks for a DROID robot (Franka + Robotiq 2F-85), on Isaac Lab.
 
     Each task is its own suite; `task` is a comma-separated list of task names, or empty for all 120. The envs of a

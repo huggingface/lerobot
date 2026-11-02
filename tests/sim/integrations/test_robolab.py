@@ -126,12 +126,12 @@ def robolab(tmp_path, monkeypatch):
 
 
 def test_robolab_tasks_run_as_lerobot_vector_envs(robolab):
-    from lerobot.envs.configs import RoboLabEnv
+    from lerobot.envs.configs import RoboLabEnvConfig
     from lerobot.sim.local_vector_env import LocalVectorEnv
 
     with pytest.raises(ValueError, match="Unknown RoboLab tasks"):
-        LocalVectorEnv(RoboLabEnv(task="NoSuchTask").sim_config())
-    env = LocalVectorEnv(RoboLabEnv(task="BananaInBowlTask").sim_config(), num_envs=2)
+        LocalVectorEnv(RoboLabEnvConfig(task="NoSuchTask").sim_config())
+    env = LocalVectorEnv(RoboLabEnvConfig(task="BananaInBowlTask").sim_config(), num_envs=2)
     try:
         descriptor = env.descriptor
         assert descriptor.tasks == {"BananaInBowlTask": [0]}
