@@ -39,7 +39,12 @@ def build_action_block_causal_attention_mask(
     return mask
 
 
-def rotate_queries_or_keys(x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
+def rotate_queries_or_keys(x: torch.Tensor, pos: torch.Tensor, legacy: bool = False) -> torch.Tensor:
+    """Rotary position encoding over the last dimension of `x`.
+
+    `legacy=True` reproduces the expansion used before #4835 (frequency blocks repeated rather than interleaved),
+    for checkpoints whose world predictor was trained with it. It is not a per-pair rotation.
+    """
     _, _, _, dim = x.size()
     if dim % 2 != 0:
         raise ValueError("Embedding dimension must be even for rotary position encoding.")
@@ -51,8 +56,12 @@ def rotate_queries_or_keys(x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
     # Each adjacent coordinate pair is rotated by one frequency.
     # Upstream proposal: https://github.com/facebookresearch/vjepa2/pull/15
     # Checkpoint compatibility notes: https://github.com/facebookresearch/vjepa2/pull/75
-    emb_sin = freqs.sin().repeat_interleave(2, dim=-1)
-    emb_cos = freqs.cos().repeat_interleave(2, dim=-1)
+    if legacy:
+        emb_sin = freqs.sin().squeeze(-1).repeat(1, 1, 1, 2)
+        emb_cos = freqs.cos().squeeze(-1).repeat(1, 1, 1, 2)
+    else:
+        emb_sin = freqs.sin().repeat_interleave(2, dim=-1)
+        emb_cos = freqs.cos().repeat_interleave(2, dim=-1)
 
     y = x.unflatten(-1, (-1, 2))
     y1, y2 = y.unbind(dim=-1)
@@ -113,8 +122,10 @@ class ACRoPEAttention(nn.Module):
         use_sdpa: bool = True,
         is_causal: bool = False,
         grid_size: int = 16,
+        rope_legacy: bool = False,
     ) -> None:
         super().__init__()
+        self.rope_legacy = rope_legacy
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = qk_scale or self.head_dim**-0.5
@@ -179,10 +190,14 @@ class ACRoPEAttention(nn.Module):
                 qkv = self.qkv(action_token).unflatten(-1, (3, self.num_heads, -1)).permute(2, 0, 3, 1, 4)
                 q, k, v = qkv[0], qkv[1], qkv[2]
                 qd = rotate_queries_or_keys(
-                    q[..., : self.d_dim], pos=torch.arange(num_frames, device=x.device)
+                    q[..., : self.d_dim],
+                    pos=torch.arange(num_frames, device=x.device),
+                    legacy=self.rope_legacy,
                 )
                 kd = rotate_queries_or_keys(
-                    k[..., : self.d_dim], pos=torch.arange(num_frames, device=x.device)
+                    k[..., : self.d_dim],
+                    pos=torch.arange(num_frames, device=x.device),
+                    legacy=self.rope_legacy,
                 )
                 qr = q[..., self.d_dim :]
                 kr = k[..., self.d_dim :]
@@ -203,14 +218,14 @@ class ACRoPEAttention(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]
 
         offset = 0
-        qd = rotate_queries_or_keys(q[..., offset : offset + self.d_dim], pos=d_mask)
-        kd = rotate_queries_or_keys(k[..., offset : offset + self.d_dim], pos=d_mask)
+        qd = rotate_queries_or_keys(q[..., offset : offset + self.d_dim], pos=d_mask, legacy=self.rope_legacy)
+        kd = rotate_queries_or_keys(k[..., offset : offset + self.d_dim], pos=d_mask, legacy=self.rope_legacy)
         offset += self.d_dim
-        qh = rotate_queries_or_keys(q[..., offset : offset + self.h_dim], pos=h_mask)
-        kh = rotate_queries_or_keys(k[..., offset : offset + self.h_dim], pos=h_mask)
+        qh = rotate_queries_or_keys(q[..., offset : offset + self.h_dim], pos=h_mask, legacy=self.rope_legacy)
+        kh = rotate_queries_or_keys(k[..., offset : offset + self.h_dim], pos=h_mask, legacy=self.rope_legacy)
         offset += self.h_dim
-        qw = rotate_queries_or_keys(q[..., offset : offset + self.w_dim], pos=w_mask)
-        kw = rotate_queries_or_keys(k[..., offset : offset + self.w_dim], pos=w_mask)
+        qw = rotate_queries_or_keys(q[..., offset : offset + self.w_dim], pos=w_mask, legacy=self.rope_legacy)
+        kw = rotate_queries_or_keys(k[..., offset : offset + self.w_dim], pos=w_mask, legacy=self.rope_legacy)
         offset += self.w_dim
 
         if offset < self.head_dim:
@@ -273,6 +288,7 @@ class ACBlock(nn.Module):
         is_causal: bool = False,
         grid_size: int = 16,
         use_rope: bool = True,
+        rope_legacy: bool = False,
     ) -> None:
         super().__init__()
         self.norm1 = norm_layer(dim)
@@ -288,6 +304,7 @@ class ACBlock(nn.Module):
             is_causal=is_causal,
             grid_size=grid_size,
             proj_drop=drop,
+            rope_legacy=rope_legacy,
         )
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -340,6 +357,7 @@ class ActionConditionedVideoPredictor(nn.Module):
         num_action_tokens_per_step: int,
         dropout: float = 0.0,
         use_extrinsics: bool = False,
+        rope_legacy: bool = False,
     ) -> None:
         super().__init__()
         self.is_frame_causal = True
@@ -373,6 +391,7 @@ class ActionConditionedVideoPredictor(nn.Module):
                     norm_layer=lambda dim: nn.LayerNorm(dim, eps=1e-6),
                     grid_size=self.grid_height,
                     use_rope=True,
+                    rope_legacy=rope_legacy,
                 )
                 for _ in range(depth)
             ]
