@@ -726,6 +726,27 @@ def train(cfg: TrainPipelineConfig) -> None:
         # validate() resolves `output_dir` and make_optimizer_and_scheduler() rejects a missing optimizer.
         raise ValueError("`output_dir` and `optimizer` must be resolved before training starts.")
 
+    # AdamW keeps no fp32 master copy, so it adds each update straight into the parameter's own
+    # dtype and rounds away everything smaller than |w|/512 — silently, with a loss that still
+    # falls (arXiv:2610.31859). Say so once rather than letting it happen quietly. PEFT adapters are
+    # left out: they are small and are usually trained at rates where their updates survive.
+    if is_main_process() and not (cfg.policy is not None and cfg.policy.use_peft):
+        low_precision = sorted(
+            {
+                str(p.dtype)
+                for group in optimizer.param_groups
+                for p in group["params"]
+                if p.requires_grad and p.dtype in (torch.bfloat16, torch.float16)
+            }
+        )
+        if low_precision:
+            logging.warning(
+                "Trainable parameters are stored in %s and the optimizer keeps no fp32 copy, so AdamW "
+                "rounds away every update smaller than |w|/512 without raising. Keep the trainable "
+                "weights in fp32 and pass --accelerator.mixed_precision=bf16 for bf16 compute.",
+                ", ".join(low_precision),
+            )
+
     # --- resume phase 1 + dataloaders ----------------------------------------------------------
     step = 0  # number of loop steps (= micro-batches consumed per data-parallel worker)
     if cfg.resume:
