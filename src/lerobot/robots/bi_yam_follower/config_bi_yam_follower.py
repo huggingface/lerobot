@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
-from ..yam_follower.config_yam_follower import YamFollowerConfig, motor_feature_names
+from ..yam_follower.config_yam_follower import YamFollowerConfig
 
 
 @RobotConfig.register_subclass("bi_yam_follower")
@@ -45,8 +45,3 @@ class BiYamFollowerConfig(RobotConfig):
         super().__post_init__()
         if self.left_arm_config.port == self.right_arm_config.port:
             raise ValueError("YAM arms use duplicate motor IDs and require distinct CAN interfaces")
-        motor_features = {
-            f"{side}_{name}" for side in ("left", "right") for name in motor_feature_names(True)
-        }
-        if set(self.cameras) & motor_features:
-            raise ValueError("Camera names collide with YAM motor features")
