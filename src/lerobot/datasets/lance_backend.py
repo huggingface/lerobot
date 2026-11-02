@@ -31,7 +31,7 @@ import contextlib
 import importlib
 import json
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from itertools import batched
@@ -119,6 +119,52 @@ class _SamplePlan(TypedDict):
     rows: set[int]
     windows: dict[str, list[int]]
     padding: dict[str, torch.Tensor]
+
+
+class _EpisodeSubsetIndexMapping(Mapping[int, int]):
+    """Map absolute frame indices to relative Lance rows using selected episode intervals.
+
+    Stores O(num_episodes) boundaries; both lookup directions use binary search.
+    Keys follow storage order, and unselected frames raise KeyError.
+    """
+
+    def __init__(self, episode_starts: np.ndarray, episode_ends: np.ndarray) -> None:
+        """Build from ascending, non-overlapping absolute [start, end) intervals."""
+        self._episode_starts = np.ascontiguousarray(episode_starts, dtype=np.int64)
+        self._episode_ends = np.ascontiguousarray(episode_ends, dtype=np.int64)
+        self._relative_episode_ends = np.cumsum(self._episode_ends - self._episode_starts)
+        self._num_frames = int(self._relative_episode_ends[-1]) if len(self._relative_episode_ends) else 0
+
+    def rel_to_abs(self, rel_idx: int) -> int:
+        """Map a relative row in [0, len(self)) to its absolute frame index."""
+        block = int(np.searchsorted(self._relative_episode_ends, rel_idx, side="right"))
+        relative_base = int(self._relative_episode_ends[block - 1]) if block > 0 else 0
+        return int(self._episode_starts[block]) + (rel_idx - relative_base)
+
+    def __getitem__(self, abs_idx: int) -> int:
+        block = int(np.searchsorted(self._episode_starts, abs_idx, side="right")) - 1
+        if block < 0 or abs_idx >= int(self._episode_ends[block]):
+            raise KeyError(abs_idx)
+        relative_base = int(self._relative_episode_ends[block - 1]) if block > 0 else 0
+        return relative_base + (abs_idx - int(self._episode_starts[block]))
+
+    def __len__(self) -> int:
+        return self._num_frames
+
+    def __iter__(self) -> Iterator[int]:
+        for start, end in zip(self._episode_starts.tolist(), self._episode_ends.tolist(), strict=True):
+            yield from range(start, end)
+
+    def __eq__(self, other: object) -> bool:
+        # Mapping.__eq__ materializes per-frame dicts; compare items incrementally instead.
+        if isinstance(other, Mapping):
+            if len(self) != len(other):
+                return False
+            try:
+                return all(other[key] == value for key, value in self.items())
+            except KeyError:
+                return False
+        return NotImplemented
 
 
 def _opened[T](resource: T | None) -> T:
@@ -226,17 +272,17 @@ class LanceDatasetReader(BaseDatasetReader):
                 "the dataset metadata is inconsistent."
             )
 
-        self._rel_to_abs: np.ndarray | None = None
-        self._absolute_to_relative_idx: dict[int, int] | None = None
+        self._subset_index_mapping: _EpisodeSubsetIndexMapping | None = None
         if self.episodes is not None:
             # Rows are served in storage order regardless of the episodes list
-            # order, matching the default reader's parquet predicate pushdown.
-            self._rel_to_abs = np.concatenate(
-                [np.arange(self._ep_from[ep], self._ep_to[ep]) for ep in sorted(self.episodes)]
+            # order, matching the default reader's parquet predicate pushdown;
+            # likewise a duplicated episode is served once, as its isin() filter does.
+            # The index keeps only per-episode bounds (O(num_episodes)) and resolves
+            # either direction with a binary search instead of one entry per frame.
+            selected = sorted(set(self.episodes))
+            self._subset_index_mapping = _EpisodeSubsetIndexMapping(
+                self._ep_from[selected], self._ep_to[selected]
             )
-            self._absolute_to_relative_idx = {
-                int(abs_idx): rel_idx for rel_idx, abs_idx in enumerate(self._rel_to_abs)
-            }
 
         self._task_names = list(self.meta.tasks.index)
 
@@ -360,15 +406,19 @@ class LanceDatasetReader(BaseDatasetReader):
 
     @property
     def num_frames(self) -> int:
-        return len(self._rel_to_abs) if self._rel_to_abs is not None else self.meta.total_frames
+        return (
+            len(self._subset_index_mapping)
+            if self._subset_index_mapping is not None
+            else self.meta.total_frames
+        )
 
     @property
     def num_episodes(self) -> int:
         return len(self.episodes) if self.episodes is not None else self.meta.total_episodes
 
     @property
-    def absolute_to_relative_idx(self) -> dict[int, int] | None:
-        return self._absolute_to_relative_idx
+    def absolute_to_relative_idx(self) -> Mapping[int, int] | None:
+        return self._subset_index_mapping
 
     def get_item(self, idx: int) -> dict:
         return self.get_items([idx])[0]
@@ -449,7 +499,7 @@ class LanceDatasetReader(BaseDatasetReader):
             idx += self.num_frames
         if not 0 <= idx < self.num_frames:
             raise IndexError(f"Index {idx} is out of range for a dataset of {self.num_frames} frames.")
-        return int(self._rel_to_abs[idx]) if self._rel_to_abs is not None else idx
+        return self._subset_index_mapping.rel_to_abs(idx) if self._subset_index_mapping is not None else idx
 
     def _episode_index_for_abs_idx(self, abs_idx: int) -> int:
         return int(np.searchsorted(self._ep_from, abs_idx, side="right") - 1)
