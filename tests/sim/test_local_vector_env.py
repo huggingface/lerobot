@@ -252,7 +252,10 @@ def test_a_dead_environment_process_is_reported():
 
 
 def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
-    # LIBERO imports its simulator with the integration, and has an extra to install.
+    # LIBERO imports its simulator with the integration, and has an extra to install. Hide all of it: an
+    # earlier test may have imported its submodules.
+    for name in [name for name in sys.modules if name.startswith("libero.")]:
+        monkeypatch.delitem(sys.modules, name)
     monkeypatch.setitem(sys.modules, "libero", None)
     monkeypatch.delitem(sys.modules, "lerobot.sim.integrations.libero", raising=False)
     with pytest.raises(ModuleNotFoundError, match=r"pip install 'lerobot\[libero\]', or serve it"):
