@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 
 from lerobot.sim.types import EnvDescriptor, StepResult
+from lerobot.transport.protocol.codec import CodecLimits
 from lerobot.transport.protocol.envelope import validate_segment
 from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
@@ -30,10 +31,17 @@ from lerobot.utils.feature_spec import FeatureSpec, validate_array
 PROTOCOL_VERSION = 1
 # Every server also answers describe here, for clients that do not name a deployment.
 ANY_DEPLOYMENT_DESCRIBE = f"lerobot/env/v{PROTOCOL_VERSION}/describe"
-# Largest message, in bytes, unless the server and the client raise it. Both ends size their `CodecLimits` from
-# their own bound: one tensor may fill a message and decoded images may take twice its size, the ratios of the
-# default `CodecLimits`.
+# Largest message, in bytes, unless the server and the client raise it.
 DEFAULT_MAX_PAYLOAD_BYTES = 32 * 1024 * 1024
+
+
+def codec_limits(max_payload_bytes: int) -> CodecLimits:
+    """Limits for messages of up to `max_payload_bytes`: one tensor may fill a message, decoded frames twice that."""
+    return CodecLimits(
+        max_payload_bytes=max_payload_bytes,
+        max_tensor_bytes=max_payload_bytes,
+        max_decoded_bytes=2 * max_payload_bytes,
+    )
 
 
 def deployment_prefix(deployment: str) -> str:

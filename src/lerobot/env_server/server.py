@@ -28,7 +28,7 @@ import numpy as np
 from lerobot.sim.config import SimConfig, SimSettings
 from lerobot.sim.local_vector_env import LocalVectorEnv
 from lerobot.sim.types import EnvDescriptor
-from lerobot.transport.protocol.codec import CodecLimits, RGBImage, decode_message, encode_message
+from lerobot.transport.protocol.codec import RGBImage, decode_message, encode_message
 from lerobot.transport.protocol.envelope import (
     Envelope,
     ErrorCode,
@@ -48,6 +48,7 @@ from lerobot.utils.feature_spec import validate_array
 
 from .protocol import (
     ANY_DEPLOYMENT_DESCRIBE,
+    codec_limits,
     deployment_prefix,
     encode_descriptor,
     encode_step_result,
@@ -235,12 +236,7 @@ class EnvServer:
         """Create the transport. Envs are built in `serve`."""
         self.config = config
         self.instance_id = uuid.uuid4().hex
-        payload_bytes = config.zenoh.max_payload_bytes
-        self.limits = CodecLimits(
-            max_payload_bytes=payload_bytes,
-            max_tensor_bytes=payload_bytes,
-            max_decoded_bytes=2 * payload_bytes,
-        )
+        self.limits = codec_limits(config.zenoh.max_payload_bytes)
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
         # Built at startup to read the descriptor, then reused by the first session asking for the same batch.
@@ -376,18 +372,16 @@ class EnvServer:
                 ErrorCode.UNSUPPORTED, "Image encoding must be raw or jpeg, quality in [1, 100]"
             )
         if type(client_payload_bytes) is not int or client_payload_bytes < 1:
-            raise ProtocolError(ErrorCode.INCOMPATIBLE, "max_payload_bytes must be a positive integer")
+            raise ProtocolError(
+                ErrorCode.INCOMPATIBLE,
+                f"max_payload_bytes must be a positive integer, got {client_payload_bytes!r}",
+            )
         seeds = _checked_seeds(body.get("seeds"), num_envs)
         batch_bytes = num_envs * sum(
             int(np.prod(f.shape)) * np.dtype(f.dtype).itemsize for f in self.descriptor.features
         )
         # JPEG frames are far smaller on the wire, but the client still decodes them to full size.
-        payload_bytes = min(self.limits.max_payload_bytes, client_payload_bytes)
-        limits = CodecLimits(
-            max_payload_bytes=payload_bytes,
-            max_tensor_bytes=payload_bytes,
-            max_decoded_bytes=2 * payload_bytes,
-        )
+        limits = codec_limits(min(self.limits.max_payload_bytes, client_payload_bytes))
         budget = limits.max_payload_bytes if encoding == "raw" else limits.max_decoded_bytes
         if batch_bytes + _REPLY_HEADROOM_BYTES > budget:
             raise ProtocolError(

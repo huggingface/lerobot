@@ -175,10 +175,6 @@ def test_jpeg_observations_match_raw(sim_server):
 
 
 def test_the_client_payload_limit_bounds_the_batch(sim_server):
-    from lerobot.env_server.protocol import DEFAULT_MAX_PAYLOAD_BYTES
-    from lerobot.transport.protocol.codec import CodecLimits
-
-    assert CodecLimits().max_payload_bytes == DEFAULT_MAX_PAYLOAD_BYTES
     _, endpoint = sim_server
     # A toy env observes 200 bytes, and the server keeps 64 KiB of each reply for the rest: two envs fit, three don't.
     limit = 64 * 1024 + 500

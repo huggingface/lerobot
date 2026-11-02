@@ -25,13 +25,13 @@ from gymnasium.vector.utils import batch_space
 
 from lerobot.sim.types import EnvDescriptor, StepResult
 from lerobot.transport.protocol.client import query_reply
-from lerobot.transport.protocol.codec import CodecLimits
 from lerobot.transport.protocol.envelope import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig, ZenohTransport
 
 from .protocol import (
     ANY_DEPLOYMENT_DESCRIBE,
     DEFAULT_MAX_PAYLOAD_BYTES,
+    codec_limits,
     decode_descriptor,
     decode_step_result,
     deployment_prefix,
@@ -91,11 +91,7 @@ class EnvClient:
                 open_timeout_s=handshake_timeout_s,
             )
         )
-        self.limits = CodecLimits(
-            max_payload_bytes=max_payload_bytes,
-            max_tensor_bytes=max_payload_bytes,
-            max_decoded_bytes=2 * max_payload_bytes,
-        )
+        self.limits = codec_limits(max_payload_bytes)
         self.handshake_timeout_s = handshake_timeout_s
         self.deployment = deployment or ""
         self.timeout_s = timeout_s

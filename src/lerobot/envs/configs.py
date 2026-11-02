@@ -26,6 +26,7 @@ import draccus
 import gymnasium as gym
 
 from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.env_server.protocol import DEFAULT_MAX_PAYLOAD_BYTES
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.sim.config import SimConfig
@@ -60,7 +61,7 @@ class EnvClientConfig:
     jpeg_quality: int = 90
     # Largest reply in bytes, which carries every env's camera frames. Raise it with the server's
     # zenoh.max_payload_bytes for large batches or high resolution cameras.
-    max_payload_bytes: int = 32 * 1024 * 1024
+    max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES
 
     def __post_init__(self):
         if self.encoding not in {"raw", "jpeg"} or not 1 <= self.jpeg_quality <= 100:
