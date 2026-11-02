@@ -112,29 +112,31 @@ class BiYamFollower(BimanualMixin, Robot):
         """Connect both arms, checking both before either receives torque."""
         if any(arm.is_connected for arm in self.arms.values()):
             raise RuntimeError("Disconnect both YAM arms before reconnecting")
-        if calibrate and not self.is_calibrated:
-            raise ValueError("Run lerobot-calibrate with this robot.id to measure both gripper endpoints")
         self._stop.clear()
         try:
             if not calibrate:
                 for arm in self.arms.values():
                     arm.connect(calibrate=False)
-            else:
-                # Open and pose-check both arms, and switch both to MIT mode, before either gets torque.
+                return
+            if not self.is_calibrated:
                 for arm in self.arms.values():
-                    arm.open()
-                self.configure()
-                for arm in self.arms.values():
-                    arm.start()
+                    arm.connect(calibrate=False)
+                self.calibrate()
+                self.disconnect()
+                self._stop.clear()
+            # Open and pose-check both arms, and switch both to MIT mode, before either gets torque.
+            for arm in self.arms.values():
+                arm.open()
+            self.configure()
+            for arm in self.arms.values():
+                arm.start()
         except BaseException:
             self._stop.set()
-            for arm in reversed(tuple(self.arms.values())):
-                if not arm.is_connected:
-                    continue
+            if any(arm.is_connected for arm in self.arms.values()):
                 try:
-                    arm.disconnect()
+                    self.disconnect()
                 except Exception:
-                    logger.exception("Failed to close YAM arm after bimanual connection failure")
+                    logger.exception("Failed to disconnect YAM after bimanual connection failure")
             raise
 
     @check_if_not_connected

@@ -398,6 +398,25 @@ def test_calibration_connection_never_enables_motor(robot, monkeypatch):
     robot.disconnect()
 
 
+def test_connect_calibrates_missing_gripper_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
+    robot = make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
+    mock_hardware(robot, monkeypatch)
+
+    def prompt(text):
+        robot.bus.read_states.return_value.position[6] = 6.1 if "open" in text else 0.1
+        return ""
+
+    monkeypatch.setattr("builtins.input", prompt)
+    monkeypatch.setattr(robot_module.time, "sleep", lambda _: None)
+    robot.connect()
+
+    assert robot.is_calibrated
+    assert robot.bus.open.call_count == 2
+    robot.bus.enable.assert_called_once()
+    robot.disconnect()
+
+
 def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     robot.connect()

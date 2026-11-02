@@ -377,11 +377,17 @@ class YamFollower(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """Start control, or open a torque-free gripper calibration session when ``calibrate=False``."""
+        """Start control, calibrating missing gripper endpoints first unless disabled."""
         if not calibrate:
             self._open_for_calibration()
             logger.info(f"{self} connected for calibration.")
             return
+        if not self.is_calibrated:
+            self._open_for_calibration()
+            try:
+                self.calibrate()
+            finally:
+                self.disconnect()
         self.open()
         try:
             self.configure()

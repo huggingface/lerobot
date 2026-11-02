@@ -173,6 +173,34 @@ def test_calibration_connect_never_enables_motors(robot, monkeypatch):
     robot.disconnect()
 
 
+def test_connect_calibrates_both_arms_before_enabling_torque(tmp_path, monkeypatch):
+    monkeypatch.setattr(yam_module, "require_package", lambda *a, **kw: None)
+    robot = BiYamFollower(
+        BiYamFollowerConfig(
+            id="test",
+            calibration_dir=tmp_path,
+            left_arm_config=YamFollowerConfig(port="can0", gravity_compensation=False),
+            right_arm_config=YamFollowerConfig(port="can1", gravity_compensation=False),
+        )
+    )
+    mock_hardware(robot, monkeypatch)
+
+    def prompt(text):
+        side = "left" if "test_left" in text else "right"
+        robot.arms[side].bus.read_states.return_value.position[6] = 6.1 if "open" in text else 0.1
+        return ""
+
+    monkeypatch.setattr("builtins.input", prompt)
+    monkeypatch.setattr(yam_module.time, "sleep", lambda _: None)
+    robot.connect()
+
+    assert robot.is_calibrated
+    for arm in robot.arms.values():
+        assert arm.bus.open.call_count == 2
+        arm.bus.enable.assert_called_once()
+    robot.disconnect()
+
+
 def test_each_arm_loads_its_model_before_its_can_interface(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     events = []
