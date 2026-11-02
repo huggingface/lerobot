@@ -227,8 +227,8 @@ class SmolVLMWithExpertModel(nn.Module):
         batch_size,
         head_dim,
         use_cache: bool = True,
-        past_key_values: "DynamicCache | None" = None,
-    ) -> "tuple[list[torch.Tensor], DynamicCache | None]":
+        past_key_values: "DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None" = None,
+    ) -> "tuple[list[torch.Tensor], DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None]":
         query_states = []
         key_states = []
         value_states = []
@@ -307,8 +307,8 @@ class SmolVLMWithExpertModel(nn.Module):
         batch_size,
         head_dim,
         use_cache: bool = True,
-        past_key_values: "DynamicCache | None" = None,
-    ) -> "tuple[list[torch.Tensor], DynamicCache | None]":
+        past_key_values: "DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None" = None,
+    ) -> "tuple[list[torch.Tensor], DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None]":
         attention_interface = self.get_attention_interface()
 
         att_outputs = []
@@ -422,7 +422,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        past_key_values: "DynamicCache | None" = None,
+        past_key_values: "DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None" = None,
         inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
     ):

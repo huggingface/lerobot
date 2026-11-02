@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
+
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -23,20 +25,20 @@ from lerobot.utils.random_utils import set_seed
 from tests.utils import require_cuda, skip_if_package_missing
 
 
-@skip_if_package_missing("transformers")
-@require_cuda
-def test_smolvla_tuple_kv_and_compile_parity():
-    from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy, make_att_2d_masks
+def _build_tiny_smolvla_policy_and_batch(device: str):
+    from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
     set_seed(42)
 
     config = SmolVLAConfig(
         max_action_dim=7,
-        chunk_size=50,
-        n_action_steps=50,
+        chunk_size=10,
+        n_action_steps=10,
         num_steps=3,
+        num_vlm_layers=2,
         use_cache=True,
         compile_denoise=False,
+        device=device,
     )
     config.input_features = {
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(14,)),
@@ -52,7 +54,6 @@ def test_smolvla_tuple_kv_and_compile_parity():
         "observation.images.base_0_rgb": {"mean": torch.zeros(3, 224, 224), "std": torch.ones(3, 224, 224)},
     }
 
-    device = config.device
     policy = SmolVLAPolicy(config).to(device)
     policy.eval()
 
@@ -67,9 +68,17 @@ def test_smolvla_tuple_kv_and_compile_parity():
     }
     batch = preprocessor(batch)
     noise = policy.model.sample_noise((1, config.chunk_size, 7), device)
+    return policy, batch, noise
+
+
+@skip_if_package_missing("transformers")
+def test_smolvla_tuple_kv_parity():
+    from lerobot.policies.smolvla.modeling_smolvla import make_att_2d_masks
+
+    policy, batch, noise = _build_tiny_smolvla_policy_and_batch(device="cpu")
+    config = policy.config
 
     with torch.no_grad():
-        # 0. Direct DynamicCache vs static tuple KV parity across denoise_step calls
         images, img_masks = policy.prepare_images(batch)
         state = policy.prepare_state(batch)
         lang_tokens = batch["observation.language.tokens"]
@@ -96,18 +105,27 @@ def test_smolvla_tuple_kv_and_compile_parity():
         x_tup = noise.clone()
         dt = -1.0 / config.num_steps
         for step in range(config.num_steps):
-            t = torch.tensor(1.0 + step * dt, dtype=torch.float32, device=device).expand(1)
+            t = torch.tensor(1.0 + step * dt, dtype=torch.float32, device="cpu").expand(1)
             dynamic_kv.crop(prefix_len)
             v_dyn = policy.model.denoise_step(prefix_pad_masks, dynamic_kv, x_dyn, t)
             v_tup = policy.model.denoise_step(prefix_pad_masks, tuple_kv, x_tup, t)
-            torch.testing.assert_close(v_dyn, v_tup, atol=1e-5, rtol=1e-5)
+            assert torch.equal(v_dyn, v_tup), (
+                f"Step {step} velocity mismatch between DynamicCache and tuple KV"
+            )
             x_dyn = x_dyn + dt * v_dyn
             x_tup = x_tup + dt * v_tup
 
-        torch.testing.assert_close(x_dyn, x_tup, atol=1e-5, rtol=1e-5)
+        assert torch.equal(x_dyn, x_tup), "Final denoised action mismatch between DynamicCache and tuple KV"
         for (k, v), (k_orig, v_orig) in zip(tuple_kv, tuple_kv_snapshot, strict=True):
             assert torch.equal(k, k_orig) and torch.equal(v, v_orig), "Tuple KV prefix was mutated"
 
+
+@skip_if_package_missing("transformers")
+@require_cuda
+def test_smolvla_compile_parity():
+    policy, batch, noise = _build_tiny_smolvla_policy_and_batch(device="cuda")
+
+    with torch.no_grad():
         # 1. Eager mode with tuple KV cache
         policy.config.compile_denoise = False
         actions_eager = policy.predict_action_chunk(batch, noise=noise.clone())
@@ -120,8 +138,18 @@ def test_smolvla_tuple_kv_and_compile_parity():
         policy.config.compile_denoise = False
         actions_eager_retest = policy.predict_action_chunk(batch, noise=noise.clone())
 
+        # 4. Verify copy.deepcopy after compilation uses the copied module weights
+        policy.config.compile_denoise = True
+        copied_policy = copy.deepcopy(policy)
+        copied_policy.model.action_out_proj.weight.zero_()
+        copied_policy.model.action_out_proj.bias.zero_()
+        actions_zeroed = copied_policy.predict_action_chunk(batch, noise=noise.clone())
+
     # Eager toggling should be exact
-    torch.testing.assert_close(actions_eager, actions_eager_retest, atol=1e-5, rtol=1e-5)
+    assert torch.equal(actions_eager, actions_eager_retest)
+
+    # Zeroed action_out_proj on deep-copied policy must leave noise unchanged (v_t == 0)
+    torch.testing.assert_close(actions_zeroed, noise[:, :, :7], atol=1e-6, rtol=1e-6)
 
     # Compiled vs eager should match within numerical tolerance
     torch.testing.assert_close(actions_eager, actions_compiled, atol=2e-2, rtol=2e-2)
