@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from typing import cast
 
 import torch
 from torch import Tensor, nn
@@ -201,16 +202,25 @@ class Classifier(PreTrainedRewardModel):
             ),
         )
 
+    def _backbone_is_frozen(self) -> bool:
+        """Whether the pretrained backbone has no trainable parameters (see `_freeze_encoder`)."""
+        return not any(param.requires_grad for param in self.encoder.parameters())
+
     def _get_encoder_output(self, x: torch.Tensor, image_key: str) -> torch.Tensor:
-        """Extract the appropriate output from the encoder."""
-        with torch.no_grad():
-            if self.is_cnn:
-                # The HF ResNet applies pooling internally
-                outputs = self.encoders[image_key](x)
-                return outputs
-            else:  # Transformer models
-                outputs = self.encoder(x)
-                return outputs.last_hidden_state[:, 0, :]
+        """Extract the appropriate output from the encoder.
+
+        Only the pretrained backbone runs without gradients (when it is frozen). For CNNs, the per-camera
+        layers stacked on top of it (spatial embeddings, projection, layer norm) are trainable and must
+        receive gradients, as in the HIL-SERL reference classifier.
+        """
+        with torch.set_grad_enabled(torch.is_grad_enabled() and not self._backbone_is_frozen()):
+            if not self.is_cnn:  # Transformer models
+                return self.encoder(x).last_hidden_state[:, 0, :]
+            # `Sequential(backbone, *trainable_layers)`, see `_create_single_encoder`. It is split here
+            # rather than stored as two modules so that the state-dict keys stay unchanged.
+            encoder = cast(nn.Sequential, self.encoders[image_key])
+            backbone_outputs = encoder[0](x)
+        return encoder[1:](backbone_outputs)
 
     def extract_images_and_labels(self, batch: dict[str, Tensor]) -> tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""

@@ -144,3 +144,96 @@ def test_explicit_device_setup():
     classifier = Classifier(config)
     for p in classifier.parameters():
         assert p.device == torch.device("cpu")
+
+
+def _make_tiny_classifier(num_cameras: int = 1):
+    from lerobot.rewards.classifier.modeling_classifier import Classifier
+
+    config = RewardClassifierConfig(num_cameras=num_cameras)
+    config.input_features = {
+        f"{OBS_IMAGE}s.cam{i}": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32))
+        for i in range(num_cameras)
+    }
+    config.output_features = {REWARD: PolicyFeature(type=FeatureType.REWARD, shape=(1,))}
+    return Classifier(config)
+
+
+@skip_if_package_missing("transformers")
+def test_classifier_trains_layers_on_top_of_frozen_backbone(tiny_classifier_backbone):
+    classifier = _make_tiny_classifier()
+    classifier.train()
+    encoder = classifier.encoders[classifier.image_keys[0]]
+    backbone, spatial_embeddings, projection, layer_norm = encoder[0], encoder[1], encoder[3], encoder[4]
+    assert not any(p.requires_grad for p in backbone.parameters())
+
+    def snapshot(module):
+        return {name: p.detach().clone() for name, p in module.named_parameters()}
+
+    trainable = {"spatial_embeddings": spatial_embeddings, "projection": projection, "layer_norm": layer_norm}
+    trainable_before = {module_name: snapshot(module) for module_name, module in trainable.items()}
+    backbone_before = snapshot(backbone)
+
+    batch = {
+        f"{OBS_IMAGE}s.cam0": torch.rand(4, 3, 32, 32),
+        REWARD: torch.tensor([0.0, 1.0, 0.0, 1.0]),
+    }
+    optimizer = torch.optim.AdamW([p for p in classifier.parameters() if p.requires_grad], lr=1e-2)
+    loss, _ = classifier(batch)
+    loss.backward()
+    optimizer.step()
+
+    for module_name, module in trainable.items():
+        for name, param in module.named_parameters():
+            assert param.grad is not None, f"{module_name}.{name} got no gradient"
+            assert not torch.equal(param, trainable_before[module_name][name]), (
+                f"{module_name}.{name} was not updated"
+            )
+    for name, param in backbone.named_parameters():
+        assert param.grad is None
+        assert torch.equal(param, backbone_before[name]), f"frozen backbone parameter {name} changed"
+
+
+@skip_if_package_missing("transformers")
+def test_classifier_state_dict_keys_unchanged(tiny_classifier_backbone, tmp_path):
+    from lerobot.rewards.classifier.modeling_classifier import Classifier
+
+    classifier = _make_tiny_classifier(num_cameras=2)
+    keys = set(classifier.state_dict())
+
+    # Existing checkpoints store the backbone once under `encoder.` and once per camera under
+    # `encoders.<camera>.0.`, followed by the per-camera layers at their `nn.Sequential` indices.
+    backbone_keys = {key.removeprefix("encoder.") for key in keys if key.startswith("encoder.")}
+    assert backbone_keys
+    expected = {f"encoder.{key}" for key in backbone_keys}
+    for camera in ("observation_images_cam0", "observation_images_cam1"):
+        expected |= {f"encoders.{camera}.0.{key}" for key in backbone_keys}
+        expected |= {
+            f"encoders.{camera}.1.kernel",
+            f"encoders.{camera}.3.weight",
+            f"encoders.{camera}.3.bias",
+            f"encoders.{camera}.4.weight",
+            f"encoders.{camera}.4.bias",
+        }
+    expected |= {
+        "classifier_head.0.weight",
+        "classifier_head.0.bias",
+        "classifier_head.2.weight",
+        "classifier_head.2.bias",
+        "classifier_head.4.weight",
+        "classifier_head.4.bias",
+    }
+    assert keys == expected
+
+    # A saved checkpoint loads back with the same weights and predictions. The weights are perturbed
+    # first so that they differ from a fresh initialization.
+    classifier.eval()
+    with torch.no_grad():
+        for param in classifier.parameters():
+            param.add_(torch.randn_like(param))
+    classifier.save_pretrained(tmp_path)
+    loaded = Classifier.from_pretrained(tmp_path)
+    loaded_state_dict = loaded.state_dict()
+    for key, value in classifier.state_dict().items():
+        torch.testing.assert_close(loaded_state_dict[key], value, msg=key)
+    images = [torch.rand(2, 3, 32, 32), torch.rand(2, 3, 32, 32)]
+    torch.testing.assert_close(loaded.predict(images).logits, classifier.predict(images).logits)
