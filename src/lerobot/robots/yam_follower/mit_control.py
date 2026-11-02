@@ -190,15 +190,29 @@ class MitArmParams:
 
 
 class MitArmBus(Protocol):
-    """What ``MitServo`` needs from a robot's motor bus."""
+    """Motor-bus operations required by `MitServo`.
+
+    State arrays follow `MitArmParams.motor_names`: arm joints first, then the gripper.
+    Positions and velocities use radians and radians per second; torques use newton-metres.
+    """
 
     enabled: bool
+    """Whether torque is enabled for the arm."""
 
-    def read_states(self) -> MotorStates: ...
+    def read_states(self) -> MotorStates:
+        """Return fresh feedback from every motor in bus order.
 
-    def send_mit(self, motor: str, command: MitCommand) -> None: ...
+        Raise `ConnectionError` when feedback is missing or stale, or when a motor reports a fault.
+        """
+        ...
 
-    def disable(self) -> None: ...
+    def send_mit(self, motor: str, command: MitCommand) -> None:
+        """Send one MIT command to the named motor."""
+        ...
+
+    def disable(self) -> None:
+        """Disable torque for the arm; repeated calls must be safe."""
+        ...
 
 
 class ServoSettings(Protocol):
