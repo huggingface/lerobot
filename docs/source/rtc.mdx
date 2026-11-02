@@ -120,7 +120,7 @@ With `x_t = t * noise + (1 - t) * a`, the denoiser estimate is `x1 = x_t - t * v
 The off-diagonal blocks of `J` are what carry a correction on the frozen prefix over to the steps after it.
 
 - `identity` (default): uses `J = I` and does not backpropagate through the denoiser. Only the weighted prefix receives a direct correction; later denoising steps can still couple the following actions to the prefix indirectly. This is the historical LeRobot behaviour.
-- `vjp`: the RTC paper's vector-Jacobian product through the denoiser, so the correction also reaches the steps after the prefix. This is closer to the paper, not necessarily better in practice. It needs autograd at inference time, so it is not available in ONNX export or other runtimes without a backward pass. It costs one extra backward pass through the action expert per denoising step (SmolVLA on CPU: about +0.6 s on a 4.2 s fp32 chunk) and retains about 93 MiB of activations per step; `policy.requires_grad_(False)` reduces that to about 68 MiB.
+- `vjp`: the RTC paper's vector-Jacobian product through the denoiser, so the correction also reaches the steps after the prefix. This is closer to the paper, not necessarily better in practice. It needs autograd at inference time, so it is not available in ONNX export or other runtimes without a backward pass. It costs one extra backward pass through the action expert per denoising step (SmolVLA, CPU, chunk 50, batch 1: about +0.6 s on a 4.2 s fp32 chunk) and holds about 93 MiB of extra saved activations during each step; `policy.requires_grad_(False)` reduces that to about 68 MiB.
 
 **`prefix_attention_schedule`**: How to weight consistency across the overlap region.
 

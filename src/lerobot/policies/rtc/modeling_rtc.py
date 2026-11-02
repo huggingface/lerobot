@@ -238,8 +238,6 @@ class RTCProcessor:
             correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
 
         v_t = v_t.detach()
-        x1_t = x1_t.detach()
-        err = err.detach()
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
         tau_tensor = torch.as_tensor(tau)

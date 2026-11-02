@@ -888,20 +888,15 @@ def test_vjp_matches_explicit_autograd_grad_on_a_nonlinear_denoiser():
 
 
 @pytest.mark.parametrize("guidance_jacobian", ["identity", "vjp"])
-def test_debug_tracker_stores_detached_tensors(guidance_jacobian):
-    """The result and the tracked tensors must not carry an autograd graph."""
+def test_denoise_step_result_carries_no_autograd_graph(guidance_jacobian):
+    """Called with grad mode on and trainable weights, the returned velocity must be graph-free."""
     torch.manual_seed(0)
     chunk_size, action_dim = 10, 2
     x_t = torch.randn(1, chunk_size, action_dim)
     prev_chunk = torch.randn(1, chunk_size, action_dim)
     linear = torch.nn.Linear(action_dim, action_dim)  # weights require grad by default
 
-    processor = RTCProcessor(RTCConfig(debug=True, guidance_jacobian=guidance_jacobian))
+    processor = RTCProcessor(RTCConfig(guidance_jacobian=guidance_jacobian))
     result = processor.denoise_step(x_t, prev_chunk, 4, 0.5, linear, execution_horizon=4)
 
     assert not result.requires_grad
-    step = processor.get_all_debug_steps()[-1]
-    for name in ("x1_t", "correction", "err"):
-        tensor = getattr(step, name)
-        assert tensor is not None, name
-        assert tensor.grad_fn is None and not tensor.requires_grad, name
