@@ -15,7 +15,11 @@
 # limitations under the License.
 """Tests for dataset tools utilities."""
 
+import json
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,6 +29,8 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pandas as pd
+import pyarrow.parquet as pq
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
@@ -1240,6 +1246,314 @@ def test_modify_features_preserves_file_structure(sample_dataset, tmp_path):
         assert new_chunk_indices == original_chunk_indices, "Chunk indices should be preserved"
         assert new_file_indices == original_file_indices, "File indices should be preserved"
         assert "reward" in modified_dataset.meta.features
+
+
+@pytest.fixture
+def mixed_task_dataset(
+    tmp_path: Path, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> LeRobotDataset:
+    """Finalize a tiny local numeric dataset with shared or separate physical data files."""
+    multiple_files = getattr(request, "param", False)
+    if multiple_files:
+        # Exercise real file rotation without generating megabytes of frame values and statistics.
+        monkeypatch.setattr("lerobot.datasets.dataset_writer.get_file_size_in_mb", lambda _path: 1)
+    dataset = LeRobotDataset.create(
+        DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        root=tmp_path / "mixed_tasks",
+        features={
+            "action": {"dtype": "float32", "shape": (2,), "names": None},
+            "observation.state": {"dtype": "float32", "shape": (2,), "names": None},
+        },
+        use_videos=False,
+        video_backend="pyav",
+        data_files_size_in_mb=1 if multiple_files else None,
+    )
+    for ep_idx, tasks in enumerate([["pick", "place", "pick"], ["wait", "carry", "wait"], ["inspect"]]):
+        for frame_idx, task in enumerate(tasks):
+            dataset.add_frame(
+                {
+                    "action": np.array([ep_idx * 10, frame_idx], dtype=np.float32),
+                    "observation.state": np.array([ep_idx, frame_idx], dtype=np.float32),
+                    "task": task,
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+    return dataset
+
+
+def _snapshot_non_task_data(root: Path) -> dict:
+    """Capture physical file membership and values without task-related fields or reader caches."""
+    snapshot = {}
+    for directory, column in [(root / "data", "task_index"), (root / "meta" / "episodes", "tasks")]:
+        for path in directory.rglob("*.parquet"):
+            snapshot[str(path.relative_to(root))] = pq.read_table(path).drop([column]).to_pylist()
+    for path in (root / "meta").iterdir():
+        if path.is_file() and path.name != "tasks.parquet":
+            if path.name == "info.json":
+                info = json.loads(path.read_text())
+                info.pop("total_tasks")
+                snapshot[path.name] = info
+            else:
+                snapshot[path.name] = path.read_bytes()
+    return snapshot
+
+
+def _assert_modified_task_labels(dataset: LeRobotDataset, expected: list[list[str]], snapshot: dict) -> None:
+    """Check physical metadata, every frame, the returned view, and a fresh full-root reader."""
+    root = dataset.root
+    assert _snapshot_non_task_data(root) == snapshot
+    tasks = sorted({task for episode in expected for task in episode})
+    task_table = pd.read_parquet(root / "meta" / "tasks.parquet")
+    assert task_table.index.name == "task"
+    assert task_table.index.tolist() == tasks
+    assert task_table["task_index"].tolist() == list(range(len(tasks)))
+    assert json.loads((root / "meta" / "info.json").read_text())["total_tasks"] == len(tasks)
+
+    physical_frames = [
+        row for path in sorted((root / "data").rglob("*.parquet")) for row in pq.read_table(path).to_pylist()
+    ]
+    flat_expected = [task for episode in expected for task in episode]
+    assert [tasks[row["task_index"]] for row in physical_frames] == flat_expected
+    physical_episodes = [
+        row
+        for path in sorted((root / "meta" / "episodes").rglob("*.parquet"))
+        for row in pq.read_table(path).to_pylist()
+    ]
+    assert len(physical_episodes) == len(expected)
+    for row in physical_episodes:
+        assert set(row["tasks"]) == set(expected[row["episode_index"]])
+        assert len(row["tasks"]) == len(set(row["tasks"]))
+
+    for view in (dataset, LeRobotDataset(DUMMY_REPO_ID, root=root, video_backend="pyav")):
+        pd.testing.assert_frame_equal(view.meta.tasks, task_table)
+        assert view.meta.total_tasks == len(tasks)
+        for ep_idx, episode in enumerate(expected):
+            assert set(view.meta.episodes[ep_idx]["tasks"]) == set(episode)
+        visible_episodes = view.episodes if view.episodes is not None else range(len(expected))
+        visible_tasks = [task for ep_idx in visible_episodes for task in expected[ep_idx]]
+        assert len(view) == len(visible_tasks)
+        for idx, task in enumerate(visible_tasks):
+            item = view[idx]
+            assert item["task"] == task
+            assert item["task_index"].item() == tasks.index(task)
+
+
+@pytest.mark.parametrize("metadata_tasks", [["pick", "place"], ["place", "pick"]])
+@pytest.mark.parametrize(
+    "operations, expected",
+    [
+        (
+            {"task_replacements": {"place": "drop"}},
+            [["pick", "drop", "pick"], ["wait", "carry", "wait"], ["inspect"]],
+        ),
+        (
+            {"task_replacements": {"pick": "lift"}},
+            [["lift", "place", "lift"], ["wait", "carry", "wait"], ["inspect"]],
+        ),
+        (
+            {"task_replacements": {"inspect": "review"}},
+            [["pick", "place", "pick"], ["wait", "carry", "wait"], ["review"]],
+        ),
+        (
+            {"episode_tasks": {2: "review"}},
+            [["pick", "place", "pick"], ["wait", "carry", "wait"], ["review"]],
+        ),
+        ({"new_task": "idle"}, [["idle"] * 3, ["idle"] * 3, ["idle"]]),
+        ({"new_task": "idle", "episode_tasks": {0: "special"}}, [["special"] * 3, ["idle"] * 3, ["idle"]]),
+        (
+            {"new_task": "idle", "task_replacements": {"place": "drop"}},
+            [["pick", "drop", "pick"], ["idle"] * 3, ["idle"]],
+        ),
+        (
+            {"new_task": "idle", "task_replacements": {"place": "drop"}, "episode_tasks": {0: "place"}},
+            [["place"] * 3, ["idle"] * 3, ["idle"]],
+        ),
+        (
+            {"task_replacements": {"pick": "unused"}, "episode_tasks": {0: "place"}},
+            [["place"] * 3, ["wait", "carry", "wait"], ["inspect"]],
+        ),
+        (
+            {"task_replacements": {"pick": "done", "place": "done"}},
+            [["done"] * 3, ["wait", "carry", "wait"], ["inspect"]],
+        ),
+        ({"task_replacements": {"pick": "place"}}, [["place"] * 3, ["wait", "carry", "wait"], ["inspect"]]),
+        (
+            {"task_replacements": {"pick": "place", "place": "pick"}},
+            [["place", "pick", "place"], ["wait", "carry", "wait"], ["inspect"]],
+        ),
+        (
+            {"task_replacements": {"pick": "place", "place": "drop"}},
+            [["place", "drop", "place"], ["wait", "carry", "wait"], ["inspect"]],
+        ),
+        (
+            {"new_task": "idle", "task_replacements": {"pick": "pick"}},
+            [["pick", "place", "pick"], ["idle"] * 3, ["idle"]],
+        ),
+        (
+            {"new_task": "", "episode_tasks": {}, "task_replacements": {"inspect": "review"}},
+            [["pick", "place", "pick"], ["wait", "carry", "wait"], ["review"]],
+        ),
+        ({"episode_tasks": {0: ""}}, [[""] * 3, ["wait", "carry", "wait"], ["inspect"]]),
+    ],
+    ids=[
+        "replace-place",
+        "replace-pick",
+        "replace-other-episode",
+        "override-other-episode",
+        "default",
+        "default-override",
+        "replacement-default",
+        "all-modes",
+        "suppressed-target",
+        "many-to-one",
+        "existing-target",
+        "swap",
+        "chain",
+        "identity",
+        "empty-default",
+        "empty-override",
+    ],
+)
+def test_modify_tasks_mixed_frames(
+    mixed_task_dataset: LeRobotDataset, metadata_tasks: list[str], operations: dict, expected: list[list[str]]
+) -> None:
+    """Episode metadata order must not choose frame labels or change episode-level precedence."""
+    root = mixed_task_dataset.root
+    for path in (root / "meta" / "episodes").rglob("*.parquet"):
+        table = pd.read_parquet(path)
+        table["tasks"] = table.apply(
+            lambda row: metadata_tasks if row["episode_index"] == 0 else row["tasks"], axis=1
+        )
+        table.to_parquet(path, index=False)
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=root, video_backend="pyav")
+    assert dataset[1]["task"] == "place"  # Preload the reader before modifying disk.
+    reader = dataset.reader
+    snapshot = _snapshot_non_task_data(root)
+
+    assert modify_tasks(dataset, **operations) is dataset
+
+    assert dataset.reader is reader
+    assert dataset.root == root
+    assert dataset.repo_id == DUMMY_REPO_ID
+    expected_metadata = list(dict.fromkeys(expected[0]))
+    if metadata_tasks == ["place", "pick"]:
+        expected_metadata.reverse()
+    assert dataset.meta.episodes[0]["tasks"] == expected_metadata
+    _assert_modified_task_labels(dataset, expected, snapshot)
+
+
+@pytest.mark.parametrize(
+    "mixed_task_dataset", [False, True], indirect=True, ids=["shared-file", "multiple-files"]
+)
+def test_modify_tasks_mixed_lifecycle(mixed_task_dataset: LeRobotDataset) -> None:
+    """Editing a lazy finalized object and then a selected reader preserves the whole-root contract."""
+    dataset = mixed_task_dataset
+    root = dataset.root
+    data_files = list((root / "data").rglob("*.parquet"))
+    assert len(data_files) == (3 if dataset.meta.data_files_size_in_mb == 1 else 1)
+    assert dataset.reader is None
+    snapshot = _snapshot_non_task_data(root)
+    assert modify_tasks(dataset, task_replacements={"place": "drop", "inspect": "pick up"}) is dataset
+    assert dataset.reader is None
+    _assert_modified_task_labels(
+        dataset, [["pick", "drop", "pick"], ["wait", "carry", "wait"], ["pick up"]], snapshot
+    )
+
+    selected = LeRobotDataset(
+        DUMMY_REPO_ID, root=root, episodes=[1], video_backend="pyav", delta_timestamps={"action": [0.0]}
+    )
+    assert selected[1]["task"] == "carry"
+    reader = selected.reader
+    assert modify_tasks(selected, task_replacements={"carry": "move", "pick": "lift"}) is selected
+    assert selected.reader is reader
+    assert selected.episodes == [1]
+    assert selected[0]["action"].shape[0] == 1  # Temporal settings survive reader refresh.
+    _assert_modified_task_labels(
+        selected, [["lift", "drop", "lift"], ["wait", "move", "wait"], ["pick up"]], snapshot
+    )
+
+
+@pytest.mark.parametrize(
+    "operations, error",
+    [
+        ({}, "Must specify at least one"),
+        ({"new_task": "", "episode_tasks": {}, "task_replacements": {}}, "Must specify at least one"),
+        ({"episode_tasks": {-1: "bad"}}, "Invalid episode indices"),
+        ({"episode_tasks": {3: "bad"}}, "Invalid episode indices"),
+        ({"task_replacements": {"unknown": "bad"}, "episode_tasks": {0: "override"}}, "unknown tasks"),
+    ],
+)
+def test_modify_tasks_rejects_before_writing(
+    mixed_task_dataset: LeRobotDataset, operations: dict, error: str
+) -> None:
+    """Invalid arguments leave all physical dataset files unchanged."""
+    _assert_task_edit_rejected(mixed_task_dataset, operations, error)
+
+
+def _assert_task_edit_rejected(dataset: LeRobotDataset, operations: dict, error: str) -> None:
+    """Require a validation error without any physical dataset changes."""
+    root = dataset.root
+    before = {
+        path: path.read_bytes()
+        for directory in [root / "data", root / "meta"]
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+    with pytest.raises(ValueError, match=error):
+        modify_tasks(dataset, **operations)
+    assert {
+        path: path.read_bytes()
+        for directory in [root / "data", root / "meta"]
+        for path in directory.rglob("*")
+        if path.is_file()
+    } == before
+
+
+def test_modify_tasks_empty_episode_metadata(mixed_task_dataset: LeRobotDataset) -> None:
+    """Retain the no-task error for unresolved empty metadata before any write."""
+    from lerobot.datasets.io_utils import load_episodes
+
+    dataset = mixed_task_dataset
+    for path in (dataset.root / "meta" / "episodes").rglob("*.parquet"):
+        table = pd.read_parquet(path)
+        table["tasks"] = table.apply(lambda row: [] if row["episode_index"] == 0 else row["tasks"], axis=1)
+        table.to_parquet(path, index=False)
+    dataset.meta.episodes = load_episodes(dataset.root)
+    _assert_task_edit_rejected(dataset, {"episode_tasks": {2: "review"}}, "Episode 0 has no task")
+
+
+def test_modify_tasks_mixed_cli(mixed_task_dataset: LeRobotDataset) -> None:
+    """Run real CLI parsing and dispatch offline against a disposable mixed-task dataset."""
+    root = mixed_task_dataset.root
+    snapshot = _snapshot_non_task_data(root)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "lerobot.scripts.lerobot_edit_dataset",
+            "--repo_id",
+            DUMMY_REPO_ID,
+            "--root",
+            str(root),
+            "--operation.type",
+            "modify_tasks",
+            "--operation.task_replacements",
+            '{"place": "drop"}',
+            "--push_to_hub",
+            "false",
+        ],
+        env={**os.environ, "HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    reopened = LeRobotDataset(DUMMY_REPO_ID, root=root, video_backend="pyav")
+    _assert_modified_task_labels(
+        reopened, [["pick", "drop", "pick"], ["wait", "carry", "wait"], ["inspect"]], snapshot
+    )
 
 
 def test_modify_tasks_single_task_for_all(sample_dataset):
