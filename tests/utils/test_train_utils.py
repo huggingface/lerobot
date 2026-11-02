@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -104,6 +107,47 @@ def test_update_last_checkpoint(tmp_path):
     assert last_checkpoint.resolve() == checkpoint
 
 
+def test_update_last_checkpoint_never_leaves_last_missing_under_concurrent_updates(tmp_path):
+    """Several ranks re-point `last` at once: no rank may fail on another's link, and a reader
+    must never find `last` missing (unlink-then-create left a gap)."""
+    targets = [tmp_path / "000100", tmp_path / "000200"]
+    for target in targets:
+        target.mkdir()
+    update_last_checkpoint(targets[0])
+    last = tmp_path / LAST_CHECKPOINT_LINK
+    errors: list[BaseException] = []
+    missing = threading.Event()
+    stop = threading.Event()
+
+    def writer(target):
+        try:
+            for _ in range(300):
+                update_last_checkpoint(target)
+        except BaseException as e:  # noqa: BLE001 - collected and asserted below
+            errors.append(e)
+
+    def reader():
+        while not stop.is_set():
+            if not os.path.lexists(last):
+                missing.set()
+
+    reader_thread = threading.Thread(target=reader)
+    reader_thread.start()
+    writers = [threading.Thread(target=writer, args=(targets[i % 2],)) for i in range(4)]
+    for thread in writers:
+        thread.start()
+    for thread in writers:
+        thread.join()
+    stop.set()
+    reader_thread.join()
+
+    assert errors == []
+    assert not missing.is_set()
+    assert last.resolve() in targets
+    # No temporary links are left behind.
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["000100", "000200", LAST_CHECKPOINT_LINK]
+
+
 # save_checkpoint round-trips (all formats, real policies) live in
 # tests/common/test_checkpoint_save_resume.py.
 
@@ -179,6 +223,56 @@ def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypa
     assert last.is_symlink()
     # `last` points at the downloaded step dir.
     assert (last.parent / last.readlink()).resolve() == checkpoint_dir.resolve()
+
+
+def test_resolve_resume_checkpoint_downloads_once_for_concurrent_ranks(tmp_path, monkeypatch):
+    """Every rank of a multi-process resume resolves into the same dir at once: the download must
+    run one rank at a time (the others then find the files in place), and all agree on the result."""
+    out = tmp_path / "run"
+    active, max_active, downloads = [0], [0], []
+    lock = threading.Lock()
+
+    def fake_snapshot_download(repo_id, repo_type, allow_patterns, local_dir):
+        with lock:
+            active[0] += 1
+            max_active[0] = max(max_active[0], active[0])
+        try:
+            weights = Path(local_dir) / "checkpoints" / "020000" / "pretrained_model" / "model.safetensors"
+            if not weights.is_file():
+                time.sleep(0.2)  # a real download takes a while
+                weights.parent.mkdir(parents=True, exist_ok=True)
+                weights.write_text("weights")
+                downloads.append(threading.current_thread().name)
+        finally:
+            with lock:
+                active[0] -= 1
+        return local_dir
+
+    monkeypatch.setattr("lerobot.common.train_utils.snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr(
+        "lerobot.common.train_utils.find_latest_hub_checkpoint", lambda repo_id: "checkpoints/020000"
+    )
+    results: dict[str, Path] = {}
+    errors: list[BaseException] = []
+
+    def rank(name):
+        try:
+            results[name] = train_utils.resolve_resume_checkpoint("u/run", out)
+        except BaseException as e:  # noqa: BLE001 - collected and asserted below
+            errors.append(e)
+
+    ranks = [threading.Thread(target=rank, args=(f"rank{i}",), name=f"rank{i}") for i in range(4)]
+    for thread in ranks:
+        thread.start()
+    for thread in ranks:
+        thread.join()
+
+    assert errors == []
+    assert max_active[0] == 1
+    assert len(downloads) == 1
+    assert set(results.values()) == {out / CHECKPOINTS_DIR / "020000"}
+    last = out / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK
+    assert last.resolve() == (out / CHECKPOINTS_DIR / "020000").resolve()
 
 
 def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypatch):

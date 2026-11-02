@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime as dt
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import lerobot.configs.train as tc
+from lerobot.common import train_utils
 from lerobot.configs.train import TrainPipelineConfig
 
 
@@ -93,3 +98,99 @@ def test_resolve_resume_checkpoint_accepts_file_or_pretrained_model_dir(tmp_path
     # The model the run was fine-tuned from survives the resume, for the published card.
     assert cfg.policy.pretrained_path == Path("user/base_model")
     assert cfg.checkpoint_path == pretrained_dir.parent
+
+
+def _hub_resume_cfg(monkeypatch, cli_output_dir=None):
+    """A `--resume` config on a Hub repo, with the Hub download stubbed out."""
+
+    def fake_snapshot_download(repo_id, repo_type, allow_patterns, local_dir):
+        (Path(local_dir) / "checkpoints" / "000200" / "pretrained_model").mkdir(parents=True, exist_ok=True)
+        return local_dir
+
+    monkeypatch.setattr(train_utils, "snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr(train_utils, "find_latest_hub_checkpoint", lambda repo_id: "checkpoints/000200")
+    args = {"config_path": "alice/run", "output_dir": cli_output_dir}
+    monkeypatch.setattr(tc.parser, "parse_arg", lambda name: args.get(name))
+    cfg = tc.draccus.parse(TrainPipelineConfig, args=["--dataset.repo_id", "u/d"])
+    cfg.resume = True
+    return cfg
+
+
+def _ranks_clock(monkeypatch, clocks: dict[str, dt.datetime]) -> None:
+    """Give every thread (a simulated rank) its own wall clock."""
+
+    class _RankDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clocks[threading.current_thread().name]
+
+    monkeypatch.setattr(tc, "dt", SimpleNamespace(datetime=_RankDateTime))
+
+
+def test_multi_process_hub_resume_requires_an_explicit_output_dir(monkeypatch, tmp_path):
+    """Two ranks whose clocks straddle a second boundary would each stamp their own resume dir, and
+    a sharded save would then scatter its shards across both. Refuse instead of guessing."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    _ranks_clock(monkeypatch, {threading.current_thread().name: dt.datetime(2026, 11, 2, 11, 11, 45)})
+    cfg = _hub_resume_cfg(monkeypatch)
+
+    with pytest.raises(ValueError, match="needs an explicit --output_dir"):
+        cfg._resolve_resume_checkpoint()
+    assert not (tmp_path / "outputs").exists()  # nothing downloaded
+
+
+def test_single_process_hub_resume_keeps_the_timestamped_default(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    _ranks_clock(monkeypatch, {threading.current_thread().name: dt.datetime(2026, 11, 2, 11, 11, 45)})
+    cfg = _hub_resume_cfg(monkeypatch)
+
+    cfg._resolve_resume_checkpoint()
+
+    assert cfg.output_dir == Path("outputs/train/2026-11-02/11-11-45_resume")
+    assert cfg.checkpoint_path == cfg.output_dir / "checkpoints" / "000200"
+
+
+def test_concurrent_ranks_with_different_clocks_share_an_explicit_output_dir(monkeypatch, tmp_path):
+    """Two ranks whose clocks are a second apart resolve the same explicit dir at once: they agree
+    on it, and the checkpoint is downloaded into it once."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    _ranks_clock(
+        monkeypatch,
+        {"rank0": dt.datetime(2026, 11, 2, 11, 11, 45), "rank1": dt.datetime(2026, 11, 2, 11, 11, 46)},
+    )
+    resolved: dict[str, tuple[Path, Path]] = {}
+    errors: list[BaseException] = []
+    downloads: list[str] = []
+    cfgs = {name: _hub_resume_cfg(monkeypatch, "outputs/train/run_resume") for name in ("rank0", "rank1")}
+
+    def fake_snapshot_download(repo_id, repo_type, allow_patterns, local_dir):
+        weights = Path(local_dir) / "checkpoints" / "000200" / "pretrained_model" / "model.safetensors"
+        if not weights.is_file():
+            time.sleep(0.2)  # a real download takes a while
+            weights.parent.mkdir(parents=True, exist_ok=True)
+            weights.write_text("weights")
+            downloads.append(threading.current_thread().name)
+        return local_dir
+
+    monkeypatch.setattr(train_utils, "snapshot_download", fake_snapshot_download)
+
+    def rank(name):
+        try:
+            cfgs[name]._resolve_resume_checkpoint()
+            resolved[name] = (cfgs[name].output_dir, cfgs[name].checkpoint_path)
+        except BaseException as e:  # noqa: BLE001 - collected and asserted below
+            errors.append(e)
+
+    threads = [threading.Thread(target=rank, args=(name,), name=name) for name in cfgs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert len(downloads) == 1
+    run_dir = Path("outputs/train/run_resume")
+    assert resolved == dict.fromkeys(cfgs, (run_dir, run_dir / "checkpoints" / "000200"))

@@ -25,6 +25,7 @@ its writes live in the same method.
 
 import logging
 import os
+import uuid
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -42,6 +43,7 @@ from huggingface_hub import (
     snapshot_download,
 )
 from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled
+from huggingface_hub.utils import WeakFileLock
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -135,17 +137,22 @@ def should_save_checkpoint(step: int, save_freq: int, total_steps: int) -> bool:
 def update_last_checkpoint(checkpoint_dir: Path) -> None:
     """Point the `last` symlink in the checkpoints directory at the given checkpoint.
 
-    Any existing `last` symlink is replaced. The link target is relative to the checkpoints
-    directory, so the tree stays valid when the run directory is moved.
+    Any existing `last` symlink is replaced atomically (a uniquely named link renamed over it), so
+    concurrent callers never see `last` missing nor fail on one another's link. The link target is
+    relative to the checkpoints directory, so the tree stays valid when the run directory is moved.
 
     Args:
         checkpoint_dir (Path): The checkpoint step directory the `last` link should target.
     """
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
-    if last_checkpoint_dir.is_symlink():
-        last_checkpoint_dir.unlink()
     relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
-    last_checkpoint_dir.symlink_to(relative_target)
+    tmp_link = checkpoint_dir.parent / f".{LAST_CHECKPOINT_LINK}.{uuid.uuid4().hex}"
+    tmp_link.symlink_to(relative_target)
+    try:
+        os.replace(tmp_link, last_checkpoint_dir)
+    except BaseException:
+        tmp_link.unlink(missing_ok=True)
+        raise
 
 
 # ---------------------------------------------------------------------------------------------
@@ -662,6 +669,9 @@ def resolve_resume_checkpoint(repo_id: str, output_dir: Path) -> Path:
     checkpoint dir. Used to resume training from the Hub on a machine (or HF Jobs pod) that does not
     have the original local run dir.
 
+    Every rank of a multi-process run calls this with the same `output_dir`. A file lock next to
+    `output_dir` serializes them: the first downloads, the others find the files in place.
+
     Args:
         repo_id (str): The Hub model repo holding `checkpoints/<step>/` subtrees.
         output_dir (Path): The local run directory to download the checkpoint into.
@@ -678,14 +688,16 @@ def resolve_resume_checkpoint(repo_id: str, output_dir: Path) -> Path:
             f"No checkpoint found in '{repo_id}' under '{CHECKPOINTS_DIR}/'. "
             "Was the run trained with --save_checkpoint_to_hub?"
         )
-    snapshot_download(
-        repo_id=repo_id,
-        repo_type="model",
-        allow_patterns=f"{latest}/*",
-        local_dir=str(output_dir),
-    )
-    checkpoint_dir = output_dir / latest
-    update_last_checkpoint(checkpoint_dir)
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    with WeakFileLock(output_dir.parent / f".{output_dir.name}.lock"):
+        snapshot_download(
+            repo_id=repo_id,
+            repo_type="model",
+            allow_patterns=f"{latest}/*",
+            local_dir=str(output_dir),
+        )
+        checkpoint_dir = output_dir / latest
+        update_last_checkpoint(checkpoint_dir)
     return checkpoint_dir
 
 

@@ -29,7 +29,7 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
 from lerobot.configs.accelerator import AcceleratorConfig, ActivationCheckpointingMode
-from lerobot.configs.parallelism import ParallelismConfig
+from lerobot.configs.parallelism import ParallelismConfig, world_size_from_env
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.optim.ema import EMAConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
@@ -271,6 +271,15 @@ class TrainPipelineConfig(HubMixin):
             cli_output_dir = parser.parse_arg("output_dir")
             if cli_output_dir:
                 self.output_dir = Path(cli_output_dir)
+            elif world_size_from_env() > 1:
+                # Every rank resolves the resume on its own, before any process group exists: a
+                # dir stamped from each rank's clock could differ, scattering the download and
+                # every later checkpoint (sharded saves write one shard per rank) across dirs.
+                raise ValueError(
+                    f"Resuming a multi-process run from the Hub repo {config_path!r} needs an explicit "
+                    "--output_dir, so that every rank downloads the checkpoint into, and saves to, the "
+                    "same directory. Pass e.g. --output_dir=outputs/train/<run_name>_resume."
+                )
             else:
                 now = dt.datetime.now()
                 self.output_dir = Path("outputs/train") / f"{now:%Y-%m-%d}/{now:%H-%M-%S}_resume"
