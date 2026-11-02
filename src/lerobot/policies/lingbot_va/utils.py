@@ -469,7 +469,10 @@ class FlexAttnFunc(nn.Module):
 
 
 class WanRotaryPosEmbed(nn.Module):
-    """Rotary position embedding with separate frequency bases for frame / height / width."""
+    """Rotary position embedding with separate frequency bases for frame / height / width.
+
+    Returns the cosine and sine of every rotation angle, stacked in the last dimension.
+    """
 
     def __init__(self, attention_head_dim: int, patch_size, max_seq_len: int, theta: float = 10000.0):
         super().__init__()
@@ -506,9 +509,9 @@ class WanRotaryPosEmbed(nn.Module):
             h_freqs = grid_ids[:, 1, :].unsqueeze(-1) * self.h_freqs_base.to(grid_ids.device)
             w_freqs = grid_ids[:, 2, :].unsqueeze(-1) * self.w_freqs_base.to(grid_ids.device)
             freqs = torch.cat([f_freqs, h_freqs, w_freqs], dim=-1).float()
-            freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
-
-        return freqs_cis
+            # Real cosines and sines rather than complex numbers, which ExecuTorch and Torch-TensorRT cannot compile.
+            # FSDP2 with `cast_forward_inputs` rounds this table to bfloat16 where each wrapped block takes it.
+            return torch.stack([freqs.cos(), freqs.sin()], dim=-1)
 
 
 class WanAttention(nn.Module):
@@ -644,10 +647,10 @@ class WanAttention(nn.Module):
         if rotary_emb is not None:
 
             def apply_rotary_emb(x, freqs):
-                x_out = torch.view_as_complex(
-                    x.to(torch.float64).reshape(x.shape[0], x.shape[1], x.shape[2], -1, 2)
-                )
-                x_out = torch.view_as_real(x_out * freqs).flatten(3)
+                # Each pair of adjacent channels is one complex number, multiplied by the rotation's cos + i sin.
+                real, imag = x.to(torch.float64).reshape(x.shape[0], x.shape[1], x.shape[2], -1, 2).unbind(-1)
+                cos, sin = freqs.unbind(-1)
+                x_out = torch.stack([real * cos - imag * sin, real * sin + imag * cos], dim=-1).flatten(3)
                 return x_out.to(x.dtype)
 
             query = apply_rotary_emb(query, rotary_emb)
@@ -1001,7 +1004,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
         total_length = hidden_states.shape[1]
         padded_length = (128 - total_length % 128) % 128
         hidden_states = F.pad(hidden_states, (0, 0, 0, padded_length))
-        rotary_emb = F.pad(rotary_emb, (0, 0, 0, 0, 0, padded_length))
+        rotary_emb = F.pad(rotary_emb, (0, 0, 0, 0, 0, 0, 0, padded_length))
         temb = F.pad(temb, (0, 0, 0, padded_length))
         timestep_proj = F.pad(timestep_proj, (0, 0, 0, 0, 0, padded_length))
 
@@ -1061,7 +1064,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
         text_hidden_states = self.condition_embedder.text_embedder(input_dict["text_emb"])  # B L2 C
 
         latent_grid_id = input_dict["grid_id"]
-        rotary_emb = self.rope(latent_grid_id)[:, :, None]  # 1 L 1 C
+        rotary_emb = self.rope(latent_grid_id)[:, :, None]  # 1 L 1 C 2, the cosines and the sines
         patch_scale_h, patch_scale_w = (1, 1) if action_mode else (self.patch_size[1], self.patch_size[2])
 
         latent_time_steps = torch.repeat_interleave(
