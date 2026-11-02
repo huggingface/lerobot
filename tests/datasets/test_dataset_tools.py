@@ -1125,6 +1125,35 @@ def test_modify_tasks_single_task_for_all(sample_dataset):
         assert item["task"] == new_task
 
 
+@pytest.mark.parametrize("episodes", [None, [1, 3]], ids=["all-episodes", "selected-episodes"])
+@pytest.mark.parametrize(
+    ("updates", "expected_tasks"),
+    [
+        ({"task_replacements": {"task_0": "z_task"}}, ["z_task", "task_1", "z_task", "task_1", "z_task"]),
+        ({"new_task": "new task"}, ["new task"] * 5),
+    ],
+    ids=["reordered-task-indices", "single-task"],
+)
+def test_modify_tasks_refreshes_loaded_reader(sample_dataset, episodes, updates, expected_tasks):
+    """Task edits must be visible through an already loaded dataset, including episode subsets."""
+    dataset = LeRobotDataset(
+        sample_dataset.repo_id, root=sample_dataset.root, episodes=episodes, video_backend="pyav"
+    )
+    original_frames = [dataset[i] for i in range(len(dataset))]
+
+    modified = modify_tasks(dataset, **updates)
+
+    assert modified is dataset
+    assert len(modified) == len(original_frames)
+    for i, original in enumerate(original_frames):
+        item = modified[i]
+        ep_idx = original["episode_index"].item()
+        assert item["task"] == expected_tasks[ep_idx]
+        assert item["episode_index"].item() == ep_idx
+        torch.testing.assert_close(item["action"], original["action"])
+        torch.testing.assert_close(item["observation.state"], original["observation.state"])
+
+
 def test_modify_tasks_episode_specific(sample_dataset):
     """Test setting different tasks for specific episodes."""
     episode_tasks = {

@@ -1612,6 +1612,10 @@ def modify_tasks(
     if isinstance(dataset.reader, DatasetReader) and dataset.reader.hf_dataset is not None:
         dataset.reader.load_and_activate()
 
+    # Refresh cached task indices while preserving the reader's episode selection.
+    if isinstance(dataset.reader, DatasetReader):
+        dataset.reader.load_and_activate()
+
     logger.info(f"Tasks: {unique_tasks}")
 
     return dataset
