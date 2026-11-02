@@ -325,7 +325,7 @@ def _gym_settings(
 
 @EnvConfig.register_subclass("aloha")
 @dataclass
-class AlohaEnv(EnvConfig):
+class AlohaEnvConfig(EnvConfig):
     task: str | None = "AlohaInsertion-v0"
     fps: int = 50
     episode_length: int = 400
@@ -347,7 +347,7 @@ class AlohaEnv(EnvConfig):
 
 @EnvConfig.register_subclass("pusht")
 @dataclass
-class PushtEnv(EnvConfig):
+class PushtEnvConfig(EnvConfig):
     task: str | None = "PushT-v0"
     fps: int = 10
     episode_length: int = 300
@@ -463,7 +463,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
 
 @EnvConfig.register_subclass("libero")
 @dataclass
-class LiberoEnv(EnvConfig):
+class LiberoEnvConfig(EnvConfig):
     task: str = "libero_10"  # can also choose libero_spatial, libero_object, etc.
     task_ids: list[int] | None = None
     fps: int = 20  # Must match robosuite's default control_freq (20 Hz)
@@ -522,7 +522,7 @@ class LiberoEnv(EnvConfig):
 
 @EnvConfig.register_subclass("metaworld")
 @dataclass
-class MetaworldEnv(EnvConfig):
+class MetaworldEnvConfig(EnvConfig):
     task: str = "metaworld-push-v3"  # add all tasks
     fps: int = 80
     obs_type: str = "pixels_agent_pos"
@@ -545,7 +545,7 @@ class MetaworldEnv(EnvConfig):
 
 @EnvConfig.register_subclass("robocasa")
 @dataclass
-class RoboCasaEnv(EnvConfig):
+class RoboCasaEnvConfig(EnvConfig):
     task: str = "CloseFridge"
     fps: int = 20
     episode_length: int | None = None
@@ -599,7 +599,7 @@ class RoboCasaEnv(EnvConfig):
 
 @EnvConfig.register_subclass("vlabench")
 @dataclass
-class VLABenchEnv(EnvConfig):
+class VLABenchEnvConfig(EnvConfig):
     task: str = "select_fruit"
     fps: int = 10
     episode_length: int = 500
@@ -630,7 +630,7 @@ class VLABenchEnv(EnvConfig):
 
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
-class IsaaclabArenaEnv(HubEnvConfig):
+class IsaaclabArenaEnvConfig(HubEnvConfig):
     hub_path: str = "nvidia/isaaclab-arena-envs"
     # Run the repo's own vector env locally, as an EnvHub native batch.
     use_native_batch: bool = True
@@ -725,7 +725,7 @@ class G1EndEffector(StrEnum):
 
 @EnvConfig.register_subclass("unitree_g1_mujoco")
 @dataclass
-class UnitreeG1MujocoEnv(HubEnvConfig):
+class UnitreeG1MujocoEnvConfig(HubEnvConfig):
     """Config for the MuJoCo simulation of the Unitree G1.
 
     The end effector selects the MuJoCo model, and with it the finger actuators and the
@@ -761,14 +761,14 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
 
 @EnvConfig.register_subclass("libero_plus")
 @dataclass
-class LiberoPlusEnv(LiberoEnv):
+class LiberoPlusEnvConfig(LiberoEnvConfig):
     """Config for LIBERO-plus robustness benchmark evaluation.
 
     LIBERO-plus extends LIBERO with 7 perturbation dimensions (camera viewpoints,
     object layouts, robot initial states, language instructions, lighting, background
     textures, sensor noise) producing ~10k task variants.
 
-    The gym interface is identical to LIBERO so this class reuses ``LiberoEnv``
+    The gym interface is identical to LIBERO so this class reuses ``LiberoEnvConfig``
     entirely — only the registered name and default task suite differ.
 
     Install: see the libero_plus_native stage of docker/Dockerfile.sim — LIBERO-plus ships
@@ -785,7 +785,7 @@ class LiberoPlusEnv(LiberoEnv):
 
 @EnvConfig.register_subclass("robocerebra")
 @dataclass
-class RoboCerebraEnv(LiberoEnv):
+class RoboCerebraEnvConfig(LiberoEnvConfig):
     """RoboCerebra long-horizon tasks on LIBERO scenes, using its datasets' camera names and image size."""
 
     task: str = "libero_10"
@@ -839,7 +839,7 @@ class RoboTwinEnvConfig(EnvConfig):
 
 @EnvConfig.register_subclass("robomme")
 @dataclass
-class RoboMMEEnv(EnvConfig):
+class RoboMMEEnvConfig(EnvConfig):
     """RoboMME memory-augmented manipulation benchmark (ManiSkill/SAPIEN).
 
     16 tasks across 4 suites: Counting, Permanence, Reference, Imitation.

@@ -115,7 +115,7 @@ dataset = LeRobotDataset("lerobot/robomme")
 
 ### Feature key alignment (training)
 
-The env wrapper exposes its cameras under `pixels/<camera_name>`, named by `RoboMMEEnv.front_camera_name` and `RoboMMEEnv.wrist_camera_name` (`camera1` and `camera2` by default). The policy receives them as `observation.images.camera1` and `observation.images.camera2`, and the state (`agent_pos`) as `observation.state`.
+The env wrapper exposes its cameras under `pixels/<camera_name>`, named by `RoboMMEEnvConfig.front_camera_name` and `RoboMMEEnvConfig.wrist_camera_name` (`camera1` and `camera2` by default). The policy receives them as `observation.images.camera1` and `observation.images.camera2`, and the state (`agent_pos`) as `observation.state`.
 
 The dataset's raw columns do not match those policy keys, so pass a `--rename_map` when fine-tuning:
 

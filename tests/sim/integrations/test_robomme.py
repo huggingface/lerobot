@@ -25,7 +25,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from lerobot.envs.configs import RoboMMEEnv
+from lerobot.envs.configs import RoboMMEEnvConfig
 from lerobot.sim.integrations.robomme import RoboMMEGymEnv, canonical_observation, env_fns
 
 
@@ -66,7 +66,7 @@ def robomme_stub(monkeypatch):
 
 
 def test_robomme_env_config_defaults():
-    cfg = RoboMMEEnv()
+    cfg = RoboMMEEnvConfig()
     assert cfg.task == "PickXtimes"
     assert cfg.fps == 10
     assert cfg.episode_length == 300
@@ -76,16 +76,18 @@ def test_robomme_env_config_defaults():
 
 
 def test_robomme_env_config_type():
-    assert RoboMMEEnv().type == "robomme"
+    assert RoboMMEEnvConfig().type == "robomme"
 
 
 def test_robomme_rejects_duplicate_camera_names():
     with pytest.raises(ValueError, match="camera names must be distinct"):
-        RoboMMEEnv(front_camera_name="camera", wrist_camera_name="camera")
+        RoboMMEEnvConfig(front_camera_name="camera", wrist_camera_name="camera")
 
 
 def test_robomme_settings_name_the_cameras_and_action_space():
-    kwargs = RoboMMEEnv(front_camera_name="image", wrist_camera_name="wrist_image").sim_settings()["kwargs"]
+    kwargs = RoboMMEEnvConfig(front_camera_name="image", wrist_camera_name="wrist_image").sim_settings()[
+        "kwargs"
+    ]
     assert (kwargs["front_camera_name"], kwargs["wrist_camera_name"]) == ("image", "wrist_image")
 
 
@@ -93,7 +95,7 @@ def test_robomme_settings_name_the_cameras_and_action_space():
     ("action_space", "control_mode", "names"), [("joint_angle", "position", 8), ("ee_pose", "eef_pose", 0)]
 )
 def test_robomme_conventions_follow_the_action_space(action_space, control_mode, names):
-    sim = RoboMMEEnv(action_space=action_space).sim_config()
+    sim = RoboMMEEnvConfig(action_space=action_space).sim_config()
     assert sim.control_mode == control_mode and len(sim.action_names) == names
 
 

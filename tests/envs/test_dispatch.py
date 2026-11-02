@@ -11,7 +11,7 @@ import torch
 from gymnasium.envs.registration import register, registry as gym_registry
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.envs.configs import EnvConfig, LiberoEnv
+from lerobot.envs.configs import EnvConfig, LiberoEnvConfig
 from lerobot.envs.factory import make_env, make_env_config, make_env_pre_post_processors
 from lerobot.processor import LiberoProcessorStep
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_PREFIX, OBS_STATE
@@ -37,14 +37,14 @@ def test_unknown_type():
 
 
 def test_libero_fps_controls_simulator_frequency():
-    cfg = LiberoEnv(fps=17)
+    cfg = LiberoEnvConfig(fps=17)
 
     assert cfg.gym_kwargs["control_freq"] == 17
 
 
 def test_libero_rejects_nonpositive_fps():
     with pytest.raises(ValueError, match="fps must be positive"):
-        LiberoEnv(fps=0)
+        LiberoEnvConfig(fps=0)
 
 
 def test_identity_processors():
@@ -78,7 +78,7 @@ def test_processors_delegation():
 
 def test_libero_processors_are_identity():
     # LIBERO observations are canonical (flipped images, flat state) before they reach any processor.
-    pre, post = make_env_pre_post_processors(LiberoEnv(), policy_cfg=object())
+    pre, post = make_env_pre_post_processors(LiberoEnvConfig(), policy_cfg=object())
 
     assert len(pre.steps) == 0 and len(post.steps) == 0
 
