@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import logging
 import re
 import signal
 import sys
@@ -36,17 +37,22 @@ from huggingface_hub import (
     create_repo,
     fetch_job_logs,
     get_token,
+    hf_hub_download,
     inspect_job,
     run_job,
     upload_file,
 )
 
-from lerobot.common.train_utils import push_checkpoint_to_hub
+from lerobot.common.train_utils import load_training_metadata, push_checkpoint_to_hub
 from lerobot.configs import parser
+from lerobot.configs.train import check_resolved_checkpoint_format
+from lerobot.utils.constants import TRAINING_STATE_DIR, TRAINING_STEP
+from lerobot.utils.hub import find_latest_hub_checkpoint
 
 from .dataset import ensure_dataset_available
 
 if TYPE_CHECKING:
+    from lerobot.configs.parallelism import ParallelismConfig
     from lerobot.configs.train import TrainPipelineConfig
 
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
@@ -82,35 +88,112 @@ def flavor_gpu_count(flavor: str) -> int:
     return int(match.group(1)) if match else 1
 
 
-def resolve_nproc_per_node(flavor: str, nproc_per_node: int | None) -> int:
-    """Return how many training processes a job on `flavor` launches: one per GPU unless overridden.
+def resolve_nproc_per_node(
+    flavor: str,
+    gpus: int,
+    requested: int | None,
+    *,
+    recorded: int | None = None,
+    resume: bool = False,
+    streaming: bool = False,
+) -> int:
+    """Return how many training processes a job on `flavor` (`gpus` GPUs) launches.
 
-    `nproc_per_node=None` (`--job.nproc_per_node` unset) uses every GPU of the flavor. An explicit
-    value may use fewer GPUs than the flavor has (e.g. 1 to keep a single-process run), but not
-    more: extra ranks would have no GPU to bind to and crash the job after it started billing.
+    A fresh run uses every GPU of the flavor unless `requested` (`--job.nproc_per_node`) says
+    otherwise. A resume defaults to `recorded`, the data-parallel world size the checkpoint was
+    trained with: changing it mid-run changes the effective batch (and the trainer refuses it for
+    streaming datasets). When that size is unknown (`recorded=None`), a resume runs one process,
+    as every resumed job did before multi-GPU launches existed.
+
+    An explicit `requested` above `gpus` is allowed with a warning, since `gpus` is only read from
+    the flavor name.
+
+    Raises:
+        ValueError: On a resume, if `recorded` exceeds the flavor's GPUs and no explicit value was
+            given, or if an explicit value differs from `recorded` on a streaming dataset.
     """
-    gpus = flavor_gpu_count(flavor)
-    if nproc_per_node is None:
-        return max(gpus, 1)
-    if nproc_per_node > max(gpus, 1):
-        raise ValueError(
-            f"--job.nproc_per_node={nproc_per_node} exceeds the {gpus} GPU(s) of flavor "
-            f"{flavor!r} (counted from its name). Pick a flavor with more GPUs "
-            "(see `hf jobs hardware`) or lower --job.nproc_per_node."
+    available = max(gpus, 1)
+    if requested is None:
+        if not resume:
+            return available
+        if recorded is None:
+            if available > 1:
+                logging.warning(
+                    "Could not read the data-parallel world size this checkpoint was trained with; "
+                    "resuming on 1 process. Pass --job.nproc_per_node=N to resume on N GPUs."
+                )
+            return 1
+        if recorded > available:
+            raise ValueError(
+                f"The checkpoint was trained on {recorded} processes but flavor {flavor!r} has "
+                f"{gpus} GPU(s) (counted from its name). Resume on a flavor with at least "
+                f"{recorded} GPUs, or pass --job.nproc_per_node explicitly."
+            )
+        return recorded
+
+    if requested > available:
+        logging.warning(
+            f"--job.nproc_per_node={requested} exceeds the {gpus} GPU(s) counted from the name of "
+            f"flavor {flavor!r}. Launching {requested} processes anyway: the job crashes if the "
+            "flavor really has fewer GPUs."
         )
-    return nproc_per_node
+    if resume and recorded is not None and requested != recorded:
+        if streaming:
+            raise ValueError(
+                f"--job.nproc_per_node={requested} differs from the {recorded} data-parallel "
+                "processes the checkpoint was trained with, and a streaming dataset only resumes "
+                f"on the same data-parallel world size. Use --job.nproc_per_node={recorded}."
+            )
+        logging.warning(
+            f"Resuming on {requested} processes a checkpoint trained on {recorded}: the effective "
+            "batch size changes mid-run, and the data order is no longer sample-exact."
+        )
+    return requested
 
 
-def build_launch_command(train_args: list[str], nproc_per_node: int) -> list[str]:
-    """Build the pod command: `lerobot-train <args>`, under `torchrun` when it runs several processes.
+def checkpoint_dp_world_size(cfg: TrainPipelineConfig) -> int | None:
+    """Return the data-parallel world size the checkpoint being resumed was trained with, or None.
 
-    The trainer only goes multi-process when launched by torchrun (it reads `WORLD_SIZE`), so a
-    multi-GPU flavor needs the launcher to use more than one GPU. `--standalone` sets up a
-    single-node rendezvous on a free local port. A single process keeps the plain command.
+    Reads the `training_step.json` the trainer records next to every checkpoint: from disk for a
+    local `--config_path`, or (one small file) from the latest `checkpoints/<step>/` of a Hub repo.
+    The checkpoint's train_config.json can't tell: a resolved `dp_replicate=1` looks the same as the
+    unresolved default, and an interrupted job's repo root holds the staged, never-resolved config.
+    Returns None when the size isn't recorded (older checkpoints) or can't be read.
+    """
+    config_path = parser.parse_arg("config_path")
+    if not config_path:
+        return None
+    try:
+        if Path(config_path).exists():  # the same local/Hub split as `_build_resume_job`
+            if cfg.checkpoint_path is None:
+                return None
+            training_state_dir = Path(cfg.checkpoint_path) / TRAINING_STATE_DIR
+        else:
+            latest = find_latest_hub_checkpoint(config_path)
+            if latest is None:
+                return None
+            step_file = hf_hub_download(config_path, f"{latest}/{TRAINING_STATE_DIR}/{TRAINING_STEP}")
+            training_state_dir = Path(step_file).parent
+        dp_world_size = load_training_metadata(training_state_dir)["dp_world_size"]
+    except (*_TRANSIENT_NET_ERRORS, KeyError, ValueError):
+        return None
+    return int(dp_world_size) if dp_world_size is not None else None
+
+
+def build_launch(train_args: list[str], nproc_per_node: int) -> tuple[list[str], dict[str, str] | None]:
+    """Return the pod command and the environment it needs.
+
+    A single process keeps the plain `lerobot-train <args>` command and the image's environment.
+    Several processes run under `torchrun`: the trainer only goes multi-process when torchrun
+    launches it (it reads `WORLD_SIZE`), and `--standalone` sets up a single-node rendezvous on a
+    free local port. The `lerobot-gpu` image bakes `CUDA_VISIBLE_DEVICES=0` in
+    (docker/Dockerfile.internal, for single-GPU CI), which would hide all but one GPU from every
+    rank, so the ranks' GPUs are exposed explicitly; the container runtime numbers a pod's GPUs
+    from 0.
     """
     if nproc_per_node == 1:
-        return ["lerobot-train", *train_args]
-    return [
+        return ["lerobot-train", *train_args], None
+    command = [
         "torchrun",
         "--standalone",
         f"--nproc-per-node={nproc_per_node}",
@@ -118,27 +201,20 @@ def build_launch_command(train_args: list[str], nproc_per_node: int) -> list[str
         "lerobot.scripts.lerobot_train",
         *train_args,
     ]
+    return command, {"CUDA_VISIBLE_DEVICES": ",".join(str(i) for i in range(nproc_per_node))}
 
 
-def build_launch_env(nproc_per_node: int) -> dict[str, str] | None:
-    """Return the pod environment a multi-process launch needs, or None for a single process.
+def describe_batch_size(cfg: TrainPipelineConfig, parallelism: ParallelismConfig) -> str:
+    """Spell out the effective batch size of a remote run from its resolved topology.
 
-    The `lerobot-gpu` image bakes `CUDA_VISIBLE_DEVICES=0` in (docker/Dockerfile.internal, for
-    single-GPU CI), which would hide all but one GPU from every rank. Expose the ranks' GPUs
-    explicitly; the container runtime numbers a pod's GPUs from 0.
+    Every data-parallel worker loads its own `--batch_size` micro-batch per step.
     """
-    if nproc_per_node == 1:
-        return None
-    return {"CUDA_VISIBLE_DEVICES": ",".join(str(i) for i in range(nproc_per_node))}
-
-
-def describe_batch_size(cfg: TrainPipelineConfig, nproc_per_node: int) -> str:
-    """Spell out the effective batch size of a remote run: `--batch_size` is per process."""
+    dp_world_size = parallelism.dp_world_size
     grad_accum = cfg.accelerator.gradient_accumulation.steps
-    effective = cfg.batch_size * nproc_per_node * grad_accum
+    effective = cfg.batch_size * dp_world_size * grad_accum
     return (
-        f"{cfg.batch_size} per process x {nproc_per_node} process(es) x {grad_accum} grad accum "
-        f"= {effective} samples per optimizer step"
+        f"{cfg.batch_size} per worker x {dp_world_size} data-parallel worker(s) x {grad_accum} "
+        f"grad accum = {effective} samples per optimizer step"
     )
 
 
@@ -383,7 +459,7 @@ def _build_resume_job(cfg: TrainPipelineConfig, username: str) -> tuple[str, lis
     so new checkpoints continue the lineage there. A local `config_path` has its checkpoint uploaded
     to a new PRIVATE repo first, and the resumed run is forced to push back to it. The args always
     carry `--job.target=local` so the checkpoint's saved `job.target` can't make the pod re-dispatch
-    itself. The caller wraps them into the pod command (see `build_launch_command`).
+    itself. The caller wraps them into the pod command (see `build_launch`).
     """
     config_path = parser.parse_arg("config_path")
     if not config_path:
@@ -424,7 +500,7 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
     sanitized config (fresh run) or resumes from a checkpoint repo, submits the job, and tails logs
     until completion or detaches immediately. Ctrl-C detaches without cancelling the remote job.
     On a multi-GPU flavor the pod runs the trainer under `torchrun`, one process per GPU (see
-    `resolve_nproc_per_node`).
+    `resolve_nproc_per_node`); a resume keeps the checkpoint's data-parallel world size.
     """
     token = get_token()
     if not token:
@@ -461,14 +537,24 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
         raise ValueError("submit_to_hf needs a remote --job.target (an HF Jobs flavor).")
     # Size the launch before anything is pushed to the Hub, so a bad topology fails for free.
     gpus = flavor_gpu_count(flavor)
-    nproc_per_node = resolve_nproc_per_node(flavor, cfg.job.nproc_per_node)
+    # Training rejects context parallelism, so a checkpoint's dp world size is its process count.
+    nproc_per_node = resolve_nproc_per_node(
+        flavor,
+        gpus,
+        cfg.job.nproc_per_node,
+        recorded=checkpoint_dp_world_size(cfg) if cfg.resume else None,
+        resume=cfg.resume,
+        streaming=cfg.dataset.streaming,
+    )
+    # The pod resolves the same degrees against torchrun's WORLD_SIZE; check them here instead.
+    parallelism = copy.deepcopy(cfg.parallelism)
     try:
-        # The pod resolves the same degrees against torchrun's WORLD_SIZE; check them here instead.
-        copy.deepcopy(cfg.parallelism).resolve(nproc_per_node)
+        parallelism.resolve(nproc_per_node)
+        check_resolved_checkpoint_format(cfg.checkpoint_format, parallelism)
     except ValueError as e:
         raise ValueError(
-            f"--parallelism.* does not fit {nproc_per_node} process(es) on flavor {flavor!r}: {e} "
-            "Adjust --parallelism.*, --job.nproc_per_node or --job.target."
+            f"The run does not fit {nproc_per_node} process(es) on flavor {flavor!r}: {e} "
+            "Adjust --parallelism.*, --checkpoint_format, --job.nproc_per_node or --job.target."
         ) from e
 
     secrets: dict[str, str] = {"HF_TOKEN": token}
@@ -490,23 +576,22 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
         config_repo_id = _stage_config_on_hub(cfg, fresh_repo_id, token, tags=tags)
         repo_id = fresh_repo_id
         train_args = [f"--config_path={config_repo_id}"]
-    command = build_launch_command(train_args, nproc_per_node)
+    command, env = build_launch(train_args, nproc_per_node)
 
     print(f"Submitting job to HF Jobs (flavor={flavor}, image={cfg.job.image}) ...")
     if nproc_per_node > 1:
         print(f"  Launch:     torchrun, {nproc_per_node} processes (one per GPU, {gpus} GPUs on the flavor)")
-    elif gpus > 1:
-        print(f"  Launch:     single process, uses 1 of the flavor's {gpus} GPUs")
-    print(f"  Batch size: {describe_batch_size(cfg, nproc_per_node)}")
-    if nproc_per_node > 1:
         print(
-            "              --steps counts per-process micro-batches; the learning rate and steps "
+            "              --steps counts per-worker micro-batches; the learning rate and steps "
             "are not rescaled for the larger batch."
         )
+    elif gpus > 1:
+        print(f"  Launch:     single process, uses 1 of the flavor's {gpus} GPUs")
+    print(f"  Batch size: {describe_batch_size(cfg, parallelism)}")
     job_info = run_job(
         image=cfg.job.image,
         command=command,
-        env=build_launch_env(nproc_per_node),
+        env=env,
         flavor=flavor,
         secrets=secrets,
         timeout=cfg.job.timeout,

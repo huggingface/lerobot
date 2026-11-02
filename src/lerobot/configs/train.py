@@ -62,6 +62,53 @@ class CheckpointFormat(str, Enum):
     SAFETENSORS_DCP = "safetensors_dcp"
 
 
+def check_resolved_checkpoint_format(
+    checkpoint_format: CheckpointFormat, parallelism: ParallelismConfig
+) -> None:
+    """Reject a DCP-bearing checkpoint format on a topology that resolved to a non-sharded run.
+
+    The parse-time check in `TrainPipelineConfig.validate()` runs against the declared degrees,
+    where the `dp_shard=-1` sentinel counts as sharded; it may resolve to an unsharded run (e.g.
+    -1 at world size 1). Re-checking against the concrete degrees keeps the recorded format from
+    lying about the artifacts a checkpoint will actually contain.
+
+    Args:
+        checkpoint_format (CheckpointFormat): The requested checkpoint format.
+        parallelism (ParallelismConfig): The topology, already resolved against the world size.
+
+    Raises:
+        ValueError: If the format requires DCP but the resolved topology is not sharded.
+    """
+    if (
+        checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP)
+        and not parallelism.is_sharded
+    ):
+        raise ValueError(
+            f"checkpoint_format={checkpoint_format.value} requires a sharded run, but the "
+            f"topology resolved to a non-sharded one (dp_replicate={parallelism.dp_replicate}, "
+            f"dp_shard={parallelism.dp_shard}); non-sharded checkpoints are always safetensors."
+        )
+
+
+@dataclass
+class TrainJobConfig(JobConfig):
+    """`JobConfig` with the training launch size."""
+
+    # Training processes the remote job launches, one per GPU. None (default) uses every GPU of the
+    # flavor, or on `--resume` the data-parallel world size the checkpoint was trained with.
+    # Multi-GPU launches run under `torchrun` (DDP unless `--parallelism.*` says otherwise); a
+    # single process keeps the plain `lerobot-train` command. Set 1 to train on a single GPU of a
+    # multi-GPU flavor. `batch_size` is per process, so the effective batch is
+    # `batch_size x nproc_per_node x accelerator.gradient_accumulation.steps`.
+    nproc_per_node: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.nproc_per_node is not None and self.nproc_per_node < 1:
+            raise ValueError(
+                f"job.nproc_per_node must be >= 1 (or unset to auto), got {self.nproc_per_node}."
+            )
+
+
 def _migrate_legacy_wandb_section(config: dict[str, Any]) -> dict[str, Any] | None:
     """Return the payload with a pre-Trackio ``wandb`` section mapped onto ``trackio``, or None if absent.
 
@@ -187,8 +234,8 @@ class TrainPipelineConfig(HubMixin):
     trackio: TrackioConfig = field(default_factory=TrackioConfig)
     peft: PeftConfig | None = None
 
-    # Where to run training (local default, or an HF Jobs flavor). See JobConfig.
-    job: JobConfig = field(default_factory=JobConfig)
+    # Where to run training (local default, or an HF Jobs flavor). See TrainJobConfig.
+    job: TrainJobConfig = field(default_factory=TrainJobConfig)
     # Push each saved checkpoint to the Hub (policy.repo_id) as it is written, not
     # just the final model (useful to monitor progress mid-run). Optional; the
     # final model is pushed regardless. Works the same locally and remotely.
@@ -447,8 +494,14 @@ class TrainPipelineConfig(HubMixin):
         return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
-            draccus.dump(self, f, indent=4)
+        data = self.to_dict()
+        # `job` only says where this run was dispatched from (client-side orchestration), not how it
+        # trains. Leaving it out keeps checkpoints parseable by trainers that predate newer job
+        # fields (e.g. a local checkpoint resumed on an older HF Jobs image), and a resume never
+        # inherits a saved remote target.
+        data.pop("job", None)
+        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f:
+            json.dump(data, f, indent=4)
 
     @classmethod
     def from_pretrained(

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,27 @@ def test_from_pretrained_falls_back_to_latest_checkpoint_config(tmp_path, monkey
     assert loaded.dataset.repo_id == "u/d"
     # Tried the root config first, then fell back to the latest checkpoint's config.
     assert calls == ["train_config.json", "checkpoints/000010/pretrained_model/train_config.json"]
+
+
+def test_saved_train_config_omits_the_client_job_section(tmp_path):
+    """`job` (where the run was dispatched from) stays out of checkpoints, so a checkpoint stays
+    parseable by trainers that predate newer job fields and a resume never inherits a remote target."""
+    parsed = tc.draccus.parse(
+        TrainPipelineConfig,
+        args=["--dataset.repo_id", "u/d", "--job.target", "h200x2", "--job.nproc_per_node", "2"],
+    )
+    parsed._save_pretrained(tmp_path)
+    data = json.loads((tmp_path / "train_config.json").read_text())
+    assert "job" not in data
+
+    loaded = TrainPipelineConfig.from_pretrained(tmp_path)
+    assert loaded.job.target is None
+    assert loaded.job.nproc_per_node is None
+
+    # Checkpoints written before the omission still load, job section included.
+    data["job"] = {"target": "local", "tags": ["lelab"]}
+    (tmp_path / "train_config.json").write_text(json.dumps(data))
+    assert TrainPipelineConfig.from_pretrained(tmp_path).job.tags == ["lelab"]
 
 
 def test_from_pretrained_raises_when_no_root_config_and_no_checkpoints(monkeypatch):

@@ -25,7 +25,7 @@ import os
 from typing import TYPE_CHECKING
 
 from lerobot.configs.parallelism import world_size_from_env
-from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig, check_resolved_checkpoint_format
 
 from .utils import unwrap_peft_model
 
@@ -87,19 +87,7 @@ def make_accelerator(cfg: TrainPipelineConfig) -> "Accelerator":
     """
     guard_against_env_interference()
     cfg.parallelism.resolve(world_size_from_env())
-    # The parse-time format check ran against the declared degrees, where the dp_shard=-1
-    # sentinel counts as sharded; it may resolve to an unsharded run (e.g. -1 at world size 1).
-    # Re-check against the concrete degrees so the recorded format never lies about the
-    # artifacts a checkpoint will actually contain.
-    if (
-        cfg.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP)
-        and not cfg.parallelism.is_sharded
-    ):
-        raise ValueError(
-            f"checkpoint_format={cfg.checkpoint_format.value} requires a sharded run, but the "
-            f"topology resolved to a non-sharded one (dp_replicate={cfg.parallelism.dp_replicate}, "
-            f"dp_shard={cfg.parallelism.dp_shard}); non-sharded checkpoints are always safetensors."
-        )
+    check_resolved_checkpoint_format(cfg.checkpoint_format, cfg.parallelism)
     return cfg.accelerator.build(
         cfg.parallelism,
         cpu=cfg.trainable_config.device == "cpu",
