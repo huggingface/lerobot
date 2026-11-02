@@ -221,7 +221,13 @@ class _YamBus:
 
     def send_mit(self, motor: str, command: MitCommand) -> None:
         """Send one MIT command to a motor."""
-        self.motors[motor].send_mit(*command)
+        self.motors[motor].send_mit(
+            command.position,
+            command.velocity,
+            command.kp,
+            command.kd,
+            command.torque,
+        )
 
     def disable(self) -> None:
         """Disable torque if enabled; logs instead of raising so shutdown can continue."""

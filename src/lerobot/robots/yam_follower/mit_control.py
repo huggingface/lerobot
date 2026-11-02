@@ -37,8 +37,17 @@ logger = logging.getLogger(__name__)
 FEEDBACK_LIMIT_TOLERANCE_RAD = 0.15
 GRIPPER_FEEDBACK_MARGIN = 0.10
 
-# One MIT command per motor: (position_rad, velocity_rad_s, kp, kd, feedforward_torque_nm).
-MitCommand = tuple[float, float, float, float, float]
+
+@dataclass(frozen=True)
+class MitCommand:
+    """One motor command in radians, radians per second and newton-metres."""
+
+    position: float
+    velocity: float
+    kp: float
+    kd: float
+    torque: float
+
 
 # Blocked-gripper detection and force limiting, from I2RT's GripperForceLimiter.
 _GRIPPER_EFFORT_WINDOW_S = 0.1
@@ -150,7 +159,7 @@ class GripperForceLimiter:
             goal = target_raw
         goal = float(np.clip(goal, min(grip.closed, grip.open), max(grip.closed, grip.open)))
         self._last_goal = goal
-        return (goal, 0.0, grip.kp, grip.kd, 0.0)
+        return MitCommand(position=goal, velocity=0.0, kp=grip.kp, kd=grip.kd, torque=0.0)
 
 
 @dataclass(frozen=True, eq=False)
@@ -254,7 +263,13 @@ def control_step(
     goal = joint_to_motor(command, params)
     torque = gravity_feedforward(params, gravity)
     return command, {
-        name: (float(goal[i]), 0.0, float(params.kp[i]), float(params.kd[i]), float(torque[i]))
+        name: MitCommand(
+            position=float(goal[i]),
+            velocity=0.0,
+            kp=float(params.kp[i]),
+            kd=float(params.kd[i]),
+            torque=float(torque[i]),
+        )
         for i, name in enumerate(params.motor_names[:n])
     }
 
@@ -278,7 +293,13 @@ def float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray)
     friction = params.coulomb_friction * np.sign(state.velocity[:n]) * params.joint_signs
     torque = gravity_feedforward(params, gravity) + friction
     return {
-        name: (float(goal[i]), 0.0, 0.0, float(params.float_kd[i]), float(torque[i]))
+        name: MitCommand(
+            position=float(goal[i]),
+            velocity=0.0,
+            kp=0.0,
+            kd=float(params.float_kd[i]),
+            torque=float(torque[i]),
+        )
         for i, name in enumerate(params.motor_names[:n])
     }
 

@@ -73,6 +73,14 @@ def joint_state(position=None):
     return mit_control.JointState(position=position, velocity=np.zeros(7), torque=np.zeros(7))
 
 
+def assert_mit_command(command, *, position, velocity, kp, kd, torque):
+    assert command.position == pytest.approx(position)
+    assert command.velocity == pytest.approx(velocity)
+    assert command.kp == pytest.approx(kp)
+    assert command.kd == pytest.approx(kd)
+    assert command.torque == pytest.approx(torque)
+
+
 def mock_bus(states=None):
     bus = MagicMock(spec=robot_module._YamBus)
     bus.enabled = False
@@ -174,6 +182,11 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     bus.enable(np.array([0.2, 0.5, 0.3, 0, 0, 0, 6.1]))
     motors["joint_1"].send_mit.assert_called_once_with(0.2, 0, 0, 0, 0)
     motors["gripper"].send_mit.assert_called_once_with(6.1, 0, 0, 0, 0)
+    bus.send_mit(
+        "joint_1",
+        mit_control.MitCommand(position=0.1, velocity=0.2, kp=3.0, kd=4.0, torque=5.0),
+    )
+    assert motors["joint_1"].send_mit.call_args_list[-1].args == (0.1, 0.2, 3.0, 4.0, 5.0)
     controller.enable_all.assert_called_once()
     bus.close()
     controller.disable_all.assert_called_once()
@@ -277,8 +290,8 @@ def test_slew_gripper_torque_and_gravity_feedforward(robot):
     command, packet = mit_control.control_step(
         params(robot), position, position + 0.1, position, gravity=np.ones(6), dt=0.01
     )
-    assert packet["joint_1"] == pytest.approx((0.003, 0, 80, 5, 1))
-    assert packet["joint_2"][-1] == pytest.approx(1.1)
+    assert_mit_command(packet["joint_1"], position=0.003, velocity=0, kp=80, kd=5, torque=1)
+    assert packet["joint_2"].torque == pytest.approx(1.1)
     assert command[6] == pytest.approx(0.52)  # gripper slews at 2 strokes/s
     assert "gripper" not in packet  # commanded by its force limiter
 
@@ -291,16 +304,16 @@ def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
     limiter = mit_control.GripperForceLimiter(grip)
     # Free motion goes straight to the target, without a torque cap.
     command = limiter.command(measured=0.5, velocity=1.0, torque=0.1, commanded=1.0, now=0.0)
-    assert command == pytest.approx((grip.to_raw(1.0), 0, 20, 0.5, 0))
+    assert_mit_command(command, position=grip.to_raw(1.0), velocity=0, kp=20, kd=0.5, torque=0)
     # Blocked while closing; the limit is 50 N * 0.096 m / 6 rad + 0.3 Nm = 1.1 Nm at the motor.
     at_limit = mit_control.GripperForceLimiter(grip)
     command = at_limit.command(measured=0.5, velocity=0.0, torque=1.1, commanded=0.0, now=0.0)
     assert at_limit.blocked
-    assert command[0] == pytest.approx(grip.to_raw(0.5))  # pressing with the limit: hold
+    assert command.position == pytest.approx(grip.to_raw(0.5))  # pressing with the limit: hold
     harder = mit_control.GripperForceLimiter(grip)
     command = harder.command(measured=0.5, velocity=0.0, torque=2.1, commanded=0.0, now=0.0)
     # 1 Nm too much: back off 1 Nm / kp 20 = 0.05 rad toward open.
-    assert command[0] == pytest.approx(grip.to_raw(0.5) + polarity * 0.05)
+    assert command.position == pytest.approx(grip.to_raw(0.5) + polarity * 0.05)
 
 
 def test_control_step_clamps_tracking_limits_and_gravity(robot):
@@ -314,10 +327,10 @@ def test_control_step_clamps_tracking_limits_and_gravity(robot):
     # joint_1 tracking band, joint_2 lower limit, joint_3 slew; the gripper slews freely.
     np.testing.assert_allclose(command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
     np.testing.assert_allclose(previous, [0.9, 0.0, 1.0, 0, 0, 0, 0.5])  # inputs are not mutated
-    assert packet["joint_1"] == pytest.approx((0.65, 0, 80, 5, 10.0))  # gravity clipped to 10 Nm
-    assert packet["joint_2"] == pytest.approx((0.0, 0, 80, 5, -2.2))  # factor 1.1, sign -1
-    assert packet["joint_3"] == pytest.approx((1.015, 0, 80, 5, 1.1))
-    assert packet["joint_4"] == pytest.approx((0.0, 0, 10, 1.5, 1.2))
+    assert_mit_command(packet["joint_1"], position=0.65, velocity=0, kp=80, kd=5, torque=10.0)
+    assert_mit_command(packet["joint_2"], position=0.0, velocity=0, kp=80, kd=5, torque=-2.2)
+    assert_mit_command(packet["joint_3"], position=1.015, velocity=0, kp=80, kd=5, torque=1.1)
+    assert_mit_command(packet["joint_4"], position=0.0, velocity=0, kp=10, kd=1.5, torque=1.2)
 
 
 def test_gravity_model_is_loaded_from_bucket_cache(robot, monkeypatch, tmp_path):

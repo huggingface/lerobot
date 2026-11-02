@@ -60,6 +60,14 @@ def motor_states(position, velocity=(0.0, 0.0, 0.0), torque=(0.0, 0.0, 0.0)):
     )
 
 
+def assert_mit_command(command, *, position, velocity, kp, kd, torque):
+    assert command.position == pytest.approx(position)
+    assert command.velocity == pytest.approx(velocity)
+    assert command.kp == pytest.approx(kp)
+    assert command.kd == pytest.approx(kd)
+    assert command.torque == pytest.approx(torque)
+
+
 @dataclass
 class Settings:
     control_frequency: float = 100.0
@@ -143,8 +151,8 @@ def test_control_step_slews_tracks_clips_and_adds_gravity():
     # shoulder: tracking band; elbow: slew then lower limit; gripper: slew (0.1 stroke per 0.1 s).
     np.testing.assert_allclose(command, [0.3, 0.0, 0.6])
     np.testing.assert_allclose(previous, [0.6, 0.02, 0.5])  # inputs are not mutated
-    assert packet["shoulder"] == pytest.approx((0.3, 0, 50, 2, 5.0))  # gravity 8 clipped to 5 Nm
-    assert packet["elbow"] == pytest.approx((0.0, 0, 20, 1, -3.0))  # factor 2, sign -1
+    assert_mit_command(packet["shoulder"], position=0.3, velocity=0, kp=50, kd=2, torque=5.0)
+    assert_mit_command(packet["elbow"], position=0.0, velocity=0, kp=20, kd=1, torque=-3.0)
     assert list(packet) == ["shoulder", "elbow"]  # the gripper has its own force limiter
 
 
@@ -168,7 +176,7 @@ def test_gravity_feedforward_rejects_invalid_torques(gravity):
 def test_free_gripper_goes_straight_to_its_target(closed, opened):
     limiter = mit_control.GripperForceLimiter(gripper(closed, opened))
     command = limiter.command(measured=0.5, velocity=1.0, torque=0.1, commanded=0.0, now=0.0)
-    assert command == pytest.approx((closed, 0, 4, 0.1, 0))
+    assert_mit_command(command, position=closed, velocity=0, kp=4, kd=0.1, torque=0)
     assert not limiter.blocked
 
 
@@ -183,17 +191,17 @@ def blocked_limiter(torque):
 def test_blocked_gripper_backs_off_to_the_force_limit():
     # Limit torque: 10 N * 0.1 m / 2 rad stroke + 0.3 Nm friction = 0.8 Nm.
     _, command = blocked_limiter(torque=0.8)
-    assert command[0] == pytest.approx(2.0)  # already at the limit: keep pressing as is
+    assert command.position == pytest.approx(2.0)  # already at the limit: keep pressing as is
     # Pressing with 2 Nm: release (2 - 0.8) / kp 4 = 0.3 rad toward open.
     _, command = blocked_limiter(torque=2.0)
-    assert command[0] == pytest.approx(2.3)
+    assert command.position == pytest.approx(2.3)
 
 
 def test_blocked_gripper_releases_when_asked_to_open():
     limiter, _ = blocked_limiter(torque=2.0)
     command = limiter.command(measured=0.5, velocity=0.0, torque=2.0, commanded=1.0, now=0.01)
     assert not limiter.blocked
-    assert command[0] == pytest.approx(3.0)
+    assert command.position == pytest.approx(3.0)
 
 
 def test_blocked_gripper_releases_once_its_torque_drops():
@@ -202,7 +210,7 @@ def test_blocked_gripper_releases_once_its_torque_drops():
     assert limiter.blocked  # 0.1 s average still above 0.2 Nm
     command = limiter.command(measured=0.5, velocity=0.0, torque=0.0, commanded=0.0, now=0.2)
     assert not limiter.blocked
-    assert command[0] == pytest.approx(1.0)
+    assert command.position == pytest.approx(1.0)
 
 
 def test_moving_gripper_is_not_considered_blocked():
@@ -270,9 +278,9 @@ def test_float_commands_compensate_gravity_and_friction_without_stiffness():
     )
     commands = mit_control.float_commands(params(), state, np.array([8.0, 1.5]))
     # Gravity 8 clipped to 5 Nm, plus friction 0.5 in the direction of motion.
-    assert commands["shoulder"] == pytest.approx((0.2, 0, 0, 0.2, 5.5))
+    assert_mit_command(commands["shoulder"], position=0.2, velocity=0, kp=0, kd=0.2, torque=5.5)
     # Gravity -3 Nm and friction -0.2 Nm in the reversed elbow's motor frame.
-    assert commands["elbow"] == pytest.approx((-0.5, 0, 0, 0.1, -3.2))
+    assert_mit_command(commands["elbow"], position=-0.5, velocity=0, kp=0, kd=0.1, torque=-3.2)
     assert list(commands) == ["shoulder", "elbow"]  # the gripper keeps its own limiter
 
 
@@ -287,7 +295,7 @@ def run_cycles(servo, cycles):
 
 
 def joint_stiffness(bus):
-    return [command[2] for name, command in bus.sent if name != "gripper"]
+    return [command.kp for name, command in bus.sent if name != "gripper"]
 
 
 def test_float_mode_floats_until_the_first_target_then_tracks_from_the_measured_pose():
@@ -302,7 +310,7 @@ def test_float_mode_floats_until_the_first_target_then_tracks_from_the_measured_
     servo.set_target(measured + np.array([0.5, 0.5, 0.0]))
     run_cycles(servo, 1)
     assert set(joint_stiffness(bus)) == {50.0, 20.0}
-    shoulder_goal = dict(bus.sent)["shoulder"][0]
+    shoulder_goal = dict(bus.sent)["shoulder"].position
     assert shoulder_goal == pytest.approx(measured[0], abs=0.5 * 0.05)  # no jump from a stale command
 
 
@@ -326,7 +334,7 @@ def test_servo_starts_past_a_limit_without_jumping(idle_mode):
     servo.seed(mit_control.read_joint_state(bus, servo.params))
     servo.set_target(np.array([0.2, 0.5, 0.5]))
     run_cycles(servo, 2)
-    elbow_goals = [-command[0] for name, command in bus.sent if name == "elbow"]
+    elbow_goals = [-command.position for name, command in bus.sent if name == "elbow"]
     assert elbow_goals and all(goal == pytest.approx(-0.1, abs=2 * 0.5 * 0.05) for goal in elbow_goals)
 
 
