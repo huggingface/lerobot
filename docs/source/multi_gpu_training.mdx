@@ -44,6 +44,18 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --trackio.enable=true
 ```
 
+On [Hugging Face Jobs](./il_robots#train-using-hugging-face-jobs), you don't launch `torchrun` yourself: `--job.target=<flavor>` with a multi-GPU flavor (`a10g-largex2`, `l4x4`, `h200x8`, ...) runs the job under `torchrun` with one process per GPU. Pass `--job.nproc_per_node=<N>` to use fewer GPUs, and `--parallelism.*` flags as usual:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=act \
+  --batch_size=8 \
+  --job.target=a10g-largex2  # 2 GPUs: effective batch 16
+```
+
+A streaming dataset (`--dataset.streaming=true`) splits its episodes across the processes, so it needs at least as many episodes as GPUs. `torchrun` also sets `OMP_NUM_THREADS=1` in every worker when it isn't already set, to keep the processes from oversubscribing the CPU cores.
+
 With no `--parallelism.*` flags, a multi-process launch runs plain DDP. Multi-node runs use the standard `torchrun --nnodes/--node-rank/--rdzv-endpoint` flags (or `accelerate launch --num_machines/--machine_rank/--main_process_ip`).
 
 > [!WARNING]
