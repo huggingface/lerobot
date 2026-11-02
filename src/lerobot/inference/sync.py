@@ -32,7 +32,7 @@ from lerobot.processor import (
     transition_to_policy_action,
     transition_to_prediction,
 )
-from lerobot.utils import OBS_STR
+from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from .base import InferenceEngine, PolicyQuery
