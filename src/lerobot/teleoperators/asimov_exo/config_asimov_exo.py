@@ -34,3 +34,11 @@ class AsimovExoTeleoperatorConfig(TeleoperatorConfig):
     arm_scale: float | None = None
     # IK weight of end-effector orientation relative to position (5-DOF arms can't match both).
     rotation_weight: float = 0.02
+    # Hand roll added about the forearm axis, in degrees; mirrored (left +, right -).
+    wrist_roll_offset_deg: float = 60.0
+    # EMA window (in reads) on exo joint angles, alpha = 2 / (n + 1); 1 disables smoothing.
+    ema_window: int = 3
+
+    def __post_init__(self):
+        if self.ema_window < 1:
+            raise ValueError("ema_window must be >= 1.")
