@@ -15,12 +15,14 @@
 
 import logging
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import torch
+from huggingface_hub import constants as hf_constants
 from huggingface_hub.errors import (
     LocalEntryNotFoundError,
     RemoteEntryNotFoundError,
@@ -354,9 +356,15 @@ CAMERA_KEY = f"{OBS_IMAGES}.front"
 
 
 def _save_trained_classifier(
-    path: Path, save_preprocessor: bool = True, image_stats: bool = True
+    path: Path,
+    save_preprocessor: bool = True,
+    image_stats: bool = True,
+    edit_normalizer: Callable[[NormalizerProcessorStep], None] | None = None,
 ) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
-    """Save a classifier and its preprocessor the way `lerobot-train` does; return the preprocessor."""
+    """Save a classifier and its preprocessor the way `lerobot-train` does; return the preprocessor.
+
+    `edit_normalizer` modifies the preprocessor's normalizer of the input features before it is saved.
+    """
     # Default normalization mapping: VISUAL -> MEAN_STD.
     config = RewardClassifierConfig(num_cameras=1)
     config.input_features = {
@@ -371,6 +379,10 @@ def _save_trained_classifier(
             "std": torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1),
         }
     preprocessor, _ = make_classifier_processor(config, dataset_stats=stats)
+    if edit_normalizer is not None:
+        input_normalizer = preprocessor.steps[0]
+        assert isinstance(input_normalizer, NormalizerProcessorStep)
+        edit_normalizer(input_normalizer)
 
     Classifier(config).save_pretrained(path)
     if save_preprocessor:
@@ -378,10 +390,14 @@ def _save_trained_classifier(
     return preprocessor
 
 
-def test_reward_classifier_step_preprocesses_images_as_in_training(tiny_classifier_backbone, tmp_path):
+def test_reward_classifier_step_preprocesses_images_as_in_training(
+    tiny_classifier_backbone, tmp_path, caplog
+):
     training_preprocessor = _save_trained_classifier(tmp_path)
-    step = RewardClassifierProcessorStep(pretrained_path=str(tmp_path), device="cpu")
+    with caplog.at_level(logging.WARNING):
+        step = RewardClassifierProcessorStep(pretrained_path=str(tmp_path), device="cpu")
     assert step.reward_preprocessor is not None
+    assert "will NOT be normalized" not in caplog.text
     classifier = step.reward_classifier
 
     classifier_inputs: dict[str, torch.Tensor] = {}
@@ -438,16 +454,44 @@ def test_reward_classifier_step_without_saved_preprocessor_warns(tiny_classifier
     assert result[TransitionKey.REWARD] == (step.success_reward if success else 0.0)
 
 
-def test_reward_classifier_step_warns_when_preprocessor_has_no_image_stats(
-    tiny_classifier_backbone, tmp_path, caplog
+# These replace the normalizer's dicts rather than modify them in place, as they are shared with the config.
+def _drop_image_feature(normalizer: NormalizerProcessorStep) -> None:
+    normalizer.features = {key: ft for key, ft in normalizer.features.items() if key != CAMERA_KEY}
+
+
+def _map_visual_to_identity(normalizer: NormalizerProcessorStep) -> None:
+    normalizer.norm_map = {**normalizer.norm_map, FeatureType.VISUAL: NormalizationMode.IDENTITY}
+
+
+def _only_normalize_state(normalizer: NormalizerProcessorStep) -> None:
+    normalizer.normalize_observation_keys = {OBS_STATE}
+
+
+@pytest.mark.parametrize(
+    "image_stats, edit_normalizer",
+    [
+        (False, None),
+        (True, _drop_image_feature),
+        (True, _map_visual_to_identity),
+        (True, _only_normalize_state),
+    ],
+    ids=["no_image_stats", "image_not_in_features", "visual_mapped_to_identity", "image_key_excluded"],
+)
+def test_reward_classifier_step_warns_when_preprocessor_does_not_normalize_images(
+    tiny_classifier_backbone, tmp_path, caplog, image_stats, edit_normalizer
 ):
-    _save_trained_classifier(tmp_path, image_stats=False)
+    training_preprocessor = _save_trained_classifier(
+        tmp_path, image_stats=image_stats, edit_normalizer=edit_normalizer
+    )
+    # The saved preprocessor indeed passes the images through unchanged.
+    image = torch.rand(1, 3, 32, 32)
+    torch.testing.assert_close(training_preprocessor({CAMERA_KEY: image.clone()})[CAMERA_KEY], image)
 
     with caplog.at_level(logging.WARNING):
         step = RewardClassifierProcessorStep(pretrained_path=str(tmp_path), device="cpu")
 
     assert step.reward_preprocessor is not None
-    assert "no normalization stats" in caplog.text
+    assert "does not normalize" in caplog.text
     assert CAMERA_KEY in caplog.text
 
 
@@ -471,11 +515,10 @@ def test_reward_classifier_step_hub_repo_without_preprocessor_warns(monkeypatch,
 @pytest.mark.parametrize(
     "error",
     [
-        LocalEntryNotFoundError("Offline and not in the cache"),
         _hub_error(RepositoryNotFoundError, 401),
         ConnectionError("Network unreachable"),
     ],
-    ids=["offline_cache_miss", "unauthorized", "network"],
+    ids=["unauthorized", "network"],
 )
 def test_reward_classifier_step_raises_when_preprocessor_lookup_fails(monkeypatch, error):
     """Only a preprocessor file that does not exist falls back to unnormalized inputs."""
@@ -488,3 +531,50 @@ def test_reward_classifier_step_raises_when_preprocessor_lookup_fails(monkeypatc
 
     with pytest.raises(type(error)):
         step._load_reward_preprocessor("user/reward-classifier")
+
+
+HUB_REPO_ID = "user/reward-classifier"
+
+
+@pytest.fixture
+def offline_hub_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Run with `HF_HUB_OFFLINE=1` on an empty Hub cache; return the cache folder of `HUB_REPO_ID`."""
+    monkeypatch.setattr(hf_constants, "HF_HUB_OFFLINE", True)
+    monkeypatch.setattr(hf_constants, "HF_HUB_CACHE", str(tmp_path))
+    repo_cache = tmp_path / "models--user--reward-classifier"
+    # What loading the classifier online caches: the commit of `main` and the classifier files.
+    commit = "0" * 40
+    (repo_cache / "refs").mkdir(parents=True)
+    (repo_cache / "refs" / "main").write_text(commit)
+    (repo_cache / "snapshots" / commit).mkdir(parents=True)
+    (repo_cache / "snapshots" / commit / "config.json").write_text("{}")
+    return repo_cache
+
+
+def test_reward_classifier_step_offline_with_cached_missing_preprocessor_warns(offline_hub_cache, caplog):
+    # An earlier online lookup found that the repository has no preprocessor, and cached that.
+    no_exist = offline_hub_cache / ".no_exist" / ("0" * 40) / "classifier_preprocessor.json"
+    no_exist.parent.mkdir(parents=True)
+    no_exist.touch()
+    step = RewardClassifierProcessorStep()
+
+    with caplog.at_level(logging.WARNING):
+        assert step._load_reward_preprocessor(HUB_REPO_ID) is None
+    assert "has no saved preprocessor" in caplog.text
+
+
+def test_reward_classifier_step_offline_with_cached_preprocessor_finds_it(offline_hub_cache):
+    (offline_hub_cache / "snapshots" / ("0" * 40) / "classifier_preprocessor.json").write_text("{}")
+
+    assert RewardClassifierProcessorStep._has_saved_preprocessor(HUB_REPO_ID) is True
+
+
+def test_reward_classifier_step_offline_with_unknown_preprocessor_raises(offline_hub_cache):
+    """Offline, a preprocessor that was never looked up may well exist: do not run without it."""
+    step = RewardClassifierProcessorStep()
+
+    with pytest.raises(LocalEntryNotFoundError) as exc_info:
+        step._load_reward_preprocessor(HUB_REPO_ID)
+    message = str(exc_info.value)
+    assert f"Cannot tell whether the reward classifier '{HUB_REPO_ID}' has a saved preprocessor" in message
+    assert f"`hf download {HUB_REPO_ID} classifier_preprocessor.json`" in message

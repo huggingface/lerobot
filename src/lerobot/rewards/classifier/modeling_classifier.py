@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from itertools import islice
 from typing import Self, cast
 
 import torch
@@ -230,10 +231,13 @@ class Classifier(PreTrainedRewardModel):
             if not self.is_cnn:  # Transformer models
                 return self.encoder(x).last_hidden_state[:, 0, :]
             # `Sequential(backbone, *trainable_layers)`, see `_create_single_encoder`. It is split here
-            # rather than stored as two modules so that the state-dict keys stay unchanged.
+            # rather than stored as two modules so that the state-dict keys stay unchanged. Its tail is iterated
+            # rather than sliced: `encoder[1:]` would build a new `Sequential` on every call.
             encoder = cast(nn.Sequential, self.encoders[image_key])
-            backbone_outputs = encoder[0](x)
-        return encoder[1:](backbone_outputs)
+            outputs = encoder[0](x)
+        for layer in islice(encoder, 1, None):
+            outputs = layer(outputs)
+        return outputs
 
     def extract_images_and_labels(self, batch: dict[str, Tensor]) -> tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""
