@@ -42,7 +42,20 @@ _MAX_CONTROL_DT_S = 0.05
 
 @dataclass(frozen=True)
 class MitCommand:
-    """One motor command in radians, radians per second and newton-metres."""
+    """Command for one MIT-mode motor.
+
+    Args:
+        position (`float`):
+            Target motor position in radians.
+        velocity (`float`):
+            Target motor velocity in radians per second.
+        kp (`float`):
+            Position gain.
+        kd (`float`):
+            Velocity gain.
+        torque (`float`):
+            Feed-forward torque in newton-metres.
+    """
 
     position: float
     velocity: float
@@ -62,7 +75,16 @@ _GRIPPER_GOAL_FILTER = 0.1
 
 @dataclass(frozen=True, eq=False)
 class MotorStates:
-    """Raw motor states in bus order (arm joints, then the gripper): rad, rad/s and Nm."""
+    """Raw feedback in bus order: arm joints, then the gripper.
+
+    Args:
+        position (`np.ndarray`):
+            Motor positions in radians.
+        velocity (`np.ndarray`):
+            Motor velocities in radians per second.
+        torque (`np.ndarray`):
+            Motor torques in newton-metres.
+    """
 
     position: np.ndarray
     velocity: np.ndarray
@@ -71,7 +93,16 @@ class MotorStates:
 
 @dataclass(frozen=True, eq=False)
 class JointState:
-    """Measured joint state: arm joints in radians, then the gripper from 0 (closed) to 1 (open)."""
+    """Measured arm state in calibrated joint coordinates.
+
+    Args:
+        position (`np.ndarray`):
+            Joint positions in radians followed by the normalized gripper opening.
+        velocity (`np.ndarray`):
+            Joint velocities in radians per second followed by gripper strokes per second.
+        torque (`np.ndarray`):
+            Joint and gripper motor torques in newton-metres.
+    """
 
     position: np.ndarray
     velocity: np.ndarray
@@ -80,17 +111,31 @@ class JointState:
 
 @dataclass(frozen=True, eq=False)
 class CalibratedGripper:
-    """A linear gripper motor in MIT mode, normalized between two measured raw stops."""
+    """Linear MIT-mode gripper calibrated between two motor positions.
+
+    Args:
+        closed (`float`):
+            Raw closed position in radians.
+        open (`float`):
+            Raw open position in radians.
+        kp (`float`):
+            Position gain.
+        kd (`float`):
+            Velocity gain.
+        max_speed (`float`):
+            Maximum commanded speed in full strokes per second.
+        force_limit_n (`float`):
+            Allowed finger force after the gripper is blocked, in newtons.
+        finger_stroke_m (`float`):
+            Finger travel used to map the force limit to motor torque, in metres.
+    """
 
     closed: float
     open: float
     kp: float
     kd: float
-    # Fastest the commanded opening moves, in full strokes per second.
     max_speed: float
-    # Finger force allowed once the gripper is blocked on an object, in N.
     force_limit_n: float
-    # Finger travel between the two stops, in m; maps finger force to motor torque.
     finger_stroke_m: float
 
     @property
@@ -107,7 +152,7 @@ class CalibratedGripper:
         return self.closed + normalized * self.stroke
 
 
-class GripperForceLimiter:
+class _GripperForceLimiter:
     """Command a gripper that moves freely but limits its force once blocked on an object.
 
     Port of I2RT's ``GripperForceLimiter``. The gripper counts as blocked when its average motor
@@ -166,11 +211,39 @@ class GripperForceLimiter:
 
 @dataclass(frozen=True, eq=False)
 class MitArmParams:
-    """Control settings of one arm in internal units."""
+    """Internal MIT control parameters for one arm.
 
-    # Arm joints, then the gripper, in bus order.
+    Args:
+        motor_names (`tuple[str, ...]`):
+            Motor order: arm joints followed by the gripper.
+        joint_limits (`np.ndarray`):
+            Lower and upper arm-joint limits in radians, shaped `(joints, 2)`.
+        joint_signs (`np.ndarray`):
+            Signs mapping raw motor motion to joint motion.
+        joint_offsets (`np.ndarray`):
+            Joint offsets in radians.
+        kp (`np.ndarray`):
+            Position gains for the arm joints.
+        kd (`np.ndarray`):
+            Velocity gains for the arm joints.
+        max_joint_speed (`float`):
+            Maximum commanded joint speed in radians per second.
+        max_tracking_error (`float`):
+            Maximum difference between measured and commanded position in radians.
+        gravity_factors (`np.ndarray`):
+            Per-joint multipliers for model gravity torques.
+        max_gravity_torque (`float`):
+            Maximum gravity feed-forward magnitude in newton-metres.
+        gripper (`CalibratedGripper`):
+            Gripper calibration and control settings.
+        float_kd (`np.ndarray`):
+            Per-joint damping gains used with zero stiffness in float mode.
+        coulomb_friction (`np.ndarray`):
+            Per-joint Coulomb friction compensation in newton-metres; zeros disable it.
+    """
+
     motor_names: tuple[str, ...]
-    joint_limits: np.ndarray  # (joints, 2) in rad
+    joint_limits: np.ndarray
     joint_signs: np.ndarray
     joint_offsets: np.ndarray
     kp: np.ndarray
@@ -180,9 +253,7 @@ class MitArmParams:
     gravity_factors: np.ndarray
     max_gravity_torque: float
     gripper: CalibratedGripper
-    # Damping of the arm joints in float mode (kp = 0, live gravity compensation).
     float_kd: np.ndarray
-    # Coulomb friction of the arm joints compensated in float mode, in Nm; zeros disable it.
     coulomb_friction: np.ndarray
 
     @property
@@ -196,20 +267,33 @@ class MitArmBus(Protocol):
 
     State arrays follow `MitArmParams.motor_names`: arm joints first, then the gripper.
     Positions and velocities use radians and radians per second; torques use newton-metres.
+
+    **Attributes**:
+        - **enabled** (`bool`) -- Whether torque is enabled for the arm.
     """
 
     enabled: bool
-    """Whether torque is enabled for the arm."""
 
     def read_states(self) -> MotorStates:
         """Return fresh feedback from every motor in bus order.
 
-        Raise `ConnectionError` when feedback is missing or stale, or when a motor reports a fault.
+        Returns:
+            `MotorStates`: The latest position, velocity and torque of every motor.
+
+        Raises:
+            ConnectionError: If feedback is missing or stale, or a motor reports a fault.
         """
         ...
 
     def send_mit(self, motor: str, command: MitCommand) -> None:
-        """Send one MIT command to the named motor."""
+        """Send one MIT command to a motor.
+
+        Args:
+            motor (`str`):
+                Name from `MitArmParams.motor_names`.
+            command (`MitCommand`):
+                Position, velocity, gains and feed-forward torque to send.
+        """
         ...
 
     def disable(self) -> None:
@@ -218,16 +302,22 @@ class MitArmBus(Protocol):
 
 
 class ServoSettings(Protocol):
-    """Timing settings ``MitServo`` reads from a robot config."""
+    """Timing settings read by `MitServo`.
+
+    **Attributes**:
+        - **control_frequency** (`float`) -- Target servo frequency in hertz.
+        - **feedback_timeout_s** (`float`) -- Maximum time to wait for fresh motor feedback.
+        - **command_timeout_s** (`float`) -- Time without a target before entering idle mode.
+        - **idle_mode** (`str`) -- Idle behavior: `hold` or `float`.
+    """
 
     control_frequency: float
     feedback_timeout_s: float
     command_timeout_s: float
-    # What the arm does before the first target and after the command timeout: "hold" or "float".
     idle_mode: str
 
 
-def motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
+def _motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
     """Convert raw motor positions to calibrated joint and gripper positions."""
     n = params.num_joints
     joints = raw[:n] * params.joint_signs + params.joint_offsets
@@ -238,14 +328,34 @@ def motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
 
 
 def joint_to_motor(positions: np.ndarray, params: MitArmParams) -> np.ndarray:
-    """Convert calibrated joint and gripper positions to raw motor positions."""
+    """Convert calibrated joint and gripper positions to raw motor positions.
+
+    Args:
+        positions (`np.ndarray`):
+            Joint positions in radians followed by the normalized gripper opening.
+        params (`MitArmParams`):
+            Calibration and motor ordering for the arm.
+
+    Returns:
+        `np.ndarray`: Motor positions in radians, in bus order.
+    """
     n = params.num_joints
     raw = (positions[:n] - params.joint_offsets) / params.joint_signs
     return np.r_[raw, params.gripper.to_raw(float(positions[n]))]
 
 
 def clip_to_limits(values: np.ndarray, joint_limits: np.ndarray) -> np.ndarray:
-    """Clip internal positions to the joint limits and the gripper stroke."""
+    """Clip internal positions to the joint limits and gripper stroke.
+
+    Args:
+        values (`np.ndarray`):
+            Joint positions in radians followed by the normalized gripper opening.
+        joint_limits (`np.ndarray`):
+            Lower and upper arm-joint limits in radians, shaped `(joints, 2)`.
+
+    Returns:
+        `np.ndarray`: A clipped copy of `values`.
+    """
     n = len(joint_limits)
     clipped = values.copy()
     clipped[:n] = np.clip(clipped[:n], *np.asarray(joint_limits).T)
@@ -253,7 +363,7 @@ def clip_to_limits(values: np.ndarray, joint_limits: np.ndarray) -> np.ndarray:
     return clipped
 
 
-def control_step(
+def _control_step(
     params: MitArmParams,
     position: np.ndarray,
     target: np.ndarray,
@@ -277,7 +387,7 @@ def control_step(
     command[n] = np.clip(command[n], 0.0, 1.0)
 
     goal = joint_to_motor(command, params)
-    torque = gravity_feedforward(params, gravity)
+    torque = _gravity_feedforward(params, gravity)
     return command, {
         name: MitCommand(
             position=float(goal[i]),
@@ -290,7 +400,7 @@ def control_step(
     }
 
 
-def gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
+def _gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
     """Return the clipped feed-forward torque of each arm joint for model gravity torques."""
     if gravity.shape != (params.num_joints,) or not np.isfinite(gravity).all():
         raise ValueError(f"Gravity compensation must return {params.num_joints} finite torques")
@@ -298,7 +408,7 @@ def gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray
     return np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
 
 
-def float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray) -> dict[str, MitCommand]:
+def _float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray) -> dict[str, MitCommand]:
     """Build arm-joint commands that let the arm be moved by hand.
 
     The joints get no stiffness, light damping, the gravity torque of the measured pose and,
@@ -307,7 +417,7 @@ def float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray)
     n = params.num_joints
     goal = joint_to_motor(state.position, params)
     friction = params.coulomb_friction * np.sign(state.velocity[:n]) * params.joint_signs
-    torque = gravity_feedforward(params, gravity) + friction
+    torque = _gravity_feedforward(params, gravity) + friction
     return {
         name: MitCommand(
             position=float(goal[i]),
@@ -321,7 +431,21 @@ def float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray)
 
 
 def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
-    """Read fresh feedback and return the validated joint state in internal units."""
+    """Read and validate fresh feedback in calibrated joint coordinates.
+
+    Args:
+        bus (`MitArmBus`):
+            Motor bus providing fresh feedback in bus order.
+        params (`MitArmParams`):
+            Calibration, ordering and limits for the arm.
+
+    Returns:
+        `JointState`: Calibrated joint and gripper state.
+
+    Raises:
+        ConnectionError: If feedback has the wrong shape or contains a non-finite value.
+        ValueError: If a joint or the gripper is outside the allowed feedback range.
+    """
     raw = bus.read_states()
     n = params.num_joints
     expected_shape = (n + 1,)
@@ -330,7 +454,7 @@ def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
         for values in (raw.position, raw.velocity, raw.torque)
     ):
         raise ConnectionError(f"Expected {n + 1} finite motor positions, velocities and torques")
-    position = motor_to_joint(raw.position, params)
+    position = _motor_to_joint(raw.position, params)
     for i, (value, (lower, upper)) in enumerate(zip(position[:n], params.joint_limits, strict=True)):
         if not lower - FEEDBACK_LIMIT_TOLERANCE_RAD <= value <= upper + FEEDBACK_LIMIT_TOLERANCE_RAD:
             raise ValueError(f"Joint {i} feedback {value} outside [{lower}, {upper}]")
@@ -343,14 +467,26 @@ def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
 class MitServo:
     """Background servo loop of one arm.
 
-    Each cycle reads feedback, advances the command toward the latest target with
-    ``control_step`` and sends it. Before the first target and after the command timeout the arm
-    is idle: with ``idle_mode="hold"`` it holds the measured pose, with ``"float"`` it can be
+    Each cycle reads feedback, advances the command toward the latest target and sends it. Before
+    the first target and after the command timeout the arm is idle: with `idle_mode="hold"` it
+    holds the measured pose, while with `idle_mode="float"` it can be
     moved by hand while gravity is compensated.
 
     After a fault, or when a coupled arm faults, the loop stops sending commands so the motor
-    firmware timeout can put the arm in its safe state. The next ``latest`` or ``set_target``
-    call raises. ``stop`` disables torque during normal shutdown.
+    firmware timeout can put the arm in its safe state. The next `latest` or `set_target` call
+    raises. `stop` disables torque during normal shutdown.
+
+    Args:
+        name (`str`):
+            Name used in thread names and error messages.
+        bus (`MitArmBus`):
+            Motor bus used for feedback, commands and torque disabling.
+        config (`ServoSettings`):
+            Loop frequency, timeouts and idle behavior.
+        gravity (`Callable[[np.ndarray], np.ndarray]`):
+            Function mapping calibrated positions to arm-joint gravity torques.
+        stop_event (`threading.Event`):
+            Stop signal, shared by both servos in a bimanual robot.
     """
 
     def __init__(
@@ -381,17 +517,22 @@ class MitServo:
         self.active = False
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
-        self._gripper: GripperForceLimiter | None = None
+        self._gripper: _GripperForceLimiter | None = None
 
     def seed(self, state: JointState) -> None:
-        """Seed the target and command from the measured state before the first action."""
+        """Seed the target and command before the first action.
+
+        Args:
+            state (`JointState`):
+                Initial measured joint state.
+        """
         self.state = state
         self.target = state.position.copy()
         self.command = state.position.copy()
         self.updated_at = self.commanded_at = time.monotonic()
         self.command_timed_out = False
         self.has_target = False
-        self._gripper = GripperForceLimiter(self.params.gripper) if self.params is not None else None
+        self._gripper = _GripperForceLimiter(self.params.gripper) if self.params is not None else None
 
     @property
     def idle(self) -> bool:
@@ -399,7 +540,11 @@ class MitServo:
         return not self.has_target or self.command_timed_out
 
     def start(self) -> None:
-        """Start the background servo thread."""
+        """Start the background servo thread.
+
+        Raises:
+            RuntimeError: If the servo is already running or has no calibrated parameters.
+        """
         if self.active or self._thread is not None:
             raise RuntimeError(f"{self.name} servo is already running")
         if self.params is None:
@@ -414,7 +559,15 @@ class MitServo:
         self.active = True
 
     def stop(self, timeout_s: float = 2.0) -> None:
-        """Stop the servo thread and disable the motors."""
+        """Stop the servo thread and disable the motors.
+
+        Args:
+            timeout_s (`float`, *optional*, defaults to `2.0`):
+                Maximum time to wait for the servo thread.
+
+        Raises:
+            RuntimeError: If the servo thread does not stop before the timeout.
+        """
         self.stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout_s)
@@ -425,7 +578,14 @@ class MitServo:
         self.active = False
 
     def latest(self) -> JointState:
-        """Return the last measured state, raising if the servo stopped or its feedback is stale."""
+        """Return the latest measured state.
+
+        Returns:
+            `JointState`: A copy of the latest calibrated state.
+
+        Raises:
+            ConnectionError: If the servo stopped or its feedback is stale.
+        """
         with self._lock:
             self._check_healthy()
             state = self.state
@@ -434,7 +594,15 @@ class MitServo:
         )
 
     def set_target(self, target: np.ndarray) -> None:
-        """Submit the latest validated joint target."""
+        """Submit the latest validated joint target.
+
+        Args:
+            target (`np.ndarray`):
+                Joint positions in radians followed by the normalized gripper opening.
+
+        Raises:
+            ConnectionError: If the servo stopped or its feedback is stale.
+        """
         with self._lock:
             self._check_healthy()
             if self.idle and self.config.idle_mode == "float":
@@ -446,7 +614,11 @@ class MitServo:
             self.has_target = True
 
     def check_healthy(self) -> None:
-        """Raise when the servo has stopped or its feedback is stale."""
+        """Check that the servo is running with fresh feedback.
+
+        Raises:
+            ConnectionError: If the servo stopped or its feedback is stale.
+        """
         with self._lock:
             self._check_healthy()
 
@@ -486,9 +658,9 @@ class MitServo:
                     if self.bus.enabled and self.idle and self.config.idle_mode == "float":
                         # The arm floats; the gripper keeps holding its commanded opening.
                         self.command[:n] = position[:n]
-                        packet = float_commands(params, state, self.gravity(position))
+                        packet = _float_commands(params, state, self.gravity(position))
                     elif self.bus.enabled:
-                        self.command, packet = control_step(
+                        self.command, packet = _control_step(
                             params,
                             position,
                             self.target,

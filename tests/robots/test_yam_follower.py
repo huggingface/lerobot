@@ -60,7 +60,7 @@ def robot(tmp_path, monkeypatch):
 
 
 def params(robot):
-    return robot_module.yam_arm_params(robot.config)
+    return robot_module._yam_arm_params(robot.config)
 
 
 def raw_states(gripper=0.1):
@@ -112,18 +112,18 @@ def test_units_order_and_gripper_polarity(robot, opened):
     raw = [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, (0.1 + opened) / 2]
     robot.config.joint_signs[0] = -1
     robot.config.joint_offsets_deg[0] = math.degrees(0.2)
-    decoded = mit_control.motor_to_joint(np.asarray(raw), params(robot))
+    decoded = mit_control._motor_to_joint(np.asarray(raw), params(robot))
     np.testing.assert_allclose(decoded, [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, 0.5])
     np.testing.assert_allclose(mit_control.joint_to_motor(decoded, params(robot)), raw)
 
 
 def test_public_units_are_degrees_and_percent_or_internal_units():
     internal = np.array([0.1, 0.2, 0.3, -0.4, 0.5, -0.6, 0.5])
-    public = robot_module.to_public(internal, use_degrees=True)
+    public = robot_module._to_public(internal, use_degrees=True)
     np.testing.assert_allclose(public, [*np.rad2deg(internal[:6]), 50.0])
-    np.testing.assert_allclose(robot_module.from_public(public, use_degrees=True), internal)
-    np.testing.assert_allclose(robot_module.to_public(internal, use_degrees=False), internal)
-    np.testing.assert_allclose(robot_module.from_public(internal, use_degrees=False), internal)
+    np.testing.assert_allclose(robot_module._from_public(public, use_degrees=True), internal)
+    np.testing.assert_allclose(robot_module._to_public(internal, use_degrees=False), internal)
+    np.testing.assert_allclose(robot_module._from_public(internal, use_degrees=False), internal)
 
 
 @pytest.mark.parametrize("use_degrees", [True, False])
@@ -147,7 +147,7 @@ def test_measured_pose_has_wider_margin_than_action(robot):
     assert measured[0] == pytest.approx(states.position[0])
     assert measured[6] == 1.0
     # Actions are clipped to the model limits instead of being rejected.
-    action = dict(zip(YAM_FEATURE_NAMES, robot_module.to_public(measured, True), strict=True))
+    action = dict(zip(YAM_FEATURE_NAMES, robot_module._to_public(measured, True), strict=True))
     assert robot_module.action_to_target(action, use_degrees=True)[0] == JOINT_LIMITS_RAD[0][0]
     states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.2
     with pytest.raises(ValueError, match="outside"):
@@ -287,7 +287,7 @@ def test_disabled_motor_is_allowed_before_enable():
 def test_slew_gripper_torque_and_gravity_feedforward(robot):
     robot.config.max_gripper_speed_s = 2
     position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
-    command, packet = mit_control.control_step(
+    command, packet = mit_control._control_step(
         params(robot), position, position + 0.1, position, gravity=np.ones(6), dt=0.01
     )
     assert_mit_command(packet["joint_1"], position=0.003, velocity=0, kp=80, kd=5, torque=1)
@@ -301,16 +301,16 @@ def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
     robot.config.gripper_open_deg = robot.config.gripper_closed_deg + polarity * math.degrees(6.0)
     grip = params(robot).gripper
     assert (grip.kp, grip.kd, grip.force_limit_n, grip.finger_stroke_m) == (20.0, 0.5, 50.0, 0.096)
-    limiter = mit_control.GripperForceLimiter(grip)
+    limiter = mit_control._GripperForceLimiter(grip)
     # Free motion goes straight to the target, without a torque cap.
     command = limiter.command(measured=0.5, velocity=1.0, torque=0.1, commanded=1.0, now=0.0)
     assert_mit_command(command, position=grip.to_raw(1.0), velocity=0, kp=20, kd=0.5, torque=0)
     # Blocked while closing; the limit is 50 N * 0.096 m / 6 rad + 0.3 Nm = 1.1 Nm at the motor.
-    at_limit = mit_control.GripperForceLimiter(grip)
+    at_limit = mit_control._GripperForceLimiter(grip)
     command = at_limit.command(measured=0.5, velocity=0.0, torque=1.1, commanded=0.0, now=0.0)
     assert at_limit.blocked
     assert command.position == pytest.approx(grip.to_raw(0.5))  # pressing with the limit: hold
-    harder = mit_control.GripperForceLimiter(grip)
+    harder = mit_control._GripperForceLimiter(grip)
     command = harder.command(measured=0.5, velocity=0.0, torque=2.1, commanded=0.0, now=0.0)
     # 1 Nm too much: back off 1 Nm / kp 20 = 0.05 rad toward open.
     assert command.position == pytest.approx(grip.to_raw(0.5) + polarity * 0.05)
@@ -323,7 +323,7 @@ def test_control_step_clamps_tracking_limits_and_gravity(robot):
     previous = np.array([0.9, 0.0, 1.0, 0, 0, 0, 0.5])
     target = np.array([0.9, -0.2, 1.5, 0, 0, 0, 1.0])
     gravity = np.array([20.0, 2, 1, 1, 1, 1])
-    command, packet = mit_control.control_step(params(robot), position, target, previous, gravity, dt=0.05)
+    command, packet = mit_control._control_step(params(robot), position, target, previous, gravity, dt=0.05)
     # joint_1 tracking band, joint_2 lower limit, joint_3 slew; the gripper slews freely.
     np.testing.assert_allclose(command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
     np.testing.assert_allclose(previous, [0.9, 0.0, 1.0, 0, 0, 0, 0.5])  # inputs are not mutated

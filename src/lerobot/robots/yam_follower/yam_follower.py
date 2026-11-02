@@ -85,7 +85,7 @@ _CAN_TIMEOUT_TICK_US = 50
 _MAX_CAN_TIMEOUT_TICKS = 8000  # I2RT's 400 ms YAM timeout.
 
 
-def yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
+def _yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
     """Build the internal control settings of a calibrated YAM arm from its config."""
     if config.gripper_closed_deg is None or config.gripper_open_deg is None:
         raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
@@ -116,14 +116,14 @@ def yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
     )
 
 
-def to_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
+def _to_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
     """Convert joint positions or rates from internal units to the robot's public units."""
     if not use_degrees:
         return values.copy()
     return np.r_[np.rad2deg(values[:6]), values[6] * 100.0]
 
 
-def from_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
+def _from_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
     """Convert joint positions or rates from the robot's public units to internal units."""
     if not use_degrees:
         return values.copy()
@@ -131,13 +131,26 @@ def from_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
 
 
 def action_to_target(action: RobotAction, use_degrees: bool) -> np.ndarray:
-    """Validate a single-arm action and return its internal target, clipped to the limits."""
+    """Validate a single-arm action and convert it to an internal target.
+
+    Args:
+        action (`RobotAction`):
+            Absolute targets for all six joints and the gripper.
+        use_degrees (`bool`):
+            Whether joints use degrees and the gripper uses 0 to 100 instead of internal units.
+
+    Returns:
+        `np.ndarray`: Clipped joint targets in radians followed by a gripper target from 0 to 1.
+
+    Raises:
+        ValueError: If a target is missing, unexpected or non-finite.
+    """
     if set(action) != set(YAM_FEATURE_NAMES):
         raise ValueError("YAM requires all seven absolute joint/gripper targets; Cartesian actions need IK")
     values = np.asarray([action[f"{name}.pos"] for name in MOTOR_NAMES], dtype=float)
     if not np.isfinite(values).all():
         raise ValueError("YAM actions must be finite")
-    return clip_to_limits(from_public(values, use_degrees), _JOINT_LIMITS)
+    return clip_to_limits(_from_public(values, use_degrees), _JOINT_LIMITS)
 
 
 class _YamBus:
@@ -336,7 +349,14 @@ class _YamBus:
 
 
 class YamFollower(Robot):
-    """A YAM arm exposing six joint positions and a gripper opening."""
+    """A YAM arm exposing six joint positions and a gripper opening.
+
+    Args:
+        config (`YamFollowerRobotConfig`):
+            Hardware, calibration and control settings.
+        stop_event (`threading.Event | None`, *optional*):
+            Stop signal shared by both arms of a bimanual robot.
+    """
 
     config_class = YamFollowerRobotConfig
     name = "yam_follower"
@@ -383,7 +403,13 @@ class YamFollower(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """Start control, calibrating missing gripper endpoints first unless disabled."""
+        """Connect the hardware and start control.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Measure missing gripper endpoints before starting control. When `False`, connect
+                only the CAN interface so calibration can be run explicitly.
+        """
         if not calibrate:
             self._open_for_calibration()
             logger.info(f"{self} connected for calibration.")
@@ -518,14 +544,21 @@ class YamFollower(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        """Return the latest motor state and camera frames."""
+        """Return the latest motor state and camera frames.
+
+        Returns:
+            `RobotObservation`: Joint state and the latest frame from each configured camera.
+
+        Raises:
+            RuntimeError: If the robot was opened only for calibration and the servo is not running.
+        """
         if not self.servo.active:
             raise RuntimeError("Reconnect after calibration before reading policy observations")
         state = self.servo.latest()
         use_degrees = self.config.use_degrees
-        values = {"pos": to_public(state.position, use_degrees)}
+        values = {"pos": _to_public(state.position, use_degrees)}
         if self.config.use_velocity_and_torque:
-            values["vel"] = to_public(state.velocity, use_degrees)
+            values["vel"] = _to_public(state.velocity, use_degrees)
             values["torque"] = state.torque
         result: dict[str, Any] = {
             f"{name}.{kind}": float(data[i])
@@ -538,12 +571,24 @@ class YamFollower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        """Validate and submit a joint-position target."""
+        """Validate and submit a joint-position target.
+
+        Args:
+            action (`RobotAction`):
+                Absolute targets for all six joints and the gripper.
+
+        Returns:
+            `RobotAction`: The clipped target submitted to the servo.
+
+        Raises:
+            RuntimeError: If the servo is not running.
+            ValueError: If the action is incomplete or contains an invalid value.
+        """
         if not self.servo.active:
             raise RuntimeError("YAM commands require an active servo")
         target = action_to_target(action, self.config.use_degrees)
         self.servo.set_target(target)
-        sent = to_public(target, self.config.use_degrees)
+        sent = _to_public(target, self.config.use_degrees)
         return {f"{name}.pos": float(sent[i]) for i, name in enumerate(MOTOR_NAMES)}
 
     @check_if_not_connected
@@ -554,7 +599,7 @@ class YamFollower(Robot):
 
     def _refresh_params(self) -> None:
         """Rebuild the internal control settings from the config, once the gripper is calibrated."""
-        self.params = yam_arm_params(self.config) if self.is_calibrated else None
+        self.params = _yam_arm_params(self.config) if self.is_calibrated else None
         self.servo.params = self.params
 
     def _require_params(self) -> MitArmParams:
