@@ -15,12 +15,17 @@
 # limitations under the License.
 
 import functools
+import importlib.util
+import os
 import re
+import shutil
+import tempfile
 import traceback
 from pathlib import Path
 
 import draccus.wrappers.docstring as _draccus_docstring
 import pytest
+import yaml
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.utils.import_utils import is_package_available
@@ -71,6 +76,27 @@ def _needs_gpu(item) -> bool:
     return any(NEEDS_GPU_REASON.search(mark.kwargs.get("reason", "")) for mark in item.iter_markers("skipif"))
 
 
+def _write_libero_config(config) -> None:
+    """Give an installed LIBERO its default config, which it otherwise asks for on stdin when imported."""
+    spec = importlib.util.find_spec("libero")
+    if spec is None or spec.origin is None or "LIBERO_CONFIG_PATH" in os.environ:
+        return
+    root = Path(spec.origin).parent / "libero"
+    paths = {
+        "benchmark_root": root,
+        "bddl_files": root / "bddl_files",
+        "init_states": root / "init_files",
+        "datasets": root.parent / "datasets",
+        "assets": root / "assets",
+    }
+    config_dir = tempfile.mkdtemp(prefix="libero_config_")
+    config.add_cleanup(functools.partial(shutil.rmtree, config_dir, ignore_errors=True))
+    Path(config_dir, "config.yaml").write_text(
+        yaml.safe_dump({key: str(path) for key, path in paths.items()})
+    )
+    os.environ["LIBERO_CONFIG_PATH"] = config_dir
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "base: Fast Tests base tier (added to tests without a tier mark)")
     for mark in TIER_MARKS:
@@ -78,6 +104,7 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "gpu: run by the GPU Tests job (added to policy tests and `require_cuda` tests)"
     )
+    _write_libero_config(config)
 
 
 @pytest.hookimpl(tryfirst=True)  # before `-m` deselects by mark
