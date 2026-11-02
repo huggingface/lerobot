@@ -19,6 +19,7 @@ import logging
 import os
 from collections.abc import Callable
 from difflib import get_close_matches
+from functools import partial
 from typing import Any
 
 import gymnasium as gym
@@ -26,7 +27,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "env_fns", "make_envs"]
+__all__ = ["canonical_observation", "conventions", "env_fns", "make_envs", "vector_env_fns"]
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +238,50 @@ def env_fns(
         suite: {task_id: _env_factories(vec, n_envs) for task_id, vec in tasks.items()}
         for suite, tasks in _normalize_hub_result(result).items()
     }
+
+
+def vector_env_fns(
+    task: str,
+    n_envs: int,
+    hub_path: str,
+    trust_remote_code: bool = False,
+    hub_cache_dir: str | None = None,
+    make_env_kwargs: dict[str, Any] | None = None,
+) -> dict[str, dict[int, Callable[[], Any]]] | None:
+    """Return the repo's own `vector_env_fns(task, n_envs, **make_env_kwargs)`, or None if it has none.
+
+    As for an in-tree integration, each factory builds one vector env of `n_envs` envs that does not
+    autoreset, only when its task runs (e.g. a GPU simulator stepping every env at once).
+    """
+    _, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
+    make = getattr(module, "vector_env_fns", None)
+    if make is None:
+        return None
+    options = make_env_kwargs or {}
+    repo = (hub_path, trust_remote_code, hub_cache_dir, task, n_envs, options)
+    return {
+        suite: {task_id: partial(_build_repo_vector_env, *repo, suite, task_id) for task_id in tasks}
+        for suite, tasks in make(task=task, n_envs=n_envs, **options).items()
+    }
+
+
+def _build_repo_vector_env(
+    hub_path: str,
+    trust_remote_code: bool,
+    hub_cache_dir: str | None,
+    task: str,
+    n_envs: int,
+    options: dict[str, Any],
+    suite: str,
+    task_id: int,
+) -> Any:
+    """Build one task's vector env from the repo's `vector_env_fns`, loading the repo in this process.
+
+    A worker process can't receive the repo's own factories: `env.py` isn't importable there, so they would be
+    pickled with its module state (e.g. a running simulator).
+    """
+    _, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
+    return module.vector_env_fns(task=task, n_envs=n_envs, **options)[suite][task_id]()
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:

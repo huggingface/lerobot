@@ -227,7 +227,8 @@ class LocalVectorEnv(gym.vector.VectorEnv):
     `use_async_envs`, each env runs in its own worker process.
 
     An integration that defines `vector_env_fns` builds the whole batch as one Gymnasium vector env instead
-    (a GPU simulator stepping every env at once). That env must not autoreset; it is stepped as a whole, and
+    (a GPU simulator stepping every env at once), unless it returns None for this config, as EnvHub does for a
+    repo without one. That env must not autoreset; it is stepped as a whole, and
     the rows of finished envs are ignored, so they stay finished as above. With `use_async_envs`, it runs in
     one worker process.
     """
@@ -262,11 +263,15 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         with simulator_required(config.type):
             integration = importlib.import_module(f"lerobot.sim.integrations.{config.type}")
             vector_env_fns = getattr(integration, "vector_env_fns", None)
-            make_factories = vector_env_fns or integration.env_fns
-            factories = make_factories(task=config.task, n_envs=num_envs, **config.kwargs)
+            # None from vector_env_fns: this config has no batched sim (e.g. an EnvHub repo without one).
+            factories = None
+            if vector_env_fns is not None:
+                factories = vector_env_fns(task=config.task, n_envs=num_envs, **config.kwargs)
+            # One vector env for the whole batch, instead of one env per batch entry.
+            self._batched = factories is not None
+            if factories is None:
+                factories = integration.env_fns(task=config.task, n_envs=num_envs, **config.kwargs)
         self._canonical_observation = integration.canonical_observation
-        # One vector env for the whole batch, instead of one env per batch entry.
-        self._batched = vector_env_fns is not None
         self.config = config
         self.num_envs = num_envs
         self.use_async_envs = use_async_envs

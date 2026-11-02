@@ -242,3 +242,98 @@ def test_envhub_native_batch_preserves_provider_and_options(hub_repo, monkeypatc
     config.server = None
     with pytest.raises(ValueError, match="SimRobot"):
         config.create_env()
+
+
+_BATCHED_ENV = """
+import builtins
+import threading
+from functools import partial
+
+import gymnasium as gym
+import numpy as np
+from gymnasium import spaces
+from gymnasium.vector.utils import batch_space
+
+# Module state that can't be pickled, like a running simulator's.
+_SIMULATOR = threading.Lock()
+
+
+class ReachBatch(gym.vector.VectorEnv):
+    # One simulator stepping every env at once, as a GPU simulator does.
+    metadata = {"autoreset_mode": gym.vector.AutoresetMode.DISABLED}
+
+    def __init__(self, n_envs, goal):
+        with _SIMULATOR:
+            getattr(builtins, "envhub_builds", []).append(goal)
+        self.num_envs, self.goal = n_envs, goal
+        self.task_description = f"reach {goal}"
+        self._max_episode_steps = 5
+        self.single_observation_space = spaces.Dict(
+            {
+                "pixels": spaces.Dict({"front": spaces.Box(0, 255, (8, 8, 3), np.uint8)}),
+                "agent_pos": spaces.Box(-10, 10, (2,), np.float32),
+            }
+        )
+        self.single_action_space = spaces.Box(-1, 1, (2,), np.float32)
+        self.observation_space = batch_space(self.single_observation_space, n_envs)
+        self.action_space = batch_space(self.single_action_space, n_envs)
+
+    def reset(self, seed=None, options=None):
+        self.pos = np.array([np.random.default_rng(s).uniform(-1, 1, 2) for s in seed], np.float32)
+        return self._obs(), {}
+
+    def step(self, actions):
+        self.pos += actions
+        done = np.abs(self.pos - self.goal).max(axis=1) < 0.5
+        return self._obs(), done.astype(np.float32), done, np.zeros(self.num_envs, bool), {"is_success": done}
+
+    def _obs(self):
+        return {"pixels": {"front": np.zeros((self.num_envs, 8, 8, 3), np.uint8)}, "agent_pos": self.pos.copy()}
+
+
+def vector_env_fns(task, n_envs, spacing=1.0):
+    return {"reach_batch": {i: partial(ReachBatch, n_envs, i * spacing) for i in range(3)}}
+"""
+
+
+def test_envhub_runs_a_batched_repository_one_task_at_a_time(hub_repo, monkeypatch):
+    hub_repo(_BATCHED_ENV)
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"spacing": 2.0})
+    envs = config.create_envs(2)["reach_batch"]
+    try:
+        assert sorted(envs) == [0, 1, 2]
+        # One simulator for the batch of 2, and only the first task's: the others build when they run.
+        assert builtins.envhub_builds == [0.0]
+        env = envs[2]
+        first = env.reset(seed=[3, 4])[0]["observation.state"]
+        assert first.shape == (2, 2)
+        assert builtins.envhub_builds == [0.0, 4.0]
+        np.testing.assert_array_equal(env.reset(seed=[3, 4])[0]["observation.state"], first)
+        info = env.step(np.zeros((2, 2), np.float32))[4]
+        assert info["task"] == ("reach 4.0", "reach 4.0")
+        assert env.call("_max_episode_steps") == (5, 5)
+    finally:
+        for env in envs.values():
+            env.close()
+
+
+def test_envhub_batched_repository_must_not_autoreset(hub_repo, monkeypatch):
+    hub_repo(_BATCHED_ENV.replace("AutoresetMode.DISABLED", "AutoresetMode.NEXT_STEP"))
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    with pytest.raises(ValueError, match="must not autoreset"):
+        LocalVectorEnv(_envhub(), num_envs=2)
+
+
+def test_envhub_batched_repository_runs_in_a_worker_process(tmp_path, monkeypatch):
+    # A worker can't import env.py, so it loads the repo itself instead of receiving its classes.
+    (tmp_path / "env.py").write_text(_BATCHED_ENV)
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    env = LocalVectorEnv(_envhub(hub_path=str(tmp_path)), num_envs=2, task_id=1, use_async_envs=True)
+    try:
+        # Built in the worker, not in this process.
+        assert builtins.envhub_builds == []
+        assert env.reset(seed=[3, 4])[0]["observation.state"].shape == (2, 2)
+        assert env.step(np.zeros((2, 2), np.float32))[4]["task"] == ("reach 1.0", "reach 1.0")
+    finally:
+        env.close()
