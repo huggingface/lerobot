@@ -32,6 +32,8 @@ from huggingface_hub.constants import ENDPOINT as HF_ENDPOINT
 from lerobot_lancedb.convert import convert
 from PIL import Image
 
+from lerobot.datasets import lance_backend
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.io_utils import DatasetImage
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils import import_utils
@@ -217,6 +219,27 @@ def test_external_images_use_dataset_root(image_dataset_roots, tmp_path, monkeyp
     assert_read_equal(lance_ds.get_raw_item(7), upstream.get_raw_item(7))
     assert_items_equal(lance_ds[7], upstream[7])
     assert_read_equal(pickle.loads(pickle.dumps(lance_ds))[7], upstream[7])
+
+
+def test_external_hf_images_use_table_revision(image_dataset_roots, monkeypatch):
+    _, local_root = image_dataset_roots
+    root = f"hf://datasets/{DUMMY_REPO_ID}"
+    revision = "image-snapshot"
+    meta = LeRobotDatasetMetadata(DUMMY_REPO_ID, root=local_root, revision=revision)
+    monkeypatch.setattr(lance_backend, "resolve_lance_root", lambda *args: (root, local_root))
+    reader = lance_backend.LanceDatasetReader(meta, root=root, revision=revision, token=False)
+    encoded = io.BytesIO()
+    Image.new("RGB", (2, 2)).save(encoded, format="PNG")
+
+    def open_image(path, mode, **options):
+        assert path == f"{root}@{revision}/assets/frame.png"
+        assert mode == "rb"
+        assert options == {"token": False}
+        return io.BytesIO(encoded.getvalue())
+
+    monkeypatch.setattr(fsspec, "open", open_image)
+    image = reader._decode_image({"bytes": None, "path": "assets/frame.png"}, meta.image_keys[0], 0)
+    assert image.shape == (3, 2, 2)
 
 
 @pytest.mark.parametrize(

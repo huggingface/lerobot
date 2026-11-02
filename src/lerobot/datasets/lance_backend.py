@@ -265,10 +265,9 @@ class LanceDatasetReader(BaseDatasetReader):
         }
         self._image_depth_units = image_depth_units(meta)
         self._read_features = get_hf_features_from_features(meta.features)
+        image_root = hf_dataset_uri(self.repo_id, self._hub_revision) if self._hub_revision else self._db_uri
         for key in self.meta.image_keys:
-            self._read_features[key] = DatasetImage(
-                self._db_uri, token=token, storage_options=storage_options
-            )
+            self._read_features[key] = DatasetImage(image_root, token=token, storage_options=storage_options)
         self.set_image_transforms(image_transforms)
         self.return_uint8 = return_uint8
 
