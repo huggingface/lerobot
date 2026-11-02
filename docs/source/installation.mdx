@@ -227,6 +227,9 @@ pip install -e ".[all]"          # source
 pip install lerobot              # from PyPI
 ```
 
+> [!NOTE]
+> `cu126` is the build PyTorch keeps for drivers that only support CUDA 12. torch 2.15 has no CUDA 12 build, so this index installs torch 2.14, and staying on CUDA 12 means staying on torch 2.14 or older.
+
 With `uv pip`, `--torch-backend` selects the index in one step, e.g. `uv pip install --torch-backend cu126 lerobot`. `uv sync` always installs the committed lock: to change the CUDA build there, add the index to `[tool.uv.index]` and `[tool.uv.sources]` in `pyproject.toml` and re-run `uv lock`.
 
 ### Troubleshooting
