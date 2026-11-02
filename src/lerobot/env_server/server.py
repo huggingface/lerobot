@@ -235,6 +235,12 @@ class EnvServer:
         """Create the transport. Envs are built in `serve`."""
         self.config = config
         self.instance_id = uuid.uuid4().hex
+        payload_bytes = config.zenoh.max_payload_bytes
+        self.limits = CodecLimits(
+            max_payload_bytes=payload_bytes,
+            max_tensor_bytes=payload_bytes,
+            max_decoded_bytes=2 * payload_bytes,
+        )
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
         # Built at startup to read the descriptor, then reused by the first session asking for the same batch.
@@ -300,7 +306,7 @@ class EnvServer:
         """Decode one request, pass it to `_dispatch`, and send back its answer or an error."""
         message = None
         try:
-            message = decode_message(pending.payload)
+            message = decode_message(pending.payload, self.limits)
             reply = self._dispatch(pending.key, message)
         except Exception as exc:
             if isinstance(exc, ProtocolError):
@@ -313,10 +319,9 @@ class EnvServer:
             reply = (message or Envelope(MessageType.DESCRIBE)).error(code, str(exc))
         self._send(pending, reply)
 
-    @staticmethod
-    def _send(pending: PendingQuery, reply: Envelope) -> None:
+    def _send(self, pending: PendingQuery, reply: Envelope) -> None:
         """Send the reply, and warn if it was not sent: the client then waits for its full timeout."""
-        if not pending.reply(encode_message(reply)):
+        if not pending.reply(encode_message(reply, self.limits)):
             logger.warning(
                 "Reply %s for %s was not sent: the query expired %.1fs ago",
                 reply.message_type,
@@ -361,6 +366,7 @@ class EnvServer:
         use_async_envs = bool(body.get("use_async_envs", False))
         encoding = body.get("encoding", "raw")
         jpeg_quality = body.get("jpeg_quality", 90)
+        client_payload_bytes = body.get("max_payload_bytes", self.limits.max_payload_bytes)
         if type(num_envs) is not int or not 1 <= num_envs <= self.config.max_envs:
             raise ProtocolError(
                 ErrorCode.INCOMPATIBLE, f"Batch size {num_envs!r} is not between 1 and {self.config.max_envs}"
@@ -369,18 +375,25 @@ class EnvServer:
             raise ProtocolError(
                 ErrorCode.UNSUPPORTED, "Image encoding must be raw or jpeg, quality in [1, 100]"
             )
+        if type(client_payload_bytes) is not int or client_payload_bytes < 1:
+            raise ProtocolError(ErrorCode.INCOMPATIBLE, "max_payload_bytes must be a positive integer")
         seeds = _checked_seeds(body.get("seeds"), num_envs)
         batch_bytes = num_envs * sum(
             int(np.prod(f.shape)) * np.dtype(f.dtype).itemsize for f in self.descriptor.features
         )
         # JPEG frames are far smaller on the wire, but the client still decodes them to full size.
-        budget = (
-            min(CodecLimits().max_payload_bytes, self.config.zenoh.max_payload_bytes)
-            if encoding == "raw"
-            else CodecLimits().max_decoded_bytes
+        payload_bytes = min(self.limits.max_payload_bytes, client_payload_bytes)
+        limits = CodecLimits(
+            max_payload_bytes=payload_bytes,
+            max_tensor_bytes=payload_bytes,
+            max_decoded_bytes=2 * payload_bytes,
         )
+        budget = limits.max_payload_bytes if encoding == "raw" else limits.max_decoded_bytes
         if batch_bytes + _REPLY_HEADROOM_BYTES > budget:
-            raise ProtocolError(ErrorCode.INCOMPATIBLE, "Observation batch exceeds transport payload budget")
+            raise ProtocolError(
+                ErrorCode.INCOMPATIBLE,
+                f"Observation batch of {batch_bytes} bytes exceeds the payload budget of {budget} bytes.",
+            )
         if len(self.sessions) >= self.config.max_sessions:
             raise ProtocolError(ErrorCode.BUSY, "Server is busy with another session")
         env = self._session_env(num_envs, body.get("task_group"), body.get("task_id"), use_async_envs)

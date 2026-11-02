@@ -58,6 +58,9 @@ class EnvClientConfig:
     # JPEG (at jpeg_quality) sends camera frames with less bandwidth but lower quality.
     encoding: Literal["raw", "jpeg"] = "raw"
     jpeg_quality: int = 90
+    # Largest reply in bytes, which carries every env's camera frames. Raise it with the server's
+    # zenoh.max_payload_bytes for large batches or high resolution cameras.
+    max_payload_bytes: int = 32 * 1024 * 1024
 
     def __post_init__(self):
         if self.encoding not in {"raw", "jpeg"} or not 1 <= self.jpeg_quality <= 100:
@@ -163,6 +166,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                 SERVED_TIMEOUT_S,
                 handshake_timeout_s=server.handshake_timeout_s,
                 zenoh_config_path=server.zenoh_config_path,
+                max_payload_bytes=server.max_payload_bytes,
             )
             probe = connect()
             try:

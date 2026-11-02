@@ -174,6 +174,27 @@ def test_jpeg_observations_match_raw(sim_server):
     client.close()
 
 
+def test_the_client_payload_limit_bounds_the_batch(sim_server):
+    from lerobot.env_server.protocol import DEFAULT_MAX_PAYLOAD_BYTES
+    from lerobot.transport.protocol.codec import CodecLimits
+
+    assert CodecLimits().max_payload_bytes == DEFAULT_MAX_PAYLOAD_BYTES
+    _, endpoint = sim_server
+    # A toy env observes 200 bytes, and the server keeps 64 KiB of each reply for the rest: two envs fit, three don't.
+    limit = 64 * 1024 + 500
+    for num_envs, fits in ((2, True), (3, False)):
+        client = EnvClient(endpoint, max_payload_bytes=limit)
+        try:
+            if fits:
+                assert client.open(num_envs).obs["observation.state"].shape == (num_envs, 2)
+            else:
+                with pytest.raises(ProtocolError, match="exceeds the payload budget") as error:
+                    client.open(num_envs)
+                assert error.value.code == ErrorCode.INCOMPATIBLE
+        finally:
+            client.close()
+
+
 def test_server_loss_fails_session(sim_server):
     running, endpoint = sim_server
     client = EnvClient(endpoint, timeout_s=0.1)
