@@ -70,6 +70,7 @@ lerobot-eval \
 - `--env.task_ids` restricts to specific task indices (`[0]`, `[1,2,3]`, etc.). Omit to run all tasks in the suite.
 - `--eval.batch_size` controls how many environments run in parallel.
 - `--eval.n_episodes` sets how many episodes to run per task.
+- `--env.observation_height` and `--env.observation_width` control the rendered camera resolution (defaults to 360). For policies with declared policy input-feature resolution of 256×256 (such as SmolVLA LIBERO checkpoints), consider setting `--env.observation_height=256 --env.observation_width=256` to match rendered observations with declared model input dimensions.
 
 ### Multi-suite evaluation
 

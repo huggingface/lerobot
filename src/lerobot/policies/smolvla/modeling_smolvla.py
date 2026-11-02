@@ -52,6 +52,7 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 """
 
+import logging
 import math
 from collections import deque
 from typing import Any, Unpack
@@ -85,6 +86,8 @@ from ..utils import (
 )
 from .configuration_smolvla import SmolVLAConfig
 from .smolvlm_with_expert import SmolVLMWithExpertModel
+
+logger = logging.getLogger(__name__)
 
 
 def normalize(x, min_val, max_val):
@@ -168,6 +171,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.init_rtc_processor()
         self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
         self.reset()
+        self._warned_visual_resolution = False
 
     def reset(self):
         """This should be called whenever the environment is reset."""
@@ -395,6 +399,42 @@ class SmolVLAPolicy(PreTrainedPolicy):
             raise ValueError(
                 f"All image features are missing from the batch. At least one expected. (batch: {batch.keys()}) (image_features:{self.config.image_features})"
             )
+        if (
+            not self.training
+            and not getattr(self, "_warned_visual_resolution", False)
+            and self.config.resize_imgs_with_padding is not None
+        ):
+            mismatches: list[str] = []
+            expected_features = self.config.input_features or {}
+            for key in present_img_keys:
+                feat = expected_features.get(key)
+                if (
+                    feat is not None
+                    and getattr(feat, "type", None) is FeatureType.VISUAL
+                    and hasattr(feat, "shape")
+                ):
+                    shape = feat.shape
+                    if len(shape) == 3 and shape[1] > 0 and shape[2] > 0:
+                        exp_h, exp_w = int(shape[1]), int(shape[2])
+                    elif len(shape) == 2 and shape[0] > 0 and shape[1] > 0:
+                        exp_h, exp_w = int(shape[0]), int(shape[1])
+                    else:
+                        continue
+                    act_h, act_w = int(batch[key].shape[-2]), int(batch[key].shape[-1])
+                    if (act_h, act_w) != (exp_h, exp_w):
+                        mismatches.append(
+                            f"camera '{key}': received {act_h}x{act_w} vs declared policy input-feature resolution {exp_h}x{exp_w}"
+                        )
+            if mismatches:
+                self._warned_visual_resolution = True
+                logger.warning(
+                    "SmolVLA received input image(s) differing from declared policy input-feature resolution: "
+                    f"{', '.join(mismatches)}. Evaluating on observations at a different resolution than declared "
+                    "in policy metadata may induce visual domain shift (e.g. scale or aspect-ratio changes) "
+                    "even though resize_imgs_with_padding is active. Ignore this advisory if input resizing or "
+                    "cropping is intentional."
+                )
+
         # Preprocess image features present in the batch
         for key in present_img_keys:
             img = batch[key][:, -1, :, :, :] if batch[key].ndim == 5 else batch[key]
