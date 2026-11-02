@@ -149,10 +149,10 @@ class HubMixin:
             force_download (`bool`, *optional*, defaults to `False`):
                 Whether to force (re-)downloading the files from the Hub, overriding the existing cache.
             proxies (`Dict[str, str]`, *optional*):
-                Retained for backward compatibility and ignored. Configure proxies with the
+                Kept for backward compatibility and ignored. Configure proxies with the
                 `HTTP_PROXY` and `HTTPS_PROXY` environment variables instead.
             resume_download (`bool`, *optional*):
-                Retained for backward compatibility and ignored. Downloads always resume when possible.
+                Kept for backward compatibility and ignored. Downloads always resume when possible.
             token (`str` or `bool`, *optional*):
                 The token to use as HTTP bearer authorization for remote files. By default, it will use the token
                 cached when running `hf auth login`.

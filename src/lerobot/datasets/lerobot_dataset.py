@@ -673,7 +673,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             private: If ``True``, create a private repository. If ``None``
                 (default), defer to the org default on the Hub (only affects orgs).
             allow_patterns: Glob pattern(s) restricting which files to upload.
-            upload_large_folder: Retained for backward compatibility and ignored.
+            upload_large_folder: Kept for backward compatibility and ignored.
                 ``upload_folder`` handles datasets of all sizes.
             **card_kwargs: Additional keyword arguments forwarded to dataset card
                 creation.
