@@ -13,6 +13,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+from draccus.utils import DecodingError
+
 from lerobot.configs.policies import PreTrainedConfig
 
 
@@ -132,3 +135,44 @@ def test_reward_config_from_pretrained_backfills_path():
         assert isinstance(cfg, _DummyRewardBackfillConfig)
         assert cfg.pretrained_path == tmpdir
         assert cfg.pretrained_revision is None
+
+
+@pytest.mark.parametrize("reward", [False, True])
+@pytest.mark.parametrize("failure", [None, "parse", "write"])
+def test_pretrained_config_removes_temporary_json(tmp_path, monkeypatch, reward, failure):
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    config_path = checkpoint / "config.json"
+    config_path.write_text(
+        json.dumps({"type": "_dummy_reward_backfill" if reward else "_dummy_backfill", "lr": 0.1})
+    )
+    original = config_path.read_bytes()
+    temporary_paths = []
+    create_temporary_file = tempfile.NamedTemporaryFile
+
+    def track_temporary_file(*args, **kwargs):
+        kwargs.setdefault("dir", tmp_path)
+        handle = create_temporary_file(*args, **kwargs)
+        temporary_paths.append(Path(handle.name))
+        return handle
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", track_temporary_file)
+    if failure == "write":
+
+        def fail_write(*args, **kwargs):
+            raise OSError("config write failed")
+
+        monkeypatch.setattr(json, "dump", fail_write)
+
+    config_class = RewardModelConfig if reward else PreTrainedConfig
+    overrides = ["--lr=invalid"] if failure == "parse" else ["--lr=0.5"]
+    if failure:
+        with pytest.raises(DecodingError if failure == "parse" else OSError):
+            config_class.from_pretrained(checkpoint, cli_overrides=overrides)
+    else:
+        config = config_class.from_pretrained(checkpoint, cli_overrides=overrides)
+        assert config.lr == 0.5
+
+    assert temporary_paths
+    assert all(not path.exists() for path in temporary_paths)
+    assert config_path.read_bytes() == original
