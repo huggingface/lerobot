@@ -39,6 +39,20 @@ class AsimovExoTeleoperatorConfig(TeleoperatorConfig):
     # EMA window (in reads) on exo joint angles, alpha = 2 / (n + 1); 1 disables smoothing.
     ema_window: int = 3
 
+    # Match --robot.control_mode. "arms": exo arms drive Asimov's arms via IK.
+    # "velocity": exo joysticks drive locomotion (left stick: walk/strafe, right stick x: turn).
+    control_mode: str = "arms"
+    # Normalized stick deflection below which an axis reads zero.
+    joystick_deadzone: float = 0.1
+    # Velocity at full stick deflection; the robot clamps to its own limits.
+    max_linear_velocity: float = 0.3  # m/s
+    max_lateral_velocity: float = 0.2  # m/s
+    max_angular_velocity: float = 30.0  # deg/s
+
     def __post_init__(self):
         if self.ema_window < 1:
             raise ValueError("ema_window must be >= 1.")
+        if self.control_mode not in ("arms", "velocity"):
+            raise ValueError("control_mode must be 'arms' or 'velocity'.")
+        if not 0 <= self.joystick_deadzone < 1:
+            raise ValueError("joystick_deadzone must be in [0, 1).")
