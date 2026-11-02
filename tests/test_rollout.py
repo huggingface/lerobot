@@ -658,7 +658,9 @@ def test_resumed_dataset_must_record_at_fps(monkeypatch):
     from lerobot.configs.dataset import DatasetRecordConfig
     from lerobot.rollout import context
 
-    monkeypatch.setattr(context.LeRobotDataset, "resume", lambda *args, **kwargs: SimpleNamespace(fps=15))
+    finalized = []
+    dataset = SimpleNamespace(fps=15, finalize=lambda: finalized.append(True))
+    monkeypatch.setattr(context.LeRobotDataset, "resume", lambda *args, **kwargs: dataset)
     cfg = SimpleNamespace(
         dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
         resume=True,
@@ -667,6 +669,8 @@ def test_resumed_dataset_must_record_at_fps(monkeypatch):
     )
     with pytest.raises(ValueError, match="pass --fps=15"):
         context._build_rollout_dataset(cfg, SimpleNamespace(), {})
+    # The resumed dataset's writers are closed, since setup cleanup never sees it.
+    assert finalized
 
 
 def test_setup_defaults_to_starting_the_engine():

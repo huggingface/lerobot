@@ -27,7 +27,7 @@ Usage:
         --artifacts-dir /tmp/libero-artifacts \\
         --env libero \\
         --task libero_spatial \\
-        --policy pepijn223/smolvla_libero
+        --policy lerobot/smolvla_libero
 
 Writes <artifacts-dir>/metrics.json. The CI workflow then uploads this file
 as a GitHub Actions artifact named "<env>-metrics". When given, it also records the checkpoint
@@ -88,7 +88,7 @@ def main() -> int:
     parser.add_argument("--artifacts-dir", required=True, help="Path to the mounted artifacts volume")
     parser.add_argument("--env", required=True, help="Environment name (e.g. libero)")
     parser.add_argument("--task", required=True, help="Task name (e.g. libero_spatial)")
-    parser.add_argument("--policy", required=True, help="Policy hub path (e.g. pepijn223/smolvla_libero)")
+    parser.add_argument("--policy", required=True, help="Policy hub path (e.g. lerobot/smolvla_libero)")
     parser.add_argument("--policy-revision", help="Checkpoint revision evaluated")
     parser.add_argument("--sim-tag", help="Content tag of the simulator image")
     parser.add_argument("--commit", help="LeRobot commit tested")

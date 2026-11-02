@@ -38,10 +38,8 @@ logger = logging.getLogger(__name__)
 
 
 def _quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
-    """Convert xyzw quaternions to axis-angle like robosuite's ``quat2axisangle``: zeros near the identity."""
+    """Convert xyzw quaternions to axis-angle like robosuite's `quat2axisangle`: zeros near the identity."""
     quat = np.asarray(quat, dtype=np.float32)
-    if quat.shape[-1:] != (4,):
-        raise ValueError("Quaternion must end in four xyzw components")
     w = np.clip(quat[..., 3], -1, 1)
     den = np.sqrt(np.maximum(1 - w * w, 0))
     scale = np.divide(2 * np.arccos(w), den, out=np.zeros_like(den), where=den > 1e-10)
@@ -90,6 +88,7 @@ _LIBERO_PERTURBATION_SUFFIX_RE = re.compile(r"_(?:language|view|light)_[^.]*|_(?
 
 
 def _load_initial_states(path: Path) -> np.ndarray:
+    """Load a task's initial states, from the converted `.npy` file next to `path` when there is one."""
     portable = path.with_suffix(path.suffix + ".npy")
     if portable.exists():
         return np.load(portable, allow_pickle=False)
@@ -186,7 +185,7 @@ class LiberoEnv(gym.Env):
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
 
         # Map raw camera names to "image1" and "image2".
-        # The preprocessing step `preprocess_observation` will then prefix these with `.images.*`,
+        # `canonical_observation` will then prefix these with `observation.images.*`,
         # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
         # This ensures the policy consistently receives observations in the
         # expected format regardless of the original camera naming.
@@ -490,7 +489,7 @@ def env_fns(
     camera_name_mapping: dict[str, str] | None = None,
     is_libero_plus: bool = False,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """Return ``n_envs`` LIBERO env factories per task, as ``{suite: {task_id: [factory, ...]}}``.
+    """Return `n_envs` LIBERO env factories per task, as `{suite: {task_id: [factory, ...]}}`.
 
     Notes:
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
@@ -544,7 +543,10 @@ def env_fns(
 
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Return LIBERO's defaults. ``control_mode``: ``relative`` (eef deltas) or ``absolute`` (eef poses)."""
+    """Return LIBERO's default fps, control mode, state and action names, and robot type.
+
+    LIBERO's own `control_mode` option, in `kwargs`, is `relative` (eef deltas) or `absolute` (eef poses).
+    """
     pose = ("eef.x", "eef.y", "eef.z", "eef.axis_angle.x", "eef.axis_angle.y", "eef.axis_angle.z")
     absolute = kwargs.get("control_mode", "relative") == "absolute"
     commanded = pose if absolute else tuple(name.replace("eef.", "eef.delta.") for name in pose)

@@ -75,9 +75,10 @@ dependencies = [
     "requests>=2.32.0,<3.0.0",
 
     # Environments
-    # NOTE: gymnasium is used in lerobot.envs (lerobot-train, lerobot-eval), policies/factory,
-    # and robots/unitree. Moving it to an optional extra would require import guards across many
-    # tightly-coupled modules. Candidate for a future refactor to decouple envs from the core.
+    # NOTE: gymnasium is used in lerobot.envs, lerobot.sim and lerobot.env_server (lerobot-train,
+    # lerobot-eval, lerobot-env-server), policies/factory and robots/unitree. Moving it to an optional
+    # extra would require import guards across many tightly-coupled modules. Candidate for a future
+    # refactor to decouple envs from the core.
     "gymnasium>=1.1.1,<2.0.0",
 
     # Serialization & checkpointing

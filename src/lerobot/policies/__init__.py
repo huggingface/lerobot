@@ -13,13 +13,10 @@
 # limitations under the License.
 
 from lerobot.utils import ActionInterpolator as ActionInterpolator
+from lerobot.utils.feature_spec import FeatureSpec
 
 from .act.configuration_act import ACTConfig as ACTConfig
-from .chunk import (
-    ChunkPolicySpec,
-    ExecutionMode,
-    FeatureSpec,
-)
+from .chunk import ChunkPolicySpec, ExecutionMode
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .dm05.configuration_dm05 import DM05Config as DM05Config
 from .eo1.configuration_eo1 import EO1Config as EO1Config

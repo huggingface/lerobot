@@ -12,33 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Simulator benchmark CI: the matrix, the metrics it records, and the LIBERO policy-server example."""
+
 import json
 import subprocess
 import sys
 from pathlib import Path
 
+import draccus
 import pytest
+import yaml
+
+from lerobot.remote_inference.configs import ServerConfig
+from tests.utils import resolve_without_simulator
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_missing_metrics_fail(tmp_path):
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts/ci/parse_eval_metrics.py"),
-            "--artifacts-dir",
-            str(tmp_path),
-            "--env",
-            "toy",
-            "--task",
-            "reach",
-            "--policy",
-            "test",
-        ],
-        capture_output=True,
+def _parse_metrics(artifacts: Path, *options: str) -> subprocess.CompletedProcess:
+    """Run parse_eval_metrics.py on `artifacts` for a toy benchmark."""
+    command = [
+        sys.executable,
+        str(ROOT / "scripts/ci/parse_eval_metrics.py"),
+        "--artifacts-dir",
+        str(artifacts),
+    ]
+    return subprocess.run(
+        [*command, "--env", "toy", "--task", "reach", "--policy", "test", *options], capture_output=True
     )
-    assert result.returncode == 1
+
+
+def test_missing_metrics_fail(tmp_path):
+    assert _parse_metrics(tmp_path).returncode == 1
 
 
 @pytest.mark.parametrize(
@@ -53,22 +58,7 @@ def test_missing_metrics_fail(tmp_path):
 )
 def test_metrics_validity(tmp_path, metrics, expected):
     (tmp_path / "eval_info.json").write_text(json.dumps({"overall": metrics}))
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts/ci/parse_eval_metrics.py"),
-            "--artifacts-dir",
-            str(tmp_path),
-            "--env",
-            "toy",
-            "--task",
-            "reach",
-            "--policy",
-            "test",
-        ],
-        capture_output=True,
-    )
-    assert result.returncode == expected
+    assert _parse_metrics(tmp_path).returncode == expected
 
 
 def test_matrix_has_eight_benchmarks_and_training_coverage():
@@ -88,12 +78,6 @@ def test_matrix_has_eight_benchmarks_and_training_coverage():
 
 
 def test_libero_policy_server_example_matches_simulator_config(monkeypatch):
-    import draccus
-    import yaml
-
-    from lerobot.remote_inference.configs import ServerConfig
-    from tests.utils import resolve_without_simulator
-
     policy = draccus.parse(ServerConfig, config_path=str(ROOT / "docker/sim/policy_libero.yaml"), args=[])
     settings = yaml.safe_load((ROOT / "docker/sim/configs/libero.yaml").read_text())["sim"]
     sim = resolve_without_simulator(settings, monkeypatch)
@@ -109,24 +93,7 @@ def test_metrics_record_what_the_score_depends_on(tmp_path, max_episode_steps):
     (tmp_path / "eval_info.json").write_text(json.dumps({"overall": {"pc_success": 50, "n_episodes": 2}}))
     pins = ["--policy-revision", "abc123", "--sim-tag", "f00d", "--commit", "deadbeef"]
     capped = [] if max_episode_steps is None else ["--max-episode-steps", str(max_episode_steps)]
-    subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts/ci/parse_eval_metrics.py"),
-            "--artifacts-dir",
-            str(tmp_path),
-            "--env",
-            "toy",
-            "--task",
-            "reach",
-            "--policy",
-            "test",
-            *pins,
-            *capped,
-        ],
-        check=True,
-        capture_output=True,
-    )
+    assert _parse_metrics(tmp_path, *pins, *capped).returncode == 0
     metrics = json.loads((tmp_path / "metrics.json").read_text())
     assert (metrics["policy_revision"], metrics["sim_tag"], metrics["commit"]) == (
         "abc123",

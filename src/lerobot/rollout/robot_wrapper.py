@@ -95,7 +95,7 @@ class ThreadSafeRobot:
             raise RuntimeError("Position hold requires finite position targets for every actuator")
         return positions
 
-    def configure_position_hold(self) -> None:
+    def _configure_position_hold(self) -> None:
         """Enable the explicit, robot-supported position hold; reject mixed control modes."""
         if (
             not self._robot.supports_position_hold
@@ -110,7 +110,7 @@ class ThreadSafeRobot:
         if self.supports_command_hold:
             self._command_hold_enabled = True
         else:
-            self.configure_position_hold()
+            self._configure_position_hold()
 
     @property
     def supports_hold(self) -> bool:

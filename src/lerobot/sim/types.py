@@ -28,7 +28,30 @@ CONTROL_MODES = ("position", "delta", "eef_pose")
 
 @dataclass(frozen=True)
 class EnvDescriptor:
-    """What an env exposes: observation and action features, control mode, fps and tasks."""
+    """What an env exposes: observation and action features, control mode, fps and tasks.
+
+    Args:
+        sim_type (`str`):
+            Integration that runs the env, e.g. `libero`.
+        semantics (`str`):
+            Name of the observation and action conventions, e.g. `libero-delta-v1`.
+        features (`tuple[FeatureSpec, ...]`):
+            Observation features, with LeRobot keys.
+        action_feature (`FeatureSpec`):
+            The action: one dimension, with ordered component names.
+        control_mode (`str`):
+            What an action commands: `position`, `delta` or `eef_pose`.
+        fps (`float`):
+            Control rate.
+        tasks (`dict[str, list[int]]`):
+            Task IDs of each suite.
+        max_episode_steps (`int`):
+            Steps before an episode is truncated.
+        robot_type (`str`, *optional*, defaults to `""`):
+            Body a sim robot records in its dataset.
+        config (`dict[str, Any]`, *optional*):
+            The `SimConfig` the env was built with. A client checks it against its own settings.
+    """
 
     sim_type: str
     semantics: str
@@ -36,7 +59,7 @@ class EnvDescriptor:
     action_feature: FeatureSpec
     control_mode: str
     fps: float
-    tasks: dict[str, list[str]]
+    tasks: dict[str, list[int]]
     max_episode_steps: int
     robot_type: str = ""
     config: dict[str, Any] = field(default_factory=dict)
@@ -68,7 +91,7 @@ class EnvDescriptor:
         return spaces.Box(-np.inf, np.inf, self.action_feature.shape, np.float32)
 
     def same_schema(self, other: "EnvDescriptor") -> bool:
-        """Return whether ``other`` has the same observation features, action feature and semantics."""
+        """Return whether `other` has the same observation features, action feature and semantics."""
         return (
             self.features == other.features
             and self.action_feature == other.action_feature
@@ -78,7 +101,24 @@ class EnvDescriptor:
 
 @dataclass(frozen=True)
 class StepResult:
-    """Result of one reset or step of a batch of envs. Arrays have the batch dimension first."""
+    """Result of one reset or step of a batch of envs. Arrays have the batch dimension first.
+
+    Args:
+        obs (`dict[str, np.ndarray]`):
+            Observations, with LeRobot keys. A finished env keeps its terminal observation.
+        task (`tuple[str, ...]`):
+            Task description of each env.
+        reward (`np.ndarray`):
+            Reward of each env, `float32`. Zero once its episode has finished.
+        terminated (`np.ndarray`):
+            Whether each env reached a terminal state, `bool`.
+        truncated (`np.ndarray`):
+            Whether each env's episode was cut short, e.g. by its step limit, `bool`.
+        is_success (`np.ndarray`):
+            Whether each env completed its task, `bool`.
+        elapsed_steps (`np.ndarray`):
+            Steps since the last reset, `int64`.
+    """
 
     obs: dict[str, np.ndarray]
     task: tuple[str, ...]
@@ -86,21 +126,15 @@ class StepResult:
     terminated: np.ndarray
     truncated: np.ndarray
     is_success: np.ndarray
-    sim_time: float
     elapsed_steps: np.ndarray
 
-    def frames(self) -> list[np.ndarray]:
+    def frames(self) -> tuple[np.ndarray, ...]:
         """Return one frame per env from the first RGB observation, including terminal frames."""
         key = next((k for k, v in self.obs.items() if v.dtype == np.uint8 and v.ndim == 4), None)
         if key is None:
             raise ValueError("This environment exposes no RGB observation")
-        return [frame.copy() for frame in self.obs[key]]
+        return tuple(frame.copy() for frame in self.obs[key])
 
     def info(self) -> dict[str, Any]:
-        """Return the Gymnasium ``info`` dict for this step."""
-        return {
-            "is_success": self.is_success,
-            "task": self.task,
-            "elapsed_steps": self.elapsed_steps,
-            "sim_time": self.sim_time,
-        }
+        """Return the Gymnasium `info` dict for this step."""
+        return {"is_success": self.is_success, "task": self.task, "elapsed_steps": self.elapsed_steps}

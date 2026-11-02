@@ -16,12 +16,13 @@
 
 import numpy as np
 
+from lerobot.envs.configs import LiberoEnv
+from lerobot.envs.utils import preprocess_observation
+from lerobot.processor.env_processor import LiberoProcessorStep
+from tests.utils import import_without_simulator, resolve_without_simulator
+
 
 def test_libero_numpy_adapter_parity(monkeypatch):
-    from lerobot.envs.utils import preprocess_observation
-    from lerobot.processor.env_processor import LiberoProcessorStep
-    from tests.utils import import_without_simulator
-
     canonical_observation = import_without_simulator("libero", monkeypatch).canonical_observation
 
     native = {
@@ -47,9 +48,6 @@ def test_libero_numpy_adapter_parity(monkeypatch):
 
 
 def test_libero_declares_the_control_mode_it_runs(monkeypatch):
-    from lerobot.envs.configs import LiberoEnv
-    from tests.utils import resolve_without_simulator
-
     relative = resolve_without_simulator(LiberoEnv(task="libero_spatial").sim_settings(), monkeypatch)
     assert (relative.control_mode, relative.semantics) == ("delta", "libero-delta-v1")
     assert relative.action_names[0] == "eef.delta.x"

@@ -35,3 +35,18 @@ def test_array_validation_checks_batch_dtype_and_finiteness(value):
     validate_array(np.zeros((3, 2), np.float32), feature, leading_shape=(3,))
     with pytest.raises(ValueError):
         validate_array(value, feature, leading_shape=(3,))
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"semantics": ""},
+        {"dtype": "float16"},
+        {"dtype": "uint8", "kind": "rgb"},
+        {"names": ("x", "y", "z")},
+    ],
+)
+def test_an_invalid_feature_is_named_in_its_error(invalid):
+    valid = {"name": "observation.state", "shape": (2,), "dtype": "float32", "semantics": "state-v1"}
+    with pytest.raises(ValueError, match="'observation.state'"):
+        FeatureSpec(**{**valid, **invalid})

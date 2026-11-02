@@ -361,7 +361,7 @@ def env_fns(
     episode_length: int | None = None,
     obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """Return ``n_envs`` env factories per RoboCasa365 task, as ``{task_name: {0: [factory, ...]}}``.
+    """Return `n_envs` env factories per RoboCasa365 task, as `{task_name: {0: [factory, ...]}}`.
 
     `task` can be:
       - a single task name (e.g. `CloseFridge`)

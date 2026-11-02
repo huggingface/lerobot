@@ -102,8 +102,8 @@ class RoboMMEGymEnv(gym.Env):
 
         action_dim = 8 if action_space_type == "joint_angle" else 7
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_dim,), dtype=np.float32)
-        # `pixels` must be a nested Dict so `preprocess_observation()` in
-        # envs/utils.py picks it up and maps each camera to
+        # `pixels` must be a nested Dict so `canonical_observation()` in
+        # sim/integrations/utils.py picks it up and maps each camera to
         # `observation.images.<cam>`. A flat layout (`pixels/image`,
         # `pixels/wrist_image`) silently drops every image from the batch.
         self.observation_space = spaces.Dict(
@@ -244,7 +244,7 @@ def env_fns(
     front_camera_name: str = "camera1",
     wrist_camera_name: str = "camera2",
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """Return ``n_envs`` env factories per RoboMME task, as ``{suite: {task_id: [factory, ...]}}``.
+    """Return `n_envs` env factories per RoboMME task, as `{suite: {task_id: [factory, ...]}}`.
 
     `task` may be a single RoboMME task name (e.g. "PickXtimes") or a
     comma-separated list (e.g. "PickXtimes,BinFill,StopCube"). Each task

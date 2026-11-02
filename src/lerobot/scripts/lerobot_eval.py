@@ -288,7 +288,7 @@ def rollout(
     # Sim envs already return observations with LeRobot keys; other envs return their own format.
     prepare_observation = (
         prepare_canonical_observation
-        if getattr(env, "canonical_observations", False)
+        if env.metadata.get("canonical_observations", False)
         else preprocess_observation
     )
     progbar = trange(

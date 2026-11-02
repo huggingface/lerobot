@@ -28,25 +28,23 @@ from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
 # The env server's own version, separate from the remote inference and envelope versions.
 PROTOCOL_VERSION = 1
-
-
-def deployment_prefix(deployment: str) -> str:
-    """Return the key prefix of a deployment, the name a server serves its simulator under."""
-    return f"lerobot/env/v{PROTOCOL_VERSION}/deployments/{validate_segment(deployment)}"
-
-
 # Every server also answers describe here, for clients that do not name a deployment.
 ANY_DEPLOYMENT_DESCRIBE = f"lerobot/env/v{PROTOCOL_VERSION}/describe"
 
 
+def deployment_prefix(deployment: str) -> str:
+    """Return the key prefix of a deployment, the name a server serves its simulator under."""
+    return f"lerobot/env/v{PROTOCOL_VERSION}/deployments/{validate_segment(deployment, 'deployment')}"
+
+
 def instance_prefix(deployment: str, instance: str) -> str:
     """Return the key prefix of one server process (instance) in a deployment."""
-    return f"{deployment_prefix(deployment)}/instances/{validate_segment(instance)}"
+    return f"{deployment_prefix(deployment)}/instances/{validate_segment(instance, 'instance')}"
 
 
 def session_prefix(deployment: str, instance: str, session: str) -> str:
     """Return the key prefix of one session on a server process."""
-    return f"{instance_prefix(deployment, instance)}/sessions/{validate_segment(session)}"
+    return f"{instance_prefix(deployment, instance)}/sessions/{validate_segment(session, 'session')}"
 
 
 def encode_descriptor(descriptor: EnvDescriptor) -> dict[str, Any]:
@@ -70,7 +68,7 @@ def encode_step_result(result: StepResult) -> dict[str, Any]:
 
 
 def decode_step_result(data: dict[str, Any]) -> StepResult:
-    """Decode a step result from its wire dict."""
+    """Decode a step result sent by the server."""
     # JPEG replies carry a list of frames, one per env; stack them into one batch array.
     obs = {name: np.stack(value) if isinstance(value, list) else value for name, value in data["obs"].items()}
     return StepResult(**{**data, "obs": obs, "task": tuple(data["task"])})
@@ -87,7 +85,7 @@ _BATCH_DTYPES = {
 
 
 def validate_result(result: StepResult, descriptor: EnvDescriptor, num_envs: int) -> None:
-    """Raise ``ValueError`` if a result does not match the descriptor or the batch size."""
+    """Raise `ValueError` if a result does not match the descriptor or the batch size."""
     if set(result.obs) != {f.name for f in descriptor.features}:
         raise ValueError("Simulator observation keys differ from its descriptor")
     for feature in descriptor.features:

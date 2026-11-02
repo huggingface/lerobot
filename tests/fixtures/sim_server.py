@@ -20,32 +20,37 @@ import threading
 import pytest
 
 
+def free_port() -> int:
+    """Return a localhost TCP port that nothing listens on."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 @pytest.fixture
 def sim_server():
     # Live-server tests need the `remote` extra; the base-dependency tier skips them.
     pytest.importorskip("zenoh")
     pytest.importorskip("msgpack")
-    from lerobot.env_server.server import EnvServer, ServerConfig
+    from lerobot.env_server.server import EnvServer, EnvServerConfig
+    from lerobot.sim.config import SimSettings
     from lerobot.transport.zenoh import ZenohConfig
     from tests.fixtures.toy_env import ToyEnvConfig
 
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    endpoint = f"tcp/127.0.0.1:{port}"
+    endpoint = f"tcp/127.0.0.1:{free_port()}"
     server = EnvServer(
-        ServerConfig(
-            sim=ToyEnvConfig().sim_config(),
+        EnvServerConfig(
+            sim=SimSettings(**ToyEnvConfig().sim_settings()),
             # Served env configs address the deployment named after their --env.type.
             deployment="toy",
             zenoh=ZenohConfig(listen_endpoints=[endpoint]),
-            presence_grace_s=0.5,
+            initial_presence_timeout_s=0.5,
         )
     )
     thread = threading.Thread(target=server.serve)
     thread.start()
     assert server.ready.wait(5)
     yield server, endpoint
-    server.stop.set()
+    server.stop()
     thread.join(5)
     assert not thread.is_alive()

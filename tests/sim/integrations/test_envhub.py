@@ -12,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Environments served from an EnvHub repository."""
+"""Environments built from an EnvHub repository's `env.py`."""
 
+import builtins
+
+import gymnasium as gym
 import numpy as np
 import pytest
+
+from lerobot.envs import EnvClientConfig, HubEnvConfig
+from lerobot.sim.config import SimConfig
+from lerobot.sim.integrations import envhub
+from lerobot.sim.local_vector_env import LocalVectorEnv
 
 _ENVHUB_ENV = """
 import gymnasium as gym
@@ -52,24 +60,29 @@ def make_env(n_envs=1, use_async_envs=False):
 """
 
 
-def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
-    from lerobot.sim.config import SimConfig
-    from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
-
+@pytest.fixture
+def hub_repo(tmp_path, monkeypatch):
+    """Return a function that sets the `env.py` the Hub repository `user/reach` downloads."""
     env_file = tmp_path / "env.py"
-    env_file.write_text(_ENVHUB_ENV)
     # Only the network download is stubbed; the consent check and URL parsing run for real.
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    config = SimConfig(
+    return env_file.write_text
+
+
+def _envhub(hub_path: str = "user/reach", trust_remote_code: bool = True) -> SimConfig:
+    return SimConfig(
         type="envhub",
         task="",
         semantics="envhub-v1",
-        kwargs={"hub_path": "user/reach", "trust_remote_code": True},
+        kwargs={"hub_path": hub_path, "trust_remote_code": trust_remote_code},
     )
-    env = LocalVectorEnv(config, num_envs=2)
+
+
+def test_envhub_runs_a_hub_repository(hub_repo):
+    hub_repo(_ENVHUB_ENV)
+    env = LocalVectorEnv(_envhub(), num_envs=2)
     try:
-        assert env.tasks == {"reach_suite": ["0"]}
+        assert env.tasks == {"reach_suite": [0]}
         assert {f.name: (f.shape, f.kind) for f in env.descriptor.features} == {
             "observation.images.front": ((8, 8, 3), "rgb"),
             "observation.state": ((2,), "tensor"),
@@ -82,19 +95,13 @@ def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
     finally:
         env.close()
     # Running remote code needs explicit consent.
-    config.kwargs["trust_remote_code"] = False
     with pytest.raises(RuntimeError, match="Refusing"):
-        LocalVectorEnv(config, num_envs=1)
+        LocalVectorEnv(_envhub(trust_remote_code=False), num_envs=1)
 
 
-def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch):
-    from lerobot.envs.configs import HubEnvConfig
-    from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
-
+def test_envhub_make_env_takes_the_options_of_the_command(hub_repo):
     # The repository's make_env sizes its camera from an option of its own.
-    env_file = tmp_path / "env.py"
-    env_file.write_text(
+    hub_repo(
         _ENVHUB_ENV
         + """
 class SizedReach(Reach):
@@ -111,7 +118,6 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
     return {"reach_suite": {0: gym.vector.SyncVectorEnv([lambda: SizedReach(size)] * n_envs)}}
 """
     )
-    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
     config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"size": 4})
     env = LocalVectorEnv(config.sim_config())
     try:
@@ -121,105 +127,61 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
         env.close()
 
 
-def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
-    from lerobot.sim.config import SimConfig
-    from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
-
+def test_envhub_runs_a_local_directory(tmp_path, monkeypatch):
     (tmp_path / "env.py").write_text(_ENVHUB_ENV)
 
     def no_download(**kwargs):
         raise AssertionError("A local directory is not downloaded")
 
     monkeypatch.setattr(envhub, "hf_hub_download", no_download)
-    env = LocalVectorEnv(
-        SimConfig(
-            type="envhub",
-            task="",
-            semantics="envhub-v1",
-            kwargs={"hub_path": str(tmp_path), "trust_remote_code": True},
-        )
-    )
+    env = LocalVectorEnv(_envhub(hub_path=str(tmp_path)))
     try:
-        assert env.tasks == {"reach_suite": ["0"]}
+        assert env.tasks == {"reach_suite": [0]}
     finally:
         env.close()
 
 
-def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
-    import builtins
-
-    from lerobot.sim.config import SimConfig
-    from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
-
+def test_envhub_module_runs_once_per_server_process(hub_repo, monkeypatch):
     # A simulator app that can start only once per process (e.g. Isaac Sim) lives in module state.
-    env_file = tmp_path / "env.py"
-    env_file.write_text("import builtins\nbuiltins.envhub_imports += 1\n" + _ENVHUB_ENV)
+    hub_repo("import builtins\nbuiltins.envhub_imports += 1\n" + _ENVHUB_ENV)
     monkeypatch.setattr(builtins, "envhub_imports", 0, raising=False)
-    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    config = SimConfig(
-        type="envhub",
-        task="",
-        semantics="envhub-v1",
-        kwargs={"hub_path": "user/reach", "trust_remote_code": True},
-    )
     # The probe and two sessions each build their environments.
     for _ in range(3):
-        env = LocalVectorEnv(config)
+        env = LocalVectorEnv(_envhub())
         env.reset(seed=[0])
         env.close()
     assert builtins.envhub_imports == 1
 
 
-def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
-    from lerobot.sim.config import SimConfig
-    from lerobot.sim.integrations import envhub
-    from lerobot.sim.vector_env import LocalVectorEnv
-
-    env_file = tmp_path / "env.py"
+def test_envhub_needs_dict_observations(hub_repo):
     # A flat array observation, which local LeRobot execution does not accept either.
-    env_file.write_text(
+    hub_repo(
         "import gymnasium as gym\n"
         "def make_env(n_envs=1, use_async_envs=False):\n"
         "    return gym.vector.SyncVectorEnv([lambda: gym.make('CartPole-v1')] * n_envs)\n"
     )
-    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    config = SimConfig(
-        type="envhub",
-        task="",
-        semantics="envhub-v1",
-        kwargs={"hub_path": "user/reach", "trust_remote_code": True},
-    )
     with pytest.raises(ValueError, match="dict observations"):
-        LocalVectorEnv(config)
+        LocalVectorEnv(_envhub())
 
 
-def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
-    from lerobot.sim.config import SimConfig
-    from lerobot.sim.integrations import envhub
-
+def test_envhub_settings_come_from_the_repository(hub_repo):
     declared = (
         'LEROBOT_SIM = {"fps": 15, "control_mode": "delta", "semantics": "reach-delta-v1",'
         ' "state_names": ["x", "y"], "action_names": ["dx", "dy"], "robot_type": "so_follower"}\n'
     )
-    env_file = tmp_path / "env.py"
-    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
     sim = {"type": "envhub", "task": "", "kwargs": {"hub_path": "user/reach", "trust_remote_code": True}}
     # Repository values fill the settings left out; an explicit value wins over them.
-    env_file.write_text(_ENVHUB_ENV + declared)
+    hub_repo(_ENVHUB_ENV + declared)
     resolved = SimConfig.resolve({**sim, "fps": 50})
     assert (resolved.fps, resolved.control_mode, resolved.semantics) == (50, "delta", "reach-delta-v1")
     assert (resolved.state_names, resolved.action_names) == (("x", "y"), ("dx", "dy"))
     assert resolved.robot_type == "so_follower"
     # Repositories without LEROBOT_SIM keep working with the defaults.
-    env_file.write_text(_ENVHUB_ENV)
+    hub_repo(_ENVHUB_ENV)
     resolved = SimConfig.resolve(sim)
     assert (resolved.fps, resolved.control_mode, resolved.semantics) == (30, "position", "envhub-v1")
     # A typo or an old key in LEROBOT_SIM is an error naming the closest valid key, not an ignored setting.
-    env_file.write_text(
-        _ENVHUB_ENV + 'LEROBOT_SIM = {"fsp": 30, "control": "delta", "gripper_indices": [6]}\n'
-    )
+    hub_repo(_ENVHUB_ENV + 'LEROBOT_SIM = {"fsp": 30, "control": "delta", "gripper_indices": [6]}\n')
     with pytest.raises(ValueError) as error:
         SimConfig.resolve(sim)
     message = str(error.value)
@@ -228,12 +190,7 @@ def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
     assert "'gripper_indices'; expected" in message
 
 
-def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it() -> None:
-    import gymnasium as gym
-    import pytest
-
-    from lerobot.sim.integrations.envhub import _env_factories
-
+def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it():
     class CustomBatch(gym.vector.SyncVectorEnv):
         def step(self, actions):
             obs, reward, terminated, truncated, info = super().step(actions)
@@ -241,42 +198,45 @@ def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it() -> None:
 
     env = CustomBatch([lambda: gym.make("CartPole-v1")])
     with pytest.raises(ValueError, match="use_native_batch"):
-        _env_factories(env, 1)
+        envhub._env_factories(env, 1)
     assert env.closed
 
 
-def test_envhub_native_batch_preserves_provider_and_options(monkeypatch) -> None:
-    import gymnasium as gym
-    import pytest
+_NATIVE_BATCH_ENV = """
+import builtins
 
-    from lerobot.envs import factory
-    from lerobot.envs.configs import EnvServerConfig, HubEnvConfig
+import gymnasium as gym
 
-    calls = []
+builtins.envhub_imports += 1
 
-    class Provider:
-        @staticmethod
-        def make_env(n_envs, use_async_envs, bonus):
-            calls.append((n_envs, use_async_envs, bonus))
-            return gym.wrappers.vector.TransformReward(
-                gym.vector.SyncVectorEnv([lambda: gym.make("CartPole-v1")] * n_envs),
-                lambda reward: reward + bonus,
-            )
 
-    monkeypatch.setattr(factory, "_download_hub_file", lambda *args: ("user/repo", "env.py", "unused", None))
-    monkeypatch.setattr(factory, "_import_hub_module", lambda *args: Provider)
+def make_env(n_envs, use_async_envs, bonus):
+    env = gym.wrappers.vector.TransformReward(
+        gym.vector.SyncVectorEnv([lambda: gym.make("CartPole-v1")] * n_envs), lambda reward: reward + bonus
+    )
+    env.made_with = (n_envs, use_async_envs, bonus)
+    return env
+"""
+
+
+def test_envhub_native_batch_preserves_provider_and_options(hub_repo, monkeypatch):
+    hub_repo(_NATIVE_BATCH_ENV)
+    monkeypatch.setattr(builtins, "envhub_imports", 0, raising=False)
     config = HubEnvConfig(
         hub_path="user/repo", trust_remote_code=True, use_native_batch=True, make_env_kwargs={"bonus": 50}
     )
-    env = next(iter(config.create_envs(2).values()))[0]
-    try:
-        env.reset(seed=2)
-        assert env.step(np.zeros(2, dtype=np.int64))[1].tolist() == [51, 51]
-        assert calls == [(2, False, 50)]
-        assert not hasattr(env, "descriptor")
-    finally:
-        env.close()
-    config.server = EnvServerConfig("tcp/127.0.0.1:7448")
+    for _ in range(2):
+        env = next(iter(config.create_envs(2).values()))[0]
+        try:
+            env.reset(seed=2)
+            assert env.step(np.zeros(2, dtype=np.int64))[1].tolist() == [51, 51]
+            assert env.made_with == (2, False, 50)
+            assert not hasattr(env, "descriptor")
+        finally:
+            env.close()
+    # Like the shared path, the native batch imports the repo's env.py once per process.
+    assert builtins.envhub_imports == 1
+    config.server = EnvClientConfig("tcp/127.0.0.1:7448")
     with pytest.raises(ValueError, match="env server"):
         config.create_envs(1)
     config.server = None

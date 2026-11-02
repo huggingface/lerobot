@@ -89,7 +89,7 @@ def load_entries(root: Path) -> list[dict]:
     return [{**entry, "sim_tag": image_hash(root, entry)} for entry in entries]
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--name")

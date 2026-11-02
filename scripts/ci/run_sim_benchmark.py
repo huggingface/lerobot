@@ -22,17 +22,15 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-
-DOCKER = shutil.which("docker")
-if DOCKER is None:
-    raise FileNotFoundError("Docker is required to run simulator benchmarks")
+from typing import Any
 
 
-def run(args, **kwargs):
+def run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+    """Run a command and raise if it fails."""
     return subprocess.run(args, check=True, **kwargs)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     selected = parser.add_mutually_exclusive_group(required=True)
     selected.add_argument("--name", help="A benchmarks/benchmarks.yaml entry; needs PyYAML")
@@ -47,7 +45,12 @@ def main():
     else:
         from benchmark_matrix import load_entries
 
-        entry = next(e for e in load_entries(Path(".")) if e["name"] == args.name)
+        entry = next((e for e in load_entries(Path(".")) if e["name"] == args.name), None)
+        if entry is None:
+            raise SystemExit(f"Unknown benchmark: {args.name}")
+    docker = shutil.which("docker")
+    if docker is None:
+        raise FileNotFoundError("Docker is required to run simulator benchmarks")
     args.artifacts.mkdir(parents=True, exist_ok=True)
     # Unique names, so parallel jobs and leftover containers on a persistent runner don't clash.
     run_id = os.environ.get("GITHUB_RUN_ID", "local") + "-" + uuid.uuid4().hex[:8]
@@ -55,11 +58,11 @@ def main():
     simulator = f"{network}-server"
     driver = f"{network}-driver"
     training = f"{network}-training"
-    run([DOCKER, "network", "create", network])
+    run([docker, "network", "create", network])
     try:
         run(
             [
-                DOCKER,
+                docker,
                 "run",
                 "-d",
                 "--name",
@@ -90,7 +93,7 @@ def main():
             "        c.close()\n"
         )
         common = [
-            DOCKER,
+            docker,
             "run",
             "--network",
             network,
@@ -109,7 +112,7 @@ def main():
             with (args.artifacts / "transition-parity.log").open("w") as stream:
                 subprocess.run(
                     [
-                        DOCKER,
+                        docker,
                         "exec",
                         simulator,
                         "python",
@@ -140,7 +143,7 @@ def main():
             run(common + ["--name", driver, args.policy_image] + command)
         finally:
             subprocess.run(
-                [DOCKER, "cp", f"{driver}:/tmp/eval-artifacts/.", str(args.artifacts)], check=False
+                [docker, "cp", f"{driver}:/tmp/eval-artifacts/.", str(args.artifacts)], check=False
             )
         run(
             [
@@ -158,12 +161,9 @@ def main():
                 entry["revision"],
                 "--sim-tag",
                 entry["sim_tag"],
+                "--max-episode-steps",
+                str(entry["max_episode_steps"]),
                 *(["--commit", os.environ["GITHUB_SHA"]] if "GITHUB_SHA" in os.environ else []),
-                *(
-                    ["--max-episode-steps", str(entry["max_episode_steps"])]
-                    if entry["max_episode_steps"] is not None
-                    else []
-                ),
             ]
         )
         if entry["train_smoke"]:
@@ -200,15 +200,15 @@ def main():
             finally:
                 (args.artifacts / "train-smoke").mkdir(exist_ok=True)
                 subprocess.run(
-                    [DOCKER, "cp", f"{training}:/tmp/train-smoke/.", str(args.artifacts / "train-smoke")],
+                    [docker, "cp", f"{training}:/tmp/train-smoke/.", str(args.artifacts / "train-smoke")],
                     check=False,
                 )
     finally:
         with (args.artifacts / "sim-server.log").open("w") as stream:
-            subprocess.run([DOCKER, "logs", simulator], stdout=stream, stderr=subprocess.STDOUT, check=False)
+            subprocess.run([docker, "logs", simulator], stdout=stream, stderr=subprocess.STDOUT, check=False)
         for container in (driver, training, simulator):
-            subprocess.run([DOCKER, "rm", "-f", container], check=False, stdout=subprocess.DEVNULL)
-        subprocess.run([DOCKER, "network", "rm", network], check=False, stdout=subprocess.DEVNULL)
+            subprocess.run([docker, "rm", "-f", container], check=False, stdout=subprocess.DEVNULL)
+        subprocess.run([docker, "network", "rm", network], check=False, stdout=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":

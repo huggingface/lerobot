@@ -12,15 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A sim env behind the ``Robot`` interface, run locally or on an env server."""
+"""A sim env behind the `Robot` interface, run locally or on an env server."""
 
 import math
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from functools import cached_property
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.sim.types import EnvDescriptor, StepResult
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.feature_spec import FeatureSpec
 
@@ -29,15 +32,15 @@ from .config_sim_robot import SimRobotConfig
 
 if TYPE_CHECKING:
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
 
 class SimRobot(Robot):
     """A simulated environment as a robot: swappable with hardware.
 
     Each action advances the environment by one step. When an episode ends, the robot stays in its final state
-    and ignores actions until ``start_episode`` is called; ``latest`` keeps the final reward, termination and
-    success. ``robot_type`` is the body the environment declares, or ``sim_robot`` if it declares none.
+    and ignores actions until `start_episode` is called; `latest` keeps the final reward, termination and
+    success. `robot_type` is the body the environment declares, or `sim_robot` if it declares none.
     """
 
     config_class = SimRobotConfig
@@ -47,63 +50,58 @@ class SimRobot(Robot):
     def __init__(self, config: SimRobotConfig):
         super().__init__(config)
         self.config = config
-        # Use the env's suite if ``task`` names exactly one; otherwise the sim's first suite.
-        task = config.env.task
-        self._task_group = task if task and "," not in task else None
         self._connected = False
         self.latest: StepResult | None = None
+        # Use the env's suite if `task` names exactly one; otherwise the sim's first suite.
+        task = config.env.task
+        task_group = task if task and "," not in task else None
         # Build the env here, not in connect(): scripts read the features and descriptor before connecting.
-        self._env: LocalVectorEnv | RemoteVectorEnv = self._make_env()
-
-    def _make_env(self) -> "LocalVectorEnv | RemoteVectorEnv":
-        env = self.config.env.create_env(self._task_group, self.config.task_id)
-        descriptor = env.descriptor
+        self._env: LocalVectorEnv | RemoteVectorEnv = config.env.create_env(task_group, config.task_id)
+        descriptor = self._env.descriptor
         self.robot_type = descriptor.robot_type or self.name
-        state = next(
-            (feature for feature in descriptor.features if feature.name == "observation.state"), None
-        )
+        state = next((feature for feature in descriptor.features if feature.name == OBS_STATE), None)
         if state is None or not state.names:
-            env.close()
-            raise ValueError("A sim robot needs an observation.state feature with component names")
-        self._state: FeatureSpec = state
-        self._camera_keys: dict[str, str] = {
-            feature.name: feature.name.removeprefix("observation.images.").removeprefix("observation.")
+            self._env.close()
+            raise ValueError(f"A sim robot needs an {OBS_STATE} feature with component names")
+        self._state_feature: FeatureSpec = state
+        self._camera_names: dict[str, str] = {
+            feature.name: feature.name.removeprefix(f"{OBS_IMAGES}.").removeprefix(f"{OBS_STR}.")
             for feature in descriptor.features
             if feature.kind == "rgb"
         }
-        # Robot cameras use dataset names (observation.images.<camera>); eval envs keep benchmark names.
+        # Name cameras like a real robot's dataset (observation.images.<camera>), whatever the env calls them.
         self.descriptor: EnvDescriptor = replace(
             descriptor,
             features=tuple(
-                replace(feature, name=f"observation.images.{self._camera_keys[feature.name]}")
+                replace(feature, name=f"{OBS_IMAGES}.{self._camera_names[feature.name]}")
                 if feature.kind == "rgb"
                 else feature
                 for feature in descriptor.features
             ),
         )
-        return env
 
     @property
     def cameras(self) -> dict[str, str]:
         """Map each camera name to its observation feature, keyed like a real robot's cameras."""
-        return {camera: f"observation.images.{camera}" for camera in self._camera_keys.values()}
-
-    def feature_names(self, rename_map: dict[str, str]) -> dict[str, str]:
-        """Map each descriptor feature to its policy key with ``rename_map``, as for any robot."""
-        return {f.name: rename_map.get(f.name, f.name) for f in self.descriptor.features}
+        return {camera: f"{OBS_IMAGES}.{camera}" for camera in self._camera_names.values()}
 
     @property
-    def observation_features(self) -> dict[str, type | tuple[int, ...]]:
+    def _state_ft(self) -> dict[str, type]:
+        return dict.fromkeys(self._state_feature.names, float)
+
+    @property
+    def _cameras_ft(self) -> dict[str, tuple[int, ...]]:
         return {
-            **dict.fromkeys(self._state.names, float),
-            **{
-                f.name.removeprefix("observation.images."): f.shape
-                for f in self.descriptor.features
-                if f.kind == "rgb"
-            },
+            f.name.removeprefix(f"{OBS_IMAGES}."): f.shape
+            for f in self.descriptor.features
+            if f.kind == "rgb"
         }
 
-    @property
+    @cached_property
+    def observation_features(self) -> dict[str, type | tuple[int, ...]]:
+        return {**self._state_ft, **self._cameras_ft}
+
+    @cached_property
     def action_features(self) -> dict[str, type]:
         return dict.fromkeys(self.descriptor.action_feature.names, float)
 
@@ -123,29 +121,27 @@ class SimRobot(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self._env.closed:
-            self._env = self._make_env()
         # Start the first episode so the robot has a state to observe.
-        self._connected = True
         try:
             self.start_episode()
         except BaseException:
             self.disconnect()
             raise
+        self._connected = True
 
     @check_if_not_connected
-    def get_observation(self) -> dict[str, Any]:
+    def get_observation(self) -> RobotObservation:
         result = self._env.latest
-        return {
-            **{
-                key: float(value)
-                for key, value in zip(self._state.names, result.obs[self._state.name][0], strict=True)
-            },
-            **{camera: result.obs[name][0] for name, camera in self._camera_keys.items()},
+        state = result.obs[self._state_feature.name][0]
+        obs_dict: RobotObservation = {
+            name: float(value) for name, value in zip(self._state_feature.names, state, strict=True)
         }
+        for feature_name, cam_key in self._camera_names.items():
+            obs_dict[cam_key] = result.obs[feature_name][0]
+        return obs_dict
 
     @check_if_not_connected
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
         names = self.descriptor.action_feature.names
         if set(action) != set(names):
             raise ValueError(
@@ -159,8 +155,8 @@ class SimRobot(Robot):
             self.latest = self._env.latest
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
 
-    @check_if_not_connected
     def start_episode(self, seed: int | None = None) -> None:
+        """Reset the environment; a `seed` makes the episode repeatable."""
         self._env.reset(seed=seed)
         self.latest = self._env.latest
 
@@ -178,18 +174,20 @@ class SimRobot(Robot):
 
 
 def check_control_rate(robot: Robot, fps: float, flag: str | None = None, multiplier: int = 1) -> None:
-    """Raise unless ``fps * multiplier`` commands per second match a sim robot's control rate."""
-    if isinstance(robot, SimRobot) and not math.isclose(fps * multiplier, robot.descriptor.fps):
-        rate = robot.descriptor.fps
+    """Raise unless `fps * multiplier` commands per second match a sim robot's control rate."""
+    if not isinstance(robot, SimRobot):
+        return
+    sent, rate = fps * multiplier, robot.descriptor.fps
+    if not math.isclose(sent, rate):
         hint = f": pass {flag}={rate / multiplier:g}" if flag else ""
         raise ValueError(
-            f"The control loop sends {fps * multiplier:g} commands per second but the simulator control rate "
-            f"is {rate:g} Hz{hint}"
+            f"The control loop sends {sent:g} commands per second but the simulator control rate is {rate:g} Hz"
+            f"{hint}"
         )
 
 
 def start_episode(robot: Robot) -> None:
-    """Start a new episode. A sim robot resets its world; a real robot's scene is reset by hand."""
+    """Start a new episode. A sim robot resets its environment; a real robot's scene is reset by hand."""
     if isinstance(robot, SimRobot):
         robot.start_episode()
 

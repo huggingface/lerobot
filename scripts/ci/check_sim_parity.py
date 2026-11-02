@@ -27,11 +27,12 @@ import yaml
 
 from lerobot.env_server.client import EnvClient
 from lerobot.sim.config import SimConfig
-from lerobot.sim.vector_env import LocalVectorEnv
+from lerobot.sim.local_vector_env import LocalVectorEnv
 from lerobot.utils import init_logging
 
 
-def check(config_path: Path, steps: int = 5):
+def check(config_path: Path, steps: int = 5) -> None:
+    """Check that `steps` seeded steps match locally and on an env server started from `config_path`."""
     config = yaml.safe_load(config_path.read_text())
     env = LocalVectorEnv(SimConfig.resolve(config["sim"]))
     try:
@@ -50,13 +51,18 @@ def check(config_path: Path, steps: int = 5):
         env.close()
     config["zenoh"] = {"listen_endpoints": ["tcp/127.0.0.1:7458"]}
     # A short handshake timeout keeps polling fast while the server starts; other calls keep the default.
-    client = EnvClient("tcp/127.0.0.1:7458", config.get("deployment", "default"), handshake_timeout_s=1)
+    client = EnvClient("tcp/127.0.0.1:7458", config["deployment"], handshake_timeout_s=1)
     with tempfile.TemporaryDirectory() as directory:
         server_config = Path(directory) / "server.yaml"
         server_config.write_text(yaml.safe_dump(config))
         with (Path(directory) / "server.log").open("w+") as log:
             server = subprocess.Popen(
-                [sys.executable, "-m", "lerobot.scripts.lerobot_env_server", "--config", str(server_config)],
+                [
+                    sys.executable,
+                    "-m",
+                    "lerobot.scripts.lerobot_env_server",
+                    f"--config_path={server_config}",
+                ],
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
@@ -72,7 +78,7 @@ def check(config_path: Path, steps: int = 5):
                             log.seek(0)
                             raise RuntimeError("Simulator startup failed:\n" + log.read()) from None
                 actual = [client.open(1, seeds=[123])]
-                actual.extend(client.request("step", actions=action)["result"] for action in actions)
+                actual.extend(client.request("step", actions=action) for action in actions)
                 for reference, remote in zip(expected, actual, strict=True):
                     np.testing.assert_equal(remote.task, reference.task)
                     for key in reference.obs:
@@ -94,7 +100,7 @@ def check(config_path: Path, steps: int = 5):
                     server.wait()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=5)

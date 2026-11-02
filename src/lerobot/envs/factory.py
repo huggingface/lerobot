@@ -19,12 +19,7 @@ from typing import Any
 
 import gymnasium as gym
 
-from lerobot.sim.integrations.envhub import (
-    _call_make_env,
-    _download_hub_file,
-    _import_hub_module,
-    _normalize_hub_result,
-)
+from lerobot.sim.integrations import envhub
 
 from .configs import EnvConfig, HubEnvConfig
 
@@ -61,27 +56,6 @@ def make_env_pre_post_processors(
     return env_cfg.get_env_processors()
 
 
-def make_hub_envs(
-    hub_path: str,
-    n_envs: int,
-    use_async_envs: bool,
-    trust_remote_code: bool,
-    hub_cache_dir: str | None = None,
-    cfg: EnvConfig | None = None,
-) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """Call a Hub repo's ``make_env`` and return its envs, as ``{suite: {task_id: env}}``."""
-    repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)
-    module = _import_hub_module(local_file, repo_id)
-    # A plain EnvHub config passes its make_env_kwargs. Provider configs (Isaac Lab Arena, Unitree G1)
-    # subclass it and pass themselves as ``cfg``, since their options are config fields.
-    options = cfg.make_env_kwargs if isinstance(cfg, HubEnvConfig) else {}
-    provider_cfg = None if type(cfg) is HubEnvConfig else cfg
-    raw_result = _call_make_env(
-        module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=provider_cfg, **options
-    )
-    return _normalize_hub_result(raw_result)
-
-
 def make_env(
     cfg: EnvConfig | str,
     n_envs: int = 1,
@@ -89,33 +63,35 @@ def make_env(
     hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """Build the vector envs of a config, or of a Hub repo's ``make_env``.
+    """Build the vector envs of a config, or of a Hub repo's `make_env`.
 
     Args:
-        cfg (EnvConfig | str): Either an `EnvConfig` describing the env, or a Hugging Face Hub repo ID
-            (e.g. `"username/repo"`) whose `env.py` builds the envs.
-        n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
-        use_async_envs (bool, optional): Whether to run each sub-env in its own worker process. Defaults
-            to False.
-        hub_cache_dir (str | None): Optional cache path for downloaded hub files.
-        trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
-            Default False — must be set to True to import/exec hub `env.py`.
-    Raises:
-        ValueError: if n_envs < 1
-        ModuleNotFoundError: If the requested env package is not installed
+        cfg (`EnvConfig | str`):
+            The env config, or a Hugging Face Hub repo ID (e.g. `"username/repo"`) whose `env.py` builds the
+            envs.
+        n_envs (`int`, *optional*, defaults to `1`):
+            Number of envs in each vector env.
+        use_async_envs (`bool`, *optional*, defaults to `False`):
+            Run each env in its own worker process.
+        hub_cache_dir (`str`, *optional*):
+            Folder to cache the downloaded `env.py` in. Only used with a repo ID.
+        trust_remote_code (`bool`, *optional*, defaults to `False`):
+            Consent to run a Hub repo's code, needed for a repo ID or an EnvHub config.
 
     Returns:
-        dict[str, dict[int, gym.vector.VectorEnv]]:
-            A mapping from suite name to indexed vectorized environments.
-            - For multi-task benchmarks (e.g., LIBERO): one entry per suite, and one vec env per task_id.
-            - For single-task envs: a single suite entry with task_id=0.
+        `dict[str, dict[int, gym.vector.VectorEnv]]`: The vector envs, as `{suite: {task_id: env}}`. A
+        single-task env has one suite, with task ID 0.
 
+    Raises:
+        ValueError: If `n_envs` is below 1.
+        RuntimeError: If a Hub repo's code would run without `trust_remote_code`.
+        ModuleNotFoundError: If the simulator, or a package the repo's `env.py` needs, is not installed.
     """
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
     # TODO: (jadechoghari): deprecate string API and remove this check
     if isinstance(cfg, str):
-        return make_hub_envs(cfg, n_envs, use_async_envs, trust_remote_code, hub_cache_dir)
+        return envhub.make_envs(cfg, n_envs, use_async_envs, trust_remote_code, hub_cache_dir)
     if isinstance(cfg, HubEnvConfig) and trust_remote_code:
         cfg.trust_remote_code = True
     return cfg.create_envs(n_envs=n_envs, use_async_envs=use_async_envs)

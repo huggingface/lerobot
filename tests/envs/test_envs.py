@@ -16,6 +16,7 @@
 import importlib
 from dataclasses import dataclass, field
 
+import draccus
 import gymnasium as gym
 import numpy as np
 import pytest
@@ -26,13 +27,9 @@ from gymnasium.utils.env_checker import check_env
 from lerobot.configs.types import PolicyFeature
 from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.envs.utils import (
-    _normalize_hub_result,
-    prepare_canonical_observation,
-    preprocess_observation,
-)
-from lerobot.sim.integrations.envhub import _parse_hub_url
-from tests.fixtures.toy_env import DictObservationEnv
+from lerobot.envs.utils import prepare_canonical_observation, preprocess_observation
+from lerobot.sim.integrations.envhub import _normalize_hub_result, _parse_hub_url
+from tests.fixtures.toy_env import DictObservationEnv, ToyEnvConfig
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -70,7 +67,7 @@ def test_factory(env_name):
     obs, _ = env.reset()
     obs = (
         prepare_canonical_observation(obs)
-        if getattr(env, "canonical_observations", False)
+        if env.metadata.get("canonical_observations", False)
         else preprocess_observation(obs)
     )
 
@@ -288,12 +285,21 @@ def test_gym_manipulator_points_to_the_real_robot_entry_points():
     assert "lerobot.rl.eval_policy" in str(e.value)
 
 
-def test_prepare_canonical_observation():
-    obs = {
-        "observation.image": np.full((2, 8, 8, 3), 255, np.uint8),
-        "observation.state": np.zeros((2, 2), np.float32),
-    }
-    converted = prepare_canonical_observation(obs)
-    assert converted["observation.image"].shape == (2, 3, 8, 8)
-    assert converted["observation.image"].max() == 1
-    assert converted["observation.state"].dtype == torch.float32
+def test_env_server_options_are_one_optional_group():
+    assert ToyEnvConfig().server is None and draccus.encode(ToyEnvConfig())["server"] is None
+    config = draccus.parse(
+        ToyEnvConfig, args=["--server.endpoint=tcp/127.0.0.1:7448", "--server.encoding=jpeg"]
+    )
+    assert (config.server.endpoint, config.server.encoding) == ("tcp/127.0.0.1:7448", "jpeg")
+    with pytest.raises(draccus.utils.DecodingError, match="endpoint"):
+        draccus.parse(ToyEnvConfig, args=["--server.encoding=jpeg"])
+    # A typo fails while parsing the command line, not when the client starts.
+    with pytest.raises(SystemExit):
+        draccus.parse(ToyEnvConfig, args=["--server.endpoint=tcp/127.0.0.1:7448", "--server.encoding=jpg"])
+
+
+def test_env_config_saves_only_its_settings():
+    # Saved with a training config after its env is built; the env's description is runtime state.
+    config = ToyEnvConfig()
+    config.create_env().close()
+    assert "descriptor" not in draccus.encode(config)

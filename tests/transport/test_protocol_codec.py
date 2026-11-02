@@ -12,7 +12,13 @@ pytest.importorskip("msgpack")
 import msgpack
 
 from lerobot.transport.protocol import codec
-from lerobot.transport.protocol.codec import CodecLimits, RGBImage, decode_message, encode_message
+from lerobot.transport.protocol.codec import (
+    CodecLimits,
+    RGBImage,
+    decode_message,
+    encode_message,
+    peek_envelope,
+)
 from lerobot.transport.protocol.envelope import Envelope, ErrorCode, MessageType, ProtocolError
 
 
@@ -155,8 +161,6 @@ def test_session_message_requires_identity():
 
 
 def test_peek_correlates_malformed_obsolete_body_without_allocating(monkeypatch):
-    from lerobot.transport.protocol.codec import peek_envelope
-
     invalid = {"__lerobot_type__": "tensor", "dtype": "object", "shape": [1], "data": b""}
     monkeypatch.setattr(np, "frombuffer", lambda *a, **k: pytest.fail("allocated in header peek"))
     header = peek_envelope(packed_record(invalid))
@@ -175,18 +179,14 @@ def test_aggregate_nodes_are_bounded_during_unpacking(read, nested, monkeypatch)
     payload = msgpack.packb(envelope, use_bin_type=True)
     limits = replace(codec.CodecLimits(), max_container_items=16, max_nodes=24)
     completed = []
-    from lerobot.transport.protocol import codec as protocol_codec
-
-    sequence = protocol_codec._UnpackBudget.sequence
+    sequence = codec._UnpackBudget.sequence
 
     def count_sequence(self, items):
         completed.append(len(items))
         return sequence(self, items)
 
-    monkeypatch.setattr(protocol_codec._UnpackBudget, "sequence", count_sequence)
-    monkeypatch.setattr(
-        protocol_codec, "_decode_value", lambda *args: pytest.fail("reached full body decoding")
-    )
+    monkeypatch.setattr(codec._UnpackBudget, "sequence", count_sequence)
+    monkeypatch.setattr(codec, "_decode_value", lambda *args: pytest.fail("reached full body decoding"))
     with pytest.raises(ProtocolError, match="node count.*parsing"):
         read(payload, limits)
     # The outer groups list is never completed: parsing stopped within its children.

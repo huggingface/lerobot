@@ -31,7 +31,7 @@ lerobot-eval \
 Served: start the server with the same environment (see [Serve an environment](#serve-an-environment)), and add its endpoint:
 
 ```bash
-lerobot-env-server --docker --config=docker/sim/configs/libero.yaml
+lerobot-env-server --config_path=docker/sim/configs/libero.yaml --docker=true
 lerobot-eval ... --env.server.endpoint=tcp/127.0.0.1:7448
 ```
 
@@ -74,9 +74,9 @@ lerobot-rollout \
 
 A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. `lerobot-record` stores the body the environment declares as the dataset's `robot_type` (`panda` for LIBERO), or `sim_robot` when it declares none.
 
-Recorded episodes follow the environment's. `lerobot-record` and the episodic rollout strategy restart the simulated world at the start of each episode, and end it when the environment's episode ends (success, termination or its step limit) or when its duration is up, whichever comes first. Each recorded episode is therefore one simulated episode, from its initial state. Nothing needs resetting by hand, so skip the reset phase between episodes with `--dataset.reset_time_s=0`, and with the episodic rollout strategy also pass `--strategy.reset_to_initial_position=false`. When an episode ends, the robot stops: it ignores actions and keeps its final state, and `latest` keeps the final reward, termination and success. Teleoperation and the base rollout strategy then start a new episode (the strategy also resets the policy), and replay stops. The sentry, highlight and DAgger strategies don't support sim robots yet, since they record by time or on demand rather than per episode; use the episodic strategy to record. Real robots are unaffected: their episodes are timed, and their scene is reset by hand. For success rates, evaluate with `lerobot-eval` and a batched env.
+Recorded episodes follow the environment's. `lerobot-record` and the episodic rollout strategy restart the simulated environment at the start of each episode, and end it when the environment's episode ends (success, termination or its step limit) or when its duration is up, whichever comes first. Each recorded episode is therefore one simulated episode, from its initial state. Nothing needs resetting by hand, so skip the reset phase between episodes with `--dataset.reset_time_s=0`, and with the episodic rollout strategy also pass `--strategy.reset_to_initial_position=false`. When an episode ends, the robot stops: it ignores actions and keeps its final state, and `latest` keeps the final reward, termination and success. Teleoperation and the base rollout strategy then start a new episode (the strategy also resets the policy), and replay stops. The sentry, highlight and DAgger strategies don't support sim robots yet, since they record by time or on demand rather than per episode; use the episodic strategy to record. Real robots are unaffected: their episodes are timed, and their scene is reset by hand. For success rates, evaluate with `lerobot-eval` and a batched env.
 
-Robot camera features use the same `observation.images.<camera>` names as real-hardware recording. A single unnamed camera is `observation.images.image`. Native batched evaluation keeps legacy benchmark names such as `observation.image`; when deploying a checkpoint with that name through `SimRobot`, use `--rename_map='{"observation.images.image": "observation.image"}'`.
+Robot camera features use the same `observation.images.<camera>` names as real-hardware recording. A single unnamed camera is `observation.images.image`. Batched evaluation keeps the environment's own keys, such as `observation.image` for a single camera; when deploying a checkpoint with that name through `SimRobot`, use `--rename_map='{"observation.images.image": "observation.image"}'`.
 
 For remote inference, keep the same `--robot.*` options and replace the local policy and inference options with:
 
@@ -96,22 +96,22 @@ When the policy is late, holding a sim robot does not advance physics. Simulator
 From a LeRobot source checkout (the image is built from it), run from the repository root:
 
 ```bash
-lerobot-env-server --docker --config=docker/sim/configs/libero.yaml
+lerobot-env-server --config_path=docker/sim/configs/libero.yaml --docker=true
 ```
 
-`--docker` uses `docker/sim/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another simulator. Each simulator's control rate, action convention and component names come from its integration's `conventions()`, so a YAML only names the task and the simulator's options.
+`--docker=true` uses `docker/sim/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another simulator. Each simulator's control rate, action convention, component names and robot type come from its integration's `conventions()`, so a YAML only names the task and the simulator's options.
 
-`--set` overrides keys of the YAML (values parsed as YAML) and leaves the file unchanged:
+As for `lerobot-policy-server`, every YAML field accepts a nested command-line override, and the file stays unchanged. A dictionary value such as `sim.kwargs` is merged into the YAML's:
 
 ```bash
-lerobot-env-server --docker --config=docker/sim/configs/libero.yaml \
-  --set sim.kwargs.gym_kwargs.observation_height=256 \
-  --set sim.kwargs.gym_kwargs.observation_width=256
+lerobot-env-server --config_path=docker/sim/configs/libero.yaml --docker=true \
+  --sim.task=libero_goal \
+  --sim.kwargs='{gym_kwargs: {observation_height: 256, observation_width: 256}}'
 ```
 
-The effective configuration is kept under `$HF_LEROBOT_HOME/sim`, so a restarted container finds it. Switching configuration recreates the server and ends active sessions. The image is built when missing; add `--build` to rebuild it after changing the simulator or LeRobot source, or `--stop` to shut down the server. The container requires Docker GPU access for EGL rendering. [EnvHub](./envhub) repositories are served with `--envhub=<user/repo>`; see [EnvHub and the simulator server](./envhub#envhub-and-the-simulator-server).
+The effective configuration is kept under `$HF_LEROBOT_HOME/sim`, so a restarted container finds it. Switching configuration recreates the server and ends active sessions. The image is built when missing; add `--build=true` to rebuild it after changing the simulator or LeRobot source, or `--stop=true` to shut down the server. The container requires Docker GPU access for EGL rendering. [EnvHub](./envhub) repositories are served with `--envhub=<user/repo>`; see [EnvHub and the simulator server](./envhub#envhub-and-the-simulator-server).
 
-Without `--docker`, the same command runs the server in the current environment: install the simulator's native dependencies in an isolated environment, install LeRobot with `--no-deps`, and install `docker/sim/requirements.txt`. It listens on localhost; `--listen=tcp/0.0.0.0:7448` accepts other machines, and a `zenoh.config_file` in the YAML adds TLS and access control.
+Without `--docker=true`, the same command runs the server in the current environment: install the simulator's native dependencies in an isolated environment, install LeRobot with `--no-deps`, and install `docker/sim/requirements.txt`. It listens on localhost; `--zenoh.listen_endpoints='[tcp/0.0.0.0:7448]'` accepts other machines, and a `zenoh.config_file` in the YAML adds TLS and access control.
 
 LIBERO runtime images use converted NumPy initial-state files. The image build converts trusted upstream assets with `scripts/ci/convert_libero_init_states.py`; the server rejects missing converted files. RoboTwin and RoboMME require their own torch for native planning and ManiSkill, respectively; their torch installations are isolated from the policy environment.
 

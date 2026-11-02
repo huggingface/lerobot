@@ -17,8 +17,6 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from lerobot.utils.feature_spec import FeatureSpec as FeatureSpec
-
 
 class ExecutionMode(StrEnum):
     """An explicitly negotiated action execution mode."""

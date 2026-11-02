@@ -48,6 +48,7 @@ jobs:
       - id: matrix
         run: echo "benchmarks=$(python3 scripts/ci/benchmark_matrix.py)" >> "$GITHUB_OUTPUT"
   benchmark:
+    name: ${{ matrix.name }}
     needs: matrix
     permissions:
       contents: read

@@ -62,7 +62,6 @@ class Robot(abc.ABC):
         self.calibration_dir = (
             config.calibration_dir if config.calibration_dir else HF_LEROBOT_CALIBRATION / ROBOTS / self.name
         )
-        self.calibration_dir.mkdir(parents=True, exist_ok=True)
         self.calibration_fpath = self.calibration_dir / f"{self.id}.json"
         self.calibration: dict[str, MotorCalibration] = {}
         if self.calibration_fpath.is_file():
@@ -180,6 +179,7 @@ class Robot(abc.ABC):
             fpath (Path | None): Optional path to save the calibration file. Defaults to `self.calibration_fpath`.
         """
         fpath = self.calibration_fpath if fpath is None else fpath
+        fpath.parent.mkdir(parents=True, exist_ok=True)
         with open(fpath, "w") as f, draccus.config_type("json"):
             draccus.dump(self.calibration, f, indent=4)
 

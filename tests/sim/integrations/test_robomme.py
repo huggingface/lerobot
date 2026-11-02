@@ -11,14 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Unit tests for the RoboMME env wrapper and config.
 
-RoboMME requires Linux + ManiSkill (Vulkan/SAPIEN), so tests that touch the
-env wrapper mock the ``robomme`` package. Tests that only exercise the
-dataclass config run without any mocking.
+RoboMME requires Linux + ManiSkill (Vulkan/SAPIEN), so tests that build the
+env wrapper stub the ``robomme`` package. The other tests run without it.
 """
-
-from __future__ import annotations
 
 import sys
 from types import ModuleType
@@ -27,9 +25,13 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from lerobot.envs.configs import RoboMMEEnv
+from lerobot.sim.integrations.robomme import RoboMMEGymEnv, canonical_observation, env_fns
 
-def _install_robomme_stub():
-    """Register a minimal stub for the ``robomme`` package on sys.modules."""
+
+@pytest.fixture
+def robomme_stub(monkeypatch):
+    """Register a minimal stub for the ``robomme`` package, which the env wrapper imports when built."""
     stub = ModuleType("robomme")
     wrapper_stub = ModuleType("robomme.env_record_wrapper")
 
@@ -54,13 +56,8 @@ def _install_robomme_stub():
 
     wrapper_stub.BenchmarkEnvBuilder = FakeBuilder
     stub.env_record_wrapper = wrapper_stub
-    sys.modules["robomme"] = stub
-    sys.modules["robomme.env_record_wrapper"] = wrapper_stub
-
-
-def _uninstall_robomme_stub():
-    sys.modules.pop("robomme", None)
-    sys.modules.pop("robomme.env_record_wrapper", None)
+    monkeypatch.setitem(sys.modules, "robomme", stub)
+    monkeypatch.setitem(sys.modules, "robomme.env_record_wrapper", wrapper_stub)
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +66,6 @@ def _uninstall_robomme_stub():
 
 
 def test_robomme_env_config_defaults():
-    from lerobot.envs.configs import RoboMMEEnv
-
     cfg = RoboMMEEnv()
     assert cfg.task == "PickXtimes"
     assert cfg.fps == 10
@@ -81,22 +76,15 @@ def test_robomme_env_config_defaults():
 
 
 def test_robomme_env_config_type():
-    from lerobot.envs.configs import RoboMMEEnv
-
-    cfg = RoboMMEEnv()
-    assert cfg.type == "robomme"
+    assert RoboMMEEnv().type == "robomme"
 
 
 def test_robomme_rejects_duplicate_camera_names():
-    from lerobot.envs.configs import RoboMMEEnv
-
     with pytest.raises(ValueError, match="camera names must be distinct"):
         RoboMMEEnv(front_camera_name="camera", wrist_camera_name="camera")
 
 
 def test_robomme_settings_name_the_cameras_and_action_space():
-    from lerobot.envs.configs import RoboMMEEnv
-
     kwargs = RoboMMEEnv(front_camera_name="image", wrist_camera_name="wrist_image").sim_settings()["kwargs"]
     assert (kwargs["front_camera_name"], kwargs["wrist_camera_name"]) == ("image", "wrist_image")
 
@@ -105,10 +93,42 @@ def test_robomme_settings_name_the_cameras_and_action_space():
     ("action_space", "control_mode", "names"), [("joint_angle", "position", 8), ("ee_pose", "eef_pose", 0)]
 )
 def test_robomme_conventions_follow_the_action_space(action_space, control_mode, names):
-    from lerobot.envs.configs import RoboMMEEnv
-
     sim = RoboMMEEnv(action_space=action_space).sim_config()
     assert sim.control_mode == control_mode and len(sim.action_names) == names
+
+
+# ---------------------------------------------------------------------------
+# Env wrapper (stubbed sim)
+# ---------------------------------------------------------------------------
+
+
+def test_reset_exposes_episode_task_description(robomme_stub):
+    env = RoboMMEGymEnv(task="PickXtimes")
+    env.reset()
+
+    assert env.task == "PickXtimes"
+    assert env.task_description == "pick the cube"
+
+
+def test_close_releases_underlying_simulator(robomme_stub):
+    env = RoboMMEGymEnv(task="PickXtimes")
+    env.reset()
+    simulator = env._env
+    env.close()
+
+    simulator.close.assert_called_once_with()
+    assert env._env is None
+    assert env._last_raw_obs is None
+
+
+def test_reset_closes_previous_simulator(robomme_stub):
+    env = RoboMMEGymEnv(task="PickXtimes")
+    env.reset()
+    first_simulator = env._env
+    env.reset()
+
+    first_simulator.close.assert_called_once_with()
+    assert env._env is not first_simulator
 
 
 # ---------------------------------------------------------------------------
@@ -116,144 +136,70 @@ def test_robomme_conventions_follow_the_action_space(action_space, control_mode,
 # ---------------------------------------------------------------------------
 
 
-def test_reset_exposes_episode_task_description():
-    _install_robomme_stub()
-    try:
-        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
-
-        env = RoboMMEGymEnv(task="PickXtimes")
-        env.reset()
-
-        assert env.task == "PickXtimes"
-        assert env.task_description == "pick the cube"
-    finally:
-        _uninstall_robomme_stub()
-
-
-def test_close_releases_underlying_simulator():
-    _install_robomme_stub()
-    try:
-        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
-
-        env = RoboMMEGymEnv(task="PickXtimes")
-        env.reset()
-        simulator = env._env
-        env.close()
-
-        simulator.close.assert_called_once_with()
-        assert env._env is None
-        assert env._last_raw_obs is None
-    finally:
-        _uninstall_robomme_stub()
-
-
-def test_reset_closes_previous_simulator():
-    _install_robomme_stub()
-    try:
-        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
-
-        env = RoboMMEGymEnv(task="PickXtimes")
-        env.reset()
-        first_simulator = env._env
-        env.reset()
-
-        first_simulator.close.assert_called_once_with()
-        assert env._env is not first_simulator
-    finally:
-        _uninstall_robomme_stub()
-
-
 def test_convert_obs_list_format():
     """_convert_obs takes the last element from list-format obs fields and
     emits a nested ``pixels`` dict using policy-aligned camera names plus ``agent_pos``.
 
-    The nested layout is required so ``preprocess_observation()`` in
-    ``envs/utils.py`` maps each camera to ``observation.images.<cam>``.
+    The nested layout is required so the integration's ``canonical_observation()``
+    maps each camera to ``observation.images.<cam>``.
     """
-    _install_robomme_stub()
-    try:
-        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
+    env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
 
-        env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
+    front = np.full((256, 256, 3), 42, dtype=np.uint8)
+    wrist = np.full((256, 256, 3), 7, dtype=np.uint8)
+    joints = np.arange(7, dtype=np.float32)
+    gripper = np.array([0.5, 0.5], dtype=np.float32)
 
-        front = np.full((256, 256, 3), 42, dtype=np.uint8)
-        wrist = np.full((256, 256, 3), 7, dtype=np.uint8)
-        joints = np.arange(7, dtype=np.float32)
-        gripper = np.array([0.5, 0.5], dtype=np.float32)
+    obs_raw = {
+        "front_rgb_list": [np.zeros_like(front), front],
+        "wrist_rgb_list": [np.zeros_like(wrist), wrist],
+        "joint_state_list": [np.zeros(7, dtype=np.float32), joints],
+        "gripper_state_list": [np.zeros(2, dtype=np.float32), gripper],
+    }
 
-        obs_raw = {
-            "front_rgb_list": [np.zeros_like(front), front],
-            "wrist_rgb_list": [np.zeros_like(wrist), wrist],
-            "joint_state_list": [np.zeros(7, dtype=np.float32), joints],
-            "gripper_state_list": [np.zeros(2, dtype=np.float32), gripper],
-        }
+    result = env._convert_obs(obs_raw)
+    np.testing.assert_array_equal(result["pixels"]["camera1"], front)
+    np.testing.assert_array_equal(result["pixels"]["camera2"], wrist)
+    assert result["agent_pos"].shape == (8,)
+    np.testing.assert_array_almost_equal(result["agent_pos"][:7], joints)
+    assert result["agent_pos"][7] == gripper[0]
 
-        result = env._convert_obs(obs_raw)
-        np.testing.assert_array_equal(result["pixels"]["camera1"], front)
-        np.testing.assert_array_equal(result["pixels"]["camera2"], wrist)
-        assert result["agent_pos"].shape == (8,)
-        np.testing.assert_array_almost_equal(result["agent_pos"][:7], joints)
-        assert result["agent_pos"][7] == gripper[0]
-
-        from lerobot.envs.utils import preprocess_observation
-
-        processed = preprocess_observation(result)
-        assert "observation.images.camera1" in processed
-        assert "observation.images.camera2" in processed
-    finally:
-        _uninstall_robomme_stub()
+    canonical = canonical_observation(result)
+    assert set(canonical) == {"observation.images.camera1", "observation.images.camera2", "observation.state"}
 
 
 def test_convert_obs_array_format():
     """_convert_obs also handles non-list (direct array) obs."""
-    _install_robomme_stub()
-    try:
-        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
+    env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
 
-        env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
-
-        front = np.zeros((256, 256, 3), dtype=np.uint8)
-        obs_raw = {
-            "front_rgb_list": front,
-            "wrist_rgb_list": front,
-            "joint_state_list": np.zeros(7, dtype=np.float32),
-            "gripper_state_list": np.zeros(2, dtype=np.float32),
-        }
-        result = env._convert_obs(obs_raw)
-        assert result["pixels"]["camera1"].shape == (256, 256, 3)
-        assert result["pixels"]["camera2"].shape == (256, 256, 3)
-        assert result["agent_pos"].shape == (8,)
-    finally:
-        _uninstall_robomme_stub()
+    front = np.zeros((256, 256, 3), dtype=np.uint8)
+    obs_raw = {
+        "front_rgb_list": front,
+        "wrist_rgb_list": front,
+        "joint_state_list": np.zeros(7, dtype=np.float32),
+        "gripper_state_list": np.zeros(2, dtype=np.float32),
+    }
+    result = env._convert_obs(obs_raw)
+    assert result["pixels"]["camera1"].shape == (256, 256, 3)
+    assert result["pixels"]["camera2"].shape == (256, 256, 3)
+    assert result["agent_pos"].shape == (8,)
 
 
 # ---------------------------------------------------------------------------
-# env_fns (mocked sim)
+# env_fns (factories only, no sim)
 # ---------------------------------------------------------------------------
 
 
 def test_robomme_env_fns_returns_correct_structure():
     """Single task -> {task_name: {task_id: [factory, ...]}} with one entry per task_id."""
-    _install_robomme_stub()
-    try:
-        from lerobot.sim.integrations.robomme import env_fns
+    result = env_fns(task="PickXtimes", n_envs=2, task_ids=[0, 1])
 
-        result = env_fns(task="PickXtimes", n_envs=2, task_ids=[0, 1])
-
-        assert list(result) == ["PickXtimes"] and list(result["PickXtimes"]) == [0, 1]
-        assert all(len(factories) == 2 for factories in result["PickXtimes"].values())
-    finally:
-        _uninstall_robomme_stub()
+    assert list(result) == ["PickXtimes"] and list(result["PickXtimes"]) == [0, 1]
+    assert all(len(factories) == 2 for factories in result["PickXtimes"].values())
 
 
 def test_robomme_env_fns_multi_task():
     """Comma-separated task list produces one suite per task."""
-    _install_robomme_stub()
-    try:
-        from lerobot.sim.integrations.robomme import env_fns
+    result = env_fns(task="PickXtimes,BinFill,StopCube", n_envs=1)
 
-        result = env_fns(task="PickXtimes,BinFill,StopCube", n_envs=1)
-
-        assert set(result.keys()) == {"PickXtimes", "BinFill", "StopCube"}
-    finally:
-        _uninstall_robomme_stub()
+    assert set(result.keys()) == {"PickXtimes", "BinFill", "StopCube"}

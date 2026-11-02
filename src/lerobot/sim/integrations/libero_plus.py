@@ -23,5 +23,5 @@ __all__ = ["canonical_observation", "conventions", "env_fns"]
 
 
 def env_fns(**kwargs: Any) -> dict[str, dict[int, list[Callable[[], Any]]]]:
-    """Return LIBERO-plus env factories; takes the same arguments as LIBERO's ``env_fns``."""
+    """Return LIBERO-plus env factories; takes the same arguments as LIBERO's `env_fns`."""
     return _env_fns(**{**kwargs, "is_libero_plus": True})

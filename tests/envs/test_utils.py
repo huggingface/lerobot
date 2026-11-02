@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Which checkpoints a simulator admits."""
+"""Env helpers: which checkpoints a simulator admits, and how its observations reach a policy."""
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
+import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.envs.utils import validate_checkpoint
+from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoint
 from tests.fixtures.toy_env import ToyEnvConfig
 
 
@@ -65,3 +67,14 @@ def test_checkpoint_admission():
     config.output_features["action"] = PolicyFeature(FeatureType.ACTION, (7,))
     with pytest.raises(ValueError, match="action dimension"):
         validate_checkpoint(descriptor, config, rename_map)
+
+
+def test_prepare_canonical_observation():
+    obs = {
+        "observation.image": np.full((2, 8, 8, 3), 255, np.uint8),
+        "observation.state": np.zeros((2, 2), np.float32),
+    }
+    converted = prepare_canonical_observation(obs)
+    assert converted["observation.image"].shape == (2, 3, 8, 8)
+    assert converted["observation.image"].max() == 1
+    assert converted["observation.state"].dtype == torch.float32

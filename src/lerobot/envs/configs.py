@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import draccus
 import gymnasium as gym
@@ -29,13 +29,14 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.sim.config import SimConfig
+from lerobot.sim.integrations import envhub
 from lerobot.sim.types import EnvDescriptor
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 if TYPE_CHECKING:
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.vector_env import LocalVectorEnv
+    from lerobot.sim.local_vector_env import LocalVectorEnv
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,8 @@ SERVED_TIMEOUT_S = 120.0
 
 
 @dataclass
-class EnvServerConfig:
-    """Address of a `lerobot-env-server` that runs the env, and how the client talks to it."""
+class EnvClientConfig:
+    """How the client reaches the `lerobot-env-server` that runs the env."""
 
     endpoint: str
     # Deployment name on the server. Defaults to the env type, which is how server configs name it.
@@ -54,9 +55,13 @@ class EnvServerConfig:
     handshake_timeout_s: float = 10.0
     # Zenoh JSON5 file with TLS and access-control settings, as for remote inference.
     zenoh_config_path: str | None = None
-    # "raw" or "jpeg". JPEG (at jpeg_quality) sends camera frames with less bandwidth but lower quality.
-    encoding: str = "raw"
+    # JPEG (at jpeg_quality) sends camera frames with less bandwidth but lower quality.
+    encoding: Literal["raw", "jpeg"] = "raw"
     jpeg_quality: int = 90
+
+    def __post_init__(self):
+        if self.encoding not in {"raw", "jpeg"} or not 1 <= self.jpeg_quality <= 100:
+            raise ValueError("Env server encoding must be raw or jpeg, with jpeg_quality in [1, 100]")
 
 
 @dataclass
@@ -68,8 +73,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     features_map: dict[str, str] = field(default_factory=dict)
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
-    # Env server that runs this env. When unset, the env runs in this process.
-    server: EnvServerConfig | None = None
+    # Env server that runs this env, and how to reach it. When unset, the env runs locally.
+    server: EnvClientConfig | None = None
 
     @property
     def type(self) -> str:
@@ -113,22 +118,24 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         for group in groups:
             if group not in descriptor.tasks:
                 raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
-            result[group] = {int(task_id): make(group, int(task_id)) for task_id in descriptor.tasks[group]}
+            result[group] = {task_id: make(group, task_id) for task_id in descriptor.tasks[group]}
         return result
 
     def create_env(
         self,
         task_group: str | None = None,
-        task_id: int = 0,
+        task_id: int | None = None,
         n_envs: int = 1,
         use_async_envs: bool = False,
     ) -> LocalVectorEnv | RemoteVectorEnv:
-        """Create one local or served vector env for one task."""
+        """Create one local or served vector env for one task; no `task_id` means the suite's first task."""
         descriptor, make = self._environment_factory(n_envs, use_async_envs, task_group, task_id)
         group = task_group or next(iter(descriptor.tasks))
         if group not in descriptor.tasks:
             raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
-        task_ids = {int(value) for value in descriptor.tasks[group]}
+        task_ids = descriptor.tasks[group]
+        if task_id is None:
+            task_id = task_ids[0]
         if task_id not in task_ids:
             raise ValueError(f"Unknown task ID {task_id} for {group!r}; this suite has {sorted(task_ids)}")
         return make(group, task_id)
@@ -140,7 +147,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         task_group: str | None = None,
         task_id: int | None = None,
     ) -> tuple[EnvDescriptor, Callable[[str, int], LocalVectorEnv | RemoteVectorEnv]]:
-        from lerobot.sim.vector_env import LocalVectorEnv
+        from lerobot.sim.local_vector_env import LocalVectorEnv
 
         settings = self.sim_settings()
         server = self.server
@@ -170,8 +177,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                     n_envs,
                     group,
                     task_id,
-                    descriptor,
                     use_async_envs and n_envs > 1,
+                    descriptor,
                 )
         else:
             sim = self.sim_config()
@@ -259,9 +266,17 @@ class HubEnvConfig(EnvConfig):
             raise ValueError("use_native_batch runs locally; it cannot use an env server")
         if not self.hub_path:
             raise ValueError("--env.hub_path is required for an EnvHub environment")
-        from .factory import make_hub_envs
-
-        return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
+        # Provider configs (Isaac Lab Arena, Unitree G1) subclass this one and also pass themselves as `cfg`,
+        # since their options are config fields.
+        provider = None if type(self) is HubEnvConfig else self
+        return envhub.make_envs(
+            self.hub_path,
+            n_envs,
+            use_async_envs,
+            self.trust_remote_code,
+            cfg=provider,
+            **self.make_env_kwargs,
+        )
 
     def sim_settings(self) -> dict[str, Any]:
         if self.use_native_batch:

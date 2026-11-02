@@ -18,7 +18,7 @@ import argparse
 from pathlib import Path
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     args = parser.parse_args()

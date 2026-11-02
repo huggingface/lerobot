@@ -19,6 +19,8 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
+
 # Same as lerobot.lerobot_types.RobotObservation, redefined here so integrations don't import torch.
 RobotObservation = dict[str, Any]
 
@@ -28,29 +30,32 @@ def canonical_observation(
     *,
     flip_images: bool = False,
 ) -> dict[str, np.ndarray]:
-    """Map a simulator observation to LeRobot keys; images must be HWC ``uint8``."""
+    """Map a simulator observation to LeRobot keys; images must be HWC `uint8` with three channels.
+
+    With `flip_images`, images are rotated by 180 degrees, as LIBERO needs.
+    """
     result = {}
     pixels = obs.get("pixels")
     if pixels is not None:
         images = pixels if isinstance(pixels, dict) else {None: pixels}
         for name, image in images.items():
+            key = f"{OBS_IMAGES}.{name}" if name is not None else OBS_IMAGE
             image = np.asarray(image)
             if image.ndim != 3 or image.shape[-1] != 3 or image.dtype != np.uint8:
-                raise ValueError("Canonical RGB requires HWC uint8")
+                raise ValueError(
+                    f"Feature {key!r}: images must be HWC uint8 with three channels, "
+                    f"got {image.shape}, {image.dtype}"
+                )
             if flip_images:
                 image = image[::-1, ::-1]
-            key = f"observation.images.{name}" if name is not None else "observation.image"
             result[key] = np.ascontiguousarray(image)
-    for raw, canonical in (
-        ("agent_pos", "observation.state"),
-        ("environment_state", "observation.environment_state"),
-    ):
+    for raw, canonical in (("agent_pos", OBS_STATE), ("environment_state", OBS_ENV_STATE)):
         if raw in obs:
             result[canonical] = np.asarray(obs[raw], dtype=np.float32)
     handled = {"pixels", "agent_pos", "environment_state"}
     for key, value in obs.items():
         if key not in handled and isinstance(value, np.ndarray):
-            target = key if key.startswith("observation.") else f"observation.{key}"
+            target = key if key.startswith(f"{OBS_STR}.") else f"{OBS_STR}.{key}"
             result[target] = np.asarray(value, dtype=np.float32)
     return result
 
