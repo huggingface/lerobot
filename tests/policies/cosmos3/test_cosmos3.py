@@ -40,7 +40,6 @@ from tests.utils import DEVICE  # noqa: E402
 
 BATCH_SIZE = 2
 CHUNK_SIZE = 4
-IMAGE_SIZE = 32
 TASKS = ["pick up the black bowl", "open the top drawer and put the bowl inside"]
 # Two layers of the released text backbones, with their vocabulary and special tokens for the real tokenizers.
 TEXT_CONFIG = {
@@ -59,6 +58,7 @@ CASES = [
         {
             "policy_type": "cosmos3_nano",
             "camera_keys": ["observation.images.image", "observation.images.wrist_image"],
+            "image_size": (32, 32),
             "action_names": [*(f"pos_{i}" for i in range(3)), *(f"rot6d_{i}" for i in range(6)), "gripper_0"],
             "recipe": {},
         },
@@ -72,6 +72,7 @@ CASES = [
                 "observation.images.exterior_1",
                 "observation.images.exterior_2",
             ],
+            "image_size": (32, 33),  # odd width: the two lower views split the top view width
             "action_names": [*(f"joint_{i}" for i in range(7)), "gripper_0"],
             "recipe": {"use_state": True, "idle_state": True, "guidance_scale": 2.0},
         },
@@ -134,7 +135,7 @@ def make_policy_and_processors(case: dict):
         **case["recipe"],
     )
     config.input_features = {
-        key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, IMAGE_SIZE, IMAGE_SIZE))
+        key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, *case["image_size"]))
         for key in case["camera_keys"]
     }
     if config.use_state:
@@ -154,7 +155,7 @@ def make_batch(case: dict, training: bool) -> dict:
     """
     action_dim = len(case["action_names"])
     frames = (CHUNK_SIZE + 1,) if training else ()
-    batch = {key: torch.rand(BATCH_SIZE, *frames, 3, IMAGE_SIZE, IMAGE_SIZE) for key in case["camera_keys"]}
+    batch = {key: torch.rand(BATCH_SIZE, *frames, 3, *case["image_size"]) for key in case["camera_keys"]}
     batch[OBS_STATE] = torch.randn(BATCH_SIZE, action_dim)
     batch["task"] = TASKS
     if training:

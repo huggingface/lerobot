@@ -282,8 +282,8 @@ class Cosmos3VideoCanvasProcessorStep(ComplementaryDataProcessorStep):
        for DROID.
     2. Every view is resized to `view_size` (bilinear with antialias, rounded to uint8 levels) when it has
        another size.
-    3. One view is used as is, two go side by side, three put the first on top and the others at half size
-       side by side below it.
+    3. One view is used as is, two go side by side, three put the first on top and the others below it at half
+       its height, side by side and splitting its width.
     4. The canvas is quantized to uint8 and fit into the canvas of its resolution tier (the shorter side picks
        the tier, the closest aspect ratio the canvas) without enlarging it: bicubic resizing with antialias,
        then reflection padding on the right and at the bottom (edge replication when the padding is wider than
@@ -358,10 +358,12 @@ class Cosmos3VideoCanvasProcessorStep(ComplementaryDataProcessorStep):
         if len(views) == 2:
             return torch.cat(views, dim=-1)
         top, *bottom = views
-        half_size = (top.shape[-2] // 2, top.shape[-1] // 2)
+        height, width = top.shape[-2:]
         halves = []
-        for view in bottom:
-            half = F.interpolate(view.flatten(0, 1), size=half_size, mode="bilinear", align_corners=False)
+        for view, half_width in zip(bottom, (width // 2, width - width // 2), strict=True):
+            half = F.interpolate(
+                view.flatten(0, 1), size=(height // 2, half_width), mode="bilinear", align_corners=False
+            )
             halves.append(half.unflatten(0, view.shape[:2]))
         return torch.cat([top, torch.cat(halves, dim=-1)], dim=-2)
 
