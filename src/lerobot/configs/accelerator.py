@@ -51,7 +51,7 @@ class MixedPrecisionPolicyConfig:
     # Dtype of the unsharded parameters: the forward, the backward and the all-gather.
     # None keeps their dtype.
     param_dtype: torch.dtype | None = None
-    # Dtype of the gradient reduction. None follows `param_dtype`.
+    # Dtype of the gradient reduction. None leaves it to torch (the gradient dtype since torch 2.15).
     reduce_dtype: torch.dtype | None = None
     # Dtype every FSDP unit casts its floating-point outputs to. None leaves them unchanged.
     output_dtype: torch.dtype | None = None

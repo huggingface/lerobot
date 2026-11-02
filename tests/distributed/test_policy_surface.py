@@ -97,8 +97,38 @@ class _UndeclaredPolicy(nn.Module):
     _fsdp_wrap_modules = None
 
 
+class _TiedPolicy(nn.Module):
+    """A language head tied to the input embedding, 1024 parameters each."""
+
+    _fsdp_wrap_modules = None
+
+    def __init__(self):
+        super().__init__()
+        self.embed = nn.Embedding(64, 16)
+        self.head = nn.Linear(16, 64, bias=False)
+        self.head.weight = self.embed.weight
+
+
 def _accelerator_with(plugin) -> SimpleNamespace:
     return SimpleNamespace(state=SimpleNamespace(fsdp_plugin=plugin))
+
+
+class TestTiedWeightGuard:
+    """Size-based wrapping needs no accelerate, so the guard stays covered in base CI."""
+
+    @staticmethod
+    def _plugin(min_num_params, ignored_modules=None) -> SimpleNamespace:
+        return SimpleNamespace(
+            min_num_params=min_num_params, transformer_cls_names_to_wrap=None, ignored_modules=ignored_modules
+        )
+
+    def test_rejects_splitting_tied_weights(self):
+        with pytest.raises(ValueError, match=r"'embed\.weight' and 'head\.weight'"):
+            set_fsdp_wrap_modules(_accelerator_with(self._plugin(512)), _TiedPolicy())
+
+    @pytest.mark.parametrize("min_num_params,ignored_modules", [(4096, None), (512, "embed")])
+    def test_accepts_unsplit_or_ignored_tied_weights(self, min_num_params, ignored_modules):
+        set_fsdp_wrap_modules(_accelerator_with(self._plugin(min_num_params, ignored_modules)), _TiedPolicy())
 
 
 class TestSetFsdpWrapModules:
@@ -132,6 +162,15 @@ class TestSetFsdpWrapModules:
         plugin = FSDPConfig(min_num_params=1024).build_plugin()
         set_fsdp_wrap_modules(_accelerator_with(plugin), _UndeclaredPolicy())
         assert plugin.transformer_cls_names_to_wrap is None
+
+    def test_class_based_wrap_rejects_splitting_tied_weights(self):
+        plugin = FSDPConfig(wrap_modules=["Embedding"]).build_plugin()
+        with pytest.raises(ValueError, match=r"'embed\.weight' and 'head\.weight'"):
+            set_fsdp_wrap_modules(_accelerator_with(plugin), _TiedPolicy())
+
+    def test_class_based_wrap_keeps_tied_weights_in_parent_unit(self):
+        plugin = FSDPConfig(wrap_modules=["_TiedPolicy"]).build_plugin()
+        set_fsdp_wrap_modules(_accelerator_with(plugin), nn.Sequential(_TiedPolicy()))
 
     def test_non_sharded_run_is_noop(self):
         set_fsdp_wrap_modules(_accelerator_with(None), _UndeclaredPolicy())

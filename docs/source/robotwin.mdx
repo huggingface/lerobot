@@ -68,7 +68,7 @@ ds = load_dataset("lerobot/robotwin_unified", split="train")
 
 ## Installation
 
-RoboTwin 2.0 requires **Linux** with an NVIDIA GPU (CUDA 12.1 recommended). Installation takes approximately 20 minutes.
+RoboTwin 2.0 requires **Linux** with an NVIDIA GPU and the CUDA compiler (`nvcc`) to build PyTorch3D and CuRobo. Its major version must match the CUDA version of the installed PyTorch (`python -c "import torch; print(torch.version.cuda)"`); if that `nvcc` isn't your default `/usr/local/cuda`, set `CUDA_HOME` to it and add `$CUDA_HOME/bin` to `PATH`. Installation takes approximately 20 minutes.
 
 ### 1. Create a conda environment
 
@@ -87,28 +87,58 @@ pip install -e "."
 
 ### 3. Install RoboTwin 2.0
 
+Check out the RoboTwin commit that LeRobot's RoboTwin Docker image uses, and download its assets:
+
 ```bash
 git clone https://github.com/RoboTwin-Platform/RoboTwin.git
 cd RoboTwin
-bash script/_install.sh
+git checkout 0aeea2d669c0f8516f4d5785f0aa33ba812c14b4
 bash script/_download_assets.sh
 ```
 
-The install script handles all Python dependencies including SAPIEN, CuRobo, mplib, and pytorch3d.
-
 <Tip warning={true}>
-If the automated install fails, install manually:
 
-```bash
-pip install -r requirements.txt
-pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
-cd envs && git clone https://github.com/NVlabs/curobo.git && cd curobo
-pip install -e . --no-build-isolation
-```
-
-Then apply the required mplib fix: in `mplib/planner.py` line 807, remove `or collide` from the conditional.
+Do not run RoboTwin's `script/_install.sh`: it pins an old torch, and its CuRobo and PyTorch3D builds fail against LeRobot's. Run the commands below from the `RoboTwin` folder instead; they mirror [`docker/Dockerfile.benchmark.robotwin`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.benchmark.robotwin).
 
 </Tip>
+
+```bash
+pip install "sapien==3.0.0b1" "mplib==0.2.1" "transforms3d==0.4.2" "trimesh==4.4.3" \
+    "open3d==0.19.0" "imageio==2.34.2" termcolor zarr pydantic h5py
+
+# PyTorch3D pins C++17, but the PyTorch headers need C++20.
+git clone --branch V0.7.8 --depth 1 https://github.com/facebookresearch/pytorch3d.git
+sed -i 's/"-std=c++17"/"-std=c++20"/g' pytorch3d/setup.py
+grep -c '"-std=c++20"' pytorch3d/setup.py  # prints 2 when the edit landed
+# Needed for V0.7.8 to link with CUDA 13's nvcc.
+NVCC_FLAGS="-static-global-template-stub=false" pip install ./pytorch3d --no-build-isolation
+
+git clone --branch v0.7.8 --depth 1 https://github.com/NVlabs/curobo.git envs/curobo
+# CuRobo's scalar `lerp` clashes with the C++20 standard library one; guard only that overload.
+python - <<'PATCH'
+import pathlib
+p = pathlib.Path("envs/curobo/src/curobo/curobolib/cpp/helper_math.h")
+s = p.read_text()
+d = "inline __device__ __host__ float lerp(float a, float b, float t)"
+if d not in s:
+    raise SystemExit(f"{p} has no scalar lerp to guard; check that CuRobo is at v0.7.8")
+i = s.index(d)
+j = s.index("}", i) + 1
+p.write_text(s[:i] + "#if __cplusplus < 202002L\n" + s[i:j] + "\n#endif" + s[j:])
+PATCH
+# mplib 0.2.1 needs numpy<2.
+pip install -e envs/curobo --no-build-isolation "numpy<2"
+
+# The sapien and mplib fixes from RoboTwin's script/_install.sh.
+SAPIEN=$(pip show sapien | awk '/^Location:/{print $2}')/sapien
+sed -i -E 's/("r")(\))( as)/\1, encoding="utf-8") as/g' "$SAPIEN/wrapper/urdf_loader.py"
+grep -c 'encoding="utf-8") as' "$SAPIEN/wrapper/urdf_loader.py"  # prints 2 when the edit landed
+MPLIB=$(pip show mplib | awk '/^Location:/{print $2}')/mplib
+sed -i -E 's/(if np.linalg.norm\(delta_twist\) < 1e-4 )(or collide )(or not within_joint_limit:)/\1\3/g' "$MPLIB/planner.py"
+grep -c 'delta_twist) < 1e-4 or not within_joint_limit:' "$MPLIB/planner.py"  # prints 1 when the edit landed
+```
+
+Because `mplib==0.2.1` needs numpy<2, `pip check` then reports numpy conflicts with LeRobot; the Docker image runs the same way.
 
 ### 4. Add RoboTwin to PYTHONPATH
 

@@ -22,15 +22,22 @@ env vars in that mode); the yaml flow is superseded.
 """
 
 import os
+import re
 from typing import TYPE_CHECKING
 
 from lerobot.configs.parallelism import world_size_from_env
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
+from lerobot.utils.import_utils import _accelerate_available, require_package
 
 from .utils import unwrap_peft_model
 
+if TYPE_CHECKING or _accelerate_available:
+    from accelerate.utils.dataclasses import get_module_class_from_name
+
 if TYPE_CHECKING:
     from accelerate import Accelerator
+    from accelerate.utils import FullyShardedDataParallelPlugin
+    from torch import nn
 
     from lerobot.policies.pretrained import PreTrainedPolicy
 
@@ -114,8 +121,8 @@ def set_fsdp_wrap_modules(accelerator: "Accelerator", policy: "PreTrainedPolicy"
     silent default when no wrap source exists — is never accepted: it quietly forfeits all
     sharding memory savings.
 
-    No-op for the size-based policy (`--accelerator.fsdp.min_num_params`), which needs no class
-    names, and for non-sharded runs (no fsdp plugin).
+    The size-based policy (`--accelerator.fsdp.min_num_params`) needs no class names. Either way,
+    wrap units that would split tied weights are rejected. No-op for non-sharded runs (no fsdp plugin).
 
     Args:
         accelerator (Accelerator): The accelerator whose FSDP plugin receives the wrap-unit
@@ -125,22 +132,74 @@ def set_fsdp_wrap_modules(accelerator: "Accelerator", policy: "PreTrainedPolicy"
 
     Raises:
         ValueError: If sharded class-based wrapping is configured but neither a user override
-            nor a policy declaration supplies wrap-unit class names.
+            nor a policy declaration supplies wrap-unit class names, or if the wrap units would
+            split tied weights.
     """
     plugin = getattr(accelerator.state, "fsdp_plugin", None)
-    if plugin is None or plugin.min_num_params:
+    if plugin is None:
         return
-    if plugin.transformer_cls_names_to_wrap:  # user override, set at build time
-        return
-    policy = unwrap_peft_model(policy)
-    # getattr, not attribute access: non-policy trainables (no `_fsdp_wrap_modules` attribute)
-    # must reach the actionable error below, not an AttributeError.
-    declared = getattr(type(policy), "_fsdp_wrap_modules", None)
-    if not declared:
-        raise ValueError(
-            f"Policy '{type(policy).__name__}' declares no FSDP wrap units. Sharded training "
-            "requires wrap-unit class names: set --accelerator.fsdp.wrap_modules='[\"MyBlock\"]' "
-            "(or --accelerator.fsdp.min_num_params for a size-based policy), or declare "
-            "`_fsdp_wrap_modules` on the policy class."
-        )
-    plugin.transformer_cls_names_to_wrap = list(declared)
+    # A user override is set on the plugin at build time.
+    if not plugin.min_num_params and not plugin.transformer_cls_names_to_wrap:
+        trainable = unwrap_peft_model(policy)
+        # getattr, not attribute access: non-policy trainables (no `_fsdp_wrap_modules` attribute)
+        # must reach the actionable error below, not an AttributeError.
+        declared = getattr(type(trainable), "_fsdp_wrap_modules", None)
+        if not declared:
+            raise ValueError(
+                f"Policy '{type(trainable).__name__}' declares no FSDP wrap units. Sharded training "
+                "requires wrap-unit class names: set --accelerator.fsdp.wrap_modules='[\"MyBlock\"]' "
+                "(or --accelerator.fsdp.min_num_params for a size-based policy), or declare "
+                "`_fsdp_wrap_modules` on the policy class."
+            )
+        plugin.transformer_cls_names_to_wrap = list(declared)
+    _check_wrap_keeps_tied_weights(policy, plugin)
+
+
+def _check_wrap_keeps_tied_weights(model: "nn.Module", plugin: "FullyShardedDataParallelPlugin") -> None:
+    """Fail before sharding if the FSDP wrap units would split a tied parameter.
+
+    FSDP otherwise fails at the first forward, or silently unties the weights on older torch. This
+    mirrors how accelerate picks units: every non-root module the wrap policy selects, while the
+    parameters of `ignored_modules` belong to none.
+    """
+    if plugin.min_num_params:
+        min_num_params = plugin.min_num_params
+
+        def is_unit(module: "nn.Module") -> bool:
+            return sum(p.numel() for p in module.parameters()) > min_num_params
+
+    else:
+        require_package("accelerate", extra="training")
+        names = plugin.transformer_cls_names_to_wrap
+        # Unknown names are left for accelerate to report.
+        classes = tuple({get_module_class_from_name(model, name) for name in names} - {None})
+
+        def is_unit(module: "nn.Module") -> bool:
+            return isinstance(module, classes)
+
+    ignored: set[int] = set()
+    if plugin.ignored_modules:
+        pattern = re.compile(plugin.ignored_modules)
+        ignored = {
+            id(p) for name, m in model.named_modules() if pattern.fullmatch(name) for p in m.parameters()
+        }
+    units = {id(m) for m in list(model.modules())[1:] if is_unit(m)}
+    owner: dict[int, tuple[int, str]] = {}  # parameter -> (unit, first name seen)
+
+    def visit(module: "nn.Module", prefix: str, unit: int) -> None:
+        if id(module) in units:
+            unit = id(module)
+        for name, param in module.named_parameters(recurse=False):
+            if id(param) in ignored:
+                continue
+            first_unit, first_name = owner.setdefault(id(param), (unit, prefix + name))
+            if first_unit != unit:
+                raise ValueError(
+                    f"The FSDP wrap units would split the tied parameters '{first_name}' and '{prefix + name}'. "
+                    "Set --accelerator.fsdp.wrap_modules (instead of --accelerator.fsdp.min_num_params) "
+                    "to modules that keep them in one unit."
+                )
+        for name, child in module.named_children():
+            visit(child, f"{prefix}{name}.", unit)
+
+    visit(model, "", id(model))

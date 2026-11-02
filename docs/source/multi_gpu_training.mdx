@@ -94,6 +94,8 @@ FSDP shards the model in units (typically the repeated transformer block) and ga
 --accelerator.fsdp.min_num_params=1000000                  # or: wrap every submodule above 1M params
 ```
 
+FSDP can't split tied weights (e.g. a language head tied to the input embedding) across wrap units, so LeRobot checks the units before sharding and stops with an error naming the tied parameters. Wrapping the repeated block class usually keeps them together in the root unit.
+
 If a policy doesn't declare `_fsdp_wrap_modules` and no `--accelerator.fsdp.wrap_modules` or `--accelerator.fsdp.min_num_params` is passed, the run fails at startup rather than silently wrapping only the root module (which would forfeit all sharding memory savings).
 
 Other sharding settings:
