@@ -23,21 +23,20 @@ damped least squares, so only stock Pinocchio is needed (no CasADi bindings).
 from __future__ import annotations
 
 import logging
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from huggingface_hub import sync_bucket
 
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 logger = logging.getLogger(__name__)
 
-# menloresearch/asimov-1 (CERN-OHL-S-2.0), sim-model/asimov_1_25dof.
-ASIMOV_MODEL_COMMIT = "96a6807c163e4e6cabdc124eefcc45b0ae2cb57a"
-ASIMOV_MODEL_URL = (
-    f"https://raw.githubusercontent.com/menloresearch/asimov-1/{ASIMOV_MODEL_COMMIT}/sim-model/asimov_1_25dof"
-)
+# Copy of menloresearch/asimov-1 sim-model/asimov_1_25dof (CERN-OHL-S-2.0) at commit
+# 96a6807c163e4e6cabdc124eefcc45b0ae2cb57a, in the public lerobot/robot-urdfs bucket.
+ASIMOV_MODEL_BUCKET = "hf://buckets/lerobot/robot-urdfs/asimov"
+ASIMOV_MODEL_DIR = "asimov_1_25dof"
 ASIMOV_MESHES = (
     "pelvis_link",
     "waist_yaw_link",
@@ -82,25 +81,21 @@ def urdf_joint_name(sdk_name: str) -> str:
     return f"{prefix}{joint.lower()}_joint" if prefix else f"{sdk_name.lower()}_joint"
 
 
-def _download(url: str, dest: Path) -> None:
-    if dest.exists():
-        return
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    logger.info(f"Downloading {url}")
-    with urllib.request.urlopen(url, timeout=60) as response:  # nosec B310 - fixed https URL
-        tmp.write_bytes(response.read())
-    tmp.replace(dest)
-
-
 def get_asimov_urdf(with_meshes: bool = False) -> Path:
-    """Fetch the pinned Asimov 1 URDF (and optionally its meshes) into the LeRobot cache."""
-    root = HF_LEROBOT_HOME / "assets" / "asimov_1_25dof" / ASIMOV_MODEL_COMMIT
+    """Fetch the Asimov 1 URDF (and optionally its meshes) from the robot-urdfs bucket into the cache."""
+    dest = HF_LEROBOT_HOME / "robot-urdfs" / "asimov"
+    root = dest / ASIMOV_MODEL_DIR
     urdf = root / "urdf" / "asimov_1_25dof.urdf"
-    _download(f"{ASIMOV_MODEL_URL}/urdf/asimov_1_25dof.urdf", urdf)
-    if with_meshes:
-        for mesh in ASIMOV_MESHES:
-            _download(f"{ASIMOV_MODEL_URL}/meshes/{mesh}.STL", root / "meshes" / f"{mesh}.STL")
+    needed = [urdf, *(root / "meshes" / f"{mesh}.STL" for mesh in ASIMOV_MESHES)] if with_meshes else [urdf]
+    if not all(path.exists() for path in needed):
+        include = [f"{ASIMOV_MODEL_DIR}/urdf/*"] + ([f"{ASIMOV_MODEL_DIR}/meshes/*"] if with_meshes else [])
+        logger.info(f"Downloading the Asimov model from {ASIMOV_MODEL_BUCKET}")
+        sync_bucket(ASIMOV_MODEL_BUCKET, str(dest), include=include, quiet=True)
+        missing = [str(path) for path in needed if not path.exists()]
+        if missing:
+            raise FileNotFoundError(
+                f"Asimov model files missing after download from {ASIMOV_MODEL_BUCKET}: {missing}"
+            )
     return urdf
 
 
