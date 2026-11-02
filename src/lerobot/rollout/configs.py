@@ -415,14 +415,10 @@ class RolloutConfig:
         if policy_path:
             yaml_overrides = parser.get_yaml_overrides("policy")
             cli_overrides = parser.get_cli_overrides("policy") or []
-            policy_overrides = yaml_overrides + cli_overrides
-            pretrained_revision = parser.parse_arg("pretrained_revision", cli_overrides)
-            if pretrained_revision is None:
-                pretrained_revision = parser.parse_arg("pretrained_revision", yaml_overrides)
             self.policy = PreTrainedConfig.from_pretrained(
                 policy_path,
-                revision=pretrained_revision,
-                cli_overrides=policy_overrides,
+                revision=parser.get_pretrained_revision("policy"),
+                cli_overrides=yaml_overrides + cli_overrides,
             )
             self.policy.pretrained_path = policy_path
         if self.policy is None and not remote:
