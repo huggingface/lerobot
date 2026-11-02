@@ -19,7 +19,7 @@ Isaac Lab 3.0 beta pins `transformers==4.57.6` (hence `huggingface-hub<1.0`), `n
 
 ```bash
 # Build the image on first use (Isaac Sim and the assets: a long first build), then serve every task
-lerobot-env-server --docker --config=docker/sim/configs/robolab.yaml
+lerobot-env-server --config_path=docker/sim/configs/robolab.yaml --docker=true
 
 # In your LeRobot environment
 lerobot-eval \
@@ -32,7 +32,7 @@ lerobot-eval \
   --eval.n_episodes=10
 ```
 
-The server runs any of its configured tasks: the client opens the one it asks for, and the server builds it in the running Isaac Sim (a few seconds). Starting Isaac Sim itself takes from seconds to a few minutes.
+The server runs any of its configured tasks: the client opens the one it asks for, and the server builds it in the running Isaac Sim (a few seconds). Starting Isaac Sim itself takes from seconds to a few minutes. If it finds no GPU in the container (`ERROR_INCOMPATIBLE_DRIVER`), see the Vulkan note in [Simulation](./simulation#serve-an-environment).
 
 ## Run it locally
 
