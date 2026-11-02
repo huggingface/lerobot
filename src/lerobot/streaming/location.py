@@ -15,9 +15,11 @@ Kept free of the ``datasets`` extra so the streaming primitives can use it;
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from huggingface_hub import HfApi, HfFileSystem
 
@@ -113,9 +115,18 @@ class StorageLocation:
             raise ValueError(f"{self.uri!r} is not a local path")
         return Path(self.uri).expanduser()
 
-    def storage_options(self, token: str | bool | None) -> dict[str, str | bool]:
-        """Fsspec options for reading this root: the Hub token, for Hub roots only."""
-        return {"token": token} if token is not None and self.is_hf else {}
+    def storage_options(
+        self, token: str | bool | None, extra: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Fsspec options for reading this root.
+
+        ``extra`` (user ``storage_options``, e.g. S3 credentials) applies to every URI root;
+        local paths ignore it. Hub roots also get ``token``.
+        """
+        options: dict[str, Any] = dict(extra) if extra and self.is_remote else {}
+        if token is not None and self.is_hf:
+            options["token"] = token
+        return options
 
     def pinned(self, *, token: str | bool | None = None) -> StorageLocation:
         """Resolve a dataset branch or tag to its commit; other roots are returned unchanged."""

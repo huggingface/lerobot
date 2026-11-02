@@ -16,9 +16,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
+import json
+import os
+import re
+import shutil
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+import fsspec
+from huggingface_hub.utils import WeakFileLock
 
 # Root parsing is shared with the streaming primitives, which cannot depend on this package.
 from lerobot.streaming.location import (
@@ -27,6 +36,7 @@ from lerobot.streaming.location import (
     hf_bucket_uri,
     hf_dataset_uri,
 )
+from lerobot.utils.constants import HF_LEROBOT_HOME
 
 if TYPE_CHECKING:
     from .dataset_metadata import LeRobotDatasetMetadata
@@ -111,6 +121,58 @@ def make_dataset_reader(storage_format: str, **kwargs) -> BaseDatasetReader:
     return _reader_module(storage_format).DATASET_READER(**kwargs)
 
 
+def remote_meta_cache_dir(key: str) -> Path:
+    """Local directory caching ``meta/`` of the object-store dataset identified by ``key``."""
+    # The hash keeps keys that sanitize alike (``a_b`` vs ``a/b``) apart and the name short.
+    digest = hashlib.sha256(key.encode()).hexdigest()[:12]
+    return HF_LEROBOT_HOME / "remote" / f"{re.sub(r'[^A-Za-z0-9._-]+', '_', key)[:100]}-{digest}"
+
+
+def localize_lerobot_root(
+    root: str,
+    storage_options: Mapping[str, Any] | None = None,
+    force_cache_sync: bool = False,
+) -> Path:
+    """Copy ``meta/`` of a default-format dataset at an fsspec ``root`` to a local cache.
+
+    Data files stay remote. Raises ``FileNotFoundError`` when ``root`` has no
+    ``meta/info.json`` or holds another storage format, and fsspec's ``ImportError``
+    when the protocol's package (e.g. ``s3fs``) is missing.
+    """
+    uri = root.rstrip("/")
+    filesystem, path = fsspec.core.url_to_fs(
+        uri, **StorageLocation.parse(uri).storage_options(None, storage_options)
+    )
+    try:
+        info = json.loads(filesystem.cat_file(f"{path}/meta/info.json"))
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"{uri}/meta/info.json not found") from error
+    # Other formats (e.g. Lance) also ship meta/; leave them to their own backend.
+    storage_format = info.get("storage_format") or DEFAULT_STORAGE_FORMAT
+    if storage_format != DEFAULT_STORAGE_FORMAT:
+        raise FileNotFoundError(
+            f"{uri} has storage_format {storage_format!r}, not {DEFAULT_STORAGE_FORMAT!r}"
+        )
+    cache = remote_meta_cache_dir(uri)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    with WeakFileLock(cache.parent / f".{cache.name}.lock"):
+        meta = cache / "meta"
+        if force_cache_sync or not (meta / "info.json").is_file():
+            tmp = cache / "meta.tmp"
+            for stale in [tmp, *cache.glob("meta.old-*")]:  # left behind by a crashed refresh
+                shutil.rmtree(stale, ignore_errors=True)
+            cache.mkdir(exist_ok=True)
+            # tmp must not exist: fsspec copies into an existing directory as tmp/meta.
+            filesystem.get(f"{path}/meta", str(tmp), recursive=True)
+            # Swap, never delete first: another rank may be reading the current meta/.
+            old = cache / f"meta.old-{os.getpid()}"
+            if meta.exists():
+                os.replace(meta, old)
+            os.replace(tmp, meta)
+            shutil.rmtree(old, ignore_errors=True)
+    return cache
+
+
 def localize_remote_root(
     repo_id: str | None,
     root: str | Path,
@@ -118,7 +180,7 @@ def localize_remote_root(
     token: str | bool | None = None,
     force_cache_sync: bool = False,
     *,
-    storage_options: dict[str, str] | None = None,
+    storage_options: Mapping[str, Any] | None = None,
 ) -> Path:
     """Materialize ``meta/`` for an object-store dataset and return the local dir holding it.
 
@@ -128,6 +190,17 @@ def localize_remote_root(
     ``storage_options`` configures the connection used to read remote metadata.
     """
     errors = []
+    missing_protocol: ImportError | None = None
+    if StorageLocation.parse(root).kind is LocationKind.FSSPEC:
+        try:
+            return localize_lerobot_root(str(root), storage_options, force_cache_sync)
+        except FileNotFoundError as error:
+            errors.append(f"{DEFAULT_STORAGE_FORMAT}: {error}")
+        except ImportError as error:
+            # The protocol's fsspec package (e.g. s3fs) is missing. Other formats may not need it
+            # (Lance reads S3 natively), so keep probing and raise this only if none matches.
+            missing_protocol = error
+            errors.append(f"{DEFAULT_STORAGE_FORMAT}: {error}")
     options_kwargs = {"storage_options": storage_options} if storage_options else {}
     for storage_format in _DATASET_READER_MODULES:
         try:
@@ -138,6 +211,8 @@ def localize_remote_root(
             # ImportError: this format's optional dependencies are missing, which
             # must not stop the probe from reaching other registered formats.
             errors.append(f"{storage_format}: {error}")
+    if missing_protocol is not None:
+        raise missing_protocol
     raise FileNotFoundError(
         f"No dataset found at {str(root)!r}. Tried {errors}. "
         f"For {DEFAULT_STORAGE_FORMAT!r} datasets on an HF Storage Bucket, use "
@@ -153,7 +228,7 @@ def load_dataset_metadata(
     token: str | bool | None = None,
     force_cache_sync: bool = False,
     *,
-    storage_options: dict[str, str] | None = None,
+    storage_options: Mapping[str, Any] | None = None,
 ) -> LeRobotDatasetMetadata:
     """Load dataset metadata wherever the dataset lives.
 
