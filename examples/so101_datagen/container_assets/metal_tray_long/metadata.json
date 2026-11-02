@@ -1,0 +1,25 @@
+{
+  "source_repo": "nvidia/simready-assets",
+  "revision": "4763fbfaa4f8e97658e68b57d01b4c86659e08b5",
+  "source_asset": "container_system_sterilising_b02",
+  "license": "CC-BY-4.0",
+  "aspect": 2.011627906976744,
+  "outer_half": [
+    2.4709277894607813,
+    1.4825367996858998
+  ],
+  "height": 0.46280074507934804,
+  "floor": 0.11735951,
+  "collision_parts": 41,
+  "albedo": "albedo.png",
+  "native_color": "gray",
+  "native_label": "metal tray",
+  "noun": "tray",
+  "specular": 0.85,
+  "shininess": 0.65,
+  "source_albedo": "simready_usd/Textures/t_metal_steelStainless_clean_a01_tile_alb.png",
+  "source_albedo_sha256": "52a7df4cd76a31c6f00b4bde562ec880ed4d4446793d9e2d91aecd6df94b2e92",
+  "albedo_sha256": "6a75cc2cb184d12b0261b1a88e150c763ffd9b285f40ce9999605d255a61a459",
+  "uv_scale": 4,
+  "conversion": "Triangulated USD visual mesh with original UVs and authored UV repeat, centered XY and aligned long axis x; normalized by conservative usable short floor half-width. CoACD convex decomposition. Source albedo resampled to at most 1024 pixels. XY proportions retained; configured Z height scaled independently. Support height measured by a vertical ray through the source interior floor. Overlapping convex floor pieces removed from the usable interior; exterior convex wall hulls retained. One continuous slab supports the measured source-floor height."
+}

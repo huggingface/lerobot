@@ -44,9 +44,19 @@ class ObjectsConfig:
 @dataclass
 class ContainerConfig:
     inner_size: Range = (0.08, 0.13)
+    collection_inner_size: Range = (0.14, 0.20)
+    clearing_wall_height: Range = (0.012, 0.022)
     wall_height: Range = (0.012, 0.045)
     wall_thickness: Range = (0.003, 0.006)
     texture_prob: float = 0.1
+    # Imported SimReady containers are opt-in. The crate is scaled to a shallow wall height.
+    style: str = "procedural"
+    # Optional relative weights override style, allowing container diversity within one run.
+    style_weights: dict[str, float] = field(default_factory=dict)
+    max_asset_length: float = 0.32
+    asset_inner_size: Range = (0.12, 0.15)
+    # Original albedo/UVs on imported containers; the rest keep randomized named colors.
+    original_texture_prob: float = 0.5
 
 
 @dataclass
@@ -97,11 +107,19 @@ class FrontCameraConfig:
     # little to the left or right.
     distance: Range = (0.3, 0.55)
     azimuth: Range = (-35.0, 35.0)
-    elevation: Range = (35.0, 80.0)
+    elevation: Range = (30.0, 65.0)
     lookat: tuple[float, float, float] = (0.2, 0.0, 0.02)
     lookat_jitter: float = 0.05
     roll: float = 3.0
     fovy: Range = (50.0, 70.0)
+    wide_prob: float = 0.4
+    # Wider mounting variation still stays in front of the workspace, at tabletop-camera scale.
+    wide_distance: Range = (0.35, 0.60)
+    wide_azimuth: Range = (-50.0, 50.0)
+    wide_elevation: Range = (25.0, 65.0)
+    wide_roll: float = 5.0
+    wide_fovy: Range = (50.0, 65.0)
+    wide_lookat_jitter: float = 0.04
 
 
 @dataclass
@@ -151,10 +169,8 @@ class MotionConfig:
     via_jitter: float = 6.0
     s_curve_prob: float = 0.3
     # Consecutive moves overlap by this share of the shorter one, so the arm flows from one into the
-    # next instead of stopping; pausing and the gripper break the flow. A pause before descending onto
-    # an object happens with pause_prob.
+    # next instead of stopping; pausing and the gripper break the flow.
     blend: Range = (0.4, 0.7)
-    pause_prob: float = 0.25
     approach_height: Range = (0.05, 0.11)
     lift_height: Range = (0.08, 0.15)
     # Room kept between a carried object's bottom and the top of what it passes over (a container's rim,
@@ -162,17 +178,22 @@ class MotionConfig:
     carry_margin: Range = (0.04, 0.08)
     # Where that is out of the arm's reach (close to the base), the least room kept.
     min_carry_margin: float = 0.02
-    # Approach tilt from vertical, outwards from the robot: mostly near vertical, sometimes steeply angled.
-    # A 5-DoF arm keeps its approach in the plane of its pan, so tilts are always radial; horizontal
-    # grasps would put the gripper's body into the table. Steep ones are only reachable far from the
-    # base and, for boxes, from one side: the planner falls back to the nearest reachable tilt.
-    tilt: Range = (0.0, 30.0)
-    steep_tilt: Range = (30.0, 55.0)
-    steep_tilt_prob: float = 0.5
+    # Jaw direction and approach tilt are sampled independently; unreachable choices fall back.
+    grasp_styles: dict[str, float] = field(
+        default_factory=lambda: {"object_aligned": 0.65, "tangential": 0.35}
+    )
+    tilt: Range = (0.0, 25.0)
+    inclined_tilt: Range = (25.0, 90.0)
+    inclined_tilt_prob: float = 0.25
+    tangential_min_height: float = 0.025
+    # Place the object's center this far behind the gripper site, inside the fingers.
+    tangential_grip_depth: float = 0.01
     # Spread of the jaw axis around its preferred direction, for round objects.
     jaw_yaw_jitter: float = 25.0
     # Extra jaw opening around the object before closing.
     open_margin: Range = (0.015, 0.04)
+    # Minimum physical surface gap per jaw during the open approach, including physics tracking.
+    approach_clearance: float = 0.005
     grasp_offset: float = 0.004
     dwell: Range = (0.05, 0.35)
     # Height of the via point that bends transit moves.
@@ -185,6 +206,8 @@ class MotionConfig:
 @dataclass
 class NoiseConfig:
     # Commands: a slow Ornstein-Uhlenbeck drift per joint, and rare short jerks. Both are executed.
+    motion_noise_k: Range = (0.2, 0.5)
+    motion_noise_tau: float = 0.5
     drift_std: float = 0.4
     drift_tau: float = 0.4
     jerk_rate: float = 0.06
@@ -193,6 +216,28 @@ class NoiseConfig:
     # Gear play per arm joint, in degrees, sampled per episode: on reversing, the joint lags behind the
     # servo until the play is taken up. On the robot side, so it shows between action and state.
     backlash: Range = (1.0, 3.0)
+
+
+@dataclass
+class RecoveryConfig:
+    max_attempts: int = 3
+    miss_prob: float = 0.2
+    miss_modes: dict[str, float] = field(
+        default_factory=lambda: {"high": 1.0, "short": 1.0, "wide": 1.0, "loose": 1.0}
+    )
+
+    def validate(self) -> None:
+        if self.max_attempts < 1 or not 0 <= self.miss_prob <= 1:
+            raise ValueError("Recovery needs at least one attempt and miss_prob in [0, 1]")
+        if (
+            not self.miss_modes
+            or set(self.miss_modes) - {"high", "short", "wide", "loose"}
+            or any(not 0 <= w < float("inf") for w in self.miss_modes.values())
+            or sum(self.miss_modes.values()) <= 0
+        ):
+            raise ValueError(
+                "Recovery miss modes need known names and nonnegative weights with a positive sum"
+            )
 
 
 @dataclass
@@ -214,10 +259,13 @@ class AnnotationConfig:
     # VQA pairs per second, alternating cameras. VQA frames train only the language head, but ground
     # truth costs one segmentation render (about 3 ms) each.
     vqa_hz: float = 1.0
+    front_bbox_hz: float = 3.0
+    front_bbox_all_prob: float = 0.25
     question_weights: dict[str, float] = field(
         default_factory=lambda: {
             "bbox": 0.4,
             "keypoint": 0.2,
+            "grasp": 0.2,
             "count": 0.1,
             "attribute": 0.15,
             "spatial": 0.15,
@@ -248,6 +296,7 @@ class GenerationConfig:
     start_pose: StartPoseConfig = field(default_factory=StartPoseConfig)
     motion: MotionConfig = field(default_factory=MotionConfig)
     noise: NoiseConfig = field(default_factory=NoiseConfig)
+    recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
     calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
     annotation: AnnotationConfig = field(default_factory=AnnotationConfig)
     tasks: TaskMixConfig = field(default_factory=TaskMixConfig)
@@ -255,4 +304,5 @@ class GenerationConfig:
     height: int = 480
     width: int = 640
     # Hard cap on an episode's length; longer plans are discarded.
-    max_episode_seconds: float = 30.0
+    max_episode_seconds: float = 40.0
+    max_long_episode_seconds: float = 120.0

@@ -20,8 +20,11 @@
 JSON next to its episode and rebuilt exactly.
 """
 
+import json
 import warnings
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -55,6 +58,8 @@ class ObjectParams:
     color: str | None = None
     mesh: str | None = None
     scale: float = 1.0
+    # Initial supporting surface above the table; runtime recovery refreshes this from physics.
+    support_height: float = 0.0
 
 
 @dataclass
@@ -68,6 +73,55 @@ class ContainerParams:
     pos: list[float]
     yaw: float
     color: str | None = None
+    # Imported assets use a conservative rectangular usable floor. inner_half is its short half-width.
+    style: str = "procedural"
+
+    @property
+    def inner_half_xy(self) -> np.ndarray:
+        aspect = 1.0 if self.style == "procedural" else container_asset(self.style)["aspect"]
+        return self.inner_half * np.array([aspect, 1.0])
+
+    @property
+    def outer_half_xy(self) -> np.ndarray:
+        if self.style == "procedural":
+            return np.full(2, self.inner_half + self.thickness)
+        return self.inner_half * np.array(container_asset(self.style)["outer_half"])
+
+
+CONTAINER_STYLES = (
+    "procedural",
+    "kitchenware_tray",
+    "crate",
+    "metal_tray_small",
+    "metal_tray_medium",
+    "metal_tray_long",
+    "wooden_tray",
+    "white_dish",
+)
+
+
+@lru_cache
+def container_asset(style: str) -> dict:
+    if style not in CONTAINER_STYLES or style == "procedural":
+        raise ValueError(f"Unknown container style {style!r}")
+    return json.loads((Path(__file__).parent / "container_assets" / style / "metadata.json").read_text())
+
+
+def container_asset_directory(style: str) -> Path:
+    """Require the one-time conversion without downloading during episode generation."""
+    asset = container_asset(style)
+    root = Path(__file__).parent / "container_assets" / style
+    if (
+        not (root / "visual.obj").is_file()
+        or not (root / asset["albedo"]).is_file()
+        or len(list(root.glob("collision_*.obj"))) != asset["collision_parts"]
+    ):
+        raise FileNotFoundError(
+            f"Container assets for {style!r} need preparation. "
+            "See examples/so101_datagen/container_assets/README.md and run "
+            f"examples/so101_datagen/prepare_containers.py --styles {style}."
+        )
+    return root
 
 
 @dataclass
@@ -85,6 +139,7 @@ class CameraParams:
     pos: list[float]
     quat: list[float]
     fovy: float
+    mode: str = "typical"
 
 
 @dataclass
@@ -294,6 +349,18 @@ def _material(spec: mujoco.MjSpec, name: str, look: Look) -> str:
         # With uniform mapping, texrepeat counts repeats per meter: the photograph keeps its real scale.
         mat.texrepeat = [1 / look.texture["size"]] * 2
         mat.texuniform = True
+    elif look.texture is not None and look.texture["kind"] == "container_asset":
+        style = look.texture["name"]
+        asset = container_asset(style)
+        texture = spec.add_texture(
+            name=f"{name}_tex",
+            type=mujoco.mjtTexture.mjTEXTURE_2D,
+            file=str(container_asset_directory(style) / asset["albedo"]),
+        )
+        mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = texture.name
+        # Preserve the source mesh UVs, including the crate's authored 3x repeat.
+        mat.texuniform = False
+        mat.texrepeat = [1, 1]
     elif look.texture is not None:
         image = texture_image(look.texture)
         tex = spec.add_texture(
@@ -352,7 +419,7 @@ def _add_object(spec: mujoco.MjSpec, obj: ObjectParams, meshes: dict[str, MeshAs
     half_height = obj.half_size[-1]
     body = spec.worldbody.add_body(
         name=obj.name,
-        pos=[obj.pos[0], obj.pos[1], half_height + 0.002],
+        pos=[obj.pos[0], obj.pos[1], obj.support_height + half_height + 0.002],
         quat=_yaw_quat(obj.yaw),
     )
     body.add_freejoint()
@@ -380,6 +447,32 @@ def _add_container(spec: mujoco.MjSpec, container: ContainerParams) -> None:
         name=container.name, pos=[*container.pos, 0.0], quat=_yaw_quat(container.yaw)
     )
     material = _material(spec, f"{container.name}_mat", container.look)
+    if container.style != "procedural":
+        asset = container_asset(container.style)
+        root = container_asset_directory(container.style)
+        scale = [container.inner_half, container.inner_half, container.wall_height / asset["height"]]
+        for i, path in enumerate([root / "visual.obj", *sorted(root.glob("collision_*.obj"))]):
+            name = f"{container.name}_mesh_{i}"
+            spec.add_mesh(name=name, file=str(path.resolve()), scale=scale)
+            body.add_geom(
+                type=mujoco.mjtGeom.mjGEOM_MESH,
+                meshname=name,
+                material=material,
+                contype=0 if i == 0 else 1,
+                conaffinity=0 if i == 0 else 1,
+                group=2 if i == 0 else 3,
+            )
+        # A solid support slab avoids gaps between decomposed floor pieces and stabilizes thin floors.
+        floor = container.wall_height * asset["floor"] / asset["height"]
+        body.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            size=[*container.inner_half_xy, floor / 2],
+            pos=[0, 0, floor / 2],
+            solref=[0.004, 1.0],
+            priority=1,
+            group=3,
+        )
+        return
     h, t, w = container.wall_height, container.thickness, container.inner_half
     outer = w + t
     walls = [

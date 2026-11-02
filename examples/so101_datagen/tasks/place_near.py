@@ -19,6 +19,7 @@
 import mujoco
 import numpy as np
 
+from ..config import GenerationConfig
 from ..motion import Planner, PlanningError
 from ..randomization import uniform
 from ..scene import SceneInfo, SceneParams
@@ -53,7 +54,9 @@ class PlaceNear(Task):
     name = "place_near"
     min_objects = 2
 
-    def sample(self, scene: SceneParams, rng: np.random.Generator) -> TaskInstance | None:
+    def sample(
+        self, scene: SceneParams, rng: np.random.Generator, cfg: GenerationConfig | None = None
+    ) -> TaskInstance | None:
         pairs = [
             (obj, target)
             for obj in scene.objects
@@ -71,28 +74,33 @@ class PlaceNear(Task):
             instruction=instruction,
             roles={"object": obj.name, "target": target.name},
             phrasings=phrasings,
-            memories=[f"I picked up the {obj.label}.", f"The {obj.label} is next to the {target.label}."],
         )
 
     def script(self, instance: TaskInstance, scene: SceneParams, planner: Planner, rng: np.random.Generator):
         obj = find(scene, instance.roles["object"])
         target = find(scene, instance.roles["target"])
         spot = self._free_spot(scene, obj, target, planner.workspace, rng)
-        planner.subtask(f"pick up the {obj.label}")
-        grasp = planner.pick(obj)
-        planner.subtask(f"place the {obj.label} next to the {target.label}")
-        release = np.array([spot[0], spot[1], grasp.height + rng.uniform(0.004, 0.015)])
-        # Over whatever stands on the way; the target itself is beside the spot, not under the path.
-        top = obstacle_top(scene, obj.pos, release, exclude={obj.name, target.name})
-        clear = top + grasp.height
-        planner.place(
-            release,
-            grasp.tilt,
-            hover_z=clear + uniform(rng, planner.cfg.carry_margin),
-            min_hover_z=clear + planner.cfg.min_carry_margin,
-        )
+
+        def place(grasp):
+            planner.subtask(
+                f"place the {obj.label} next to the {target.label}", memory=f"I picked up the {obj.label}."
+            )
+            release = np.array([spot[0], spot[1], grasp.height + rng.uniform(0.004, 0.015)])
+            if grasp.style == "tangential":
+                release[2] = max(release[2], grasp.height + 0.025)
+            # Over whatever stands on the way; the target itself is beside the spot, not under the path.
+            top = obstacle_top(scene, obj.pos, release, exclude={obj.name, target.name})
+            clear = top + grasp.height
+            planner.place(
+                release,
+                grasp.tilt,
+                hover_z=clear + uniform(rng, planner.cfg.carry_margin),
+                min_hover_z=clear + planner.cfg.min_carry_margin,
+            )
+
+        self.pick_and_place(obj, planner, place, preflight=True)
         if rng.random() < planner.cfg.return_rest_prob:
-            planner.subtask("go back to the rest position")
+            planner.subtask("go back to the rest position", memory=f"I placed the {obj.label}.")
             planner.transit(REST + rng.uniform(-3, 3, 6) * [1, 1, 1, 1, 1, 0])
 
     @staticmethod
@@ -115,6 +123,11 @@ class PlaceNear(Task):
                 np.linalg.norm(spot - np.asarray(o.pos)) > footprint(obj) + footprint(o) + 0.01
                 for o in others
             )
+            for container in scene.containers:
+                c, s = np.cos(container.yaw), np.sin(container.yaw)
+                local = np.array([[c, s], [-s, c]]) @ (spot - container.pos)
+                distance = np.linalg.norm(np.maximum(np.abs(local) - container.outer_half_xy, 0))
+                clear = clear and distance > footprint(obj) + 0.01
             if clear:
                 return spot
         raise PlanningError("No free spot next to the target")

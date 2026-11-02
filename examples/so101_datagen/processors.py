@@ -17,7 +17,8 @@
 """State and action processors, in the same two places as ``lerobot-record`` puts its own.
 
 - Teleop side (``make_command_pipeline``): what the scripted "operator" commands, before it is executed.
-  ``CommandDrift`` and ``CommandJerk`` make the hand less steady; the simulated arm executes the result.
+  ``MotionNoise`` scales Cartesian perturbations with hand travel; ``CommandDrift`` and
+  ``CommandJerk`` add slow drift and occasional bumps. The simulated arm executes the result.
 - Robot side, mechanics (``make_actuation_pipeline``): what the follower's servos actually execute.
   ``JointBacklash`` adds gear play; it runs after the action is recorded, so it shows in the state only.
 - Robot side, readings (``make_recording_pipelines``): how a real follower would report states and commands.
@@ -32,6 +33,7 @@ with ``VirtualCalibration.start_episode``.
 from dataclasses import dataclass, field
 from typing import Any
 
+import mujoco
 import numpy as np
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
@@ -51,7 +53,16 @@ from lerobot.processor.converters import (
 )
 
 from .config import CalibrationConfig, NoiseConfig
-from .so101 import ARM_JOINTS, GRIPPER, GRIPPER_RANGE_DEG, JOINT_LIMITS_DEG, JOINT_NAMES, JOINTS
+from .so101 import (
+    ARM_JOINTS,
+    GRIPPER,
+    GRIPPER_RANGE_DEG,
+    JOINT_LIMITS_DEG,
+    JOINT_NAMES,
+    JOINTS,
+    Arm,
+    arm_spec,
+)
 
 # STS3215: 12-bit encoder over a full turn. Calibration sets the homing pose to mid-scale.
 MAX_RES = 4095
@@ -189,6 +200,66 @@ class CalibratedJointCommands(RobotActionProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register("so101_datagen_motion_noise")
+@dataclass
+class MotionNoise(RobotActionProcessorStep):
+    """Accumulate Cartesian hand-motion noise through the arm Jacobian; fade it while still."""
+
+    k: tuple[float, float] = (0.2, 0.5)
+    tau: float = 0.5
+    fps: int = 30
+    damping: float = 1e-4
+    _arm: Arm | None = field(default=None, init=False, repr=False)
+    _previous: np.ndarray | None = field(default=None, init=False, repr=False)
+    _offset: np.ndarray = field(default_factory=lambda: np.zeros(ARM_JOINTS), init=False, repr=False)
+    _rng: np.random.Generator = field(default_factory=np.random.default_rng, init=False, repr=False)
+    _scale: float = field(default=0.0, init=False, repr=False)
+
+    def start_episode(self, rng: np.random.Generator) -> None:
+        if self.tau <= 0 or self.fps <= 0 or not 0 <= self.k[0] <= self.k[1]:
+            raise ValueError("Motion noise requires nonnegative k, positive tau and fps")
+        self._rng = np.random.default_rng(rng.integers(2**63))
+        self._scale = float(self._rng.uniform(*self.k))
+        self._previous = None
+        self._offset.fill(0)
+        if self._arm is None:
+            self._arm = Arm(arm_spec().compile())
+
+    def action(self, action: RobotAction) -> RobotAction:
+        q = to_vector(action)
+        if self._arm is None:
+            self.start_episode(self._rng)
+        arm = self._arm
+        pos, _ = arm.tcp_pose(q)
+        decay = np.exp(-1 / (self.fps * self.tau))
+        self._offset *= decay
+        if self._previous is not None:
+            sigma = self._scale * np.linalg.norm(pos - self._previous)
+            if sigma > 0:
+                data = arm._scratch
+                mujoco.mj_forward(arm.model, data)
+                jp, jr = np.zeros((3, arm.model.nv)), np.zeros((3, arm.model.nv))
+                mujoco.mj_jacSite(arm.model, data, jp, jr, arm.tcp)
+                jacobian = np.vstack([jp, jr])[:, arm.dofadr[:ARM_JOINTS]]
+                epsilon = self._rng.normal(size=6) * np.r_[np.full(3, sigma), np.full(3, 0.1 * sigma)]
+                # Normalize the innovation so accumulation does not inflate the requested
+                # Cartesian noise by sqrt(fps * tau / 2). k controls the filtered offset's scale.
+                epsilon *= np.sqrt(1 - decay**2)
+                dq = jacobian.T @ np.linalg.solve(jacobian @ jacobian.T + self.damping * np.eye(6), epsilon)
+                self._offset += np.rad2deg(dq)
+        self._previous = pos
+        q[:ARM_JOINTS] += self._offset
+        return to_dict(q, action)
+
+    def get_config(self) -> dict[str, Any]:
+        return {"k": list(self.k), "tau": self.tau, "fps": self.fps, "damping": self.damping}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 @ProcessorStepRegistry.register("so101_datagen_command_drift")
 @dataclass
 class CommandDrift(RobotActionProcessorStep):
@@ -311,6 +382,7 @@ def make_command_pipeline(cfg: NoiseConfig, fps: int) -> RobotProcessorPipeline:
     """Teleop side: planned command (and current observation) to executed command."""
     return RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[
+            MotionNoise(k=cfg.motion_noise_k, tau=cfg.motion_noise_tau, fps=fps),
             CommandDrift(std=cfg.drift_std, tau=cfg.drift_tau, fps=fps),
             CommandJerk(rate=cfg.jerk_rate, amplitude=cfg.jerk_amplitude, frames=cfg.jerk_frames, fps=fps),
         ],

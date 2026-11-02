@@ -20,7 +20,7 @@ Shards are generated in parallel, one process and one LeRobotDataset each, then 
 
     python -m examples.so101_datagen.generate \\
         --output_dir=outputs/so101_datagen --repo_id=<hf_user>/so101_datagen \\
-        --num_shards=32 --episodes_per_shard=50 --num_workers=14
+        --num_shards=32 --episodes_per_shard=50 --num_workers=6
 
 Rerunning the same command resumes: finished shards are kept, interrupted ones start over.
 """
@@ -56,7 +56,7 @@ class GenerateConfig:
     seed: int = 0
     merge: bool = True
     push_to_hub: bool = False
-    private: bool = True
+    private: bool = False
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     encoding: EncodingConfig = field(default_factory=EncodingConfig)
 
@@ -159,6 +159,8 @@ def summarize(reports: list[dict], elapsed: float) -> dict:
         "episodes_per_hour": round(episodes / elapsed * 3600),
         "success_rate": round(episodes / max(attempts, 1), 3),
         "failures": failures,
+        "retries": sum(r.get("retries", 0) for r in reports),
+        "episodes_with_retries": sum(r.get("episodes_with_retries", 0) for r in reports),
         "tasks": tasks,
         # Share of worker time per stage.
         "time_split": {key: round(value / total, 3) for key, value in sorted(timings.items())},

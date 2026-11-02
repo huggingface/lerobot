@@ -1,0 +1,20 @@
+{
+  "source_repo": "nvidia/simready-assets",
+  "revision": "4763fbfaa4f8e97658e68b57d01b4c86659e08b5",
+  "source_asset": "kitchenware_tray_a01",
+  "license": "CC-BY-4.0",
+  "aspect": 1.5740740740740742,
+  "outer_half": [
+    2.0819075957492545,
+    1.2395314320370003
+  ],
+  "height": 0.6607478415524518,
+  "floor": 0.03671831775594641,
+  "collision_parts": 33,
+  "conversion": "USD triangulation, axis alignment, normalized by conservative usable floor short half-width; CoACD convex decomposition. Runtime non-uniform z scaling makes the crate a low-profile variant. Original face-varying UVs and source albedo retained; authored UV scale baked into coordinates.",
+  "albedo": "albedo.png",
+  "native_color": "blue",
+  "source_albedo": "simready_usd/Textures/t_tray_darkBlue_a01_alb.png",
+  "albedo_sha256": "5055c8505c0a3b7d18b202900cbefb5f3ebb2bfdd95e714ccca6e85928b2c27e",
+  "uv_scale": 1
+}

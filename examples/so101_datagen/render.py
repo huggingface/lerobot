@@ -90,6 +90,17 @@ class StateRenderer:
         mujoco.mj_kinematics(self.model, self.data)
         mujoco.mj_camlight(self.model, self.data)
 
+    def project(self, camera: str, point: np.ndarray) -> list[float] | None:
+        """Project a world point into normalized image coordinates; reject behind/off-image points."""
+        cam = self._camera_ids[camera]
+        local = self.data.cam_xmat[cam].reshape(3, 3).T @ (point - self.data.cam_xpos[cam])
+        depth = -local[2]
+        if depth <= 0:
+            return None
+        focal = 0.5 * self.height / np.tan(np.deg2rad(self.model.cam_fovy[cam]) / 2)
+        uv = [0.5 + focal * local[0] / (depth * self.width), 0.5 - focal * local[1] / (depth * self.height)]
+        return [float(v) for v in uv] if all(0 <= v <= 1 for v in uv) else None
+
     def _render(self, camera: str, scene: mujoco.MjvScene, context: mujoco.MjrContext) -> np.ndarray:
         self._camera.fixedcamid = self._camera_ids[camera]
         mujoco.mjv_updateScene(

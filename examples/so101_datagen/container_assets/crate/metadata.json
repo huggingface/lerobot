@@ -1,0 +1,20 @@
+{
+  "source_repo": "nvidia/simready-assets",
+  "revision": "4763fbfaa4f8e97658e68b57d01b4c86659e08b5",
+  "source_asset": "crate_blue_a01",
+  "license": "CC-BY-4.0",
+  "aspect": 1.588235294117647,
+  "outer_half": [
+    1.7798036336898801,
+    1.1915684622876783
+  ],
+  "height": 1.4895263863453532,
+  "floor": 0.07010466138665927,
+  "collision_parts": 48,
+  "conversion": "USD triangulation, axis alignment, normalized by conservative usable floor short half-width; CoACD convex decomposition. Runtime non-uniform z scaling makes the crate a low-profile variant. Original face-varying UVs and source albedo retained; authored UV scale baked into coordinates.",
+  "albedo": "albedo.png",
+  "native_color": "blue",
+  "source_albedo": "simready_usd/Textures/T_Plastic_Blue_A_Albedo.png",
+  "albedo_sha256": "9a414b0d8551193f129ee80ea61c736a990c130fc19ac256d31dde1749d04e16",
+  "uv_scale": 3
+}

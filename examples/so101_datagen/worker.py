@@ -43,8 +43,9 @@ from lerobot.utils.feature_utils import hw_to_dataset_features  # noqa: E402
 
 from .annotations import (  # noqa: E402
     EpisodeRows,
+    annotation_frames,
+    front_bbox_pair,
     persistent_rows,
-    vqa_frames,
     vqa_pair,
     write_language_columns,
 )
@@ -210,6 +211,7 @@ def run_shard(job: ShardJob) -> dict:
         attempt += 1
         rng = np.random.default_rng([seed, 1])
         t0 = time.perf_counter()
+        renderer = None
         try:
             episode = prepare(seed, cfg, meshes)
             t1 = time.perf_counter()
@@ -221,7 +223,14 @@ def run_shard(job: ShardJob) -> dict:
                 command_filter=lambda q: to_vector(command_pipeline((to_dict(q), {}))),
                 actuation=lambda q: to_vector(actuation_pipeline((to_dict(q), {}))),
             )
+            renderer = StateRenderer(episode.model, cfg.height, cfg.width)
+            renderer.set_state(episode.qpos[0])
+            visible = renderer.visible("front", episode.info, cfg.annotation.min_visible_pixels)
+            if not set(episode.instance.roles.values()).issubset(visible):
+                raise EpisodeError("occluded")
         except EpisodeError as e:
+            if renderer is not None:
+                renderer.close()
             failures[e.reason] += 1
             continue
         t2 = time.perf_counter()
@@ -242,6 +251,7 @@ def run_shard(job: ShardJob) -> dict:
             cfg,
             rng,
             timings,
+            renderer=renderer,
         )
         t3 = time.perf_counter()
         dataset.save_episode()
@@ -257,6 +267,22 @@ def run_shard(job: ShardJob) -> dict:
                 "roles": episode.instance.roles,
                 "start_mode": episode.start_mode,
                 "start": episode.start.tolist(),
+                "attempts": len(episode.plan.attempts),
+                "miss_modes": [a.miss_mode for a in episode.plan.attempts],
+                "retry_frames": episode.plan.retry_frames,
+                "objectives": [asdict(o) for o in episode.plan.objectives],
+                "transfers": [asdict(t) for t in episode.instance.transfers],
+                "completed_transfers": [asdict(t) for t in episode.plan.completed_transfers],
+                "grasp_attempts": [
+                    {
+                        "object_name": a.object_name,
+                        "transfer_id": a.transfer_id,
+                        "objective_id": a.objective_id,
+                        "success": a.success,
+                        "miss_mode": a.miss_mode,
+                    }
+                    for a in episode.plan.attempts
+                ],
                 "calibration": calibration.as_dict(),
                 "scene": asdict(episode.scene),
             }
@@ -279,6 +305,8 @@ def run_shard(job: ShardJob) -> dict:
         "attempts": attempt,
         "failures": dict(failures),
         "tasks": dict(tasks),
+        "retries": sum(max(0, e["attempts"] - max(1, len(e["transfers"]))) for e in sidecar),
+        "episodes_with_retries": sum(e["attempts"] > max(1, len(e["transfers"])) for e in sidecar),
         "seconds": time.perf_counter() - started,
         "timings": dict(timings),
     }
@@ -296,10 +324,11 @@ def record_episode(
     cfg: GenerationConfig,
     rng: np.random.Generator,
     timings: dict[str, float],
+    renderer: StateRenderer | None = None,
 ) -> None:
     """Pass 2: render the recorded states, map joints through the robot-side processors, add frames."""
-    renderer = StateRenderer(episode.model, cfg.height, cfg.width)
-    vqa_at = set(vqa_frames(len(episode.commands), cfg.fps, cfg.annotation, rng))
+    renderer = renderer or StateRenderer(episode.model, cfg.height, cfg.width)
+    bbox_at, vqa_at = annotation_frames(len(episode.commands), cfg.fps, cfg.annotation, rng)
     info = episode.info
     try:
         for t in range(len(episode.commands)):
@@ -307,13 +336,42 @@ def record_episode(
             renderer.set_state(episode.qpos[t])
             frame = {f"{OBS_STR}.images.{name}": renderer.rgb(name) for name in CAMERAS}
             t1 = time.perf_counter()
-            if t in vqa_at:
+            if t in bbox_at or t in vqa_at:
                 positions = {
                     name: renderer.data.xpos[body].copy() for name, body in info.object_bodies.items()
                 }
-                for name, key in zip(CAMERAS, camera_keys, strict=True):
-                    visible = renderer.visible(name, info, cfg.annotation.min_visible_pixels)
-                    pair = vqa_pair(key, visible, episode.scene, positions, cfg.annotation, rng)
+                needed = ({"front"} if t in bbox_at else set()) | ({vqa_at[t]} if t in vqa_at else set())
+                visible = {
+                    name: renderer.visible(name, info, cfg.annotation.min_visible_pixels) for name in needed
+                }
+                if t in bbox_at:
+                    pair = front_bbox_pair(
+                        camera_keys[0], visible["front"], episode.instance, cfg.annotation, rng
+                    )
+                    if pair is not None:
+                        rows.events.extend((t, r) for r in pair)
+                if t in vqa_at:
+                    name = vqa_at[t]
+                    key = camera_keys[list(CAMERAS).index(name)]
+                    grasp = None
+                    attempt = episode.plan.attempt_at(t)
+                    if attempt is not None and attempt.point_local is not None:
+                        target = attempt.object_name or episode.instance.roles["object"]
+                        body = info.object_bodies[target]
+                        point = (
+                            renderer.data.xpos[body]
+                            + renderer.data.xmat[body].reshape(3, 3) @ attempt.point_local
+                        )
+                        uv = renderer.project(name, point)
+                        if uv is not None:
+                            grasp = (
+                                target,
+                                next(o.label for o in episode.scene.objects if o.name == target),
+                                uv,
+                            )
+                    pair = vqa_pair(
+                        key, visible[name], episode.scene, positions, cfg.annotation, rng, grasp=grasp
+                    )
                     if pair is not None:
                         rows.events.extend((t, r) for r in pair)
             t2 = time.perf_counter()

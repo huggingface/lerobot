@@ -105,10 +105,21 @@ class Arm:
         self.actuators = np.array([model.actuator(name).id for name in JOINTS])
         self.lo, self.hi = model.actuator_ctrlrange[self.actuators].T.copy()
         self.tcp = model.site(TCP_SITE).id
+        self.wrist_camera = model.camera("wrist_cam").id
         self.base = model.body("base").id
         self.bodies = set(range(self.base, model.body("moving_jaw_so101_v1").id + 1))
         self._scratch = mujoco.MjData(model)
+        self.scene_qpos = model.qpos0.copy()
         self._measure_jaws()
+        self.jaw_geoms = [
+            [
+                i
+                for i in range(model.ngeom)
+                if model.geom(i).name.startswith(side + "_jaw")
+                and (model.geom_contype[i] or model.geom_conaffinity[i])
+            ]
+            for side in ("fixed", "moving")
+        ]
 
     def _measure_jaws(self) -> None:
         """Jaw gap as a function of the gripper opening, and where the fixed jaw sits in the site frame."""
@@ -120,8 +131,11 @@ class Arm:
         for opening in openings:
             data.qpos[self.qadr] = self.to_ctrl(np.array([0.0, 0.0, 0.0, 90.0, 0.0, opening]))
             mujoco.mj_kinematics(self.model, data)
-            gaps.append(np.linalg.norm(data.geom_xpos[moving] - data.geom_xpos[fixed]))
+            delta = data.geom_xpos[moving] - data.geom_xpos[fixed]
+            span = abs(np.dot(delta, data.site_xmat[self.tcp].reshape(3, 3)[:, 2]))
+            gaps.append(span - self.model.geom_size[fixed, 0] - self.model.geom_size[moving, 0])
         self._openings, self._gaps = openings, np.asarray(gaps)
+        self.max_jaw_span = max(gaps)
         rot = data.site_xmat[self.tcp].reshape(3, 3)
         # Offset of the fixed jaw from the site along the jaw axis (site z): about -2 cm.
         self.fixed_jaw_offset = float((rot.T @ (data.geom_xpos[fixed] - data.site_xpos[self.tcp]))[2])
@@ -129,6 +143,83 @@ class Arm:
     def opening_for_width(self, width: float) -> float:
         """Gripper opening (0-100) whose jaw gap is ``width`` meters."""
         return float(np.interp(width, self._gaps, self._openings))
+
+    def jaw_clearances(
+        self, values: np.ndarray | None, geoms: set[int], qpos: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Signed surface distance from each jaw's collision shapes to the target."""
+        if not geoms:
+            return np.full(2, np.inf)
+        data = self._scratch
+        data.qpos[:] = self.scene_qpos if qpos is None else qpos
+        if values is not None:
+            data.qpos[self.qadr] = self.to_ctrl(values)
+        mujoco.mj_forward(self.model, data)
+        return np.array(
+            [
+                min(mujoco.mj_geomDistance(self.model, data, a, b, 0.2, None) for a in jaw for b in geoms)
+                for jaw in self.jaw_geoms
+            ]
+        )
+
+    def collides(self, values: np.ndarray, ignore: set[int] | None = None) -> bool:
+        """Whether the arm touches the scene at these joint values, ignoring selected geoms."""
+        data = self._scratch
+        data.qpos[:] = self.scene_qpos
+        data.qpos[self.qadr] = self.to_ctrl(values)
+        mujoco.mj_forward(self.model, data)
+        ignored = ignore or set()
+        for contact in data.contact[: data.ncon]:
+            g1, g2 = contact.geom1, contact.geom2
+            if g1 in ignored or g2 in ignored:
+                continue
+            a, b = self.model.geom_bodyid[g1], self.model.geom_bodyid[g2]
+            if (a in self.bodies) != (b in self.bodies):
+                return True
+        return False
+
+    def wrist_camera_ok(
+        self,
+        values: np.ndarray | None,
+        target: int | None = None,
+        geoms: set[int] | None = None,
+        qpos: np.ndarray | None = None,
+    ) -> bool:
+        """Camera is above/beside the wrist and, when requested, can see the target center.
+
+        The visibility check uses the camera frustum and a ray through the scene; it is deliberately
+        conservative and does not replace a segmentation render.
+        """
+        model, data = self.model, self._scratch
+        if qpos is None:
+            data.qpos[:] = self.scene_qpos
+            data.qpos[self.qadr] = self.to_ctrl(values)
+        else:
+            data.qpos[:] = qpos
+        mujoco.mj_forward(model, data)
+        cam = self.wrist_camera
+        axis = data.site_xmat[self.tcp].reshape(3, 3)[:, 0]
+        offset = data.cam_xpos[cam] - data.xpos[model.cam_bodyid[cam]]
+        across = offset - axis * np.dot(offset, axis)
+        if across[2] < -0.008:
+            return False
+        if target is None:
+            return True
+        vector = data.xpos[target] - data.cam_xpos[cam]
+        local = data.cam_xmat[cam].reshape(3, 3).T @ vector
+        depth = -local[2]
+        fov = np.tan(np.deg2rad(model.cam_fovy[cam]) / 2)
+        aspect = model.vis.global_.offwidth / model.vis.global_.offheight
+        if depth <= 0.005 or abs(local[0]) > depth * fov * aspect or abs(local[1]) > depth * fov:
+            return False
+        norm = np.linalg.norm(vector)
+        if norm < 1e-8:
+            return False
+        hit = np.array([-1], dtype=np.int32)
+        mujoco.mj_ray(
+            model, data, data.cam_xpos[cam], vector / norm, None, True, model.cam_bodyid[cam], hit, None
+        )
+        return int(hit[0]) in (geoms or set())
 
     def to_ctrl(self, values: np.ndarray) -> np.ndarray:
         """Degrees and the 0-100 gripper opening to actuator radians."""
@@ -172,6 +263,7 @@ class Arm:
         """
         model, data = self.model, self._scratch
         q = self.to_ctrl(init)
+        data.qpos[:] = self.scene_qpos
         cols = self.dofadr[:ARM_JOINTS]
         jp = np.zeros((3, model.nv))
         jr = np.zeros((3, model.nv))

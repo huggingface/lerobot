@@ -1,0 +1,3 @@
+# Generated from pinned public USD sources by prepare_containers.py.
+*.obj
+*.png

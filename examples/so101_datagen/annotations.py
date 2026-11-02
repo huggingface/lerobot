@@ -81,14 +81,22 @@ def persistent_rows(instance: TaskInstance, plan: Plan, cfg: AnnotationConfig) -
     changes = np.flatnonzero(np.diff(plan.subtask_of_frame)) + 1
     starts = [0, *changes.tolist()]
     labels = [plan.subtasks[plan.subtask_of_frame[s]] for s in starts]
-    for i, (start, label) in enumerate(zip(starts, labels, strict=True)):
+    # IDs distinguish intentional repeated steps from recovery re-entering the same objective.
+    # Older, manually constructed Plans can still be read without objective metadata.
+    objectives = [o.label for o in plan.objectives] if plan.objective_ids else list(dict.fromkeys(labels))
+    indices = {o.id: i for i, o in enumerate(plan.objectives)}
+    for start, label in zip(starts, labels, strict=True):
         rows.append((start, row("assistant", label, "subtask")))
-        remaining = "\n".join(f"{k + 1}. {text}" for k, text in enumerate(labels[i:]))
+        index = (
+            indices[plan.objective_ids[plan.subtask_of_frame[start]]]
+            if plan.objective_ids
+            else objectives.index(label)
+        )
+        remaining = "\n".join(f"{k + 1}. {text}" for k, text in enumerate(objectives[index:]))
         rows.append((start, row("assistant", remaining, "plan")))
-        if cfg.memory and i > 0 and instance.memories:
-            rows.append(
-                (start, row("assistant", instance.memories[min(i, len(instance.memories)) - 1], "memory"))
-            )
+        memory = plan.memories[plan.subtask_of_frame[start]] if plan.memories else None
+        if cfg.memory and memory:
+            rows.append((start, row("assistant", memory, "memory")))
     return rows
 
 
@@ -101,6 +109,50 @@ def vqa_frames(n_frames: int, fps: int, cfg: AnnotationConfig, rng: np.random.Ge
     return sorted({int(f) for f in np.arange(first, n_frames, period)})
 
 
+def annotation_frames(
+    n_frames: int, fps: int, cfg: AnnotationConfig, rng: np.random.Generator
+) -> tuple[set[int], dict[int, str]]:
+    """Reserve the front detection stream; alternate general questions without front collisions."""
+    boxes = set()
+    if cfg.front_bbox_hz > 0:
+        period = fps / cfg.front_bbox_hz
+        boxes = {int(f) for f in np.arange(rng.uniform(0, period), n_frames, period)}
+    general = {}
+    for i, frame in enumerate(vqa_frames(n_frames, fps, cfg, rng)):
+        camera = "front" if i % 2 == 0 else "wrist"
+        if camera == "front" and frame in boxes:
+            candidates = (f for f in range(n_frames) if f not in boxes and f not in general)
+            frame = min(candidates, key=lambda f: abs(f - frame), default=None)
+            if frame is None:
+                continue
+        general[frame] = camera
+    return boxes, general
+
+
+def front_bbox_pair(
+    camera_key: str,
+    visible: dict[str, Visible],
+    instance: TaskInstance,
+    cfg: AnnotationConfig,
+    rng: np.random.Generator,
+) -> tuple[dict, dict] | None:
+    """Task-role detections, with occasional all-visible-object questions."""
+    all_objects = rng.random() < cfg.front_bbox_all_prob
+    selected = visible if all_objects else {n: v for n, v in visible.items() if n in instance.roles.values()}
+    items = sorted(selected.values(), key=lambda v: v.name)
+    if not items:
+        return None
+    question = (
+        _pick(rng, ALL_BBOX_QUESTIONS)
+        if all_objects
+        else "Detect " + " and ".join(f"the {v.label}" for v in items) + "."
+    )
+    answer = {"detections": [{"label": v.label, "bbox_format": "xyxy", "bbox": v.bbox} for v in items]}
+    return row("user", question, "vqa", camera_key), row(
+        "assistant", json.dumps(answer, sort_keys=True), "vqa", camera_key
+    )
+
+
 def vqa_pair(
     camera_key: str,
     visible: dict[str, Visible],
@@ -108,14 +160,26 @@ def vqa_pair(
     positions: dict[str, np.ndarray],
     cfg: AnnotationConfig,
     rng: np.random.Generator,
+    grasp: tuple[str, str, list[float]] | None = None,
 ) -> tuple[dict, dict] | None:
     """A question about what ``camera_key`` sees and its ground-truth answer, or None if nothing fits."""
     if not visible:
         return None
-    kinds = list(cfg.question_weights)
+    kinds = [k for k, weight in cfg.question_weights.items() if weight > 0]
+    if not kinds:
+        return None
     weights = np.asarray([cfg.question_weights[k] for k in kinds], dtype=np.float64)
     for kind in rng.choice(kinds, size=len(kinds), replace=False, p=weights / weights.sum()):
-        qa = _QUESTIONS[kind](visible, scene, positions, rng)
+        if kind == "grasp":
+            if grasp is None or grasp[0] not in visible:
+                continue
+            _, label, point = grasp
+            qa = (
+                f"Where will you grasp the {label}?",
+                {"label": f"grasp point of the {label}", "point_format": "xy", "point": point},
+            )
+        else:
+            qa = _QUESTIONS[kind](visible, scene, positions, rng)
         if qa is not None:
             question, answer = qa
             return (
@@ -177,7 +241,10 @@ def _spatial(visible, scene, positions, rng):
     container = next((c for c in scene.containers if c.name == b.name), None)
     if container is not None and a.name in positions:
         rel = positions[a.name][:2] - np.asarray(container.pos)
-        if np.all(np.abs(rel) < container.inner_half) and positions[a.name][2] < container.wall_height + 0.03:
+        if (
+            np.all(np.abs(rel) < container.inner_half_xy)
+            and positions[a.name][2] < container.wall_height + 0.03
+        ):
             relation = "in"
         else:
             relation = "left_of" if a.center[0] < b.center[0] else "right_of"

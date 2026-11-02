@@ -19,6 +19,7 @@
 import mujoco
 import numpy as np
 
+from ..config import GenerationConfig
 from ..motion import Planner
 from ..scene import SceneInfo, SceneParams
 from . import Task, TaskInstance, find, is_lifted, phrase, register
@@ -41,7 +42,9 @@ TEMPLATES = [
 class PickLift(Task):
     name = "pick_lift"
 
-    def sample(self, scene: SceneParams, rng: np.random.Generator) -> TaskInstance | None:
+    def sample(
+        self, scene: SceneParams, rng: np.random.Generator, cfg: GenerationConfig | None = None
+    ) -> TaskInstance | None:
         obj = scene.objects[rng.integers(len(scene.objects))]
         instruction, phrasings = phrase(TEMPLATES, rng, 10, obj=obj.label)
         return TaskInstance(
@@ -49,14 +52,13 @@ class PickLift(Task):
             instruction=instruction,
             roles={"object": obj.name},
             phrasings=phrasings,
-            memories=[f"I picked up the {obj.label}."],
         )
 
     def script(self, instance: TaskInstance, scene: SceneParams, planner: Planner, rng: np.random.Generator):
         obj = find(scene, instance.roles["object"])
         planner.subtask(f"pick up the {obj.label}")
         grasp = planner.pick(obj)
-        planner.subtask(f"hold the {obj.label} up")
+        planner.subtask(f"hold the {obj.label} up", memory=f"I picked up the {obj.label}.")
         # Bring it up and a little towards the robot, then hold it there.
         pos, _ = planner.arm.tcp_pose(planner.q)
         up = pos + np.array([*(-pos[:2] * rng.uniform(0.0, 0.3)), rng.uniform(0.02, 0.08)])

@@ -1,0 +1,25 @@
+{
+  "source_repo": "PalatialSim/palatial-nv-asset-library",
+  "revision": "69a87329036cec0440403351c12230970c4e67d8",
+  "source_asset": "D00935",
+  "license": "CC-BY-4.0",
+  "aspect": 1.6086956521739129,
+  "outer_half": [
+    1.8612826647965803,
+    1.2630652474320452
+  ],
+  "height": 0.8141565096119175,
+  "floor": 0.04435547818826592,
+  "collision_parts": 29,
+  "albedo": "albedo.png",
+  "native_color": "white",
+  "native_label": "white dish",
+  "noun": "dish",
+  "specular": 0.5,
+  "shininess": 0.4,
+  "source_albedo": "simready_usd/textures/texture_base_color.png",
+  "source_albedo_sha256": "c77500db60deec56d181c88cae32ba1676bffceb7050c3d70559c5ddba8d7885",
+  "albedo_sha256": "0b5983de4387bb1c242e199006eebfddb163cf374f741e1d4cf98eebf92d9f21",
+  "uv_scale": 1,
+  "conversion": "Triangulated USD visual mesh with original UVs and authored UV repeat, centered XY and aligned long axis x; normalized by conservative usable short floor half-width. authored USD convex collision meshes. Source albedo resampled to at most 1024 pixels. XY proportions retained; configured Z height scaled independently. Overlapping convex floor pieces removed from the usable interior; exterior convex wall hulls retained. One continuous slab supports the measured source-floor height."
+}

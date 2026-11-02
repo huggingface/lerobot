@@ -23,13 +23,27 @@ new module in this package, imported below.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import mujoco
 import numpy as np
 
-from ..motion import Planner
+from ..config import GenerationConfig
+from ..errors import EpisodeError
+from ..motion import DroppedError, Grasp, Objective, Planner
 from ..scene import ObjectParams, SceneInfo, SceneParams
+
+
+@dataclass
+class Transfer:
+    id: str
+    object_name: str
+    target_name: str
+    position: list[float]
+    kind: str = "place_in"
+    # A relational destination may be inside the container holding its reference object.
+    container_name: str | None = None
 
 
 @dataclass
@@ -42,8 +56,8 @@ class TaskInstance:
     roles: dict[str, str]
     # Other phrasings of the instruction, for ``task_aug`` rows.
     phrasings: list[str] = field(default_factory=list)
-    # What the robot has done at the start of each subtask after the first, for ``memory`` rows.
-    memories: list[str] = field(default_factory=list)
+    objectives: list[Objective] = field(default_factory=list)
+    transfers: list[Transfer] = field(default_factory=list)
 
 
 class Task(ABC):
@@ -51,9 +65,38 @@ class Task(ABC):
     # What the scene must contain.
     containers: int = 0
     min_objects: int = 1
+    long_horizon: bool = False
+    # New contained-object tasks need actual rotated wall bounds when reserving free table space.
+    precise_container_layout: bool = False
+
+    def scene_config(self, cfg: GenerationConfig) -> GenerationConfig:
+        return cfg
+
+    def completed_transfer_valid(
+        self,
+        transfer_id: str,
+        instance: TaskInstance,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        info: SceneInfo,
+    ) -> bool:
+        """Check an earlier goal while later transfers are still moving."""
+        return self.transfer_success(transfer_id, instance, model, data, info)
+
+    def transfer_success(
+        self,
+        transfer_id: str,
+        instance: TaskInstance,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        info: SceneInfo,
+    ) -> bool:
+        return self.success(instance, model, data, info)
 
     @abstractmethod
-    def sample(self, scene: SceneParams, rng: np.random.Generator) -> TaskInstance | None:
+    def sample(
+        self, scene: SceneParams, rng: np.random.Generator, cfg: GenerationConfig | None = None
+    ) -> TaskInstance | None:
         """Choose the objects to act on and phrase the instruction; None when the scene doesn't fit."""
 
     @abstractmethod
@@ -65,6 +108,26 @@ class Task(ABC):
         self, instance: TaskInstance, model: mujoco.MjModel, data: mujoco.MjData, info: SceneInfo
     ) -> bool:
         """Whether the final simulated state completes the task."""
+
+    def pick_and_place(
+        self,
+        obj: ObjectParams,
+        planner: Planner,
+        place: Callable[[Grasp], None],
+        *,
+        preflight: bool = False,
+        objective_id: str | None = None,
+    ) -> None:
+        planner.subtask(f"pick up the {obj.label}", objective_id=objective_id)
+        while True:
+            grasp = planner.pick(obj, preflight=place if preflight else None)
+            try:
+                place(grasp)
+                return
+            except DroppedError:
+                if planner.rollout.attempts_used >= planner.rollout.episode.config.recovery.max_attempts:
+                    raise EpisodeError("attempts_exhausted") from None
+                planner.recover(obj, "carry dropped")
 
     def check(
         self, mark: str, instance: TaskInstance, model: mujoco.MjModel, data: mujoco.MjData, info: SceneInfo
@@ -111,9 +174,9 @@ def obstacle_top(
         if item.name in exclude:
             continue
         if isinstance(item, ObjectParams):
-            height, radius = 2 * item.half_size[-1], footprint(item)
+            height, radius = item.support_height + 2 * item.half_size[-1], footprint(item)
         else:
-            height, radius = item.wall_height, np.sqrt(2) * (item.inner_half + item.thickness)
+            height, radius = item.wall_height, float(np.linalg.norm(item.outer_half_xy))
         s = np.clip(np.dot(np.asarray(item.pos[:2]) - start, path) / max(np.dot(path, path), 1e-9), 0, 1)
         if np.linalg.norm(start + s * path - np.asarray(item.pos[:2])) < radius + corridor:
             top = max(top, height)
@@ -146,7 +209,7 @@ def is_lifted(name: str, model: mujoco.MjModel, data: mujoco.MjData, info: Scene
     body = info.object_bodies[name]
     tcp = data.site_xpos[model.site("gripperframe").id]
     obj = find(info.params, name)
-    raised = data.xpos[body][2] > obj.half_size[-1] + 0.015
+    raised = data.xpos[body][2] > obj.support_height + obj.half_size[-1] + 0.015
     held = np.linalg.norm(data.xpos[body] - tcp) < 0.06
     return bool(raised and held)
 
@@ -159,4 +222,11 @@ def resting_on_table(name: str, model: mujoco.MjModel, data: mujoco.MjData, info
     )
 
 
-from . import pick_lift, place_in, place_near  # noqa: E402, F401
+from . import (  # noqa: E402, F401
+    clear_container,
+    collect_objects,
+    ordered_transfers,
+    pick_lift,
+    place_in,
+    place_near,
+)

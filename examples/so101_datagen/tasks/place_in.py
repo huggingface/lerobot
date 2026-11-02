@@ -19,6 +19,7 @@
 import mujoco
 import numpy as np
 
+from ..config import GenerationConfig
 from ..motion import Planner
 from ..randomization import uniform
 from ..scene import SceneInfo, SceneParams
@@ -47,7 +48,9 @@ class PlaceIn(Task):
     containers = 1
     min_objects = 1
 
-    def sample(self, scene: SceneParams, rng: np.random.Generator) -> TaskInstance | None:
+    def sample(
+        self, scene: SceneParams, rng: np.random.Generator, cfg: GenerationConfig | None = None
+    ) -> TaskInstance | None:
         container = scene.containers[0]
         # It must fit, with room to spare for an imprecise drop.
         fits = [o for o in scene.objects if footprint(o) < container.inner_half - 0.012]
@@ -61,37 +64,43 @@ class PlaceIn(Task):
             instruction=instruction,
             roles={"object": obj.name, "target": container.name},
             phrasings=phrasings,
-            memories=[f"I picked up the {obj.label}.", f"The {obj.label} is in the {container.label}."],
         )
 
     def script(self, instance: TaskInstance, scene: SceneParams, planner: Planner, rng: np.random.Generator):
         obj = find(scene, instance.roles["object"])
         container = find(scene, instance.roles["target"])
-        planner.subtask(f"pick up the {obj.label}")
-        grasp = planner.pick(obj)
-        planner.subtask(f"put the {obj.label} in the {container.label}")
-        # Somewhere inside, with the object's footprint clear of the walls.
-        room = max(container.inner_half - footprint(obj) - 0.008, 0.0)
-        offset = rng.uniform(-1, 1, 2) * room * 0.7
-        clearance = rng.uniform(0.008, 0.025)
-        release = np.array(
-            [
-                container.pos[0] + offset[0],
-                container.pos[1] + offset[1],
-                container.thickness + grasp.height + clearance,
-            ]
-        )
-        # The rim, and anything on the way, passes under the object's bottom with room to spare.
-        top = obstacle_top(scene, obj.pos, release, exclude={obj.name})
-        clear = top + grasp.height
-        planner.place(
-            release,
-            grasp.tilt,
-            hover_z=clear + uniform(rng, planner.cfg.carry_margin),
-            min_hover_z=clear + planner.cfg.min_carry_margin,
-        )
+
+        def place(grasp):
+            planner.subtask(
+                f"put the {obj.label} in the {container.label}", memory=f"I picked up the {obj.label}."
+            )
+            # Somewhere inside, with the object's footprint clear of the walls.
+            room = max(container.inner_half - footprint(obj) - 0.008, 0.0)
+            offset = rng.uniform(-1, 1, 2) * room * 0.7
+            clearance = rng.uniform(0.008, 0.025)
+            release = np.array(
+                [
+                    container.pos[0] + offset[0],
+                    container.pos[1] + offset[1],
+                    container.thickness + grasp.height + clearance,
+                ]
+            )
+            if grasp.style == "tangential":
+                # A horizontal gripper may not fit between the walls; release above the rim.
+                release[2] = max(release[2], container.wall_height + grasp.height + 0.015)
+            # The rim, and anything on the way, passes under the object's bottom with room to spare.
+            top = obstacle_top(scene, obj.pos, release, exclude={obj.name})
+            clear = top + grasp.height
+            planner.place(
+                release,
+                grasp.tilt,
+                hover_z=clear + uniform(rng, planner.cfg.carry_margin),
+                min_hover_z=clear + planner.cfg.min_carry_margin,
+            )
+
+        self.pick_and_place(obj, planner, place, preflight=True)
         if rng.random() < planner.cfg.return_rest_prob:
-            planner.subtask("go back to the rest position")
+            planner.subtask("go back to the rest position", memory=f"I placed the {obj.label}.")
             planner.transit(REST + rng.uniform(-3, 3, 6) * [1, 1, 1, 1, 1, 0])
 
     def success(
@@ -102,6 +111,6 @@ class PlaceIn(Task):
         center = info.container_bodies[instance.roles["target"]]
         rel = data.xmat[center].reshape(3, 3).T @ (data.xpos[body] - data.xpos[center])
         inside = bool(
-            np.all(np.abs(rel[:2]) < container.inner_half) and rel[2] < container.wall_height + 0.03
+            np.all(np.abs(rel[:2]) < container.inner_half_xy) and rel[2] < container.wall_height + 0.03
         )
         return inside and not touches_gripper(instance.roles["object"], model, data, info)

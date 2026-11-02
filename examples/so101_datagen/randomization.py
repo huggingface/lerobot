@@ -25,6 +25,7 @@ import numpy as np
 from .assets import MeshAsset, polyhaven_subset
 from .config import GenerationConfig, Range
 from .scene import (
+    CONTAINER_STYLES,
     BackgroundParams,
     CameraParams,
     ContainerParams,
@@ -33,6 +34,7 @@ from .scene import (
     Look,
     ObjectParams,
     SceneParams,
+    container_asset,
 )
 
 # Named colors, so labels such as "red cube" stay true under jitter.
@@ -72,6 +74,7 @@ CONFUSABLE = {
 MIN_CHANNEL = 0.05
 TEXTURE_KINDS = ("grain", "noise")
 CAMERA_TRIES = 30
+WIDE_CAMERA_TRIES = 120
 CONTAINER_NOUNS = ("box", "bin", "container")
 TRAY_NOUNS = ("tray", "box")
 
@@ -83,6 +86,8 @@ class Footprint:
     x: float
     y: float
     radius: float
+    half_xy: tuple[float, float] | None = None
+    yaw: float = 0.0
 
 
 def uniform(rng: np.random.Generator, r: Range) -> float:
@@ -95,6 +100,8 @@ def sample_scene(
     meshes: dict[str, MeshAsset],
     containers: int,
     min_objects: int,
+    *,
+    precise_containers: bool = False,
 ) -> SceneParams | None:
     """Sample one scene with ``containers`` containers and at least ``min_objects`` graspable objects.
 
@@ -106,7 +113,16 @@ def sample_scene(
     container_params = []
     for i in range(containers):
         container = _sample_container(rng, cfg, f"container_{i}", used_labels, used_colors)
-        spot = _place(rng, cfg, placed, container.inner_half + container.thickness)
+        spot = _place(
+            rng,
+            cfg,
+            placed,
+            container.inner_half + container.thickness,
+            half_xy=None
+            if container.style == "procedural" and not precise_containers
+            else tuple(container.outer_half_xy),
+            yaw=container.yaw,
+        )
         if spot is None:
             return None
         container.pos = spot
@@ -128,9 +144,12 @@ def sample_scene(
         objects.append(obj)
 
     # The front camera must see every object and container whole.
-    corners = np.concatenate([_corners(item) for item in [*objects, *container_params]])
-    for _ in range(CAMERA_TRIES):
-        camera = _sample_front_camera(rng, cfg)
+    corners = np.concatenate(
+        [_corners(item, precise_containers=precise_containers) for item in [*objects, *container_params]]
+    )
+    wide = cfg.front_camera.wide_prob > 0 and rng.random() < cfg.front_camera.wide_prob
+    for _ in range(WIDE_CAMERA_TRIES if wide else CAMERA_TRIES):
+        camera = _sample_front_camera(rng, cfg, wide=wide)
         if _in_view(camera, corners, cfg.width / cfg.height):
             break
     else:
@@ -153,15 +172,18 @@ def sample_scene(
     )
 
 
-def _corners(item: ObjectParams | ContainerParams) -> np.ndarray:
+def _corners(item: ObjectParams | ContainerParams, *, precise_containers: bool = False) -> np.ndarray:
     """Corners of a placed item's bounding box, ignoring its yaw (the box around any yaw)."""
     if isinstance(item, ContainerParams):
-        half = item.inner_half + item.thickness
-        size = np.array([half, half, item.wall_height + item.thickness])
+        half = item.outer_half_xy
+        if item.style != "procedural" or precise_containers:
+            c, s = abs(np.cos(item.yaw)), abs(np.sin(item.yaw))
+            half = np.array([[c, s], [s, c]]) @ half
+        size = np.array([*half, item.wall_height + item.thickness])
     else:
         h = item.half_size
         reach = float(np.hypot(h[0], h[1])) if item.shape != "cylinder" else h[0]
-        size = np.array([reach, reach, 2 * h[-1]])
+        size = np.array([reach, reach, 2 * h[-1] + item.support_height])
     x, y = item.pos
     return np.array(
         [[x + sx * size[0], y + sy * size[1], z] for sx in (-1, 1) for sy in (-1, 1) for z in (0.0, size[2])]
@@ -182,14 +204,44 @@ def _in_view(camera: CameraParams, points: np.ndarray, aspect: float, margin: fl
     return bool(np.all(np.abs(u) <= 1 - 2 * margin) and np.all(np.abs(v) <= 1 - 2 * margin))
 
 
-def _place(rng: np.random.Generator, cfg: GenerationConfig, placed: list[Footprint], radius: float):
-    """Rejection-sample a free spot in the reachable annulus."""
+def _separated(a: Footprint, b: Footprint, gap: float) -> bool:
+    delta = np.array([a.x - b.x, a.y - b.y])
+    if a.half_xy is None and b.half_xy is None:
+        return bool(np.linalg.norm(delta) > a.radius + b.radius + gap)
+    if a.half_xy is None:
+        a, b = b, a
+        delta = -delta
+    c, s = np.cos(a.yaw), np.sin(a.yaw)
+    axes_a = np.array([[c, -s], [s, c]])
+    if b.half_xy is None:
+        local = np.abs(delta @ axes_a) - np.array(a.half_xy)
+        return bool(np.linalg.norm(np.maximum(local, 0)) > b.radius + gap)
+    c, s = np.cos(b.yaw), np.sin(b.yaw)
+    axes_b = np.array([[c, -s], [s, c]])
+    for axis in np.concatenate([axes_a.T, axes_b.T]):
+        extent = np.abs(axis @ axes_a) @ a.half_xy + np.abs(axis @ axes_b) @ b.half_xy
+        if abs(delta @ axis) > extent + gap:
+            return True
+    return False
+
+
+def _place(
+    rng: np.random.Generator,
+    cfg: GenerationConfig,
+    placed: list[Footprint],
+    radius: float,
+    *,
+    half_xy: tuple[float, float] | None = None,
+    yaw: float = 0.0,
+):
+    """Rejection-sample a free spot; imported rectangular trays retain their actual orientation."""
     for _ in range(100):
         r = uniform(rng, cfg.layout.radius)
         angle = np.deg2rad(uniform(rng, cfg.layout.angle))
         x, y = r * np.cos(angle), r * np.sin(angle)
-        if all(np.hypot(x - p.x, y - p.y) > radius + p.radius + cfg.layout.min_gap for p in placed):
-            placed.append(Footprint(x, y, radius))
+        candidate = Footprint(float(x), float(y), radius, half_xy, yaw)
+        if all(_separated(candidate, p, cfg.layout.min_gap) for p in placed):
+            placed.append(candidate)
             return [float(x), float(y)]
     return None
 
@@ -302,23 +354,81 @@ def _sample_container(
     rng: np.random.Generator, cfg: GenerationConfig, name: str, used_labels: set[str], used_colors: set[str]
 ) -> ContainerParams:
     cc = cfg.container
+    if not np.isfinite(cc.original_texture_prob) or not 0 <= cc.original_texture_prob <= 1:
+        raise ValueError("container.original_texture_prob must be between 0 and 1")
+    style = cc.style
+    if cc.style_weights:
+        names, weights = list(cc.style_weights), np.array(list(cc.style_weights.values()), dtype=float)
+        if any(name not in CONTAINER_STYLES for name in names):
+            raise ValueError("Unknown container style in style_weights")
+        if not np.all(np.isfinite(weights)) or np.any(weights < 0) or weights.sum() <= 0:
+            raise ValueError("container.style_weights must be finite, nonnegative, with a positive total")
+        style = names[rng.choice(len(names), p=weights / weights.sum())]
+    if style not in CONTAINER_STYLES:
+        raise ValueError(f"Unknown container style {style!r}")
+    size_range = cc.inner_size
+    if style != "procedural":
+        asset = container_asset(style)
+        if not np.isfinite(cc.max_asset_length) or cc.max_asset_length <= 0:
+            raise ValueError("container.max_asset_length must be positive")
+        size_range = (
+            cc.asset_inner_size[0],
+            min(cc.asset_inner_size[1], cc.max_asset_length / max(asset["outer_half"])),
+        )
+        if size_range[1] < size_range[0]:
+            raise ValueError("container.asset_inner_size cannot fit within max_asset_length")
+    previous_colors = set(used_colors)
+    previous_labels = set(used_labels)
     wall_height = uniform(rng, cc.wall_height)
     nouns = TRAY_NOUNS if wall_height < 0.02 else CONTAINER_NOUNS
     color, rgba = _color(rng, cfg, _confusable(used_colors))
     label = f"{color} {nouns[rng.integers(len(nouns))]}"
     used_labels.add(label)
     used_colors.add(color)
-    return ContainerParams(
+    container = ContainerParams(
         name=name,
         label=label,
-        inner_half=uniform(rng, cc.inner_size) / 2,
+        inner_half=uniform(rng, size_range) / 2,
         wall_height=wall_height,
         thickness=uniform(rng, cc.wall_thickness),
         look=_look(rng, rgba, cc.texture_prob, (4.0, 10.0)),
         pos=[0.0, 0.0],
         yaw=float(rng.uniform(-np.pi, np.pi)),
         color=color,
+        style=style,
     )
+    if container.style != "procedural":
+        asset = container_asset(container.style)
+        container.thickness = container.wall_height * asset["floor"] / asset["height"]
+        noun = asset.get("noun", "crate" if container.style == "crate" else "tray")
+        container.label = f"{color} {noun}"
+        # Draw at both endpoints too, so the probability itself never changes RNG consumption.
+        original = rng.random() < cc.original_texture_prob
+        native_color = asset["native_color"]
+        native_label = asset.get("native_label", f"{native_color} {noun}")
+        if (
+            original
+            and native_label not in previous_labels
+            and native_color not in _confusable(previous_colors)
+        ):
+            container.label, container.color = native_label, native_color
+            container.look = Look(
+                rgba=[1.0, 1.0, 1.0, 1.0],
+                texture={"kind": "container_asset", "name": container.style},
+                specular=asset.get("specular", 0.5),
+                shininess=asset.get("shininess", 0.3),
+            )
+        else:
+            # Two source-blue trays would be ambiguous: give the next one a distinct sampled label.
+            while container.label in previous_labels:
+                color, rgba = _color(rng, cfg, previous_colors | _confusable(previous_colors))
+                container.label, container.color = f"{color} {noun}", color
+                container.look.rgba = rgba
+        used_labels.clear()
+        used_labels.update(previous_labels | {container.label})
+        used_colors.clear()
+        used_colors.update(previous_colors | {container.color})
+    return container
 
 
 def _surface_rgb(rng: np.random.Generator) -> np.ndarray:
@@ -437,15 +547,26 @@ def look_at_quat(pos: np.ndarray, target: np.ndarray, roll: float = 0.0) -> list
     return quat.tolist()
 
 
-def _sample_front_camera(rng: np.random.Generator, cfg: GenerationConfig) -> CameraParams:
+def _sample_front_camera(
+    rng: np.random.Generator, cfg: GenerationConfig, *, wide: bool | None = None
+) -> CameraParams:
     fc = cfg.front_camera
-    target = np.asarray(fc.lookat) + rng.uniform(-1, 1, 3) * fc.lookat_jitter * np.array([1, 1, 0.3])
-    azimuth = np.deg2rad(uniform(rng, fc.azimuth))
-    elevation = np.deg2rad(uniform(rng, fc.elevation))
-    distance = uniform(rng, fc.distance)
+    if wide is None:
+        wide = rng.random() < fc.wide_prob
+    jitter = fc.wide_lookat_jitter if wide else fc.lookat_jitter
+    target = np.asarray(fc.lookat) + rng.uniform(-1, 1, 3) * jitter * np.array([1, 1, 0.3])
+    azimuth = np.deg2rad(uniform(rng, fc.wide_azimuth if wide else fc.azimuth))
+    elevation = np.deg2rad(uniform(rng, fc.wide_elevation if wide else fc.elevation))
+    distance = uniform(rng, fc.wide_distance if wide else fc.distance)
     # Azimuth 0 sits in front of the robot (+x), looking back at it.
     pos = target + distance * np.array(
         [np.cos(elevation) * np.cos(azimuth), np.cos(elevation) * np.sin(azimuth), np.sin(elevation)]
     )
-    roll = np.deg2rad(rng.uniform(-fc.roll, fc.roll))
-    return CameraParams(pos=pos.tolist(), quat=look_at_quat(pos, target, roll), fovy=uniform(rng, fc.fovy))
+    max_roll = fc.wide_roll if wide else fc.roll
+    roll = np.deg2rad(rng.uniform(-max_roll, max_roll))
+    return CameraParams(
+        pos=pos.tolist(),
+        quat=look_at_quat(pos, target, roll),
+        fovy=uniform(rng, fc.wide_fovy if wide else fc.fovy),
+        mode="wide" if wide else "typical",
+    )
