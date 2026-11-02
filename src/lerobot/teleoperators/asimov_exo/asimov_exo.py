@@ -72,6 +72,8 @@ class AsimovExoTeleoperator(Teleoperator):
             side="right",
         )
         self.ik_helper: AsimovExoIKHelper | None = None
+        self.ema_alpha = 2 / (config.ema_window + 1)
+        self._ema: dict[str, dict[str, float]] = {"left": {}, "right": {}}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -94,10 +96,12 @@ class AsimovExoTeleoperator(Teleoperator):
             frozen_joints=[j.strip() for j in self.config.frozen_joints.split(",") if j.strip()],
             arm_scale=self.config.arm_scale,
             rotation_weight=self.config.rotation_weight,
+            wrist_roll_offset_deg=self.config.wrist_roll_offset_deg,
             visualize=visualize,
         )
 
     def connect(self, calibrate: bool = True) -> None:
+        self._ema = {"left": {}, "right": {}}
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
         self.ik_helper = self._make_ik_helper()
@@ -126,8 +130,20 @@ class AsimovExoTeleoperator(Teleoperator):
     def get_action(self) -> dict[str, float]:
         if self.ik_helper is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        return self.ik_helper.compute_asimov_joints_from_exo(
-            self.left_arm.get_angles(), self.right_arm.get_angles()
+        return self.ik_helper.compute_asimov_joints_from_exo(*self._read_smoothed_angles())
+
+    def _smooth(self, side: str, angles: dict[str, float]) -> dict[str, float]:
+        """Per-joint EMA; a missed serial read keeps the last smoothed angles."""
+        ema = self._ema[side]
+        for joint, value in angles.items():
+            prev = ema.get(joint)
+            ema[joint] = value if prev is None else self.ema_alpha * value + (1 - self.ema_alpha) * prev
+        return dict(ema)
+
+    def _read_smoothed_angles(self) -> tuple[dict[str, float], dict[str, float]]:
+        return (
+            self._smooth("left", self.left_arm.get_angles()),
+            self._smooth("right", self.right_arm.get_angles()),
         )
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
@@ -149,7 +165,7 @@ class AsimovExoTeleoperator(Teleoperator):
 
         try:
             while True:
-                helper.compute_asimov_joints_from_exo(self.left_arm.get_angles(), self.right_arm.get_angles())
+                helper.compute_asimov_joints_from_exo(*self._read_smoothed_angles())
                 helper.update_visualization()
                 time.sleep(0.01)
         except KeyboardInterrupt:
