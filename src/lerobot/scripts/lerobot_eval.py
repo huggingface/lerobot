@@ -233,7 +233,7 @@ def rollout(
     postprocessor.reset()
     # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
     # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
-    reset_options = {NEW_ROLLOUT_OPTION: True}
+    reset_options: dict[str, bool | list[int]] = {NEW_ROLLOUT_OPTION: True}
     if initial_state_indices is not None:
         reset_options["initial_state_indices"] = initial_state_indices
     observation, info = env.reset(seed=seeds, options=reset_options)
