@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 
 SIDES = ("left", "right")
 # Where the exo models are drawn in meshcat, in front of the robot.
-VIZ_OFFSET = {"left": np.array([0.6, 0.3, 0.0]), "right": np.array([0.6, -0.3, 0.0])}
+VIZ_OFFSET = {"left": np.array([0.5, 0.3, 0.0]), "right": np.array([0.5, -0.3, 0.0])}
+# Exo models are drawn scaled about their shoulder joint.
+VIZ_SCALE = 0.8
 
 
 class AsimovExoIKHelper:
@@ -55,6 +57,7 @@ class AsimovExoIKHelper:
         frozen_joints: list[str] | None = None,
         arm_scale: float | None = None,
         rotation_weight: float = 0.02,
+        wrist_roll_offset_deg: float = 0.0,
         visualize: bool = False,
     ):
         try:
@@ -65,6 +68,12 @@ class AsimovExoIKHelper:
 
         self.pin = pin
         self.frozen = frozenset(frozen_joints or [])
+        # Asimov's ee frame has the forearm along local x, so roll is a local x rotation.
+        roll = np.deg2rad(wrist_roll_offset_deg)
+        self.wrist_roll = {
+            "left": pin.utils.rpyToMatrix(roll, 0.0, 0.0),
+            "right": pin.utils.rpyToMatrix(-roll, 0.0, 0.0),
+        }
         self.ik = AsimovArmIK(with_meshes=visualize, rotation_weight=rotation_weight)
 
         assets_dir = os.path.join(snapshot_download("lerobot/unitree-g1-mujoco"), "assets")
@@ -120,7 +129,7 @@ class AsimovExoIKHelper:
             return None
         ee = self._exo_ee(side, angles)
         target = np.eye(4)
-        target[:3, :3] = ee.rotation
+        target[:3, :3] = ee.rotation @ self.wrist_roll[side]
         target[:3, 3] = self.shoulder_asimov[side] + self.scale[side] * (
             ee.translation - self.shoulder_exo[side]
         )
@@ -167,9 +176,7 @@ class AsimovExoIKHelper:
             v.initViewer(open=False)
             v.viewer = self.viewer
             v.loadViewerModel(f"exo_{side}")
-            offset_tf = np.eye(4)
-            offset_tf[:3, 3] = VIZ_OFFSET[side]
-            self.viewer[f"exo_{side}"].set_transform(offset_tf)
+            self.viewer[f"exo_{side}"].set_transform(self._exo_viz_tf(side))
             v.display(self.q_exo[side])
             self.viz_exo[side] = v
 
@@ -182,10 +189,16 @@ class AsimovExoIKHelper:
         logger.info(f"meshcat viz initialized: {self.viewer.url()}")
         print(f"\nmeshcat url: {self.viewer.url()}\n")
 
+    def _exo_viz_tf(self, side: str) -> np.ndarray:
+        """Meshcat transform of an exo model: offset, then scaled about its shoulder."""
+        tf = np.eye(4)
+        tf[:3, :3] *= VIZ_SCALE
+        tf[:3, 3] = VIZ_OFFSET[side] + (1.0 - VIZ_SCALE) * self.shoulder_exo[side]
+        return tf
+
     def update_visualization(self):
         if self.viewer is None or self.markers is None:
             return
-        pin = self.pin
 
         self.viz_asimov.display(self.ik.q)
         for side in SIDES:
@@ -194,7 +207,8 @@ class AsimovExoIKHelper:
             self.markers.tf(f"markers/{side}_asimov_axes", ee_tf)
 
             self.viz_exo[side].display(self.q_exo[side])
-            exo_tf = (pin.SE3(np.eye(3), VIZ_OFFSET[side]) * self._exo_ee(side, {})).homogeneous
+            exo_tf = self._exo_ee(side, {}).homogeneous
+            exo_tf[:3, 3] = (self._exo_viz_tf(side) @ np.append(exo_tf[:3, 3], 1.0))[:3]
             self.markers.tf(f"markers/{side}_exo_ee", exo_tf)
             self.markers.tf(f"markers/{side}_exo_axes", exo_tf)
 
