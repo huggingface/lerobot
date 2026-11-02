@@ -37,6 +37,8 @@ export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
 
 </Tip>
 
+On first import LIBERO asks on stdin where to store its config, which fails with `EOFError` on a machine without a terminal (CI, SLURM, HF Jobs). LeRobot writes LIBERO's default config to `~/.libero/config.yaml` (or `$LIBERO_CONFIG_PATH/config.yaml`) before importing it when the file is missing, so no prompt appears. An existing config file is never modified.
+
 ## Evaluation
 
 ### Default evaluation (recommended)
