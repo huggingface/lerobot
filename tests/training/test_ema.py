@@ -151,6 +151,7 @@ def make_train_config(root, output_dir, steps):
         ema=WarmupEMAConfig(),
     )
     cfg.accelerator.gradient_accumulation.steps = 2
+    cfg.trackio.enable = False
     cfg.optimizer = policy_config.get_optimizer_preset()
     cfg.scheduler = policy_config.get_scheduler_preset()
     # The config is built in-process, so skip the CLI-oriented validation.

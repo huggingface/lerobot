@@ -31,7 +31,7 @@ python -m lerobot.rl.learner --config_path src/lerobot/configs/train_config_hils
 **NOTE**: Start the learner server before launching the actor server. The learner opens a gRPC server
 to communicate with actors.
 
-**NOTE**: Training progress can be monitored through Trackio if trackio.enable is set to true
+**NOTE**: Training progress is tracked with Trackio unless trackio.enable is set to false
 in your configuration.
 
 **WORKFLOW**:
@@ -73,7 +73,7 @@ from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
 from lerobot.cameras import opencv  # noqa: F401
-from lerobot.common.trackio_utils import TrackioLogger
+from lerobot.common.trackio_utils import TrackioLogger, make_trackio_logger
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     load_training_metadata,
@@ -173,11 +173,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 
     # Setup Trackio logging if enabled. After the resume logic, so a resumed run reattaches to the
     # Trackio run stored in the checkpoint's train_config.json.
-    if cfg.trackio.enable and cfg.trackio.project:
-        trackio_logger = TrackioLogger(cfg)
-    else:
-        trackio_logger = None
-        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+    trackio_logger = make_trackio_logger(cfg)
 
     set_seed(seed=cfg.seed)
 

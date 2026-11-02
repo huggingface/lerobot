@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import os
 import re
 import signal
 import sys
@@ -39,6 +40,7 @@ from huggingface_hub import (
     run_job,
     upload_file,
 )
+from huggingface_hub.errors import RepositoryNotFoundError
 from huggingface_hub.utils import httpx
 
 from lerobot.common.train_utils import push_checkpoint_to_hub
@@ -62,6 +64,10 @@ _TRANSIENT_NET_ERRORS = (OSError, httpx.HTTPError)
 # Always attached to remote jobs and pushed datasets so LeRobot-originated work
 # is identifiable on the Hub; callers (e.g. LeLab) add their own via --job.tags.
 LEROBOT_TAG = "lerobot"
+
+# Space a remote job tracks its run in when no --trackio.space_id is given: the pod's local Trackio
+# database vanishes with the job.
+DEFAULT_JOB_TRACKIO_SPACE = "lerobot-trackio"
 
 
 def resolve_job_tags(extra: list[str] | None) -> list[str]:
@@ -318,7 +324,14 @@ def _build_resume_job(cfg: TrainPipelineConfig, username: str) -> tuple[str, lis
         raise ValueError("A config_path is expected when resuming a run.")
     forwarded = _pod_forwarded_args(
         sys.argv[1:],
-        drop_names=("--config_path", "--policy.repo_id", "--policy.push_to_hub", "--dataset.root"),
+        drop_names=(
+            "--config_path",
+            "--policy.repo_id",
+            "--policy.push_to_hub",
+            "--dataset.root",
+            "--trackio.space_id",
+            "--trackio.private",
+        ),
         drop_prefixes=("--job.",),
     )
 
@@ -339,6 +352,12 @@ def _build_resume_job(cfg: TrainPipelineConfig, username: str) -> tuple[str, lis
     else:
         source_repo = config_path
         extra = []
+
+    if cfg.trackio.enable and cfg.trackio.space_id:
+        # Forward the resolved Space: submit_to_hf may have defaulted it, and a local checkpoint has none.
+        extra.append(f"--trackio.space_id={cfg.trackio.space_id}")
+    if cfg.trackio.private is not None:
+        extra.append(f"--trackio.private={str(cfg.trackio.private).lower()}")
 
     command = [
         "lerobot-train",
@@ -389,9 +408,29 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
 
     secrets: dict[str, str] = {"HF_TOKEN": token}
     if cfg.trackio.enable and not cfg.trackio.space_id:
-        raise ValueError(
-            "trackio is enabled but no `--trackio.space_id` is set. A remote job's local Trackio database "
-            "vanishes with the pod, so pass a Hugging Face Space, e.g. `--trackio.space_id=<user>/<space>`."
+        # The pod's local Trackio database vanishes with the job, so log to a Space. TRACKIO_SPACE_ID is
+        # honored as on a local run, and resolved here because only HF_TOKEN is forwarded to the pod.
+        env_space = os.environ.get("TRACKIO_SPACE_ID")
+        cfg.trackio.space_id = env_space or f"{username}/{DEFAULT_JOB_TRACKIO_SPACE}"
+        if not env_space:
+            if cfg.trackio.private is None:
+                cfg.trackio.private = True
+            # Trackio's private flag only affects creation; don't reuse a public default implicitly.
+            if cfg.trackio.private:
+                try:
+                    space = api.space_info(cfg.trackio.space_id)
+                except RepositoryNotFoundError:
+                    pass  # Trackio creates the private Space when the job starts.
+                else:
+                    if not space.private:
+                        raise ValueError(
+                            f"The default Trackio Space {cfg.trackio.space_id} is public. "
+                            "Make it private, choose another with `--trackio.space_id`, or pass "
+                            "`--trackio.private=false` to use it publicly."
+                        )
+        print(
+            f"Trackio: logging to the {cfg.trackio.space_id} Space. Pass `--trackio.space_id` to pick "
+            "another one, or `--trackio.enable=false` to turn tracking off."
         )
 
     tags = resolve_job_tags(cfg.job.tags)

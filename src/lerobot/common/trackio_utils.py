@@ -16,8 +16,9 @@
 """Training run tracking with Trackio (https://huggingface.co/docs/trackio).
 
 Runs live in a local SQLite database under ``~/.cache/huggingface/trackio`` and are viewed with
-``trackio show --project <project>``. Setting ``--trackio.space_id`` syncs the run to a Hugging Face
-Space instead, which is the only option that survives a remote job.
+``trackio show --project <project>``. Setting ``--trackio.space_id`` syncs the run live to a Hugging Face
+Space instead, which is the only option that survives a remote job. A local run can still be uploaded
+after training with ``trackio sync``.
 """
 
 import logging
@@ -52,6 +53,20 @@ def cfg_to_group(cfg: TrainPipelineConfig) -> str:
 def get_safe_artifact_name(name: str) -> str:
     """Trackio addresses artifacts as ``project/name:alias``, so neither separator may appear in the name."""
     return name.replace(":", "_").replace("/", "_")
+
+
+def make_trackio_logger(cfg: TrainPipelineConfig) -> "TrackioLogger | None":
+    """Return a TrackioLogger, or None when tracking is disabled or Trackio is not installed."""
+    if cfg.trackio.enable and cfg.trackio.project:
+        if _trackio_available:
+            return TrackioLogger(cfg)
+        # Tracking is on by default, but some extras (e.g. `hilserl`) train without shipping Trackio.
+        logging.warning(
+            "Trackio is not installed, so this run is not tracked. Install it with "
+            "`pip install 'lerobot[training]'`, or pass `--trackio.enable=false` to silence this warning."
+        )
+    logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+    return None
 
 
 class TrackioLogger:

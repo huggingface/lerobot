@@ -37,8 +37,7 @@ lerobot-train \
   --output_dir=outputs/train/<desired_reward_model_repo_id> \
   --job_name=lerobot_reward_training \
   --reward_model.device=cuda \
-  --reward_model.repo_id=${HF_USER}/<desired_reward_model_repo_id> \
-  --trackio.enable=true
+  --reward_model.repo_id=${HF_USER}/<desired_reward_model_repo_id>
 ```
 
 _Writes checkpoints to `outputs/train/<desired_reward_model_repo_id>/checkpoints/`._
