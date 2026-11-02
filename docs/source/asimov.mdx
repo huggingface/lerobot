@@ -101,7 +101,7 @@ Each successful action refreshes the bounded hold. If the recording, policy, or 
 
 The exoskeleton arms used for the [Unitree G1](./unitree_g1) also drive Asimov's arms. As for the G1, exoskeleton forward kinematics gives each hand pose; it is expressed relative to the exoskeleton shoulder, scaled to Asimov's shorter reach (about 0.84), placed at Asimov's shoulder, and solved with Asimov arm IK. Asimov's 5-DOF arms (shoulder pitch/roll/yaw, elbow, wrist yaw) match the exoskeleton's five joints; position is weighted above orientation.
 
-The IK uses Menlo's open-source [25-DOF URDF](https://github.com/menloresearch/asimov-1/tree/main/sim-model/asimov_1_25dof) (CERN-OHL-S-2.0), downloaded at a pinned commit into `$HF_LEROBOT_HOME/assets` on first use. It needs Pinocchio (`pip install pin`); no CasADi bindings are required.
+The IK uses Menlo's open-source [25-DOF URDF](https://github.com/menloresearch/asimov-1/tree/main/sim-model/asimov_1_25dof) (CERN-OHL-S-2.0). A copy at a pinned commit is downloaded on first use from the public [`lerobot/robot-urdfs`](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/asimov) bucket into `$HF_LEROBOT_HOME/robot-urdfs/asimov/`; meshes are fetched only for the visualization. It needs Pinocchio (`pip install pin`); no CasADi bindings are required.
 
 <Tip warning={true}>
   Menlo's joint control puts **every** joint under position control with the
