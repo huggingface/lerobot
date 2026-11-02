@@ -33,9 +33,6 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Measured poses may exceed the model limits, which are not mechanical stops.
-FEEDBACK_LIMIT_TOLERANCE_RAD = 0.15
-GRIPPER_FEEDBACK_MARGIN = 0.10
 # Prevent a delayed servo cycle from producing a large speed-limited command step.
 _MAX_CONTROL_DT_S = 0.05
 
@@ -128,6 +125,8 @@ class CalibratedGripper:
             Allowed finger force after the gripper is blocked, in newtons.
         finger_stroke_m (`float`):
             Finger travel used to map the force limit to motor torque, in metres.
+        feedback_margin (`float`):
+            Allowed normalized feedback outside the calibrated stroke.
     """
 
     closed: float
@@ -137,6 +136,7 @@ class CalibratedGripper:
     max_speed: float
     force_limit_n: float
     finger_stroke_m: float
+    feedback_margin: float
 
     @property
     def stroke(self) -> float:
@@ -218,6 +218,8 @@ class MitArmParams:
             Motor order: arm joints followed by the gripper.
         joint_limits (`np.ndarray`):
             Lower and upper arm-joint limits in radians, shaped `(joints, 2)`.
+        joint_feedback_tolerance_rad (`float`):
+            Allowed feedback outside the model limits, which are not mechanical stops, in radians.
         joint_signs (`np.ndarray`):
             Signs mapping raw motor motion to joint motion.
         joint_offsets (`np.ndarray`):
@@ -244,6 +246,7 @@ class MitArmParams:
 
     motor_names: tuple[str, ...]
     joint_limits: np.ndarray
+    joint_feedback_tolerance_rad: float
     joint_signs: np.ndarray
     joint_offsets: np.ndarray
     kp: np.ndarray
@@ -322,7 +325,7 @@ def _motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
     n = params.num_joints
     joints = raw[:n] * params.joint_signs + params.joint_offsets
     gripper = params.gripper.to_normalized(float(raw[n]))
-    if not -GRIPPER_FEEDBACK_MARGIN <= gripper <= 1 + GRIPPER_FEEDBACK_MARGIN:
+    if not -params.gripper.feedback_margin <= gripper <= 1 + params.gripper.feedback_margin:
         raise ValueError("Gripper feedback is outside the calibrated stroke; check endpoints")
     return np.r_[joints, np.clip(gripper, 0, 1)]
 
@@ -456,7 +459,11 @@ def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
         raise ConnectionError(f"Expected {n + 1} finite motor positions, velocities and torques")
     position = _motor_to_joint(raw.position, params)
     for i, (value, (lower, upper)) in enumerate(zip(position[:n], params.joint_limits, strict=True)):
-        if not lower - FEEDBACK_LIMIT_TOLERANCE_RAD <= value <= upper + FEEDBACK_LIMIT_TOLERANCE_RAD:
+        if not (
+            lower - params.joint_feedback_tolerance_rad
+            <= value
+            <= upper + params.joint_feedback_tolerance_rad
+        ):
             raise ValueError(f"Joint {i} feedback {value} outside [{lower}, {upper}]")
     gripper = params.gripper
     velocity = np.r_[raw.velocity[:n] * params.joint_signs, raw.velocity[n] / gripper.stroke]

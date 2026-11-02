@@ -79,6 +79,8 @@ _GRAVITY_MODEL_REMOTE_PATH = "yam/v1/linear_4310.urdf"
 _GRAVITY_MODEL_LOCAL_PATH = HF_LEROBOT_HOME / "robot-urdfs" / _GRAVITY_MODEL_REMOTE_PATH
 _MAX_GRAVITY_TORQUE_NM = 10.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
+_JOINT_FEEDBACK_TOLERANCE_RAD = 0.15
+_GRIPPER_FEEDBACK_MARGIN = 0.10
 # Damiao register 9 stores the CAN loss-of-communication timeout in 50 us ticks.
 _CAN_TIMEOUT_REGISTER = 9
 _CAN_TIMEOUT_TICK_US = 50
@@ -92,6 +94,7 @@ def _yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
     return MitArmParams(
         motor_names=MOTOR_NAMES,
         joint_limits=_JOINT_LIMITS,
+        joint_feedback_tolerance_rad=_JOINT_FEEDBACK_TOLERANCE_RAD,
         joint_signs=np.asarray(config.joint_signs, dtype=float),
         joint_offsets=np.deg2rad(config.joint_offsets_deg),
         kp=np.asarray(config.kp, dtype=float),
@@ -108,6 +111,7 @@ def _yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
             max_speed=config.max_gripper_speed_s,
             force_limit_n=config.gripper_force_limit_n,
             finger_stroke_m=config.gripper_stroke_m,
+            feedback_margin=_GRIPPER_FEEDBACK_MARGIN,
         ),
         float_kd=np.asarray(config.float_kd, dtype=float),
         coulomb_friction=np.asarray(config.coulomb_friction, dtype=float)

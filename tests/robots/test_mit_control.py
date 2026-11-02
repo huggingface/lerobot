@@ -28,7 +28,14 @@ from lerobot.robots.yam_follower import mit_control
 
 def gripper(closed=1.0, opened=3.0):
     return mit_control.CalibratedGripper(
-        closed=closed, open=opened, kp=4.0, kd=0.1, max_speed=1.0, force_limit_n=10.0, finger_stroke_m=0.1
+        closed=closed,
+        open=opened,
+        kp=4.0,
+        kd=0.1,
+        max_speed=1.0,
+        force_limit_n=10.0,
+        finger_stroke_m=0.1,
+        feedback_margin=0.1,
     )
 
 
@@ -36,6 +43,7 @@ def params(**overrides):
     values = {
         "motor_names": ("shoulder", "elbow", "gripper"),
         "joint_limits": np.array([[-1.0, 1.0], [0.0, 2.0]]),
+        "joint_feedback_tolerance_rad": 0.15,
         "joint_signs": np.array([1.0, -1.0]),
         "joint_offsets": np.array([0.0, 0.0]),
         "kp": np.array([50.0, 20.0]),
