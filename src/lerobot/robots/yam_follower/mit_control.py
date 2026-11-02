@@ -206,7 +206,7 @@ def motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
     """Convert raw motor positions to calibrated joint and gripper positions."""
     n = params.num_joints
     joints = raw[:n] * params.joint_signs + params.joint_offsets
-    gripper = params.gripper.to_normalized(raw[n])
+    gripper = params.gripper.to_normalized(float(raw[n]))
     if not -GRIPPER_FEEDBACK_MARGIN <= gripper <= 1 + GRIPPER_FEEDBACK_MARGIN:
         raise ValueError("Gripper feedback is outside the calibrated stroke; check endpoints")
     return np.r_[joints, np.clip(gripper, 0, 1)]
