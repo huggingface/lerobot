@@ -147,6 +147,20 @@ def test_submit_rejects_local_config_files(monkeypatch, arg):
         submit_annotate_to_hf(cfg)
 
 
+def test_submit_rejects_training_only_nproc_per_node(monkeypatch):
+    """`job.nproc_per_node` is inherited from the training JobConfig; annotation must refuse it
+    rather than silently ignore it (vLLM spreads over the GPUs through --vlm.* instead)."""
+    monkeypatch.setattr("lerobot.jobs.annotate.get_token", lambda: "tok")
+
+    def _boom(*a, **kw):
+        raise AssertionError("must fail before submitting")
+
+    monkeypatch.setattr("lerobot.jobs.annotate.run_job", _boom)
+    cfg = _parse("--repo_id", "u/d", "--job.target", "h200x2", "--job.nproc_per_node", "2")
+    with pytest.raises(ValueError, match="only applies to lerobot-train"):
+        submit_annotate_to_hf(cfg)
+
+
 def test_pod_command_drops_bare_job_config_file_arg():
     """`--job` isn't caught by the `--job.` prefix, and could carry a remote target
     that would make the pod submit a job of its own — recursively."""

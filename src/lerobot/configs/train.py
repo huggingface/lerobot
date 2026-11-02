@@ -366,6 +366,12 @@ class TrainPipelineConfig(HubMixin):
         ):
             raise ValueError("'repo_id' argument missing. Please specify it to push the model to the hub.")
 
+        if self.job.nproc_per_node is not None and not self.job.is_remote:
+            logging.warning(
+                "--job.nproc_per_node only sizes HF Jobs launches (--job.target=<flavor>) and is ignored "
+                "here. Launch a local multi-GPU run with `torchrun --nproc-per-node=N $(which lerobot-train)`."
+            )
+
         if self.save_checkpoint_to_hub and not (self.policy is not None and self.policy.repo_id):
             raise ValueError("save_checkpoint_to_hub requires --policy.repo_id.")
 

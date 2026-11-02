@@ -120,6 +120,13 @@ def submit_annotate_to_hf(cfg: AnnotationPipelineConfig) -> None:
             "and --root only names a directory on this machine."
         )
 
+    if cfg.job.nproc_per_node is not None:
+        # Inherited from the training JobConfig; it would be silently ignored here.
+        raise ValueError(
+            "--job.nproc_per_node only applies to lerobot-train. lerobot-annotate spreads its vLLM "
+            "servers over the flavor's GPUs with --vlm.parallel_servers / --vlm.num_gpus instead."
+        )
+
     argv = sys.argv[1:]
     passed = {tok.split("=", 1)[0] for tok in argv}
     used_config_files = sorted(passed.intersection(_local_config_file_args(cfg)))

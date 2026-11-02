@@ -252,6 +252,19 @@ class JobConfig:
     # Extra tags attached to the HF job and to any dataset this run pushes to the
     # Hub. A "lerobot" tag is always added; e.g. --job.tags '["lelab"]' adds more.
     tags: list[str] = field(default_factory=list)
+    # Training processes the remote job launches, one per GPU (lerobot-train only). None (default)
+    # uses every GPU of the flavor: multi-GPU flavors (e.g. `a10g-largex2`, `h200x8`) run under
+    # `torchrun` (DDP unless `--parallelism.*` says otherwise), single-GPU flavors keep the plain
+    # `lerobot-train` command. Set 1 to train on a single GPU of a multi-GPU flavor. `batch_size`
+    # is per process, so the effective batch is
+    # `batch_size x nproc_per_node x accelerator.gradient_accumulation.steps`.
+    nproc_per_node: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.nproc_per_node is not None and self.nproc_per_node < 1:
+            raise ValueError(
+                f"job.nproc_per_node must be >= 1 (or unset to auto), got {self.nproc_per_node}."
+            )
 
     # Two entry points to the same predicate: the staticmethod tests a raw target string
     # straight from argv (before any JobConfig exists, to decide dispatch early), while the

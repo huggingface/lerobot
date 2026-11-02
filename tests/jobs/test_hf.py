@@ -23,15 +23,21 @@ import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.configs.default import JobConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.jobs.hf import (
     _build_resume_job,
     _pod_forwarded_args,
     _poll_until_done,
+    build_launch_command,
+    build_launch_env,
     build_remote_config_file,
     build_repo_id,
+    describe_batch_size,
+    flavor_gpu_count,
     follow_job,
     resolve_job_tags,
+    resolve_nproc_per_node,
     submit_to_hf,
 )
 
@@ -177,12 +183,12 @@ def test_submit_resume_dispatches_to_build_resume_job(monkeypatch):
         raise AssertionError("a resume must not stage a fresh config")
 
     monkeypatch.setattr("lerobot.jobs.hf._stage_config_on_hub", _boom)
-    resume_command = ["lerobot-train", "--config_path=alice/ckpt", "--job.target=local"]
+    resume_args = ["--config_path=alice/ckpt", "--job.target=local"]
     resume_calls = []
 
     def fake_build_resume_job(cfg, username):
         resume_calls.append((cfg, username))
-        return "alice/ckpt", resume_command
+        return "alice/ckpt", resume_args
 
     monkeypatch.setattr("lerobot.jobs.hf._build_resume_job", fake_build_resume_job)
     run_job_calls = []
@@ -215,7 +221,9 @@ def test_submit_resume_dispatches_to_build_resume_job(monkeypatch):
     submit_to_hf(cfg)
 
     assert resume_calls == [(cfg, "alice")]
-    assert run_job_calls[0]["command"] == resume_command
+    # A single-GPU flavor keeps the plain command (no launcher, no env override).
+    assert run_job_calls[0]["command"] == ["lerobot-train", *resume_args]
+    assert run_job_calls[0]["env"] is None
     # The fresh-run branch must not have run: no auto-assigned model repo on the policy.
     assert cfg.policy.repo_id is None
 
@@ -376,6 +384,9 @@ def test_submit_passes_validation_and_submits(monkeypatch):
     # The pod runs `lerobot-train --config_path=<staged repo>` on the requested flavor/image.
     assert call["command"][0] == "lerobot-train"
     assert call["command"][1].startswith("--config_path=")
+    # Single-GPU flavor: no launcher and no env override, as before multi-GPU support.
+    assert len(call["command"]) == 2
+    assert call["env"] is None
     assert call["flavor"] == "a10g-small"
     assert call["image"] == "huggingface/lerobot-gpu:latest"
     # The Hub token is forwarded so the pod can pull the (possibly private) dataset.
@@ -445,8 +456,14 @@ def test_submit_returns_when_job_completes(monkeypatch):
 
 
 @pytest.mark.timeout(15)
-def test_submit_returns_on_model_pushed_marker(monkeypatch):
-    """Finish when the model-pushed log appears, even if the job stage never flips."""
+@pytest.mark.parametrize("flavor", ["a10g-small", "a10g-largex2"], ids=["single_gpu", "torchrun"])
+def test_submit_returns_on_model_pushed_marker(monkeypatch, flavor):
+    """Finish when the model-pushed log appears, even if the job stage never flips.
+
+    Under torchrun the marker still arrives verbatim: only rank 0 logs at INFO (`init_logging`
+    gives other ranks a NullHandler), and torchrun only prefixes lines of tee'd streams, which the
+    pod command doesn't request.
+    """
     from types import SimpleNamespace
 
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
@@ -484,7 +501,7 @@ def test_submit_returns_on_model_pushed_marker(monkeypatch):
             "--policy.repo_id",
             "alice/myrun",
             "--job.target",
-            "a10g-small",
+            flavor,
         ],
     )
     # Must return via the model-pushed marker despite the perpetual RUNNING stage.
@@ -615,3 +632,308 @@ def test_submit_raises_when_job_ends_in_error(monkeypatch):
     )
     with pytest.raises(RuntimeError, match=r"stage=ERROR \(Job timeout\)"):
         submit_to_hf(cfg)
+
+
+# --- multi-GPU launch ---------------------------------------------------------------------------
+
+
+# The `hf jobs hardware` catalogue (2026-11): multi-GPU flavors end in `x<count>`.
+@pytest.mark.parametrize(
+    "flavor,gpus",
+    [
+        ("cpu-basic", 0),
+        ("cpu-upgrade", 0),
+        ("cpu-performance", 0),
+        ("cpu-xl", 0),
+        ("t4-small", 1),
+        ("t4-medium", 1),
+        ("a10g-small", 1),
+        ("a10g-large", 1),
+        ("a10g-largex2", 2),
+        ("a10g-largex4", 4),
+        ("a100-large", 1),
+        ("a100x4", 4),
+        ("a100x8", 8),
+        ("h200", 1),
+        ("h200x2", 2),
+        ("h200x4", 4),
+        ("h200x8", 8),
+        ("rtx-pro-6000", 1),
+        ("rtx-pro-6000x2", 2),
+        ("rtx-pro-6000x4", 4),
+        ("rtx-pro-6000x8", 8),
+        ("l4x1", 1),
+        ("l4x4", 4),
+        ("l40sx1", 1),
+        ("l40sx4", 4),
+        ("l40sx8", 8),
+    ],
+)
+def test_flavor_gpu_count_matches_hf_jobs_catalogue(flavor, gpus):
+    assert flavor_gpu_count(flavor) == gpus
+
+
+@pytest.mark.parametrize(
+    "flavor,override,expected",
+    [
+        ("a10g-largex2", None, 2),  # auto: every GPU of the flavor
+        ("h200x8", None, 8),
+        ("a10g-large", None, 1),  # single-GPU flavor: one process
+        ("cpu-basic", None, 1),  # CPU flavor: still one process
+        ("a100x4", 1, 1),  # opt out of multi-GPU on a multi-GPU flavor
+        ("h200x8", 4, 4),  # use a subset of the GPUs
+    ],
+)
+def test_resolve_nproc_per_node(flavor, override, expected):
+    assert resolve_nproc_per_node(flavor, override) == expected
+
+
+@pytest.mark.parametrize("flavor,override", [("a10g-largex2", 4), ("a10g-large", 2), ("cpu-basic", 2)])
+def test_resolve_nproc_per_node_rejects_more_processes_than_gpus(flavor, override):
+    """Extra ranks would have no GPU to bind to and crash the job after it started billing."""
+    with pytest.raises(ValueError, match="exceeds"):
+        resolve_nproc_per_node(flavor, override)
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_job_config_rejects_non_positive_nproc_per_node(value):
+    with pytest.raises(ValueError, match="nproc_per_node"):
+        JobConfig(target="a10g-largex2", nproc_per_node=value)
+
+
+def test_job_config_parses_nproc_per_node_from_cli():
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--job.target", "h200x8"]
+        + ["--job.nproc_per_node", "4"],
+    )
+    assert cfg.job.nproc_per_node == 4
+    assert _minimal_cfg().job.nproc_per_node is None  # auto by default
+
+
+def test_build_launch_command_single_process_is_unchanged():
+    assert build_launch_command(["--config_path=u/r"], 1) == ["lerobot-train", "--config_path=u/r"]
+    assert build_launch_env(1) is None
+
+
+def test_build_launch_command_multi_process_uses_torchrun():
+    assert build_launch_command(["--config_path=u/r"], 4) == [
+        "torchrun",
+        "--standalone",
+        "--nproc-per-node=4",
+        "-m",
+        "lerobot.scripts.lerobot_train",
+        "--config_path=u/r",
+    ]
+    # The lerobot-gpu image bakes in CUDA_VISIBLE_DEVICES=0; every rank must see all GPUs.
+    assert build_launch_env(4) == {"CUDA_VISIBLE_DEVICES": "0,1,2,3"}
+
+
+def test_torchrun_module_is_the_lerobot_train_entry_point():
+    """`torchrun -m <module>` must run the same `main` as the `lerobot-train` console script."""
+    from importlib.metadata import entry_points
+
+    (script,) = entry_points(group="console_scripts", name="lerobot-train")
+    module = build_launch_command([], 2)[4]
+    assert script.value == f"{module}:main"
+
+
+def test_describe_batch_size_multiplies_processes_and_grad_accum():
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--batch_size", "8"]
+        + ["--accelerator.gradient_accumulation.steps", "2"],
+    )
+    assert describe_batch_size(cfg, 4) == (
+        "8 per process x 4 process(es) x 2 grad accum = 64 samples per optimizer step"
+    )
+
+
+def test_build_remote_config_never_carries_nproc_per_node(tmp_path):
+    """The launch size is client-side orchestration: the staged config must stay parseable by
+    older trainer images, and its parallelism must stay unresolved so the pod binds it to the
+    WORLD_SIZE torchrun gives it."""
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--job.target", "h200x4"]
+        + ["--job.nproc_per_node", "2"],
+    )
+    dest = tmp_path / "train_config.json"
+    build_remote_config_file(cfg, "u/run", dest)
+    text = dest.read_text()
+    data = json.loads(text)
+    assert "job" not in data
+    assert "nproc_per_node" not in text
+    assert data["parallelism"]["dp_replicate"] == 1
+    assert data["parallelism"]["dp_shard"] == 1
+
+
+def _patch_submit_side_effects(monkeypatch, *, stage_config=None) -> list[dict]:
+    """Stub the Hub/Jobs calls of `submit_to_hf`; return the list `run_job` kwargs land in."""
+    monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
+
+    class FakeHfApi:
+        def __init__(self, token=None):
+            pass
+
+        def whoami(self, token=None):
+            return {"name": "alice"}
+
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "lerobot.jobs.hf._stage_config_on_hub",
+        stage_config or (lambda cfg, repo_id, token, tags=None: repo_id),
+    )
+    run_job_calls: list[dict] = []
+
+    def fake_run_job(**kwargs):
+        run_job_calls.append(kwargs)
+        return SimpleNamespace(id="job-1", url=None)
+
+    monkeypatch.setattr("lerobot.jobs.hf.run_job", fake_run_job)
+    return run_job_calls
+
+
+def _remote_cfg(flavor: str, *extra: str) -> TrainPipelineConfig:
+    return draccus.parse(
+        TrainPipelineConfig,
+        args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--batch_size", "16"]
+        + ["--job.target", flavor, "--job.detach", "true", *extra],
+    )
+
+
+@pytest.mark.parametrize(
+    "flavor,extra,nproc",
+    [
+        ("a10g-largex2", [], 2),
+        ("h200x8", [], 8),
+        ("h200x8", ["--job.nproc_per_node", "4"], 4),
+    ],
+)
+def test_submit_fresh_run_on_multi_gpu_flavor_launches_torchrun(monkeypatch, capsys, flavor, extra, nproc):
+    run_job_calls = _patch_submit_side_effects(monkeypatch)
+    cfg = _remote_cfg(flavor, *extra)
+
+    submit_to_hf(cfg)
+
+    (call,) = run_job_calls
+    assert call["flavor"] == flavor
+    assert call["command"] == [
+        "torchrun",
+        "--standalone",
+        f"--nproc-per-node={nproc}",
+        "-m",
+        "lerobot.scripts.lerobot_train",
+        f"--config_path={cfg.policy.repo_id}",
+    ]
+    assert call["env"] == {"CUDA_VISIBLE_DEVICES": ",".join(str(i) for i in range(nproc))}
+    # The staged config keeps the parallelism unresolved; the submit-time check works on a copy.
+    assert cfg.parallelism.dp_replicate == 1
+    out = capsys.readouterr().out
+    assert f"torchrun, {nproc} processes" in out
+    assert f"16 per process x {nproc} process(es) x 1 grad accum = {16 * nproc} samples" in out
+
+
+@pytest.mark.parametrize(
+    "flavor,extra",
+    [("a10g-large", []), ("l4x1", []), ("a100x4", ["--job.nproc_per_node", "1"])],
+    ids=["single_gpu", "x1_suffix", "opt_out"],
+)
+def test_submit_single_process_keeps_plain_command(monkeypatch, capsys, flavor, extra):
+    run_job_calls = _patch_submit_side_effects(monkeypatch)
+    cfg = _remote_cfg(flavor, *extra)
+
+    submit_to_hf(cfg)
+
+    (call,) = run_job_calls
+    assert call["command"] == ["lerobot-train", f"--config_path={cfg.policy.repo_id}"]
+    assert call["env"] is None
+    assert "= 16 samples per optimizer step" in capsys.readouterr().out
+
+
+def test_submit_resume_on_multi_gpu_flavor_launches_torchrun(monkeypatch):
+    """The resume path replays the user's flags under the same launcher, minus every --job.* flag."""
+
+    def _boom(*a, **kw):
+        raise AssertionError("a resume must not stage a fresh config")
+
+    run_job_calls = _patch_submit_side_effects(monkeypatch, stage_config=_boom)
+    argv = ["--config_path=alice/ckpt", "--resume=true", "--steps=500"]
+    job_argv = ["--job.target=h200x4", "--job.nproc_per_node=2", "--job.detach=true"]
+    monkeypatch.setattr("sys.argv", ["lerobot-train", *argv, *job_argv])
+    monkeypatch.setattr(
+        "lerobot.configs.parser.parse_arg",
+        lambda name, *a, **k: "alice/ckpt" if name == "config_path" else None,
+    )
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--resume", "true"]
+        + ["--job.target", "h200x4", "--job.nproc_per_node", "2", "--job.detach", "true"],
+    )
+    # validate() would resolve the Hub checkpoint; _build_resume_job only needs config_path.
+    monkeypatch.setattr(cfg, "validate", lambda: None)
+
+    submit_to_hf(cfg)
+
+    (call,) = run_job_calls
+    assert call["command"] == [
+        "torchrun",
+        "--standalone",
+        "--nproc-per-node=2",
+        "-m",
+        "lerobot.scripts.lerobot_train",
+        "--resume=true",
+        "--steps=500",
+        "--config_path=alice/ckpt",
+        "--job.target=local",
+    ]
+    assert call["env"] == {"CUDA_VISIBLE_DEVICES": "0,1"}
+
+
+@pytest.mark.parametrize(
+    "flavor,parallelism",
+    [
+        # FSDP over 4 shards cannot fit the 2 processes of a 2-GPU flavor.
+        ("a10g-largex2", ["--parallelism.dp_shard", "4"]),
+        # e.g. resuming a 2-GPU DDP checkpoint (its config records dp_replicate=2) on 1 GPU.
+        ("a10g-large", ["--parallelism.dp_replicate", "2"]),
+    ],
+)
+def test_submit_rejects_parallelism_that_does_not_fit_the_launch(monkeypatch, flavor, parallelism):
+    """The pod would fail on WORLD_SIZE; catch it before the dataset push and config staging."""
+
+    def _boom(*a, **kw):
+        raise AssertionError("must fail before touching the Hub")
+
+    run_job_calls = _patch_submit_side_effects(monkeypatch, stage_config=_boom)
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", _boom)
+    cfg = _remote_cfg(flavor, *parallelism)
+
+    with pytest.raises(ValueError, match="does not fit"):
+        submit_to_hf(cfg)
+    assert run_job_calls == []
+
+
+def test_submit_rejects_more_processes_than_gpus_before_touching_the_hub(monkeypatch):
+    def _boom(*a, **kw):
+        raise AssertionError("must fail before touching the Hub")
+
+    run_job_calls = _patch_submit_side_effects(monkeypatch, stage_config=_boom)
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", _boom)
+    cfg = _remote_cfg("a10g-largex2", "--job.nproc_per_node", "4")
+
+    with pytest.raises(ValueError, match="exceeds"):
+        submit_to_hf(cfg)
+    assert run_job_calls == []
+
+
+def test_validate_warns_that_nproc_per_node_is_ignored_locally(caplog):
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--policy.push_to_hub", "false"]
+        + ["--job.nproc_per_node", "2"],
+    )
+    with caplog.at_level("WARNING"):
+        cfg.validate()
+    assert "only sizes HF Jobs launches" in caplog.text
