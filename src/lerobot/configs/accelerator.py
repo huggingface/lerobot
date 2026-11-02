@@ -22,6 +22,7 @@ never imports accelerate.
 """
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
         FullyShardedDataParallelPlugin,
         GradientAccumulationPlugin,
         GradScalerKwargs,
+        InitProcessGroupKwargs,
     )
     from torch.distributed.fsdp import MixedPrecisionPolicy
 
@@ -157,6 +159,44 @@ class DDPConfig:
             find_unused_parameters=self.find_unused_parameters,
             gradient_as_bucket_view=self.gradient_as_bucket_view,
             static_graph=self.static_graph,
+        )
+
+
+@dataclass
+class InitProcessGroupConfig:
+    """Mirror of `InitProcessGroupKwargs`, the arguments of `torch.distributed.init_process_group`.
+
+    The defaults are accelerate's: accelerate picks the backend for the hardware, and a None
+    timeout keeps torch's default for the backend (10 minutes for NCCL, 30 for the others).
+    """
+
+    backend: str | None = "nccl"
+    init_method: str | None = None
+    # In seconds.
+    timeout: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the timeout.
+
+        Raises:
+            ValueError: If ``timeout`` is set and not positive.
+        """
+        if self.timeout is not None and self.timeout <= 0:
+            raise ValueError(f"init_process_group.timeout must be > 0 seconds, got {self.timeout}.")
+
+    def build_kwargs_handler(self) -> "InitProcessGroupKwargs":
+        """Build the process group kwargs handler for `Accelerator(kwargs_handlers=[...])`.
+
+        Returns:
+            InitProcessGroupKwargs: Handler carrying the mirrored fields, passed by accelerate to
+                `torch.distributed.init_process_group`.
+        """
+        from accelerate.utils import InitProcessGroupKwargs
+
+        return InitProcessGroupKwargs(
+            backend=self.backend,
+            init_method=self.init_method,
+            timeout=None if self.timeout is None else timedelta(seconds=self.timeout),
         )
 
 
@@ -309,6 +349,7 @@ class AcceleratorConfig:
     grad_scaler: GradScalerConfig = field(default_factory=GradScalerConfig)
     fsdp: FSDPConfig = field(default_factory=FSDPConfig)
     ddp: DDPConfig = field(default_factory=DDPConfig)
+    init_process_group: InitProcessGroupConfig = field(default_factory=InitProcessGroupConfig)
     compile: CompileConfig = field(default_factory=CompileConfig)
     activation_checkpointing: ActivationCheckpointingConfig = field(
         default_factory=ActivationCheckpointingConfig
@@ -356,6 +397,7 @@ class AcceleratorConfig:
         `ParallelismConfig` mesh), replicated-only -> DDP kwargs, single process -> plain.
         The scaler kwargs handler is orthogonal to that matrix: fp16 adds it on every
         topology, and accelerate picks the right `GradScaler` flavour for the one in force.
+        The process group kwargs handler is passed on every topology.
 
         Args:
             parallelism (ParallelismConfig): The resolved process topology; selects which
@@ -375,7 +417,7 @@ class AcceleratorConfig:
             "mixed_precision": self.mixed_precision,
             "cpu": cpu,
         }
-        handlers: list = []
+        handlers: list = [self.init_process_group.build_kwargs_handler()]
         if parallelism.is_sharded:
             kwargs["fsdp_plugin"] = self.fsdp.build_plugin()
             kwargs["parallelism_config"] = _accelerate_parallelism_config(parallelism)
@@ -385,8 +427,7 @@ class AcceleratorConfig:
             # Only appended for fp16: accelerate ignores this handler otherwise, and leaving
             # it out keeps the "no"/"bf16" Accelerator identical to a run without a scaler.
             handlers.append(self.grad_scaler.build_kwargs_handler())
-        if handlers:
-            kwargs["kwargs_handlers"] = handlers
+        kwargs["kwargs_handlers"] = handlers
         return Accelerator(**kwargs)
 
 
