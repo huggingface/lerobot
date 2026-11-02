@@ -14,10 +14,6 @@
 
 """
 SARM subtask annotation tools.
-
-Available modules (import directly)::
-
-    from lerobot.data_processing.sarm_annotations.subtask_annotation import ...
 """
 
 __all__: list[str] = []

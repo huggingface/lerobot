@@ -14,10 +14,6 @@
 
 """
 Data processing utilities (annotation tools, dataset transformations).
-
-Available sub-modules (import directly)::
-
-    from lerobot.data_processing.sarm_annotations import ...
 """
 
 __all__: list[str] = []
