@@ -127,7 +127,8 @@ class YamFollowerConfig:
             raise ValueError(f"coulomb_friction must be nonnegative; got {self.coulomb_friction}")
         if self.idle_mode == "float" and not self.gravity_compensation:
             raise ValueError(
-                "idle_mode='float' needs gravity_compensation. Enable gravity_compensation for this arm."
+                "idle_mode='float' needs gravity_compensation. "
+                "Enable it with --robot.gravity_compensation=true."
             )
         if self.initial_position_deg is not None:
             if len(self.initial_position_deg) != 6:
