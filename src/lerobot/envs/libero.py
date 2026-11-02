@@ -105,7 +105,7 @@ TASK_SUITE_MAX_STEPS: dict[str, int] = {
 
 
 class LiberoEnv(gym.Env):
-    metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
+    metadata = {"render_modes": ["rgb_array"], "render_fps": 80, "lerobot_env_type": "libero"}
 
     def __init__(
         self,
@@ -336,14 +336,27 @@ class LiberoEnv(gym.Env):
             "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
         )
 
-    def reset(self, seed=None, **kwargs):
+    def reset(self, seed=None, options: Mapping[str, Any] | None = None, **kwargs):
         self._ensure_env()
+        assert self._env is not None
         super().reset(seed=seed)
         self._env.seed(seed)
         raw_obs = self._env.reset()
         if self.init_states and self._init_states is not None:
-            raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
-            self.init_state_id += self._reset_stride  # Change init_state_id when reset
+            initial_state_index = self.init_state_id
+            if options is not None and "initial_state_indices" in options:
+                indices = options["initial_state_indices"]
+                if self.episode_index >= len(indices):
+                    raise ValueError(
+                        f"Missing initial state index for LIBERO vector slot {self.episode_index}. "
+                        f"Received {len(indices)} indices."
+                    )
+                initial_state_index = int(indices[self.episode_index])
+            raw_obs = self._env.set_init_state(
+                self._init_states[initial_state_index % len(self._init_states)]
+            )
+            # Assignment, not increment: discard drift from timing-dependent autoresets.
+            self.init_state_id = initial_state_index + self._reset_stride
 
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
         # Step the simulator with a no-op action for a few frames so everything settles.
