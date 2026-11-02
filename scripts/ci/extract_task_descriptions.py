@@ -50,10 +50,6 @@ def _strip_libero_perturbation_tail(instruction: str) -> str:
 
 
 def _libero_descriptions(task_suite: str) -> dict[str, str]:
-    from lerobot.envs.libero_config import ensure_libero_config
-
-    # LIBERO prompts on stdin at import time when its config file is missing.
-    ensure_libero_config()
     from libero.libero import benchmark
 
     suite_dict = benchmark.get_benchmark_dict()

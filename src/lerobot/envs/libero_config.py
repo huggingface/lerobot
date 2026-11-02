@@ -38,6 +38,10 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# Set once the stale-config warning has been logged. Child processes inherit it, so async vector-env
+# workers, which import LIBERO again, don't repeat the warning.
+_STALE_WARNING_ENV = "LEROBOT_LIBERO_STALE_CONFIG_WARNED"
+
 
 def libero_config_file() -> Path:
     """Return the config file LIBERO reads, honouring `LIBERO_CONFIG_PATH` like LIBERO does."""
@@ -60,20 +64,27 @@ def _find_libero_benchmark_root() -> Path | None:
         return None
     # `libero` may be a namespace package (LIBERO-plus), so check every search location.
     for location in spec.submodule_search_locations:
-        candidate = Path(location) / "libero"
-        if (candidate / "__init__.py").is_file():
-            return candidate
+        # LIBERO takes its root from `os.path.dirname(os.path.abspath(__file__))`; build it the same way
+        # so the paths written below are the exact strings LIBERO would write. `os.path.isfile` (unlike
+        # `Path.is_file` on Python 3.12) returns False instead of raising on permission errors.
+        candidate = os.path.abspath(os.path.join(location, "libero"))
+        if os.path.isfile(os.path.join(candidate, "__init__.py")):
+            return Path(candidate)
     return None
 
 
 def _has_interactive_terminal() -> bool:
     """Whether a user can see and answer LIBERO's `input()` prompt.
 
-    Both stdin and stdout must be terminals: `input()` writes its prompt to stdout, so with stdout
-    redirected to a log file the prompt is invisible and the process would wait on it silently.
-    `sys.stdin` is None under pythonw and in some daemons, and multiprocessing workers (e.g. async
-    vector-env workers) get a closed or `/dev/null` stdin, so all of these count as non-interactive.
+    A Jupyter (IPython) kernel counts as interactive: its stdin is not a TTY, but `input()` is forwarded
+    to the notebook. Otherwise both stdin and stdout must be terminals: `input()` writes its prompt to
+    stdout, so with stdout redirected to a log file the prompt is invisible and the process would wait
+    on it silently. `sys.stdin` is None under pythonw and in some daemons, and multiprocessing workers
+    (e.g. async vector-env workers) get a closed or `/dev/null` stdin, so all of these count as
+    non-interactive.
     """
+    if "ipykernel" in sys.modules:
+        return True
     streams: tuple[TextIO | None, ...] = (sys.stdin, sys.stdout)
     for stream in streams:
         if stream is None or getattr(stream, "closed", False):
@@ -86,20 +97,22 @@ def _has_interactive_terminal() -> bool:
     return True
 
 
-def default_libero_paths(benchmark_root: Path) -> dict[str, str]:
+def default_libero_paths(benchmark_root: str | os.PathLike[str]) -> dict[str, str]:
     """The paths LIBERO itself writes when its first-run prompt is answered with "N".
 
-    Mirrors `libero.libero.get_default_path_dict()`, with the paths normalized (LIBERO writes e.g.
-    `<root>/./bddl_files` and `<root>/../datasets`). `assets` is listed for completeness: `hf-libero`
-    resolves assets through `get_assets_path()` (bundled or downloaded from `lerobot/libero-assets`)
-    rather than this entry.
+    The same strings as `libero.libero.get_default_path_dict()`, joined the same way and left
+    unnormalized (e.g. `<root>/./bddl_files` and `<root>/../datasets`), so the OS resolves them exactly
+    as it would LIBERO's own config, including `..` when `benchmark_root` is reached through a symlink.
+    `assets` is listed for completeness: `hf-libero` resolves assets through `get_assets_path()`
+    (bundled or downloaded from `lerobot/libero-assets`) rather than this entry.
     """
+    root = os.fspath(benchmark_root)
     return {
-        "benchmark_root": str(benchmark_root),
-        "bddl_files": str(benchmark_root / "bddl_files"),
-        "init_states": str(benchmark_root / "init_files"),
-        "datasets": str(benchmark_root.parent / "datasets"),
-        "assets": str(benchmark_root / "assets"),
+        "benchmark_root": root,
+        "bddl_files": os.path.join(root, "./bddl_files"),
+        "init_states": os.path.join(root, "./init_files"),
+        "datasets": os.path.join(root, "../datasets"),
+        "assets": os.path.join(root, "./assets"),
     }
 
 
@@ -111,7 +124,12 @@ def _write_new_file(path: Path, content: str) -> None:
     """
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
-        with os.fdopen(fd, "w") as f:
+        try:
+            f = os.fdopen(fd, "w")
+        except BaseException:
+            os.close(fd)  # Not yet owned by a file object, which would otherwise close it.
+            raise
+        with f:
             f.write(content)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -154,8 +172,11 @@ def _warn_if_stale(config_file: Path) -> None:
     """Warn when an existing config points at a LIBERO install that no longer exists.
 
     This happens after switching LIBERO packages (e.g. from `hf-libero` to LIBERO-plus and uninstalling
-    the first): LIBERO keeps reading the old paths. The file is left as is.
+    the first): LIBERO keeps reading the old paths. The file is left as is. The warning is logged once
+    per run, not again in each worker process that imports LIBERO.
     """
+    if os.environ.get(_STALE_WARNING_ENV) == str(config_file):
+        return
     try:
         config = yaml.safe_load(config_file.read_text())
     except (OSError, UnicodeDecodeError, yaml.YAMLError):
@@ -163,8 +184,13 @@ def _warn_if_stale(config_file: Path) -> None:
     if not isinstance(config, dict):
         return
     configured_root = config.get("benchmark_root")
-    if not isinstance(configured_root, str) or Path(configured_root).exists():
+    if not isinstance(configured_root, str):
         return
+    try:
+        if Path(configured_root).exists():
+            return
+    except OSError:
+        return  # Can't tell, e.g. a path under another user's home (Path.exists raises EACCES on 3.12).
     current_root = _find_libero_benchmark_root()
     logger.warning(
         "LIBERO config %s sets benchmark_root to %s, which does not exist; it was probably written by "
@@ -174,31 +200,57 @@ def _warn_if_stale(config_file: Path) -> None:
         configured_root,
         current_root if current_root is not None else "<no LIBERO package found>",
     )
+    os.environ[_STALE_WARNING_ENV] = str(config_file)
+
+
+def _warn_dangling_symlink(config_file: Path) -> None:
+    """Warn that `config_file` is a symlink whose target is missing, so LIBERO will still prompt.
+
+    LIBERO's `os.path.exists` check sees no config, but no file can be created in its place either. The
+    symlink is neither followed nor removed.
+    """
+    try:
+        target = os.readlink(config_file)
+    except OSError:
+        target = "<unreadable>"
+    logger.warning(
+        "LIBERO config %s is a symlink to %s, which does not exist or is not accessible, so importing "
+        "LIBERO will prompt for a config (and fail without a terminal). Fix or remove the symlink, or set "
+        "LIBERO_CONFIG_PATH to another directory.",
+        config_file,
+        target,
+    )
 
 
 def ensure_libero_config() -> Path | None:
     """Write LIBERO's default config file if it is missing, so importing LIBERO never prompts headless.
 
-    Only acts without an interactive terminal: in a terminal LIBERO's own first-run prompt is kept, so
-    users can still pick a custom `datasets` folder (the only thing the prompt offers on top of the
-    defaults written here; LIBERO uses it for its own demonstration downloads and LeRobot never reads
-    it). An existing config file is never modified; if its `benchmark_root` no longer exists a warning
-    is logged.
+    Only acts without an interactive terminal: in a terminal or a Jupyter notebook LIBERO's own
+    first-run prompt is kept, so users can still pick a custom `datasets` folder (the only thing the
+    prompt offers on top of the defaults written here; LIBERO uses it for its own demonstration
+    downloads and LeRobot never reads it). An existing config file is never modified; if its
+    `benchmark_root` no longer exists a warning is logged.
 
     The file is created atomically and only if absent, so concurrent processes (e.g. async vector-env
     workers) importing LIBERO at the same time never observe a half-written config or overwrite one.
-    If the config directory is not writable, a warning is logged and LIBERO's own behaviour applies.
+    If the config directory is not writable or the config path is a dangling symlink, a warning is
+    logged and LIBERO's own behaviour applies; this function does not raise on filesystem errors.
 
     Returns:
         The path of the config file that was written, or None when nothing was written (a config
-        already exists, a terminal is attached, the config directory is not writable, or LIBERO is not
-        installed, in which case the import fails as usual).
+        already exists, a terminal is attached, the config path is a dangling symlink, the config
+        directory is not writable, or LIBERO is not installed, in which case the import fails as usual).
     """
     config_file = libero_config_file()
-    if config_file.exists():
+    # The check LIBERO itself makes. Unlike `Path.exists` on Python 3.12 it returns False instead of
+    # raising on permission errors; the write below then fails and logs a warning.
+    if os.path.exists(config_file):
         _warn_if_stale(config_file)
         return None
     if _has_interactive_terminal():
+        return None
+    if os.path.lexists(config_file):
+        _warn_dangling_symlink(config_file)
         return None
     benchmark_root = _find_libero_benchmark_root()
     if benchmark_root is None:
