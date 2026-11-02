@@ -85,6 +85,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self_attn_every_n_layers: int = -1,
         expert_width_multiplier: float = 0.5,
         device: str = "auto",
+        dtype: torch.dtype | None = None,
     ):
         super().__init__()
         require_package("transformers", extra="smolvla")
@@ -140,6 +141,14 @@ class SmolVLMWithExpertModel(nn.Module):
                 )
         # Remove unused embed_tokens
         self.lm_expert.embed_tokens = None
+
+        # The expert is built from `config.text_config`, which carries the VLM's bfloat16, so by
+        # default the trainable weights are stored in bf16 too. With no fp32 master copy, AdamW adds
+        # each step straight into bf16 and rounds away every update smaller than |w|/512
+        # (arXiv:2610.31859). `--policy.dtype=float32` keeps the expert in fp32; pair it with
+        # `--accelerator.mixed_precision=bf16` so compute still runs in bf16.
+        if dtype is not None:
+            self.lm_expert.to(dtype)
 
         self.num_attention_heads = self.config.text_config.num_attention_heads
         self.num_key_value_heads = self.config.text_config.num_key_value_heads
