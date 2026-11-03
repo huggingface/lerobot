@@ -20,7 +20,6 @@ import threading
 import time
 from functools import cached_property
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -636,13 +635,3 @@ class YamFollower(Robot):
                     camera.disconnect()
         finally:
             self._connected = False
-
-    def _save_calibration(self, fpath: Path | None = None) -> None:
-        path = fpath if fpath is not None else self.calibration_fpath
-        with NamedTemporaryFile(dir=path.parent, suffix=".tmp", delete=False) as temporary:
-            temporary_path = Path(temporary.name)
-        try:
-            super()._save_calibration(temporary_path)
-            temporary_path.replace(path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
