@@ -435,11 +435,9 @@ def test_from_lerobot_dataset(tmp_path):
         reconverted_buffer.dones[: len(replay_buffer)], replay_buffer.dones[: len(replay_buffer)]
     ), "Dones from converted buffer should be equal to the original replay buffer."
 
-    # Lerobot DS haven't supported truncateds yet
-    expected_truncateds = torch.zeros(len(replay_buffer)).bool()
-    assert torch.equal(reconverted_buffer.truncateds[: len(replay_buffer)], expected_truncateds), (
-        "Truncateds from converted buffer should be equal False"
-    )
+    assert torch.equal(
+        reconverted_buffer.truncateds[: len(replay_buffer)], replay_buffer.truncateds[: len(replay_buffer)]
+    ), "Truncation flags should be preserved when converting to a dataset and back."
 
     assert torch.equal(
         replay_buffer.states[OBS_STATE][: len(replay_buffer)],
