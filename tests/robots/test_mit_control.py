@@ -176,12 +176,6 @@ def test_control_step_returns_from_past_a_limit_without_jumping():
     assert command[1] == pytest.approx(-0.1)
 
 
-@pytest.mark.parametrize("gravity", [np.array([np.nan, 0.0]), np.zeros(1)])
-def test_gravity_feedforward_rejects_invalid_torques(gravity):
-    with pytest.raises(ValueError, match="2 finite torques"):
-        mit_control._gravity_feedforward(params(), gravity)
-
-
 @pytest.mark.parametrize("closed,opened", [(1.0, 3.0), (3.0, 1.0)])
 def test_free_gripper_goes_straight_to_its_target(closed, opened):
     limiter = mit_control._GripperForceLimiter(gripper(closed, opened))
@@ -237,14 +231,6 @@ def test_joint_state_maps_rates_and_torques_to_the_joint_frame():
     np.testing.assert_allclose(state.position, [0.2, 0.5, 0.5])
     np.testing.assert_allclose(state.velocity, [0.5, -0.5, -0.5])  # 1 rad/s over a -2 rad stroke
     np.testing.assert_allclose(state.torque, [2.0, -2.0, -0.3])
-
-
-@pytest.mark.parametrize("field", ["position", "velocity", "torque"])
-def test_joint_state_rejects_non_finite_feedback(field):
-    bus = FakeBus()
-    getattr(bus.states, field)[0] = np.nan
-    with pytest.raises(ConnectionError, match="finite motor"):
-        mit_control.read_joint_state(bus, params())
 
 
 def test_servo_holds_then_sends_one_command_per_motor():

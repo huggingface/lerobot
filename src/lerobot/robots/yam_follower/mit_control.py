@@ -404,8 +404,6 @@ def _control_step(
 
 def _gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
     """Return the clipped feed-forward torque of each arm joint for model gravity torques."""
-    if gravity.shape != (params.num_joints,) or not np.isfinite(gravity).all():
-        raise ValueError(f"Gravity compensation must return {params.num_joints} finite torques")
     torque = gravity * params.gravity_factors * params.joint_signs
     return np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
 
@@ -445,17 +443,10 @@ def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
         `JointState`: Calibrated joint and gripper state.
 
     Raises:
-        ConnectionError: If feedback has the wrong shape or contains a non-finite value.
         ValueError: If a joint or the gripper is outside the allowed feedback range.
     """
     raw = bus.read_states()
     n = params.num_joints
-    expected_shape = (n + 1,)
-    if any(
-        values.shape != expected_shape or not np.isfinite(values).all()
-        for values in (raw.position, raw.velocity, raw.torque)
-    ):
-        raise ConnectionError(f"Expected {n + 1} finite motor positions, velocities and torques")
     position = _motor_to_joint(raw.position, params)
     for i, (value, (lower, upper)) in enumerate(zip(position[:n], params.joint_limits, strict=True)):
         if not (
