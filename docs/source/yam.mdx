@@ -1,92 +1,118 @@
 # YAM
 
-The `yam_follower` and `bi_yam_follower` integrations support one or two standard YAM v1 arms with linear DM4310 grippers on Linux SocketCAN. Each arm needs its own classic CAN interface at 1 Mbit/s. The supported layout uses motor IDs 1–7: three DM4340 motors followed by four DM4310 motors.
+`yam_follower` drives one YAM v1 arm with the linear DM4310 gripper, and `bi_yam_follower` drives two. Use them with `lerobot-calibrate`, `lerobot-rollout` and `lerobot-replay`. LeRobot has no YAM leader arm yet, so a YAM is driven by a policy or by replaying a dataset.
 
-## Install and calibrate
+## Before you start
+
+You need:
+
+- A standard YAM v1 arm with the linear gripper. Its motors use IDs 1 to 7: DM4340 for joints 1 to 3, and DM4310 for the rest.
+- Linux, and one USB-to-CAN adapter per arm (SocketCAN, classic CAN at 1 Mbit/s).
+- Every motor's CAN timeout set to at most 400 ms (`8000` ticks, I2RT's value) with the Damiao or I2RT motor tools. The timeout is the last safeguard if LeRobot stops sending commands, so LeRobot won't enable torque without it.
+- Internet access the first time you connect: gravity compensation downloads the YAM model from the [`lerobot/robot-urdfs`](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/yam/v1) bucket and caches it under `HF_LEROBOT_HOME/robot-urdfs/yam/v1`.
+
+## Install LeRobot 🤗
+
+Follow the [Installation Guide](./installation), then install YAM support:
 
 ```bash
-uv sync --locked --extra yam
+pip install -e ".[yam]"
 ```
 
-Prepare each SocketCAN interface at 1 Mbit/s classic CAN before calibration or control. For one arm:
+This installs `motorbridge`, `python-can` and `placo`.
+
+## Set up CAN
 
 ```bash
-uv run --no-sync lerobot-setup-can \
-  --mode=setup --interfaces=can0 \
-  --bitrate=1000000 --use_fd=false
+lerobot-setup-can --mode=setup --interfaces=can0 --use_fd=false
+```
+
+Use `--interfaces=can0,can1` for two arms. The command configures the Linux interfaces with `sudo ip link` and sends no motor commands; run it while no robot is connected. With two arms, check which arm each interface drives, and set `expected_adapter_serial` on each arm so a swapped USB adapter is detected when connecting.
+
+## Calibrate
+
+Calibration measures only the gripper's closed and open stops: the joints keep their factory zeros, and torque stays off.
+
+```bash
+lerobot-calibrate --robot.type=yam_follower --robot.port=can0 --robot.id=yam
 ```
 
 For two arms:
 
 ```bash
-uv run --no-sync lerobot-setup-can \
-  --mode=setup --interfaces=can0,can1 \
-  --bitrate=1000000 --use_fd=false
-```
-
-`--mode=setup` brings each Linux CAN interface down, configures it, and brings it back up. It sends no motor commands. Run it only when no robot controller is using the interfaces.
-
-For a bimanual setup, verify which physical arm each interface controls. Set `expected_adapter_serial` on each arm to detect swapped USB-to-CAN adapters when connecting.
-
-With each arm supported, measure its gripper endpoints. For one arm:
-
-```bash
-uv run --no-sync lerobot-calibrate \
-  --robot.type=yam_follower --robot.id=yam \
-  --robot.port=can0
-```
-
-For two arms:
-
-```bash
-uv run --no-sync lerobot-calibrate \
-  --robot.type=bi_yam_follower --robot.id=bimanual_yam \
+lerobot-calibrate --robot.type=bi_yam_follower --robot.id=bimanual_yam \
   --robot.left_arm_config.port=can0 --robot.right_arm_config.port=can1
 ```
 
-Follow the closed/open prompts while supporting the arm. Calibration reads feedback only: it does not enable torque, move the gripper, or change the factory joint zeros. A bimanual calibration measures the left arm and then the right arm, saving separate files with `_left` and `_right` suffixes. Reuse the same `--robot.id` in later commands so LeRobot loads these files. If calibration already exists, the command asks whether to reuse or replace it.
+Support the arm, then follow the prompts to move the gripper fully closed and fully open by hand. Two arms are calibrated one after the other, into `<id>_left` and `<id>_right` files. Use the same `--robot.id` in later commands.
 
-## Control and units
+## Observations and actions
 
-For one arm, observations and actions contain `joint_1.pos` through `joint_6.pos`, followed by `gripper.pos`. The bimanual robot adds `left_` and `right_` prefixes; top-level camera names remain unchanged, while per-arm cameras are prefixed. By default, joints use **absolute degrees** and the gripper uses **0 (closed) to 100 (open)**. Set `use_degrees=false` for **radians** and a **0–1 gripper**, as used by I2RT and MolmoAct2. `use_velocity_and_torque=true` adds `.vel` and `.torque` observations. Joint-space actions are clipped to the configured limits; end-effector policies require an IK processor.
+One arm has `joint_1.pos` to `joint_6.pos`, then `gripper.pos`, for both observations and actions. Joints are absolute angles in degrees, and the gripper goes from 0 (closed) to 100 (open). `use_degrees=false` switches to radians and 0 to 1, as I2RT and MolmoAct2 data use. `use_velocity_and_torque=true` adds `.vel` and `.torque` observations. Actions are absolute joint targets, clipped to the joint limits.
 
-Connecting checks every configured arm and camera before enabling impedance control at the measured pose. There is no automatic startup motion. By default, the joints must be within 11.5° of the factory folded zero pose. Use `initial_position_deg` and `initial_tolerance_deg` for a verified alternative starting pose.
+Two arms use the same names with `left_` and `right_` prefixes. Cameras set on an arm are prefixed too, while top-level `--robot.cameras` keep their names.
 
-Each arm runs a servo loop that applies position stiffness and gravity compensation while enforcing speed and tracking-error limits. The gripper limits its force after detecting that it is blocked on an object; `gripper_force_limit_n` defaults to 50 N.
+## Run a policy
 
-On first use, gravity compensation downloads the YAM dynamics model from the public [`lerobot/robot-urdfs`](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/yam/v1) bucket and caches it under `HF_LEROBOT_HOME/robot-urdfs/yam/v1`.
-
-The default `idle_mode=hold` holds the measured pose before the first action and after `command_timeout_s`. With `idle_mode=float`, the joints instead use gravity compensation and light damping so the arm can be moved by hand, while the gripper continues holding. Float mode requires `gravity_compensation`. Validate `gravity_factors` with your hardware because cameras and payloads are not included in the model and can cause drift.
-
-A motor fault or missing feedback stops commands. In a bimanual setup, a fault on either arm stops both. Actions and observations remain unavailable until the robot is disconnected and reconnected. Disconnecting explicitly disables torque.
-
-The motor firmware timeout is the final safeguard if the Python process stops sending commands. Configure every motor to the I2RT value of 400 ms (`8000` ticks) using the Damiao/I2RT tools. LeRobot refuses to enable torque if a timeout is disabled or longer than 400 ms. A `LOST_COMM` (`0xD`) motor fault is different from a down CAN interface; do not clear faults or restart the interface automatically during control.
-
-## MolmoAct2 rollout
-
-Install the policy and dataset dependencies in addition to YAM support:
+Put the arm in its folded zero pose before connecting: LeRobot checks that every joint is within 11.5° of it, then starts control from the measured pose. Nothing moves until the policy sends an action.
 
 ```bash
-uv sync --locked --extra yam --extra molmoact2 --extra dataset
+lerobot-rollout \
+  --robot.type=yam_follower --robot.port=can0 --robot.id=yam \
+  --robot.cameras='{"wrist": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}}' \
+  --policy.path=<user>/<policy> \
+  --task="Pick up the cube"
 ```
 
-Use a **LeRobot-format** checkpoint directory with its saved processors, not the original model repository as `policy.path`. For `allenai/MolmoAct2-BimanualYAM`, the original embodiment tag is `yam_dual_molmoact2`: absolute joint pose, the 14 features above, and camera order **top, left, right**. It was trained on radians and a 0–1 gripper, so set `use_degrees=false` on both arms, as below. Keep the released quantile statistics and `normalize_gripper=false`; the two gripper dimensions are excluded from quantile normalization. Do not estimate replacement statistics from live observations. See [MolmoAct2](molmoact2) for policy loading.
+For two arms, use `--robot.type=bi_yam_follower --robot.id=bimanual_yam --robot.left_arm_config.port=can0 --robot.right_arm_config.port=can1`. Add `--dataset.repo_id=<user>/rollout_<name>` to record the rollout; see [Run inference and evaluate your policy](./il_robots#run-inference-and-evaluate-your-policy). `lerobot-replay` replays a recorded episode with the same `--robot.*` options.
 
-For an already converted checkpoint, configure your three RGB camera paths and run:
+Before the first action, and when no action arrives for `command_timeout_s` (1 s), the arm holds its pose. With `idle_mode=float`, the joints are instead gravity-compensated and lightly damped so you can move the arm by hand, while the gripper keeps its opening; tracking resumes from wherever you moved it.
+
+## Safety
+
+- A motor fault or missing feedback stops all commands. With two arms, a fault on either stops both. Disconnect and reconnect to continue.
+- Disconnecting turns torque off: support the arms first.
+- The gravity model covers the standard arm without cameras or payloads. After adding either, check that the arm doesn't drift in float mode, and adjust `gravity_factors` if it does.
+
+## Configuration options
+
+| Option                    | Default                          | Description                                                |
+| ------------------------- | -------------------------------- | ---------------------------------------------------------- |
+| `port`                    | required                         | SocketCAN interface, for example `can0`                    |
+| `expected_adapter_serial` | `None`                           | USB adapter serial, to detect swapped interfaces           |
+| `use_degrees`             | `true`                           | Degrees and a 0–100 gripper; `false` gives radians and 0–1 |
+| `use_velocity_and_torque` | `false`                          | Add `.vel` and `.torque` observations                      |
+| `idle_mode`               | `hold`                           | `hold` the pose or `float` when no action arrives          |
+| `command_timeout_s`       | `1.0`                            | Seconds without an action before the idle mode             |
+| `initial_position_deg`    | all zeros                        | Required start pose; `None` accepts any pose within limits |
+| `initial_tolerance_deg`   | `11.5`                           | Allowed distance from the start pose                       |
+| `gripper_force_limit_n`   | `50.0`                           | Finger force once the gripper is blocked on an object      |
+| `gravity_factors`         | `[1.0, 1.1, 1.1, 1.2, 1.0, 1.0]` | Per-joint multipliers of the gravity compensation          |
+| `cameras`                 | `{}`                             | Cameras attached to the arm                                |
+
+With two arms, set these per arm, with `--robot.left_arm_config.<option>` and `--robot.right_arm_config.<option>`.
+
+## Example: MolmoAct2
+
+`allenai/MolmoAct2-BimanualYAM` was trained on two YAM arms with radians and a 0–1 gripper, and with three cameras in the order top, left, right. Convert it to a LeRobot checkpoint and keep its released normalization statistics; see [MolmoAct2](./molmoact2).
 
 ```bash
-uv run --no-sync lerobot-rollout \
+pip install -e ".[yam,molmoact2,dataset]"
+
+lerobot-rollout \
   --robot.type=bi_yam_follower --robot.id=bimanual_yam \
   --robot.left_arm_config.port=can0 --robot.right_arm_config.port=can1 \
   --robot.left_arm_config.use_degrees=false --robot.right_arm_config.use_degrees=false \
-  --robot.cameras='{"top":{"type":"opencv","index_or_path":"/dev/v4l/by-id/TOP_CAMERA","width":640,"height":480,"fps":30},"left":{"type":"opencv","index_or_path":"/dev/v4l/by-id/LEFT_CAMERA","width":640,"height":480,"fps":30,"fourcc":"MJPG"},"right":{"type":"opencv","index_or_path":"/dev/v4l/by-id/RIGHT_CAMERA","width":640,"height":480,"fps":30,"fourcc":"MJPG"}}' \
+  --robot.cameras='{
+    "top": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/TOP_CAMERA", "width": 640, "height": 480, "fps": 30},
+    "left": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/LEFT_CAMERA", "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"},
+    "right": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/RIGHT_CAMERA", "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"}
+  }' \
   --policy.path=/path/to/molmoact2-bimanual-yam \
-  --inference.type=rtc --inference.rtc.mode=guided \
-  --inference.rtc.execution_horizon=20 --inference.queue_threshold=20 \
-  --device=cuda --fps=30 --interpolation_multiplier=2 \
-  --duration=0 --interactive=true --play_sounds=false \
-  --return_to_initial_position=true \
+  --inference.type=rtc --inference.rtc.execution_horizon=20 --inference.queue_threshold=20 \
+  --device=cuda --interpolation_multiplier=2 \
+  --interactive=true --play_sounds=false \
   --task="Pick up the red block and place it in the green bin"
 ```
 
-Type `/start` to begin policy execution, `/subtask <text>` to change the instruction, and `/reset` to return toward the captured startup pose. `duration=0` means no episode time limit. Returning is time-based and does not confirm measured arrival; YAM's speed and tracking limits still apply. Support the arms before disconnecting because disconnect disables torque.
+Type `/start` to run the policy, `/subtask <text>` to change the instruction, `/reset` to return to the startup pose, and `/stop` to quit.
