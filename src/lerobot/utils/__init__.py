@@ -20,8 +20,6 @@ to ``lerobot.common``. ``visualization_utils`` remains here but is
 intentionally NOT re-exported to avoid pulling in optional dependencies.
 """
 
-from typing import TYPE_CHECKING, Any
-
 from .constants import (
     ACTION,
     DEFAULT_FEATURES,
@@ -41,10 +39,6 @@ from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from .import_utils import is_package_available, register_third_party_plugins, require_package
 from .utils import init_logging
 
-if TYPE_CHECKING:
-    from .action_interpolator import ActionInterpolator
-    from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
-
 __all__ = [
     # Constants
     "ACTION",
@@ -59,16 +53,11 @@ __all__ = [
     "QUERY_KIND",
     "QUERY_TEXT",
     "REWARD",
-    # Device utilities
-    "auto_select_torch_device",
-    "get_safe_torch_device",
-    "is_torch_device_available",
     # Import guards
     "is_package_available",
     "register_third_party_plugins",
     "require_package",
     # General utilities
-    "ActionInterpolator",
     "init_logging",
     # Decorators
     "check_if_already_connected",
@@ -77,16 +66,3 @@ __all__ = [
     "DeviceAlreadyConnectedError",
     "DeviceNotConnectedError",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    # Import torch helpers on first use, so the env server image, which has no torch, can import utils.
-    if name == "ActionInterpolator":
-        from .action_interpolator import ActionInterpolator
-
-        return ActionInterpolator
-    if name in {"auto_select_torch_device", "get_safe_torch_device", "is_torch_device_available"}:
-        from . import device_utils
-
-        return getattr(device_utils, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
