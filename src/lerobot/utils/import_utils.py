@@ -88,16 +88,19 @@ def is_package_available(
         return package_exists
 
 
-def get_safe_default_video_backend():
+def get_safe_default_video_backend() -> Literal["torchcodec", "pyav"]:
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
         # Despite being installed, torchcodec may not be loadable at runtime.
         try:
-            importlib.import_module("torchcodec")
+            # Recent releases import even when FFmpeg fails to load; older ones raise here instead.
+            core = importlib.import_module("torchcodec._core")
+            if getattr(core, "ffmpeg_major_version", True) is None:
+                raise RuntimeError("TorchCodec could not load the FFmpeg libraries.")
             return "torchcodec"
         except (ImportError, OSError, RuntimeError) as e:
             logger.warning(
-                f"{e}\n'torchcodec' is installed but cannot be loaded (see the error above). "
+                f"{e}\n'torchcodec' is installed but cannot decode videos (see the error above). "
                 "Falling back to 'pyav' as a default decoder."
             )
             return "pyav"

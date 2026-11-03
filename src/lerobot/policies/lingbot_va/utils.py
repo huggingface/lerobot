@@ -635,9 +635,10 @@ class WanAttention(nn.Module):
         )
 
         query, key, value = self.to_q(q), self.to_k(k), self.to_v(v)
-        query = self.norm_q(query)
+        # From torch 2.12, CUDA autocast runs RMSNorm in float32, which the KV cache and flash-attn reject.
+        query = self.norm_q(query).to(value.dtype)
         query = query.unflatten(2, (self.heads, -1))
-        key = self.norm_k(key)
+        key = self.norm_k(key).to(value.dtype)
         key = key.unflatten(2, (self.heads, -1))
         value = value.unflatten(2, (self.heads, -1))
         if rotary_emb is not None:
