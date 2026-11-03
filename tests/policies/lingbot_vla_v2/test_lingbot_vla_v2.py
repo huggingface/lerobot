@@ -105,11 +105,13 @@ def tiny_backbone(tmp_path, monkeypatch):
     return assets
 
 
-def _tiny_config(assets, device: str = "cpu", **kwargs) -> LingbotVLAV2Config:
+def _tiny_config(
+    assets, device: str = "cpu", dtype: torch.dtype = torch.float32, **kwargs
+) -> LingbotVLAV2Config:
     return LingbotVLAV2Config(
         tokenizer_path=str(assets),
         device=device,
-        dtype=torch.float32,
+        dtype=dtype,
         expert_hidden_size=64,
         expert_intermediate_size=128,
         action_num_attention_heads=4,
@@ -169,7 +171,7 @@ def _policy_and_batch(tiny_backbone, cameras, vision_boundaries=True, **config):
     preprocessor, _ = make_pre_post_processors(cfg, dataset_stats=meta.stats)
     raw = _raw_batch(7, cameras=cameras)
     raw.pop(ACTION)
-    return policy, preprocessor(raw), torch.randn(2, CHUNK, cfg.max_action_dim)
+    return policy, preprocessor(raw), torch.randn(2, CHUNK, cfg.max_action_dim, dtype=cfg.dtype)
 
 
 class _PredictActionChunk(torch.nn.Module):
@@ -199,12 +201,12 @@ def _grid(policy, batch):
 
 def test_prediction_on_a_vision_grid_exports_and_matches_eager(tiny_backbone, monkeypatch):
     """Eager prediction keeps transformers' prefix positions; on a vision grid, prediction exports. Two
-    cameras are visible, with vision boundaries: the default layout."""
+    cameras are visible, with vision boundaries, in bfloat16: the default layout and dtype."""
     from tests.policies.common.fixed_grid_checks import data_dependent_nodes
 
     # The runtime asserts must not depend on transformers' own checks, which this switch turns off.
     monkeypatch.setenv("TRANSFORMERS_DISABLE_TORCH_CHECK", "1")
-    policy, batch, noise = _policy_and_batch(tiny_backbone, (CAMERA, WRIST))
+    policy, batch, noise = _policy_and_batch(tiny_backbone, (CAMERA, WRIST), dtype=torch.bfloat16)
     core = policy.model.qwenvl_with_expert
     build_prefix_position_ids, prefixes = core.build_prefix_position_ids, []
 
