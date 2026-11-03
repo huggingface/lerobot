@@ -191,7 +191,9 @@ class FastWAMPolicy(PreTrainedPolicy):
                     mismatched.append(key)
 
         if not mismatched:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
+            # The core model is already on the target device; stage weights on CPU
+            # to avoid holding a second full copy on the accelerator.
+            return super()._load_as_safetensor(model, model_file, "cpu", strict)
         if strict:
             raise RuntimeError(
                 f"FastWAM: {len(mismatched)} checkpoint tensors have a shape mismatch under "

@@ -15,10 +15,12 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 
 import pytest
 import torch
 from safetensors import safe_open
+from safetensors.torch import load_model, save_model
 from torch import nn
 
 pytest.importorskip("transformers", reason="fastwam requires the `fastwam` extra (transformers)")
@@ -451,6 +453,60 @@ class CoreWithFrozenComponents(FakeFastWAMCore):
         self.vae._apply(fn)
         self.text_encoder._apply(fn)
         return self
+
+
+@pytest.mark.parametrize(
+    "model_device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda:0",
+            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA loading requires CUDA"),
+        ),
+    ],
+)
+@pytest.mark.parametrize("map_location", ["cpu", "cuda:0"])
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_checkpoint_load_stages_weights_on_cpu(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    model_device: str,
+    map_location: str,
+    strict: bool,
+    dtype: torch.dtype,
+) -> None:
+    reference = FakeFastWAMCore().to(dtype=dtype)
+    checkpoint = tmp_path / "model.safetensors"
+    save_model(reference, checkpoint)
+    target = FakeFastWAMCore().to(device=model_device, dtype=dtype)
+    original_parameters = dict(target.named_parameters())
+    load_calls: list[tuple[str, bool]] = []
+
+    def load_on_cpu(
+        model: nn.Module, filename: str, *, strict: bool, device: str
+    ) -> tuple[list[str], list[str]]:
+        assert device == "cpu"
+        load_calls.append((device, strict))
+        return load_model(model, filename, strict=strict, device=device)
+
+    monkeypatch.setattr("lerobot.policies.pretrained.load_model_as_safetensor", load_on_cpu)
+    loaded = FastWAMPolicy._load_as_safetensor(target, str(checkpoint), map_location, strict)
+
+    assert loaded is target
+    assert load_calls == [("cpu", strict)]
+    assert all(
+        parameter is original_parameters[name]
+        and parameter.device == torch.device(model_device)
+        and parameter.dtype == dtype
+        for name, parameter in target.named_parameters()
+    )
+    torch.testing.assert_close(
+        {name: tensor.cpu() for name, tensor in target.state_dict().items()},
+        reference.state_dict(),
+        rtol=0,
+        atol=0,
+    )
 
 
 def test_from_pretrained_uses_base_loader_and_skips_wan_backbone(monkeypatch, tmp_path):

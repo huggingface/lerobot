@@ -139,6 +139,10 @@ The frozen UMT5-XXL text encoder takes about 11 GB. `policy.text_encoder_device=
 
 FastWAM loads the Wan VAE, video DiT, text encoder, and tokenizer from the configured Wan model directory or Hugging Face Hub model id. LeRobot-format FastWAM checkpoints saved by `save_pretrained` also copy the local Wan component files needed by `from_pretrained`.
 
+### Checkpoint Loading Memory
+
+FastWAM stages policy checkpoint weights on CPU and copies them into the model on `policy.device`. This avoids keeping an extra full checkpoint on the accelerator during loading, without changing the model's parameter dtype or steady-state model memory. CPU staging still uses host memory and can affect loading time; it does not offload inference to CPU.
+
 ### Attention Backend
 
 FastWAM's DiT uses PyTorch's `scaled_dot_product_attention` (SDPA) for all attention. It does **not** use FlashAttention: its Mixture-of-Transformers (MoT) routing needs arbitrary boolean `[query, key]` attention masks, which the FlashAttention varlen API cannot express. Installing the `flash-attn` package therefore has no effect on the FastWAM path. (Note that SDPA itself may still select PyTorch's own flash / memory-efficient / math kernel internally — this is unrelated to the `flash-attn` package.)
