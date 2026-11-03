@@ -423,6 +423,15 @@ def test_calibration_connection_never_enables_motor(robot, monkeypatch):
     robot.disconnect()
 
 
+def test_open_without_calibration_touches_no_hardware(tmp_path, monkeypatch):
+    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
+    robot = make_robot(tmp_path, gripper=None)
+    mock_hardware(robot, monkeypatch)
+    with pytest.raises(ValueError, match="lerobot-calibrate"):
+        robot.open()
+    robot.bus.open.assert_not_called()
+
+
 def test_connect_calibrates_missing_gripper_endpoints(tmp_path, monkeypatch):
     monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
     robot = make_robot(tmp_path, gripper=None)

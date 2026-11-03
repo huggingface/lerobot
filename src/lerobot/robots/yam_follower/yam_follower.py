@@ -408,11 +408,8 @@ class YamFollower(Robot):
         ``connect`` runs ``open``, ``configure`` and ``start``. A bimanual robot opens both arms
         before starting either, so a bad pose on one arm never enables the other.
         """
-        if not self.is_calibrated:
-            raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
+        params = self._require_params()
         try:
-            self._refresh_params()
-            params = self._require_params()
             self.servo.stop_event.clear()
             self._load_control_model()  # before touching hardware, so a missing dependency fails first
             self.bus.open()
