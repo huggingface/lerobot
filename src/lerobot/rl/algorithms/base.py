@@ -29,7 +29,7 @@ from safetensors.torch import load_file as load_safetensors, save_file as save_s
 from torch.optim import Optimizer
 
 from lerobot.lerobot_types import BatchType
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, hub_safe_id
 
 from .configs import RLAlgorithmConfig, TrainingStats
 
@@ -181,7 +181,7 @@ class RLAlgorithm(HubMixin, abc.ABC):
 
         instance = cls(policy=policy, config=config, **algo_kwargs)
 
-        model_id = str(pretrained_name_or_path)
+        model_id = hub_safe_id(pretrained_name_or_path)
         if os.path.isdir(model_id):
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
         else:

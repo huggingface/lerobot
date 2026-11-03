@@ -504,7 +504,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         # Store pretrained path for PEFT's base_model_name_or_path
         if self.config.pretrained_path:
-            self.name_or_path = str(self.config.pretrained_path)
+            self.name_or_path = hub_safe_id(self.config.pretrained_path)
 
         # Wrap with PEFT
         peft_model = get_peft_model(self, final_config)
