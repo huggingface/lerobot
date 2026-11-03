@@ -97,6 +97,16 @@ def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) 
         logging.warning(f"Unexpected key(s) when loading model: {unexpected_keys}")
 
 
+# TODO: remove once policies load their transformers sub-models with the transformers loader, which applies
+# this rename (`transformers.core_model_loading.convert_and_load_state_dict_in_model`, an internal API).
+def rename_legacy_vision_model_keys(
+    module: nn.Module, state_dict: dict[str, torch.Tensor], prefix: str, *args
+) -> None:
+    """`load_state_dict` pre-hook for checkpoints saved before transformers 5.6 flattened SigLIP towers."""
+    for key in [key for key in state_dict if "vision_tower.vision_model." in key]:
+        state_dict[key.replace("vision_tower.vision_model.", "vision_tower.")] = state_dict.pop(key)
+
+
 # TODO(Steven): Move this function to a proper preprocessor step
 def prepare_observation_for_inference(
     observation: RobotObservation,

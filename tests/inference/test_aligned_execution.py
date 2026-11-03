@@ -299,3 +299,27 @@ def test_relative_model_outputs_are_blended_only_after_absolute_postprocessing()
     expected = incoming.canonical_actions.clone()
     expected[:2, :2] = 0.5 * (previous[:2, :2] + expected[:2, :2])
     torch.testing.assert_close(rt.queue.snapshot().canonical_actions, expected)
+
+
+def test_chunk_latency_includes_cold_start_without_changing_scheduling():
+    rt, clock = runtime()
+    rt.latency.configure(0.5)
+    request = rt.begin(sample(rt, clock))
+    clock.now += 0.3
+    assert rt.accept(request, result(request), task_version=0)
+    assert rt.latency.recent(clock()) == pytest.approx([0.3])
+    assert list(rt.turnarounds) == []
+    assert rt.turnaround == pytest.approx(0.3)
+
+    rt.pop()
+    request = rt.begin(sample(rt, clock))
+    clock.now += 0.1
+    assert rt.accept(request, result(request), task_version=0)
+    assert rt.latency.recent(clock()) == pytest.approx([0.3, 0.1])
+    assert list(rt.turnarounds) == pytest.approx([0.1])
+    assert rt.turnaround == pytest.approx(0.1)
+    clock.now += 0.45
+    assert rt.latency.recent(clock()) == pytest.approx([0.1])
+    clock.now += 0.1
+    assert rt.latency.recent(clock()) == []
+    assert rt.turnaround == pytest.approx(0.1)

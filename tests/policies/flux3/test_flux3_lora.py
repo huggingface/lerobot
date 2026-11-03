@@ -360,14 +360,10 @@ def test_exporter_creates_cli_config_without_training(tmp_path, monkeypatch, use
         exporter.export_base(source, "test/so101", stats, None, output)
 
 
-def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path, monkeypatch):
+@pytest.mark.usefixtures("restore_torch_backend_flags")
+def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path):
     for package in ("accelerate", "peft", "diffusers"):
         pytest.importorskip(package)
-
-    # Restore the global precision/determinism settings changed by train() at teardown.
-    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32)
-    monkeypatch.setattr(torch.backends.cudnn, "benchmark", torch.backends.cudnn.benchmark)
-    monkeypatch.setattr(torch.backends.cudnn, "deterministic", torch.backends.cudnn.deterministic)
 
     root = tmp_path / "dataset"
     dataset = LeRobotDataset.create(

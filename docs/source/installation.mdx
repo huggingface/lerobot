@@ -1,6 +1,6 @@
 # Installation
 
-This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12 and support PyTorch >= 2.10, then skip ahead to [Environment Setup](#step-2-environment-setup).
+This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12, then skip ahead to [Environment Setup](#step-2-environment-setup).
 
 ## Step 1 (`conda` only): Install [`miniforge`](https://conda-forge.org/download/)
 
@@ -67,14 +67,18 @@ source .venv/bin/activate
 </hfoptions>
 <!-- prettier-ignore-end -->
 
+### Platform requirements
+
+On Apple Silicon, PyTorch requires **macOS 14 or newer**, and MPS acceleration **macOS 15 or newer** (on macOS 14, LeRobot falls back to CPU). On Linux, the default PyTorch wheels need an NVIDIA driver of **580.65 or newer**; for older drivers, see [PyTorch CUDA variant](#pytorch-cuda-variant-linux-only).
+
 ### Install `ffmpeg` (for video decoding)
 
 LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video decoding by default, which requires `ffmpeg`.
 
 > [!NOTE]
-> **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64), Linux ARM (aarch64, arm64, armv7l), or Windows with PyTorch < 2.8. On these platforms, LeRobot automatically falls back to `pyav` — so you do not need to install `ffmpeg` and can skip to Step 3.
+> **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64) or Linux armv7l. On these platforms, LeRobot automatically falls back to `pyav` — so you do not need to install `ffmpeg` and can skip to Step 3.
 >
-> **Jetson (aarch64 + CUDA):** the `pyav` fallback above means no GPU-accelerated video decode by default. [`docker/Dockerfile.jetson`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.jetson) builds `torch`/`torchcodec` from source with CUDA support for JetPack 6.2 — community-maintained, see [`ravediamond/lerobot-jetson`](https://github.com/ravediamond/lerobot-jetson) for the prebuilt image and issue [#819](https://github.com/huggingface/lerobot/issues/819) for background.
+> **Jetson (aarch64 + CUDA):** video decoding runs on CPU by default. [`docker/Dockerfile.jetson`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.jetson) builds `torch`/`torchcodec` from source with CUDA support for JetPack 6.2 — community-maintained, see [`ravediamond/lerobot-jetson`](https://github.com/ravediamond/lerobot-jetson) for the prebuilt image and issue [#819](https://github.com/huggingface/lerobot/issues/819) for background.
 
 If your platform supports TorchCodec, install `ffmpeg` using one of the methods below:
 
@@ -211,53 +215,22 @@ _Multiple extras can be combined (e.g., `.[core_scripts,pi,pusht]`). For a full 
 
 ### PyTorch CUDA variant (Linux only)
 
-On Linux, the install path determines which CUDA wheel you get. macOS and Windows installs use the PyPI default (MPS / CPU / CUDA-Windows wheel respectively) and can skip this section.
+On Linux, `torch` and `torchvision` come from PyPI, whose default wheels are CUDA 13 builds (driver floor **580.65**). macOS and Windows installs use the PyPI default wheels and can skip this section.
 
-<!-- prettier-ignore-start -->
-
-<hfoptions id="cuda_variant">
-<hfoption id="uv-source">
-
-**Source install via `uv` (`uv sync` or `uv pip install -e .`)**
-
-`torch` and `torchvision` are pinned by the project to the **CUDA 12.8** PyTorch index (`https://download.pytorch.org/whl/cu128`, driver floor **570.86**) — covers Ampere/Ada/Hopper/Blackwell GPUs. No action needed for typical NVIDIA setups.
-
-To override for a different CUDA variant:
+For an older driver or GPU, install PyTorch from the matching [PyTorch index](https://pytorch.org/get-started/locally/) first, then LeRobot. PyPI's Linux TorchCodec is a CUDA 13 build too, so take it from the CPU index (with torch below 2.11, pick the matching release from the [TorchCodec compatibility table](https://github.com/meta-pytorch/torchcodec#installing-torchcodec)):
 
 ```bash
-uv pip install --force-reinstall torch torchvision \
-    --index-url https://download.pytorch.org/whl/cu126   # older drivers; or cu130 for Blackwell on driver ≥ 580
-```
-
-</hfoption>
-<hfoption id="pip-conda">
-
-**Source install via `pip`/`conda`, or `pip install lerobot` from PyPI**
-
-PyPI default torch wheel is currently a cu130-bundled Linux wheel, driver floor **580.65**.
-
-To pick a specific CUDA variant:
-
-**Using `pip` or `conda`** — install torch first with an explicit index, then lerobot:
-
-```bash
-pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision
+pip install --index-url https://download.pytorch.org/whl/cu126 torch torchvision
+pip install --index-url https://download.pytorch.org/whl/cpu torchcodec
 pip install -e ".[all]"          # source
 # — or —
 pip install lerobot              # from PyPI
 ```
 
-**Using `uv` to install from PyPI** — one-liner via `--torch-backend` (uv ≥ 0.6):
+> [!NOTE]
+> `cu126` is the build PyTorch keeps for drivers that only support CUDA 12. torch 2.15 has no CUDA 12 build, so this index installs torch 2.14, and staying on CUDA 12 means staying on torch 2.14 or older.
 
-```bash
-uv pip install --torch-backend cu128 lerobot
-```
-
-Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, plus various `rocm*` and `xpu`. Swap as needed for your driver.
-
-</hfoption>
-</hfoptions>
-<!-- prettier-ignore-end -->
+With `uv pip`, `--torch-backend` selects the index in one step, e.g. `uv pip install --torch-backend cu126 lerobot`. `uv sync` always installs the committed lock: to change the CUDA build there, add the index to `[tool.uv.index]` and `[tool.uv.sources]` in `pyproject.toml` and re-run `uv lock`.
 
 ### Troubleshooting
 

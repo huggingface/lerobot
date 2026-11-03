@@ -217,7 +217,8 @@ class FineARTVLAPytorch(PI05Pytorch):  # see openpi `PI0Pytorch`
             use_cache=False,
             adarms_cond=[None, adarms_cond],
         )
-        past_key_values.crop(prefix_len)
+        for layer in past_key_values.layers:
+            layer.crop(prefix_len - layer.get_seq_length())
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]

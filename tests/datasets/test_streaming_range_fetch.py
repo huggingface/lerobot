@@ -15,9 +15,9 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 
-import httpx
 import pytest
 from huggingface_hub.errors import HfHubHTTPError
+from huggingface_hub.utils import httpx
 
 from lerobot.streaming.range_fetch import NativeHTTPRangeFetcher
 
