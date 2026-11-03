@@ -20,8 +20,6 @@
 # Run:    docker run --gpus all --rm lerobot-benchmark-metaworld lerobot-eval ...
 
 FROM huggingface/lerobot-gpu:latest
-COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
-RUN uv sync --locked --inexact --extra all --no-install-project --no-cache
 
 # Overlay the PR's source code on top of the nightly image.
 COPY --chown=user_lerobot:user_lerobot . .
