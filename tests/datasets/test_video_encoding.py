@@ -647,9 +647,9 @@ class TestConcatenateVideoFiles:
                 compatibility_check=True,
             )
 
-    @pytest.mark.parametrize("folder", ["clips", "space here", "owner's clips", "a'b'c"])
+    @pytest.mark.parametrize("folder", ["clips", "space here", "owner's clips", "a'b'c", "café clips"])
     def test_concatenates_local_paths_with_spaces_or_apostrophes(self, tmp_path, folder):
-        """ffconcat quoting must keep paths that contain spaces or apostrophes."""
+        """ffconcat quoting must keep paths that contain spaces, apostrophes, or non-ASCII characters."""
         directory = tmp_path / folder
         inputs = []
         for index, value in enumerate((40, 200)):

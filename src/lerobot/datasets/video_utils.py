@@ -753,7 +753,9 @@ def concatenate_video_files(
                 )
 
     # Create a temporary .ffconcat file to list the input video paths
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", suffix=".ffconcat", delete=False
+    ) as tmp_concatenate_file:
         tmp_concatenate_file.write("ffconcat version 1.0\n")
         for input_path in input_video_paths:
             tmp_concatenate_file.write(f"file {_ffconcat_path(input_path)}\n")
