@@ -157,7 +157,7 @@ class RobotKinematics:
 
 
 class GravityCompensation:
-    """Static gravity torques for a fixed-base URDF model, computed with placo."""
+    """Joint torques that hold a fixed-base URDF model against gravity, computed with Placo."""
 
     def __init__(
         self,
@@ -169,9 +169,12 @@ class GravityCompensation:
         Load a robot model for gravity compensation.
 
         Args:
-            urdf_path (`str` or `Path`): Path to the URDF model.
-            joint_names (`Sequence[str]`): Model joints to compensate, in the order torques are returned.
-            base_frame (`str`): Name of the fixed base frame in the model.
+            urdf_path (`str | Path`):
+                Path to the URDF model.
+            joint_names (`Sequence[str]`):
+                Model joints to compensate, in the order torques are returned.
+            base_frame (`str`):
+                Name of the fixed base frame in the model.
         """
         require_package("placo", extra="placo-dep")
         _raise_if_placo_unusable()
@@ -187,9 +190,11 @@ class GravityCompensation:
         Compute the torques that hold a configuration against gravity.
 
         Args:
-            joint_pos_rad (`np.ndarray`): Positions of `joint_names` in radians.
-            extra_joint_pos (`dict[str, float]`, *optional*): Positions of other model joints
-                whose mass still loads the compensated joints (e.g. gripper fingers), in model units.
+            joint_pos_rad (`np.ndarray`):
+                Positions of `joint_names` in radians.
+            extra_joint_pos (`dict[str, float]`, *optional*):
+                Positions of other model joints whose mass still loads the compensated joints (e.g. gripper
+                fingers), in model units.
 
         Returns:
             `np.ndarray`: Torques in Nm for each joint in `joint_names`.
