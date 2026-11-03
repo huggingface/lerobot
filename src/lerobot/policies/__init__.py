@@ -17,6 +17,10 @@ from lerobot.utils.feature_spec import FeatureSpec
 
 from .act.configuration_act import ACTConfig as ACTConfig
 from .chunk import ChunkPolicySpec, ExecutionMode
+from .cosmos3.configuration_cosmos3 import (
+    Cosmos3EdgeConfig as Cosmos3EdgeConfig,
+    Cosmos3NanoConfig as Cosmos3NanoConfig,
+)
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .dm05.configuration_dm05 import DM05Config as DM05Config
 from .eo1.configuration_eo1 import EO1Config as EO1Config
@@ -61,6 +65,8 @@ from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
 __all__ = [
     # Configuration classes
     "ACTConfig",
+    "Cosmos3EdgeConfig",
+    "Cosmos3NanoConfig",
     "DiffusionConfig",
     "DM05Config",
     "EO1Config",
