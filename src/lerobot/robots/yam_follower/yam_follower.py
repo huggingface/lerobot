@@ -323,7 +323,6 @@ class YamFollower(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
         self.bus = _YamBus(config.port, config.feedback_timeout_s)
         self.gravity_model: GravityCompensation | None = None
-        self.params: MitArmParams | None = None
         self.servo = MitServo(
             str(self.id), self.bus, config, self._gravity_torque, stop_event or threading.Event()
         )
@@ -545,15 +544,14 @@ class YamFollower(Robot):
 
     def _refresh_params(self) -> None:
         """Rebuild the internal control settings, once the gripper is calibrated."""
-        self.params = (
+        self.servo.params = (
             _yam_arm_params(self.config, self.calibration["gripper"]) if self.is_calibrated else None
         )
-        self.servo.params = self.params
 
     def _require_params(self) -> MitArmParams:
-        if self.params is None:
+        if self.servo.params is None:
             raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
-        return self.params
+        return self.servo.params
 
     def _gravity_torque(self, positions: np.ndarray) -> np.ndarray:
         if self.gravity_model is None:

@@ -525,8 +525,8 @@ def test_single_arm_calibration_preserves_factory_zeros(tmp_path, monkeypatch):
     assert (calibration.homing_offset, calibration.drive_mode) == (0, 0)
     # Raw motor angles of the stops, in whole degrees.
     assert (calibration.range_min, calibration.range_max) == (6, 350)
-    assert robot.params is not None
-    assert robot.params.gripper.open == pytest.approx(6.1, abs=0.01)
+    assert robot.servo.params is not None
+    assert robot.servo.params.gripper.open == pytest.approx(6.1, abs=0.01)
     assert all("[test]" in text for text in prompts)
     assert robot.calibration_fpath.is_file()
     robot.bus.enable.assert_not_called()
@@ -547,8 +547,8 @@ def saved_calibration_robot(tmp_path, monkeypatch, *, closed=0.1, opened=6.1):
 def test_saved_calibration_loads_either_polarity(tmp_path, monkeypatch, closed, opened):
     robot = saved_calibration_robot(tmp_path, monkeypatch, closed=closed, opened=opened)
     assert robot.is_calibrated
-    assert robot.params.gripper.closed == pytest.approx(math.radians(round(math.degrees(closed))))
-    assert robot.params.gripper.open == pytest.approx(math.radians(round(math.degrees(opened))))
+    assert robot.servo.params.gripper.closed == pytest.approx(math.radians(round(math.degrees(closed))))
+    assert robot.servo.params.gripper.open == pytest.approx(math.radians(round(math.degrees(opened))))
 
 
 def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch):
@@ -562,7 +562,7 @@ def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch
 
     prompts = measure_gripper(robot, monkeypatch, opened=5.1, answers=["c"])
     assert len(prompts) == 3
-    assert robot.params.gripper.open == pytest.approx(math.radians(round(math.degrees(5.1))))
+    assert robot.servo.params.gripper.open == pytest.approx(math.radians(round(math.degrees(5.1))))
     robot.disconnect()
 
 
