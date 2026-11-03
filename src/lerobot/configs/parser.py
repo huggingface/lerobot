@@ -226,6 +226,14 @@ def get_yaml_overrides(field_name: str) -> list[str]:
     return _config_yaml_overrides.get(field_name, [])
 
 
+def get_pretrained_revision(field_name: str) -> str | None:
+    """Return `--<field_name>.pretrained_revision` from the CLI, else from the `--config_path` file."""
+    revision = parse_arg("pretrained_revision", get_cli_overrides(field_name) or [])
+    if revision is None:
+        revision = parse_arg("pretrained_revision", get_yaml_overrides(field_name))
+    return revision
+
+
 def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
     return parse_arg(f"{field_name}.{draccus.CHOICE_TYPE_KEY}", args)
 

@@ -9,11 +9,19 @@ the pretrained stats — the policy appears to load fine but acts blind.
 """
 
 import json
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from lerobot.configs import parser
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
 
 
 @PreTrainedConfig.register_subclass("_dummy_backfill")
@@ -132,3 +140,49 @@ def test_reward_config_from_pretrained_backfills_path():
         assert isinstance(cfg, _DummyRewardBackfillConfig)
         assert cfg.pretrained_path == tmpdir
         assert cfg.pretrained_revision is None
+
+
+# ── The CLI entry points must hand --<field>.pretrained_revision to from_pretrained ──
+
+
+def _eval_config() -> EvalPipelineConfig:
+    return EvalPipelineConfig(env=None)
+
+
+def _train_config() -> TrainPipelineConfig:
+    cfg = TrainPipelineConfig(dataset=DatasetConfig(repo_id="user/dataset"))
+    cfg._resolve_pretrained_from_cli()
+    return cfg
+
+
+@pytest.mark.parametrize(
+    ("argv", "build", "config_cls", "field"),
+    [
+        (["lerobot-eval", "--policy.path=user/policy"], _eval_config, PreTrainedConfig, "policy"),
+        (["lerobot-train", "--policy.path=user/policy"], _train_config, PreTrainedConfig, "policy"),
+        (
+            ["lerobot-train", "--reward_model.path=user/reward_model"],
+            _train_config,
+            RewardModelConfig,
+            "reward_model",
+        ),
+    ],
+)
+def test_cli_pretrained_revision_reaches_from_pretrained(monkeypatch, argv, build, config_cls, field):
+    # The CLI revision reaches from_pretrained and the returned config, ahead of the --config_path file.
+    captured = {}
+
+    def fake_from_pretrained(cls, pretrained_name_or_path, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            type="_dummy_backfill", pretrained_path=None, pretrained_revision=kwargs["revision"]
+        )
+
+    monkeypatch.setattr(sys, "argv", [*argv, f"--{field}.pretrained_revision=cli-sha"])
+    monkeypatch.setattr(parser, "get_yaml_overrides", lambda _: ["--pretrained_revision=yaml-sha"])
+    monkeypatch.setattr(config_cls, "from_pretrained", classmethod(fake_from_pretrained))
+
+    cfg = build()
+
+    assert captured["revision"] == "cli-sha"
+    assert getattr(cfg, field).pretrained_revision == "cli-sha"
