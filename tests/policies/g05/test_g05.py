@@ -19,6 +19,7 @@ pytest.importorskip("transformers", reason="g05 requires the `g05` extra (transf
 
 from safetensors.torch import save_file
 from transformers import DynamicCache
+from transformers.cache_utils import LinearAttentionLayer
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextRotaryEmbedding,
@@ -1131,15 +1132,17 @@ def test_decode_token_restores_finished_linear_attention_rows():
             return torch.zeros(*token_ids.shape, 4)
 
         def forward(self, inputs_embeds, *, cache, **kwargs):
-            cache.layers[0].conv_states.add_(1)
-            cache.layers[0].recurrent_states.add_(1)
+            cache.layers[0].conv_states[0].add_(1)
+            cache.layers[0].recurrent_states[0].add_(1)
             return torch.ones(inputs_embeds.shape[0], 1, 4), cache
 
     backend = G05NativeBackend.__new__(G05NativeBackend)
     nn.Module.__init__(backend)
     backend.model = nn.Module()
     backend.model.vlm = MutatingVLM()
-    layer = SimpleNamespace(conv_states=torch.zeros(2, 1), recurrent_states=torch.zeros(2, 1))
+    layer = LinearAttentionLayer()
+    layer.update_conv_state(torch.zeros(2, 1))
+    layer.update_recurrent_state(torch.zeros(2, 1))
     cache = SimpleNamespace(layers=[layer])
 
     _, token_types, _ = backend._decode_token(
@@ -1150,8 +1153,8 @@ def test_decode_token_restores_finished_linear_attention_rows():
         active_mask=torch.tensor([False, True]),
     )
 
-    torch.testing.assert_close(layer.conv_states, torch.tensor([[0.0], [1.0]]))
-    torch.testing.assert_close(layer.recurrent_states, torch.tensor([[0.0], [1.0]]))
+    torch.testing.assert_close(layer.conv_states[0], torch.tensor([[0.0], [1.0]]))
+    torch.testing.assert_close(layer.recurrent_states[0], torch.tensor([[0.0], [1.0]]))
     assert token_types[0, -1] == float(G05TokenType.PADDING)
     assert token_types[1, -1] == float(G05TokenType.PRED_TEXT)
 
@@ -1573,7 +1576,7 @@ def test_meta_loader_materializes_transformers_rotary_buffers():
     nn.Module.__init__(backend)
     with torch.device("meta"):
         backend.text_rotary = Qwen3_5TextRotaryEmbedding(config)
-        backend.vision_rotary = Qwen3_5VisionRotaryEmbedding(dim=8)
+        backend.vision_rotary = Qwen3_5VisionRotaryEmbedding(Qwen3_5VisionConfig(hidden_size=16, num_heads=1))
 
     assert all(buffer.is_meta for buffer in backend.buffers())
     backend.materialize_runtime_buffers("cpu")

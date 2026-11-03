@@ -26,6 +26,7 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import DynamicCache
+    from transformers.cache_utils import LinearAttentionCacheLayerMixin
     from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
     from transformers.models.qwen3_5.modeling_qwen3_5 import (
         Qwen3_5Attention,
@@ -37,6 +38,14 @@ if TYPE_CHECKING or _transformers_available:
         Qwen3_5VisionModel,
         Qwen3_5VisionRotaryEmbedding,
         apply_rotary_pos_emb_vision,
+        causal_conv1d_fn,
+        causal_conv1d_update,
+        torch_chunk_gated_delta_rule,
+        torch_recurrent_gated_delta_rule,
+    )
+    from transformers.vision_utils import (
+        get_vision_interpolation_indices_and_weights,
+        get_vision_position_ids,
     )
 
     from lerobot.policies.pi_gemma import PiGemmaRMSNorm
@@ -45,6 +54,7 @@ else:
     # without the extra raises; PiGemmaRMSNorm is only used at runtime.
     PiGemmaRMSNorm = None
     DynamicCache = None
+    LinearAttentionCacheLayerMixin = None
     Qwen3_5TextConfig = None
     Qwen3_5VisionConfig = None
     Qwen3_5Attention = None
@@ -55,6 +65,12 @@ else:
     Qwen3_5VisionModel = None
     Qwen3_5VisionRotaryEmbedding = None
     apply_rotary_pos_emb_vision = None
+    causal_conv1d_fn = None
+    causal_conv1d_update = None
+    torch_chunk_gated_delta_rule = None
+    torch_recurrent_gated_delta_rule = None
+    get_vision_interpolation_indices_and_weights = None
+    get_vision_position_ids = None
     Qwen3_5GatedDeltaNet = nn.Module  # subclassed at module scope
 
 from lerobot.configs.policies import PreTrainedConfig
@@ -95,18 +111,17 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
         hidden_states: Tensor,
         cache_params: DynamicCache | None = None,
         attention_mask: Tensor | None = None,
+        **kwargs,
     ) -> Tensor:
         """Run the gated delta-net mixer over the sequence."""
         if attention_mask is not None and attention_mask.ndim == 2:
             hidden_states = hidden_states * attention_mask[:, :, None]
 
         batch_size, sequence_length, _ = hidden_states.shape
-        layer_cache = None
-        if cache_params is not None and cache_params.has_previous_state(self.layer_idx):
-            layer_cache = cache_params.layers[self.layer_idx]
-            conv_state = layer_cache.conv_states
-            recurrent_state = layer_cache.recurrent_states
-        use_cached_state = layer_cache is not None
+        conv_state = recurrent_state = None
+        if cache_params is not None:
+            conv_state = cache_params.get_conv_state(self.layer_idx)
+            recurrent_state = cache_params.get_recurrent_state(self.layer_idx)
 
         mixed_qkv = self.in_proj_qkv(hidden_states).transpose(1, 2)
         gate = self.in_proj_z(hidden_states).reshape(
@@ -118,9 +133,9 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
         beta = self.in_proj_b(hidden_states).sigmoid()
         decay = self.in_proj_a(hidden_states)
 
-        if layer_cache is not None:
+        if conv_state is not None:
             if sequence_length == 1:
-                mixed_qkv = self.causal_conv1d_update(
+                mixed_qkv = causal_conv1d_update(
                     mixed_qkv,
                     conv_state,
                     self.conv1d.weight.squeeze(1),
@@ -137,7 +152,7 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
                         groups=self.conv1d.groups,
                     )
                 )
-                layer_cache.conv_states.copy_(conv_input[..., -self.conv_kernel_size :])
+                conv_state.copy_(conv_input[..., -self.conv_kernel_size :])
         else:
             if cache_params is not None:
                 conv_state = functional.pad(
@@ -145,16 +160,12 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
                     (self.conv_kernel_size - mixed_qkv.shape[-1], 0),
                 )
                 cache_params.update_conv_state(conv_state, self.layer_idx)
-            if self.causal_conv1d_fn is not None:
-                mixed_qkv = self.causal_conv1d_fn(
-                    x=mixed_qkv,
-                    weight=self.conv1d.weight.squeeze(1),
-                    bias=self.conv1d.bias,
-                    activation=self.activation,
-                    seq_idx=None,
-                )
-            else:
-                mixed_qkv = functional.silu(self.conv1d(mixed_qkv)[:, :, :sequence_length])
+            mixed_qkv = causal_conv1d_fn(
+                mixed_qkv,
+                self.conv1d.weight.squeeze(1),
+                self.conv1d.bias,
+                activation=self.activation,
+            )
 
         query, key, value = torch.split(
             mixed_qkv.transpose(1, 2),
@@ -172,8 +183,8 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
             query = query.repeat_interleave(head_repeats, dim=2)
             key = key.repeat_interleave(head_repeats, dim=2)
 
-        if use_cached_state and sequence_length == 1:
-            attended, recurrent_state = self.recurrent_gated_delta_rule(
+        if recurrent_state is not None and sequence_length == 1:
+            attended, recurrent_state = torch_recurrent_gated_delta_rule(
                 query,
                 key,
                 value,
@@ -184,8 +195,8 @@ class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 use_qk_l2norm_in_kernel=True,
             )
         else:
-            initial_state = recurrent_state.clone() if use_cached_state else None
-            attended, recurrent_state = self.chunk_gated_delta_rule(
+            initial_state = recurrent_state.clone() if recurrent_state is not None else None
+            attended, recurrent_state = torch_chunk_gated_delta_rule(
                 query,
                 key,
                 value,
@@ -606,8 +617,14 @@ class G05NativeBackend(nn.Module):
                 module.original_inv_freq = inverse_frequency.clone()
                 module.attention_scaling = attention_scaling
             elif isinstance(module, Qwen3_5VisionRotaryEmbedding) and module.inv_freq.is_meta:
-                frequency = torch.arange(0, module.dim, 2, dtype=torch.float32, device=device)
-                module.inv_freq = 1.0 / (module.theta ** (frequency / module.dim))
+                with torch.device(device):
+                    inverse_frequency, attention_scaling = module.compute_axial_rope_parameters(
+                        module.config,
+                        device,
+                    )
+                module.inv_freq = inverse_frequency
+                module.original_inv_freq = inverse_frequency.clone()
+                module.attention_scaling = attention_scaling
 
         remaining = [name for name, buffer in self.named_buffers() if buffer.is_meta]
         if remaining:
@@ -870,10 +887,16 @@ class G05NativeBackend(nn.Module):
 
         with torch.autocast(frames.device.type, enabled=False):
             hidden_states = tower.patch_embed(patches)
-            hidden_states = hidden_states + tower.fast_pos_embed_interpolate(grid)
-        rotary = tower.rot_pos_emb(grid).reshape(hidden_states.shape[0], -1)
-        rotary = torch.cat((rotary, rotary), dim=-1)
-        position_embeddings = (rotary.cos(), rotary.sin())
+            indices, weights = get_vision_interpolation_indices_and_weights(
+                grid,
+                num_grid_per_side=tower.num_grid_per_side,
+                mode=tower.interpolation_mode,
+                align_corners=tower.interpolation_align_corners,
+                spatial_merge_size=tower.config.spatial_merge_size,
+            )
+            hidden_states = hidden_states + (tower.pos_embed(indices) * weights[:, :, None]).sum(1)
+        position_ids = get_vision_position_ids(grid, tower.spatial_merge_size)
+        position_embeddings = tower.rotary_pos_emb(hidden_states, position_ids)
         cu_seqlens = torch.arange(
             0,
             (batch_size * num_frames + 1) * patches_per_frame,
@@ -1142,13 +1165,13 @@ class G05NativeBackend(nn.Module):
         inactive = ~active_mask
         if inactive.any():
             for layer in cache.layers:
-                if hasattr(layer, "keys") or not hasattr(layer, "conv_states"):
+                if not isinstance(layer, LinearAttentionCacheLayerMixin):
                     continue
                 frozen_linear_states.append(
                     (
                         layer,
-                        layer.conv_states[inactive].clone(),
-                        layer.recurrent_states[inactive].clone(),
+                        layer.conv_states[0][inactive].clone(),
+                        layer.recurrent_states[0][inactive].clone(),
                     )
                 )
         hidden_states, cache = self.model.vlm(
@@ -1159,8 +1182,8 @@ class G05NativeBackend(nn.Module):
             cache=cache,
         )
         for layer, conv_states, recurrent_states in frozen_linear_states:
-            layer.conv_states[inactive] = conv_states
-            layer.recurrent_states[inactive] = recurrent_states
+            layer.conv_states[0][inactive] = conv_states
+            layer.recurrent_states[0][inactive] = recurrent_states
         next_types = torch.full(
             (batch_size, 1),
             float(G05TokenType.PRED_TEXT),
