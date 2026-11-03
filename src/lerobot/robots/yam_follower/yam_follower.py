@@ -19,7 +19,6 @@ import math
 import threading
 import time
 from functools import cached_property
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -148,12 +147,9 @@ class _YamBus:
 
     motor_names: tuple[str, ...] = MOTOR_NAMES
 
-    def __init__(
-        self, port: str, feedback_timeout_s: float, expected_adapter_serial: str | None = None
-    ) -> None:
+    def __init__(self, port: str, feedback_timeout_s: float) -> None:
         self.port = port
         self.feedback_timeout_s = feedback_timeout_s
-        self.expected_adapter_serial = expected_adapter_serial
         self.controller: Controller | None = None
         self.monitor: can.BusABC | None = None
         self.motors: dict[str, Any] = {}
@@ -165,7 +161,6 @@ class _YamBus:
     def open(self) -> None:
         """Open the SocketCAN monitor and MotorBridge devices."""
         self.enabled = False
-        self._verify_adapter()
         self.monitor = can.Bus(
             channel=self.port,
             interface="socketcan",
@@ -261,22 +256,6 @@ class _YamBus:
             finally:
                 self.monitor = None
 
-    def _verify_adapter(self) -> None:
-        """Check the USB adapter serial so can0/can1 enumeration swaps cannot swap arms."""
-        if self.expected_adapter_serial is None:
-            return
-        device = (Path("/sys/class/net") / self.port / "device").resolve()
-        for parent in (device, *device.parents):
-            serial = parent / "serial"
-            if serial.is_file():
-                actual = serial.read_text().strip()
-                if actual != self.expected_adapter_serial:
-                    raise ValueError(
-                        f"{self.port} adapter serial {actual!r} does not match the configured arm"
-                    )
-                return
-        raise ValueError(f"Cannot verify USB serial for {self.port}; check the adapter connection")
-
     def _require_open(self) -> tuple[Controller, can.BusABC]:
         if self.controller is None or self.monitor is None:
             raise RuntimeError(f"{self.port} bus is not open")
@@ -342,7 +321,7 @@ class YamFollower(Robot):
         super().__init__(config)
         self.config = config
         self.cameras = make_cameras_from_configs(config.cameras)
-        self.bus = _YamBus(config.port, config.feedback_timeout_s, config.expected_adapter_serial)
+        self.bus = _YamBus(config.port, config.feedback_timeout_s)
         self.gravity_model: GravityCompensation | None = None
         self.params: MitArmParams | None = None
         self.servo = MitServo(
@@ -468,7 +447,6 @@ class YamFollower(Robot):
                 f"Gripper stroke of {stroke_deg} motor degrees is outside {low:.0f} to {high:.0f}; "
                 "calibration was not saved"
             )
-        previous: dict[str, MotorCalibration] = self.calibration
         self.calibration = {
             "gripper": MotorCalibration(
                 id=7,
@@ -478,11 +456,7 @@ class YamFollower(Robot):
                 range_max=stops_deg[1],
             )
         }
-        try:
-            self._save_calibration()
-        except Exception:
-            self.calibration = previous
-            raise
+        self._save_calibration()
         self._refresh_params()
         logger.info("Saved gripper endpoints to %s. Joint zeros were not changed.", self.calibration_fpath)
 

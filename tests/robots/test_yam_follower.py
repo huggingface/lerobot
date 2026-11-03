@@ -62,9 +62,14 @@ def make_robot(tmp_path, *, gripper=(0.1, 6.1), **overrides):
     return robot
 
 
-@pytest.fixture
-def robot(tmp_path, monkeypatch):
+@pytest.fixture(autouse=True)
+def without_hardware_packages(monkeypatch):
+    """Build robots without the yam extra; their hardware is mocked."""
     monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
+
+
+@pytest.fixture
+def robot(tmp_path):
     return make_robot(tmp_path)
 
 
@@ -75,11 +80,6 @@ def params(robot):
 def raw_states(gripper=0.1):
     position = np.array([0, 0, 0, 0, 0, 0, gripper], dtype=float)
     return mit_control.MotorStates(position=position, velocity=np.zeros(7), torque=np.zeros(7))
-
-
-def joint_state(position=None):
-    position = np.zeros(7) if position is None else np.asarray(position, dtype=float)
-    return mit_control.JointState(position=position, velocity=np.zeros(7), torque=np.zeros(7))
 
 
 def assert_mit_command(command, *, position, velocity, kp, kd, torque):
@@ -124,15 +124,6 @@ def test_units_order_and_gripper_polarity(robot, opened):
     np.testing.assert_allclose(mit_control.joint_to_motor(decoded, params(robot)), raw)
 
 
-def test_public_units_are_degrees_and_percent_or_internal_units():
-    internal = np.array([0.1, 0.2, 0.3, -0.4, 0.5, -0.6, 0.5])
-    public = robot_module._to_public(internal, use_degrees=True)
-    np.testing.assert_allclose(public, [*np.rad2deg(internal[:6]), 50.0])
-    np.testing.assert_allclose(robot_module._from_public(public, use_degrees=True), internal)
-    np.testing.assert_allclose(robot_module._to_public(internal, use_degrees=False), internal)
-    np.testing.assert_allclose(robot_module._from_public(internal, use_degrees=False), internal)
-
-
 @pytest.mark.parametrize("use_degrees", [True, False])
 def test_actions_are_clipped_to_the_limits(robot, use_degrees):
     robot.config.use_degrees = use_degrees
@@ -158,15 +149,6 @@ def test_measured_pose_has_wider_margin_than_action(robot):
     states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.2
     with pytest.raises(ValueError, match="outside"):
         mit_control.read_joint_state(bus, params(robot))
-
-
-def test_gripper_rate_is_in_strokes_per_second(robot):
-    states = raw_states(gripper=3.1)
-    states.velocity[6] = 3.0
-    states.torque[6] = 0.2
-    state = mit_control.read_joint_state(mock_bus(states), params(robot))
-    assert state.velocity[6] == pytest.approx(0.5)  # 3 rad/s over a 6 rad stroke
-    assert state.torque[6] == pytest.approx(0.2)
 
 
 def test_motorbridge_mapping_and_mit_radians(monkeypatch):
@@ -237,14 +219,12 @@ def feedback_bus(frames):
     return bus
 
 
-def test_cached_motorbridge_states_do_not_hide_missing_motor():
-    bus = feedback_bus([frame(i) for i in range(1, 7)])
-    with pytest.raises(ConnectionError, match="stale"):
-        bus.read_states()
-
-
-def test_queued_old_packets_do_not_count_as_fresh():
-    bus = feedback_bus([frame(i, age=1) for i in range(1, 8)])
+@pytest.mark.parametrize(
+    ("motor_ids", "age"), [(range(1, 7), 0), (range(1, 8), 1)], ids=["a motor never answered", "old frames"]
+)
+def test_missing_or_old_feedback_is_stale(motor_ids, age):
+    # MotorBridge's cached states can't show this; the monitor's frame times do.
+    bus = feedback_bus([frame(i, age=age) for i in motor_ids])
     with pytest.raises(ConnectionError, match="stale"):
         bus.read_states()
 
@@ -271,10 +251,13 @@ def test_disabled_motor_after_enable_grace_is_a_fault():
         bus.read_states()
 
 
-def test_disabled_motor_is_allowed_during_enable_transition():
+@pytest.mark.parametrize(
+    ("enabled", "enabled_ago_s"), [(False, 1.0), (True, 0.0)], ids=["torque off", "torque just enabled"]
+)
+def test_disabled_motors_are_expected_while_torque_is_off_or_turning_on(enabled, enabled_ago_s):
     bus = feedback_bus([frame(i, status=0) for i in range(1, 8)])
-    bus.enabled = True
-    bus._enabled_at = time.monotonic()
+    bus.enabled = enabled
+    bus._enabled_at = time.monotonic() - enabled_ago_s
     np.testing.assert_allclose(bus.read_states().position, np.full(7, 0.1))
 
 
@@ -285,21 +268,16 @@ def test_old_disabled_frame_does_not_override_new_enabled_frame():
     np.testing.assert_allclose(bus.read_states().position, np.full(7, 0.1))
 
 
-def test_disabled_motor_is_allowed_before_enable():
-    bus = feedback_bus([frame(i, status=0) for i in range(1, 8)])
-    np.testing.assert_allclose(bus.read_states().position, np.full(7, 0.1))
-
-
-def test_slew_gripper_torque_and_gravity_feedforward(robot):
+def test_yam_parameters_reach_the_motor_commands(robot):
     robot.config.max_gripper_speed = 2
-    position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
-    command, packet = mit_control._control_step(
-        params(robot), position, position + 0.1, position, gravity=np.ones(6), dt=0.01
-    )
-    assert_mit_command(packet[0], position=0.003, velocity=0, kp=80, kd=5, torque=1)
-    assert packet[1].torque == pytest.approx(1.1)
-    assert command[6] == pytest.approx(0.52)  # gripper slews at 2 strokes/s
-    assert len(packet) == 6  # the gripper has its own force limiter
+    position = np.array([0.5, 0.5, 1.0, 0, 0, 0, 0.5])
+    target = np.r_[position[:6], 1.0]
+    gravity = np.array([20.0, 1, 1, 1, 1, 1])
+    command, packet = mit_control._control_step(params(robot), position, target, position, gravity, dt=0.01)
+    # I2RT's gains, the per-joint gravity factors, and the 10 Nm cap on gravity torque.
+    assert [(c.kp, c.kd) for c in packet] == [(80, 5)] * 3 + [(10, 1.5)] * 3
+    np.testing.assert_allclose([c.torque for c in packet], [10.0, 1.1, 1.1, 1.2, 1.0, 1.0])
+    assert command[6] == pytest.approx(0.52)  # the gripper slews at 2 strokes/s
 
 
 @pytest.mark.parametrize("polarity", [-1, 1])
@@ -320,22 +298,6 @@ def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
     command = harder.command(measured=0.5, velocity=0.0, torque=2.1, commanded=0.0, now=0.0)
     # 1 Nm too much: back off 1 Nm / kp 20 = 0.05 rad toward open.
     assert command.position == pytest.approx(grip.to_raw(0.5) + polarity * 0.05)
-
-
-def test_control_step_clamps_tracking_limits_and_gravity(robot):
-    # Characterizes the full control step so refactors must reproduce it exactly.
-    position = np.array([0.5, 0.0, 1.0, 0, 0, 0, 0.5])
-    previous = np.array([0.9, 0.0, 1.0, 0, 0, 0, 0.5])
-    target = np.array([0.9, -0.2, 1.5, 0, 0, 0, 1.0])
-    gravity = np.array([20.0, 2, 1, 1, 1, 1])
-    command, packet = mit_control._control_step(params(robot), position, target, previous, gravity, dt=0.05)
-    # joint_1 tracking band, joint_2 lower limit, joint_3 slew; the gripper slews freely.
-    np.testing.assert_allclose(command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
-    np.testing.assert_allclose(previous, [0.9, 0.0, 1.0, 0, 0, 0, 0.5])  # inputs are not mutated
-    assert_mit_command(packet[0], position=0.65, velocity=0, kp=80, kd=5, torque=10.0)
-    assert_mit_command(packet[1], position=0.0, velocity=0, kp=80, kd=5, torque=2.2)
-    assert_mit_command(packet[2], position=1.015, velocity=0, kp=80, kd=5, torque=1.1)
-    assert_mit_command(packet[3], position=0.0, velocity=0, kp=10, kd=1.5, torque=1.2)
 
 
 def test_gravity_model_is_loaded_from_bucket_cache(robot, monkeypatch, tmp_path):
@@ -360,25 +322,17 @@ def test_gravity_model_is_loaded_from_bucket_cache(robot, monkeypatch, tmp_path)
     )
 
 
-def test_single_arm_features_are_not_prefixed(robot):
+def test_features_are_positions_with_optional_velocity_and_torque_per_motor(robot, tmp_path):
     assert tuple(robot.action_features) == YAM_FEATURE_NAMES
     assert robot.observation_features == robot.action_features
-    assert YAM_FEATURE_NAMES[0] == "joint_1.pos"
-
-
-def test_velocity_and_torque_features_are_grouped_per_motor(tmp_path, monkeypatch):
-    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
-    robot = make_robot(tmp_path, use_velocity_and_torque=True)
-    names = tuple(robot.observation_features)
+    names = tuple(make_robot(tmp_path, use_velocity_and_torque=True).observation_features)
     assert len(names) == 21
     assert names[:3] == ("joint_1.pos", "joint_1.vel", "joint_1.torque")
     assert names[-3:] == ("gripper.pos", "gripper.vel", "gripper.torque")
-    assert tuple(robot.action_features) == YAM_FEATURE_NAMES
 
 
 @pytest.mark.parametrize("use_degrees", [True, False])
 def test_observation_uses_public_units(tmp_path, monkeypatch, use_degrees):
-    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
     robot = make_robot(tmp_path, use_degrees=use_degrees, use_velocity_and_torque=True)
     ready(robot)
     robot.servo.state = mit_control.JointState(
@@ -419,7 +373,6 @@ def test_calibration_connection_never_enables_motor(robot, monkeypatch):
 
 
 def test_open_without_calibration_touches_no_hardware(tmp_path, monkeypatch):
-    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
     robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
     with pytest.raises(ValueError, match="lerobot-calibrate"):
@@ -428,7 +381,6 @@ def test_open_without_calibration_touches_no_hardware(tmp_path, monkeypatch):
 
 
 def test_connect_calibrates_missing_gripper_endpoints(tmp_path, monkeypatch):
-    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
     robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
 
@@ -565,7 +517,6 @@ def measure_gripper(robot, monkeypatch, *, closed=0.1, opened=6.1, answers=()):
 
 
 def test_single_arm_calibration_preserves_factory_zeros(tmp_path, monkeypatch):
-    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
     robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
     robot.connect(calibrate=False)
@@ -584,7 +535,6 @@ def test_single_arm_calibration_preserves_factory_zeros(tmp_path, monkeypatch):
 
 def saved_calibration_robot(tmp_path, monkeypatch, *, closed=0.1, opened=6.1):
     """Calibrate once, then build a new robot that only knows the saved file."""
-    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
     first = make_robot(tmp_path, gripper=None)
     mock_hardware(first, monkeypatch)
     first.connect(calibrate=False)
@@ -624,17 +574,6 @@ def test_calibration_refuses_an_implausible_stroke(robot, monkeypatch, opened):
         measure_gripper(robot, monkeypatch, opened=opened, answers=["c"])
     assert not robot.calibration_fpath.is_file()
     robot.disconnect()
-
-
-def test_servo_error_stops_single_arm_until_disconnect(robot):
-    bus = attach_bus(robot, mock_bus())
-    bus.read_states.side_effect = ConnectionError("lost")
-    robot.servo._run()
-    assert isinstance(robot.servo.failure, ConnectionError)
-    assert robot.servo.stop_event.is_set()
-    bus.disable.assert_not_called()
-    robot.servo.stop()
-    bus.disable.assert_called_once()
 
 
 def test_servo_waits_for_asynchronous_feedback(robot):

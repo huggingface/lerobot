@@ -42,7 +42,6 @@ class YamFollowerConfig:
     """Settings of one YAM follower arm, shared by the single-arm and bimanual robots."""
 
     port: str
-    expected_adapter_serial: str | None = None
     initial_position_deg: list[float] | None = field(default_factory=lambda: [0.0] * 6)
     initial_tolerance_deg: float = 11.5
     kp: list[float] = field(default_factory=lambda: [80.0, 80.0, 80.0, 10.0, 10.0, 10.0])
@@ -113,8 +112,6 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
     Args:
         port (`str`):
             Linux SocketCAN interface used by the arm, for example `can0`.
-        expected_adapter_serial (`str | None`, *optional*):
-            USB adapter serial used to detect swapped CAN interfaces.
         initial_position_deg (`list[float] | None`, *optional*):
             Pose in degrees the arm must be in before torque is enabled; a check, not a motion command.
             Zeros are the manufacturer's folded pose; `None` accepts any valid pose.

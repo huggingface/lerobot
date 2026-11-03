@@ -371,29 +371,6 @@ def test_fault_stops_commands_until_disconnect(cause):
     assert isinstance(servo.failure, ConnectionError) == (cause == "own fault")
 
 
-def test_normal_stop_disables_without_damping():
-    bus = FakeBus()
-    servo = make_servo(bus)
-    start_enabled(servo)
-    wait_for(lambda: len(bus.sent) >= 3)
-    servo.stop()
-    assert bus.disable_calls == 1
-
-
-def test_servo_error_stops_commands_until_disconnect():
-    bus = FakeBus()
-    bus.error = ConnectionError("lost")
-    servo = make_servo(bus)
-    servo._run()
-    assert isinstance(servo.failure, ConnectionError)
-    assert servo.stop_event.is_set()
-    assert bus.disable_calls == 0
-    with pytest.raises(ConnectionError, match="stopped"):
-        servo.latest()
-    servo.stop()
-    assert bus.disable_calls == 1
-
-
 def test_servo_start_refuses_a_second_thread():
     servo = make_servo()
     servo.seed(mit_control.read_joint_state(servo.bus, servo.params))

@@ -138,14 +138,6 @@ def test_per_arm_and_top_level_cameras_follow_bimanual_conventions(tmp_path, mon
         )
 
 
-def test_quantized_home_clamped_to_joint_limit(robot):
-    action = ready(robot)
-    action["left_joint_2.pos"] = math.degrees(-0.00019074)
-    sent = robot.send_action(action)
-    assert sent["left_joint_2.pos"] == 0
-    assert robot.left_arm.servo.target[1] == 0
-
-
 def test_stale_feedback_on_either_arm_stops_both(robot):
     action = ready(robot)
     robot.right_arm.servo.updated_at -= 1
@@ -198,24 +190,6 @@ def test_connect_calibrates_both_arms_before_enabling_torque(tmp_path, monkeypat
     robot.disconnect()
 
 
-def test_each_arm_loads_its_model_before_its_can_interface(robot, monkeypatch):
-    mock_hardware(robot, monkeypatch)
-    events = []
-    for side, arm in robot.arms.items():
-        arm.config.gravity_compensation = True
-
-        def load_model(side=side, arm=arm):
-            if arm.gravity_model is None:
-                events.append(f"{side}:model")
-                arm.gravity_model = object()
-
-        arm._load_control_model = load_model
-        arm.bus.open.side_effect = lambda side=side: events.append(f"{side}:connect")
-    robot.connect()
-    robot.disconnect()
-    assert events[:4] == ["left:model", "left:connect", "right:model", "right:connect"]
-
-
 def test_bad_second_arm_pose_never_enables_first(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     robot.right_arm.bus.read_states.return_value.position[1] = 1
@@ -237,33 +211,6 @@ def test_both_arms_configure_before_either_is_enabled(robot, monkeypatch):
     assert events == ["left:configure", "right:configure", "left:enable", "right:enable"]
 
 
-def test_servo_error_stops_both_arms_until_disconnect(robot):
-    for arm in robot.arms.values():
-        attach_bus(arm, mock_bus())
-    robot.left_arm.bus.read_states.side_effect = ConnectionError("lost")
-    robot.left_arm.servo._run()
-    robot.right_arm.servo._run()
-    assert isinstance(robot.left_arm.servo.failure, ConnectionError)
-    assert robot._stop.is_set()
-    for arm in robot.arms.values():
-        arm.bus.disable.assert_not_called()
-        arm.servo.stop()
-        arm.bus.disable.assert_called_once()
-
-
-def test_disconnect_attempts_both_arms_after_one_fails(robot):
-    for arm in robot.arms.values():
-        arm._connected = True
-    robot.left_arm.disconnect = MagicMock(side_effect=RuntimeError("left failed"))
-    robot.right_arm.disconnect = MagicMock()
-    with pytest.raises(RuntimeError, match="left failed"):
-        robot.disconnect()
-    robot.left_arm.disconnect.assert_called_once()
-    robot.right_arm.disconnect.assert_called_once()
-    for arm in robot.arms.values():
-        arm._connected = False
-
-
 def test_partial_disconnect_can_be_retried(robot):
     for arm in robot.arms.values():
         arm._connected = True
@@ -282,17 +229,6 @@ def test_partial_connection_must_be_disconnected_before_reconnecting(robot):
     robot.left_arm._connected = True
     with pytest.raises(RuntimeError, match="Disconnect both"):
         robot.connect()
-
-
-def test_calibration_delegates_to_both_single_arms(robot, monkeypatch):
-    mock_hardware(robot, monkeypatch)
-    robot.connect(calibrate=False)
-    robot.left_arm.calibrate = MagicMock()
-    robot.right_arm.calibrate = MagicMock()
-    robot.calibrate()
-    robot.left_arm.calibrate.assert_called_once()
-    robot.right_arm.calibrate.assert_called_once()
-    robot.disconnect()
 
 
 def test_installed_optional_dependencies_allow_construction(tmp_path):

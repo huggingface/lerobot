@@ -27,7 +27,7 @@ This installs `motorbridge`, `python-can` and `placo`.
 lerobot-setup-can --mode=setup --interfaces=can0 --use_fd=false
 ```
 
-Use `--interfaces=can0,can1` for two arms. The command configures the Linux interfaces with `sudo ip link` and sends no motor commands; run it while no robot is connected. With two arms, check which arm each interface drives, and set `expected_adapter_serial` on each arm so a swapped USB adapter is detected when connecting.
+Use `--interfaces=can0,can1` for two arms. The command configures the Linux interfaces with `sudo ip link` and sends no motor commands; run it while no robot is connected. With two arms, `can0` and `can1` can swap after a reboot: check which arm each interface drives, or give the interfaces fixed names with a udev rule on each adapter's serial.
 
 ## Calibrate
 
@@ -79,7 +79,6 @@ Before the first action, and when no action arrives for `command_timeout_s` (1 s
 | Option                    | Default                          | Description                                                |
 | ------------------------- | -------------------------------- | ---------------------------------------------------------- |
 | `port`                    | required                         | SocketCAN interface, for example `can0`                    |
-| `expected_adapter_serial` | `None`                           | USB adapter serial, to detect swapped interfaces           |
 | `use_degrees`             | `true`                           | Degrees and a 0–100 gripper; `false` gives radians and 0–1 |
 | `use_velocity_and_torque` | `false`                          | Add `.vel` and `.torque` observations                      |
 | `idle_mode`               | `hold`                           | `hold` the pose or `float` when no action arrives          |

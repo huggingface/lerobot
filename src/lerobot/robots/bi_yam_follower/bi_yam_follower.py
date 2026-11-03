@@ -111,7 +111,6 @@ class BiYamFollower(BimanualMixin, Robot):
         """Connect both arms, checking both before either receives torque."""
         if any(arm.is_connected for arm in self.arms.values()):
             raise RuntimeError("Disconnect both YAM arms before reconnecting")
-        self._stop.clear()
         try:
             if not calibrate:
                 for arm in self.arms.values():
@@ -122,7 +121,6 @@ class BiYamFollower(BimanualMixin, Robot):
                     arm.connect(calibrate=False)
                 self.calibrate()
                 self.disconnect()
-                self._stop.clear()
             # Open and pose-check both arms, and switch both to MIT mode, before either gets torque.
             for arm in self.arms.values():
                 arm.open()
