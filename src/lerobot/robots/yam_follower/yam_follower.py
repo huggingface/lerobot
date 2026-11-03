@@ -256,7 +256,7 @@ class _YamBus:
             finally:
                 self.monitor = None
 
-    def _require_open(self) -> tuple[Controller, can.BusABC]:
+    def _require_open(self) -> "tuple[Controller, can.BusABC]":
         if self.controller is None or self.monitor is None:
             raise RuntimeError(f"{self.port} bus is not open")
         return self.controller, self.monitor
