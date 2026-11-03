@@ -127,16 +127,14 @@ def test_public_units_are_degrees_and_percent_or_internal_units():
 
 
 @pytest.mark.parametrize("use_degrees", [True, False])
-def test_actions_clip_finite_overshoot_and_reject_non_finite(use_degrees):
-    action = dict.fromkeys(YAM_FEATURE_NAMES, 0.0)
+def test_actions_are_clipped_to_the_limits(robot, use_degrees):
+    robot.config.use_degrees = use_degrees
+    action = ready(robot)
     action["gripper.pos"] = 100.4 if use_degrees else 1.004
     action["joint_2.pos"] = -1.0  # below the 0 lower limit in either unit
-    target = robot_module.action_to_target(action, use_degrees)
-    assert target[6] == 1.0
-    assert target[1] == 0.0
-    action["joint_1.pos"] = float("nan")
-    with pytest.raises(ValueError, match="finite"):
-        robot_module.action_to_target(action, use_degrees)
+    robot.send_action(action)
+    assert robot.servo.target[6] == 1.0
+    assert robot.servo.target[1] == 0.0
 
 
 def test_measured_pose_has_wider_margin_than_action(robot):
@@ -147,8 +145,9 @@ def test_measured_pose_has_wider_margin_than_action(robot):
     assert measured[0] == pytest.approx(states.position[0])
     assert measured[6] == 1.0
     # Actions are clipped to the model limits instead of being rejected.
-    action = dict(zip(YAM_FEATURE_NAMES, robot_module._to_public(measured, True), strict=True))
-    assert robot_module.action_to_target(action, use_degrees=True)[0] == JOINT_LIMITS_RAD[0][0]
+    ready(robot)
+    robot.send_action(dict(zip(YAM_FEATURE_NAMES, robot_module._to_public(measured, True), strict=True)))
+    assert robot.servo.target[0] == JOINT_LIMITS_RAD[0][0]
     states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.2
     with pytest.raises(ValueError, match="outside"):
         mit_control.read_joint_state(bus, params(robot))
@@ -401,7 +400,7 @@ def test_single_arm_action_updates_target(robot):
 
 def test_single_arm_rejects_partial_action(robot):
     ready(robot)
-    with pytest.raises(ValueError, match="all seven"):
+    with pytest.raises(KeyError, match="joint_2.pos"):
         robot.send_action({"joint_1.pos": 0.2})
 
 

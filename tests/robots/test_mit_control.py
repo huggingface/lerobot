@@ -415,7 +415,7 @@ def test_servo_needs_params_before_it_starts():
 def test_foreground_watchdog_allows_one_late_feedback_window():
     servo = make_servo()
     servo.updated_at = time.monotonic() - 1.5 * 0.2
-    servo.check_healthy()
+    servo.latest()
     servo.updated_at = time.monotonic() - 3 * 0.2
     with pytest.raises(ConnectionError, match="stale"):
-        servo.check_healthy()
+        servo.latest()

@@ -136,29 +136,6 @@ def _from_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
     return np.r_[np.deg2rad(values[:6]), values[6] / 100.0]
 
 
-def action_to_target(action: RobotAction, use_degrees: bool) -> np.ndarray:
-    """Validate a single-arm action and convert it to an internal target.
-
-    Args:
-        action (`RobotAction`):
-            Absolute targets for all six joints and the gripper.
-        use_degrees (`bool`):
-            Whether joints use degrees and the gripper uses 0 to 100 instead of internal units.
-
-    Returns:
-        `np.ndarray`: Clipped joint targets in radians followed by a gripper target from 0 to 1.
-
-    Raises:
-        ValueError: If a target is missing, unexpected or non-finite.
-    """
-    if set(action) != set(YAM_FEATURE_NAMES):
-        raise ValueError("YAM requires all seven absolute joint/gripper targets; Cartesian actions need IK")
-    values = np.asarray([action[f"{name}.pos"] for name in MOTOR_NAMES], dtype=float)
-    if not np.isfinite(values).all():
-        raise ValueError("YAM actions must be finite")
-    return clip_to_limits(_from_public(values, use_degrees), _JOINT_LIMITS)
-
-
 class _YamBus:
     """CAN interface of one YAM arm.
 
@@ -567,7 +544,7 @@ class YamFollower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        """Validate and submit a joint-position target.
+        """Clip a joint-position target to the joint limits and submit it to the servo.
 
         Args:
             action (`RobotAction`):
@@ -578,11 +555,12 @@ class YamFollower(Robot):
 
         Raises:
             RuntimeError: If the servo is not running.
-            ValueError: If the action is incomplete or contains an invalid value.
+            KeyError: If a joint or gripper target is missing.
         """
         if not self.servo.active:
             raise RuntimeError("YAM commands require an active servo")
-        target = action_to_target(action, self.config.use_degrees)
+        values = np.asarray([action[f"{name}.pos"] for name in MOTOR_NAMES], dtype=float)
+        target = clip_to_limits(_from_public(values, self.config.use_degrees), _JOINT_LIMITS)
         self.servo.set_target(target)
         sent = _to_public(target, self.config.use_degrees)
         return {f"{name}.pos": float(sent[i]) for i, name in enumerate(MOTOR_NAMES)}

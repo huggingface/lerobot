@@ -610,15 +610,6 @@ class MitServo:
             self.command_timed_out = False
             self.has_target = True
 
-    def check_healthy(self) -> None:
-        """Check that the servo is running with fresh feedback.
-
-        Raises:
-            ConnectionError: If the servo stopped or its feedback is stale.
-        """
-        with self._lock:
-            self._check_healthy()
-
     def _check_healthy(self) -> None:
         if self.failure is not None or self.stop_event.is_set():
             raise ConnectionError(f"{self.name} servo stopped after a motor/feedback error") from self.failure

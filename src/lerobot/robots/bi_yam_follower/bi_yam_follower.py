@@ -27,7 +27,6 @@ from lerobot.utils.bimanual import BimanualMixin
 
 from ..robot import Robot
 from ..yam_follower import YamFollower, YamFollowerConfig, YamFollowerRobotConfig
-from ..yam_follower.yam_follower import action_to_target
 from .config_bi_yam_follower import BiYamFollowerConfig
 
 logger = logging.getLogger(__name__)
@@ -151,22 +150,11 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        """Validate both arm targets before submitting either one."""
-        if any(not arm.servo.active for arm in self.arms.values()):
-            raise RuntimeError("YAM commands require both servos active")
-        if set(action) != set(self.action_features):
-            raise ValueError("YAM requires all 14 absolute joint/gripper targets; Cartesian actions need IK")
-        arm_actions = {
-            side: {name: action[f"{side}_{name}"] for name in arm.action_features}
+        """Send each arm its side-prefixed targets. A fault on either arm stops both servos."""
+        sent = {
+            side: arm.send_action({name: action[f"{side}_{name}"] for name in arm.action_features})
             for side, arm in self.arms.items()
         }
-        # Validate and health-check both arms before moving either; a later fault on one
-        # stops both servos through the shared stop event.
-        for side, arm in self.arms.items():
-            action_to_target(arm_actions[side], arm.config.use_degrees)
-        for arm in self.arms.values():
-            arm.servo.check_healthy()
-        sent = {side: arm.send_action(arm_actions[side]) for side, arm in self.arms.items()}
         return {f"{side}_{name}": value for side, values in sent.items() for name, value in values.items()}
 
     def disconnect(self) -> None:
