@@ -203,8 +203,7 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
                     component = policy_obs[key]
                     # Flatten extra dims: (B, N, M) -> (B, N*M)
                     if component.dim() > 2:
-                        batch_size = component.shape[0]
-                        component = component.view(batch_size, -1)
+                        component = component.flatten(start_dim=1)
                     state_components.append(component)
 
             if state_components:
