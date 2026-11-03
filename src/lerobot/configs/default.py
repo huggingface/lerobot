@@ -149,6 +149,8 @@ class TrackioConfig:
     # Remote jobs (--job.target), whose local database vanishes with the pod, default to
     # `$TRACKIO_SPACE_ID` or `<user>/lerobot-trackio`.
     space_id: str | None = None
+    # Sync the run to `space_id`. False keeps tracking in the local database only, without disabling it.
+    push_to_hub: bool = True
     # Whether a newly created Space is private. Ignored if the Space already exists.
     # Defaults to True for an automatically selected <user>/lerobot-trackio job Space.
     private: bool | None = None
