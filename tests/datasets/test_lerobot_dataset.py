@@ -728,3 +728,23 @@ def test_create_record_finalize_read_roundtrip(tmp_path):
         item = reopened[3 + i]
         assert torch.allclose(item["state"], ep1_states[i], atol=1e-5)
         assert item["episode_index"].item() == 1
+
+
+# ── Hub ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("private", [True, False, None])
+def test_push_to_hub_forwards_private_to_create_repo(tmp_path, monkeypatch, lerobot_dataset_factory, private):
+    """push_to_hub(private=...) reaches HfApi.create_repo unchanged (None defers to the Hub default)."""
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=1, total_frames=5, use_videos=False
+    )
+    hub_api = Mock()
+    monkeypatch.setattr(lerobot_dataset_module, "HfApi", Mock(return_value=hub_api))
+    monkeypatch.setattr(lerobot_dataset_module, "create_lerobot_dataset_card", Mock())
+
+    dataset.push_to_hub(private=private)
+
+    hub_api.create_repo.assert_called_once_with(
+        repo_id=dataset.repo_id, private=private, repo_type="dataset", exist_ok=True
+    )
