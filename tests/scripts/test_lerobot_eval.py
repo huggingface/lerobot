@@ -20,10 +20,14 @@ from torch import nn
 
 pytest.importorskip("datasets")
 
+from lerobot.configs.eval import EvalPipelineConfig
+from lerobot.envs.configs import PushtEnvConfig
 from lerobot.lerobot_types import TransitionKey
+from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
+from lerobot.scripts import lerobot_eval
 from lerobot.scripts.lerobot_eval import rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.policies.flux3.helpers import task_config
@@ -190,3 +194,41 @@ def test_rollout_ends_at_the_step_cap_below_the_env_limit():
         env.close()
     assert result[ACTION].shape[1] == 3
     assert result["done"][0].tolist() == [False, False, True]
+
+
+@pytest.fixture
+def restore_cudnn_flags():
+    benchmark = torch.backends.cudnn.benchmark
+    deterministic = torch.backends.cudnn.deterministic
+    algorithms = torch.are_deterministic_algorithms_enabled()
+    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    yield
+    torch.backends.cudnn.benchmark = benchmark
+    torch.backends.cudnn.deterministic = deterministic
+    torch.use_deterministic_algorithms(algorithms, warn_only=warn_only)
+
+
+@pytest.mark.parametrize("cudnn_deterministic", [False, True])
+def test_eval_main_sets_cudnn_determinism(monkeypatch, tmp_path, restore_cudnn_flags, cudnn_deterministic):
+    class _StopBeforeEnvError(Exception):
+        pass
+
+    def _make_env(*args, **kwargs):
+        raise _StopBeforeEnvError
+
+    torch.backends.cudnn.deterministic = False
+    torch.use_deterministic_algorithms(False)
+    monkeypatch.setattr(lerobot_eval, "make_env", _make_env)
+    cfg = EvalPipelineConfig(
+        env=PushtEnvConfig(),
+        policy=ACTConfig(device="cpu"),
+        output_dir=tmp_path,
+        cudnn_deterministic=cudnn_deterministic,
+    )
+
+    with pytest.raises(_StopBeforeEnvError):
+        lerobot_eval.eval_main.__wrapped__(cfg)
+
+    assert torch.backends.cudnn.benchmark is not cudnn_deterministic
+    assert torch.backends.cudnn.deterministic is cudnn_deterministic
+    assert torch.are_deterministic_algorithms_enabled() is cudnn_deterministic

@@ -826,7 +826,12 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)
 
-    torch.backends.cudnn.benchmark = True
+    if cfg.cudnn_deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    else:
+        torch.backends.cudnn.benchmark = True
     if cfg.tf32 is not None:
         torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
         torch.backends.cudnn.allow_tf32 = cfg.tf32
