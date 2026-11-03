@@ -38,6 +38,11 @@ from lerobot.policies import (  # noqa: E402
     make_pre_post_processors,
 )
 from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy  # noqa: E402
+from lerobot.policies.fineart_vla.processor_fineart_vla import (  # noqa: E402
+    _loc_token,
+    _messages_vqa_to_loc,
+    _vqa_answer_to_loc,
+)
 from lerobot.policies.pi05.configuration_pi05 import PI05Config  # noqa: E402
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy  # noqa: E402
 from lerobot.utils.constants import (  # noqa: E402
@@ -124,6 +129,36 @@ class _PaligemmaTokenizer:
 
     def encode(self, text, **kwargs):
         return [10, 11] if text == "Action: " else [12]
+
+
+@pytest.mark.dataset
+@pytest.mark.parametrize(
+    "coord,expected", [(0, "<loc0000>"), (0.25, "<loc0256>"), (0.5, "<loc0512>"), (1, "<loc1023>")]
+)
+def test_location_tokens_read_unit_coordinates(coord, expected):
+    assert _loc_token(coord) == expected
+
+
+@pytest.mark.dataset
+def test_point_target_reads_unit_coordinates_in_yx_order():
+    answer = {"label": "cup", "point_format": "xy", "point": [0.5, 0.25]}
+    assert _vqa_answer_to_loc(answer) == "cup <loc0256><loc0512>"
+
+
+@pytest.mark.dataset
+def test_box_target_reads_unit_coordinates_in_yxyx_order():
+    answer = {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [0, 0.25, 0.5, 1]}]}
+    assert _vqa_answer_to_loc(answer) == "cup <loc0256><loc0000><loc1023><loc0512>"
+
+
+@pytest.mark.dataset
+def test_message_conversion_only_changes_supervised_target():
+    content = json.dumps({"label": "cup", "point_format": "xy", "point": [0.5, 0.5]})
+    messages = [{"role": "user", "content": content}, {"role": "assistant", "content": content}]
+    result = _messages_vqa_to_loc(messages, [1])
+    assert result[0] == messages[0]
+    assert result[1]["content"] == "cup <loc0512><loc0512>"
+    assert messages[1]["content"] == content
 
 
 @pytest.mark.dataset
