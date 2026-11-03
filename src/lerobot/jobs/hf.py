@@ -407,6 +407,11 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
         )
 
     secrets: dict[str, str] = {"HF_TOKEN": token}
+    if cfg.trackio.enable and not cfg.trackio.push_to_hub:
+        raise ValueError(
+            "`--trackio.push_to_hub=false` is not supported for remote jobs: the pod's local Trackio database "
+            "vanishes with the job. Drop the flag to log to a Space, or pass `--trackio.enable=false`."
+        )
     if cfg.trackio.enable and not cfg.trackio.space_id:
         # The pod's local Trackio database vanishes with the job, so log to a Space. TRACKIO_SPACE_ID is
         # honored as on a local run, and resolved here because only HF_TOKEN is forwarded to the pod.

@@ -95,7 +95,7 @@ class TrackioLogger:
             project=self.cfg.project,
             name=self.cfg.run_name,
             group=self._group,
-            space_id=self.cfg.space_id,
+            space_id=self.cfg.space_id if self.cfg.push_to_hub else None,
             private=self.cfg.private,
             config=cfg.to_dict(),
             resume=resume,
