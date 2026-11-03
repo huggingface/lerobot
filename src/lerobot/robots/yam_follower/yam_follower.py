@@ -98,8 +98,9 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
     return MitArmParams(
         joint_limits=_JOINT_LIMITS,
         joint_feedback_tolerance_rad=_JOINT_FEEDBACK_TOLERANCE_RAD,
-        joint_signs=np.asarray(config.joint_signs, dtype=float),
-        joint_offsets=np.deg2rad(config.joint_offsets_deg),
+        # YAM's joints read their motors directly, with no flip or offset.
+        joint_signs=np.ones(6),
+        joint_offsets=np.zeros(6),
         kp=np.asarray(config.kp, dtype=float),
         kd=np.asarray(config.kd, dtype=float),
         max_joint_speed=math.radians(config.max_joint_speed_deg_s),

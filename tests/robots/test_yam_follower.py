@@ -119,8 +119,6 @@ def ready(robot):
 def test_units_order_and_gripper_polarity(robot, opened):
     robot.calibration["gripper"] = gripper_calibration(0.1, opened)
     raw = [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, (0.1 + opened) / 2]
-    robot.config.joint_signs[0] = -1
-    robot.config.joint_offsets_deg[0] = math.degrees(0.2)
     decoded = mit_control._motor_to_joint(np.asarray(raw), params(robot))
     np.testing.assert_allclose(decoded, [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, 0.5])
     np.testing.assert_allclose(mit_control.joint_to_motor(decoded, params(robot)), raw)
@@ -162,14 +160,11 @@ def test_measured_pose_has_wider_margin_than_action(robot):
         mit_control.read_joint_state(bus, params(robot))
 
 
-def test_joint_state_maps_velocity_and_torque_to_joint_frame(robot):
-    robot.config.joint_signs[0] = -1
+def test_gripper_rate_is_in_strokes_per_second(robot):
     states = raw_states(gripper=3.1)
-    states.velocity[:] = [0.5, 0, 0, 0, 0, 0, 3.0]
-    states.torque[:] = [2.0, 0, 0, 0, 0, 0, 0.2]
+    states.velocity[6] = 3.0
+    states.torque[6] = 0.2
     state = mit_control.read_joint_state(mock_bus(states), params(robot))
-    assert state.velocity[0] == pytest.approx(-0.5)
-    assert state.torque[0] == pytest.approx(-2.0)
     assert state.velocity[6] == pytest.approx(0.5)  # 3 rad/s over a 6 rad stroke
     assert state.torque[6] == pytest.approx(0.2)
 
@@ -329,7 +324,6 @@ def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
 
 def test_control_step_clamps_tracking_limits_and_gravity(robot):
     # Characterizes the full control step so refactors must reproduce it exactly.
-    robot.config.joint_signs[1] = -1
     position = np.array([0.5, 0.0, 1.0, 0, 0, 0, 0.5])
     previous = np.array([0.9, 0.0, 1.0, 0, 0, 0, 0.5])
     target = np.array([0.9, -0.2, 1.5, 0, 0, 0, 1.0])
@@ -339,7 +333,7 @@ def test_control_step_clamps_tracking_limits_and_gravity(robot):
     np.testing.assert_allclose(command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
     np.testing.assert_allclose(previous, [0.9, 0.0, 1.0, 0, 0, 0, 0.5])  # inputs are not mutated
     assert_mit_command(packet[0], position=0.65, velocity=0, kp=80, kd=5, torque=10.0)
-    assert_mit_command(packet[1], position=0.0, velocity=0, kp=80, kd=5, torque=-2.2)
+    assert_mit_command(packet[1], position=0.0, velocity=0, kp=80, kd=5, torque=2.2)
     assert_mit_command(packet[2], position=1.015, velocity=0, kp=80, kd=5, torque=1.1)
     assert_mit_command(packet[3], position=0.0, velocity=0, kp=10, kd=1.5, torque=1.2)
 

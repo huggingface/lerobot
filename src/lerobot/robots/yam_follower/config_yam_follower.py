@@ -43,8 +43,6 @@ class YamFollowerConfig:
 
     port: str
     expected_adapter_serial: str | None = None
-    joint_signs: list[float] = field(default_factory=lambda: [1.0] * 6)
-    joint_offsets_deg: list[float] = field(default_factory=lambda: [0.0] * 6)
     initial_position_deg: list[float] | None = field(default_factory=lambda: [0.0] * 6)
     initial_tolerance_deg: float = 11.5
     kp: list[float] = field(default_factory=lambda: [80.0, 80.0, 80.0, 10.0, 10.0, 10.0])
@@ -69,20 +67,10 @@ class YamFollowerConfig:
     command_timeout_s: float = 1.0
 
     def __post_init__(self) -> None:
-        for name in (
-            "joint_signs",
-            "joint_offsets_deg",
-            "kp",
-            "kd",
-            "gravity_factors",
-            "float_kd",
-            "coulomb_friction",
-        ):
+        for name in ("kp", "kd", "gravity_factors", "float_kd", "coulomb_friction"):
             values = getattr(self, name)
             if len(values) != 6:
                 raise ValueError(f"{name} must contain six values; got {len(values)}")
-        if any(s not in (-1, 1) for s in self.joint_signs):
-            raise ValueError(f"joint_signs must contain only -1 or +1; got {self.joint_signs}")
         for name in (
             "initial_tolerance_deg",
             "gripper_force_limit_n",
@@ -127,10 +115,6 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
             Linux SocketCAN interface used by the arm, for example `can0`.
         expected_adapter_serial (`str | None`, *optional*):
             USB adapter serial used to detect swapped CAN interfaces.
-        joint_signs (`list[float]`, *optional*):
-            Direction multiplier, `-1` or `1`, for each arm joint.
-        joint_offsets_deg (`list[float]`, *optional*):
-            Joint-frame offset in degrees for each arm joint.
         initial_position_deg (`list[float] | None`, *optional*):
             Pose in degrees the arm must be in before torque is enabled; a check, not a motion command.
             Zeros are the manufacturer's folded pose; `None` accepts any valid pose.
