@@ -22,8 +22,6 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
-import netrc
-import os
 import re
 import signal
 import sys
@@ -32,7 +30,6 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import httpx
 from huggingface_hub import (
     HfApi,
     create_repo,
@@ -42,6 +39,7 @@ from huggingface_hub import (
     run_job,
     upload_file,
 )
+from huggingface_hub.utils import httpx
 
 from lerobot.common.train_utils import push_checkpoint_to_hub
 from lerobot.configs import parser
@@ -55,7 +53,7 @@ _SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 _TERMINAL_STAGES = {"COMPLETED", "CANCELED", "ERROR", "DELETED"}
 
-# huggingface_hub 1.x runs on httpx: transient HTTP/transport failures surface as
+# huggingface_hub runs on httpx (httpx2 in 2.x): transient HTTP/transport failures surface as
 # httpx.HTTPError and socket-level errors as OSError. Catching only these keeps real
 # bugs (TypeError, AttributeError, ...) from being silently retried or counted as
 # job failures.
@@ -69,22 +67,6 @@ LEROBOT_TAG = "lerobot"
 def resolve_job_tags(extra: list[str] | None) -> list[str]:
     """Return the tag list for a run: the lerobot tag plus any extras, deduped, order-stable."""
     return list(dict.fromkeys([LEROBOT_TAG, *(extra or [])]))
-
-
-def resolve_wandb_api_key() -> str | None:
-    """Host's wandb key for forwarding to the job: $WANDB_API_KEY, else ~/.netrc."""
-    key = os.environ.get("WANDB_API_KEY")
-    if key:
-        return key
-    try:
-        rc = netrc.netrc()
-    except (FileNotFoundError, netrc.NetrcParseError, OSError):
-        return None
-    auth = rc.authenticators("api.wandb.ai")
-    if auth is None:
-        return None
-    _login, _account, password = auth
-    return password or None
 
 
 def build_repo_id(username: str, job_name: str, now: dt.datetime) -> str:
@@ -406,14 +388,11 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
         )
 
     secrets: dict[str, str] = {"HF_TOKEN": token}
-    if cfg.wandb.enable:
-        wandb_key = resolve_wandb_api_key()
-        if wandb_key is None:
-            raise ValueError(
-                "wandb is enabled but no WANDB_API_KEY found. "
-                "Set it via `export WANDB_API_KEY=...` or add it to ~/.netrc."
-            )
-        secrets["WANDB_API_KEY"] = wandb_key
+    if cfg.trackio.enable and not cfg.trackio.space_id:
+        raise ValueError(
+            "trackio is enabled but no `--trackio.space_id` is set. A remote job's local Trackio database "
+            "vanishes with the pod, so pass a Hugging Face Space, e.g. `--trackio.space_id=<user>/<space>`."
+        )
 
     tags = resolve_job_tags(cfg.job.tags)
     # The dataset must be reachable from the pod for both fresh and resumed runs; a local-only

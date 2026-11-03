@@ -245,6 +245,60 @@ def make_my_policy_pre_post_processors_from_pretrained(
 
 For working examples, see [`processor_evo1.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/evo1/processor_evo1.py) (re-pads normalization stats), [`processor_groot.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/groot/processor_groot.py) (handles raw upstream checkpoints), and [`processor_molmoact2.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/molmoact2/processor_molmoact2.py) (renames override keys).
 
+### Returning a prediction besides actions (imagined frames, subtasks, boxes)
+
+A policy may return what it expects or believes besides the action it takes, such as a world
+model's imagined frames, a predicted subtask or bounding boxes, so `--display_data` shows it live in
+Rerun or Foxglove. `select_action` and `predict_action_chunk` take a batch and return either a bare
+action tensor (the default for every policy) or a `PolicyOutput` (`lerobot.lerobot_types`): a batch,
+keyed like the input batch, with the action under `"action"` and a `PolicyPrediction` under
+`"prediction"`. The prediction is batched like the action, one value per environment, and every
+entry is keyed by what it refers to:
+
+- `observation`: the predicted future observation, by observation key
+  (`"observation.images.top"` -> `[B, C, H, W]` frames). It is shown as `prediction.images.top`.
+- `language`: one string per environment, by annotation style (`"subtask"`, `"plan"`, `"memory"`),
+  the styles of the annotation pipeline's language columns. It is shown as `prediction.subtask`.
+- `boxes`: by the observation image key they are drawn on, one bbox answer per environment in the
+  annotation VQA schema (`{"detections": [{"label", "bbox": [x1, y1, x2, y2]}]}`, image fractions
+  0 to 1).
+
+Callers normalize the two return types with `policy_output_to_transition`, which turns a
+`PolicyOutput` into the `EnvTransition` processors use, so only policies that predict something
+change. The viewers show the first environment.
+
+```python
+from lerobot.utils.constants import ACTION, PREDICTION
+
+
+class MyPolicy(PreTrainedPolicy):
+    def select_action(self, batch, **kwargs) -> Tensor | PolicyOutput:
+        if not self._action_queue:
+            chunk, extras = self.model.sample(batch)
+            self._action_queue.extend(chunk.transpose(0, 1))
+            if self.config.return_prediction:  # a config field of your choosing
+                # The prediction goes with the step that computed it; the others return a bare action.
+                prediction = {
+                    "observation": {"observation.images.top": extras.next_frames},  # [B, C, H, W]
+                    "language": {"subtask": extras.subtasks},  # list[str], one per env
+                    "boxes": {
+                        "observation.images.top": [
+                            {"detections": [{"label": "cube", "bbox": xyxy}]} for xyxy in extras.cube_xyxy
+                        ]
+                    },
+                }
+                return {ACTION: self._action_queue.popleft(), PREDICTION: prediction}
+        return self._action_queue.popleft()
+```
+
+- A prediction holds values for this step. One that spans a chunk, such as an imagined clip, is
+  returned piece by piece: each step returns the part matching the action it serves.
+- Each entry stays displayed until it is returned again. Return empty `detections` to clear a
+  camera's boxes.
+- Predicting is opt-in through your policy's config, and should cost nothing when disabled.
+- A prediction never changes the actions, and only the action goes through the postprocessor. Text
+  that should steer the policy, such as the next subtask, goes through `generate_text` (below).
+
 ### Text-capable policies
 
 Language policies share recipe rendering between two processor steps:

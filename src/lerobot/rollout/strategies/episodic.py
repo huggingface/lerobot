@@ -40,6 +40,7 @@ from lerobot.common.control_utils import (
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.processor import transition_to_robot_action
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -255,7 +256,7 @@ class EpisodicStrategy(RolloutStrategy):
         start_t = time.perf_counter()
 
         while timestamp < control_time_s:
-            timer.tick(new_cycle=interpolator.needs_new_action())
+            self._tick(timer, new_cycle=interpolator.needs_new_action())
 
             if events["exit_early"]:
                 events["exit_early"] = False
@@ -272,11 +273,12 @@ class EpisodicStrategy(RolloutStrategy):
             if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, timer):
                 continue
 
-            action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+            step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
-            if action_dict is not None:
+            if step is not None:
+                action_dict = transition_to_robot_action(step)
                 with timer.section("telemetry"):
-                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                    self._log_telemetry(obs_processed, step, ctx.runtime)
                 # Record once per interpolation cycle so the dataset cadence
                 # matches its declared fps; interpolated ticks only send
                 # commands to the robot.

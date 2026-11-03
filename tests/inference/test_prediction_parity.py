@@ -14,6 +14,8 @@
 
 """Local RTC and the remote runner share post-preprocessing action semantics."""
 
+from threading import Thread
+
 import pytest
 import torch
 
@@ -21,6 +23,7 @@ pytest.importorskip("datasets", reason="local rollout imports the dataset integr
 
 from lerobot.inference import ExecutionMode, predict_chunk
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.processor import transition_to_prediction
 from tests.inference.policy_helpers import (
     ConformingPolicy,
     local_engine_for,
@@ -28,6 +31,7 @@ from tests.inference.policy_helpers import (
     runner_for,
     tiny_config,
 )
+from tests.utils import wait_for
 
 pytestmark = pytest.mark.dataset
 
@@ -147,3 +151,83 @@ def test_shared_prediction_preserves_model_coordinates_before_inplace_postproces
     torch.testing.assert_close(prediction.canonical_actions, expected + 10)
     assert not prediction.model_actions.requires_grad
     assert not prediction.canonical_actions.requires_grad
+
+
+def test_shared_prediction_keeps_the_policy_prediction_beside_the_actions():
+    policy = ObservedPolicy(tiny_config())
+    # A `PolicyOutput`: the chunk and a prediction batched like it.
+    policy.output = {"action": policy.output, "prediction": {"language": {"subtask": ["pick"]}}}
+    prediction = predict_chunk(
+        policy,
+        lambda actions: actions,
+        {},
+        spec=policy.chunk_inference_spec(),
+        mode=ExecutionMode.CHUNK,
+        canonical_action_dim=3,
+        model_action_dim=None,
+        device="cpu",
+    )
+    torch.testing.assert_close(prediction.model_actions, torch.arange(9, dtype=torch.float32).reshape(3, 3))
+    assert prediction.prediction == {"language": {"subtask": ["pick"]}}
+
+
+def _rtc_engine_after_one_chunk(monkeypatch, *, accept=True, after_accept=None):
+    """A local RTC engine that ran one chunk of a policy predicting a subtask with it."""
+    config = tiny_config()
+    config.rtc_config = RTCConfig(enabled=False)
+    policy = ObservedPolicy(config)
+    policy.output = {"action": policy.output, "prediction": {"language": {"subtask": ["reach"]}}}
+    engine = local_engine_for(policy, queue_threshold=8)
+    engine.resume()
+    engine._runtime.turnarounds.append(1 / 30)
+    engine.notify_observation(
+        {"a.pos": 20.0, "b.pos": 20.0, "c.pos": 20.0, "env_a": 0.0, "env_b": 0.0, "env_c": 0.0}
+    )
+    real_accept = engine._runtime.accept
+
+    def accept_once(request, chunk, *, task_version):
+        engine._shutdown_event.set()
+        accepted = real_accept(request, chunk, task_version=task_version) if accept else False
+        if after_accept is not None:
+            after_accept(engine)
+        return accepted
+
+    monkeypatch.setattr(engine._runtime, "accept", accept_once)
+    engine._rtc_loop()
+    return engine
+
+
+def test_rtc_engine_hands_a_chunk_prediction_out_once_with_the_next_action(monkeypatch):
+    engine = _rtc_engine_after_one_chunk(monkeypatch)
+
+    first = engine.get_action(None)
+    assert transition_to_prediction(first) == {"language": {"subtask": ["reach"]}}
+    assert isinstance(engine.get_action(None), torch.Tensor)  # the rest of the chunk is bare
+
+
+def test_rtc_engine_drops_the_prediction_of_a_discarded_chunk(monkeypatch):
+    # A chunk the runtime does not accept is never served: its prediction must not be shown either.
+    engine = _rtc_engine_after_one_chunk(monkeypatch, accept=False)
+    assert engine._runtime.take_prediction() is None
+
+
+def test_rtc_engine_reset_clears_a_pending_prediction(monkeypatch):
+    engine = _rtc_engine_after_one_chunk(monkeypatch)
+    engine.reset()
+    assert engine._runtime.take_prediction() is None
+
+
+def test_rtc_engine_reset_right_after_acceptance_drops_the_prediction(monkeypatch):
+    resets = []
+
+    def reset_concurrently(engine):
+        # reset() waits on the task lock held around accept, so it runs on another thread;
+        # the worker resumes once the reset has cleared the queue.
+        generation = engine._runtime.generation
+        resets.append(Thread(target=engine.reset))
+        resets[0].start()
+        assert wait_for(lambda: engine._runtime.generation != generation)
+
+    engine = _rtc_engine_after_one_chunk(monkeypatch, after_accept=reset_concurrently)
+    resets[0].join(timeout=3)
+    assert engine._runtime.take_prediction() is None

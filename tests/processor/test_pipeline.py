@@ -47,6 +47,7 @@ TRANSITION_KEYS = frozenset(
     {
         TransitionKey.OBSERVATION,
         TransitionKey.ACTION,
+        TransitionKey.PREDICTION,
         TransitionKey.REWARD,
         TransitionKey.DONE,
         TransitionKey.TRUNCATED,

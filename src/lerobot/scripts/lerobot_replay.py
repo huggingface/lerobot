@@ -32,8 +32,8 @@ Example replay with bimanual so100:
 ```shell
 lerobot-replay \
   --robot.type=bi_so_follower \
-  --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
-  --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
+  --robot.left_arm_config.port=/dev/tty.usbmodem5A460851411 \
+  --robot.right_arm_config.port=/dev/tty.usbmodem5A460812391 \
   --robot.id=bimanual_follower \
   --dataset.repo_id=${HF_USER}/bimanual-so100-handover-cube \
   --dataset.episode=0

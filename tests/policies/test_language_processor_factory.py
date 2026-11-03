@@ -8,9 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
+from lerobot.configs.train import CheckpointFormat
 from lerobot.policies import factory
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
+    DataProcessorPipeline,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
@@ -21,7 +23,8 @@ def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_ar
     saved = (SimpleNamespace(steps=[]), SimpleNamespace(steps=[]))
     load = MagicMock(side_effect=saved)
     rebuild = MagicMock()
-    monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
+    # Patch the concrete class so monkeypatch can restore the classmethod at teardown.
+    monkeypatch.setattr(DataProcessorPipeline, "from_pretrained", load)
     monkeypatch.setattr(factory, "_make_processors_from_policy_config", rebuild)
 
     config = _act_config()
@@ -64,7 +67,7 @@ def dataset_dependencies():
 
 
 @pytest.fixture
-def training_dependencies(dataset_dependencies):
+def training_dependencies(dataset_dependencies, restore_torch_backend_flags):
     pytest.importorskip("accelerate", reason="training setup requires lerobot[training]")
 
 
@@ -81,10 +84,11 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     cfg.validate = lambda: None
     cfg.to_dict = lambda: {}
     cfg.parallelism = None
-    cfg.wandb = SimpleNamespace(enable=False)
+    cfg.trackio = SimpleNamespace(enable=False)
     cfg.seed = None
     cfg.cudnn_deterministic = False
-    cfg.checkpoint_format = SimpleNamespace(wants_dcp=False)
+    cfg.tf32 = True
+    cfg.checkpoint_format = CheckpointFormat.SAFETENSORS
     cfg.peft = None
     cfg.dataset = SimpleNamespace(image_transforms=ImageTransformsConfig())
     accelerator = SimpleNamespace(
@@ -100,9 +104,6 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
         lambda _: (SimpleNamespace(meta=SimpleNamespace(stats=stats)), None),
     )
     monkeypatch.setattr(trainer, "make_policy", lambda **kwargs: SimpleNamespace(config=cfg.policy))
-    # Restore backend globals changed during training setup after each test.
-    monkeypatch.setattr(torch.backends.cudnn, "benchmark", torch.backends.cudnn.benchmark)
-    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32)
     pipelines = []
 
     def build(**kwargs):
@@ -152,7 +153,7 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
         is_reward_model_training=False,
     )
     load = MagicMock(wraps=factory.PolicyProcessorPipeline.from_pretrained)
-    monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
+    monkeypatch.setattr(DataProcessorPipeline, "from_pretrained", load)
     pre, post = _run_training_until_processors(monkeypatch, cfg, _stats(20.0), main_process=main_process)
     uses_checkpoint = resume or recipe_mode in ("absent", "disabled")
     warnings = [

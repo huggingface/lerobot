@@ -38,6 +38,7 @@ def setup(monkeypatch, tmp_path):
     client.descriptor.update(capabilities=asdict(client.capabilities), instance_id=client.instance_id)
     robot = SimpleNamespace(
         name="test_position_robot",
+        robot_type="test_position_robot",
         supports_position_hold=True,
         action_features={"a.pos": float, "b.pos": float},
         observation_features={"a.pos": float, "b.pos": float},
