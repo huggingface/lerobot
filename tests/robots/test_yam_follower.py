@@ -33,7 +33,6 @@ from lerobot.robots.yam_follower.config_yam_follower import (
     JOINT_LIMITS_RAD,
     MOTOR_NAMES,
     YAM_FEATURE_NAMES,
-    motor_feature_names,
 )
 
 
@@ -297,7 +296,7 @@ def test_disabled_motor_is_allowed_before_enable():
 
 
 def test_slew_gripper_torque_and_gravity_feedforward(robot):
-    robot.config.max_gripper_speed_s = 2
+    robot.config.max_gripper_speed = 2
     position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
     command, packet = mit_control._control_step(
         params(robot), position, position + 0.1, position, gravity=np.ones(6), dt=0.01
@@ -376,8 +375,10 @@ def test_single_arm_features_are_not_prefixed(robot):
 def test_velocity_and_torque_features_are_grouped_per_motor(tmp_path, monkeypatch):
     monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
     robot = make_robot(tmp_path, use_velocity_and_torque=True)
-    assert tuple(robot.observation_features) == motor_feature_names(use_velocity_and_torque=True)
-    assert tuple(robot.observation_features)[:3] == ("joint_1.pos", "joint_1.vel", "joint_1.torque")
+    names = tuple(robot.observation_features)
+    assert len(names) == 21
+    assert names[:3] == ("joint_1.pos", "joint_1.vel", "joint_1.torque")
+    assert names[-3:] == ("gripper.pos", "gripper.vel", "gripper.torque")
     assert tuple(robot.action_features) == YAM_FEATURE_NAMES
 
 

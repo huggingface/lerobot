@@ -48,7 +48,6 @@ from .config_yam_follower import (
     YAM_FEATURE_NAMES,
     YamFollowerConfig,
     YamFollowerRobotConfig,
-    motor_feature_names,
 )
 from .mit_control import (
     CalibratedGripper,
@@ -71,7 +70,10 @@ logger = logging.getLogger(__name__)
 
 _MODEL_ARM_JOINTS = tuple(f"joint{i}" for i in range(1, 7))
 _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
+# Travel of each finger joint in the gravity model, and the finger travel that maps the linear
+# DM4310 gripper's force limit to motor torque.
 _MODEL_GRIPPER_STROKE_M = 0.0475
+_GRIPPER_FINGER_STROKE_M = 0.096
 _GRAVITY_MODEL_BUCKET_ID = "lerobot/robot-urdfs"
 _GRAVITY_MODEL_REMOTE_PATH = "yam/v1/linear_4310.urdf"
 _GRAVITY_MODEL_LOCAL_PATH = HF_LEROBOT_HOME / "robot-urdfs" / _GRAVITY_MODEL_REMOTE_PATH
@@ -110,9 +112,9 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
             open=opened,
             kp=config.gripper_kp,
             kd=config.gripper_kd,
-            max_speed=config.max_gripper_speed_s,
+            max_speed=config.max_gripper_speed,
             force_limit_n=config.gripper_force_limit_n,
-            finger_stroke_m=config.gripper_stroke_m,
+            finger_stroke_m=_GRIPPER_FINGER_STROKE_M,
             feedback_margin=_GRIPPER_FEEDBACK_MARGIN,
         ),
         float_kd=np.asarray(config.float_kd, dtype=float),
@@ -351,7 +353,8 @@ class YamFollower(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return dict.fromkeys(motor_feature_names(self.config.use_velocity_and_torque), float)
+        suffixes = (".pos", ".vel", ".torque") if self.config.use_velocity_and_torque else (".pos",)
+        return {f"{name}{suffix}": float for name in MOTOR_NAMES for suffix in suffixes}
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
