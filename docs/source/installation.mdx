@@ -72,9 +72,11 @@ source .venv/bin/activate
 LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video decoding by default, which requires `ffmpeg`.
 
 > [!NOTE]
-> **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64), Linux ARM (aarch64, arm64, armv7l), or Windows with PyTorch < 2.8. On these platforms, LeRobot automatically falls back to `pyav` — so you do not need to install `ffmpeg` and can skip to Step 3.
+> **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64), Linux armv7l, or Windows with PyTorch < 2.8. On these platforms, LeRobot automatically falls back to `pyav` — so you do not need to install `ffmpeg` and can skip to Step 3. On Linux aarch64, TorchCodec wheels are available from TorchCodec 0.11 (PyTorch >= 2.11).
 >
-> **Jetson (aarch64 + CUDA):** the `pyav` fallback above means no GPU-accelerated video decode by default. [`docker/Dockerfile.jetson`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.jetson) builds `torch`/`torchcodec` from source with CUDA support for JetPack 6.2 — community-maintained, see [`ravediamond/lerobot-jetson`](https://github.com/ravediamond/lerobot-jetson) for the prebuilt image and issue [#819](https://github.com/huggingface/lerobot/issues/819) for background.
+> LeRobot also falls back to `pyav` (after printing the load error) when TorchCodec is installed but cannot load the FFmpeg libraries it links against, e.g. on a system that has FFmpeg runtime libraries but no `libavdevice`. The `av` wheel bundles its own FFmpeg.
+>
+> **Jetson (aarch64 + CUDA):** the `pyav` fallback above means no GPU-accelerated video decode by default. On Jetson Orin, [`docker/Dockerfile.jetson`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.jetson) builds `torch`/`torchcodec` from source with CUDA support for JetPack 6.2 — community-maintained, see [`ravediamond/lerobot-jetson`](https://github.com/ravediamond/lerobot-jetson) for the prebuilt image and issue [#819](https://github.com/huggingface/lerobot/issues/819) for background. For Jetson Thor (JetPack 7), see the note under [PyTorch CUDA variant](#pytorch-cuda-variant-linux-only).
 
 If your platform supports TorchCodec, install `ffmpeg` using one of the methods below:
 
@@ -228,6 +230,13 @@ To override for a different CUDA variant:
 uv pip install --force-reinstall torch torchvision \
     --index-url https://download.pytorch.org/whl/cu126   # older drivers; or cu130 for Blackwell on driver ≥ 580
 ```
+
+> [!NOTE]
+> **Jetson Thor (JetPack 7):** the CUDA 12.8 wheels have no kernels for Thor (`sm_110`). `torch.cuda.is_available()` returns `True`, but CUDA kernels fail with `no kernel image is available for execution on the device`. Install the CUDA 13.0 wheels instead; `--no-sources` makes `uv` ignore the project's cu128 pin while keeping LeRobot's version constraints:
+>
+> ```bash
+> uv pip install -e ".[dataset]" --torch-backend cu130 --no-sources   # replace `dataset` with the extras you need
+> ```
 
 </hfoption>
 <hfoption id="pip-conda">
