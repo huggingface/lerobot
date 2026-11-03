@@ -4,16 +4,16 @@ A benchmark is a simulator that LeRobot drives in one place, `lerobot.sim`, so t
 
 ## What to add
 
-| Component            | Location                                      | What to add                                                                                                                         |
-| -------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Integration          | `src/lerobot/sim/integrations/<benchmark>.py` | The `gym.Env`, `env_fns()` factories, `canonical_observation()` adapter and `conventions()` for that simulator                      |
-| Config               | `src/lerobot/envs/configs.py`                 | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                                             |
-| Server configuration | `docker/sim/configs/<benchmark>.yaml`         | The task and factory kwargs the server and CI use                                                                                   |
-| Simulator image      | `docker/Dockerfile.sim`                       | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server                       |
-| CI manifest          | `benchmarks/benchmarks.yaml`                  | Name, tasks, checkpoint revision, camera `rename_map` and optional `parity`; the rest defaults from the name                        |
-| Dependencies         | `pyproject.toml`                              | An optional-dependency group for local use                                                                                          |
-| Documentation        | `docs/source/<benchmark>.mdx`, `_toctree.yml` | A user-facing page                                                                                                                  |
-| Provenance           | `docs/source/<benchmark>.mdx`                 | Source repositories, pinned code and asset revisions with their licenses, and a published success rate for a checkpoint you can run |
+| Component            | Location                                      | What to add                                                                                                                                                             |
+| -------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Integration          | `src/lerobot/sim/integrations/<benchmark>.py` | The `gym.Env`, `env_fns()` factories, `canonical_observation()` adapter and `conventions()` for that simulator                                                          |
+| Config               | `src/lerobot/envs/configs.py`                 | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                                                                                 |
+| Server configuration | `docker/sim/configs/<benchmark>.yaml`         | The task and factory kwargs the server and CI use                                                                                                                       |
+| Simulator image      | `docker/Dockerfile.sim`                       | A `<benchmark>_native` stage: pinned native dependencies (including any CUDA toolkit, as the base is plain Ubuntu) and asset revisions; the final stage adds the server |
+| CI manifest          | `benchmarks/benchmarks.yaml`                  | Name, tasks, checkpoint revision, camera `rename_map` and optional `parity`; the rest defaults from the name                                                            |
+| Dependencies         | `pyproject.toml`                              | An optional-dependency group for local use                                                                                                                              |
+| Documentation        | `docs/source/<benchmark>.mdx`, `_toctree.yml` | A user-facing page                                                                                                                                                      |
+| Provenance           | `docs/source/<benchmark>.mdx`                 | Source repositories, pinned code and asset revisions with their licenses, and a published success rate for a checkpoint you can run                                     |
 
 Both paths expose the same environment behavior:
 

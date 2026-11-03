@@ -21,17 +21,20 @@
 ARG SIM=libero
 
 # ---------------------------------------------------------------------------- shared base
-FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04 AS base
+# Plain Ubuntu: the NVIDIA container runtime mounts the host driver (EGL, Vulkan, CUDA) into any image. A
+# simulator that needs CUDA libraries or a toolkit installs its own in its stage, as RoboTwin does.
+FROM ubuntu:24.04 AS base
+ARG DEBIAN_FRONTEND=noninteractive
 COPY --from=ghcr.io/astral-sh/uv:0.11.30 /uv /uvx /usr/local/bin/
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-dev python3-venv git build-essential cmake curl unzip ffmpeg \
+    ca-certificates python3 python3-dev python3-venv git build-essential cmake curl unzip ffmpeg \
     libegl1 libgl1 libglx0 libgles2 libglib2.0-0 libosmesa6 libvulkan1 libxrender1 libsm6 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1001 user_lerobot && mkdir /lerobot && chown user_lerobot /lerobot
 USER user_lerobot
 WORKDIR /lerobot
 ENV VIRTUAL_ENV=/home/user_lerobot/venv PATH="/home/user_lerobot/venv/bin:${PATH}" \
-    MUJOCO_GL=egl PYOPENGL_PLATFORM=egl NVIDIA_DRIVER_CAPABILITIES=all
+    MUJOCO_GL=egl PYOPENGL_PLATFORM=egl NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=all
 RUN uv venv "$VIRTUAL_ENV" --python python3
 COPY --chown=user_lerobot:user_lerobot docker/sim/requirements.txt /tmp/sim-requirements.txt
 RUN uv pip install -r /tmp/sim-requirements.txt
@@ -177,12 +180,17 @@ RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\nscipy==1.15.3\n' > /tmp/robomme_ov
 
 # ---------------------------------------------------------------------------- RoboTwin
 FROM base AS robotwin_native
-# CuRobo's editable install compiles with nvcc, and SAPIEN renders with Vulkan.
+# CuRobo's editable install compiles with nvcc 12.8 from NVIDIA's apt repository, and SAPIEN renders with Vulkan.
 ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
-    ROBOTWIN_ROOT=/opt/robotwin
+    ROBOTWIN_ROOT=/opt/robotwin \
+    CUDA_HOME=/usr/local/cuda-12.8 \
+    PATH="/usr/local/cuda-12.8/bin:${PATH}"
 USER root
 ARG ROBOTWIN_SHA=0aeea2d669c0f8516f4d5785f0aa33ba812c14b4
-RUN apt-get update \
+RUN curl -fsSL -o /tmp/cuda-keyring.deb \
+         "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/$(uname -m | sed s/aarch64/sbsa/)/cuda-keyring_1.1-1_all.deb" \
+    && dpkg -i /tmp/cuda-keyring.deb && rm /tmp/cuda-keyring.deb \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
          cuda-nvcc-12-8 cuda-cudart-dev-12-8 \
          libvulkan1 vulkan-tools \

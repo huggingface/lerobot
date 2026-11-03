@@ -289,7 +289,7 @@ By default, EnvHub environments run inside the evaluation process: `make_env` do
 lerobot-env-server --envhub=username/my-env@<commit> --docker=true
 ```
 
-Besides `requirements.txt` (installed with pip's rules, so `--extra-index-url` lines work), the image installs the apt packages listed in an optional `packages.txt`, one per line, as in Hugging Face Spaces.
+Besides `requirements.txt` (installed with pip's rules, so `--extra-index-url` lines work), the image installs the apt packages listed in an optional `packages.txt`, one per line, as in Hugging Face Spaces. The image is plain Ubuntu: the GPU driver comes from the host, and CUDA libraries come from the Python wheels that need them (torch, Isaac Sim).
 
 Passing `--envhub` is the explicit consent to run the repository's code, like `trust_remote_code=True`. Pin a commit. Then evaluate against it like any other environment, adding its endpoint:
 
