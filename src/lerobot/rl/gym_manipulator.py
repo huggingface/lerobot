@@ -58,6 +58,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
 )
 from lerobot.robots.robot import Robot
+from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     EEReferenceAndDelta,
@@ -105,18 +106,82 @@ class GymManipulatorConfig:
     device: str = "cpu"
 
 
-def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> None:
-    """Reset robot arm to target position using smooth trajectory."""
-    current_position_dict = robot_arm.bus.sync_read("Present_Position")
-    current_position = np.array(
-        [current_position_dict[name] for name in current_position_dict], dtype=np.float32
+def reset_follower_position(robot_arm: ThreadSafeRobot, target_position: np.ndarray) -> None:
+    """Reset SO follower through the authorized ThreadSafeRobot dispatch."""
+    import math
+
+    if not isinstance(robot_arm, ThreadSafeRobot):
+        raise RuntimeError(
+            "Reset requires ThreadSafeRobot; direct Robot access is forbidden"
+        )
+
+    robot_kind = getattr(
+        getattr(robot_arm, "config", None),
+        "type",
+        getattr(robot_arm, "robot_type", None),
     )
-    trajectory = torch.from_numpy(
-        np.linspace(current_position, target_position, 50)
-    )  # NOTE: 30 is just an arbitrary number
+
+    if robot_kind not in {"so100_follower", "so101_follower"}:
+        raise RuntimeError("Safe reset supports SO100/SO101 followers only")
+
+    if not robot_arm.is_connected:
+        raise RuntimeError("Cannot reset a disconnected robot")
+
+    action_features = robot_arm.action_features
+    motor_names = list(action_features)
+
+    if not motor_names or any(not name.endswith(".pos") for name in motor_names):
+        raise RuntimeError("Invalid robot action feature contract")
+
+    observation = robot_arm.get_observation()
+
+    current = []
+    for name in motor_names:
+        if name not in observation:
+            raise RuntimeError(f"Missing reset observation: {name}")
+
+        value = float(observation[name])
+        if not math.isfinite(value):
+            raise RuntimeError(f"Non-finite reset observation: {name}")
+
+        current.append(value)
+
+    target = np.asarray(target_position, dtype=np.float64)
+
+    if target.ndim != 1:
+        raise ValueError("Reset target must be a one-dimensional array")
+
+    if not np.all(np.isfinite(target)):
+        raise ValueError("Reset target contains NaN or Inf")
+
+    has_gripper = motor_names[-1] == "gripper.pos"
+
+    if has_gripper and len(target) == len(motor_names) - 1:
+        # Five arm joints: preserve the currently observed gripper position.
+        target = np.append(target, current[-1])
+    elif len(target) != len(motor_names):
+        raise ValueError(
+            f"Reset target dimension must be {len(motor_names)}"
+            + (f" or {len(motor_names) - 1}" if has_gripper else "")
+        )
+
+    if has_gripper and not 0.0 <= float(target[-1]) <= 100.0:
+        raise ValueError("Reset gripper target outside [0,100]")
+
+    trajectory = np.linspace(
+        np.asarray(current, dtype=np.float64),
+        target,
+        50,
+    )
+
     for pose in trajectory:
-        action_dict = dict(zip(current_position_dict, pose, strict=False))
-        robot_arm.bus.sync_write("Goal_Position", action_dict)
+        action_dict = {
+            name: float(value)
+            for name, value in zip(motor_names, pose, strict=True)
+        }
+
+        # All hardware dispatch must pass through ThreadSafeRobot safety gates.
+        robot_arm.send_action(action_dict)
         precise_sleep(0.015)
 
 
@@ -142,29 +207,55 @@ class RobotEnv(gym.Env):
         """
         super().__init__()
 
-        self.robot = robot
+        # Use one shared lock-protected robot interface.
+        self.robot = (
+            robot
+            if isinstance(robot, ThreadSafeRobot)
+            else ThreadSafeRobot(robot)
+        )
         self.display_cameras = display_cameras
+        self._closed = False
 
-        # Connect to the robot if not already connected.
-        if not self.robot.is_connected:
-            self.robot.connect()
+        # Initialize transactionally: never leave partially acquired
+        # SO100/SO101 resources behind if environment setup fails.
+        try:
+            if not self.robot.is_connected:
+                self.robot.connect()
 
-        # Episode tracking.
-        self.current_step = 0
-        self.episode_data = None
+            self.current_step = 0
+            self.episode_data = None
 
-        self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors]
-        self._image_keys = self.robot.cameras.keys()
+            self._joint_names = [f"{key}.pos" for key in self.robot.motor_names]
+            self._image_keys = self.robot.cameras.keys()
 
-        self.reset_pose = reset_pose
-        self.reset_time_s = reset_time_s
+            self.reset_pose = reset_pose
+            self.reset_time_s = reset_time_s
+            self.use_gripper = use_gripper
 
-        self.use_gripper = use_gripper
+            self._joint_names = list(self.robot.motor_names)
+            self._raw_joint_positions = None
 
-        self._joint_names = list(self.robot.bus.motors.keys())
-        self._raw_joint_positions = None
+            self._setup_spaces()
 
-        self._setup_spaces()
+        except BaseException as original_error:
+            robot_kind = getattr(
+                getattr(self.robot, "config", None),
+                "type",
+                getattr(self.robot, "robot_type", None),
+            )
+
+            try:
+                if (
+                    robot_kind in {"so100_follower", "so101_follower"}
+                    or self.robot.is_connected
+                ):
+                    self.robot.disconnect()
+            except BaseException as cleanup_error:
+                original_error.add_note(
+                    f"Robot initialization cleanup failed: {cleanup_error!r}"
+                )
+
+            raise
 
     def _get_observation(self) -> RobotObservation:
         """Get current robot observation including joint positions and camera images."""
@@ -254,7 +345,7 @@ class RobotEnv(gym.Env):
 
     def step(self, action) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
-        joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
+        joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.motor_names)}
 
         self.robot.send_action(joint_targets_dict)
 
@@ -292,9 +383,24 @@ class RobotEnv(gym.Env):
                 cv2.waitKey(1)
 
     def close(self) -> None:
-        """Close environment and disconnect robot."""
-        if self.robot.is_connected:
+        """Idempotently release robot resources; allow retry after failure."""
+        if self._closed:
+            return
+
+        robot_kind = getattr(
+            getattr(self.robot, "config", None),
+            "type",
+            getattr(self.robot, "robot_type", None),
+        )
+
+        if (
+            robot_kind in {"so100_follower", "so101_follower"}
+            or self.robot.is_connected
+        ):
             self.robot.disconnect()
+
+        # Mark closed only after successful cleanup.
+        self._closed = True
 
     def get_raw_joint_positions(self) -> dict[str, float]:
         """Get raw joint positions."""
@@ -336,23 +442,46 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
 
     robot = make_robot_from_config(cfg.robot)
     teleop_device = make_teleoperator_from_config(cfg.teleop)
-    teleop_device.connect()
 
-    # Create base environment with safe defaults
-    use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
-    display_cameras = (
-        cfg.processor.observation.display_cameras if cfg.processor.observation is not None else False
-    )
-    reset_pose = cfg.processor.reset.fixed_reset_joint_positions if cfg.processor.reset is not None else None
+    teleop_connect_attempted = False
 
-    env = RobotEnv(
-        robot=robot,
-        use_gripper=use_gripper,
-        display_cameras=display_cameras,
-        reset_pose=reset_pose,
-    )
+    try:
+        # connect() may partially acquire resources before raising.
+        teleop_connect_attempted = True
+        teleop_device.connect()
 
-    return env, teleop_device
+        # Create base environment with safe defaults.
+        use_gripper = (
+            cfg.processor.gripper.use_gripper
+            if cfg.processor.gripper is not None else True
+        )
+        display_cameras = (
+            cfg.processor.observation.display_cameras
+            if cfg.processor.observation is not None else False
+        )
+        reset_pose = (
+            cfg.processor.reset.fixed_reset_joint_positions
+            if cfg.processor.reset is not None else None
+        )
+
+        env = RobotEnv(
+            robot=robot,
+            use_gripper=use_gripper,
+            display_cameras=display_cameras,
+            reset_pose=reset_pose,
+        )
+
+        return env, teleop_device
+
+    except BaseException as original_error:
+        try:
+            if teleop_connect_attempted:
+                teleop_device.disconnect()
+        except BaseException as cleanup_error:
+            original_error.add_note(
+                f"Teleoperator initialization cleanup failed: {cleanup_error!r}"
+            )
+        raise
 
 
 def make_processors(
@@ -408,7 +537,7 @@ def make_processors(
 
     # Full processor pipeline for real robot environment
     # Get robot and motor information for kinematics
-    motor_names = list(env.robot.bus.motors.keys())
+    motor_names = list(env.robot.motor_names)
 
     # Set up kinematics solver if inverse kinematics is configured
     kinematics_solver = None
@@ -790,6 +919,7 @@ def replay_trajectory(
     actions = dataset.select_columns(ACTION)
 
     _, info = env.reset()
+    action_processor.reset()
 
     for action_data in actions:
         start_time = time.perf_counter()

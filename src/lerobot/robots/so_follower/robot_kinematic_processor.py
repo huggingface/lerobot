@@ -320,12 +320,17 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
 
         observation = raw_observation.copy()
 
-        q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+        required_keys = [f"{name}.pos" for name in self.motor_names]
+        missing = [key for key in required_keys if key not in observation]
+        if missing:
+            raise ValueError(f"Missing joint observations: {missing}")
+
+        q_raw = np.asarray(
+            [observation[key] for key in required_keys],
             dtype=float,
         )
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+        if q_raw.shape != (len(self.motor_names),) or not np.all(np.isfinite(q_raw)):
+            raise ValueError("Invalid joint observation dimensions or non-finite values")
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
             self.q_curr = q_raw
@@ -342,6 +347,17 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
         q_target = self.kinematics.inverse_kinematics(
             self.q_curr, t_des, orientation_weight=self.orientation_weight
         )
+        q_target = np.asarray(q_target, dtype=float)
+
+        if q_target.shape != (len(self.motor_names),):
+            raise ValueError(
+                f"Invalid IK output shape: {q_target.shape}; "
+                f"expected {(len(self.motor_names),)}"
+            )
+
+        if not np.all(np.isfinite(q_target)):
+            raise ValueError("IK output contains NaN or Inf")
+
         self.q_curr = q_target
 
         # TODO: This is sentitive to order of motor_names = q_target mapping
@@ -405,12 +421,14 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
         observation = raw_observation.copy()
 
-        q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
-            dtype=float,
-        )
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+        if "gripper.pos" not in observation:
+            raise ValueError("Missing gripper.pos observation")
+
+        gripper_current = float(observation["gripper.pos"])
+        if not np.isfinite(gripper_current):
+            raise ValueError("Non-finite gripper position")
+        if not np.isfinite(gripper_vel):
+            raise ValueError("Non-finite gripper velocity")
 
         if self.discrete_gripper:
             # Map discrete command {0=close, 1=stay, 2=open} -> signed velocity.
@@ -421,7 +439,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
         # Compute desired gripper position
         delta = gripper_vel * float(self.speed_factor)
         # TODO: This assumes gripper is the last specified joint in the robot
-        gripper_pos = float(np.clip(q_raw[-1] + delta, self.clip_min, self.clip_max))
+        gripper_pos = float(np.clip(gripper_current + delta, self.clip_min, self.clip_max))
         action["ee.gripper_pos"] = gripper_pos
 
         return action
@@ -596,12 +614,17 @@ class InverseKinematicsRLStep(ProcessorStep):
 
         observation = raw_observation.copy()
 
-        q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
+        required_keys = [f"{name}.pos" for name in self.motor_names]
+        missing = [key for key in required_keys if key not in observation]
+        if missing:
+            raise ValueError(f"Missing joint observations: {missing}")
+
+        q_raw = np.asarray(
+            [observation[key] for key in required_keys],
             dtype=float,
         )
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+        if q_raw.shape != (len(self.motor_names),) or not np.all(np.isfinite(q_raw)):
+            raise ValueError("Invalid joint observation dimensions or non-finite values")
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
             self.q_curr = q_raw
@@ -616,6 +639,17 @@ class InverseKinematicsRLStep(ProcessorStep):
 
         # Compute inverse kinematics
         q_target = self.kinematics.inverse_kinematics(self.q_curr, t_des)
+        q_target = np.asarray(q_target, dtype=float)
+
+        if q_target.shape != (len(self.motor_names),):
+            raise ValueError(
+                f"Invalid IK output shape: {q_target.shape}; "
+                f"expected {(len(self.motor_names),)}"
+            )
+
+        if not np.all(np.isfinite(q_target)):
+            raise ValueError("IK output contains NaN or Inf")
+
         self.q_curr = q_target
 
         # TODO: This is sentitive to order of motor_names = q_target mapping
