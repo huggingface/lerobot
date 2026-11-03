@@ -168,6 +168,21 @@ Soft resets are faster but are not bit-identical to hard resets after the
 environment's settling steps, so camera observations and policy results may
 differ slightly. Use hard resets when reproducing benchmark results.
 
+### Settling steps
+
+After each reset, LeRobot steps the simulator with a no-op action so that
+objects settle before the first observation. The number of steps defaults to 10,
+as in the openpi and OpenVLA LIBERO evaluations:
+
+```bash
+--env.num_steps_wait=10
+```
+
+Some initial states depend on this settling, so the starting scene can change
+with this value and with the MuJoCo version (see
+[#4390](https://github.com/huggingface/lerobot/issues/4390)). Keep the default
+when reproducing benchmark results.
+
 ### Policy inputs and outputs
 
 **Observations:**
