@@ -28,10 +28,8 @@ import draccus
 import torch
 from draccus.utils import DecodingError
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import WarmupStableDecaySchedulerConfig
+from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.optim import AdamWConfig, WarmupStableDecaySchedulerConfig
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available
 

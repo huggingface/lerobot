@@ -48,7 +48,7 @@ if TYPE_CHECKING or _transformers_available:
         get_vision_position_ids,
     )
 
-    from lerobot.policies.pi_gemma import PiGemmaRMSNorm
+    from ..pi_gemma import PiGemmaRMSNorm
 else:
     # `pi_gemma` subclasses Transformers classes at module scope, so importing it
     # without the extra raises; PiGemmaRMSNorm is only used at runtime.
@@ -73,19 +73,19 @@ else:
     get_vision_position_ids = None
     Qwen3_5GatedDeltaNet = nn.Module  # subclassed at module scope
 
-from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs import PreTrainedConfig
 from lerobot.lerobot_types import BboxAnswer, Detection, PolicyOutput, PolicyPrediction
-from lerobot.optim.optimizers import OptimizerParams
-from lerobot.policies.common.flow_matching import (
+from lerobot.optim import OptimizerParams
+from lerobot.utils.constants import ACTION, PREDICTION
+from lerobot.utils.device_utils import resolve_safetensors_device
+
+from ..common.flow_matching import (
     FlowConvention,
     make_flow_matching_inputs,
     sample_beta,
     sample_noise,
 )
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, PREDICTION
-from lerobot.utils.device_utils import resolve_safetensors_device
-
+from ..pretrained import PreTrainedPolicy
 from .action_codec_g05 import G05NativeActionCodec, g05_codec_parts
 from .configuration_g05 import (
     G05Config,

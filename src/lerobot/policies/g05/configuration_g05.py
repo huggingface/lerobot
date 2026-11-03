@@ -11,10 +11,8 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.optim import AdamWConfig, ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -356,7 +354,7 @@ class G05Config(PreTrainedConfig):
             # The file is read once and stored inline, and the path is dropped, so a saved
             # checkpoint keeps the recipe it was trained with even if the file changes later.
             # Import only here: the datasets package requires optional extras.
-            from lerobot.datasets.recipe import resolve_recipe_override
+            from lerobot.datasets import resolve_recipe_override
 
             resolved = resolve_recipe_override(self.recipe, self.recipe_path)
             self.recipe = asdict(resolved) if resolved is not None else None

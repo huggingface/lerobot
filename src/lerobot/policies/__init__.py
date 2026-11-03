@@ -19,9 +19,11 @@ from .chunk import (
     FeatureSpec,
 )
 from .cosmos3.configuration_cosmos3 import (
+    Cosmos3Config,
     Cosmos3EdgeConfig as Cosmos3EdgeConfig,
     Cosmos3NanoConfig as Cosmos3NanoConfig,
 )
+from .cosmos3.processor_cosmos3 import make_cosmos3_libero_pre_post_processors
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .dm05.configuration_dm05 import DM05Config as DM05Config
 from .eo1.configuration_eo1 import EO1Config as EO1Config
@@ -89,6 +91,7 @@ from .xvla.processor_xvla import make_xvla_libero_pre_post_processors
 __all__ = [
     # Configuration classes
     "ACTConfig",
+    "Cosmos3Config",
     "Cosmos3EdgeConfig",
     "Cosmos3NanoConfig",
     "DiffusionConfig",
@@ -147,6 +150,7 @@ __all__ = [
     "has_peft_adapter_config",
     "make_policy",
     "make_policy_config",
+    "make_cosmos3_libero_pre_post_processors",
     "make_pre_post_processors",
     "make_xvla_libero_pre_post_processors",
 ]

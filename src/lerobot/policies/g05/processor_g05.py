@@ -19,7 +19,7 @@ import torchvision.transforms.functional as vision_functional
 from huggingface_hub import snapshot_download
 from torch import Tensor
 
-from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -37,15 +37,13 @@ from lerobot.processor import (
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
     UnnormalizerProcessorStep,
-    load_pretrained_policy_processors,
-)
-from lerobot.processor.converters import (
     batch_to_transition,
+    load_pretrained_policy_processors,
     policy_action_to_transition,
+    to_relative_actions,
     transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.utils.constants import (
     ACTION,
     MESSAGES_RENDERED,
@@ -77,7 +75,7 @@ from .tokenizer_g05 import (
 )
 
 if TYPE_CHECKING:
-    from lerobot.datasets.recipe import TrainingRecipe
+    from lerobot.datasets import TrainingRecipe
 
 
 def _copy_feature_tree(
@@ -1023,7 +1021,7 @@ def _training_recipe(config: G05Config) -> TrainingRecipe | None:
     if config.recipe is None:
         return None
     # Imported here: recipes need the dataset extras, the policy does not.
-    from lerobot.datasets.recipe import TrainingRecipe
+    from lerobot.datasets import TrainingRecipe
 
     return TrainingRecipe.from_dict(config.recipe)
 

@@ -37,6 +37,7 @@ from .schedulers import (
     FrozenWarmupConstantSchedulerConfig,
     LRSchedulerConfig as LRSchedulerConfig,
     VQBeTSchedulerConfig as VQBeTSchedulerConfig,
+    WarmupStableDecaySchedulerConfig,
     load_scheduler_state,
     save_scheduler_state,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "FrozenWarmupConstantSchedulerConfig",
     "LRSchedulerConfig",
     "VQBeTSchedulerConfig",
+    "WarmupStableDecaySchedulerConfig",
     # EMA
     "EMA",
     "EMAConfig",
