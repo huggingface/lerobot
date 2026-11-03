@@ -247,6 +247,8 @@ class FastWAMConfig(PreTrainedConfig):
     tiled: bool = False
     fp32_attention: bool = True
     compile_action_infer: bool = False
+    # Streaming-WAM eager AC-Stream. Requires its own converted checkpoint.
+    streaming_wam: bool = False
     use_gradient_checkpointing: bool = False
     freeze_video_expert: bool = False
     toggle_action_dimensions: list[int] = field(default_factory=list)
@@ -411,6 +413,17 @@ class FastWAMConfig(PreTrainedConfig):
         self.validate_features()
 
     def validate_features(self) -> None:
+        if self.streaming_wam:
+            if self.lite_kv_fusion or self.retracted_1d_rope or self.world_model_only_conditioning:
+                raise ValueError("Streaming-WAM cannot combine Faster-WAM fusion or conditioning options.")
+            if (self.action_horizon, self.n_action_steps, self.model_video_frames) != (32, 32, 9):
+                raise ValueError("Streaming-WAM requires horizon=32, n_action_steps=32 and 9 model frames.")
+            if self.num_inference_steps != 1 or self.compile_action_infer:
+                raise ValueError("Streaming-WAM supports eager one-step inference only.")
+            if self.video_dit_config and self.video_dit_config.get("action_conditioned", False):
+                raise ValueError("Streaming-WAM cannot combine Faster-WAM action conditioning.")
+            if self.base_model_id is not None:
+                raise ValueError("Streaming-WAM requires base_model_id=None and its converted checkpoint.")
         if self.action_dim <= 0:
             raise ValueError(f"`action_dim` must be positive, got {self.action_dim}.")
         if self.action_horizon <= 0:

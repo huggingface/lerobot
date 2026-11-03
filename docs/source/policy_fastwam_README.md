@@ -111,3 +111,23 @@ The public repository [TeamFasterwam/FasterWAM](https://github.com/TeamFasterwam
 licenses its original contributions under the
 [PolyForm Noncommercial License 1.0.0](https://github.com/TeamFasterwam/FasterWAM/blob/main/LICENSE).
 Its code was not copied, translated, or adapted.
+
+## Opt-in eager Streaming-WAM
+
+[Streaming-WAM](https://arxiv.org/abs/2609.28927) by Xuyao Huang et al. is off by default (`streaming_wam=False`). This Apache-2.0 adaptation credits Shaohua Pan; see `NOTICE.streaming-wam` and the repository root `LICENSE`. It pins source revision `ff36d6e66514afd65bf957a06a0a2410f182b0e3` and Hub release `8dcc67ce14c72a5cce0c04c87a518b4ccfec217e`.
+
+Download `ac-stream/model.pt` and `ac-stream/dataset_stats.json` from that revision of [SJTU-DENG-Lab/Streaming-WAM](https://huggingface.co/SJTU-DENG-Lab/Streaming-WAM), then convert locally:
+
+```bash
+uv run python -m lerobot.policies.fastwam.convert_streaming_checkpoint \
+    --checkpoint /path/ac-stream/model.pt \
+    --stats /path/ac-stream/dataset_stats.json --output /path/native-streaming-wam
+```
+
+The converter memory-maps the checkpoint, validates its schema, saves native weights and processors, and requires a strict reload. Load with `FastWAMPolicy.from_pretrained("/path/native-streaming-wam", strict=True, init_empty_weights=True)`. Load the saved processors with `make_pre_post_processors(policy.config, pretrained_path="/path/native-streaming-wam")`. Cache the frozen Wan assets for offline use. Supply cached `context` and `context_mask`, or explicitly enable the text encoder.
+
+For each action, preprocess the current observation, attach its text context, call `select_action(batch)`, apply the saved postprocessor once, and execute the action. Call `mark_action_executed()` exactly once after execution completes. Use `try/finally` to call `close()` when the loop ends. Call all controller methods from the control-loop thread.
+
+The batch-one worker uses a 32-action horizon, 16-action stride, and 8-action delay. It launches after eight acknowledged actions and waits at the stride boundary if inference is late. `reset()` and `drop_queued_actions()` drain pending work and discard the prefix; `close()` drains work and releases the thread. Worker errors propagate to the caller.
+
+Supply float32, byte-derived RGB in `[0, 1]`, already resized to 224 by 224, with `observation.images.image` before `observation.images.wrist_image`. Set camera orientation before preprocessing; implicit resizing is rejected. Saved processors apply the released minmax statistics, state clamp, and gripper threshold. This eager path does not include the reference CUDA accelerated runtime or staged consistency distillation. Task success and real-arm quality remain untested.

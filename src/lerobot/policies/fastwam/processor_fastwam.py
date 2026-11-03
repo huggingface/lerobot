@@ -22,6 +22,7 @@ import torch
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     ActionProcessorStep,
+    ObservationProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
@@ -31,6 +32,26 @@ from lerobot.processor import (
 )
 
 from .configuration_fastwam import FastWAMConfig
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="streaming_wam_state_clamp")
+class StreamingWAMStateClamp(ObservationProcessorStep):
+    """Clamp normalized proprioception as in the released Streaming-WAM recipe.
+
+    Adapted from Streaming-WAM, Xuyao Huang et al., revision
+    ff36d6e66514afd65bf957a06a0a2410f182b0e3. Copyright 2026 Shaohua Pan.
+    Apache-2.0; see the repository root LICENSE.
+    """
+
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        if "observation.state" in observation:
+            observation = dict(observation)
+            observation["observation.state"] = observation["observation.state"].clamp(-5.0, 5.0)
+        return observation
+
+    def transform_features(self, features: dict) -> dict:
+        return features
 
 
 @dataclass
@@ -63,6 +84,24 @@ class FastWAMActionToggleProcessorStep(ActionProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="streaming_wam_action_toggle")
+class StreamingWAMActionToggle(FastWAMActionToggleProcessorStep):
+    """Use the release's strict >0.5 LIBERO gripper threshold, including ties.
+
+    Adapted from Streaming-WAM, Xuyao Huang et al., revision
+    ff36d6e66514afd65bf957a06a0a2410f182b0e3. Copyright 2026 Shaohua Pan.
+    Apache-2.0; see the repository root LICENSE.
+    """
+
+    def action(self, action: PolicyAction) -> PolicyAction:
+        result = super().action(action)
+        # The inherited bounds checks run before we access any dimension.
+        for dim in self.toggle_dimensions:
+            result[..., dim] = torch.where(action[..., dim] > 0.5, -1.0, 1.0)
+        return result
 
 
 def make_fastwam_pre_post_processors(
@@ -108,9 +147,10 @@ def make_fastwam_pre_post_processors(
     output_steps: list[ProcessorStep] = [
         steps.unnormalize,
     ]
+    if config.streaming_wam:
+        input_steps.append(StreamingWAMStateClamp())
     if config.toggle_action_dimensions:
-        output_steps.append(
-            FastWAMActionToggleProcessorStep(toggle_dimensions=config.toggle_action_dimensions)
-        )
+        toggle_cls = StreamingWAMActionToggle if config.streaming_wam else FastWAMActionToggleProcessorStep
+        output_steps.append(toggle_cls(toggle_dimensions=config.toggle_action_dimensions))
     output_steps.append(steps.to_cpu)
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
