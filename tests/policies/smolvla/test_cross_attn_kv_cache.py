@@ -26,10 +26,12 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.common.vla_utils import make_att_2d_masks
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.utils.random_utils import set_seed
-from tests.utils import require_cuda, skip_if_package_missing
+from tests.utils import skip_if_package_missing
+
+DEVICES = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
 
 
-def _make_model_and_inputs(dtype):
+def _make_model_and_inputs(dtype, device):
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
     set_seed(0)
@@ -42,7 +44,6 @@ def _make_model_and_inputs(dtype):
     }
     config.output_features = {"action": PolicyFeature(type=FeatureType.ACTION, shape=(7,))}
 
-    device = torch.device("cuda")
     model = SmolVLAPolicy(config).to(device=device, dtype=dtype).eval().model
     # denoise_step upcasts the expert output to float32 before action_out_proj
     model.action_out_proj.to(dtype=torch.float32)
@@ -58,11 +59,11 @@ def _make_model_and_inputs(dtype):
 
 
 @skip_if_package_missing("transformers")
-@require_cuda
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("device", DEVICES)
 @torch.no_grad()
-def test_precomputed_cross_attn_kv_matches_per_step(dtype):
-    model, inputs = _make_model_and_inputs(dtype)
+def test_precomputed_cross_attn_kv_matches_per_step(dtype, device):
+    model, inputs = _make_model_and_inputs(dtype, device)
     prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(**inputs)
     _, past_key_values = model.vlm_with_expert.forward(
         attention_mask=make_att_2d_masks(prefix_pad_masks, prefix_att_masks),
@@ -74,9 +75,16 @@ def test_precomputed_cross_attn_kv_matches_per_step(dtype):
 
     cross_attn_kv = model.vlm_with_expert.precompute_cross_attn_kv(past_key_values)
     assert set(cross_attn_kv) == {1}
+    frozen = tuple((layer.keys, layer.values) for layer in past_key_values.layers)
+    from_tuple = model.vlm_with_expert.precompute_cross_attn_kv(frozen)
+    assert from_tuple.keys() == cross_attn_kv.keys()
+    for layer_idx, (key, value) in cross_attn_kv.items():
+        tuple_key, tuple_value = from_tuple[layer_idx]
+        assert torch.equal(key, tuple_key)
+        assert torch.equal(value, tuple_value)
 
-    x_t = torch.randn(1, model.config.chunk_size, model.config.max_action_dim, device="cuda", dtype=dtype)
-    timestep = torch.full((1,), 0.4, device="cuda")
+    x_t = torch.randn(1, model.config.chunk_size, model.config.max_action_dim, device=device, dtype=dtype)
+    timestep = torch.full((1,), 0.4, device=device)
     kwargs = {"prefix_pad_masks": prefix_pad_masks, "x_t": x_t, "timestep": timestep}
 
     expected = model.denoise_step(past_key_values=copy.deepcopy(past_key_values), **kwargs)
@@ -88,16 +96,16 @@ def test_precomputed_cross_attn_kv_matches_per_step(dtype):
 
 
 @skip_if_package_missing("transformers")
-@require_cuda
+@pytest.mark.parametrize("device", DEVICES)
 @torch.no_grad()
-def test_sample_actions_projects_prefix_kv_once_per_chunk():
-    model, inputs = _make_model_and_inputs(torch.float32)
+def test_sample_actions_projects_prefix_kv_once_per_chunk(device):
+    model, inputs = _make_model_and_inputs(torch.float32, device)
     vlm = model.vlm_with_expert
-    noise = torch.randn(1, model.config.chunk_size, model.config.max_action_dim, device="cuda")
+    noise = torch.randn(1, model.config.chunk_size, model.config.max_action_dim, device=device)
 
     with mock.patch.object(vlm, "_project_prefix_kv", wraps=vlm._project_prefix_kv) as project:
         got = model.sample_actions(**inputs, noise=noise)
-    # One cross-attention layer, projected once for the whole chunk.
+    # The test model has one cross-attention layer.
     assert project.call_count == 1
 
     with (

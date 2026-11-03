@@ -415,8 +415,17 @@ class SmolVLMWithExpertModel(nn.Module):
         )
         return key_states, value_states
 
+    def _read_prefix_kv(self, past_key_values, layer_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return prefix K/V in ``(batch, seq, kv_heads, head_dim)`` layout."""
+        if isinstance(past_key_values, tuple):
+            key_states, value_states = past_key_values[layer_idx]
+        else:
+            key_states = past_key_values.layers[layer_idx].keys
+            value_states = past_key_values.layers[layer_idx].values
+        return key_states.transpose(1, 2), value_states.transpose(1, 2)
+
     def precompute_cross_attn_kv(
-        self, past_key_values: "DynamicCache"
+        self, past_key_values: "DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...]"
     ) -> dict[int, tuple[torch.Tensor, torch.Tensor]]:
         """Project the fixed prefix K/V into every cross-attention expert once per action chunk.
 
@@ -440,8 +449,7 @@ class SmolVLMWithExpertModel(nn.Module):
             expert_layer = model_layers[1][layer_idx]
             if expert_layer is None:
                 continue
-            key_states = past_key_values.layers[layer_idx].keys.transpose(1, 2)
-            value_states = past_key_values.layers[layer_idx].values.transpose(1, 2)
+            key_states, value_states = self._read_prefix_kv(past_key_values, layer_idx)
             expert_kv[layer_idx] = self._project_prefix_kv(expert_layer, key_states, value_states)
         return expert_kv
 

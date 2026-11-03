@@ -837,7 +837,7 @@ class VLAFlowMatching(nn.Module):
         past_key_values,
         x_t,
         timestep,
-        cross_attn_kv=None,
+        cross_attn_kv: dict[int, tuple[torch.Tensor, torch.Tensor]] | None = None,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, timestep)
