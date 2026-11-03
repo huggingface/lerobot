@@ -59,8 +59,13 @@ class OnlineOfflineMixer(DataMixer):
         if self.offline_buffer is None:
             return self.online_buffer.sample(batch_size)
 
-        n_online = max(1, int(batch_size * self.online_ratio))
+        n_online = max(1, int(batch_size * self.online_ratio)) if self.online_ratio > 0 else 0
         n_offline = batch_size - n_online
+
+        if n_online == 0:
+            return self.offline_buffer.sample(batch_size)
+        if n_offline == 0:
+            return self.online_buffer.sample(batch_size)
 
         online_batch = self.online_buffer.sample(n_online)
         offline_batch = self.offline_buffer.sample(n_offline)
@@ -74,7 +79,19 @@ class OnlineOfflineMixer(DataMixer):
     ):
         """Yield batches by composing buffer async iterators."""
 
-        n_online = max(1, int(batch_size * self.online_ratio))
+        if self.offline_buffer is None:
+            yield from self.online_buffer.get_iterator(
+                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=queue_size
+            )
+            return
+
+        n_online = max(1, int(batch_size * self.online_ratio)) if self.online_ratio > 0 else 0
+        n_offline = batch_size - n_online
+        if n_online == 0:
+            yield from self.offline_buffer.get_iterator(
+                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=queue_size
+            )
+            return
 
         online_iter = self.online_buffer.get_iterator(
             batch_size=n_online,
@@ -82,11 +99,10 @@ class OnlineOfflineMixer(DataMixer):
             queue_size=queue_size,
         )
 
-        if self.offline_buffer is None:
+        if n_offline == 0:
             yield from online_iter
             return
 
-        n_offline = batch_size - n_online
         offline_iter = self.offline_buffer.get_iterator(
             batch_size=n_offline,
             async_prefetch=async_prefetch,
