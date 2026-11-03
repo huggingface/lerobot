@@ -31,8 +31,10 @@ from lerobot.policies.flow_dagger import (
 )
 from lerobot.policies.flow_dagger.inversion import (
     InversionResult,
+    SampleSelection,
     frames_to_next_intervention,
     hold_last_beyond,
+    invert_dataset,
     segment_run_lengths,
     select_samples,
     summarize_inversion,
@@ -192,6 +194,115 @@ def test_policy_noise_fn_seeds_denoising(make_model):
     assert len(seen) == 1
 
 
+def test_smolvla_invert_action_chunk_leaves_caller_batch_untouched():
+    pytest.importorskip("transformers")
+    from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+    from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+    from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+
+    policy = SmolVLAPolicy.__new__(SmolVLAPolicy)
+    nn.Module.__init__(policy)
+    policy.config = SmolVLAConfig(adapt_to_pi_aloha=True, chunk_size=_H, n_action_steps=_H)
+    seen = {}
+    policy.prepare_images = lambda batch: (None, None)
+    policy.prepare_state = lambda batch: batch[OBS_STATE]
+    policy.prepare_action = lambda batch: seen.setdefault("action", batch[ACTION])
+
+    class _Model(nn.Module):
+        def invert_actions(self, *args, **kwargs):
+            return torch.zeros(1), torch.zeros(1)
+
+    policy.model = _Model()
+    gen = torch.Generator().manual_seed(0)
+    batch = {
+        OBS_STATE: torch.rand(_B, 14, generator=gen),
+        ACTION: torch.rand(_B, _H, 14, generator=gen),
+        OBS_LANGUAGE_TOKENS: torch.zeros(_B, 1, dtype=torch.long),
+        OBS_LANGUAGE_ATTENTION_MASK: torch.ones(_B, 1, dtype=torch.bool),
+    }
+    original = {k: v.clone() for k, v in batch.items()}
+
+    policy.invert_action_chunk(batch)
+
+    for key, value in original.items():
+        torch.testing.assert_close(batch[key], value)
+    assert not torch.equal(seen["action"], original[ACTION])  # the transform did apply internally
+
+
+class _RecordingPolicy:
+    """Minimal InvertiblePolicy that records the preprocessed batches it is given."""
+
+    def __init__(self, chunk_size: int, action_dim: int):
+        from lerobot.configs.types import FeatureType, PolicyFeature
+        from lerobot.utils.constants import ACTION
+
+        self.config = type(
+            "Cfg",
+            (),
+            {
+                "chunk_size": chunk_size,
+                "max_action_dim": action_dim,
+                "output_features": {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
+            },
+        )()
+        self.batches: list[dict] = []
+
+    def invert_action_chunk(self, batch, *, num_fixed_point_iters=5):
+        from lerobot.utils.constants import ACTION
+
+        self.batches.append(batch)
+        return batch[ACTION].clone(), torch.zeros(batch[ACTION].shape[0], 2)
+
+    def predict_action_chunk(self, batch, *, noise=None):
+        return noise
+
+    def reset(self):
+        pass
+
+
+def test_invert_dataset_applies_rename_map_before_cropping():
+    from lerobot.utils.constants import ACTION
+
+    chunk, action_dim, n = 3, 2, 4
+    cam_raw, cam = "observation.images.top_raw", "observation.images.top"
+    items = [
+        {
+            "actions": torch.full((chunk, action_dim), float(i)),
+            "actions_is_pad": torch.zeros(chunk, dtype=torch.bool),
+            cam_raw: torch.full((3, 2, 2), 255, dtype=torch.uint8),
+        }
+        for i in range(n)
+    ]
+    for item in items:
+        item["actions"][-1] = 99.0  # beyond valid_len: must be replaced by the last valid action
+    selection = SampleSelection(
+        intervention_positions=np.array([0, 1]),
+        autonomous_positions=np.array([2, 3]),
+        valid_len=np.full(n, 2),
+    )
+    policy = _RecordingPolicy(chunk, action_dim)
+
+    result = invert_dataset(
+        policy,
+        lambda batch: batch,
+        items,
+        selection,
+        device=torch.device("cpu"),
+        batch_size=2,
+        num_workers=0,
+        rename_map={"actions": ACTION, cam_raw: cam},
+        camera_keys=[cam_raw],
+        progress=False,
+    )
+
+    assert len(result) == n
+    for batch in policy.batches:
+        assert "actions" not in batch and f"{ACTION}_is_pad" not in batch
+        assert batch[cam].dtype == torch.float32 and torch.all(batch[cam] == 1.0)
+        torch.testing.assert_close(batch[ACTION][:, -1], batch[ACTION][:, 1])
+    torch.testing.assert_close(result.reconstruction_mse, torch.zeros(n))
+
+
 # ---------------------------------------------------------------------------
 # Sample selection
 # ---------------------------------------------------------------------------
@@ -297,9 +408,13 @@ def test_noise_policy_holder(tmp_path):
     assert isinstance(loaded, NoisePolicy) and not loaded.training
     assert holder.get(str(tmp_path / "np"), **kwargs) is loaded  # cached
 
-    in_memory = NoisePolicy(_noise_cfg())
+    in_memory = NoisePolicy(_noise_cfg(dropout=0.5))
+    assert in_memory.training
     holder.set(in_memory)
     assert holder.get(None, **kwargs) is in_memory
+    # Attached in memory, it is frozen exactly like a path-loaded noise policy (dropout off).
+    assert not in_memory.training
+    assert not any(p.requires_grad for p in in_memory.parameters())
     with pytest.raises(ValueError, match="chunk_size"):
         NoisePolicyHolder().get(str(tmp_path / "np"), **{**kwargs, "chunk_size": 50})
 
@@ -343,3 +458,20 @@ def test_train_noise_policy_fits_targets():
     assert metrics["val/autonomous_mse"] < 0.1 * baseline
     stats = summarize_inversion(data)
     assert stats["intervention/num_samples"] == 64 and stats["autonomous/num_samples"] == n - 64
+
+
+# ---------------------------------------------------------------------------
+# Training script
+# ---------------------------------------------------------------------------
+
+
+def test_checkpoint_fingerprint_tracks_local_changes(tmp_path):
+    from lerobot.scripts.lerobot_train_flow_dagger import _checkpoint_fingerprint
+
+    (tmp_path / "model.safetensors").write_bytes(b"weights-v1")
+    (tmp_path / "policy_preprocessor.json").write_text("{}")
+    first = _checkpoint_fingerprint(tmp_path, None)
+    assert first is not None and first == _checkpoint_fingerprint(tmp_path, None)
+
+    (tmp_path / "model.safetensors").write_bytes(b"weights-v2-longer")
+    assert _checkpoint_fingerprint(tmp_path, None) != first

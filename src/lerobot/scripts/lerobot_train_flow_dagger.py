@@ -49,6 +49,7 @@ from pathlib import Path
 from pprint import pformat
 
 import torch
+from huggingface_hub import HfApi
 from safetensors.torch import load_file, save_file
 
 from lerobot import policies  # noqa: F401  (registers policy configs for draccus)
@@ -135,8 +136,9 @@ class FlowDAggerTrainPipelineConfig:
     def __post_init__(self) -> None:
         policy_path = parser.get_path_arg("policy")
         if policy_path:
-            cli_overrides = parser.get_cli_overrides("policy") or []
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            # Same precedence as TrainPipelineConfig: config-file policy fields, then CLI flags.
+            overrides = parser.get_yaml_overrides("policy") + (parser.get_cli_overrides("policy") or [])
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=overrides)
             self.policy.pretrained_path = Path(policy_path)
 
         if not self.job_name:
@@ -170,9 +172,36 @@ def _num_inference_steps(policy_cfg: PreTrainedConfig) -> int:
     return int(policy_cfg.num_inference_steps if policy_cfg.type == "pi05" else policy_cfg.num_steps)
 
 
-def _cache_key(cfg: FlowDAggerTrainPipelineConfig, dataset: LeRobotDataset, min_valid_steps: int) -> str:
+def _checkpoint_fingerprint(pretrained_path: str | Path, revision: str | None) -> str | None:
+    """An identity for the base checkpoint that changes whenever its weights or processors do.
+
+    Local directories are fingerprinted by the name, size and modification time of every file
+    (weights are not hashed: they can be several GB). Hub repos resolve ``revision`` to its
+    immutable commit sha. Returns None when no identity can be established (e.g. offline).
+    """
+    path = Path(pretrained_path)
+    if path.is_dir():
+        digest = hashlib.sha1(usedforsecurity=False)
+        for file in sorted(p for p in path.rglob("*") if p.is_file()):
+            stat = file.stat()
+            digest.update(f"{file.relative_to(path)}:{stat.st_size}:{stat.st_mtime_ns};".encode())
+        return f"local:{digest.hexdigest()}"
+    try:
+        return f"hub:{HfApi().model_info(str(pretrained_path), revision=revision).sha}"
+    except Exception as e:  # noqa: BLE001  (network / auth errors only disable cache reuse)
+        logger.warning("Could not resolve the commit of %s (%s)", pretrained_path, e)
+        return None
+
+
+def _cache_key(
+    cfg: FlowDAggerTrainPipelineConfig,
+    dataset: LeRobotDataset,
+    min_valid_steps: int,
+    checkpoint_fingerprint: str,
+) -> str:
     assert cfg.policy is not None
     payload = {
+        "checkpoint": checkpoint_fingerprint,
         "repo_id": dataset.repo_id,
         "revision": cfg.dataset.revision,
         "root": str(dataset.root),
@@ -218,6 +247,7 @@ def train_flow_dagger(cfg: FlowDAggerTrainPipelineConfig) -> Path:
     preprocessor, _ = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
+        pretrained_revision=cfg.policy.pretrained_revision,
         preprocessor_overrides={
             "device_processor": {"device": str(device)},
             "rename_observations_processor": {"rename_map": cfg.rename_map},
@@ -225,6 +255,12 @@ def train_flow_dagger(cfg: FlowDAggerTrainPipelineConfig) -> Path:
     )
 
     min_valid_steps = cfg.inversion.min_valid_steps or cfg.policy.n_action_steps
+    use_cache = cfg.inversion.use_cache
+    assert cfg.policy.pretrained_path is not None  # checked in validate()
+    fingerprint = _checkpoint_fingerprint(cfg.policy.pretrained_path, cfg.policy.pretrained_revision)
+    if use_cache and fingerprint is None:
+        logger.warning("Base checkpoint identity unknown: the inversion cache is disabled for this run.")
+        use_cache = False
     results: list[InversionResult] = []
     for repo_id, root in zip(cfg.dataset.repo_ids, roots, strict=True):
         meta = LeRobotDatasetMetadata(repo_id, root=root, revision=cfg.dataset.revision)
@@ -235,8 +271,12 @@ def train_flow_dagger(cfg: FlowDAggerTrainPipelineConfig) -> Path:
             delta_timestamps=resolve_delta_timestamps(cfg.policy, meta, cfg.rename_map),
             video_backend=cfg.dataset.video_backend,
         )
-        cache_file = cache_dir / f"{_cache_key(cfg, dataset, min_valid_steps)}.safetensors"
-        if cfg.inversion.use_cache and cache_file.exists():
+        cache_file = None
+        if use_cache:
+            assert fingerprint is not None
+            key = _cache_key(cfg, dataset, min_valid_steps, fingerprint)
+            cache_file = cache_dir / f"{key}.safetensors"
+        if cache_file is not None and cache_file.exists():
             logger.info("Loading cached inversion for %s from %s", repo_id, cache_file)
             results.append(InversionResult.from_dict(load_file(str(cache_file))))
             continue
@@ -272,7 +312,7 @@ def train_flow_dagger(cfg: FlowDAggerTrainPipelineConfig) -> Path:
             camera_keys=meta.camera_keys,
         )
         logger.info("%s inversion: %s", repo_id, pformat(summarize_inversion(result)))
-        if cfg.inversion.use_cache and len(result) > 0:
+        if cache_file is not None and len(result) > 0:
             cache_dir.mkdir(parents=True, exist_ok=True)
             save_file(result.to_dict(), str(cache_file))
         results.append(result)
@@ -310,8 +350,6 @@ def train_flow_dagger(cfg: FlowDAggerTrainPipelineConfig) -> Path:
     logger.info("Saved noise policy to %s", save_dir)
 
     if cfg.push_to_hub:
-        from huggingface_hub import HfApi
-
         assert cfg.repo_id is not None
         api = HfApi()
         api.create_repo(cfg.repo_id, repo_type="model", private=cfg.private, exist_ok=True)

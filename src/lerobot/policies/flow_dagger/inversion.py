@@ -299,6 +299,7 @@ def invert_dataset(
         pin_memory=device.type == "cuda",
     )
     action_dim = policy.config.output_features[ACTION].shape[0]
+    renamed_camera_keys = [(rename_map or {}).get(key, key) for key in camera_keys]
 
     features, noises, mses = [], [], []
     iterator: Any = loader
@@ -309,13 +310,15 @@ def invert_dataset(
     for batch in iterator:
         pos = batch.pop("_flow_dagger_pos")
         valid_len = valid_len_all[pos]
+        # Canonicalise dataset keys (and their `_is_pad` companions) before touching them.
+        batch = rename_batch_keys(batch, rename_map)
         # Keep each chunk inside its segment before normalisation / relative-action transforms.
         batch[ACTION] = hold_last_beyond(batch[ACTION], valid_len)
         batch.pop(f"{ACTION}_is_pad", None)
-        for cam_key in camera_keys:
+        for cam_key in renamed_camera_keys:
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                 batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
-        batch = preprocessor(rename_batch_keys(batch, rename_map))
+        batch = preprocessor(batch)
 
         noise, feats = policy.invert_action_chunk(batch, num_fixed_point_iters=num_fixed_point_iters)
         features.append(feats.float().cpu())

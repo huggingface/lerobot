@@ -217,6 +217,13 @@ class NoisePolicyHolder:
         return self._noise_policy
 
     def set(self, noise_policy: NoisePolicy | None) -> None:
-        """Attach an in-memory noise policy (e.g. right after training)."""
+        """Attach an in-memory noise policy (e.g. right after training).
+
+        The holder lives outside the base policy's module tree, so ``policy.eval()`` never
+        reaches the noise policy: freeze it here, as for path-loaded noise policies, so that
+        dropout cannot make the starting noise non-deterministic.
+        """
+        if noise_policy is not None:
+            noise_policy.eval().requires_grad_(False)
         self._noise_policy = noise_policy
         self._loaded_from = _IN_MEMORY if noise_policy is not None else None
