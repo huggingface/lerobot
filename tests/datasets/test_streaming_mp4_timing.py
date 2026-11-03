@@ -21,8 +21,6 @@ import pytest
 from numpy.typing import NDArray
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
-pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
-
 from lerobot.streaming import episode_cache
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
