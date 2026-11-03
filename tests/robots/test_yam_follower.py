@@ -37,20 +37,30 @@ from lerobot.robots.yam_follower.config_yam_follower import (
 )
 
 
-def make_robot(tmp_path, **overrides):
+def gripper_calibration(closed=0.1, opened=6.1):
+    """Calibration of gripper stops at `closed` and `opened` raw radians, kept exact (calibrate() rounds)."""
+    low, high = sorted(math.degrees(value) for value in (closed, opened))
+    return robot_module.MotorCalibration(
+        id=7, drive_mode=int(opened < closed), homing_offset=0, range_min=low, range_max=high
+    )
+
+
+def make_robot(tmp_path, *, gripper=(0.1, 6.1), **overrides):
     config = {
         "id": "test",
         "calibration_dir": tmp_path,
         "port": "can0",
-        "gripper_closed_deg": math.degrees(0.1),
-        "gripper_open_deg": math.degrees(6.1),
         "gravity_compensation": False,
         # Equal to the former radian defaults, so the control numbers below stay unchanged.
         "max_joint_speed_deg_s": math.degrees(0.3),
         "max_tracking_error_deg": math.degrees(0.15),
         **overrides,
     }
-    return YamFollower(YamFollowerRobotConfig(**config))
+    robot = YamFollower(YamFollowerRobotConfig(**config))
+    if gripper is not None:
+        robot.calibration = {"gripper": gripper_calibration(*gripper)}
+        robot._refresh_params()
+    return robot
 
 
 @pytest.fixture
@@ -60,7 +70,7 @@ def robot(tmp_path, monkeypatch):
 
 
 def params(robot):
-    return robot_module._yam_arm_params(robot.config)
+    return robot_module._yam_arm_params(robot.config, robot.calibration["gripper"])
 
 
 def raw_states(gripper=0.1):
@@ -108,7 +118,7 @@ def ready(robot):
 
 @pytest.mark.parametrize("opened", [6.1, -5.9])
 def test_units_order_and_gripper_polarity(robot, opened):
-    robot.config.gripper_open_deg = math.degrees(opened)
+    robot.calibration["gripper"] = gripper_calibration(0.1, opened)
     raw = [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, (0.1 + opened) / 2]
     robot.config.joint_signs[0] = -1
     robot.config.joint_offsets_deg[0] = math.degrees(0.2)
@@ -300,7 +310,7 @@ def test_slew_gripper_torque_and_gravity_feedforward(robot):
 
 @pytest.mark.parametrize("polarity", [-1, 1])
 def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
-    robot.config.gripper_open_deg = robot.config.gripper_closed_deg + polarity * math.degrees(6.0)
+    robot.calibration["gripper"] = gripper_calibration(0.1, 0.1 + polarity * 6.0)
     grip = params(robot).gripper
     assert (grip.kp, grip.kd, grip.force_limit_n, grip.finger_stroke_m) == (20.0, 0.5, 50.0, 0.096)
     limiter = mit_control._GripperForceLimiter(grip)
@@ -415,7 +425,7 @@ def test_calibration_connection_never_enables_motor(robot, monkeypatch):
 
 def test_connect_calibrates_missing_gripper_endpoints(tmp_path, monkeypatch):
     monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
-    robot = make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
+    robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
 
     def prompt(text):
@@ -550,7 +560,9 @@ def measure_gripper(robot, monkeypatch, *, closed=0.1, opened=6.1, answers=()):
     return prompts
 
 
-def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
+def test_single_arm_calibration_preserves_factory_zeros(tmp_path, monkeypatch):
+    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
+    robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
     robot.connect(calibrate=False)
     prompts = measure_gripper(robot, monkeypatch)
@@ -558,7 +570,6 @@ def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
     assert (calibration.homing_offset, calibration.drive_mode) == (0, 0)
     # Raw motor angles of the stops, in whole degrees.
     assert (calibration.range_min, calibration.range_max) == (6, 350)
-    assert robot.config.gripper_open_deg == 350.0
     assert robot.params is not None
     assert robot.params.gripper.open == pytest.approx(6.1, abs=0.01)
     assert all("[test]" in text for text in prompts)
@@ -570,20 +581,20 @@ def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
 def saved_calibration_robot(tmp_path, monkeypatch, *, closed=0.1, opened=6.1):
     """Calibrate once, then build a new robot that only knows the saved file."""
     monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
-    first = make_robot(tmp_path)
+    first = make_robot(tmp_path, gripper=None)
     mock_hardware(first, monkeypatch)
     first.connect(calibrate=False)
     measure_gripper(first, monkeypatch, closed=closed, opened=opened)
     first.disconnect()
-    return make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
+    return make_robot(tmp_path, gripper=None)
 
 
 @pytest.mark.parametrize("closed,opened", [(0.1, 6.1), (6.1, 0.1)])
 def test_saved_calibration_loads_either_polarity(tmp_path, monkeypatch, closed, opened):
     robot = saved_calibration_robot(tmp_path, monkeypatch, closed=closed, opened=opened)
     assert robot.is_calibrated
-    assert robot.config.gripper_closed_deg == round(math.degrees(closed))
-    assert robot.config.gripper_open_deg == round(math.degrees(opened))
+    assert robot.params.gripper.closed == pytest.approx(math.radians(round(math.degrees(closed))))
+    assert robot.params.gripper.open == pytest.approx(math.radians(round(math.degrees(opened))))
 
 
 def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch):
@@ -597,38 +608,18 @@ def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch
 
     prompts = measure_gripper(robot, monkeypatch, opened=5.1, answers=["c"])
     assert len(prompts) == 3
-    assert robot.config.gripper_open_deg == round(math.degrees(5.1))
+    assert robot.params.gripper.open == pytest.approx(math.radians(round(math.degrees(5.1))))
     robot.disconnect()
 
 
-def test_count_based_calibration_file_asks_to_recalibrate(tmp_path, monkeypatch):
-    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
-    robot = make_robot(tmp_path)
-    robot.calibration = {
-        "gripper": robot_module.MotorCalibration(
-            id=7, drive_mode=0, homing_offset=0, range_min=33000, range_max=48000
-        )
-    }
-    robot._save_calibration()
-    with pytest.raises(ValueError, match="run lerobot-calibrate again"):
-        make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
-
-
-def test_gripper_stroke_is_checked_in_degrees(tmp_path, monkeypatch):
-    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
-    for open_deg in (2.0, 600.0):  # outside 0.5 to 10 rad
-        with pytest.raises(ValueError, match="Gripper stroke"):
-            make_robot(tmp_path, gripper_closed_deg=0.0, gripper_open_deg=open_deg)
-    # A saved calibration goes through the same check.
-    robot = make_robot(tmp_path)
-    robot.calibration = {
-        "gripper": robot_module.MotorCalibration(
-            id=7, drive_mode=0, homing_offset=0, range_min=6, range_max=8
-        )
-    }
-    robot._save_calibration()
+@pytest.mark.parametrize("opened", [0.2, 11.0])  # strokes outside 0.5 to 10 rad
+def test_calibration_refuses_an_implausible_stroke(robot, monkeypatch, opened):
+    mock_hardware(robot, monkeypatch)
+    robot.connect(calibrate=False)
     with pytest.raises(ValueError, match="Gripper stroke"):
-        make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
+        measure_gripper(robot, monkeypatch, opened=opened, answers=["c"])
+    assert not robot.calibration_fpath.is_file()
+    robot.disconnect()
 
 
 def test_servo_error_stops_single_arm_until_disconnect(robot):

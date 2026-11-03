@@ -35,9 +35,6 @@ JOINT_LIMITS_RAD = (
     (-2.0944, 2.0944),
 )
 JOINT_LIMITS_DEG = tuple((math.degrees(lower), math.degrees(upper)) for lower, upper in JOINT_LIMITS_RAD)
-DM_MIT_POSITION_LIMIT_RAD = 12.5
-# Plausible raw motor travel between the two gripper stops (0.5 to 10 rad).
-GRIPPER_STROKE_RANGE_DEG = (math.degrees(0.5), math.degrees(10.0))
 
 
 def motor_feature_names(use_velocity_and_torque: bool = False) -> tuple[str, ...]:
@@ -53,10 +50,6 @@ class YamFollowerConfig:
     port: str
     # Linux USB serial verification prevents can0/can1 enumeration swapping arms.
     expected_adapter_serial: str | None = None
-    # Raw motor angles at the physical closed and open stops, normally loaded from calibration.
-    # Either polarity is supported; no nominal stroke or automatic homing guess.
-    gripper_closed_deg: float | None = None
-    gripper_open_deg: float | None = None
     joint_signs: list[float] = field(default_factory=lambda: [1.0] * 6)
     joint_offsets_deg: list[float] = field(default_factory=lambda: [0.0] * 6)
     # A check, NOT a motion command. Place the supported arm in this pose before enabling
@@ -144,18 +137,6 @@ class YamFollowerConfig:
                         f"{name} initial position must be between {lower:.1f} and {upper:.1f} degrees; "
                         f"got {value}"
                     )
-        closed = self.gripper_closed_deg
-        opened = self.gripper_open_deg
-        if (closed is None) != (opened is None):
-            raise ValueError("Provide both gripper_closed_deg and gripper_open_deg, or neither")
-        if closed is not None and opened is not None:
-            low, high = GRIPPER_STROKE_RANGE_DEG
-            stroke = abs(opened - closed)
-            if not low <= stroke <= high:
-                raise ValueError(
-                    f"Gripper stroke must be between {low:.0f} and {high:.0f} raw motor degrees; "
-                    f"got {stroke:.0f}"
-                )
 
 
 @RobotConfig.register_subclass("yam_follower")
@@ -168,10 +149,6 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
             Linux SocketCAN interface used by the arm, for example `can0`.
         expected_adapter_serial (`str | None`, *optional*):
             USB adapter serial used to detect swapped CAN interfaces.
-        gripper_closed_deg (`float | None`, *optional*):
-            Raw gripper motor angle at the closed stop, normally loaded from calibration.
-        gripper_open_deg (`float | None`, *optional*):
-            Raw gripper motor angle at the open stop, normally loaded from calibration.
         joint_signs (`list`, *optional*):
             Direction multiplier, `-1` or `1`, for each arm joint.
         joint_offsets_deg (`list`, *optional*):

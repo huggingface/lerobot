@@ -31,24 +31,32 @@ from lerobot.robots.yam_follower import (
 
 
 def arm_config(port="can0", **kwargs):
-    return YamFollowerConfig(
-        port=port,
-        gripper_closed_deg=math.degrees(0.1),
-        gripper_open_deg=math.degrees(6.1),
-        gravity_compensation=False,
-        **kwargs,
-    )
+    return YamFollowerConfig(port=port, gravity_compensation=False, **kwargs)
+
+
+def calibrate_arms(robot):
+    """Give both arms gripper stops at 0.1 and 6.1 raw radians."""
+    for arm in robot.arms.values():
+        arm.calibration = {
+            "gripper": yam_module.MotorCalibration(
+                id=7, drive_mode=0, homing_offset=0, range_min=math.degrees(0.1), range_max=math.degrees(6.1)
+            )
+        }
+        arm._refresh_params()
+    return robot
 
 
 @pytest.fixture
 def robot(tmp_path, monkeypatch):
     monkeypatch.setattr(yam_module, "require_package", lambda *a, **kw: None)
-    return BiYamFollower(
-        BiYamFollowerConfig(
-            id="test",
-            calibration_dir=tmp_path,
-            left_arm_config=arm_config("can0"),
-            right_arm_config=arm_config("can1"),
+    return calibrate_arms(
+        BiYamFollower(
+            BiYamFollowerConfig(
+                id="test",
+                calibration_dir=tmp_path,
+                left_arm_config=arm_config("can0"),
+                right_arm_config=arm_config("can1"),
+            )
         )
     )
 

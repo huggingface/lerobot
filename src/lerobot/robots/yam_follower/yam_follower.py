@@ -43,8 +43,6 @@ from lerobot.utils.import_utils import (
 
 from ..robot import Robot
 from .config_yam_follower import (
-    DM_MIT_POSITION_LIMIT_RAD,
-    GRIPPER_STROKE_RANGE_DEG,
     JOINT_LIMITS_RAD,
     MOTOR_NAMES,
     YAM_FEATURE_NAMES,
@@ -81,6 +79,8 @@ _MAX_GRAVITY_TORQUE_NM = 10.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
 _JOINT_FEEDBACK_TOLERANCE_RAD = 0.15
 _GRIPPER_FEEDBACK_MARGIN = 0.10
+# Plausible raw motor travel between the two gripper stops (0.5 to 10 rad).
+_GRIPPER_STROKE_RANGE_DEG = (math.degrees(0.5), math.degrees(10.0))
 # Damiao register 9 stores the CAN loss-of-communication timeout in 50 us ticks.
 _CAN_TIMEOUT_REGISTER = 9
 _CAN_TIMEOUT_TICK_US = 50
@@ -90,10 +90,10 @@ _MOTOR_IDS = range(1, len(MOTOR_NAMES) + 1)
 _FEEDBACK_ID_OFFSET = 0x10
 
 
-def _yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
-    """Build the internal control settings of a calibrated YAM arm from its config."""
-    if config.gripper_closed_deg is None or config.gripper_open_deg is None:
-        raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
+def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> MitArmParams:
+    """Build the internal control settings of a YAM arm from its config and gripper calibration."""
+    stops = (math.radians(gripper.range_min), math.radians(gripper.range_max))
+    closed, opened = stops[::-1] if gripper.drive_mode else stops
     return MitArmParams(
         joint_limits=_JOINT_LIMITS,
         joint_feedback_tolerance_rad=_JOINT_FEEDBACK_TOLERANCE_RAD,
@@ -106,8 +106,8 @@ def _yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
         gravity_factors=np.asarray(config.gravity_factors, dtype=float),
         max_gravity_torque=_MAX_GRAVITY_TORQUE_NM,
         gripper=CalibratedGripper(
-            closed=math.radians(config.gripper_closed_deg),
-            open=math.radians(config.gripper_open_deg),
+            closed=closed,
+            open=opened,
             kp=config.gripper_kp,
             kd=config.gripper_kd,
             max_speed=config.max_gripper_speed_s,
@@ -347,7 +347,6 @@ class YamFollower(Robot):
             str(self.id), self.bus, config, self._gravity_torque, stop_event or threading.Event()
         )
         self._connected = False
-        self._apply_gripper_calibration()
         self._refresh_params()
 
     @property
@@ -372,7 +371,7 @@ class YamFollower(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.config.gripper_closed_deg is not None and self.config.gripper_open_deg is not None
+        return "gripper" in self.calibration
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
@@ -456,19 +455,19 @@ class YamFollower(Robot):
             for _ in range(10):
                 samples.append(self.bus.read_states().position[6])
                 time.sleep(0.02)
-            if not np.isfinite(samples).all() or np.ptp(samples) > 0.03:
-                raise ValueError("Gripper moved or returned invalid feedback; calibration was not saved")
+            if np.ptp(samples) > 0.03:
+                raise ValueError("Gripper moved while it was measured; calibration was not saved")
             measurements[endpoint] = float(np.median(samples))
         closed, opened = measurements["closed"], measurements["open"]
         # Raw motor angles of the two stops, in whole degrees; drive_mode records which is closed.
         stops_deg = sorted(round(math.degrees(value)) for value in (closed, opened))
-        low, high = GRIPPER_STROKE_RANGE_DEG
-        if not (
-            abs(closed) <= DM_MIT_POSITION_LIMIT_RAD
-            and abs(opened) <= DM_MIT_POSITION_LIMIT_RAD
-            and low <= stops_deg[1] - stops_deg[0] <= high
-        ):
-            raise ValueError("Implausible gripper stroke; calibration was not saved")
+        stroke_deg = stops_deg[1] - stops_deg[0]
+        low, high = _GRIPPER_STROKE_RANGE_DEG
+        if not low <= stroke_deg <= high:
+            raise ValueError(
+                f"Gripper stroke of {stroke_deg} motor degrees is outside {low:.0f} to {high:.0f}; "
+                "calibration was not saved"
+            )
         previous: dict[str, MotorCalibration] = self.calibration
         self.calibration = {
             "gripper": MotorCalibration(
@@ -484,7 +483,6 @@ class YamFollower(Robot):
         except Exception:
             self.calibration = previous
             raise
-        self._apply_gripper_calibration(overwrite=True)
         self._refresh_params()
         logger.info("Saved gripper endpoints to %s. Joint zeros were not changed.", self.calibration_fpath)
 
@@ -572,8 +570,10 @@ class YamFollower(Robot):
         logger.info(f"{self} disconnected.")
 
     def _refresh_params(self) -> None:
-        """Rebuild the internal control settings from the config, once the gripper is calibrated."""
-        self.params = _yam_arm_params(self.config) if self.is_calibrated else None
+        """Rebuild the internal control settings, once the gripper is calibrated."""
+        self.params = (
+            _yam_arm_params(self.config, self.calibration["gripper"]) if self.is_calibrated else None
+        )
         self.servo.params = self.params
 
     def _require_params(self) -> MitArmParams:
@@ -636,26 +636,6 @@ class YamFollower(Robot):
                     camera.disconnect()
         finally:
             self._connected = False
-
-    def _apply_gripper_calibration(self, *, overwrite: bool = False) -> None:
-        calibration = self.calibration.get("gripper")
-        if calibration is None:
-            return
-        motor_limit_deg = math.degrees(DM_MIT_POSITION_LIMIT_RAD)
-        if not (
-            calibration.id == 7
-            and calibration.drive_mode in (0, 1)
-            and calibration.homing_offset == 0
-            and -motor_limit_deg <= calibration.range_min < calibration.range_max <= motor_limit_deg
-        ):
-            raise ValueError(
-                f"Invalid saved gripper calibration in {self.calibration_fpath}; run lerobot-calibrate again"
-            )
-        stops_deg = (float(calibration.range_min), float(calibration.range_max))
-        closed_deg, open_deg = stops_deg[::-1] if calibration.drive_mode else stops_deg
-        if overwrite or self.config.gripper_closed_deg is None:
-            self.config.gripper_closed_deg, self.config.gripper_open_deg = closed_deg, open_deg
-            self.config.__post_init__()
 
     def _save_calibration(self, fpath: Path | None = None) -> None:
         path = fpath if fpath is not None else self.calibration_fpath
