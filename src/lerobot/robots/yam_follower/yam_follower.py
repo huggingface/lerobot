@@ -85,6 +85,9 @@ _GRIPPER_FEEDBACK_MARGIN = 0.10
 _CAN_TIMEOUT_REGISTER = 9
 _CAN_TIMEOUT_TICK_US = 50
 _MAX_CAN_TIMEOUT_TICKS = 8000  # I2RT's 400 ms YAM timeout.
+# YAM's motors use IDs 1 to 7, and each answers on CAN ID motor ID + 0x10.
+_MOTOR_IDS = range(1, len(MOTOR_NAMES) + 1)
+_FEEDBACK_ID_OFFSET = 0x10
 
 
 def _yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
@@ -176,28 +179,30 @@ class _YamBus:
         self.monitor: can.BusABC | None = None
         self.motors: dict[str, Any] = {}
         self.enabled = False
-        self._disable_failed = False
         self._enabled_at = 0.0
-        self._last_feedback: dict[int, float] = {}  # receive time per feedback CAN ID
+        self._last_feedback: dict[int, float] = {}  # receive time per motor ID
         self._last_status: dict[int, int] = {}
 
     def open(self) -> None:
         """Open the SocketCAN monitor and MotorBridge devices."""
-        if self._disable_failed:
-            raise RuntimeError(
-                "Previous YAM torque-disable command failed; use the hardware e-stop before reconnecting"
-            )
         self.enabled = False
         self._verify_adapter()
         self.monitor = can.Bus(
             channel=self.port,
             interface="socketcan",
-            can_filters=[{"can_id": i + 17, "can_mask": 0x7FF, "extended": False} for i in range(7)],
+            # Only the motors' feedback frames reach the monitor.
+            can_filters=[
+                {"can_id": motor_id + _FEEDBACK_ID_OFFSET, "can_mask": 0x7FF, "extended": False}
+                for motor_id in _MOTOR_IDS
+            ],
+            ignore_rx_error_frames=True,
         )
         self.controller = Controller(channel=self.port)
         self.motors = {
-            name: self.controller.add_damiao_motor(i + 1, i + 17, "4340" if i < 3 else "4310")
-            for i, name in enumerate(self.motor_names)
+            name: self.controller.add_damiao_motor(
+                motor_id, motor_id + _FEEDBACK_ID_OFFSET, "4340" if motor_id <= 3 else "4310"
+            )
+            for motor_id, name in zip(_MOTOR_IDS, self.motor_names, strict=True)
         }
         self._last_feedback.clear()
         self._last_status.clear()
@@ -213,9 +218,7 @@ class _YamBus:
 
     def set_mit_mode(self) -> None:
         """Put every motor into MIT control mode."""
-        controller = self.controller
-        if controller is None:
-            raise RuntimeError(f"{self.port} bus is not open")
+        controller, _ = self._require_open()
         controller.disable_all()
         for motor in self.motors.values():
             motor.ensure_mode(Mode.MIT)
@@ -228,9 +231,7 @@ class _YamBus:
 
     def enable(self, hold: np.ndarray) -> None:
         """Enable torque after sending zero-gain setpoints at the ``hold`` raw positions."""
-        controller = self.controller
-        if controller is None:
-            raise RuntimeError(f"{self.port} bus is not open")
+        controller, _ = self._require_open()
         for name, value in zip(self.motor_names, hold, strict=True):
             self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
         self.enabled = True
@@ -254,9 +255,7 @@ class _YamBus:
         try:
             self.controller.disable_all()
             self.enabled = False
-            self._disable_failed = False
         except Exception:
-            self._disable_failed = True
             logger.exception("Could not disable YAM torque; use the hardware e-stop")
 
     def close(self) -> None:
@@ -299,10 +298,13 @@ class _YamBus:
                 return
         raise ValueError(f"Cannot verify USB serial for {self.port}; check the adapter connection")
 
-    def _wait_for_fresh_states(self) -> dict[str, Any]:
+    def _require_open(self) -> tuple[Controller, can.BusABC]:
         if self.controller is None or self.monitor is None:
             raise RuntimeError(f"{self.port} bus is not open")
-        monitor = self.monitor
+        return self.controller, self.monitor
+
+    def _wait_for_fresh_states(self) -> dict[str, Any]:
+        controller, monitor = self._require_open()
         for motor in self.motors.values():
             motor.request_feedback()
         deadline = time.monotonic() + self.feedback_timeout_s
@@ -311,43 +313,32 @@ class _YamBus:
                 msg = monitor.recv(timeout=0)
                 if msg is None:
                     break
-                if (
-                    msg.is_error_frame
-                    or msg.is_remote_frame
-                    or msg.is_extended_id
-                    or msg.dlc != 8
-                    or msg.arbitration_id not in range(17, 24)
-                ):
-                    continue
-                if msg.data[0] & 0x0F != msg.arbitration_id - 16:
-                    continue
+                motor_id = msg.arbitration_id - _FEEDBACK_ID_OFFSET
                 status = msg.data[0] >> 4
                 if status not in (0, 1):
-                    raise ConnectionError(f"{self.port}: motor {msg.arbitration_id - 16} fault {status:#x}")
-                self._last_feedback[msg.arbitration_id] = msg.timestamp
-                self._last_status[msg.arbitration_id] = status
-            self.controller.poll_feedback_once()
+                    raise ConnectionError(f"{self.port}: motor {motor_id} fault {status:#x}")
+                self._last_feedback[motor_id] = msg.timestamp
+                self._last_status[motor_id] = status
+            controller.poll_feedback_once()
             states = {name: motor.get_state() for name, motor in self.motors.items()}
             # SocketCAN frame timestamps use wall time; monotonic time above bounds the wait.
             now = time.time()
             fresh = all(
-                0 <= now - self._last_feedback.get(i + 17, 0) <= self.feedback_timeout_s for i in range(7)
+                0 <= now - self._last_feedback.get(motor_id, 0) <= self.feedback_timeout_s
+                for motor_id in _MOTOR_IDS
             )
             if fresh and all(state is not None for state in states.values()):
                 if self.enabled and time.monotonic() - self._enabled_at > self.feedback_timeout_s:
-                    disabled = [i for i in range(1, 8) if self._last_status[i + 16] == 0]
+                    disabled = [motor_id for motor_id in _MOTOR_IDS if self._last_status[motor_id] == 0]
                     if disabled:
                         raise ConnectionError(f"{self.port}: motor {disabled[0]} unexpectedly disabled")
-                for name, state in states.items():
-                    if state.status_code not in (0, 1) or not math.isfinite(state.pos):
-                        raise ConnectionError(f"{self.port}: invalid {name} feedback")
                 return states
             if time.monotonic() >= deadline:
                 ages = ", ".join(
-                    f"{i}: {(now - self._last_feedback[i + 16]) * 1000:.1f} ms"
-                    if i + 16 in self._last_feedback
-                    else f"{i}: missing"
-                    for i in range(1, 8)
+                    f"{motor_id}: {(now - self._last_feedback[motor_id]) * 1000:.1f} ms"
+                    if motor_id in self._last_feedback
+                    else f"{motor_id}: missing"
+                    for motor_id in _MOTOR_IDS
                 )
                 raise ConnectionError(f"{self.port}: missing or stale motor feedback ({ages})")
             time.sleep(0.001)

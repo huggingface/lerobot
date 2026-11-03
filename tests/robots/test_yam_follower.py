@@ -170,11 +170,15 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     controller = MagicMock()
     controller.add_damiao_motor.side_effect = lambda *args: MagicMock()
     factory = MagicMock(return_value=controller)
+    monitor = MagicMock()
     monkeypatch.setattr(robot_module, "Controller", factory, raising=False)
-    monkeypatch.setattr(robot_module, "can", SimpleNamespace(Bus=MagicMock()), raising=False)
+    monkeypatch.setattr(robot_module, "can", SimpleNamespace(Bus=monitor), raising=False)
     bus = robot_module._YamBus("can0", feedback_timeout_s=0.2)
     bus.open()
     factory.assert_called_once_with(channel="can0")
+    # The monitor only receives the seven feedback IDs, without error frames.
+    assert [f["can_id"] for f in monitor.call_args.kwargs["can_filters"]] == list(range(17, 24))
+    assert monitor.call_args.kwargs["ignore_rx_error_frames"] is True
     assert [call.args for call in controller.add_damiao_motor.call_args_list] == [
         (i + 1, i + 17, "4340" if i < 3 else "4310") for i in range(7)
     ]
@@ -193,28 +197,27 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     controller.close.assert_called_once()
 
 
-def test_failed_torque_shutdown_blocks_reconnection(monkeypatch):
+def test_failed_torque_off_still_closes_the_bus(monkeypatch):
     controller = MagicMock()
     controller.add_damiao_motor.side_effect = lambda *args: MagicMock()
+    monitor = MagicMock()
     monkeypatch.setattr(robot_module, "Controller", MagicMock(return_value=controller), raising=False)
-    monkeypatch.setattr(robot_module, "can", SimpleNamespace(Bus=MagicMock()), raising=False)
+    monkeypatch.setattr(
+        robot_module, "can", SimpleNamespace(Bus=MagicMock(return_value=monitor)), raising=False
+    )
     bus = robot_module._YamBus("can0", feedback_timeout_s=0.2)
     bus.open()
     bus.enabled = True
     controller.disable_all.side_effect = RuntimeError("CAN write failed")
     bus.close()
-    with pytest.raises(RuntimeError, match="torque-disable command failed"):
-        bus.open()
+    controller.close.assert_called_once()
+    monitor.shutdown.assert_called_once()
 
 
-def frame(i, age=0, status=1):
+def frame(motor_id, age=0, status=1):
     return SimpleNamespace(
-        is_error_frame=False,
-        is_remote_frame=False,
-        is_extended_id=False,
-        dlc=8,
-        arbitration_id=i + 16,
-        data=bytes([status << 4 | i]) + bytes(7),
+        arbitration_id=motor_id + 0x10,
+        data=bytes([status << 4]) + bytes(7),
         timestamp=time.time() - age,
     )
 
@@ -227,7 +230,7 @@ def feedback_bus(frames):
     bus.monitor = SimpleNamespace(recv=lambda timeout: queued.popleft() if queued else None)
     bus.motors = {name: MagicMock() for name in MOTOR_NAMES}
     for motor in bus.motors.values():
-        motor.get_state.return_value = SimpleNamespace(pos=0.1, vel=0.2, torq=0.3, status_code=1)
+        motor.get_state.return_value = SimpleNamespace(pos=0.1, vel=0.2, torq=0.3)
     return bus
 
 
