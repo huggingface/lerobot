@@ -160,7 +160,7 @@ RUN python -m robocasa.scripts.setup_macros && \
 
 # ---------------------------------------------------------------------------- RoboLab
 FROM base AS robolab_native
-# Isaac Sim's Kit renders through X and OpenGL libraries the CUDA base lacks; RoboLab's assets are git LFS objects.
+# Isaac Sim's Kit renders through X and OpenGL libraries the base lacks; RoboLab's assets are git LFS objects.
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libxt6 libopengl0 libglu1-mesa git-lfs \
