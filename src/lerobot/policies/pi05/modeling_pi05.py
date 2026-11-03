@@ -482,9 +482,8 @@ class PaliGemmaWithExpertModel(
         if image.ndim == 5:
             if frame_mask is None:
                 frame_mask = torch.ones(image.shape[:2], dtype=torch.bool, device=image.device)
-            vision_transformer = self.paligemma.model.vision_tower.vision_model
             features = encode_video_with_mem(
-                vision_transformer,
+                self.paligemma.model.vision_tower,
                 image,
                 frame_mask,
                 temporal_attention_every=temporal_attention_every,
