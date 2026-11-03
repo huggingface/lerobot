@@ -30,7 +30,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
-import httpx
 import torch.distributed as dist
 from huggingface_hub import (
     CommitInfo,
@@ -42,6 +41,7 @@ from huggingface_hub import (
     snapshot_download,
 )
 from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled
+from huggingface_hub.utils import httpx
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 

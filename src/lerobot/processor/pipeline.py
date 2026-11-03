@@ -726,8 +726,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             config_filename: The name of the pipeline's JSON configuration file. Always required
                 to prevent ambiguity when multiple configs exist (e.g., preprocessor vs postprocessor).
             force_download: Whether to force (re)downloading the files.
-            resume_download: Whether to resume a previously interrupted download.
-            proxies: A dictionary of proxy servers to use.
+            resume_download: Kept for backward compatibility and ignored. Downloads resume automatically.
+            proxies: Kept for backward compatibility and ignored. Use HTTP_PROXY and HTTPS_PROXY instead.
             token: The token to use as HTTP bearer authorization for private Hub repositories.
             cache_dir: The path to a specific cache folder to store downloaded files.
             local_files_only: If True, avoid downloading files from the Hub.
@@ -753,8 +753,6 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         is_local_source = model_path.is_dir() or model_path.is_file()
         hub_download_kwargs = {
             "force_download": force_download,
-            "resume_download": resume_download,
-            "proxies": proxies,
             "token": token,
             "cache_dir": cache_dir,
             "local_files_only": local_files_only,
