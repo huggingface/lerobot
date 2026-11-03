@@ -238,6 +238,25 @@ def test_forward_returns_per_sample_losses_under_reduction_none(monkeypatch):
     assert per_sample_loss.shape == (2,)
 
 
+def test_rabc_sample_weighter_uses_the_full_action_horizon(tmp_path):
+    pd = pytest.importorskip("pandas")
+    from types import SimpleNamespace
+
+    from lerobot.utils.sample_weighting import SampleWeightingConfig, make_sample_weighter
+
+    progress = tmp_path / "sarm_progress.parquet"
+    pd.DataFrame({"index": range(40), "episode_index": [0] * 40, "progress_sparse": [0.0] * 40}).to_parquet(
+        progress
+    )
+    cfg = FastWAMConfig(action_horizon=16, n_action_steps=4, base_model_id=None)
+    weighter = make_sample_weighter(
+        SampleWeightingConfig(type="rabc", progress_path=str(progress)),
+        SimpleNamespace(config=cfg),
+        torch.device("cpu"),
+    )
+    assert weighter.chunk_size == 16
+
+
 def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
     captured = []
 

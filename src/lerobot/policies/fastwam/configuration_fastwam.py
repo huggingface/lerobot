@@ -487,6 +487,11 @@ class FastWAMConfig(PreTrainedConfig):
             raise ValueError(f"FastWAM image feature widths must sum to {width}, got {image_width_sum}.")
 
     @property
+    def chunk_size(self) -> int:
+        """Alias read by RA-BC sample weighting: the full supervised horizon, not `n_action_steps`."""
+        return self.action_horizon
+
+    @property
     def model_video_frames(self) -> int:
         """Number of video frames the model actually operates on, after subsampling the
         raw `num_video_frames` window by `action_video_freq_ratio` (e.g. 33 -> 9)."""
