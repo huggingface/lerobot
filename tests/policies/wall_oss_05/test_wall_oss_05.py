@@ -956,9 +956,6 @@ def test_native_checkpoint_roundtrip_from_another_working_directory(tmp_path, mo
 
 @pytest.mark.parametrize("main_process", [False, True])
 def test_save_uses_shared_collective_and_main_process_gate(tmp_path, monkeypatch, main_process):
-    import lerobot.distributed.checkpoint as checkpoint
-    import lerobot.distributed.utils as distributed_utils
-
     policy = WallOSS05Policy(_config(), load_model=False)
     policy.model = _TinyTiedAuthorModel()
     gathered = []
@@ -968,8 +965,8 @@ def test_save_uses_shared_collective_and_main_process_gate(tmp_path, monkeypatch
         # DDP has a full state dict even off-main, which must still not write.
         return module.state_dict()
 
-    monkeypatch.setattr(checkpoint, "full_model_state_dict", gather)
-    monkeypatch.setattr(distributed_utils, "is_main_process", lambda: main_process)
+    monkeypatch.setattr("lerobot.distributed.full_model_state_dict", gather)
+    monkeypatch.setattr("lerobot.distributed.is_main_process", lambda: main_process)
     policy.save_pretrained(tmp_path)
     assert gathered == [policy]
     assert (tmp_path / "model.safetensors").exists() is main_process
