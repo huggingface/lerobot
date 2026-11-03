@@ -24,6 +24,8 @@
 # Run:    docker run --gpus all --rm lerobot-benchmark-robomme lerobot-eval ...
 
 FROM huggingface/lerobot-gpu:latest
+COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
+RUN uv sync --locked --inexact --extra all --no-install-project --no-cache
 
 # NVIDIA Container Toolkit: expose Vulkan driver capability for headless rendering.
 ENV NVIDIA_DRIVER_CAPABILITIES=all \

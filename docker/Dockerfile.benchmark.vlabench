@@ -19,6 +19,8 @@
 # Run:    docker run --gpus all --rm lerobot-benchmark-vlabench lerobot-eval ...
 
 FROM huggingface/lerobot-gpu:latest
+COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
+RUN uv sync --locked --inexact --extra all --no-install-project --no-cache
 
 # Install VLABench from GitHub (not on PyPI) and pin MuJoCo/dm-control.
 # Shallow-clone without submodule recursion (nested SSH-only submodules fail in CI).

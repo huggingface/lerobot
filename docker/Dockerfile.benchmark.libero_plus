@@ -20,6 +20,8 @@
 # Run:    docker run --gpus all --rm lerobot-benchmark-libero-plus lerobot-eval ...
 
 FROM huggingface/lerobot-gpu:latest
+COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
+RUN uv sync --locked --inexact --extra all --no-install-project --no-cache
 ENV MUJOCO_GL=egl
 
 # unzip for the 6.4 GB assets.zip; the rest are LIBERO-plus build-time extras

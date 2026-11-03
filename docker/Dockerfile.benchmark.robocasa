@@ -20,6 +20,8 @@
 # Run:    docker run --gpus all --rm lerobot-benchmark-robocasa lerobot-eval ...
 
 FROM huggingface/lerobot-gpu:latest
+COPY --chown=user_lerobot:user_lerobot setup.py pyproject.toml uv.lock README.md MANIFEST.in ./
+RUN uv sync --locked --inexact --extra all --no-install-project --no-cache
 
 # Install robocasa + robosuite as editable clones. pip-installing from git
 # omits data files like robocasa/models/assets/box_links/box_links_assets.json
