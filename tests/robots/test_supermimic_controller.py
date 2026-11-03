@@ -22,12 +22,18 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.policies.supermimic import MotionReference, load_export, proprio_observation
-from lerobot.policies.supermimic.geometry import quat_to_mat, z_rotation
-from lerobot.robots.unitree_g1.config_unitree_g1 import SuperMimicControllerConfig, UnitreeG1Config
-from lerobot.robots.unitree_g1.controllers import supermimic_tracking as smt
-from lerobot.robots.unitree_g1.g1_utils import NUM_MOTORS, G1_29_JointIndex
-from tests.mocks.mock_supermimic import make_clip, make_export
+pytest.importorskip("onnx")
+pytest.importorskip("onnxruntime")
+
+from lerobot.policies.supermimic import MotionReference, load_export, proprio_observation  # noqa: E402
+from lerobot.policies.supermimic.geometry import quat_to_mat, z_rotation  # noqa: E402
+from lerobot.robots.unitree_g1.config_unitree_g1 import (  # noqa: E402
+    SuperMimicControllerConfig,
+    UnitreeG1Config,
+)
+from lerobot.robots.unitree_g1.controllers import supermimic_tracking as smt  # noqa: E402
+from lerobot.robots.unitree_g1.g1_utils import NUM_MOTORS, G1_29_JointIndex  # noqa: E402
+from tests.mocks.mock_supermimic import make_clip, make_export  # noqa: E402
 
 
 @pytest.fixture
