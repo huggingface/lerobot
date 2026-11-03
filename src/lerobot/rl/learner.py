@@ -182,7 +182,9 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
     set_seed(seed=cfg.seed)
 
     torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
 
     is_threaded = use_threads(cfg)
     shutdown_event = ProcessSignalHandler(is_threaded, display_pid=display_pid).shutdown_event

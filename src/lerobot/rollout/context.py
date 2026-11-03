@@ -470,6 +470,9 @@ def build_rollout_context(
 
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
 
     if policy_config.type == "vqbet" and cfg.device == "mps":
         raise NotImplementedError(

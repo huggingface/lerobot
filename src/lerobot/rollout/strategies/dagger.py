@@ -384,7 +384,7 @@ class DAggerStrategy(RolloutStrategy):
         with VideoEncodingManager(dataset):
             try:
                 while not events.stop_recording.is_set() and not ctx.runtime.shutdown_event.is_set():
-                    timer.tick(new_cycle=interpolator.needs_new_action())
+                    self._tick(timer, new_cycle=interpolator.needs_new_action())
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
@@ -578,7 +578,7 @@ class DAggerStrategy(RolloutStrategy):
                     and not events.stop_recording.is_set()
                     and not ctx.runtime.shutdown_event.is_set()
                 ):
-                    timer.tick(new_cycle=interpolator.needs_new_action())
+                    self._tick(timer, new_cycle=interpolator.needs_new_action())
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)

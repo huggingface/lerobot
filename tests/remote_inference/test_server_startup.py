@@ -80,7 +80,7 @@ def _language_deployment(tmp_path, monkeypatch, *, recipe_kind="none"):
     post.save_pretrained(tmp_path)
     server = ServerConfig(
         deployment="test",
-        model=ModelConfig(str(tmp_path), device="cpu"),
+        model=ModelConfig(str(tmp_path), device="cpu", tf32=None),
         execution=ExecutionConfig(action_fps=30, warmup_calls=1),
         language=LanguageConfig(enabled=True),
         zenoh=ZenohConfig(listen_endpoints=["tcp/127.0.0.1:7447"]),

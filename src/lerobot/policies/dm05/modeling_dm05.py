@@ -53,7 +53,6 @@ def setup_compiled_suffix(config: Any, model: Any) -> bool:
         return False
     if not torch.cuda.is_available() or not str(config.device).startswith("cuda"):
         raise RuntimeError("DM05 compiled suffix inference requires CUDA.")
-    torch.set_float32_matmul_precision("high")
     model.setup_compiled_suffix_layers(mode="reduce-overhead", dynamic=False)
     logger.info("Enabled DM05 compiled suffix inference.")
     return True
@@ -169,7 +168,6 @@ def _resolve_processor_source(
         revision=revision,
         cache_dir=cache_dir,
         force_download=force_download,
-        proxies=proxies,
         token=token,
         local_files_only=local_files_only,
     )

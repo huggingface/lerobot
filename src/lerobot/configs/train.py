@@ -31,12 +31,13 @@ from lerobot import envs
 from lerobot.configs.accelerator import AcceleratorConfig, ActivationCheckpointingMode
 from lerobot.configs.parallelism import ParallelismConfig
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
+from lerobot.optim.ema import EMAConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
+from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
@@ -143,6 +144,8 @@ class TrainPipelineConfig(HubMixin):
     # Set to True to use deterministic cuDNN algorithms for reproducibility.
     # This disables cudnn.benchmark and may reduce training speed by ~10-20 percent.
     cudnn_deterministic: bool = False
+    # TF32 in float32 matmuls and cuDNN convolutions on Ampere and newer GPUs.
+    tf32: bool | None = True
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
@@ -178,8 +181,9 @@ class TrainPipelineConfig(HubMixin):
     # FSDP/DDP tuning knobs, compile & activation-checkpointing placeholders.
     accelerator: AcceleratorConfig = field(default_factory=AcceleratorConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
-    # Maintain an EMA shadow of the policy weights during training (see EMAConfig).
-    ema: EMAConfig = field(default_factory=EMAConfig)
+    # EMA of the trainable policy weights, enabled with --ema.type (see EMAConfig). In-training env eval and the
+    # pushed main branch use the EMA weights.
+    ema: EMAConfig | None = None
     trackio: TrackioConfig = field(default_factory=TrackioConfig)
     peft: PeftConfig | None = None
 
@@ -224,12 +228,16 @@ class TrainPipelineConfig(HubMixin):
         if reward_model_path:
             cli_overrides = parser.get_cli_overrides("reward_model")
             self.reward_model = RewardModelConfig.from_pretrained(
-                reward_model_path, cli_overrides=cli_overrides
+                reward_model_path,
+                revision=parser.get_pretrained_revision("reward_model"),
+                cli_overrides=cli_overrides,
             )
             self.reward_model.pretrained_path = str(Path(reward_model_path))
         elif policy_path:
             overrides = parser.get_yaml_overrides("policy") + (parser.get_cli_overrides("policy") or [])
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=overrides)
+            self.policy = PreTrainedConfig.from_pretrained(
+                policy_path, revision=parser.get_pretrained_revision("policy"), cli_overrides=overrides
+            )
             self.policy.pretrained_path = Path(policy_path)
         elif self.resume:
             self._resolve_resume_checkpoint()
@@ -469,8 +477,6 @@ class TrainPipelineConfig(HubMixin):
                 "revision": revision,
                 "cache_dir": cache_dir,
                 "force_download": force_download,
-                "proxies": proxies,
-                "resume_download": resume_download,
                 "token": token,
                 "local_files_only": local_files_only,
             }

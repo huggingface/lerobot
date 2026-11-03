@@ -30,6 +30,7 @@ import torch
 # install `lerobot[dataset]` skip this module rather than fail collection.
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.optim.ema import EMA, ConstantEMAConfig  # noqa: E402
 from lerobot.scripts.lerobot_train import update_policy  # noqa: E402
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker  # noqa: E402
 from tests.fixtures.dummy_checkpoint_policy import make_dummy_policy  # noqa: E402
@@ -103,6 +104,7 @@ def _run(*, step_was_skipped: bool, make_grads_nonfinite: bool = False):
     optimizer = torch.optim.SGD(policy.parameters(), lr=0.1)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.5)
     accelerator = StubAccelerator(step_was_skipped=step_was_skipped)
+    ema = EMA(policy, ConstantEMAConfig())
     batch = {"observation.state": torch.randn(2, 4)}
     if make_grads_nonfinite:
         batch["observation.state"][0, 0] = float("inf")
@@ -115,19 +117,22 @@ def _run(*, step_was_skipped: bool, make_grads_nonfinite: bool = False):
         grad_clip_norm=1.0,
         accelerator=accelerator,
         lr_scheduler=scheduler,
+        ema=ema,
     )
-    return policy, scheduler, tracker
+    return policy, scheduler, tracker, ema
 
 
 def test_skipped_update_does_not_advance_policy_state():
-    policy, _, _ = _run(step_was_skipped=True, make_grads_nonfinite=True)
-    # EMA shadows and target networks must track applied updates, not attempted ones.
+    policy, _, _, ema = _run(step_was_skipped=True, make_grads_nonfinite=True)
+    # EMA and target networks must track applied updates, not attempted ones.
     assert policy.updates == 0
+    assert ema.num_updates == 0
 
 
 def test_applied_update_advances_policy_state():
-    policy, _, _ = _run(step_was_skipped=False)
+    policy, _, _, ema = _run(step_was_skipped=False)
     assert policy.updates == 1
+    assert ema.num_updates == 1
 
 
 @pytest.mark.parametrize("step_was_skipped", [True, False])
@@ -135,14 +140,14 @@ def test_scheduler_keeps_its_micro_batch_cadence(step_was_skipped):
     """LeRobot's schedule is a function of micro-batches consumed, so it is deliberately NOT
     gated on the scaler — under gradient accumulation it already advances on micro-batches that
     apply no update at all."""
-    _, scheduler, _ = _run(step_was_skipped=step_was_skipped, make_grads_nonfinite=step_was_skipped)
+    _, scheduler, _, _ = _run(step_was_skipped=step_was_skipped, make_grads_nonfinite=step_was_skipped)
     assert scheduler.last_epoch == 1
 
 
 def test_skipped_update_keeps_the_inf_norm_out_of_the_metrics():
     """A skipped step's norm is inf by construction; averaging it in would destroy the window."""
-    _, _, skipped = _run(step_was_skipped=True, make_grads_nonfinite=True)
-    _, _, applied = _run(step_was_skipped=False)
+    _, _, skipped, _ = _run(step_was_skipped=True, make_grads_nonfinite=True)
+    _, _, applied, _ = _run(step_was_skipped=False)
 
     assert skipped.grad_norm.count == 0
     assert applied.grad_norm.count == 1
