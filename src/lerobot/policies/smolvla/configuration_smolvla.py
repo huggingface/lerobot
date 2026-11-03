@@ -104,6 +104,11 @@ class SmolVLAConfig(PreTrainedConfig):
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 
+    # FlowDAgger (arXiv 2607.08877): path or Hub repo of a noise policy trained with
+    # `lerobot-train-flow-dagger`. When set, inference seeds denoising with its output
+    # instead of Gaussian noise; the base weights are unchanged.
+    noise_policy_path: str | None = None
+
     compile_model: bool = False  # Whether to use torch.compile for model optimization
     compile_mode: str = "max-autotune"  # Torch compile mode
 

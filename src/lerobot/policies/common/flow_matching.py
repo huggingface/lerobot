@@ -419,3 +419,57 @@ def euler_integrate(
             rtc_processor.track(time=rtc_time, x_t=x_t, v_t=v_t if noise_at_one else -v_t)
 
     return x_t
+
+
+@torch.no_grad()
+def invert_euler(
+    denoise_fn: Callable[[Tensor, Tensor], Tensor],
+    actions: Tensor,
+    num_steps: int,
+    *,
+    num_fixed_point_iters: int = 5,
+    convention: FlowConvention = FlowConvention.NOISE_AT_ONE,
+) -> Tensor:
+    """Invert :func:`euler_integrate`: recover the noise that integrates to ``actions``.
+
+    Used by FlowDAgger (arXiv 2607.08877) to map an expert action chunk to the noise a frozen
+    flow-matching policy would have to start from to reproduce it. The forward loop runs
+    ``x_{k+1} = x_k + dt * v(x_k, t_k)`` on the same uniform schedule as
+    :func:`euler_integrate`; each step is undone implicitly with the fixed-point iteration
+    ``x_k <- x_{k+1} - dt * v(x_k, t_k)`` started at ``x_k = x_{k+1}``. A single iteration is
+    the explicit reverse-Euler step; a few more make the inversion exact up to the contraction
+    rate ``|dt| * Lip(v)``.
+
+    Args:
+        denoise_fn: Same callable as for :func:`euler_integrate`: ``(x_t, time_tensor) -> v_t``
+            with ``time_tensor`` a float32 tensor of shape ``(batch_size,)``.
+        actions: Clean sample (the end of the forward integration), ``(batch_size, ...)``.
+        num_steps: Number of Euler steps of the forward integration being inverted.
+        num_fixed_point_iters: Fixed-point iterations per reverse step (``>= 1``).
+        convention: Which end of the schedule holds the noise; must match the forward pass.
+
+    Returns:
+        The recovered noise, same shape and dtype as ``actions``.
+    """
+    if not isinstance(convention, FlowConvention):
+        raise TypeError(f"convention must be a FlowConvention, got {convention!r}")
+    if num_steps < 1:
+        raise ValueError(f"num_steps must be >= 1, got {num_steps}")
+    if num_fixed_point_iters < 1:
+        raise ValueError(f"num_fixed_point_iters must be >= 1, got {num_fixed_point_iters}")
+
+    noise_at_one = convention is FlowConvention.NOISE_AT_ONE
+    dt = (-1.0 if noise_at_one else 1.0) / num_steps
+    bsize = actions.shape[0]
+    device = actions.device
+
+    x_next = actions
+    for step in reversed(range(num_steps)):
+        # Identical scalar arithmetic to ``euler_integrate``'s ``uniform_time``.
+        time_value = (1.0 + step * dt) if noise_at_one else step * dt
+        time_tensor = torch.full((bsize,), time_value, dtype=torch.float32, device=device)
+        x_prev = x_next
+        for _ in range(num_fixed_point_iters):
+            x_prev = x_next - dt * denoise_fn(x_prev, time_tensor)
+        x_next = x_prev
+    return x_next

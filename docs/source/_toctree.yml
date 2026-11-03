@@ -23,6 +23,8 @@
     title: Multi GPU training
   - local: hil_data_collection
     title: Human In the Loop Data Collection
+  - local: flow_dagger
+    title: FlowDAgger (Pi0.5 / SmolVLA)
   - local: peft_training
     title: Training with PEFT (e.g., LoRA)
   - local: rename_map
