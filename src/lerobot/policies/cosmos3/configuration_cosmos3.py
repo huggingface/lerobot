@@ -117,7 +117,7 @@ class Qwen3VLMoTTextConfig(Qwen3VLTextConfig):
 class Qwen3VLMoTConfig(Qwen3VLConfig):
     """Config of the Qwen3-VL MoT backbone (Cosmos3 Nano and Super), defaults from ``nvidia/Cosmos3-Nano``."""
 
-    sub_configs = {"vision_config": Qwen3VLMoTVisionConfig, "text_config": Qwen3VLMoTTextConfig}
+    sub_configs_defaults = {"vision_config": Qwen3VLMoTVisionConfig, "text_config": Qwen3VLMoTTextConfig}
 
 
 @strict
@@ -194,13 +194,10 @@ class Nemotron3DenseVLProjectorConfig(PretrainedConfig):
 
 @strict
 class Nemotron3DenseVLMoTConfig(PretrainedConfig):
-    """
-    Config of the Nemotron 3 Dense VL MoT backbone (Cosmos3 Edge), defaults from ``nvidia/Cosmos3-Edge``.
-    Sub-configs given as dicts or left out are built in `__post_init__`.
-    """
+    """Config of the Nemotron 3 Dense VL MoT backbone (Cosmos3 Edge), defaults from ``nvidia/Cosmos3-Edge``."""
 
     model_type = "nemotron_3_dense_vl"
-    sub_configs = {
+    sub_configs_defaults = {
         "vision_config": Nemotron3DenseVLVisionConfig,
         "projector_config": Nemotron3DenseVLProjectorConfig,
         "text_config": Nemotron3DenseVLMoTTextConfig,
@@ -214,16 +211,6 @@ class Nemotron3DenseVLMoTConfig(PretrainedConfig):
     vision_start_token_id: int = 20
     vision_end_token_id: int = 21
     tie_word_embeddings: bool = False
-
-    def __post_init__(self, **kwargs):
-        for name, config_cls in self.sub_configs.items():
-            sub_config = getattr(self, name)
-            if isinstance(sub_config, dict):
-                setattr(self, name, config_cls(**sub_config))
-            elif sub_config is None:
-                setattr(self, name, config_cls())
-
-        super().__post_init__(**kwargs)
 
     def validate_architecture(self):
         super().validate_architecture()
