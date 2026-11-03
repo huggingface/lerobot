@@ -411,8 +411,7 @@ class LatentWorldPolicyBackend(nn.Module):
             )
         elif is_exporting() and pixel_values is not None:
             raise ValueError(
-                "Exporting LaWAM with images needs a vision_grid, which only the VLM stage takes so far; the "
-                "full prediction passes no grid yet."
+                "Exporting LaWAM with images needs a vision_grid (see `LaWAMPolicy.predict_action_chunk`)."
             )
         else:
             # HF transformers 4.57 Qwen3VL causal wrapper drops `hidden_states`
@@ -574,6 +573,7 @@ class LatentWorldPolicyBackend(nn.Module):
         primary_visual_input: torch.Tensor,
         source: str,
         lam_features_with_no_grad: bool,
+        vision_grid: Qwen3VisionGrid | None = None,
     ) -> PolicyEncodingState:
         vlm_stage_dtype = self.model_cfg.vlm_dtype
         lam_stage_dtype = torch.bfloat16
@@ -591,6 +591,7 @@ class LatentWorldPolicyBackend(nn.Module):
                 flow_placeholder_mask=prepared_batch["flow_placeholder_mask"],
                 act_query=act_query,
                 flow_query=flow_query,
+                vision_grid=vision_grid,
             )
         h_vlm = vlm_out_dict["h_vlm"]
         pred_action_emb = vlm_out_dict["pred_latent"]
@@ -646,12 +647,14 @@ class LatentWorldPolicyBackend(nn.Module):
         prepared_batch: LatentWorldPolicyInferBatch,
         source: str,
         lam_features_with_no_grad: bool,
+        vision_grid: Qwen3VisionGrid | None = None,
     ) -> PolicyEncodingState:
         return self._run_shared_encoding_core(
             prepared_batch=prepared_batch,
             primary_visual_input=prepared_batch["primary_image"],
             source=source,
             lam_features_with_no_grad=lam_features_with_no_grad,
+            vision_grid=vision_grid,
         )
 
     def forward(
@@ -755,7 +758,12 @@ class LatentWorldPolicyBackend(nn.Module):
         guidance_scale: float | None = None,
         num_inference_steps: int | None = None,
         noise: torch.Tensor | None = None,
+        vision_grid: Qwen3VisionGrid | None = None,
     ) -> torch.Tensor:
+        """Predict actions; with `vision_grid`, the VLM stage runs on it and the whole prediction exports.
+
+        Build the grid once with `Qwen3VisionGrid.build(self.vlm.model.visual, batch["image_grid_thw"])`.
+        """
         flow_stage_dtype = torch.float32
         prepared_batch = batch
 
@@ -768,6 +776,7 @@ class LatentWorldPolicyBackend(nn.Module):
             prepared_batch=prepared_batch,
             source="LatentWorldPolicyBackend.predict_action",
             lam_features_with_no_grad=False,
+            vision_grid=vision_grid,
         )
         attn_flow = prepared_batch["attention_mask"] == 1
 

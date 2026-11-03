@@ -37,6 +37,9 @@ from lerobot.utils.import_utils import (
 from ..chunk import ChunkPolicySpec
 from .configuration_lawam import LaWAMConfig
 
+if TYPE_CHECKING:
+    from ..common.qwen3_vision import Qwen3VisionGrid
+
 _lawam_deps_available = _transformers_available and _diffusers_available
 
 if TYPE_CHECKING or _lawam_deps_available:
@@ -292,14 +295,23 @@ class LaWAMPolicy(PreTrainedPolicy):
         return loss, logs
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        vision_grid: Qwen3VisionGrid | None = None,
+    ) -> Tensor:
         """Predict a normalized action chunk for each observation in the batch.
 
         `noise` is the starting sample of the flow, shaped `(batch_size, chunk_size, flow_action_dim)`.
-        When it is None, it is drawn with `torch.randn`.
+        When it is None, it is drawn with `torch.randn`. To export with `torch.export`, pass `vision_grid`,
+        built once by `Qwen3VisionGrid.build(self.model.policy_backend.vlm.model.visual, batch["image_grid_thw"])`.
+        The VLM loads with flash attention when it can, which export refuses, so first call
+        `self.model.policy_backend.vlm.set_attn_implementation("sdpa")`.
         """
         self.eval()
-        output = self.model.predict_action(batch, noise=noise)
+        output = self.model.predict_action(batch, noise=noise, vision_grid=vision_grid)
         actions = output.get("normalized_actions") if isinstance(output, dict) else output
         if actions is None:
             raise KeyError("LaWAM inference output is missing normalized actions.")

@@ -125,7 +125,6 @@ class _FakeNativeLaWAM(nn.Module):
         return {"total_loss": loss_total, "loss_flow": loss_flow}
 
     def predict_action(self, batch, **kwargs):
-        del kwargs
         self.predict_calls += 1
         self.last_batch = batch
         batch_size = int(batch["input_ids"].shape[0])
@@ -1144,5 +1143,109 @@ def test_vlm_stage_refuses_a_vision_grid_built_for_another_grid() -> None:
             stage._run_vlm_stage(**changed, vision_grid=grid)
         with pytest.raises(ValueError, match="vision_grid needs pixel_values and image_grid_thw"):
             stage._run_vlm_stage(**{**inputs, "pixel_values": None}, vision_grid=grid)
-        with pytest.raises(ValueError, match="needs a vision_grid, which only the VLM stage takes so far"):
+        with pytest.raises(ValueError, match="needs a vision_grid"):
             torch.export.export(VLMStage(None), tuple(inputs[key] for key in keys), strict=False)
+
+
+def test_action_prediction_on_a_vision_grid_exports_and_matches_eager(monkeypatch) -> None:
+    """On a vision grid, `predict_action_chunk` exports whole: the VLM stage, the latent action model and the flow."""
+    from transformers import Qwen3VLForConditionalGeneration
+
+    from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid
+    from lerobot.policies.lawam.latent_world.batch_utils import build_placeholder_masks
+    from lerobot.policies.lawam.vlas import lawam
+    from tests.policies.common.fixed_grid_checks import data_dependent_nodes
+    from tests.policies.common.qwen3_vl_helpers import (
+        STOCK_DEEPSTACK_NODES,
+        image_prompts,
+        tiny_qwen3_vl_config,
+    )
+
+    placeholder = 20
+    qwen_config = tiny_qwen3_vl_config()
+
+    def tiny_vlm(cfg, vlm_model_id):
+        vlm = Qwen3VLForConditionalGeneration(qwen_config).eval()
+        remove_lm_head(vlm)
+        return vlm, None, placeholder
+
+    monkeypatch.setattr(lawam, "_load_vlm_and_processor", tiny_vlm)
+    torch.manual_seed(0)
+    config = LaWAMConfig(
+        device="cpu",
+        chunk_size=4,
+        action_horizon=4,
+        n_action_steps=2,
+        base_vlm="dummy-qwen",
+        input_features={
+            "observation.images.front": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(3,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        lam_image_hw=(32, 32),
+        lam_dim=32,
+        lam_num_heads=4,
+        lam_ffn_expansion_factor=2,
+        lam_enc_layers=1,
+        lam_code_dim=8,
+        lam_dec_layers=1,
+        dinov3_hidden_size=32,
+        dinov3_intermediate_size=64,
+        dinov3_num_hidden_layers=2,
+        dinov3_num_attention_heads=4,
+        num_action_queries=1,
+        flow_action_num_queries=2,
+        flow_hidden_dim=32,
+        flow_num_layers=2,
+        flow_attention_heads=4,
+        flow_vlm_dim=qwen_config.text_config.hidden_size,
+        flow_num_inference_steps=2,
+    )
+    policy = LaWAMPolicy(config).eval()
+    batch = image_prompts(qwen_config, suffix=(placeholder,) * 3)
+    del batch["mm_token_type_ids"]
+    act_mask, flow_mask = build_placeholder_masks(
+        batch["input_ids"], act_queries=1, flow_queries=2, placeholder_id=placeholder
+    )
+    batch |= {
+        "act_placeholder_mask": act_mask,
+        "flow_placeholder_mask": flow_mask,
+        "primary_image": torch.rand(2, 3, 32, 32),
+        "state": torch.rand(2, config.flow_state_dim),
+        "state_mask": torch.ones(2, config.flow_state_dim, dtype=torch.bool),
+        "embodiment_id": torch.full((2,), config.embodiment_id),
+        "action_hz": torch.full((2,), 10.0),
+    }
+    noise = torch.randn(2, config.chunk_size, config.flow_action_dim)
+    grid = Qwen3VisionGrid.build(policy.model.policy_backend.vlm.model.visual, batch["image_grid_thw"])
+    keys = sorted(batch)
+
+    class Prediction(nn.Module):
+        def __init__(self, grid):
+            super().__init__()
+            self.grid = grid
+
+        def forward(self, noise, *tensors):
+            inputs = dict(zip(keys, tensors, strict=True))
+            return policy.predict_action_chunk(inputs, noise=noise, vision_grid=self.grid)
+
+    inputs = (noise, *(batch[key] for key in keys))
+    with torch.no_grad():
+        expected = Prediction(None)(*inputs)
+        torch.testing.assert_close(Prediction(grid)(*inputs), expected, rtol=0, atol=0)
+        program = torch.export.export(Prediction(grid), inputs, strict=False)
+        torch.testing.assert_close(program.module()(*inputs), expected, rtol=0, atol=0)
+        # Another batch of the same shape: other pixels, images, state and noise.
+        other = {**batch, "pixel_values": torch.randn_like(batch["pixel_values"])}
+        other |= {"primary_image": torch.rand(2, 3, 32, 32), "state": torch.rand(2, config.flow_state_dim)}
+        # And another token layout: the two prompts, of different lengths, swap places.
+        swapped = {key: batch[key].flip(0) for key in ("input_ids", "attention_mask")}
+        swapped["act_placeholder_mask"], swapped["flow_placeholder_mask"] = build_placeholder_masks(
+            swapped["input_ids"], act_queries=1, flow_queries=2, placeholder_id=placeholder
+        )
+        for changed in (other, {**batch, **swapped}):
+            other_inputs = (torch.randn_like(noise), *(changed[key] for key in keys))
+            other_expected = Prediction(None)(*other_inputs)
+            assert not torch.equal(other_expected, expected)
+            torch.testing.assert_close(program.module()(*other_inputs), other_expected, rtol=0, atol=0)
+    assert data_dependent_nodes(program) == STOCK_DEEPSTACK_NODES
