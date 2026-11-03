@@ -27,18 +27,24 @@ from ..yam_follower.config_yam_follower import YamFollowerConfig
 class BiYamFollowerConfig(RobotConfig):
     """Configuration of two YAM follower arms on separate CAN interfaces.
 
-    Each arm keeps its own gripper calibration file, named after `id` with a `_left` or
-    `_right` suffix, so calibrate with the same `id` used for control.
+    Args:
+        id (`str | None`, *optional*, defaults to `"bi_yam_follower"`):
+            Robot identifier. Each arm saves its gripper calibration under `id` with a `_left` or `_right`
+            suffix, so calibrate with the same `id` used for control.
+        calibration_dir (`pathlib.Path | None`, *optional*):
+            Directory of the gripper calibration files.
+        left_arm_config (`YamFollowerConfig`):
+            Settings of the left arm.
+        right_arm_config (`YamFollowerConfig`):
+            Settings of the right arm.
+        cameras (`dict[str, CameraConfig]`, *optional*):
+            Cameras not attached to an arm. Their keys aren't prefixed, unlike those of per-arm cameras.
     """
 
     id: str | None = "bi_yam_follower"
 
     left_arm_config: YamFollowerConfig
     right_arm_config: YamFollowerConfig
-
-    # Top-level cameras not attached to a specific side. Keys are kept as-is in
-    # observations (no `left_`/`right_` prefix). Per-arm cameras (declared on
-    # `{left,right}_arm_config.cameras`) are prefixed.
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

@@ -35,7 +35,7 @@ def arm_config(port="can0", **kwargs):
 
 
 def calibrate_arms(robot):
-    """Give both arms gripper stops at 0.1 and 6.1 raw radians."""
+    """Give both arms gripper limits at 0.1 and 6.1 motor radians."""
     for arm in robot.arms.values():
         arm.calibration = {
             "gripper": yam_module.MotorCalibration(
@@ -190,10 +190,10 @@ def test_connect_calibrates_both_arms_before_enabling_torque(tmp_path, monkeypat
     robot.disconnect()
 
 
-def test_bad_second_arm_pose_never_enables_first(robot, monkeypatch):
+def test_bad_second_arm_position_never_enables_first(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     robot.right_arm.bus.read_states.return_value.position[1] = 1
-    with pytest.raises(ValueError, match="initial pose"):
+    with pytest.raises(ValueError, match="initial_position_deg"):
         robot.connect()
     for arm in robot.arms.values():
         arm.bus.enable.assert_not_called()

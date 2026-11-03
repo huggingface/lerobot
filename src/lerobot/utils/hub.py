@@ -32,16 +32,22 @@ def ensure_bucket_file(
     *,
     token: str | bool | None = None,
 ) -> Path:
-    """Return a locally cached bucket file, downloading it atomically if missing.
+    """Return the cached copy of a bucket file, downloading it first if it's missing.
+
+    The download is renamed into place once complete, so a failed download leaves no partial file.
 
     Args:
-        bucket_id (`str`): Bucket ID, such as `lerobot/robot-urdfs`.
-        remote_path (`str`): Path to the file in the bucket.
-        local_path (`str` or `Path`): Local cache path.
-        token (`str` or `bool`, *optional*): Hub token. Pass `False` for anonymous access.
+        bucket_id (`str`):
+            Bucket ID, e.g. `lerobot/robot-urdfs`.
+        remote_path (`str`):
+            Path of the file in the bucket.
+        local_path (`str` or `Path`):
+            Where the file is cached.
+        token (`str` or `bool`, *optional*):
+            Hub token. `False` downloads anonymously.
 
     Returns:
-        `Path`: Path to the cached file.
+        `Path`: Path of the cached file.
     """
     path = Path(local_path)
     if path.is_file():

@@ -37,7 +37,7 @@ from lerobot.robots.yam_follower.config_yam_follower import (
 
 
 def gripper_calibration(closed=0.1, opened=6.1):
-    """Calibration of gripper stops at `closed` and `opened` raw radians, kept exact (calibrate() rounds)."""
+    """Gripper calibration with limits at exactly `closed` and `opened` radians; `calibrate()` would round them."""
     low, high = sorted(math.degrees(value) for value in (closed, opened))
     return robot_module.MotorCalibration(
         id=7, drive_mode=int(opened < closed), homing_offset=0, range_min=low, range_max=high
@@ -50,7 +50,7 @@ def make_robot(tmp_path, *, gripper=(0.1, 6.1), **overrides):
         "calibration_dir": tmp_path,
         "port": "can0",
         "gravity_compensation": False,
-        # Equal to the former radian defaults, so the control numbers below stay unchanged.
+        # The control numbers below use 0.3 rad/s and 0.15 rad.
         "max_joint_speed_deg_s": math.degrees(0.3),
         "max_tracking_error_deg": math.degrees(0.15),
         **overrides,
@@ -135,7 +135,7 @@ def test_actions_are_clipped_to_the_limits(robot, use_degrees):
     assert robot.servo.target[1] == 0.0
 
 
-def test_measured_pose_has_wider_margin_than_action(robot):
+def test_measured_position_has_wider_tolerance_than_action(robot):
     states = raw_states(gripper=6.4)
     states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.08
     bus = attach_bus(robot, mock_bus(states))
@@ -182,7 +182,7 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     controller.close.assert_called_once()
 
 
-def test_failed_torque_off_still_closes_the_bus(monkeypatch):
+def test_failed_torque_disable_still_closes_the_bus(monkeypatch):
     controller = MagicMock()
     controller.add_damiao_motor.side_effect = lambda *args: MagicMock()
     monitor = MagicMock()
@@ -252,7 +252,7 @@ def test_disabled_motor_after_enable_grace_is_a_fault():
 
 
 @pytest.mark.parametrize(
-    ("enabled", "enabled_ago_s"), [(False, 1.0), (True, 0.0)], ids=["torque off", "torque just enabled"]
+    ("enabled", "enabled_ago_s"), [(False, 1.0), (True, 0.0)], ids=["torque disabled", "torque just enabled"]
 )
 def test_disabled_motors_are_expected_while_torque_is_off_or_turning_on(enabled, enabled_ago_s):
     bus = feedback_bus([frame(i, status=0) for i in range(1, 8)])
@@ -380,7 +380,7 @@ def test_open_without_calibration_touches_no_hardware(tmp_path, monkeypatch):
     robot.bus.open.assert_not_called()
 
 
-def test_connect_calibrates_missing_gripper_endpoints(tmp_path, monkeypatch):
+def test_connect_calibrates_missing_gripper_limits(tmp_path, monkeypatch):
     robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
 
@@ -407,12 +407,12 @@ def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch):
     robot.disconnect()
 
 
-def test_start_pose_check_uses_degrees(robot, monkeypatch):
+def test_initial_position_check_uses_degrees(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     states = raw_states()
     states.position[0] = math.radians(robot.config.initial_tolerance_deg + 1)
     robot.bus.read_states.return_value = states
-    with pytest.raises(ValueError, match="initial pose"):
+    with pytest.raises(ValueError, match="initial_position_deg"):
         robot.connect()
     robot.bus.enable.assert_not_called()
 
@@ -491,7 +491,7 @@ def test_gravity_model_loads_before_hardware(robot, monkeypatch):
             events.append("model")
             robot.gravity_model = object()
 
-    robot._load_control_model = load_model
+    robot._load_gravity_model = load_model
     robot.bus.open.side_effect = lambda: events.append("connect")
     robot.connect()
     robot.disconnect()
@@ -499,7 +499,7 @@ def test_gravity_model_loads_before_hardware(robot, monkeypatch):
 
 
 def measure_gripper(robot, monkeypatch, *, closed=0.1, opened=6.1, answers=()):
-    """Run calibrate() with the gripper reading ``closed``/``opened`` raw radians at the prompts."""
+    """Run calibrate() with the gripper motor at `closed` and `opened` radians at the prompts."""
     pending = list(answers)
     prompts = []
 
@@ -523,7 +523,7 @@ def test_single_arm_calibration_preserves_factory_zeros(tmp_path, monkeypatch):
     prompts = measure_gripper(robot, monkeypatch)
     calibration = robot.calibration["gripper"]
     assert (calibration.homing_offset, calibration.drive_mode) == (0, 0)
-    # Raw motor angles of the stops, in whole degrees.
+    # Motor angles of the gripper limits, in whole degrees.
     assert (calibration.range_min, calibration.range_max) == (6, 350)
     assert robot.servo.params is not None
     assert robot.servo.params.gripper.open == pytest.approx(6.1, abs=0.01)

@@ -31,7 +31,7 @@ Use `--interfaces=can0,can1` for two arms. The command configures the Linux inte
 
 ## Calibrate
 
-Calibration measures only the gripper's closed and open stops: the joints keep their factory zeros, and torque stays off.
+Calibration measures only the gripper limits, fully closed and fully open: the joints keep their factory zeros, and torque stays off.
 
 ```bash
 lerobot-calibrate --robot.type=yam_follower --robot.port=can0 --robot.id=yam
@@ -54,7 +54,7 @@ Two arms use the same names with `left_` and `right_` prefixes. Cameras set on a
 
 ## Run a policy
 
-Put the arm in its folded zero pose before connecting: LeRobot checks that every joint is within 11.5° of it, then starts control from the measured pose. Nothing moves until the policy sends an action.
+Put the arm in its folded position, with every joint at zero, before connecting: LeRobot checks that every joint is within 11.5° of it, then starts control from the measured position. Nothing moves until the policy sends an action.
 
 ```bash
 lerobot-rollout \
@@ -66,12 +66,12 @@ lerobot-rollout \
 
 For two arms, use `--robot.type=bi_yam_follower --robot.id=bimanual_yam --robot.left_arm_config.port=can0 --robot.right_arm_config.port=can1`. Add `--dataset.repo_id=<user>/rollout_<name>` to record the rollout; see [Run inference and evaluate your policy](./il_robots#run-inference-and-evaluate-your-policy). `lerobot-replay` replays a recorded episode with the same `--robot.*` options.
 
-Before the first action, and when no action arrives for `command_timeout_s` (1 s), the arm holds its pose. With `idle_mode=float`, the joints are instead gravity-compensated and lightly damped so you can move the arm by hand, while the gripper keeps its opening; tracking resumes from wherever you moved it.
+Before the first action, and when no action arrives for `command_timeout_s` (1 s), the arm holds its position. With `idle_mode=float`, the joints are instead gravity-compensated and lightly damped so you can move the arm by hand, while the gripper keeps its opening; tracking resumes from wherever you moved it.
 
 ## Safety
 
 - A motor fault or missing feedback stops all commands. With two arms, a fault on either stops both. Disconnect and reconnect to continue.
-- Disconnecting turns torque off: support the arms first.
+- Disconnecting disables torque: support the arms first.
 - The gravity model covers the standard arm without cameras or payloads. After adding either, check that the arm doesn't drift in float mode, and adjust `gravity_factors` if it does.
 
 ## Configuration options
@@ -81,10 +81,10 @@ Before the first action, and when no action arrives for `command_timeout_s` (1 s
 | `port`                    | required                         | SocketCAN interface, for example `can0`                    |
 | `use_degrees`             | `true`                           | Degrees and a 0–100 gripper; `false` gives radians and 0–1 |
 | `use_velocity_and_torque` | `false`                          | Add `.vel` and `.torque` observations                      |
-| `idle_mode`               | `hold`                           | `hold` the pose or `float` when no action arrives          |
+| `idle_mode`               | `hold`                           | `hold` the position or `float` when no action arrives      |
 | `command_timeout_s`       | `1.0`                            | Seconds without an action before the idle mode             |
-| `initial_position_deg`    | all zeros                        | Required start pose; `None` accepts any pose within limits |
-| `initial_tolerance_deg`   | `11.5`                           | Allowed distance from the start pose                       |
+| `initial_position_deg`    | all zeros                        | Required initial position; `None` skips the check          |
+| `initial_tolerance_deg`   | `11.5`                           | Allowed distance from the initial position                 |
 | `gripper_force_limit_n`   | `50.0`                           | Finger force once the gripper is blocked on an object      |
 | `gravity_factors`         | `[1.0, 1.1, 1.1, 1.2, 1.0, 1.0]` | Per-joint multipliers of the gravity compensation          |
 | `cameras`                 | `{}`                             | Cameras attached to the arm                                |
@@ -114,4 +114,6 @@ lerobot-rollout \
   --task="Pick up the red block and place it in the green bin"
 ```
 
-Type `/start` to run the policy, `/subtask <text>` to change the instruction, `/reset` to return to the startup pose, and `/stop` to quit.
+Type `/start` to run the policy, `/subtask <text>` to change the instruction, `/reset` to return to the initial position, and `/stop` to quit.
+
+Float mode lets you start the policy from any position: add `--robot.left_arm_config.idle_mode=float --robot.right_arm_config.idle_mode=float`. Before the first `/start`, and 1 s after a `/reset` finishes, move the arms where you want by hand, then type `/start` to run the policy from there. Don't use `/stop` for this: it ends the session and disables torque.

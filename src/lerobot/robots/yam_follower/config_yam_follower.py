@@ -25,7 +25,7 @@ from ..config import RobotConfig
 JOINT_NAMES = tuple(f"joint_{i}" for i in range(1, 7))
 MOTOR_NAMES = (*JOINT_NAMES, "gripper")
 YAM_FEATURE_NAMES = tuple(f"{name}.pos" for name in MOTOR_NAMES)
-# I2RT yam/v1/yam.xml; radians, without widening the manufacturer's limits.
+# Joint limits in radians, from I2RT's yam/v1/yam.xml.
 JOINT_LIMITS_RAD = (
     (-2.61799, 3.14159),
     (0.0, 3.66519),
@@ -111,42 +111,42 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
 
     Args:
         port (`str`):
-            Linux SocketCAN interface used by the arm, for example `can0`.
+            SocketCAN interface of the arm, e.g. `can0`.
         initial_position_deg (`list[float] | None`, *optional*):
-            Pose in degrees the arm must be in before torque is enabled; a check, not a motion command.
-            Zeros are the manufacturer's folded pose; `None` accepts any valid pose.
+            Position, in degrees, the arm must be in before torque is enabled; the arm isn't moved there.
+            Zeros are the folded position; `None` skips this check.
         initial_tolerance_deg (`float`, *optional*, defaults to 11.5):
-            Allowed difference from `initial_position_deg` before torque is enabled.
+            Allowed distance from `initial_position_deg`, in degrees.
         kp (`list[float]`, *optional*):
-            MIT position gains for the six arm joints.
+            MIT position gains of the six arm joints.
         kd (`list[float]`, *optional*):
-            MIT damping gains for the six arm joints.
+            MIT damping gains of the six arm joints.
         gripper_kp (`float`, *optional*, defaults to 20.0):
-            MIT position gain for the gripper, I2RT's value for the linear DM4310 gripper.
+            MIT position gain of the gripper, from I2RT.
         gripper_kd (`float`, *optional*, defaults to 0.5):
-            MIT damping gain for the gripper, I2RT's value for the linear DM4310 gripper.
+            MIT damping gain of the gripper, from I2RT.
         gripper_force_limit_n (`float`, *optional*, defaults to 50.0):
-            Maximum finger force after the gripper is blocked on an object.
+            Finger force, in newtons, once the gripper is blocked on an object.
         max_joint_speed_deg_s (`float`, *optional*, defaults to 17.0):
-            Maximum commanded arm-joint speed.
+            Maximum joint speed, in degrees per second.
         max_gripper_speed (`float`, *optional*, defaults to 12.0):
-            Maximum commanded gripper speed, in full strokes per second.
+            Maximum gripper speed, in full strokes per second.
         max_tracking_error_deg (`float`, *optional*, defaults to 8.5):
-            Maximum difference between the measured and commanded joint positions.
+            Maximum difference between the measured and commanded joint positions, in degrees.
         gravity_compensation (`bool`, *optional*, defaults to `True`):
-            Whether to add gravity feed-forward from the YAM v1 model, downloaded on first use.
+            Whether to compensate gravity with the YAM v1 model, downloaded on first use.
         gravity_factors (`list[float]`, *optional*):
-            Per-joint multipliers applied to gravity feed-forward. Re-validate them after adding cameras or a
-            payload, which the model doesn't include.
+            Per-joint multipliers of the gravity torques. Check them again after adding cameras or a payload,
+            which the model doesn't include.
         idle_mode (`Literal["hold", "float"]`, *optional*, defaults to `"hold"`):
-            Behavior before the first action and after the command timeout: `hold` keeps the pose, `float`
-            lets the arm be moved by hand.
+            What the arm does before the first action and after `command_timeout_s` without one: `hold`
+            keeps the position, `float` lets you move the arm by hand.
         float_kd (`list[float]`, *optional*):
-            Per-joint damping gains used in float mode, I2RT's values.
+            Damping gains in float mode, from I2RT.
         friction_compensation (`bool`, *optional*, defaults to `False`):
-            Whether float mode compensates estimated Coulomb friction.
+            Whether float mode compensates the joints' Coulomb friction.
         coulomb_friction (`list[float]`, *optional*):
-            Per-joint Coulomb friction estimates used in float mode, I2RT's values.
+            Coulomb friction of each joint, in newton-metres, from I2RT.
         cameras (`dict[str, CameraConfig]`, *optional*):
             Cameras attached to this arm.
         use_degrees (`bool`, *optional*, defaults to `True`):
@@ -155,16 +155,15 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
         use_velocity_and_torque (`bool`, *optional*, defaults to `False`):
             Whether observations include motor velocity and torque.
         control_frequency (`float`, *optional*, defaults to 100.0):
-            Background servo-loop frequency in hertz. 100 Hz leaves classic CAN bandwidth for feedback and
-            commands.
+            Servo loop frequency in hertz. 100 Hz leaves room on classic CAN for feedback and commands.
         feedback_timeout_s (`float`, *optional*, defaults to 0.2):
             Maximum time to wait for fresh feedback.
         command_timeout_s (`float`, *optional*, defaults to 1.0):
-            Time without actions before entering the configured idle mode.
+            Time without an action before the arm goes idle, see `idle_mode`.
         id (`str | None`, *optional*):
-            Robot identifier used to name the saved gripper calibration.
+            Robot identifier, used to name the saved gripper calibration.
         calibration_dir (`pathlib.Path | None`, *optional*):
-            Directory containing the gripper calibration file.
+            Directory of the gripper calibration file.
     """
 
     def __post_init__(self) -> None:

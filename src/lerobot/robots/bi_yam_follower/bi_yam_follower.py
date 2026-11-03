@@ -66,19 +66,6 @@ class BiYamFollower(BimanualMixin, Robot):
         self.arms = {"left": self.left_arm, "right": self.right_arm}
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
 
-    def _arm_robot_config(
-        self, side: str, arm_config: YamFollowerConfig, cameras: dict[str, CameraConfig]
-    ) -> YamFollowerRobotConfig:
-        values = {
-            field.name: deepcopy(getattr(arm_config, field.name)) for field in fields(YamFollowerConfig)
-        }
-        values["cameras"] = deepcopy(cameras)
-        return YamFollowerRobotConfig(
-            id=f"{self.config.id}_{side}" if self.config.id else None,
-            calibration_dir=self.config.calibration_dir,
-            **values,
-        )
-
     @property
     def _motors_ft(self) -> dict[str, type]:
         return {
@@ -121,7 +108,7 @@ class BiYamFollower(BimanualMixin, Robot):
                     arm.connect(calibrate=False)
                 self.calibrate()
                 self.disconnect()
-            # Open and pose-check both arms, and switch both to MIT mode, before either gets torque.
+            # Open both arms, check their initial positions and set MIT mode before either gets torque.
             for arm in self.arms.values():
                 arm.open()
             self.configure()
@@ -156,7 +143,7 @@ class BiYamFollower(BimanualMixin, Robot):
         return {f"{side}_{name}": value for side, values in sent.items() for name, value in values.items()}
 
     def disconnect(self) -> None:
-        """Stop both arms, attempting the second even if the first fails."""
+        """Stop both arms, even if only one is connected or the first fails to stop."""
         if not any(arm.is_connected for arm in self.arms.values()):
             raise DeviceNotConnectedError("BiYamFollower is not connected. Run `.connect()` first.")
         self._stop.set()
@@ -172,3 +159,16 @@ class BiYamFollower(BimanualMixin, Robot):
                     first_error = exc
         if first_error is not None:
             raise first_error
+
+    def _arm_robot_config(
+        self, side: str, arm_config: YamFollowerConfig, cameras: dict[str, CameraConfig]
+    ) -> YamFollowerRobotConfig:
+        values = {
+            field.name: deepcopy(getattr(arm_config, field.name)) for field in fields(YamFollowerConfig)
+        }
+        values["cameras"] = deepcopy(cameras)
+        return YamFollowerRobotConfig(
+            id=f"{self.config.id}_{side}" if self.config.id else None,
+            calibration_dir=self.config.calibration_dir,
+            **values,
+        )

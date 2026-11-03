@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single-arm YAM v1 with a gravity-compensated impedance loop."""
+"""Single-arm YAM v1 with a gravity-compensated MIT servo loop."""
 
 import logging
 import math
@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 
 _MODEL_ARM_JOINTS = tuple(f"joint{i}" for i in range(1, 7))
 _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
-# Travel of each finger joint in the gravity model, and the finger travel that maps the linear
+# Stroke of each finger joint in the gravity model, and the finger stroke that converts the linear
 # DM4310 gripper's force limit to motor torque.
 _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRIPPER_FINGER_STROKE_M = 0.096
@@ -78,10 +78,10 @@ _GRAVITY_MODEL_LOCAL_PATH = HF_LEROBOT_HOME / "robot-urdfs" / _GRAVITY_MODEL_REM
 _MAX_GRAVITY_TORQUE_NM = 10.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
 _JOINT_FEEDBACK_TOLERANCE_RAD = 0.15
-_GRIPPER_FEEDBACK_MARGIN = 0.10
-# Plausible raw motor travel between the two gripper stops (0.5 to 10 rad).
+_GRIPPER_FEEDBACK_TOLERANCE = 0.10
+# Plausible motor stroke between the gripper limits (0.5 to 10 rad).
 _GRIPPER_STROKE_RANGE_DEG = (math.degrees(0.5), math.degrees(10.0))
-# Damiao register 9 stores the CAN loss-of-communication timeout in 50 us ticks.
+# Damiao register 9 stores the CAN timeout in 50 us ticks.
 _CAN_TIMEOUT_REGISTER = 9
 _CAN_TIMEOUT_TICK_US = 50
 _MAX_CAN_TIMEOUT_TICKS = 8000  # I2RT's 400 ms YAM timeout.
@@ -92,8 +92,8 @@ _FEEDBACK_ID_OFFSET = 0x10
 
 def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> MitArmParams:
     """Build the internal control settings of a YAM arm from its config and gripper calibration."""
-    stops = (math.radians(gripper.range_min), math.radians(gripper.range_max))
-    closed, opened = stops[::-1] if gripper.drive_mode else stops
+    limits = (math.radians(gripper.range_min), math.radians(gripper.range_max))
+    closed, opened = limits[::-1] if gripper.drive_mode else limits
     return MitArmParams(
         joint_limits=_JOINT_LIMITS,
         joint_feedback_tolerance_rad=_JOINT_FEEDBACK_TOLERANCE_RAD,
@@ -114,7 +114,7 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
             max_speed=config.max_gripper_speed,
             force_limit_n=config.gripper_force_limit_n,
             finger_stroke_m=_GRIPPER_FINGER_STROKE_M,
-            feedback_margin=_GRIPPER_FEEDBACK_MARGIN,
+            feedback_tolerance=_GRIPPER_FEEDBACK_TOLERANCE,
         ),
         float_kd=np.asarray(config.float_kd, dtype=float),
         coulomb_friction=np.asarray(config.coulomb_friction, dtype=float)
@@ -124,14 +124,14 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
 
 
 def _to_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
-    """Convert joint positions or rates from internal units to the robot's public units."""
+    """Convert positions or speeds from internal units to observation and action units."""
     if not use_degrees:
         return values.copy()
     return np.r_[np.rad2deg(values[:6]), values[6] * 100.0]
 
 
 def _from_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
-    """Convert joint positions or rates from the robot's public units to internal units."""
+    """Convert positions or speeds from observation and action units to internal units."""
     if not use_degrees:
         return values.copy()
     return np.r_[np.deg2rad(values[:6]), values[6] / 100.0]
@@ -198,13 +198,13 @@ class _YamBus:
             motor.ensure_mode(Mode.MIT)
 
     def can_timeouts(self) -> dict[str, int]:
-        """Read each motor's CAN loss-of-communication timeout register; 0 means it is off."""
+        """Read each motor's CAN timeout register; 0 means the timeout is off."""
         return {
             name: int(motor.get_register_u32(_CAN_TIMEOUT_REGISTER)) for name, motor in self.motors.items()
         }
 
     def enable(self, hold: np.ndarray) -> None:
-        """Enable torque after sending zero-gain setpoints at the ``hold`` raw positions."""
+        """Send zero-gain commands at the `hold` motor positions, then enable torque."""
         controller, _ = self._require_open()
         for name, value in zip(self.motor_names, hold, strict=True):
             self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
@@ -350,17 +350,13 @@ class YamFollower(Robot):
     def is_connected(self) -> bool:
         return self._connected
 
-    @property
-    def is_calibrated(self) -> bool:
-        return "gripper" in self.calibration
-
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         """Connect the hardware and start control.
 
         Args:
             calibrate (`bool`, *optional*, defaults to `True`):
-                Measure missing gripper endpoints before starting control. When `False`, connect
+                Measure missing gripper limits before starting control. When `False`, connect
                 only the CAN interface so calibration can be run explicitly.
         """
         if not calibrate:
@@ -382,41 +378,15 @@ class YamFollower(Robot):
             raise
         logger.info(f"{self} connected.")
 
-    @check_if_already_connected
-    def open(self) -> None:
-        """Connect cameras and CAN without torque, check the start pose and seed the servo from it.
-
-        ``connect`` runs ``open``, ``configure`` and ``start``. A bimanual robot opens both arms
-        before starting either, so a bad pose on one arm never enables the other.
-        """
-        params = self._require_params()
-        try:
-            self.servo.stop_event.clear()
-            self._load_control_model()  # before touching hardware, so a missing dependency fails first
-            self.bus.open()
-            for camera in self.cameras.values():
-                camera.connect()
-            state = read_joint_state(self.bus, params)
-            self._check_start_pose(state.position)
-            self.servo.seed(state)
-            self._connected = True
-        except BaseException:
-            self._close()
-            raise
-
-    @check_if_not_connected
-    def start(self) -> None:
-        """Enable torque at the seeded pose, then start the servo."""
-        if self.servo.active:
-            raise RuntimeError("YAM servo is already running")
-        self.bus.enable(joint_to_motor(self.servo.state.position, self._require_params()))
-        self.servo.start()
+    @property
+    def is_calibrated(self) -> bool:
+        return "gripper" in self.calibration
 
     @check_if_not_connected
     def calibrate(self) -> None:
-        """Measure the gripper stops without enabling torque or resetting joint zeros."""
+        """Measure the gripper limits without enabling torque or changing joint zeros."""
         if self.servo.active:
-            raise RuntimeError("Reconnect with calibrate=False before measuring gripper endpoints")
+            raise RuntimeError("Reconnect with calibrate=False before measuring the gripper limits")
         if self.calibration:
             user_input = input(
                 f"Press ENTER to use the gripper calibration saved for {self.id}, "
@@ -427,17 +397,17 @@ class YamFollower(Robot):
                 return
         measurements: dict[str, float] = {}
         logger.info(f"{self}: support the arm. Move only the gripper gently by hand; stop if it resists.")
-        for endpoint in ("closed", "open"):
-            input(f"[{self.id}] Place the gripper fully {endpoint}, release it, then press Enter: ")
+        for limit in ("closed", "open"):
+            input(f"[{self.id}] Place the gripper fully {limit}, release it, then press Enter: ")
             samples = []
             for _ in range(10):
                 samples.append(self.bus.read_states().position[6])
                 time.sleep(0.02)
             if np.ptp(samples) > 0.03:
                 raise ValueError("Gripper moved while it was measured; calibration was not saved")
-            measurements[endpoint] = float(np.median(samples))
+            measurements[limit] = float(np.median(samples))
         closed, opened = measurements["closed"], measurements["open"]
-        # Raw motor angles of the two stops, in whole degrees; drive_mode records which is closed.
+        # Motor angles of the two limits, in whole degrees; drive_mode records which is closed.
         stops_deg = sorted(round(math.degrees(value)) for value in (closed, opened))
         stroke_deg = stops_deg[1] - stops_deg[0]
         low, high = _GRIPPER_STROKE_RANGE_DEG
@@ -457,34 +427,46 @@ class YamFollower(Robot):
         }
         self._save_calibration()
         self._refresh_params()
-        logger.info("Saved gripper endpoints to %s. Joint zeros were not changed.", self.calibration_fpath)
+        logger.info("Saved the gripper limits to %s. Joint zeros were not changed.", self.calibration_fpath)
 
     def configure(self) -> None:
-        """Switch the motors to MIT mode and re-read the pose the servo will start from."""
+        """Switch the motors to MIT mode, and read again the position the servo starts from."""
         if self.servo.active:
             # Changing modes disables torque, which would drop an arm the servo is holding.
             raise RuntimeError("Configure YAM motors before the servo starts, not while it runs")
         self.bus.set_mit_mode()
         self._check_can_timeouts()
-        self.servo.seed(read_joint_state(self.bus, self._require_params()))
+        self.servo.reset(read_joint_state(self.bus, self._require_params()))
 
-    def _check_can_timeouts(self) -> None:
-        """Require a prompt firmware fallback if this process stops sending commands."""
-        unsafe = {
-            name: value
-            for name, value in self.bus.can_timeouts().items()
-            if not 0 < value <= _MAX_CAN_TIMEOUT_TICKS
-        }
-        if not unsafe:
-            return
-        details = ", ".join(
-            f"{name}=off" if value == 0 else f"{name}={value * _CAN_TIMEOUT_TICK_US / 1000:g} ms"
-            for name, value in unsafe.items()
-        )
-        raise ValueError(
-            f"{self}: unsafe motor CAN timeout ({details}); configure every motor to at most 400 ms "
-            "with the Damiao/I2RT motor tools"
-        )
+    @check_if_already_connected
+    def open(self) -> None:
+        """Connect CAN and cameras without torque, check the initial position, and reset the servo to it.
+
+        `connect` runs `open`, `configure` and `start`. A bimanual robot opens both arms before starting
+        either, so an arm out of its initial position never enables the other.
+        """
+        params = self._require_params()
+        try:
+            self.servo.stop_event.clear()
+            self._load_gravity_model()  # before the hardware, so a missing package or download fails first
+            self.bus.open()
+            for camera in self.cameras.values():
+                camera.connect()
+            state = read_joint_state(self.bus, params)
+            self._check_initial_position(state.position)
+            self.servo.reset(state)
+            self._connected = True
+        except BaseException:
+            self._close()
+            raise
+
+    @check_if_not_connected
+    def start(self) -> None:
+        """Enable torque at the measured position, then start the servo."""
+        if self.servo.active:
+            raise RuntimeError("YAM servo is already running")
+        self.bus.enable(joint_to_motor(self.servo.state.position, self._require_params()))
+        self.servo.start()
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
@@ -550,25 +532,8 @@ class YamFollower(Robot):
 
     def _require_params(self) -> MitArmParams:
         if self.servo.params is None:
-            raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
+            raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper limits")
         return self.servo.params
-
-    def _gravity_torque(self, positions: np.ndarray) -> np.ndarray:
-        if self.gravity_model is None:
-            return np.zeros(6)
-        opening = float(positions[6]) * _MODEL_GRIPPER_STROKE_M
-        return self.gravity_model.torques(positions[:6], dict.fromkeys(_MODEL_GRIPPER_JOINTS, opening))
-
-    def _load_control_model(self) -> None:
-        if not self.config.gravity_compensation or self.gravity_model is not None:
-            return
-        model_path = ensure_bucket_file(
-            _GRAVITY_MODEL_BUCKET_ID,
-            _GRAVITY_MODEL_REMOTE_PATH,
-            _GRAVITY_MODEL_LOCAL_PATH,
-            token=False,
-        )
-        self.gravity_model = GravityCompensation(model_path, _MODEL_ARM_JOINTS, base_frame="base")
 
     def _open_for_calibration(self) -> None:
         """Open the CAN interface without cameras, servo or torque."""
@@ -580,12 +545,47 @@ class YamFollower(Robot):
             self._close()
             raise
 
-    def _check_start_pose(self, position: np.ndarray) -> None:
+    def _load_gravity_model(self) -> None:
+        if not self.config.gravity_compensation or self.gravity_model is not None:
+            return
+        model_path = ensure_bucket_file(
+            _GRAVITY_MODEL_BUCKET_ID,
+            _GRAVITY_MODEL_REMOTE_PATH,
+            _GRAVITY_MODEL_LOCAL_PATH,
+            token=False,
+        )
+        self.gravity_model = GravityCompensation(model_path, _MODEL_ARM_JOINTS, base_frame="base")
+
+    def _gravity_torque(self, positions: np.ndarray) -> np.ndarray:
+        if self.gravity_model is None:
+            return np.zeros(6)
+        opening = float(positions[6]) * _MODEL_GRIPPER_STROKE_M
+        return self.gravity_model.torques(positions[:6], dict.fromkeys(_MODEL_GRIPPER_JOINTS, opening))
+
+    def _check_initial_position(self, position: np.ndarray) -> None:
         if self.config.initial_position_deg is not None and np.any(
             np.abs(np.rad2deg(position[:6]) - self.config.initial_position_deg)
             > self.config.initial_tolerance_deg
         ):
-            raise ValueError("YAM arm is outside the configured initial pose tolerance")
+            raise ValueError("YAM arm is not within initial_tolerance_deg of initial_position_deg")
+
+    def _check_can_timeouts(self) -> None:
+        """Raise unless every motor disables itself within 400 ms of the last command."""
+        unsafe = {
+            name: value
+            for name, value in self.bus.can_timeouts().items()
+            if not 0 < value <= _MAX_CAN_TIMEOUT_TICKS
+        }
+        if not unsafe:
+            return
+        details = ", ".join(
+            f"{name}=off" if value == 0 else f"{name}={value * _CAN_TIMEOUT_TICK_US / 1000:g} ms"
+            for name, value in unsafe.items()
+        )
+        raise ValueError(
+            f"{self}: unsafe motor CAN timeout ({details}); configure every motor to at most 400 ms "
+            "with the Damiao/I2RT motor tools"
+        )
 
     def _close(self) -> None:
         stop_error: RuntimeError | None = None
@@ -593,7 +593,7 @@ class YamFollower(Robot):
             self.servo.stop()
         except RuntimeError as exc:
             stop_error = exc
-            # Leave CAN open while the thread might still be using it, but attempt torque-off.
+            # Leave CAN open while the thread might still be using it, but still try to disable torque.
             self.bus.disable()
             logger.exception("YAM servo did not stop; CAN remains open for a disconnect retry")
         if stop_error is not None:
