@@ -107,8 +107,8 @@ class JointState:
 
 
 @dataclass(frozen=True, eq=False)
-class CalibratedGripper:
-    """Linear MIT-mode gripper calibrated between two motor positions.
+class GripperParams:
+    """Calibration and control settings of a linear MIT-mode gripper.
 
     Args:
         closed (`float`):
@@ -161,7 +161,7 @@ class _GripperForceLimiter:
     torque drops.
     """
 
-    def __init__(self, gripper: CalibratedGripper) -> None:
+    def __init__(self, gripper: GripperParams) -> None:
         self.gripper = gripper
         self.blocked = False
         self._efforts: list[tuple[float, float]] = []
@@ -234,7 +234,7 @@ class MitArmParams:
             Per-joint multipliers for model gravity torques.
         max_gravity_torque (`float`):
             Maximum gravity feed-forward magnitude in newton-metres.
-        gripper (`CalibratedGripper`):
+        gripper (`GripperParams`):
             Gripper calibration and control settings.
         float_kd (`np.ndarray`):
             Per-joint damping gains used with zero stiffness in float mode.
@@ -252,7 +252,7 @@ class MitArmParams:
     max_tracking_error: float
     gravity_factors: np.ndarray
     max_gravity_torque: float
-    gripper: CalibratedGripper
+    gripper: GripperParams
     float_kd: np.ndarray
     coulomb_friction: np.ndarray
 

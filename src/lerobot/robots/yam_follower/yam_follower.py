@@ -50,7 +50,7 @@ from .config_yam_follower import (
     YamFollowerRobotConfig,
 )
 from .mit_control import (
-    CalibratedGripper,
+    GripperParams,
     MitArmParams,
     MitCommand,
     MitServo,
@@ -107,7 +107,7 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
         max_tracking_error=math.radians(config.max_tracking_error_deg),
         gravity_factors=np.asarray(config.gravity_factors, dtype=float),
         max_gravity_torque=_MAX_GRAVITY_TORQUE_NM,
-        gripper=CalibratedGripper(
+        gripper=GripperParams(
             closed=closed,
             open=opened,
             kp=config.gripper_kp,

@@ -27,7 +27,7 @@ from lerobot.robots.yam_follower import mit_control
 
 
 def gripper(closed=1.0, opened=3.0):
-    return mit_control.CalibratedGripper(
+    return mit_control.GripperParams(
         closed=closed,
         open=opened,
         kp=4.0,
