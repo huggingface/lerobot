@@ -508,7 +508,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             self.name_or_path = str(self.config.pretrained_path)
 
         # Wrap with PEFT
-        peft_model = get_peft_model(self, final_config)
+        peft_model = get_peft_model(self, final_config, revision=self.config.pretrained_revision)
 
         # Mark config as using PEFT for proper loading later
         peft_model.config.use_peft = True
