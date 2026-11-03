@@ -169,7 +169,8 @@ def make_fastwam_pre_post_processors_from_pretrained(
         (step for step in preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)), None
     )
     if relative_step is None:
-        if not relative_overrides.get("enabled", config.use_relative_actions):
+        # Only the training opt-in adds the pair: eval and rollout keep the checkpoint's processors.
+        if not relative_overrides.get("enabled", False):
             return preprocessor, postprocessor
         relative_step = RelativeActionsProcessorStep(
             enabled=config.use_relative_actions,

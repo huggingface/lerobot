@@ -180,6 +180,11 @@ def test_relative_actions_opt_in_on_a_saved_checkpoint(tmp_path, saved_with_rela
     postprocessor.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
 
     cfg = FastWAMConfig(**kwargs, use_relative_actions=True, action_feature_names=names)
+    # Eval and rollout pass no relative override: the checkpoint's processors are kept as saved.
+    preprocessor, _ = make_pre_post_processors(cfg, pretrained_path=str(tmp_path))
+    relative_steps = [s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)]
+    assert [s.enabled for s in relative_steps] == ([False] if saved_with_relative_pair else [])
+
     preprocessor, postprocessor = make_pre_post_processors(
         cfg,
         pretrained_path=str(tmp_path),

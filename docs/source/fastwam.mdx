@@ -129,7 +129,7 @@ lerobot-train \
   ...
 ```
 
-Checkpoints saved before relative actions existed, such as `lerobot/fastwam_base`, get the relative-action processor steps added when they are loaded with this option.
+Checkpoints saved before relative actions existed, such as `lerobot/fastwam_base`, get the relative-action processor steps added when fine-tuning from them with this option. This only applies at fine-tuning time: evaluation and rollout use the processors saved with the checkpoint as they are.
 
 ### Text Encoder Device
 
