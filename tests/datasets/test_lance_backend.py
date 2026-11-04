@@ -291,7 +291,9 @@ def camera_dataset_roots(request) -> tuple[Path, Path]:
     return request.getfixturevalue(request.param)
 
 
-@pytest.mark.parametrize("offsets", [None, [0], [-2, -1, 0, 1]], ids=["single", "one_frame", "history"])
+@pytest.mark.parametrize(
+    "offsets", [None, [0], [-1], [-2, -1, 0, 1]], ids=["single", "one_frame", "history_only", "history"]
+)
 def test_image_parity(camera_dataset_roots, offsets):
     src_root, lance_root = camera_dataset_roots
     meta = LeRobotDatasetMetadata(DUMMY_REPO_ID, root=src_root)
@@ -352,13 +354,14 @@ def test_image_transforms_keep_duplicate_samples_independent(camera_dataset_root
         torch.testing.assert_close(actual[1][key], expected[1][key], rtol=0, atol=0)
 
 
-def test_image_fetches_only_required_rows(image_dataset_roots, monkeypatch):
+@pytest.mark.parametrize("offsets", [[-1, 0], [-1]], ids=["current", "history_only"])
+def test_image_fetches_only_required_rows(image_dataset_roots, monkeypatch, offsets: list[int]):
     _, lance_root = image_dataset_roots
     key = "observation.images.front"
     lance_ds = LeRobotDataset(
         DUMMY_REPO_ID,
         root=lance_root,
-        delta_timestamps={key: [-1 / 30, 0.0], "action": [0.0, 1 / 30, 2 / 30]},
+        delta_timestamps={key: [offset / 30 for offset in offsets], "action": [0.0, 1 / 30, 2 / 30]},
     )
     calls = []
     decode = lance_ds.reader._decode_image
@@ -432,16 +435,20 @@ def test_image_storage(camera_dataset_roots, tmp_path, storage):
         for dataset in (lance_ds, upstream):
             with pytest.raises(ValueError, match="Missing image.*observation.images.front.*frame 7"):
                 dataset[7]
-        kwargs = {"episodes": [1], "delta_timestamps": {key: [-1 / 30, 0.0]}, "video_backend": "pyav"}
-        for root in (src_root, lance_root):
-            subset = LeRobotDataset(DUMMY_REPO_ID, root=root, **kwargs)
-            projected = subset.select_columns(key)
-            for rows in ([1, 2], [2, 1]):
-                batch = projected[rows][key]
-                assert batch[rows.index(1)] is None
-                assert isinstance(batch[rows.index(2)], torch.Tensor)
-            with pytest.raises(ValueError, match="Missing image.*frame 7"):
-                subset[2]
+        for offsets in ([-1 / 30, 0.0], [-1 / 30]):
+            kwargs = {"episodes": [1], "delta_timestamps": {key: offsets}, "video_backend": "pyav"}
+            for root in (src_root, lance_root):
+                subset = LeRobotDataset(DUMMY_REPO_ID, root=root, **kwargs)
+                projected = subset.select_columns(key)
+                for rows in ([1, 2], [2, 1]):
+                    batch = projected[rows][key]
+                    assert batch[rows.index(1)] is None
+                    assert isinstance(batch[rows.index(2)], torch.Tensor)
+                # Absolute frame 7 is missing: reject it as either the current
+                # frame (relative 1) or a requested previous frame (relative 2).
+                for index in (1, 2):
+                    with pytest.raises(ValueError, match="Missing image.*frame 7"):
+                        subset[index]
     else:
         with pytest.raises(FileNotFoundError):
             lance_ds[7]

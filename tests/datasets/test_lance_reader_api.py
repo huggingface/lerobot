@@ -41,6 +41,8 @@ from tests.datasets import test_lance_backend as lance_fixtures
 from tests.datasets.test_lance_backend import assert_items_equal
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 camera_dataset_roots = lance_fixtures.camera_dataset_roots
 image_dataset_roots = lance_fixtures.image_dataset_roots
 mixed_image_dataset_roots = lance_fixtures.mixed_image_dataset_roots

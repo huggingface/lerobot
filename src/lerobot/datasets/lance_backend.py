@@ -539,15 +539,15 @@ class LanceDatasetReader(BaseDatasetReader):
     def _read_images(self, plans: list[_SamplePlan]) -> list[dict[str, torch.Tensor]]:
         """Read and decode each (camera, row) once, then assemble independent samples.
 
-        Each image column reads only its own frame windows, so action or other
-        cameras' windows never fetch unrelated images. Image delta windows keep
+        Each image column reads its own frame windows and current rows for validation,
+        so action or other cameras' windows never fetch unrelated images. Image delta windows keep
         their time dimension even when they contain a single frame, matching the
         default reader's non-video column stacking.
         """
         items: list[dict[str, torch.Tensor]] = [{} for _ in plans]
         for key, permutation in self._image_perms.items():
             windows = [plan["windows"].get(key, [plan["abs_idx"]]) for plan in plans]
-            rows = sorted({row for window in windows for row in window})
+            rows = sorted({row for window in windows for row in window} | {plan["abs_idx"] for plan in plans})
             column = permutation.__getitems__(rows).column(to_lance_column(key))
             decoded = {
                 row: require_image(self._decode_image(column[pos].as_py(), key, row), key, row)
