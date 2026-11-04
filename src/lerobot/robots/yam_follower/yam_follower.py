@@ -345,25 +345,29 @@ class YamFollower(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """Connect the hardware and start control.
+        """Connect the arm and start control from its initial position.
+
+        Control starts only once the gripper is calibrated; until then, torque stays off.
 
         Args:
             calibrate (`bool`, *optional*, defaults to `True`):
-                Measure missing gripper limits, then start control. When `False`, connect only the CAN
-                interface, with torque off, so calibration can be run explicitly.
+                Measure the gripper limits if none are saved.
         """
         self._open_bus()
-        if calibrate:
-            try:
-                if not self.is_calibrated:
-                    self.calibrate()
-                self.open()
-                self.configure()
-                self.start()
-            except BaseException:
-                self.disconnect()
-                raise
-        logger.info(f"{self} connected." if calibrate else f"{self} connected with torque off.")
+        try:
+            if not self.is_calibrated and calibrate:
+                logger.info(f"No gripper calibration found for {self}")
+                self.calibrate()
+            for camera in self.cameras.values():
+                camera.connect()
+            self.configure()
+            if self.is_calibrated:
+                self._prepare_servo()
+                self._start_servo()
+        except BaseException:
+            self.disconnect()
+            raise
+        logger.info(f"{self} connected." if self.is_calibrated else f"{self} connected with torque off.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -371,9 +375,7 @@ class YamFollower(Robot):
 
     @check_if_not_connected
     def calibrate(self) -> None:
-        """Measure the gripper limits without enabling torque or changing joint zeros."""
-        if self.servo.active:
-            raise RuntimeError("Reconnect with calibrate=False before measuring the gripper limits")
+        """Measure the gripper limits by hand, with torque off, without changing the joint zeros."""
         if self.calibration:
             user_input = input(
                 f"Press ENTER to use the gripper calibration saved for {self.id}, "
@@ -382,6 +384,9 @@ class YamFollower(Robot):
             if user_input.strip().lower() != "c":
                 logger.info(f"Using the saved gripper calibration of {self}")
                 return
+        if self.servo.active:
+            input(f"[{self.id}] Support the arm, then press Enter to turn torque off: ")
+            self.servo.stop()
         measurements: dict[str, float] = {}
         logger.info(f"{self}: support the arm. Move only the gripper gently by hand; stop if it resists.")
         for limit in ("closed", "open"):
@@ -416,37 +421,12 @@ class YamFollower(Robot):
         logger.info("Saved the gripper limits to %s. Joint zeros were not changed.", self.calibration_fpath)
 
     def configure(self) -> None:
-        """Switch the motors to MIT mode, and read again the position the servo starts from."""
+        """Switch the motors to MIT mode and check their CAN timeouts, with torque off."""
         if self.servo.active:
             # Changing modes disables torque, which would drop an arm the servo is holding.
             raise RuntimeError("Configure YAM motors before the servo starts, not while it runs")
         self.bus.set_mit_mode()
         self._check_can_timeouts()
-        params = self._require_params()
-        self.servo.reset(read_joint_state(self.bus, params), params)
-
-    @check_if_not_connected
-    def open(self) -> None:
-        """Connect the cameras, check the initial position, and reset the servo to it, without torque.
-
-        Once the CAN interface is open, `connect` runs `open`, `configure` and `start`.
-        """
-        params = self._require_params()
-        self.servo.stop_event.clear()
-        self._load_gravity_model()
-        for camera in self.cameras.values():
-            camera.connect()
-        state = read_joint_state(self.bus, params)
-        self._check_initial_position(state.position)
-        self.servo.reset(state, params)
-
-    @check_if_not_connected
-    def start(self) -> None:
-        """Enable torque at the measured position, then start the servo."""
-        if self.servo.active:
-            raise RuntimeError("YAM servo is already running")
-        self.bus.enable(joint_to_motor(self.servo.state.position, self._require_params()))
-        self.servo.start()
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
@@ -456,7 +436,8 @@ class YamFollower(Robot):
             `RobotObservation`: Joint state and the latest frame from each configured camera.
 
         Raises:
-            RuntimeError: If the robot was opened only for calibration and the servo is not running.
+            RuntimeError: If control is not running, because the gripper is not calibrated or was just
+                calibrated again.
         """
         if not self.servo.active:
             raise RuntimeError("Reconnect after calibration before reading policy observations")
@@ -518,6 +499,20 @@ class YamFollower(Robot):
         except BaseException:
             self._close()
             raise
+
+    def _prepare_servo(self) -> None:
+        """Check the initial position and reset the servo to it, without torque."""
+        params = self._require_params()
+        self.servo.stop_event.clear()
+        self._load_gravity_model()
+        state = read_joint_state(self.bus, params)
+        self._check_initial_position(state.position)
+        self.servo.reset(state, params)
+
+    def _start_servo(self) -> None:
+        """Enable torque at the measured position, then start the servo."""
+        self.bus.enable(joint_to_motor(self.servo.state.position, self._require_params()))
+        self.servo.start()
 
     def _load_gravity_model(self) -> None:
         if not self.config.gravity_compensation or self.gravity_model is not None:

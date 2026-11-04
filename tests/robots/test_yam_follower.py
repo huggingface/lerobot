@@ -374,10 +374,10 @@ def test_single_arm_rejects_partial_action(robot):
         robot.send_action({"joint_1.pos": 0.2})
 
 
-def test_calibration_connection_never_enables_motor(robot, monkeypatch):
+def test_connect_keeps_torque_off_until_the_gripper_is_calibrated(tmp_path, monkeypatch):
+    robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
     robot.connect(calibrate=False)
-    robot.bus.set_mit_mode.assert_not_called()
     robot.bus.enable.assert_not_called()
     robot.servo.start.assert_not_called()
     robot.disconnect()
@@ -401,9 +401,10 @@ def test_connect_calibrates_missing_gripper_limits(tmp_path, monkeypatch):
     robot.disconnect()
 
 
-def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch):
+@pytest.mark.parametrize("calibrate", [True, False])
+def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch, calibrate):
     mock_hardware(robot, monkeypatch)
-    robot.connect()
+    robot.connect(calibrate=calibrate)
     calls = [name for name, *_ in robot.bus.mock_calls if name in ("open", "set_mit_mode", "enable")]
     assert calls == ["open", "set_mit_mode", "enable"]
     robot.servo.start.assert_called_once()
@@ -457,16 +458,6 @@ def test_configure_refuses_while_servo_holds_the_arm(robot):
     mark_running(robot.servo)
     with pytest.raises(RuntimeError, match="before the servo starts"):
         robot.configure()
-
-
-def test_start_refuses_second_servo_before_enabling_again(robot, monkeypatch):
-    mock_hardware(robot, monkeypatch)
-    robot.connect()
-    mark_running(robot.servo)
-    with pytest.raises(RuntimeError, match="already running"):
-        robot.start()
-    robot.bus.enable.assert_called_once()
-    robot.disconnect()
 
 
 def test_disconnect_can_retry_after_servo_join_timeout(robot):
@@ -565,6 +556,19 @@ def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch
     prompts = measure_gripper(robot, monkeypatch, opened=5.1, answers=["c"])
     assert len(prompts) == 3
     assert params(robot).gripper.open == pytest.approx(math.radians(round(math.degrees(5.1))))
+    robot.disconnect()
+
+
+def test_recalibrating_turns_torque_off_once_the_arm_is_supported(robot, monkeypatch):
+    mock_hardware(robot, monkeypatch)
+    robot.connect(calibrate=False)
+    mark_running(robot.servo)
+    measure_gripper(robot, monkeypatch, answers=[""])
+    assert robot.servo.active  # the saved calibration is kept, and so is control
+    prompts = measure_gripper(robot, monkeypatch, answers=["c", ""])
+    assert "Support the arm" in prompts[1]
+    assert not robot.servo.active
+    robot.bus.disable.assert_called_once()
     robot.disconnect()
 
 

@@ -166,11 +166,11 @@ def test_inactive_arm_refuses_its_action(robot):
         robot.send_action(action)
 
 
-def test_calibration_connect_never_enables_motors(robot, monkeypatch):
+def test_connect_keeps_both_arms_off_until_both_are_calibrated(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
+    robot.right_arm.calibration = {}
     robot.connect(calibrate=False)
     for arm in robot.arms.values():
-        arm.bus.set_mit_mode.assert_not_called()
         arm.bus.enable.assert_not_called()
     robot.disconnect()
 

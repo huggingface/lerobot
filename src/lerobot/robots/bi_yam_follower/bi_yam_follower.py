@@ -98,26 +98,34 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """Connect both arms, checking both before either receives torque.
+        """Connect both arms and start control.
 
-        If one arm is out of its initial position, neither arm gets torque.
+        Neither arm gets torque until both are calibrated and in their initial position.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Measure the gripper limits of an arm if none are saved.
         """
         if any(arm.is_connected for arm in self.arms.values()):
             raise RuntimeError("Disconnect both YAM arms before reconnecting")
         try:
             for arm in self.arms.values():
-                arm.connect(calibrate=False)
-            if calibrate:
-                if not self.is_calibrated:
-                    self.calibrate()
-                # Open both arms, check their initial positions and set MIT mode before either gets torque.
-                # Opening clears the stop event both arms share, so it must come before either servo starts:
-                # clearing it later could erase a fault of the arm that started first.
+                arm._open_bus()
+            if not self.is_calibrated and calibrate:
+                logger.info(f"No gripper calibration found for {self}")
+                self.calibrate()
+            for arm in self.arms.values():
+                for camera in arm.cameras.values():
+                    camera.connect()
+            self.configure()
+            if self.is_calibrated:
+                # Check both initial positions before either arm gets torque. This also clears the stop event
+                # both arms share, so it must come before either servo starts: clearing it later could erase a
+                # fault of the arm that started first.
                 for arm in self.arms.values():
-                    arm.open()
-                self.configure()
+                    arm._prepare_servo()
                 for arm in self.arms.values():
-                    arm.start()
+                    arm._start_servo()
         except BaseException:
             self._stop.set()
             if any(arm.is_connected for arm in self.arms.values()):
@@ -126,6 +134,7 @@ class BiYamFollower(BimanualMixin, Robot):
                 except Exception:
                     logger.exception("Failed to disconnect YAM after bimanual connection failure")
             raise
+        logger.info(f"{self} connected." if self.is_calibrated else f"{self} connected with torque off.")
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
