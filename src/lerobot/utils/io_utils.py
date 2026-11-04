@@ -16,8 +16,8 @@
 import json
 import logging
 import shutil
+import tempfile
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ def write_json(data: JsonLike, fpath: Path) -> None:
     if fpath.is_symlink():
         fpath = fpath.resolve()
     fpath.parent.mkdir(exist_ok=True, parents=True)
-    with TemporaryDirectory(dir=fpath.parent, prefix=".write-json-") as temporary_dir:
+    with tempfile.TemporaryDirectory(dir=fpath.parent, prefix=".write-json-") as temporary_dir:
         temporary_path = Path(temporary_dir) / fpath.name
         with open(temporary_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
