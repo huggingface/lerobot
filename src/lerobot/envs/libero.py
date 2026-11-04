@@ -27,12 +27,19 @@ import gymnasium as gym
 import numpy as np
 import torch
 from gymnasium import spaces
-from libero.libero import benchmark, get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
 
-from lerobot.lerobot_types import RobotObservation
+from .libero_config import ensure_libero_config
 
-from .utils import _LazyAsyncVectorEnv, parse_camera_names
+# Must run before the first `libero.libero` import: without a config file LIBERO prompts on stdin at
+# import time, which raises EOFError in headless runs (HF Jobs, CI, SLURM).
+ensure_libero_config()
+
+from libero.libero import benchmark, get_libero_path  # noqa: E402
+from libero.libero.envs import OffScreenRenderEnv  # noqa: E402
+
+from lerobot.lerobot_types import RobotObservation  # noqa: E402
+
+from .utils import _LazyAsyncVectorEnv, parse_camera_names  # noqa: E402
 
 
 def _get_suite(name: str) -> benchmark.Benchmark:

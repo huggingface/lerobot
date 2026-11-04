@@ -37,6 +37,10 @@ export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
 
 </Tip>
 
+When its config file `~/.libero/config.yaml` (or `$LIBERO_CONFIG_PATH/config.yaml`) is missing, LIBERO asks on first import whether to use a custom path for its dataset folder, then writes the file. Without a terminal (CI, SLURM, HF Jobs, Docker) that prompt fails with `EOFError`, so in that case LeRobot writes LIBERO's default config (what answering "N" produces) before importing LIBERO and no prompt appears. In an interactive terminal or a Jupyter notebook LIBERO's own prompt is kept. If the config directory is not writable, LeRobot logs a warning; set `LIBERO_CONFIG_PATH` to a writable directory.
+
+An existing config file is never modified. If its `benchmark_root` no longer exists, for example after switching from `hf-libero` to LIBERO-plus, LeRobot logs a warning naming the file; update or delete it.
+
 ## Evaluation
 
 ### Default evaluation (recommended)
