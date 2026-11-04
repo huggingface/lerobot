@@ -137,11 +137,7 @@ The frozen UMT5-XXL text encoder takes about 11 GB. `policy.text_encoder_device=
 
 ### Wan Components
 
-FastWAM loads the Wan VAE, video DiT, text encoder, and tokenizer from the configured Wan model directory or Hugging Face Hub model id. LeRobot-format FastWAM checkpoints saved by `save_pretrained` also copy the local Wan component files needed by `from_pretrained`.
-
-### Checkpoint Loading Memory
-
-FastWAM stages policy checkpoint weights on CPU and copies them into the model on `policy.device`. This avoids keeping an extra full checkpoint on the accelerator during loading, without changing the model's parameter dtype or steady-state model memory. CPU staging still uses host memory and can affect loading time; it does not offload inference to CPU.
+FastWAM loads the Wan VAE, video DiT, text encoder, and tokenizer from the configured Wan model directory or Hugging Face Hub model id. LeRobot-format FastWAM checkpoints saved by `save_pretrained` also copy the local Wan component files needed by `from_pretrained`. Checkpoint weights are staged on CPU before being copied into the model on `policy.device`, so loading does not need a second full copy of the weights on the accelerator.
 
 ### Attention Backend
 

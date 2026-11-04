@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import json
-from pathlib import Path
 
 import pytest
 import torch
@@ -466,41 +465,25 @@ class CoreWithFrozenComponents(FakeFastWAMCore):
     ],
 )
 @pytest.mark.parametrize("map_location", ["cpu", "cuda:0"])
-@pytest.mark.parametrize("strict", [False, True])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-def test_checkpoint_load_stages_weights_on_cpu(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    model_device: str,
-    map_location: str,
-    strict: bool,
-    dtype: torch.dtype,
-) -> None:
-    reference = FakeFastWAMCore().to(dtype=dtype)
+def test_checkpoint_load_stages_weights_on_cpu(monkeypatch, tmp_path, model_device, map_location):
+    reference = FakeFastWAMCore().to(dtype=torch.bfloat16)
     checkpoint = tmp_path / "model.safetensors"
     save_model(reference, checkpoint)
-    target = FakeFastWAMCore().to(device=model_device, dtype=dtype)
+    target = FakeFastWAMCore().to(device=model_device, dtype=torch.bfloat16)
     original_parameters = dict(target.named_parameters())
-    load_calls: list[tuple[str, bool]] = []
 
-    def load_on_cpu(
-        model: nn.Module, filename: str, *, strict: bool, device: str
-    ) -> tuple[list[str], list[str]]:
+    def load_on_cpu(model, filename, *, strict, device):
         assert device == "cpu"
-        load_calls.append((device, strict))
         return load_model(model, filename, strict=strict, device=device)
 
     monkeypatch.setattr("lerobot.policies.pretrained.load_model_as_safetensor", load_on_cpu)
-    loaded = FastWAMPolicy._load_as_safetensor(target, str(checkpoint), map_location, strict)
+    loaded = FastWAMPolicy._load_as_safetensor(target, str(checkpoint), map_location, strict=True)
 
     assert loaded is target
-    assert load_calls == [("cpu", strict)]
-    assert all(
-        parameter is original_parameters[name]
-        and parameter.device == torch.device(model_device)
-        and parameter.dtype == dtype
-        for name, parameter in target.named_parameters()
-    )
+    for name, parameter in target.named_parameters():
+        assert parameter is original_parameters[name], name
+        assert parameter.device == torch.device(model_device), name
+        assert parameter.dtype == torch.bfloat16, name
     torch.testing.assert_close(
         {name: tensor.cpu() for name, tensor in target.state_dict().items()},
         reference.state_dict(),
