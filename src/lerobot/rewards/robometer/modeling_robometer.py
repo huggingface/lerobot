@@ -136,7 +136,7 @@ class RobometerPredictionHead(nn.Sequential):
 
 @dataclass(frozen=True)
 class RobometerPrediction(ProgressPrediction):
-    """RoboMeter frame signals, each float32 with shape ``(batch, time)``."""
+    """Task progress and success probability for each frame, from 0 to 1, shaped `(batch, time)`."""
 
     success_probability: Tensor
 
@@ -223,11 +223,17 @@ class RobometerRewardModel(PreTrainedRewardModel):
         self.frame_pool_attn.to(dtype=model_dtype)
 
     def predict_progress(self, batch: Mapping[str, Any]) -> RobometerPrediction:
-        """Predict frame-level progress and success probability.
+        """Predict task progress and success probability for every frame.
 
-        The processor-prepared input mapping is not mutated. Frame selection,
-        thresholding, and conversion into a downstream reward belong to the
-        caller, which also controls model mode and gradient context.
+        It changes neither the model mode nor gradients: for inference, call it in `eval()` mode under
+        `torch.inference_mode()`.
+
+        Args:
+            batch (`Mapping[str, Any]`):
+                Output of the RoboMeter preprocessor.
+
+        Returns:
+            `RobometerPrediction`: Values for every frame; the caller picks frames and thresholds.
         """
         inputs = {
             key: batch[f"{ROBOMETER_FEATURE_PREFIX}{key}"]

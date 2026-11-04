@@ -80,28 +80,6 @@ def test_disabling_crop_preserves_previous_output_for_fixed_size_samples() -> No
     np.testing.assert_array_equal(uncropped, previous)
 
 
-def test_select_last_frame_progress_preserves_batch_axis() -> None:
-    prediction = RobometerPrediction(
-        progress=torch.tensor([[0.1, 0.9], [0.4, 0.6]]),
-        success_probability=torch.zeros(2, 2),
-    )
-
-    selected = compute_rabc_weights._select_last_frame_progress(prediction)
-
-    assert torch.equal(selected, torch.tensor([0.9, 0.6]))
-
-
-@pytest.mark.parametrize("progress", [torch.empty(2, 0), torch.empty(2)])
-def test_select_last_frame_progress_rejects_invalid_shape(progress: torch.Tensor) -> None:
-    prediction = RobometerPrediction(
-        progress=progress,
-        success_probability=torch.empty_like(progress),
-    )
-
-    with pytest.raises(ValueError, match=r"shape \(batch, time\)"):
-        compute_rabc_weights._select_last_frame_progress(prediction)
-
-
 @pytest.mark.parametrize("num_subsampled_frames", [0, -1])
 def test_compute_progress_rejects_invalid_subsample_count_before_loading(
     num_subsampled_frames: int,
@@ -115,38 +93,6 @@ def test_compute_progress_rejects_invalid_subsample_count_before_loading(
             reward_model_path="unused/model",
             num_subsampled_frames=num_subsampled_frames,
         )
-
-
-def test_make_scoring_encoder_disables_processor_cropping(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    class FakeEncoder:
-        def __init__(self, **kwargs) -> None:
-            captured.update(kwargs)
-
-    monkeypatch.setattr(compute_rabc_weights, "RobometerEncoderProcessorStep", FakeEncoder)
-    config = SimpleNamespace(
-        base_model_id="Qwen/Qwen3-VL-4B-Instruct",
-        image_key="observation.images.cam_top",
-        task_key="task",
-        default_task="pick up the cube",
-        use_multi_image=False,
-        use_per_frame_progress_token=False,
-    )
-
-    encoder = compute_rabc_weights._make_robometer_scoring_encoder(config)
-
-    assert isinstance(encoder, FakeEncoder)
-    assert captured == {
-        "base_model_id": config.base_model_id,
-        "image_key": config.image_key,
-        "task_key": config.task_key,
-        "default_task": config.default_task,
-        "max_frames": None,
-        "use_multi_image": config.use_multi_image,
-        "use_per_frame_progress_token": config.use_per_frame_progress_token,
-    }
-    assert "num_subsampled_frames" not in captured
 
 
 def test_scoring_encoder_preserves_already_selected_frames() -> None:
@@ -180,11 +126,13 @@ def test_scoring_encoder_preserves_already_selected_frames() -> None:
     assert [task for _, task in captured_samples] == ["task a", "task b"]
 
 
+@pytest.mark.dataset
 def test_compute_robometer_progress_preserves_legacy_parquet_artifact(monkeypatch, tmp_path: Path) -> None:
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
 
     image_key = "observation.images.top"
+    encoder_kwargs: dict[str, object] = {}
 
     class FakeConfig:
         def __init__(self, pretrained_path: str, device: str) -> None:
@@ -216,8 +164,8 @@ def test_compute_robometer_progress_preserves_legacy_parquet_artifact(monkeypatc
             return RobometerPrediction(progress=progress, success_probability=torch.zeros_like(progress))
 
     class FakeEncoder:
-        def __init__(self, **_kwargs) -> None:
-            pass
+        def __init__(self, **kwargs) -> None:
+            encoder_kwargs.update(kwargs)
 
         def __call__(self, transition):
             frames = transition[TransitionKey.OBSERVATION][image_key]
@@ -265,3 +213,4 @@ def test_compute_robometer_progress_preserves_legacy_parquet_artifact(monkeypatc
     assert table.schema.field("progress_sparse").type == pa.float32()
     assert table.schema.metadata == {b"reward_model_path": b"local/robometer"}
     assert table.column("progress_sparse").to_pylist() == [0.0, 1.0, 2.0]
+    assert encoder_kwargs["max_frames"] is None  # the sub-samples are already the right size

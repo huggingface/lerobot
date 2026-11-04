@@ -56,8 +56,7 @@ class RobometerConfig(RewardModelConfig):
     default_task: str | None = None
 
     max_frames: int | None = 8
-    # Retained so existing checkpoints keep loading. ``predict_progress``
-    # returns both signals; consumers choose frames and apply thresholds.
+    # Unused; kept so existing checkpoints such as lerobot/Robometer-4B still load.
     reward_output: str = "progress"
     success_threshold: float = 0.5
 
