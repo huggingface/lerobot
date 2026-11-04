@@ -123,7 +123,7 @@ lerobot-edit-dataset \
     --operation.overwrite true
 ```
 
-**The result lands in `$HF_LEROBOT_HOME/your_dataset`**, which `--dataset.repo_id` reads ahead of the Hub cache; add `--push_to_hub true` above to update the Hub copy too.
+**The result lands in `$HF_LEROBOT_HOME/your_dataset`**, not the cache `--dataset.repo_id` reads — so train with `--dataset.root=$HF_LEROBOT_HOME/your_dataset`, or add `--push_to_hub true` above.
 
 Or keep the dataset as-is and pass `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`.
 

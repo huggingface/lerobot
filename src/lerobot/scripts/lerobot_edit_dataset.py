@@ -266,7 +266,7 @@ from lerobot.datasets import (
     remove_feature,
     split_dataset,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.utils import init_logging
 
 
@@ -395,6 +395,16 @@ def _is_in_place(input_path: Path, output_path: Path) -> bool:
         return os.path.samefile(input_path, output_path)
     except OSError:
         return False
+
+
+def _check_output_outside_hub_cache(output_path: Path) -> None:
+    """Refuse to write into the Hub cache, whose files are symlinks to blobs shared across revisions."""
+    hub_cache = HF_LEROBOT_HUB_CACHE.resolve()
+    if output_path.is_relative_to(hub_cache):
+        raise ValueError(
+            f"Refusing to write to {output_path}: it is inside the Hub cache {hub_cache}, whose files are "
+            "shared between dataset revisions. Pass a --new_root outside of it."
+        )
 
 
 def get_output_path(
@@ -698,17 +708,18 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         raise ValueError("Operation config must be RecomputeStatsConfig")
 
     repo_id = _require_repo_id(cfg)
-    # Load first: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id,
-    # so the input path must come from where the dataset actually resolved.
-    src_dataset = LeRobotDataset(repo_id, root=cfg.root)
     # Determine whether this is an in-place operation
     output_repo_id, input_root, output_root = _resolve_io_paths(
         repo_id,
         cfg.new_repo_id,
-        src_dataset.root,
+        cfg.root,
         cfg.new_root,
         default_new_repo_id=f"{repo_id}_recomputed_stats",
     )
+    _check_output_outside_hub_cache(output_root)
+    if cfg.root is None and not input_root.exists():
+        # Not stored locally: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id.
+        input_root = LeRobotDataset(repo_id).root.resolve()
     in_place = _is_in_place(input_root, output_root)
 
     if in_place and not cfg.operation.overwrite:
@@ -723,7 +734,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         logging.warning(
             f"Overwriting dataset stats in-place at {input_root}. The original stats will be lost."
         )
-        dataset = src_dataset
+        dataset = LeRobotDataset(repo_id, root=input_root)
     else:
         logging.info(f"Copying dataset from {input_root} to {output_root}")
         if output_root.exists():
@@ -763,16 +774,17 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         raise ValueError("Operation config must be ReencodeVideosConfig")
 
     repo_id = _require_repo_id(cfg)
-    # Load first: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id,
-    # so the input path must come from where the dataset actually resolved.
-    src_dataset = LeRobotDataset(repo_id, root=cfg.root)
     output_repo_id, input_root, output_root = _resolve_io_paths(
         repo_id,
         cfg.new_repo_id,
-        src_dataset.root,
+        cfg.root,
         cfg.new_root,
         default_new_repo_id=f"{repo_id}_reencoded",
     )
+    _check_output_outside_hub_cache(output_root)
+    if cfg.root is None and not input_root.exists():
+        # Not stored locally: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id.
+        input_root = LeRobotDataset(repo_id).root.resolve()
     in_place = _is_in_place(input_root, output_root)
 
     if in_place and not cfg.operation.overwrite:
@@ -787,7 +799,7 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         logging.warning(
             f"Overwriting dataset videos in-place at {input_root}. The original videos will be lost."
         )
-        dataset = src_dataset
+        dataset = LeRobotDataset(repo_id, root=input_root)
     else:
         logging.info(f"Copying dataset from {input_root} to {output_root}")
         if output_root.exists():

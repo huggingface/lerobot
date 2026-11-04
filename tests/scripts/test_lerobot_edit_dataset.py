@@ -33,16 +33,12 @@ pytestmark = pytest.mark.dataset
 
 @pytest.mark.parametrize(
     ("handler", "operation"),
-    [
-        (handle_recompute_stats, RecomputeStatsConfig()),
-        (handle_reencode_videos, ReencodeVideosConfig()),
-    ],
+    [(handle_recompute_stats, RecomputeStatsConfig()), (handle_reencode_videos, ReencodeVideosConfig())],
 )
-def test_copies_dataset_from_resolved_root(
+def test_copies_hub_dataset_from_snapshot_cache(
     tmp_path, monkeypatch, lerobot_dataset_factory, handler, operation
 ):
-    """Without --root, the input is wherever LeRobotDataset resolved it (the Hub snapshot cache for
-    downloaded datasets), not $HF_LEROBOT_HOME/repo_id."""
+    """Without --root and with nothing at $HF_LEROBOT_HOME/repo_id, the input is the Hub snapshot cache."""
     repo_id = "user/hub_dataset"
     snapshot_root = tmp_path / "hub" / "snapshot"
     lerobot_dataset_factory(root=snapshot_root, repo_id=repo_id, use_videos=False)
