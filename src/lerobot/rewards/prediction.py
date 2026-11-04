@@ -12,32 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Consumer-facing reward-model capability types.
+"""Prediction types shared by reward models."""
 
-Reward models expose semantic methods instead of implementing one universal
-scalar-reward method. These protocols describe the methods that consumers may
-rely on for static type checking. They do not register, construct,
-or select reward-model implementations at runtime.
-"""
-
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
 
 from torch import Tensor
 
 
 @dataclass(frozen=True)
 class ProgressPrediction:
-    """Per-frame progress values with shape `(batch, time)`."""
+    """Task progress for each frame, from 0 to 1, shaped `(batch, time)`."""
 
     progress: Tensor
-
-
-class ProgressPredictor(Protocol):
-    """A model that predicts frame-aligned progress from encoded inputs."""
-
-    def predict_progress(
-        self,
-        batch: Mapping[str, Any],
-    ) -> ProgressPrediction: ...

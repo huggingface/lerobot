@@ -58,11 +58,12 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch import Tensor, nn
 
-from lerobot.rewards.capabilities import ProgressPrediction
 from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.utils.constants import OBS_PREFIX
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from ..prediction import ProgressPrediction
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoModelForImageTextToText

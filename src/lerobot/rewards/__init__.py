@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .capabilities import ProgressPrediction as ProgressPrediction, ProgressPredictor as ProgressPredictor
 from .classifier.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
 from .factory import (
     get_reward_model_class as get_reward_model_class,
@@ -20,6 +19,7 @@ from .factory import (
     make_reward_model_config as make_reward_model_config,
     make_reward_pre_post_processors as make_reward_pre_post_processors,
 )
+from .prediction import ProgressPrediction as ProgressPrediction
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
@@ -33,9 +33,8 @@ __all__ = [
     "TOPRewardConfig",
     # Base class
     "PreTrainedRewardModel",
-    # Inference capabilities
+    # Predictions
     "ProgressPrediction",
-    "ProgressPredictor",
     # Factory functions
     "get_reward_model_class",
     "make_reward_model",

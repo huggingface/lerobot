@@ -36,11 +36,9 @@ T = TypeVar("T", bound="PreTrainedRewardModel")
 
 
 class PreTrainedRewardModel(nn.Module, HubMixin):
-    """Base class for reward-model configuration, serialization, and training.
+    """Base class for reward models: configuration, Hub save and load, and training.
 
-    Reward models intentionally expose model-specific inference capabilities
-    such as ``predict_progress`` or ``compute_log_probability``. There is no
-    universal scalar inference method on this base class.
+    Each model exposes inference methods named after what it predicts, such as `predict_progress()`.
     """
 
     config_class: type[RewardModelConfig]
@@ -167,8 +165,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin):
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
         """Training forward pass — override for trainable reward models."""
         raise NotImplementedError(
-            f"{self.__class__.__name__} is not trainable. "
-            "Use the model's documented inference capabilities instead."
+            f"{self.__class__.__name__} is not trainable: it is used for inference only."
         )
 
     @property

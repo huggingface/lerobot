@@ -35,9 +35,9 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.rewards.capabilities import ProgressPrediction
 from lerobot.utils.constants import OBS_STR
 
+from ..prediction import ProgressPrediction
 from ..pretrained import PreTrainedRewardModel
 from .configuration_sarm import SARMConfig
 from .sarm_utils import (
