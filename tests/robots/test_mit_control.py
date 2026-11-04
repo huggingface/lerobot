@@ -143,11 +143,11 @@ def test_position_clipping_is_pure():
     assert clipped[2] == 1.0
 
 
-def test_control_step_slews_tracks_clips_and_adds_gravity():
+def test_track_step_slews_tracks_clips_and_adds_gravity():
     position = np.array([0.2, 0.02, 0.5])
     previous = np.array([0.6, 0.02, 0.5])
     target = np.array([0.6, -0.5, 1.0])
-    command, packet = mit_control._control_step(
+    command, packet = mit_control._track_step(
         params(), position, target, previous, np.array([8.0, 1.5]), dt=0.1
     )
     # shoulder: tracking band; elbow: slew then lower limit; gripper: slew (0.1 stroke per 0.1 s).
@@ -158,15 +158,13 @@ def test_control_step_slews_tracks_clips_and_adds_gravity():
     assert len(packet) == 2  # the gripper has its own force limiter
 
 
-def test_control_step_returns_from_past_a_limit_without_jumping():
+def test_track_step_returns_from_past_a_limit_without_jumping():
     position = np.array([0.2, -0.1, 0.5])  # elbow past its 0 lower limit
-    command, _ = mit_control._control_step(
-        params(), position, position, position.copy(), np.zeros(2), dt=0.01
-    )
+    command, _ = mit_control._track_step(params(), position, position, position.copy(), np.zeros(2), dt=0.01)
     np.testing.assert_allclose(command, [0.2, -0.095, 0.5])  # back toward 0 at 0.5 rad/s
     # A command further out than the measured position is pulled back to it, never beyond.
     previous = np.array([0.2, -0.3, 0.5])
-    command, _ = mit_control._control_step(params(), position, position, previous, np.zeros(2), dt=0.01)
+    command, _ = mit_control._track_step(params(), position, position, previous, np.zeros(2), dt=0.01)
     assert command[1] == pytest.approx(-0.1)
 
 
@@ -259,11 +257,14 @@ def test_servo_copies_submitted_target():
     assert servo.target[0] == 0.5
 
 
-def test_float_commands_compensate_gravity_and_friction_without_stiffness():
+def test_float_step_compensates_gravity_and_friction_without_stiffness():
     state = mit_control.JointState(
         position=np.array([0.2, 0.5, 0.5]), velocity=np.array([1.0, 1.0, 0.0]), torque=np.zeros(3)
     )
-    commands = mit_control._float_commands(params(), state, np.array([8.0, 1.5]))
+    command, commands = mit_control._float_step(
+        params(), state, np.array([0.0, 0.0, 0.8]), np.array([8.0, 1.5])
+    )
+    np.testing.assert_allclose(command, [0.2, 0.5, 0.8])  # the joints follow the arm, the gripper holds
     # Gravity 8 clipped to 5 Nm, plus friction 0.5 in the direction of motion.
     assert_mit_command(commands[0], position=0.2, velocity=0, kp=0, kd=0.2, torque=5.5)
     # Gravity -3 Nm and friction -0.2 Nm in the reversed elbow's motor frame.

@@ -277,7 +277,7 @@ def test_yam_parameters_reach_the_motor_commands(robot):
     position = np.array([0.5, 0.5, 1.0, 0, 0, 0, 0.5])
     target = np.r_[position[:6], 1.0]
     gravity = np.array([30.0, 15, 1, 1, 1, 1])
-    command, packet = mit_control._control_step(params(robot), position, target, position, gravity, dt=0.01)
+    command, packet = mit_control._track_step(params(robot), position, target, position, gravity, dt=0.01)
     # I2RT's gains, the per-joint gravity factors, and the 25 Nm cap on gravity torque.
     assert [(c.kp, c.kd) for c in packet] == [(80, 5)] * 3 + [(10, 1.5)] * 3
     np.testing.assert_allclose([c.torque for c in packet], [25.0, 16.5, 1.1, 1.2, 1.0, 1.0])

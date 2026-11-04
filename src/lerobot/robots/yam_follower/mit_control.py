@@ -388,7 +388,7 @@ def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
     return JointState(position=position, velocity=velocity, torque=torque)
 
 
-def _control_step(
+def _track_step(
     params: MitArmParams,
     position: np.ndarray,
     target: np.ndarray,
@@ -396,7 +396,7 @@ def _control_step(
     gravity: np.ndarray,
     dt: float,
 ) -> tuple[np.ndarray, tuple[MitCommand, ...]]:
-    """Move the command one step toward the target, and build the arm-joint commands."""
+    """Move the command one step toward the target, and build stiff arm-joint commands that hold it."""
     n = params.num_joints
     # Move toward the target, inside the limits, no faster than the configured speeds.
     speeds = np.r_[np.full(n, params.max_joint_speed), params.gripper.max_speed]
@@ -425,23 +425,23 @@ def _control_step(
     )
 
 
-def _gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
-    """Scale the model's gravity torques by `gravity_factors`, and cap them."""
-    torque = gravity * params.gravity_factors * params.joint_signs
-    return np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
+def _float_step(
+    params: MitArmParams,
+    state: JointState,
+    command: np.ndarray,
+    gravity: np.ndarray,
+) -> tuple[np.ndarray, tuple[MitCommand, ...]]:
+    """Let the arm be moved by hand, while the gripper keeps its commanded opening.
 
-
-def _float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray) -> tuple[MitCommand, ...]:
-    """Build arm-joint commands that let the arm be moved by hand.
-
-    The joints get no stiffness, light damping, the gravity torque of the measured position and,
-    when configured, Coulomb friction compensation.
+    The command follows the measured joints. The arm-joint commands have no stiffness, light damping, the
+    gravity torque of the measured position and, when configured, Coulomb friction compensation.
     """
     n = params.num_joints
+    command = np.r_[state.position[:n], command[n:]]
     goal = joint_to_motor(state.position, params)
     friction = params.coulomb_friction * np.sign(state.velocity[:n]) * params.joint_signs
     torque = _gravity_feedforward(params, gravity) + friction
-    return tuple(
+    return command, tuple(
         MitCommand(
             position=float(goal[i]),
             velocity=0.0,
@@ -451,6 +451,12 @@ def _float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray
         )
         for i in range(n)
     )
+
+
+def _gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
+    """Scale the model's gravity torques by `gravity_factors`, and cap them."""
+    torque = gravity * params.gravity_factors * params.joint_signs
+    return np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
 
 
 class MitServo:
@@ -635,11 +641,11 @@ class MitServo:
                     joint_commands: tuple[MitCommand, ...] = ()
                     n = params.num_joints
                     if self.bus.enabled and self.idle and params.idle_mode == "float":
-                        # The arm floats; the gripper keeps holding its commanded opening.
-                        self.command[:n] = position[:n]
-                        joint_commands = _float_commands(params, state, self.gravity(position))
+                        self.command, joint_commands = _float_step(
+                            params, state, self.command, self.gravity(position)
+                        )
                     elif self.bus.enabled:
-                        self.command, joint_commands = _control_step(
+                        self.command, joint_commands = _track_step(
                             params,
                             position,
                             self.target,
