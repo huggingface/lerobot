@@ -179,6 +179,7 @@ from lerobot.robots import (  # noqa: F401
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
+    bi_yam_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
@@ -189,6 +190,7 @@ from lerobot.robots import (  # noqa: F401
     rebot_b601_follower,
     so_follower,
     unitree_g1 as unitree_g1_robot,
+    yam_follower,
 )
 from lerobot.rollout import (
     InteractiveSession,
