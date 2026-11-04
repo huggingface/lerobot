@@ -266,3 +266,132 @@ def test_policy_that_cannot_be_built_on_meta_loads_the_regular_way(caplog):
         with pytest.raises(RuntimeError, match="tokenizer not found"):
             load_complete_checkpoint(NoTokenizer, download, SimpleNamespace(device="cpu"))
     assert "regular way: cannot build MetaUnsupported on the meta device (no meta kernel)" in caplog.text
+
+
+class Parent(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.toy = Toy()
+        self.own = nn.Parameter(torch.ones(4))
+
+
+def parent_on_meta():
+    """A `Parent` whose parameters are on the meta device, as building it on the meta device leaves them."""
+    parent = Parent()
+    for module in parent.modules():
+        for name, parameter in list(module.named_parameters(recurse=False)):
+            setattr(module, name, nn.Parameter(parameter.to("meta"), requires_grad=parameter.requires_grad))
+    return parent
+
+
+def test_loading_a_module_drops_the_weights_of_the_modules_on_its_way():
+    expected = Toy()
+    state_dict = {f"toy.{name}": tensor for name, tensor in expected.state_dict().items()}
+    loaded = openpi_checkpoint.load_modules(parent_on_meta(), state_dict, ["toy"], "cpu")
+    assert loaded.own is None
+    assert_same(loaded.toy, expected)
+
+
+def test_loading_a_module_copies_a_shared_parameter_once(monkeypatch):
+    with torch.device("meta"):
+        parent = nn.Module()
+        parent.shared = Shared()
+    weight = torch.arange(4.0)
+    state_dict = {"shared.a.weight": weight, "shared.b.weight": weight}
+    copied = []
+    load_into_meta = openpi_checkpoint._load_state_dict_into_meta_model
+
+    def record(model, tensors, *args, **kwargs):
+        copied.extend(tensors)
+        load_into_meta(model, tensors, *args, **kwargs)
+
+    monkeypatch.setattr(openpi_checkpoint, "_load_state_dict_into_meta_model", record)
+    loaded = openpi_checkpoint.load_modules(parent, state_dict, ["shared"], "cpu")
+    assert copied == ["shared.a.weight"]
+    assert loaded.shared.a.weight is loaded.shared.b.weight
+    assert torch.equal(loaded.shared.a.weight, weight)
+
+
+def test_loading_a_module_reports_a_placeholder_on_the_meta_device_as_missing():
+    state_dict = {f"toy.{name}": tensor for name, tensor in Toy().state_dict().items()}
+    state_dict["toy.fixed"] = state_dict["toy.fixed"].to("meta")
+    with pytest.raises(RuntimeError, match=r"does not hold toy\.fixed\.$"):
+        openpi_checkpoint.load_modules(parent_on_meta(), state_dict, ["toy"], "cpu")
+
+
+def test_loading_a_module_fills_a_shared_parameter_from_the_one_name_the_file_holds():
+    with torch.device("meta"):
+        parent = nn.Module()
+        parent.shared = Shared()
+    weight = torch.arange(4.0)
+    loaded = openpi_checkpoint.load_modules(parent, {"shared.b.weight": weight}, ["shared"], "cpu")
+    assert loaded.shared.a.weight is loaded.shared.b.weight
+    assert torch.equal(loaded.shared.b.weight, weight)
+
+
+class Encoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(4))
+        self.positions = nn.Module()
+
+
+def test_loading_a_module_keeps_a_listed_module_without_parameters():
+    with torch.device("meta"):
+        parent = nn.Module()
+        parent.encoder = Encoder()
+    loaded = openpi_checkpoint.load_modules(parent, {}, ["encoder.positions"], "cpu")
+    assert loaded.encoder.weight is None
+    assert isinstance(loaded.encoder.positions, nn.Module)
+
+
+def test_loading_a_module_checks_its_name_before_copying_anything(monkeypatch):
+    copied = []
+    monkeypatch.setattr(
+        openpi_checkpoint, "_load_state_dict_into_meta_model", lambda *args, **kwargs: copied.append(1)
+    )
+    state_dict = {f"toy.{name}": tensor for name, tensor in Toy().state_dict().items()}
+    with pytest.raises(AttributeError, match="no attribute `absent`"):
+        openpi_checkpoint.load_modules(parent_on_meta(), state_dict, ["toy", "absent"], "cpu")
+    assert copied == []
+
+
+def test_loading_a_module_reports_a_buffer_left_on_the_meta_device_as_missing():
+    parent = parent_on_meta()
+    parent.toy.register_buffer("cache", torch.empty(4, device="meta"), persistent=False)
+    state_dict = {f"toy.{name}": tensor for name, tensor in Toy().state_dict().items()}
+    with pytest.raises(RuntimeError, match=r"does not hold toy\.cache\.$"):
+        openpi_checkpoint.load_modules(parent, state_dict, ["toy"], "cpu")
+
+
+def test_loading_a_module_names_every_missing_weight_before_copying_any(monkeypatch):
+    copied = []
+    monkeypatch.setattr(
+        openpi_checkpoint, "_load_state_dict_into_meta_model", lambda *args, **kwargs: copied.append(1)
+    )
+    state_dict = {
+        f"toy.{name}": t for name, t in Toy().state_dict().items() if name not in ("norm.weight", "scale")
+    }
+    with pytest.raises(RuntimeError, match=r"does not hold toy\.norm\.weight, toy\.scale\.$"):
+        openpi_checkpoint.load_modules(parent_on_meta(), state_dict, ["toy"], "cpu")
+    assert copied == []
+
+
+def test_loading_a_module_checks_shapes_before_copying_any(monkeypatch):
+    copied = []
+    monkeypatch.setattr(
+        openpi_checkpoint, "_load_state_dict_into_meta_model", lambda *args, **kwargs: copied.append(1)
+    )
+    state_dict = {f"toy.{name}": tensor for name, tensor in Toy().state_dict().items()}
+    state_dict["toy.fixed"] = torch.ones(5)
+    with pytest.raises(RuntimeError, match=r"holds toy\.fixed with shape \(5,\) instead of \(4,\)\.$"):
+        openpi_checkpoint.load_modules(parent_on_meta(), state_dict, ["toy"], "cpu")
+    assert copied == []
+
+
+def test_loading_a_module_reports_a_parameter_the_file_lacks_even_if_it_is_not_on_meta():
+    parent = parent_on_meta()
+    parent.toy.extra = nn.Parameter(torch.ones(2))
+    state_dict = {f"toy.{name}": tensor for name, tensor in Toy().state_dict().items()}
+    with pytest.raises(RuntimeError, match=r"does not hold toy\.extra\.$"):
+        openpi_checkpoint.load_modules(parent, state_dict, ["toy"], "cpu")
