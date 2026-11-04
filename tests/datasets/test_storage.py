@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from uuid import uuid4
@@ -17,7 +18,12 @@ import fsspec
 import pytest
 
 from lerobot.datasets import storage
-from lerobot.datasets.storage import localize_lerobot_root, localize_remote_root, remote_meta_cache_dir
+from lerobot.datasets.storage import (
+    localize_lerobot_root,
+    localize_remote_root,
+    remote_meta_cache_dir,
+    remote_meta_lock,
+)
 
 pytestmark = pytest.mark.dataset
 
@@ -80,3 +86,37 @@ def test_missing_protocol_package_is_not_reported_as_missing_dataset(
     monkeypatch.setattr(storage, "_DATASET_READER_MODULES", {})  # no other format matches
     with pytest.raises(ImportError, match="s3fs"):
         localize_remote_root("owner/data", "s3://bucket/dataset")
+
+
+def test_refresh_waits_for_readers_holding_the_meta_lock(remote_meta: str) -> None:
+    cache = localize_lerobot_root(remote_meta)
+    info = cache / "meta" / "info.json"
+    info.write_text(json.dumps({"version": "stale"}))
+    refresh = threading.Thread(
+        target=localize_lerobot_root, args=(remote_meta,), kwargs={"force_cache_sync": True}
+    )
+    with remote_meta_lock(cache):  # a reader loading metadata
+        refresh.start()
+        refresh.join(timeout=0.5)
+        assert refresh.is_alive()
+        assert json.loads(info.read_text()) == {"version": "stale"}
+    refresh.join(timeout=10)
+    assert not refresh.is_alive()
+    assert json.loads(info.read_text()) == {"version": "new"}
+
+
+def test_failed_refresh_preserves_previous_meta(remote_meta: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache = localize_lerobot_root(remote_meta)
+    info = cache / "meta" / "info.json"
+    old_bytes = info.read_bytes()
+    original_replace = storage.os.replace
+
+    def failing_replace(source, destination):
+        if Path(source) == cache / "meta.tmp":
+            raise PermissionError("injected promotion failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(storage.os, "replace", failing_replace)
+    with pytest.raises(PermissionError, match="injected promotion failure"):
+        localize_lerobot_root(remote_meta, force_cache_sync=True)
+    assert info.read_bytes() == old_bytes
