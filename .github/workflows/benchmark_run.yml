@@ -35,7 +35,7 @@ on:
       build_args:
         required: true
         type: string
-      policy_extras:
+      policy_image:
         required: true
         type: string
       entry:
@@ -52,7 +52,7 @@ jobs:
       HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
       BENCHMARK_NAME: ${{ inputs.name }}
       SIM_IMAGE: lerobot-sim-${{ inputs.name }}:${{ inputs.sim_tag }}
-      POLICY_IMAGE: lerobot-policy:${{ github.sha }}-${{ inputs.name }}
+      POLICY_IMAGE: ${{ inputs.policy_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,15 +93,9 @@ jobs:
           build-args: ${{ steps.arguments.outputs.args }}
           load: true
           push: false
-      - name: Build policy from tested checkout
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: docker/Dockerfile.policy
-          tags: ${{ env.POLICY_IMAGE }}
-          build-args: POLICY_EXTRAS=${{ inputs.policy_extras }}
-          load: true
-          push: false
+      # Built once per run by benchmark_tests.yml from the tested checkout, shared by every benchmark.
+      - name: Pull policy image
+        run: docker pull "$POLICY_IMAGE"
       - name: Run evaluation and training smoke
         env:
           BENCHMARK_ENTRY: ${{ inputs.entry }}

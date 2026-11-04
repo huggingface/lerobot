@@ -61,9 +61,42 @@ jobs:
       - run: python3 -m pip install 'PyYAML>=6,<7'
       - id: matrix
         run: echo "benchmarks=$(python3 scripts/ci/benchmark_matrix.py)" >> "$GITHUB_OUTPUT"
+  # The policy side is the GPU CI image with every extra, built once from the tested checkout and pulled by
+  # every benchmark job; delete-policy-image removes its tag at the end of the run.
+  policy-image:
+    name: Build policy image
+    permissions:
+      contents: read
+    if: >-
+      github.repository == 'huggingface/lerobot' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+    runs-on:
+      group: aws-general-8-plus
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+    steps:
+      - id: tag
+        run: echo "image=huggingface/lerobot-gpu:benchmark-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          cache-binary: false
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+      - name: Build and push policy image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile.internal
+          tags: ${{ steps.tag.outputs.image }}
+          push: true
   benchmark:
     name: ${{ matrix.name }}
-    needs: matrix
+    needs: [matrix, policy-image]
     permissions:
       contents: read
     strategy:
@@ -75,9 +108,35 @@ jobs:
       dockerfile: ${{ matrix.dockerfile }}
       sim_tag: ${{ matrix.sim_tag }}
       build_args: ${{ toJSON(matrix.build_args) }}
-      policy_extras: ${{ join(matrix.policy_extras, ' ') }}
+      policy_image: ${{ needs.policy-image.outputs.image }}
       entry: ${{ toJSON(matrix) }}
     secrets:
       LEROBOT_HF_USER: ${{ secrets.LEROBOT_HF_USER }}
       DOCKERHUB_LEROBOT_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
       DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+  delete-policy-image:
+    name: Delete policy image
+    permissions: {}
+    needs: [policy-image, benchmark]
+    if: always() && needs.policy-image.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the run's policy image tag from Docker Hub
+        env:
+          DOCKERHUB_LEROBOT_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+          IMAGE: ${{ needs.policy-image.outputs.image }}
+        run: |
+          TOKEN=$(curl -s -H "Content-Type: application/json" -X POST \
+                       -d "{\"username\": \"$DOCKERHUB_LEROBOT_USERNAME\", \"password\": \"$DOCKERHUB_LEROBOT_PASSWORD\"}" \
+                       https://hub.docker.com/v2/users/login/ | jq -r .token)
+          if [ "$TOKEN" == "null" ] || [ -z "$TOKEN" ]; then
+            echo "::error::Failed to get Docker Hub token."
+            exit 1
+          fi
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: JWT ${TOKEN}" -X DELETE \
+                        "https://hub.docker.com/v2/repositories/${IMAGE%%:*}/tags/${IMAGE#*:}")
+          if [ "$STATUS" -ne 204 ]; then
+            echo "::error::Failed to delete $IMAGE (HTTP $STATUS)."
+            exit 1
+          fi
