@@ -1377,13 +1377,12 @@ wheels = [
 
 [[package]]
 name = "datasets"
-version = "4.8.5"
+version = "5.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dill" },
     { name = "filelock" },
     { name = "fsspec", extra = ["http"] },
-    { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "multiprocess" },
     { name = "numpy" },
@@ -1391,13 +1390,12 @@ dependencies = [
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pyyaml" },
-    { name = "requests" },
     { name = "tqdm" },
     { name = "xxhash" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/34/14cd8e76f907f7d4dca2334cfeec9f81d30fd15c25a015f99aaea694eaed/datasets-4.8.5.tar.gz", hash = "sha256:0f0c1c3d56ffff2c93b2f4c63c95bac94f3d7e8621aea2a2a576275233bba772", size = 605649, upload-time = "2026-04-27T15:43:57.384Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/e6/b5d8c77f13cc6269660b0f2691e8875777b9d94972e281b7b2c25f25bd9d/datasets-5.1.0.tar.gz", hash = "sha256:1561347daa8841b51351ef2ad1647b4ee4af406852c0f7bd1df587ac1ca7888e", size = 687306, upload-time = "2026-10-05T15:32:32.053Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/99/00f3196036501b53032c4b1ab8337a0b978dee832ed276dae3815df4e8b5/datasets-4.8.5-py3-none-any.whl", hash = "sha256:5079900781719c0e063a8efdd2cd95a31ad0c63209178669cd23cf1b926149ff", size = 528973, upload-time = "2026-04-27T15:43:53.702Z" },
+    { url = "https://files.pythonhosted.org/packages/24/cc/7f624629846c709ef1c68aa61bfb8d0ae2638cbe265104a1c2f7a630949e/datasets-5.1.0-py3-none-any.whl", hash = "sha256:86fd08b280485aab82894d2c81842c4151d93b575efea0054315104cb7bc3cec", size = 604432, upload-time = "2026-10-05T15:32:29.892Z" },
 ]
 
 [[package]]
@@ -3502,6 +3500,10 @@ core-scripts = [
     { name = "torchcodec", version = "0.17.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or sys_platform == 'win32'" },
     { name = "torchcodec", version = "0.17.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
 ]
+cosmos3 = [
+    { name = "diffusers" },
+    { name = "transformers" },
+]
 damiao = [
     { name = "python-can" },
 ]
@@ -3914,7 +3916,7 @@ requires-dist = [
     { name = "cmeel-tinyxml2", marker = "extra == 'placo-dep'", specifier = "<11" },
     { name = "cmeel-urdfdom", marker = "extra == 'placo-dep'", specifier = ">=4,<5" },
     { name = "contourpy", marker = "extra == 'matplotlib-dep'", specifier = ">=1.3.0,<2.0.0" },
-    { name = "datasets", marker = "extra == 'dataset'", specifier = ">=4.8.0,<5.0.0" },
+    { name = "datasets", marker = "extra == 'dataset'", specifier = ">=4.8.0,<6.0.0" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = ">=1.8.1,<1.9.0" },
     { name = "decord", marker = "(platform_machine == 'AMD64' and extra == 'groot') or (platform_machine == 'x86_64' and extra == 'groot')", specifier = ">=0.6.0,<1.0.0" },
     { name = "deepdiff", marker = "extra == 'deepdiff-dep'", specifier = ">=7.0.1,<9.0.0" },
@@ -3953,6 +3955,7 @@ requires-dist = [
     { name = "lerobot", extras = ["can-dep"], marker = "extra == 'damiao'" },
     { name = "lerobot", extras = ["can-dep"], marker = "extra == 'robstride'" },
     { name = "lerobot", extras = ["can-dep"], marker = "extra == 'yam'" },
+    { name = "lerobot", extras = ["cosmos3"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["damiao"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["damiao"], marker = "extra == 'openarms'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'all'" },
@@ -3969,6 +3972,7 @@ requires-dist = [
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'training'" },
     { name = "lerobot", extras = ["deepdiff-dep"], marker = "extra == 'hardware'" },
     { name = "lerobot", extras = ["dev"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'cosmos3'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'diffusion'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'fastwam'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'groot'" },
@@ -4069,6 +4073,7 @@ requires-dist = [
     { name = "lerobot", extras = ["topreward"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["training"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'annotations'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'cosmos3'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'dm05'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'eo1'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'evo1'" },
@@ -4166,7 +4171,7 @@ requires-dist = [
     { name = "trackio", extras = ["gpu"], marker = "sys_platform != 'darwin' and extra == 'training'", specifier = ">=0.44.0,<1.0.0" },
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.22.0,<5.23.0" },
 ]
-provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "sentencepiece-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "rustypot-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "serial-motors", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "yam", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "dm05", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "longwam", "fastwam", "flux3", "evo1", "fineart-vla", "fineart-vla-kernels", "hilserl", "vla-jepa", "lingbot-va", "lingbot-vla-v2", "wall-oss-05", "g05", "lawam", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "sentencepiece-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "rustypot-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "serial-motors", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "yam", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "dm05", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "longwam", "fastwam", "flux3", "evo1", "fineart-vla", "fineart-vla-kernels", "hilserl", "vla-jepa", "lingbot-va", "lingbot-vla-v2", "wall-oss-05", "g05", "lawam", "cosmos3", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "lerobot-lancedb"
