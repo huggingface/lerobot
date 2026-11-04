@@ -34,7 +34,8 @@ def ensure_bucket_file(
 ) -> Path:
     """Return the cached copy of a bucket file, downloading it first if it's missing.
 
-    The download is renamed into place once complete, so a failed download leaves no partial file.
+    The download is renamed into place once complete, so a failed download leaves no partial file. A cached
+    file is never refreshed; delete it to download a newer version.
 
     Args:
         bucket_id (`str`):
