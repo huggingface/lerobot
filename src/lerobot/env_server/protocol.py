@@ -79,10 +79,14 @@ def encode_step_result(result: StepResult) -> dict[str, Any]:
 
 
 def decode_step_result(data: dict[str, Any]) -> StepResult:
-    """Decode a step result sent by the server."""
+    """Decode a step result, ignoring fields added by newer servers."""
+    known = {item.name for item in fields(StepResult)}
+    values = {key: value for key, value in data.items() if key in known}
     # JPEG replies carry a list of frames, one per env; stack them into one batch array.
-    obs = {name: np.stack(value) if isinstance(value, list) else value for name, value in data["obs"].items()}
-    return StepResult(**{**data, "obs": obs, "task": tuple(data["task"])})
+    obs = {
+        name: np.stack(value) if isinstance(value, list) else value for name, value in values["obs"].items()
+    }
+    return StepResult(**{**values, "obs": obs, "task": tuple(values["task"])})
 
 
 # Per-env fields of a result and their dtype.
@@ -109,3 +113,10 @@ def validate_result(result: StepResult, descriptor: EnvDescriptor, num_envs: int
             raise ValueError(f"Simulator {name} must be {dtype}, one value per environment")
     if not np.isfinite(result.reward).all():
         raise ValueError("Simulator rewards must be finite")
+    if not isinstance(result.metrics, dict):
+        raise ValueError("Simulator metrics must be a map of per-environment values")
+    for name, array in result.metrics.items():
+        if not isinstance(array, np.ndarray) or array.shape != (num_envs,) or array.dtype.name != "float32":
+            raise ValueError(f"Simulator metric {name!r} must be float32, one value per environment")
+        if not np.isfinite(array).all():
+            raise ValueError(f"Simulator metric {name!r} must be finite")

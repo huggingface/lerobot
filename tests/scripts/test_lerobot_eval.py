@@ -148,6 +148,28 @@ def test_rollout_starts_each_episode_with_fresh_processor_state(pipeline_kind):
         torch.testing.assert_close(reused_actions[0, 0, :-1], torch.full((5,), 2.5), rtol=0, atol=0)
 
 
+def test_rollout_reports_what_the_environment_measures():
+    class _MeasuringEnv(_TwoStepEnv):
+        def step(self, action):
+            observation, reward, terminated, truncated, _ = super().step(action)
+            return observation, reward, terminated, truncated, {"metrics": {"tick": float(self.tick)}}
+
+    env = gym.vector.SyncVectorEnv([_MeasuringEnv])
+    try:
+        result = rollout(
+            env,
+            _RecordingPolicy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=make_policy_processor_pipelines([], [])[0],
+            postprocessor=make_policy_processor_pipelines([], [])[1],
+            seeds=[0],
+        )
+    finally:
+        env.close()
+    assert result["metrics"]["tick"].tolist() == [[1.0, 2.0]]
+
+
 def test_rollout_ends_at_the_step_cap_below_the_env_limit():
     class _LongEnv(_TwoStepEnv):
         _max_episode_steps = 500

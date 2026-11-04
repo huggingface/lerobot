@@ -108,6 +108,27 @@ def test_every_run_mode_takes_the_same_steps():
             for field in ("reward", "terminated", "truncated", "is_success", "elapsed_steps"):
                 np.testing.assert_array_equal(getattr(step, field), getattr(expected, field))
             assert step.task == expected.task
+            assert step.metrics.keys() == expected.metrics.keys()
+            for name, values in expected.metrics.items():
+                np.testing.assert_array_equal(step.metrics[name], values)
+
+
+def test_simulator_metrics_freeze_with_the_env_that_reported_them():
+    env = LocalVectorEnv(ToyEnvConfig().sim_config(), num_envs=2)
+    try:
+        # A reset reports no metric; the simulator fills them on its steps.
+        assert env.reset(seed=[4, 5])[1]["metrics"] == {}
+        env.step(np.array([[2, 0], [0, 0]], np.float32))
+        assert env.latest.terminated.tolist() == [True, False]
+        first = env.latest.metrics["progress"].copy()
+        env.step(np.array([[1, 0], [1, 0]], np.float32))
+        after = env.latest.metrics["progress"]
+        # The finished env keeps its last value, the running one moves on.
+        assert after[0] == first[0]
+        assert after[1] == pytest.approx(first[1] + 1, abs=1e-5)
+        assert env.reset(seed=[4, 5])[1]["metrics"] == {}
+    finally:
+        env.close()
 
 
 def test_a_batched_simulator_that_autoresets_is_rejected():
