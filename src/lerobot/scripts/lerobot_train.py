@@ -28,14 +28,12 @@ torchrun --nproc-per-node=8 $(which lerobot-train) \
 ```
 """
 
-import ctypes
 import dataclasses
-import gc
 import logging
 import sys
 import time
 from collections.abc import Iterator
-from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -354,7 +352,7 @@ def _find_sampler(dataloader):
 def _recycle_dataloader_iterator(
     dl_iter: Iterator, dataloader, step: int, cfg: TrainPipelineConfig, parallel_dims: ParallelDims
 ) -> Iterator:
-    """Replace the DataLoader workers with fresh ones, resuming at the same sample."""
+    """Replace workers, preserving sample indices but reseeding worker-side random transforms."""
     if hasattr(dl_iter, "close"):  # accelerate's DataLoaderShard iterator is a generator
         dl_iter.close()
     if hasattr(dl_iter, "_shutdown_workers"):
@@ -364,10 +362,6 @@ def _recycle_dataloader_iterator(
         if getattr(loader, "_iterator", None) is not None:
             loader._iterator._shutdown_workers()
             loader._iterator = None
-    gc.collect()
-    with suppress(OSError, AttributeError):
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-
     sampler = _find_sampler(dataloader)
     if sampler is not None:
         state = compute_sampler_state(step, len(sampler), cfg.batch_size, parallel_dims.dp_world_size)
@@ -375,8 +369,6 @@ def _recycle_dataloader_iterator(
         # accelerate's __iter__ calls sampler.set_epoch(self.iteration), which would undo the load.
         if hasattr(dataloader, "iteration"):
             dataloader.iteration = state["epoch"]
-    if is_main_process():
-        logging.info(f"Recycled DataLoader workers at step {step}")
     return iter(dataloader)
 
 
@@ -441,6 +433,13 @@ def make_dataloaders(
             saved_batch_size = metadata["batch_size"]
             ckpt_dp_world = saved_dp_world or parallel_dims.dp_world_size
             ckpt_batch_size = saved_batch_size or cfg.batch_size
+            if cfg.worker_recycle_every > 0 and (
+                ckpt_dp_world != parallel_dims.dp_world_size or ckpt_batch_size != cfg.batch_size
+            ):
+                raise ValueError(
+                    "Worker recycling requires the checkpoint's batch_size and dp_world_size. "
+                    "Restore those settings or set worker_recycle_every=0."
+                )
             if is_main_process() and saved_dp_world not in (None, parallel_dims.dp_world_size):
                 logging.warning(
                     f"Resuming with dp_world_size={parallel_dims.dp_world_size} but the "
@@ -785,6 +784,8 @@ def train(cfg: TrainPipelineConfig) -> None:
         step = resume_before_prepare(cfg)  # step + RNG only; sharded state loads after prepare
 
     dataloader, eval_dataloader = make_dataloaders(cfg, dataset, eval_dataset, step, parallel_dims)
+    sampler = _find_sampler(dataloader) if not cfg.dataset.streaming else None
+    sampler_state = sampler.state_dict() if sampler is not None else None
 
     # --- prepare & resume phase 2 ---------------------------------------------------------------
     # The FSDP wrap-unit class names resolve right before prepare: user override, else the
@@ -806,6 +807,9 @@ def train(cfg: TrainPipelineConfig) -> None:
             policy, optimizer, dataloader, lr_scheduler
         )
     finalize_sharded_policy(policy, parallel_dims)
+    if sampler_state is not None and hasattr(dataloader, "iteration"):
+        # Accelerate otherwise replaces the restored sampler epoch with zero on first iteration.
+        dataloader.iteration = sampler_state["epoch"]
     if cfg.resume:
         resume_after_prepare(cfg, accelerator, policy, optimizer, lr_scheduler)
 
@@ -962,15 +966,23 @@ def train(cfg: TrainPipelineConfig) -> None:
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
+    start_step = step
     for _ in range(step, cfg.steps):
-        if cfg.worker_recycle_every > 0 and step > 0 and step % cfg.worker_recycle_every == 0:
-            dl_iter = _recycle_dataloader_iterator(dl_iter, dataloader, step, cfg, parallel_dims)
         step_start = time.perf_counter()
+        recycling = (
+            cfg.worker_recycle_every > 0 and step > start_step and step % cfg.worker_recycle_every == 0
+        )
+        if recycling:
+            dl_iter = _recycle_dataloader_iterator(dl_iter, dataloader, step, cfg, parallel_dims)
         try:
             batch = next(dl_iter)
         except StopIteration:  # end of epoch, only reached when recycling replaced cycle()
             dl_iter = iter(dataloader)
             batch = next(dl_iter)
+        if recycling and is_main_process():
+            logging.info(
+                "Recycled DataLoader workers at step %d in %.3f s", step, time.perf_counter() - step_start
+            )
         if cfg.dataset.streaming:
             batch = send_to_device(batch, device, non_blocking=device.type == "cuda")
         preprocessing_start = time.perf_counter()

@@ -134,7 +134,9 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
-    # Restart DataLoader workers every N steps to bound host memory growth in long runs (0 = off).
+    # Restart train DataLoader workers every N steps to bound host memory growth (0 = off).
+    # Discards prefetched batches and stalls while replacement workers load the next batch.
+    # On resume, requires the same batch_size and dp_world_size as the checkpoint.
     worker_recycle_every: int = 0
     # DataLoader worker start method. "spawn" is safer than "fork" with
     # non-fork-safe libs (PyAV / torchcodec / ffmpeg), but adds some
