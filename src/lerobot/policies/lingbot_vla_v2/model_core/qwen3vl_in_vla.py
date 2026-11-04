@@ -42,6 +42,7 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
 )
 from transformers.processing_utils import Unpack
 from transformers.utils import logging
+from transformers.vision_utils import get_vision_interpolation_indices_and_weights, get_vision_position_ids
 
 logger = logging.get_logger(__name__)
 
@@ -262,12 +263,8 @@ class Qwen3VLTextDecoderLayer(GradientCheckpointingLayer):
 
 @torch.compiler.disable
 def preprcess_grid_thw(self, grid_thw: torch.Tensor):
-    rotary_pos_emb = self.rot_pos_emb(grid_thw)
-
-    seq_len = int(torch.prod(grid_thw, dim=1).sum().item())
-    rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
-    emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
-    position_embeddings = (emb.cos(), emb.sin())
+    position_ids = get_vision_position_ids(grid_thw, self.spatial_merge_size)
+    position_embeddings = self.rotary_pos_emb(self.pos_embed.weight, position_ids)
 
     cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
         dim=0,
@@ -358,6 +355,16 @@ class Qwen3VLVisionModel(_Qwen3VLVisionModel):
     def __init__(self, config, *inputs, **kwargs) -> None:
         super().__init__(config, *inputs, **kwargs)
         self.blocks = nn.ModuleList([Qwen3VLVisionBlock(config) for _ in range(config.depth)])
+
+    def fast_pos_embed_interpolate(self, grid_thw: torch.Tensor) -> torch.Tensor:
+        interpolation_indices, interpolation_weights = get_vision_interpolation_indices_and_weights(
+            grid_thw,
+            num_grid_per_side=self.num_grid_per_side,
+            mode=self.interpolation_mode,
+            align_corners=self.interpolation_align_corners,
+            spatial_merge_size=self.config.spatial_merge_size,
+        )
+        return (self.pos_embed(interpolation_indices) * interpolation_weights[:, :, None]).sum(1)
 
 
 class Qwen3VLTextModel(_Qwen3VLTextModel):

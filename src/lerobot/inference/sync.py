@@ -115,6 +115,7 @@ class SyncInferenceEngine(InferenceEngine):
                 # than ``policy.reset``: observation history and other episode state stay.
                 logger.info("Task changed to '%s' — dropping precomputed actions", task)
                 self._policy.drop_queued_actions()
+                self._postprocessor.reset()
             measure = self.latency.interval_s > 0 and self._policy.count_queued_actions() == 0
             started = time.monotonic() if measure else 0.0
             observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)

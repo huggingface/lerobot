@@ -59,8 +59,8 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 
 dependencies = [
     # Core ML
-    "torch>=2.7,<2.12.0",
-    "torchvision>=0.22.0,<0.27.0",
+    "torch>=2.7,<2.16.0",
+    "torchvision>=0.22.0,<0.30.0",
     "numpy>=2.0.0,<2.3.0", # NOTE: Explicitly listing numpy helps the resolver converge faster. Upper bound imposed by opencv-python-headless.
     "opencv-python-headless>=4.9.0,<4.14.0",
     "Pillow>=10.0.0,<14.0.0",
@@ -68,10 +68,9 @@ dependencies = [
 
     # Config & Hub
     "draccus>=0.11.6,<0.12.0",
-    "huggingface-hub>=1.6.0,<2.0.0",
+    "huggingface-hub>=1.31.0,<3.0.0",
     "filelock>=4.2.1,<5.0.0",
     "fsspec>=2023.5.0,<2027.0.0",
-    "httpx>=0.27.0,<1.0.0",
     "requests>=2.32.0,<3.0.0",
 
     # Environments
@@ -90,7 +89,7 @@ dependencies = [
 
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
-    "setuptools>=71.0.0,<82.0.0",  # torch 2.11 requires setuptools<82; a higher cap makes the resolver downgrade torch
+    "setuptools>=71.0.0,<85.0.0",
 ]
 
 # Optional dependencies
@@ -106,7 +105,7 @@ lancedb-convert = [
     "lerobot-lancedb>=0.3.1,<0.4.0",
 ]
 dataset = [
-    "datasets>=4.8.0,<5.0.0",
+    "datasets>=4.8.0,<6.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
     "pyarrow>=21.0.0,<30.0.0", # NOTE: Transitive dependency of datasets
     "lerobot[av-dep]",
@@ -118,10 +117,11 @@ dataset = [
     #   - macOS x86_64 (Intel) and linux armv7l: no wheels in any released version -> fall through to the PyAV decoder.
     # Each platform gets its own line so the resolver picks the minimum version that has a wheel for it.
 
-    # Other torch/torchcodec pairings (informational): 0.8.1 = ffmpeg>=8 support, 0.10 = system-wide ffmpeg support, 0.12 needs torch==2.12.
-    "torchcodec>=0.3.0,<0.12.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
-    "torchcodec>=0.7.0,<0.12.0; sys_platform == 'win32'",
-    "torchcodec>=0.11.0,<0.12.0; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
+    # Other torch/torchcodec pairings (informational): 0.8.1 = ffmpeg>=8 support, 0.10 = system-wide ffmpeg support, 0.12+ supports any torch>=2.11.
+    # TorchCodec doesn't declare its torch dependency: an older torch needs its matching TorchCodec release.
+    "torchcodec>=0.3.0,<0.18.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
+    "torchcodec>=0.7.0,<0.18.0; sys_platform == 'win32'",
+    "torchcodec>=0.11.0,<0.18.0; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
     "jsonlines>=4.0.0,<5.0.0",
 ]
 training = [
@@ -161,7 +161,7 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 # fails at load with "liburdfdom_sensor.so.4.0: cannot open shared object file" (see #3755).
 # There is no cmeel-urdfdom 5.x; <5 selects the 4.x ABI the placo/pin wheels are built against.
 placo-dep = ["placo>=0.9.6,<0.9.16", "cmeel-urdfdom>=4,<5", "cmeel-tinyxml2<11"]
-transformers-dep = ["transformers>=5.4.0,<5.6.0"]
+transformers-dep = ["transformers>=5.22.0,<5.23.0"]
 sentencepiece-dep = ["sentencepiece>=0.2.0,<0.3.0"] # FAST action tokenizer backend (fineart_vla)
 grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
 accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
@@ -273,10 +273,12 @@ vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 wall_oss_05 = ["lerobot[transformers-dep]"]
+g05 = ["lerobot[transformers-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
 ]
+cosmos3 = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
 
 # Features
 # Remote inference transport and serialization.
@@ -291,10 +293,8 @@ annotations = [
     "lerobot[dataset]",
     "lerobot[transformers-dep]",
     "openai>=1.40,<2.0",
-    # ``vllm`` is intentionally NOT a hard dep: it pins an older torch, and
-    # uv's single unified lock would then cap ``torch`` for every extra
-    # (e.g. forcing 2.8 while ``torchcodec`` in [dataset] needs 2.11 -> ABI
-    # break in CI). The HF Jobs image (``vllm/vllm-openai``) provides vLLM;
+    # ``vllm`` is intentionally NOT a hard dep: it pins torch, and uv's single unified lock would
+    # then cap ``torch`` for every extra. The HF Jobs image (``vllm/vllm-openai``) provides vLLM;
     # install it locally only if you run your own ``vllm serve``.
 ]
 
@@ -369,7 +369,9 @@ all = [
     "lerobot[vla_jepa]",
     "lerobot[lingbot_va]",
     "lerobot[lingbot_vla_v2]",
+    "lerobot[g05]",
     "lerobot[lawam]",
+    "lerobot[cosmos3]",
     "lerobot[remote]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -411,25 +413,15 @@ lerobot-policy-server="lerobot.scripts.lerobot_policy_server:main"
 
 # ---------------- Tool Configurations ----------------
 
-# cu128 wheels keep broad hardware reach; the driver floor is 570.86.
-# To use a different CUDA variant, reinstall torch with an explicit index, e.g.:
-#   uv pip install --force-reinstall torch torchvision \
-#       --index-url https://download.pytorch.org/whl/cu130
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
+# torch and torchvision come from PyPI; docs/source/installation.mdx covers other CUDA builds.
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
-torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 # LeRobot decodes videos on CPU; avoid GPU-only TorchCodec dependencies without changing GPU training.
-torchcodec = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')" }]
+torchcodec = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'arm64')" }]
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]
