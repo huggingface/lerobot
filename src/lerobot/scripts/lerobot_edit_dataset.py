@@ -698,11 +698,14 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         raise ValueError("Operation config must be RecomputeStatsConfig")
 
     repo_id = _require_repo_id(cfg)
+    # Load first: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id,
+    # so the input path must come from where the dataset actually resolved.
+    src_dataset = LeRobotDataset(repo_id, root=cfg.root)
     # Determine whether this is an in-place operation
     output_repo_id, input_root, output_root = _resolve_io_paths(
         repo_id,
         cfg.new_repo_id,
-        cfg.root,
+        src_dataset.root,
         cfg.new_root,
         default_new_repo_id=f"{repo_id}_recomputed_stats",
     )
@@ -720,7 +723,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         logging.warning(
             f"Overwriting dataset stats in-place at {input_root}. The original stats will be lost."
         )
-        dataset = LeRobotDataset(repo_id, root=input_root)
+        dataset = src_dataset
     else:
         logging.info(f"Copying dataset from {input_root} to {output_root}")
         if output_root.exists():
@@ -760,10 +763,13 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         raise ValueError("Operation config must be ReencodeVideosConfig")
 
     repo_id = _require_repo_id(cfg)
+    # Load first: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id,
+    # so the input path must come from where the dataset actually resolved.
+    src_dataset = LeRobotDataset(repo_id, root=cfg.root)
     output_repo_id, input_root, output_root = _resolve_io_paths(
         repo_id,
         cfg.new_repo_id,
-        cfg.root,
+        src_dataset.root,
         cfg.new_root,
         default_new_repo_id=f"{repo_id}_reencoded",
     )
@@ -781,7 +787,7 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         logging.warning(
             f"Overwriting dataset videos in-place at {input_root}. The original videos will be lost."
         )
-        dataset = LeRobotDataset(repo_id, root=input_root)
+        dataset = src_dataset
     else:
         logging.info(f"Copying dataset from {input_root} to {output_root}")
         if output_root.exists():
