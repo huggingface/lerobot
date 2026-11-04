@@ -138,7 +138,17 @@ def test_smolvla_compile_parity():
         policy.config.compile_denoise = False
         actions_eager_retest = policy.predict_action_chunk(batch, noise=noise.clone())
 
-        # 4. Verify copy.deepcopy after compilation uses the copied module weights
+        # 4. Verify grad-enabled context (as used by RTC guidance) reuses the compiled graph
+        graphs_before = torch._dynamo.utils.counters["stats"]["unique_graphs"]
+        with torch.enable_grad():
+            actions_grad_ctx = policy.predict_action_chunk(batch, noise=noise.clone())
+        graphs_after = torch._dynamo.utils.counters["stats"]["unique_graphs"]
+        assert graphs_after == graphs_before, (
+            f"Expected 0 new graphs under torch.enable_grad(), got {graphs_after - graphs_before}"
+        )
+        assert torch.equal(actions_compiled, actions_grad_ctx)
+
+        # 5. Verify copy.deepcopy after compilation uses the copied module weights
         policy.config.compile_denoise = True
         copied_policy = copy.deepcopy(policy)
         copied_policy.model.action_out_proj.weight.zero_()
