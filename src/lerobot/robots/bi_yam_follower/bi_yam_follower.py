@@ -54,7 +54,7 @@ class BiYamFollower(BimanualMixin, Robot):
             )
         left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
 
-        # One stop event for both servos, so a fault on either arm stops both.
+        # One stop event for both controllers, so a fault on either arm stops both.
         self._stop = threading.Event()
         self.left_arm = YamFollower(
             self._arm_robot_config("left", config.left_arm_config, left_arm_cameras), stop_event=self._stop
@@ -120,12 +120,12 @@ class BiYamFollower(BimanualMixin, Robot):
             self.configure()
             if self.is_calibrated:
                 # Check both initial positions before either arm gets torque. This also clears the stop event
-                # both arms share, so it must come before either servo starts: clearing it later could erase a
-                # fault of the arm that started first.
+                # both arms share, so it must come before either controller starts: clearing it later could
+                # erase a fault of the arm that started first.
                 for arm in self.arms.values():
-                    arm._prepare_servo()
+                    arm._prepare_controller()
                 for arm in self.arms.values():
-                    arm.servo.start()
+                    arm.controller.start()
         except BaseException:
             self._stop.set()
             if any(arm.is_connected for arm in self.arms.values()):
@@ -148,7 +148,7 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        """Send each arm its side-prefixed targets. A fault on either arm stops both servos."""
+        """Send each arm its side-prefixed targets. A fault on either arm stops both controllers."""
         sent = {
             side: arm.send_action({name: action[f"{side}_{name}"] for name in arm.action_features})
             for side, arm in self.arms.items()

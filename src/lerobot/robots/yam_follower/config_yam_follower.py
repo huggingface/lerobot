@@ -155,7 +155,7 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
         use_velocity_and_torque (`bool`, *optional*, defaults to `False`):
             Whether observations include motor velocity and torque.
         control_frequency (`float`, *optional*, defaults to 100.0):
-            Servo loop frequency in hertz. 100 Hz leaves room on classic CAN for feedback and commands.
+            Control loop frequency in hertz. 100 Hz leaves room on classic CAN for feedback and commands.
         feedback_timeout_s (`float`, *optional*, defaults to 0.2):
             Maximum time to wait for fresh feedback.
         command_timeout_s (`float`, *optional*, defaults to 1.0):

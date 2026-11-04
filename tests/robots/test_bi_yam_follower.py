@@ -40,7 +40,9 @@ def calibrate_arms(robot):
                 id=7, drive_mode=0, homing_offset=0, range_min=math.degrees(0.1), range_max=math.degrees(6.1)
             )
         }
-        arm.servo.set_gripper_params(yam_module._yam_gripper_params(arm.config, arm.calibration["gripper"]))
+        arm.controller.set_gripper_params(
+            yam_module._yam_gripper_params(arm.config, arm.calibration["gripper"])
+        )
     return robot
 
 
@@ -60,7 +62,7 @@ def robot(tmp_path, monkeypatch):
 
 
 def mock_bus():
-    bus = MagicMock(spec=yam_module._YamBus)
+    bus = MagicMock(spec=yam_module._YamMotorsBus)
     bus.enabled = False
     position = np.array([0, 0, 0, 0, 0, 0, 0.1])  # raw radians, gripper closed
     bus.read_states.return_value = mit_control.MotorStates(
@@ -71,35 +73,37 @@ def mock_bus():
 
 
 def attach_bus(arm, bus):
-    arm.bus = arm.servo._bus = bus
+    arm.bus = arm.controller._bus = bus
     return bus
 
 
 def mock_hardware(robot, monkeypatch):
     for arm in robot.arms.values():
         attach_bus(arm, mock_bus())
-        monkeypatch.setattr(arm.servo, "_run", lambda: None)
+        monkeypatch.setattr(arm.controller, "_run", lambda: None)
 
 
-def mark_running(servo):
-    """Make the servo report active, with a finished thread that stop() can join."""
-    servo._thread = threading.Thread(target=lambda: None)
-    servo._thread.start()
+def mark_running(controller):
+    """Make the controller report active, with a finished thread that stop() can join."""
+    controller._thread = threading.Thread(target=lambda: None)
+    controller._thread.start()
 
 
 def ready(robot):
     zeros = np.zeros(7)
     for arm in robot.arms.values():
         arm._connected = True
-        arm.servo._set_initial_state(mit_control.JointState(position=zeros, velocity=zeros, torque=zeros))
-        mark_running(arm.servo)
+        arm.controller._set_initial_state(
+            mit_control.JointState(position=zeros, velocity=zeros, torque=zeros)
+        )
+        mark_running(arm.controller)
     return dict.fromkeys(robot.action_features, 0.0)
 
 
 def test_bimanual_composes_single_arm_followers(robot):
     assert isinstance(robot.left_arm, YamFollower)
     assert isinstance(robot.right_arm, YamFollower)
-    assert robot.left_arm.servo.stop_event is robot.right_arm.servo.stop_event is robot._stop
+    assert robot.left_arm.controller.stop_event is robot.right_arm.controller.stop_event is robot._stop
 
 
 def test_position_hold_is_supported_with_position_only_actions(robot):
@@ -150,7 +154,7 @@ def test_per_arm_and_top_level_cameras_follow_bimanual_conventions(tmp_path, mon
 
 def test_stale_feedback_on_either_arm_stops_both(robot):
     action = ready(robot)
-    robot.right_arm.servo._updated_at -= 1
+    robot.right_arm.controller._updated_at -= 1
     with pytest.raises(ConnectionError, match="stale"):
         robot.send_action(action)
     assert robot._stop.is_set()
@@ -158,8 +162,8 @@ def test_stale_feedback_on_either_arm_stops_both(robot):
 
 def test_inactive_arm_refuses_its_action(robot):
     action = ready(robot)
-    robot.right_arm.servo._thread = None
-    with pytest.raises(RuntimeError, match="active servo"):
+    robot.right_arm.controller._thread = None
+    with pytest.raises(RuntimeError, match="active controller"):
         robot.send_action(action)
 
 
@@ -224,9 +228,9 @@ def test_both_arms_configure_before_either_is_enabled(robot, monkeypatch):
 def test_partial_disconnect_can_be_retried(robot):
     for arm in robot.arms.values():
         arm._connected = True
-    robot.left_arm.disconnect = MagicMock(side_effect=RuntimeError("servo did not stop"))
+    robot.left_arm.disconnect = MagicMock(side_effect=RuntimeError("controller did not stop"))
     robot.right_arm.disconnect = MagicMock(side_effect=lambda: setattr(robot.right_arm, "_connected", False))
-    with pytest.raises(RuntimeError, match="servo did not stop"):
+    with pytest.raises(RuntimeError, match="controller did not stop"):
         robot.disconnect()
     assert not robot.is_connected
     robot.left_arm.disconnect.side_effect = lambda: setattr(robot.left_arm, "_connected", False)
