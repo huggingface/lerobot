@@ -44,3 +44,22 @@ def test_rotvec_roundtrip():
     rotvec = np.array([0.1, -0.2, 0.3])
     r = Rotation.from_rotvec(rotvec)
     assert np.allclose(r.as_rotvec(), rotvec, atol=1e-6)
+
+
+@pytest.mark.parametrize("shape", [(), (0,), (2,), (4,), (1, 3), (3, 1)])
+@pytest.mark.parametrize("value", [0.0, 1.0])
+def test_rotvec_wrong_shape_rejected(shape: tuple[int, ...], value: float) -> None:
+    with pytest.raises(ValueError, match=r"Rotation vector must have shape \(3,\)"):
+        Rotation.from_rotvec(np.full(shape, value))
+
+
+@pytest.mark.parametrize("shape", [(), (3,), (2, 2), (3, 4), (4, 3), (4, 4), (1, 3, 3)])
+def test_matrix_wrong_shape_rejected(shape: tuple[int, ...]) -> None:
+    with pytest.raises(ValueError, match=r"Rotation matrix must have shape \(3, 3\)"):
+        Rotation.from_matrix(np.zeros(shape))
+
+
+@pytest.mark.parametrize("rotvec", [[0.0, 0.0, 0.0], [0.1, -0.2, 0.3], [np.pi, 0.0, 0.0]])
+def test_matrix_roundtrip(rotvec: list[float]) -> None:
+    matrix = Rotation.from_rotvec(np.array(rotvec)).as_matrix()
+    np.testing.assert_allclose(Rotation.from_matrix(matrix).as_matrix(), matrix, atol=1e-15)
