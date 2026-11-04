@@ -32,7 +32,7 @@ from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 from lerobot.datasets.aggregate import aggregate_datasets, merge_video_feature_info_for_aggregate
 from lerobot.datasets.feature_utils import features_equal_for_merge
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import EPISODES_DIR
+from lerobot.datasets.utils import DEFAULT_EPISODES_PATH, EPISODES_DIR
 from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     DUMMY_DEPTH_FEATURES,
@@ -970,3 +970,34 @@ def test_aggregate_updates_per_episode_stats(tmp_path):
             else:
                 expected = base
             assert np.allclose(got, expected), f"ep{ep} {col}: {got} != {expected}"
+
+
+def test_aggregate_resumed_dataset_points_episodes_to_their_metadata_file(tmp_path):
+    """A source recorded in two sessions has two episodes-metadata files; after the merge, every episode
+    must point at the episodes-metadata file it was actually written to."""
+    features = {"observation.state": {"dtype": "float32", "shape": (2,), "names": None}}
+
+    def _record_episode(ds):
+        for _ in range(2):
+            ds.add_frame({"observation.state": torch.randn(2), "task": "t"})
+        ds.save_episode()
+        ds.finalize()
+
+    root = tmp_path / "src"
+    _record_episode(LeRobotDataset.create(DUMMY_REPO_ID, fps=10, features=features, root=root))
+    _record_episode(LeRobotDataset.resume(DUMMY_REPO_ID, root=root))
+    assert len(list((root / EPISODES_DIR).rglob("*.parquet"))) == 2  # resuming opened a new metadata file
+
+    aggr_root = tmp_path / "aggr"
+    aggregate_datasets(
+        repo_ids=[DUMMY_REPO_ID], roots=[root], aggr_repo_id=f"{DUMMY_REPO_ID}_aggr", aggr_root=aggr_root
+    )
+
+    for shard in (aggr_root / EPISODES_DIR).rglob("*.parquet"):
+        df = pd.read_parquet(shard)
+        for chunk_idx, file_idx in zip(
+            df["meta/episodes/chunk_index"], df["meta/episodes/file_index"], strict=True
+        ):
+            assert (
+                aggr_root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx) == shard
+            )
