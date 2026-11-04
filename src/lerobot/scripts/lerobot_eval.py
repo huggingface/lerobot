@@ -178,6 +178,7 @@ def rollout(
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     seeds: list[int] | None = None,
+    initial_state_indices: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
     recording_dir: Path | None = None,
@@ -210,6 +211,7 @@ def rollout(
         policy: The policy. Must be a PyTorch nn module.
         seeds: The environments are seeded once at the start of the rollout. If provided, this argument
             specifies the seeds for each of the environments.
+        initial_state_indices: Optional LIBERO per-slot initial-state indices for this batch.
         return_observations: Whether to include all observations in the returned rollout data. Observations
             are returned optionally because they typically take more memory to cache. Defaults to False.
         render_callback: Optional rendering callback to be used after the environments are reset, and after
@@ -231,7 +233,10 @@ def rollout(
     postprocessor.reset()
     # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
     # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
-    observation, info = env.reset(seed=seeds, options={NEW_ROLLOUT_OPTION: True})
+    reset_options: dict[str, bool | list[int]] = {NEW_ROLLOUT_OPTION: True}
+    if initial_state_indices is not None:
+        reset_options["initial_state_indices"] = initial_state_indices
+    observation, info = env.reset(seed=seeds, options=reset_options)
     if render_callback is not None:
         render_callback(env)
 
@@ -558,6 +563,12 @@ def eval_policy(
             seeds = range(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
+        # LIBERO-specific options must not leak into other benchmark environments.
+        initial_state_indices = (
+            list(range(batch_ix * env.num_envs, (batch_ix + 1) * env.num_envs))
+            if env.metadata.get("lerobot_env_type") == "libero"
+            else None
+        )
         rollout_data = rollout(
             env=env,
             policy=policy,
@@ -566,6 +577,7 @@ def eval_policy(
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             seeds=list(seeds) if seeds else None,
+            initial_state_indices=initial_state_indices,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             recording_dir=recording_dir,
