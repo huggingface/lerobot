@@ -114,13 +114,9 @@ with torch.inference_mode():
     log_probability = reward_model.compute_log_probability(encoded_batch)
 ```
 
-The serialized `success_threshold` field remains for compatibility with existing configs, but it does not modify the raw output. Apply any task-specific threshold explicitly in the caller.
-
 ### Offline dataset labeling
 
 Write a `topreward_progress.parquet` for RA-BC training and overlay videos:
-
-The legacy labeling script preserves existing artifact behavior: if a loaded config has a finite `success_threshold`, it applies that threshold before per-episode normalization. New Python consumers always receive the raw value from `compute_log_probability()`.
 
 ```bash
 # Sparse-dense (15 anchors per episode, matches upstream)
@@ -129,6 +125,8 @@ uv run python -m lerobot.rewards.topreward.compute_rabc_weights \
     --num-samples 15 \
     --device cuda
 ```
+
+If the config sets a finite `success_threshold`, the labeling script applies it before per-episode normalization; `compute_log_probability()` ignores it.
 
 Then render the progress overlay for any episode:
 
