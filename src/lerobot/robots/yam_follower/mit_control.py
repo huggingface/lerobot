@@ -156,8 +156,8 @@ class _GripperForceLimiter:
     the fingers, until the target opens it or the torque drops.
     """
 
-    def __init__(self, gripper: GripperParams) -> None:
-        self.gripper = gripper
+    def __init__(self, gripper_params: GripperParams) -> None:
+        self.gripper_params = gripper_params
         self.blocked = False
         self._efforts: list[tuple[float, float]] = []
         self._limited_goal: float | None = None
@@ -170,12 +170,12 @@ class _GripperForceLimiter:
 
         Openings go from 0 (closed) to 1 (open), and `velocity` is in strokes per second.
         """
-        grip = self.gripper
-        current_raw, target_raw = grip.to_raw(measured), grip.to_raw(commanded)
+        params = self.gripper_params
+        current_raw, target_raw = params.to_raw(measured), params.to_raw(commanded)
         self._efforts = [(t, e) for t, e in self._efforts if now - t <= _GRIPPER_EFFORT_WINDOW_S]
         self._efforts.append((now, torque))
         average_effort = abs(float(np.mean([e for _, e in self._efforts])))
-        speed_raw = abs(velocity * grip.stroke)
+        speed_raw = abs(velocity * params.stroke)
 
         if self.blocked:
             if measured < commanded or average_effort < _GRIPPER_RELEASED_TORQUE_NM:
@@ -186,11 +186,13 @@ class _GripperForceLimiter:
         if self.blocked:
             # Aim past the zero-torque position, so the position gain pushes with the torque that
             # gives force_limit_n at the fingers, plus friction.
-            limit_torque = grip.force_limit_n * grip.finger_stroke_m / abs(grip.stroke) + _GRIPPER_FRICTION_NM
+            limit_torque = (
+                params.force_limit_n * params.finger_stroke_m / abs(params.stroke) + _GRIPPER_FRICTION_NM
+            )
             direction = float(np.sign(target_raw - current_raw))
             last_goal = current_raw if self._last_goal is None else self._last_goal
-            zero_torque_raw = last_goal - direction * abs(torque) / grip.kp
-            goal = zero_torque_raw + direction * limit_torque / grip.kp
+            zero_torque_raw = last_goal - direction * abs(torque) / params.kp
+            goal = zero_torque_raw + direction * limit_torque / params.kp
             if self._limited_goal is None:
                 self._limited_goal = goal
             self._limited_goal += _GRIPPER_GOAL_FILTER * (goal - self._limited_goal)
@@ -199,9 +201,9 @@ class _GripperForceLimiter:
             # The next force limit starts from where the gripper is, as in I2RT.
             self._limited_goal = current_raw
             goal = target_raw
-        goal = float(np.clip(goal, min(grip.closed, grip.open), max(grip.closed, grip.open)))
+        goal = float(np.clip(goal, min(params.closed, params.open), max(params.closed, params.open)))
         self._last_goal = goal
-        return MitCommand(position=goal, velocity=0.0, kp=grip.kp, kd=grip.kd, torque=0.0)
+        return MitCommand(position=goal, velocity=0.0, kp=params.kp, kd=params.kd, torque=0.0)
 
 
 @dataclass(frozen=True, eq=False)
