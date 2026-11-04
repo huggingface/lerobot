@@ -46,7 +46,7 @@ from .types import FrameScorer, FrameSignals, SignalDescriptor
 if TYPE_CHECKING:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-SCORING_FORMAT = "lerobot.frame_signals"
+SCORING_FORMAT = "lerobot.scores"
 SCORING_SCHEMA_VERSION = 1
 RESERVED_COLUMNS = ("index", "episode_index", "frame_index")
 
