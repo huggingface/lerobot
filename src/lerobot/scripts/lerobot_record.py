@@ -317,9 +317,7 @@ def record_loop(
         with timer.section("teleop"):
             # Get action from teleop
             if isinstance(teleop, Teleoperator):
-                act = teleop.get_action()
-                if robot.name == "unitree_g1":
-                    teleop.send_feedback(obs)
+                act = teleop.get_action(observation=obs)
 
                 # Applies a pipeline to the raw teleop action, default is IdentityProcessor
                 act_processed_teleop = teleop_action_processor((act, obs))
@@ -328,9 +326,11 @@ def record_loop(
 
             elif multi_teleop is not None:
                 arm_teleop, keyboard_teleop = multi_teleop
-                arm_action = arm_teleop.get_action()
+
+                arm_action = arm_teleop.get_action(observation=obs)
                 arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-                keyboard_action = keyboard_teleop.get_action()
+
+                keyboard_action = keyboard_teleop.get_action(observation=obs)
                 base_action = robot._from_keyboard_to_base_action(keyboard_action)  # type: ignore[attr-defined]
                 act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
                 act_processed_teleop = teleop_action_processor((act, obs))

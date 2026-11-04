@@ -17,7 +17,7 @@
 import logging
 from functools import cached_property
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.bimanual import BimanualMixin
 from lerobot.utils.decorators import check_if_not_connected
 
@@ -78,10 +78,14 @@ class BiRebot102Leader(BimanualMixin, Teleoperator):
         return {}
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         action_dict = {}
-        action_dict.update({f"left_{k}": v for k, v in self.left_arm.get_action().items()})
-        action_dict.update({f"right_{k}": v for k, v in self.right_arm.get_action().items()})
+        action_dict.update(
+            {f"left_{k}": v for k, v in self.left_arm.get_action(observation=observation).items()}
+        )
+        action_dict.update(
+            {f"right_{k}": v for k, v in self.right_arm.get_action(observation=observation).items()}
+        )
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:

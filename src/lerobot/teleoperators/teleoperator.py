@@ -20,7 +20,7 @@ from typing import Any
 
 import draccus
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors.motors_bus import MotorCalibration, MotorsBusBase
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
@@ -196,9 +196,17 @@ class Teleoperator(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         """
         Retrieve the current action from the teleoperator.
+
+        Args:
+            observation: Latest raw robot state. Implementations may use it to compute the action
+                but must not mutate it. Devices independent of robot state may ignore it.
+
+        Control loops pass the current observation in the same call. Custom implementations must
+        accept this optional argument, even when they do not use robot state. Device actuation
+        (such as driving a motorized leader during handover) remains in :meth:`send_feedback`.
 
         Returns:
             RobotAction: A flat dictionary representing the teleoperator's current actions. Its

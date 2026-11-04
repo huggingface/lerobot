@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
@@ -192,7 +192,7 @@ class OpenArmMini(Teleoperator):
         self.bus.setup_motors()
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         """Get current action (read positions from all motors)."""
         start = time.perf_counter()
 

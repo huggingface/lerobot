@@ -179,7 +179,7 @@ def sanity_check_dataset_robot_compatibility(
 class ActuatedTeleoperator(Protocol):
     """A teleoperator whose arm can be driven: position feedback plus torque control."""
 
-    def get_action(self) -> RobotAction: ...
+    def get_action(self, observation: dict[str, Any] | None = None) -> RobotAction: ...
 
     def send_feedback(self, feedback: dict[str, Any]) -> None: ...
 
@@ -204,7 +204,12 @@ def teleop_supports_feedback(teleop: Teleoperator) -> TypeGuard[ActuatedTeleoper
 
 
 def teleop_smooth_move_to(
-    teleop: ActuatedTeleoperator, target_pos: RobotAction, duration_s: float = 2.0, fps: int = 30
+    teleop: ActuatedTeleoperator,
+    target_pos: RobotAction,
+    duration_s: float = 2.0,
+    fps: int = 30,
+    *,
+    observation: dict[str, Any] | None = None,
 ) -> None:
     """Smoothly move an actuated teleop to ``target_pos`` via linear interpolation.
 
@@ -219,7 +224,7 @@ def teleop_smooth_move_to(
     follower robot does not receive new actions, which could be an issue on LeKiwi.
     """
     teleop.enable_torque()
-    current = teleop.get_action()
+    current = teleop.get_action(observation=observation)
     steps = max(int(duration_s * fps), 1)
 
     for step in range(steps + 1):
