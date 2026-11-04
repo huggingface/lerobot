@@ -34,16 +34,12 @@ def gripper(closed=1.0, opened=3.0):
         max_speed=1.0,
         force_limit_n=10.0,
         finger_stroke_m=0.1,
-        feedback_tolerance=0.1,
     )
 
 
 def params(**overrides):
     values = {
         "joint_limits": np.array([[-1.0, 1.0], [0.0, 2.0]]),
-        "joint_feedback_tolerance_rad": 0.15,
-        "joint_signs": np.array([1.0, -1.0]),
-        "joint_offsets": np.array([0.0, 0.0]),
         "kp": np.array([50.0, 20.0]),
         "kd": np.array([2.0, 1.0]),
         "max_joint_speed": 0.5,
@@ -81,7 +77,7 @@ def assert_mit_command(command, *, position, velocity, kp, kd, torque):
 class FakeBus:
     """A bus whose motors sit at fixed raw positions; it can stop the servo after some reads."""
 
-    def __init__(self, position=(0.2, -0.5, 2.0), stop_after=None):
+    def __init__(self, position=(0.2, 0.5, 2.0), stop_after=None):
         self.motor_names = ("shoulder", "elbow", "gripper")
         self.enabled = False
         self.states = motor_states(position)
@@ -124,11 +120,11 @@ def wait_for(condition, timeout_s=2.0):
         time.sleep(0.005)
 
 
-def test_joint_conversion_round_trips_signs_offsets_and_gripper():
-    arm = params(joint_offsets=np.array([0.1, 0.2]))
-    raw = np.array([0.3, -0.5, 2.5])
+def test_joint_conversion_round_trips_the_gripper():
+    arm = params()
+    raw = np.array([0.3, 0.5, 2.5])
     joints = mit_control._motor_to_joint(raw, arm)
-    np.testing.assert_allclose(joints, [0.4, 0.7, 0.75])
+    np.testing.assert_allclose(joints, [0.3, 0.5, 0.75])
     np.testing.assert_allclose(mit_control.joint_to_motor(joints, arm), raw)
     with pytest.raises(ValueError, match="calibrated stroke"):
         mit_control._motor_to_joint(np.array([0.0, 0.0, 3.5]), arm)
@@ -154,7 +150,7 @@ def test_track_step_slews_tracks_clips_and_adds_gravity():
     np.testing.assert_allclose(command, [0.3, 0.0, 0.6])
     np.testing.assert_allclose(previous, [0.6, 0.02, 0.5])  # inputs are not mutated
     assert_mit_command(packet[0], position=0.3, velocity=0, kp=50, kd=2, torque=5.0)
-    assert_mit_command(packet[1], position=0.0, velocity=0, kp=20, kd=1, torque=-3.0)
+    assert_mit_command(packet[1], position=0.0, velocity=0, kp=20, kd=1, torque=3.0)
     assert len(packet) == 2  # the gripper has its own force limiter
 
 
@@ -215,14 +211,14 @@ def test_moving_gripper_is_not_considered_blocked():
     assert not limiter.blocked
 
 
-def test_joint_state_maps_rates_and_torques_to_the_joint_frame():
+def test_joint_state_maps_the_gripper_rate_and_torque_to_its_stroke():
     arm = params(gripper=gripper(closed=3.0, opened=1.0))
     bus = FakeBus()
-    bus.states = motor_states([0.2, -0.5, 2.0], velocity=[0.5, 0.5, 1.0], torque=[2.0, 2.0, 0.3])
+    bus.states = motor_states([0.2, 0.5, 2.0], velocity=[0.5, 0.5, 1.0], torque=[2.0, 2.0, 0.3])
     state = mit_control.read_joint_state(bus, arm)
     np.testing.assert_allclose(state.position, [0.2, 0.5, 0.5])
-    np.testing.assert_allclose(state.velocity, [0.5, -0.5, -0.5])  # 1 rad/s over a -2 rad stroke
-    np.testing.assert_allclose(state.torque, [2.0, -2.0, -0.3])
+    np.testing.assert_allclose(state.velocity, [0.5, 0.5, -0.5])  # 1 rad/s over a -2 rad stroke
+    np.testing.assert_allclose(state.torque, [2.0, 2.0, -0.3])
 
 
 def test_servo_holds_then_sends_one_command_per_motor():
@@ -267,8 +263,8 @@ def test_float_step_compensates_gravity_and_friction_without_stiffness():
     np.testing.assert_allclose(command, [0.2, 0.5, 0.8])  # the joints follow the arm, the gripper holds
     # Gravity 8 clipped to 5 Nm, plus friction 0.5 in the direction of motion.
     assert_mit_command(commands[0], position=0.2, velocity=0, kp=0, kd=0.2, torque=5.5)
-    # Gravity -3 Nm and friction -0.2 Nm in the reversed elbow's motor frame.
-    assert_mit_command(commands[1], position=-0.5, velocity=0, kp=0, kd=0.1, torque=-3.2)
+    # Gravity 1.5 Nm doubled by its factor, plus friction 0.2.
+    assert_mit_command(commands[1], position=0.5, velocity=0, kp=0, kd=0.1, torque=3.2)
     assert len(commands) == 2  # the gripper keeps its own limiter
 
 
@@ -314,12 +310,12 @@ def test_float_mode_floats_again_after_the_command_timeout():
 
 @pytest.mark.parametrize("idle_mode", ["hold", "float"])
 def test_servo_starts_past_a_limit_without_jumping(idle_mode):
-    # Raw elbow 0.1 is joint -0.1 (sign -1): past its 0 lower limit, within the feedback tolerance.
-    bus = FakeBus(position=(0.2, 0.1, 2.0))
+    # Elbow -0.1 is past its 0 lower limit, within the feedback tolerance.
+    bus = FakeBus(position=(0.2, -0.1, 2.0))
     servo = make_servo(bus, idle_mode=idle_mode)
     servo.set_target(np.array([0.2, 0.5, 0.5]))
     run_cycles(servo, 2)
-    elbow_goals = [-command.position for name, command in bus.sent if name == "elbow"]
+    elbow_goals = [command.position for name, command in bus.sent if name == "elbow"]
     assert elbow_goals and all(goal == pytest.approx(-0.1, abs=2 * 0.5 * 0.05) for goal in elbow_goals)
 
 

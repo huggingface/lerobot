@@ -75,8 +75,6 @@ _GRIPPER_FINGER_STROKE_M = 0.096
 _GRAVITY_MODEL_REMOTE_PATH = "yam/v1/linear_4310.urdf"
 _MAX_GRAVITY_TORQUE_NM = 25.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
-_JOINT_FEEDBACK_TOLERANCE_RAD = 0.15
-_GRIPPER_FEEDBACK_TOLERANCE = 0.10
 # Plausible motor stroke between the gripper limits (0.5 to 10 rad).
 _GRIPPER_STROKE_RANGE_DEG = (math.degrees(0.5), math.degrees(10.0))
 # Damiao register 9 stores the CAN timeout in 50 us ticks.
@@ -94,10 +92,6 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
     closed, opened = limits[::-1] if gripper.drive_mode else limits
     return MitArmParams(
         joint_limits=_JOINT_LIMITS,
-        joint_feedback_tolerance_rad=_JOINT_FEEDBACK_TOLERANCE_RAD,
-        # YAM's joints read their motors directly, with no flip or offset.
-        joint_signs=np.ones(6),
-        joint_offsets=np.zeros(6),
         kp=np.asarray(config.kp, dtype=float),
         kd=np.asarray(config.kd, dtype=float),
         max_joint_speed=math.radians(config.max_joint_speed_deg_s),
@@ -112,7 +106,6 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
             max_speed=config.max_gripper_speed,
             force_limit_n=config.gripper_force_limit_n,
             finger_stroke_m=_GRIPPER_FINGER_STROKE_M,
-            feedback_tolerance=_GRIPPER_FEEDBACK_TOLERANCE,
         ),
         float_kd=np.asarray(config.float_kd, dtype=float),
         coulomb_friction=np.asarray(config.coulomb_friction, dtype=float)

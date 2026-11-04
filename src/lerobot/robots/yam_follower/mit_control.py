@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 # Cap on a cycle's time step, so a late cycle can't make the command jump.
 _MAX_CONTROL_DT_S = 0.05
+# How far measured joints may go past their limits, which are not hard stops.
+_JOINT_FEEDBACK_TOLERANCE_RAD = 0.15
+# How far the measured gripper opening may go past its calibrated stroke, as a fraction of the stroke.
+_GRIPPER_FEEDBACK_TOLERANCE = 0.10
 
 # Blocked-gripper detection and force limiting, from I2RT's GripperForceLimiter.
 _GRIPPER_EFFORT_WINDOW_S = 0.1
@@ -86,7 +90,7 @@ class MotorStates:
 
 @dataclass(frozen=True, eq=False)
 class JointState:
-    """Measured arm state in calibrated joint coordinates.
+    """Measured arm state, in joint coordinates with a normalized gripper opening.
 
     Args:
         position (`np.ndarray`):
@@ -121,8 +125,6 @@ class GripperParams:
             Finger force once the gripper is blocked on an object, in newtons.
         finger_stroke_m (`float`):
             Finger stroke used to convert the force limit to motor torque, in metres.
-        feedback_tolerance (`float`):
-            How far the measured opening may go past `closed` and `open`, as a fraction of the stroke.
     """
 
     closed: float
@@ -132,7 +134,6 @@ class GripperParams:
     max_speed: float
     force_limit_n: float
     finger_stroke_m: float
-    feedback_tolerance: float
 
     @property
     def stroke(self) -> float:
@@ -213,12 +214,6 @@ class MitArmParams:
     Args:
         joint_limits (`np.ndarray`):
             Lower and upper arm-joint limits in radians, shaped `(joints, 2)`.
-        joint_feedback_tolerance_rad (`float`):
-            How far measured joints may go past `joint_limits`, which are not hard stops, in radians.
-        joint_signs (`np.ndarray`):
-            Direction of each joint relative to its motor, `1` or `-1`.
-        joint_offsets (`np.ndarray`):
-            Joint positions when the motors read zero, in radians.
         kp (`np.ndarray`):
             Position gains for the arm joints.
         kd (`np.ndarray`):
@@ -248,9 +243,6 @@ class MitArmParams:
     """
 
     joint_limits: np.ndarray
-    joint_feedback_tolerance_rad: float
-    joint_signs: np.ndarray
-    joint_offsets: np.ndarray
     kp: np.ndarray
     kd: np.ndarray
     max_joint_speed: float
@@ -312,17 +304,16 @@ class MitArmBus(Protocol):
 
 
 def _motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
-    """Convert raw motor positions to calibrated joint and gripper positions."""
+    """Convert raw motor positions to joint positions and the normalized gripper opening."""
     n = params.num_joints
-    joints = raw[:n] * params.joint_signs + params.joint_offsets
     gripper = params.gripper.to_normalized(float(raw[n]))
-    if not -params.gripper.feedback_tolerance <= gripper <= 1 + params.gripper.feedback_tolerance:
+    if not -_GRIPPER_FEEDBACK_TOLERANCE <= gripper <= 1 + _GRIPPER_FEEDBACK_TOLERANCE:
         raise ValueError("Gripper feedback is outside the calibrated stroke; check the gripper limits")
-    return np.r_[joints, np.clip(gripper, 0, 1)]
+    return np.r_[raw[:n], np.clip(gripper, 0, 1)]
 
 
 def joint_to_motor(positions: np.ndarray, params: MitArmParams) -> np.ndarray:
-    """Convert calibrated joint and gripper positions to raw motor positions.
+    """Convert joint positions and the normalized gripper opening to raw motor positions.
 
     Args:
         positions (`np.ndarray`):
@@ -334,8 +325,7 @@ def joint_to_motor(positions: np.ndarray, params: MitArmParams) -> np.ndarray:
         `np.ndarray`: Motor positions in radians, in bus order.
     """
     n = params.num_joints
-    raw = (positions[:n] - params.joint_offsets) / params.joint_signs
-    return np.r_[raw, params.gripper.to_raw(float(positions[n]))]
+    return np.r_[positions[:n], params.gripper.to_raw(float(positions[n]))]
 
 
 def clip_to_limits(values: np.ndarray, joint_limits: np.ndarray) -> np.ndarray:
@@ -376,15 +366,11 @@ def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
     n = params.num_joints
     position = _motor_to_joint(raw.position, params)
     for i, (value, (lower, upper)) in enumerate(zip(position[:n], params.joint_limits, strict=True)):
-        if not (
-            lower - params.joint_feedback_tolerance_rad
-            <= value
-            <= upper + params.joint_feedback_tolerance_rad
-        ):
+        if not lower - _JOINT_FEEDBACK_TOLERANCE_RAD <= value <= upper + _JOINT_FEEDBACK_TOLERANCE_RAD:
             raise ValueError(f"Joint {i} feedback {value} outside [{lower}, {upper}]")
     gripper = params.gripper
-    velocity = np.r_[raw.velocity[:n] * params.joint_signs, raw.velocity[n] / gripper.stroke]
-    torque = np.r_[raw.torque[:n] * params.joint_signs, raw.torque[n] * np.sign(gripper.stroke)]
+    velocity = np.r_[raw.velocity[:n], raw.velocity[n] / gripper.stroke]
+    torque = np.r_[raw.torque[:n], raw.torque[n] * np.sign(gripper.stroke)]
     return JointState(position=position, velocity=velocity, torque=torque)
 
 
@@ -439,7 +425,7 @@ def _float_step(
     n = params.num_joints
     command = np.r_[state.position[:n], command[n:]]
     goal = joint_to_motor(state.position, params)
-    friction = params.coulomb_friction * np.sign(state.velocity[:n]) * params.joint_signs
+    friction = params.coulomb_friction * np.sign(state.velocity[:n])
     torque = _gravity_feedforward(params, gravity) + friction
     return command, tuple(
         MitCommand(
@@ -455,7 +441,7 @@ def _float_step(
 
 def _gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
     """Scale the model's gravity torques by `gravity_factors`, and cap them."""
-    torque = gravity * params.gravity_factors * params.joint_signs
+    torque = gravity * params.gravity_factors
     return np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
 
 
