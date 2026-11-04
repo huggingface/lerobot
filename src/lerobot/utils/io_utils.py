@@ -15,7 +15,9 @@
 # limitations under the License.
 import json
 import logging
+import shutil
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -39,15 +41,24 @@ def load_json(fpath: Path) -> Any:
 def write_json(data: JsonLike, fpath: Path) -> None:
     """Write JSON-serializable data to a file.
 
-    Creates parent directories if they don't exist.
+    Creates parent directories if they don't exist. Replaces the destination
+    only after the complete JSON file has been written successfully.
 
     Args:
         data: JSON-serializable data to write.
         fpath (Path): The path to the output JSON file.
     """
+    # Match open()'s behavior for a symlink while replacing the actual file atomically.
+    if fpath.is_symlink():
+        fpath = fpath.resolve()
     fpath.parent.mkdir(exist_ok=True, parents=True)
-    with open(fpath, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    with TemporaryDirectory(dir=fpath.parent, prefix=".write-json-") as temporary_dir:
+        temporary_path = Path(temporary_dir) / fpath.name
+        with open(temporary_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        if fpath.exists():
+            shutil.copymode(fpath, temporary_path)
+        temporary_path.replace(fpath)
 
 
 def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
