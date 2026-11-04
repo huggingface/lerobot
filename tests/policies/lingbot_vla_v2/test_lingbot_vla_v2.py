@@ -188,8 +188,7 @@ class _PredictActionChunk(torch.nn.Module):
         )
 
     def inputs(self, noise, batch):
-        # The sampler updates its noise in place, so every call gets its own copy.
-        return (noise.clone(), *(batch[key] for key in self.keys))
+        return (noise, *(batch[key] for key in self.keys))
 
 
 def _grid(policy, batch):
@@ -589,3 +588,14 @@ def test_a_given_noise_runs_in_the_model_dtype(tiny_backbone):
         cast = policy.predict_action_chunk(batch, noise=noise.to(torch.bfloat16))
 
     torch.testing.assert_close(given, cast, rtol=0, atol=0)
+
+
+def test_a_given_noise_is_left_unchanged(tiny_backbone):
+    """Sampling does not write into the starting noise, so the same noise gives the same chunk again."""
+    policy, batch, noise = _policy_and_batch(tiny_backbone, (CAMERA,))
+    given = noise.clone()
+    with torch.no_grad():
+        first = policy.predict_action_chunk(batch, noise=noise)
+        second = policy.predict_action_chunk(batch, noise=noise)
+    assert torch.equal(noise, given)
+    torch.testing.assert_close(second, first, rtol=0, atol=0)

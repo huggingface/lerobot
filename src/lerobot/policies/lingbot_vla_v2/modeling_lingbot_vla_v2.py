@@ -1202,7 +1202,7 @@ class FlowMatchingV2(FlowMatchingV1):
             )
             noise = torch.randn(actions_shape, device=device, dtype=dtype)
         else:
-            noise = noise.to(device=device, dtype=dtype)
+            noise = noise.to(device=device, dtype=dtype, copy=True)
 
         if (self.config.use_cudagraph_prefix or self.config.use_cudagraph_prefix_full) and not exporting:
             # CUDA-graphed prefix (see config docs). Falls back to the
