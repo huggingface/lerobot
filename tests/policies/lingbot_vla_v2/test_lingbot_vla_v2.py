@@ -198,11 +198,9 @@ def test_prediction_on_a_vision_grid_exports_and_matches_eager(tiny_backbone, mo
 
     grid = _grid(policy, batch)
     with torch.no_grad():
-        expected = policy.predict_action_chunk(batch, noise=noise.clone())
+        expected = policy.predict_action_chunk(batch, noise=noise)
         # On the grid, eager prediction runs the export path and gives the same actions.
-        assert torch.equal(
-            policy.predict_action_chunk(batch, noise=noise.clone(), vision_grid=grid), expected
-        )
+        assert torch.equal(policy.predict_action_chunk(batch, noise=noise, vision_grid=grid), expected)
         # The eager predictions above filled the experts' caches of packed weights.
         assert all(cache is not None for cache in cached_expert_weights())
         with warnings.catch_warnings(record=True) as caught:
@@ -240,7 +238,7 @@ def test_prediction_on_a_vision_grid_exports_and_matches_eager(tiny_backbone, mo
     with torch.no_grad():
         torch.testing.assert_close(run(batch), expected, rtol=0, atol=0)
         for inputs, inputs_noise in (({**batch, **other}, other_noise), ({**batch, **layout}, noise)):
-            inputs_expected = policy.predict_action_chunk(inputs, noise=inputs_noise.clone())
+            inputs_expected = policy.predict_action_chunk(inputs, noise=inputs_noise)
             assert not torch.equal(inputs_expected, expected)
             torch.testing.assert_close(run(inputs, noise=inputs_noise), inputs_expected, rtol=0, atol=0)
         for wrong in (changed, {**batch, **empty}):
@@ -283,8 +281,8 @@ def test_export_follows_the_vision_grid_not_the_precompute_cache(tiny_backbone):
     other = {**batch, "image_grid_thw": batch["image_grid_thw"].clone()}
     other["image_grid_thw"][..., 1:] = torch.tensor([2, 8])
     with torch.no_grad():
-        expected = policy.predict_action_chunk(batch, noise=noise.clone())
-        precompute.predict_action_chunk(other, noise=noise.clone())
+        expected = policy.predict_action_chunk(batch, noise=noise)
+        precompute.predict_action_chunk(other, noise=noise)
         with pytest.raises(ValueError, match="needs a vision_grid"):
             export_prediction(precompute, batch, noise, None)
         _, run = export_prediction(precompute, batch, noise, grid)
@@ -304,9 +302,9 @@ def test_vision_grid_without_vision_boundaries_allows_one_visible_camera(tiny_ba
     wrist_hidden["img_masks"][:, 1] = False
     grid = _grid(policy, wrist_hidden)
     with torch.no_grad():
-        expected = policy.predict_action_chunk(wrist_hidden, noise=noise.clone())
+        expected = policy.predict_action_chunk(wrist_hidden, noise=noise)
         with pytest.raises(ValueError, match="at most one visible camera per sample"):
-            policy.predict_action_chunk(batch, noise=noise.clone(), vision_grid=grid)
+            policy.predict_action_chunk(batch, noise=noise, vision_grid=grid)
         _, run = export_prediction(policy, wrist_hidden, noise, grid)
         torch.testing.assert_close(run(wrist_hidden), expected)
         with pytest.raises(RuntimeError, match="Runtime assertion failed"):
@@ -333,10 +331,10 @@ def test_full_cuda_graph_prefix_takes_a_vision_grid(tiny_backbone):
     batch = {key: value.cuda() if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
     noise, grid = noise.cuda(), _grid(policy, batch)
     with torch.no_grad():
-        expected = policy.predict_action_chunk(batch, noise=noise.clone())
+        expected = policy.predict_action_chunk(batch, noise=noise)
         policy.config.use_cudagraph_prefix_full = True
         for _ in range(2):
-            actions = policy.predict_action_chunk(batch, noise=noise.clone(), vision_grid=grid)
+            actions = policy.predict_action_chunk(batch, noise=noise, vision_grid=grid)
             torch.testing.assert_close(actions, expected, rtol=0, atol=0)
     assert getattr(policy.model, "_prefix_graph_state", None) is not None
     assert getattr(policy.model, "_vision_graph_state", None) is None
@@ -355,13 +353,13 @@ def test_export_leaves_compile_predict_velocity_to_eager_calls(tiny_backbone, mo
     monkeypatch.setattr(type(policy.model), "_compile_with_mode", compile_with_mode)
     grid = _grid(policy, batch)
     with torch.no_grad():
-        expected = policy.predict_action_chunk(batch, noise=noise.clone())
+        expected = policy.predict_action_chunk(batch, noise=noise)
         policy.config.compile_predict_velocity = True
         _, run = export_prediction(policy, batch, noise, grid)
         assert not compiled and getattr(policy.model, "_compiled_predict_velocity", None) is None
         torch.testing.assert_close(run(batch), expected, rtol=0, atol=0)
         # The next eager call compiles, as the option asks.
-        torch.testing.assert_close(policy.predict_action_chunk(batch, noise=noise.clone()), expected)
+        torch.testing.assert_close(policy.predict_action_chunk(batch, noise=noise), expected)
     assert len(compiled) == 1
 
 
@@ -374,14 +372,14 @@ def test_export_with_cuda_graphs_leaves_the_policy_intact(tiny_backbone, graph):
     batch = {key: value.cuda() if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
     noise, grid = noise.cuda(), _grid(policy, batch)
     with torch.no_grad():
-        expected = policy.predict_action_chunk(batch, noise=noise.clone())
+        expected = policy.predict_action_chunk(batch, noise=noise)
         setattr(policy.config, graph, True)
         _, run = export_prediction(policy, batch, noise, grid)
         torch.testing.assert_close(run(batch), expected, rtol=0, atol=0)
         # The first eager call after the export captures the graph, which then matches plain prediction.
         for _ in range(2):
             torch.testing.assert_close(
-                policy.predict_action_chunk(batch, noise=noise.clone()), expected, rtol=0, atol=0
+                policy.predict_action_chunk(batch, noise=noise), expected, rtol=0, atol=0
             )
 
 
@@ -610,3 +608,14 @@ def test_a_given_noise_runs_in_the_model_dtype(tiny_backbone):
         cast = policy.predict_action_chunk(batch, noise=noise.to(torch.bfloat16))
 
     torch.testing.assert_close(given, cast, rtol=0, atol=0)
+
+
+def test_a_given_noise_is_left_unchanged(tiny_backbone):
+    """Sampling does not write into the starting noise, so the same noise gives the same chunk again."""
+    policy, batch, noise = _policy_and_batch(tiny_backbone, (CAMERA,))
+    given = noise.clone()
+    with torch.no_grad():
+        first = policy.predict_action_chunk(batch, noise=noise)
+        second = policy.predict_action_chunk(batch, noise=noise)
+    assert torch.equal(noise, given)
+    torch.testing.assert_close(second, first, rtol=0, atol=0)
