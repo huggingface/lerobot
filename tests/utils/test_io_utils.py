@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -88,3 +89,38 @@ def test_list_length_mismatch_raises(tmp_json_file):
     obj = {"nums": [0, 0]}
     with pytest.raises(ValueError):
         deserialize_json_into_object(json_path, obj)
+
+
+@pytest.mark.parametrize(
+    "obj,data,error",
+    [
+        ({"nested": {"step": 0}, "late": 0}, {"nested": {"step": 3}, "late": "bad"}, TypeError),
+        ([0, {"rate": 0.0}], [5, {"rate": "bad"}], TypeError),
+        (([0], {"step": 0}), [[5], {"step": "bad"}], TypeError),
+        ({"values": [0, 0], "late": []}, {"values": [1, 2], "late": [1]}, ValueError),
+        ({"values": [0, 0], "late": {"x": 0}}, {"values": [1, 2], "late": {"y": 1}}, ValueError),
+    ],
+    ids=["nested-dict", "nested-list", "mutable-in-tuple", "late-length", "late-keys"],
+)
+def test_invalid_restore_preserves_entire_object(tmp_json_file, obj, data, error):
+    original = copy.deepcopy(obj)
+
+    with pytest.raises(error):
+        deserialize_json_into_object(tmp_json_file(data), obj)
+
+    assert obj == original
+
+
+def test_valid_restore_preserves_mutable_container_identity(tmp_json_file):
+    values = [0, 0]
+    nested = {"values": values}
+    obj = {"nested": nested, "coords": (values, 0)}
+    data = {"nested": {"values": [1, 2]}, "coords": [[1, 2], 3]}
+
+    result = deserialize_json_into_object(tmp_json_file(data), obj)
+
+    assert result is obj
+    assert result["nested"] is nested
+    assert result["nested"]["values"] is values
+    assert result["coords"][0] is values
+    assert result == {"nested": {"values": [1, 2]}, "coords": ([1, 2], 3)}
