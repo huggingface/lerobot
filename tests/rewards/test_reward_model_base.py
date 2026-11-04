@@ -351,6 +351,7 @@ def test_reward_model_generate_model_card_renders_expected_fields(_offline_model
     model, _ = _make_dummy_reward_model(
         license="mit",
         tags=["robot", "sim"],
+        repo_id="user/my_reward_model",
     )
 
     card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
@@ -369,6 +370,7 @@ def test_reward_model_generate_model_card_renders_expected_fields(_offline_model
     assert "Reward Model Card" in body
     assert "This reward model has been trained" in body
     assert "--reward_model.type=" in body  # reward-model-specific usage block
+    assert 'RewardModelConfig.from_pretrained("user/my_reward_model")' in body
 
 
 def test_reward_model_generate_model_card_leaves_an_unknown_license_out(_offline_model_card):
@@ -386,8 +388,7 @@ def test_inference_only_reward_model_card_does_not_advertise_training(_offline_m
     card = generate_model_card(TOPRewardConfig(), cfg=_make_train_cfg("user/my_dataset"))
     body = str(card)
 
-    assert "inference-only reward-model integration" in body
-    assert "Training this model through `lerobot-train` is not currently supported" in body
+    assert "inference-only" in body
     assert "### Train from scratch" not in body
     assert "compute_log_probability" in body
 

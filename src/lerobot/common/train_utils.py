@@ -930,7 +930,8 @@ def generate_model_card(
             .joinpath("lerobot_rewardmodel_modelcard_template.md")
             .read_text("utf-8")
         )
-        context: dict[str, Any] = {}  # the reward template renders from card_data alone
+        # Used by the template to pre-fill the loading snippet.
+        context: dict[str, Any] = {"reward_model_repo_id": model_cfg.repo_id}
     else:
         tags = {"robotics", "lerobot", model_type}
         template_card = (
