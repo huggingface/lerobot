@@ -24,7 +24,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 import numpy as np
 
@@ -235,6 +235,14 @@ class MitArmParams:
             Damping gains in float mode, where the joints have no stiffness.
         coulomb_friction (`np.ndarray`):
             Coulomb friction of each joint, compensated in float mode, in newton-metres; zeros disable it.
+        control_frequency (`float`):
+            Servo loop frequency in hertz.
+        feedback_timeout_s (`float`):
+            Maximum time to wait for fresh motor feedback.
+        command_timeout_s (`float`):
+            Time without a target before the arm goes idle.
+        idle_mode (`Literal["hold", "float"]`):
+            What the idle arm does: `hold` keeps its position, `float` lets you move it by hand.
     """
 
     joint_limits: np.ndarray
@@ -250,6 +258,10 @@ class MitArmParams:
     gripper: GripperParams
     float_kd: np.ndarray
     coulomb_friction: np.ndarray
+    control_frequency: float
+    feedback_timeout_s: float
+    command_timeout_s: float
+    idle_mode: Literal["hold", "float"]
 
     @property
     def num_joints(self) -> int:
@@ -295,22 +307,6 @@ class MitArmBus(Protocol):
     def disable(self) -> None:
         """Disable torque for the arm; repeated calls must be safe."""
         ...
-
-
-class ServoSettings(Protocol):
-    """Loop settings read by `MitServo`.
-
-    **Attributes**:
-        - **control_frequency** (`float`) -- Loop frequency in hertz.
-        - **feedback_timeout_s** (`float`) -- Maximum time to wait for fresh motor feedback.
-        - **command_timeout_s** (`float`) -- Time without a target before entering idle mode.
-        - **idle_mode** (`str`) -- Idle behavior: `hold` or `float`.
-    """
-
-    control_frequency: float
-    feedback_timeout_s: float
-    command_timeout_s: float
-    idle_mode: str
 
 
 def _motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
@@ -472,8 +468,6 @@ class MitServo:
             Name used in thread names and error messages.
         bus (`MitArmBus`):
             Motor bus of the arm.
-        config (`ServoSettings`):
-            Loop frequency, timeouts and idle behavior.
         gravity (`Callable[[np.ndarray], np.ndarray]`):
             Returns the arm-joint gravity torques for the measured positions.
         stop_event (`threading.Event`):
@@ -484,13 +478,12 @@ class MitServo:
         self,
         name: str,
         bus: MitArmBus,
-        config: ServoSettings,
         gravity: Callable[[np.ndarray], np.ndarray],
         stop_event: threading.Event,
     ) -> None:
         self.name = name
         self.bus = bus
-        self.config = config
+        # Set by reset(), which every start() needs first.
         self.params: MitArmParams | None = None
         self.gravity = gravity
         self.stop_event = stop_event
@@ -508,20 +501,23 @@ class MitServo:
         self._thread: threading.Thread | None = None
         self._gripper: _GripperForceLimiter | None = None
 
-    def reset(self, state: JointState) -> None:
+    def reset(self, state: JointState, params: MitArmParams) -> None:
         """Reset the target and command to a measured state, before the first action.
 
         Args:
             state (`JointState`):
                 Measured state to start from.
+            params (`MitArmParams`):
+                Settings of the arm.
         """
+        self.params = params
         self.state = state
         self.target = state.position.copy()
         self.command = state.position.copy()
         self.updated_at = self.commanded_at = time.monotonic()
         self.command_timed_out = False
         self.has_target = False
-        self._gripper = _GripperForceLimiter(self.params.gripper) if self.params is not None else None
+        self._gripper = _GripperForceLimiter(params.gripper)
 
     @property
     def idle(self) -> bool:
@@ -532,12 +528,12 @@ class MitServo:
         """Start the background servo thread.
 
         Raises:
-            RuntimeError: If the servo is already running or has no calibrated parameters.
+            RuntimeError: If the servo is already running or was never reset.
         """
         if self.active or self._thread is not None:
             raise RuntimeError(f"{self.name} servo is already running")
         if self.params is None:
-            raise RuntimeError(f"{self.name} servo needs calibrated arm parameters before it starts")
+            raise RuntimeError(f"{self.name} servo needs reset() with the arm settings before it starts")
         self.failure = None
         self._thread = threading.Thread(target=self._run, name=f"{self.name}-servo", daemon=True)
         try:
@@ -593,8 +589,8 @@ class MitServo:
             ConnectionError: If the servo stopped or its feedback is stale.
         """
         with self._lock:
-            self._check_healthy()
-            if self.idle and self.config.idle_mode == "float":
+            params = self._check_healthy()
+            if self.idle and params.idle_mode == "float":
                 # Resume tracking from wherever the arm was moved by hand.
                 self.command = self.state.position.copy()
             self.target = target.copy()
@@ -602,14 +598,18 @@ class MitServo:
             self.command_timed_out = False
             self.has_target = True
 
-    def _check_healthy(self) -> None:
+    def _check_healthy(self) -> MitArmParams:
         if self.failure is not None or self.stop_event.is_set():
             raise ConnectionError(f"{self.name} servo stopped after a motor/feedback error") from self.failure
+        params = self.params
+        if params is None:
+            raise ConnectionError(f"{self.name} servo was never reset")
         # A healthy loop's own read can take a full feedback timeout, so allow two plus a cycle.
-        progress_timeout_s = 2 * self.config.feedback_timeout_s + 1 / self.config.control_frequency
+        progress_timeout_s = 2 * params.feedback_timeout_s + 1 / params.control_frequency
         if time.monotonic() - self.updated_at > progress_timeout_s:
             self.stop_event.set()
             raise ConnectionError(f"{self.name} servo feedback is stale; reconnect before commanding motion")
+        return params
 
     def _run(self) -> None:
         previous = started = time.monotonic()
@@ -617,7 +617,7 @@ class MitServo:
         try:
             params = self.params
             if params is None:
-                raise RuntimeError(f"{self.name} servo has no calibrated arm parameters")
+                raise RuntimeError(f"{self.name} servo was never reset")
             while not self.stop_event.is_set():
                 started = time.monotonic()
                 max_cycle_gap = max(max_cycle_gap, started - previous)
@@ -626,16 +626,13 @@ class MitServo:
                 with self._lock:
                     self.state = state
                     self.updated_at = time.monotonic()
-                    if (
-                        started - self.commanded_at > self.config.command_timeout_s
-                        and not self.command_timed_out
-                    ):
+                    if started - self.commanded_at > params.command_timeout_s and not self.command_timed_out:
                         self.target = position.copy()
                         self.command = position.copy()
                         self.command_timed_out = True
                     joint_commands: tuple[MitCommand, ...] = ()
                     n = params.num_joints
-                    if self.bus.enabled and self.idle and self.config.idle_mode == "float":
+                    if self.bus.enabled and self.idle and params.idle_mode == "float":
                         # The arm floats; the gripper keeps holding its commanded opening.
                         self.command[:n] = position[:n]
                         joint_commands = _float_commands(params, state, self.gravity(position))
@@ -669,7 +666,7 @@ class MitServo:
                         break
                     self.bus.send_mit(name, command)
                 previous = started
-                self.stop_event.wait(max(0, 1 / self.config.control_frequency - (time.monotonic() - started)))
+                self.stop_event.wait(max(0, 1 / params.control_frequency - (time.monotonic() - started)))
         except Exception as exc:
             exc.add_note(
                 f"{self.name} maximum servo cycle gap: {max_cycle_gap * 1000:.1f} ms; "

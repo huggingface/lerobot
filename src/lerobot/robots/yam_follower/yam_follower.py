@@ -120,6 +120,10 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
         coulomb_friction=np.asarray(config.coulomb_friction, dtype=float)
         if config.friction_compensation
         else np.zeros(6),
+        control_frequency=config.control_frequency,
+        feedback_timeout_s=config.feedback_timeout_s,
+        command_timeout_s=config.command_timeout_s,
+        idle_mode=config.idle_mode,
     )
 
 
@@ -324,11 +328,8 @@ class YamFollower(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
         self.bus = _YamBus(config.port, config.feedback_timeout_s)
         self.gravity_model: GravityCompensation | None = None
-        self.servo = MitServo(
-            str(self.id), self.bus, config, self._gravity_torque, stop_event or threading.Event()
-        )
+        self.servo = MitServo(str(self.id), self.bus, self._gravity_torque, stop_event or threading.Event())
         self._connected = False
-        self._refresh_params()
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -421,7 +422,6 @@ class YamFollower(Robot):
             )
         }
         self._save_calibration()
-        self._refresh_params()
         logger.info("Saved the gripper limits to %s. Joint zeros were not changed.", self.calibration_fpath)
 
     def configure(self) -> None:
@@ -431,7 +431,8 @@ class YamFollower(Robot):
             raise RuntimeError("Configure YAM motors before the servo starts, not while it runs")
         self.bus.set_mit_mode()
         self._check_can_timeouts()
-        self.servo.reset(read_joint_state(self.bus, self._require_params()))
+        params = self._require_params()
+        self.servo.reset(read_joint_state(self.bus, params), params)
 
     @check_if_not_connected
     def open(self) -> None:
@@ -447,7 +448,7 @@ class YamFollower(Robot):
             camera.connect()
         state = read_joint_state(self.bus, params)
         self._check_initial_position(state.position)
-        self.servo.reset(state)
+        self.servo.reset(state, params)
 
     @check_if_not_connected
     def start(self) -> None:
@@ -513,16 +514,10 @@ class YamFollower(Robot):
         self._close()
         logger.info(f"{self} disconnected.")
 
-    def _refresh_params(self) -> None:
-        """Rebuild the internal control settings, once the gripper is calibrated."""
-        self.servo.params = (
-            _yam_arm_params(self.config, self.calibration["gripper"]) if self.is_calibrated else None
-        )
-
     def _require_params(self) -> MitArmParams:
-        if self.servo.params is None:
+        if not self.is_calibrated:
             raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper limits")
-        return self.servo.params
+        return _yam_arm_params(self.config, self.calibration["gripper"])
 
     def _open_bus(self) -> None:
         """Open the CAN interface, with torque off, once every motor answers."""

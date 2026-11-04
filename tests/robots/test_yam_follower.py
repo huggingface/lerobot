@@ -58,7 +58,6 @@ def make_robot(tmp_path, *, gripper=(0.1, 6.1), **overrides):
     robot = YamFollower(YamFollowerRobotConfig(**config))
     if gripper is not None:
         robot.calibration = {"gripper": gripper_calibration(*gripper)}
-        robot._refresh_params()
     return robot
 
 
@@ -108,10 +107,15 @@ def mock_hardware(robot, monkeypatch):
     monkeypatch.setattr(robot.servo, "start", MagicMock())
 
 
+def reset_servo(robot):
+    zeros = np.zeros(7)
+    robot.servo.reset(mit_control.JointState(position=zeros, velocity=zeros, torque=zeros), params(robot))
+
+
 def ready(robot):
     robot._connected = True
+    reset_servo(robot)
     robot.servo.active = True
-    robot.servo.updated_at = time.monotonic()
     return dict.fromkeys(robot.action_features, 0.0)
 
 
@@ -517,8 +521,7 @@ def test_single_arm_calibration_preserves_factory_zeros(tmp_path, monkeypatch):
     assert (calibration.homing_offset, calibration.drive_mode) == (0, 0)
     # Motor angles of the gripper limits, in whole degrees.
     assert (calibration.range_min, calibration.range_max) == (6, 350)
-    assert robot.servo.params is not None
-    assert robot.servo.params.gripper.open == pytest.approx(6.1, abs=0.01)
+    assert params(robot).gripper.open == pytest.approx(6.1, abs=0.01)
     assert all("[test]" in text for text in prompts)
     assert robot.calibration_fpath.is_file()
     robot.bus.enable.assert_not_called()
@@ -539,8 +542,8 @@ def saved_calibration_robot(tmp_path, monkeypatch, *, closed=0.1, opened=6.1):
 def test_saved_calibration_loads_either_polarity(tmp_path, monkeypatch, closed, opened):
     robot = saved_calibration_robot(tmp_path, monkeypatch, closed=closed, opened=opened)
     assert robot.is_calibrated
-    assert robot.servo.params.gripper.closed == pytest.approx(math.radians(round(math.degrees(closed))))
-    assert robot.servo.params.gripper.open == pytest.approx(math.radians(round(math.degrees(opened))))
+    assert params(robot).gripper.closed == pytest.approx(math.radians(round(math.degrees(closed))))
+    assert params(robot).gripper.open == pytest.approx(math.radians(round(math.degrees(opened))))
 
 
 def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch):
@@ -554,7 +557,7 @@ def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch
 
     prompts = measure_gripper(robot, monkeypatch, opened=5.1, answers=["c"])
     assert len(prompts) == 3
-    assert robot.servo.params.gripper.open == pytest.approx(math.radians(round(math.degrees(5.1))))
+    assert params(robot).gripper.open == pytest.approx(math.radians(round(math.degrees(5.1))))
     robot.disconnect()
 
 
@@ -579,6 +582,8 @@ def test_servo_waits_for_asynchronous_feedback(robot):
         return value
 
     robot.bus.monitor.recv = receive
+    reset_servo(robot)
+    reset_at = robot.servo.updated_at
     robot.servo._run()
     assert robot.servo.failure is None
-    assert robot.servo.updated_at > 0
+    assert robot.servo.updated_at > reset_at

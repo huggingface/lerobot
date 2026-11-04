@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import math
-import time
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -42,7 +41,6 @@ def calibrate_arms(robot):
                 id=7, drive_mode=0, homing_offset=0, range_min=math.degrees(0.1), range_max=math.degrees(6.1)
             )
         }
-        arm._refresh_params()
     return robot
 
 
@@ -84,10 +82,13 @@ def mock_hardware(robot, monkeypatch):
 
 
 def ready(robot):
+    zeros = np.zeros(7)
     for arm in robot.arms.values():
         arm._connected = True
+        arm.servo.reset(
+            mit_control.JointState(position=zeros, velocity=zeros, torque=zeros), arm._require_params()
+        )
         arm.servo.active = True
-        arm.servo.updated_at = time.monotonic()
     return dict.fromkeys(robot.action_features, 0.0)
 
 
