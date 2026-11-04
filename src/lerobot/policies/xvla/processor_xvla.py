@@ -33,6 +33,7 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import (
+    ACTION,
     IMAGENET_STATS,
     OBS_IMAGES,
     OBS_PREFIX,
@@ -449,10 +450,11 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
     - action[:, 3:9] -> 6D rotation (converted to axis-angle, 3D)
     - action[:, 9:10] -> gripper action
 
-    Final output: [target_eef (3), axis_angle (3), gripper (1)] = 7D action
+    Final output: [target_eef (3), axis_angle (3), gripper (1)] = 7D action, in float32 as the environment takes it.
 
     Args:
-        expected_action_dim: Expected input action dimension (default: 10, supports 6D rotation + extras)
+        expected_action_dim: Minimum input action dimension (default: 10). Only the first 10 values are used, the
+            20D ee6d action of X-VLA carries a second arm that LIBERO does not have.
     """
 
     expected_action_dim: int = 10
@@ -465,10 +467,15 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         if action is None or not isinstance(action, torch.Tensor):
             return new_transition
 
-        # Convert to numpy for processing
+        if action.shape[-1] < self.expected_action_dim:
+            raise ValueError(
+                f"Expected an action with at least {self.expected_action_dim} dimensions "
+                f"[target_eef (3), rotation 6D (6), gripper (1)], got {action.shape[-1]}."
+            )
+
+        # Convert to numpy for processing, in float32 since numpy has no bfloat16
         device = action.device
-        dtype = action.dtype
-        action_np = action.cpu().numpy()
+        action_np = action.cpu().float().numpy()
 
         # Extract components
         # action shape: (B, D) where D >= 10
@@ -486,16 +493,21 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         action_np[:, -1] = np.where(action_np[:, -1] > 0.5, 1.0, -1.0)
 
         # Convert back to tensor
-        action = torch.from_numpy(action_np).to(device=device, dtype=dtype)
+        action = torch.from_numpy(action_np).to(device=device)
 
         new_transition[TransitionKey.ACTION] = action
         return new_transition
 
-    def transform_features(self, features):
-        """Rotation conversion changes action dimension from 10 to 7."""
-        # Note: This is a simplified version. In practice, you might want to
-        # update the action feature shape in the features dict.
-        return features
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Rotation conversion changes the action to [target_eef (3), axis_angle (3), gripper (1)]."""
+        new_features = {ft: feats.copy() for ft, feats in features.items()}
+        if ACTION in new_features.get(PipelineFeatureType.ACTION, {}):
+            new_features[PipelineFeatureType.ACTION][ACTION] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(7,)
+            )
+        return new_features
 
     def get_config(self) -> dict[str, Any]:
         """Return serializable configuration."""
