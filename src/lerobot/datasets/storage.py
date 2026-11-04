@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib
 import json
@@ -128,6 +129,17 @@ def remote_meta_cache_dir(key: str) -> Path:
     return HF_LEROBOT_HOME / "remote" / f"{re.sub(r'[^A-Za-z0-9._-]+', '_', key)[:100]}-{digest}"
 
 
+def remote_meta_lock(cache: Path) -> contextlib.AbstractContextManager:
+    """Lock serializing reads of ``cache/meta`` with :func:`localize_lerobot_root` refreshes.
+
+    Hold it while loading metadata from a cache this module returned: a refresh swaps
+    ``meta/`` with two renames, so an unlocked reader can see it missing in between.
+    Same lock file as the bucket metadata cache in ``LeRobotDatasetMetadata``.
+    """
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    return WeakFileLock(cache.parent / f".{cache.name}.lock")
+
+
 def localize_lerobot_root(
     root: str,
     storage_options: Mapping[str, Any] | None = None,
@@ -135,9 +147,11 @@ def localize_lerobot_root(
 ) -> Path:
     """Copy ``meta/`` of a default-format dataset at an fsspec ``root`` to a local cache.
 
-    Data files stay remote. Raises ``FileNotFoundError`` when ``root`` has no
-    ``meta/info.json`` or holds another storage format, and fsspec's ``ImportError``
-    when the protocol's package (e.g. ``s3fs``) is missing.
+    Data files stay remote. Load metadata from the returned directory under
+    :func:`remote_meta_lock`, since a concurrent refresh replaces ``meta/``.
+    Raises ``FileNotFoundError`` when ``root`` has no ``meta/info.json`` or holds
+    another storage format, and fsspec's ``ImportError`` when the protocol's
+    package (e.g. ``s3fs``) is missing.
     """
     uri = root.rstrip("/")
     filesystem, path = fsspec.core.url_to_fs(
@@ -154,8 +168,7 @@ def localize_lerobot_root(
             f"{uri} has storage_format {storage_format!r}, not {DEFAULT_STORAGE_FORMAT!r}"
         )
     cache = remote_meta_cache_dir(uri)
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    with WeakFileLock(cache.parent / f".{cache.name}.lock"):
+    with remote_meta_lock(cache):
         meta = cache / "meta"
         if force_cache_sync or not (meta / "info.json").is_file():
             tmp = cache / "meta.tmp"
@@ -164,11 +177,17 @@ def localize_lerobot_root(
             cache.mkdir(exist_ok=True)
             # tmp must not exist: fsspec copies into an existing directory as tmp/meta.
             filesystem.get(f"{path}/meta", str(tmp), recursive=True)
-            # Swap, never delete first: another rank may be reading the current meta/.
+            # Not atomic: meta/ is missing between the two renames. Readers hold
+            # remote_meta_lock, and a failed promotion puts the previous meta/ back.
             old = cache / f"meta.old-{os.getpid()}"
             if meta.exists():
                 os.replace(meta, old)
-            os.replace(tmp, meta)
+            try:
+                os.replace(tmp, meta)
+            except BaseException:
+                if old.exists():
+                    os.replace(old, meta)
+                raise
             shutil.rmtree(old, ignore_errors=True)
     return cache
 
@@ -234,6 +253,7 @@ def load_dataset_metadata(
     """
     from .dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415  (import cycle)
 
+    meta_lock: contextlib.AbstractContextManager = contextlib.nullcontext()
     if root is not None and is_remote_uri(root):
         root = localize_remote_root(
             repo_id,
@@ -244,11 +264,15 @@ def load_dataset_metadata(
             storage_options=storage_options,
         )
         force_cache_sync = False  # the localized meta/ is already fresh
-    return LeRobotDatasetMetadata(
-        repo_id,
-        root=root,
-        revision=revision,
-        repo_type=repo_type,
-        token=token,
-        force_cache_sync=force_cache_sync,
-    )
+        # repo_type="bucket" takes this same lock in LeRobotDatasetMetadata; it is not reentrant.
+        if repo_type != "bucket":
+            meta_lock = remote_meta_lock(root)
+    with meta_lock:
+        return LeRobotDatasetMetadata(
+            repo_id,
+            root=root,
+            revision=revision,
+            repo_type=repo_type,
+            token=token,
+            force_cache_sync=force_cache_sync,
+        )

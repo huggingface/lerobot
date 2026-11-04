@@ -19,7 +19,7 @@ import warnings
 from collections import deque
 from collections.abc import Callable, Generator, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import ExitStack, closing
+from contextlib import AbstractContextManager, ExitStack, closing, nullcontext
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -42,7 +42,7 @@ from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
 from .language import LANGUAGE_COLUMNS
-from .storage import is_bucket_root, localize_lerobot_root
+from .storage import is_bucket_root, localize_lerobot_root, remote_meta_lock
 from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
     streaming_data_root,
@@ -329,6 +329,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 shuffled round. Neither strategy is a global uniform shuffle.
         """
         super().__init__()
+        meta_lock: AbstractContextManager = nullcontext()
         if is_bucket_root(repo_id, root):
             # Metadata then uses the regular bucket cache, as with repo_type="bucket".
             root, repo_type = None, "bucket"
@@ -338,6 +339,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 data_root = location.uri
             root = localize_lerobot_root(location.uri, storage_options, force_cache_sync)
             force_cache_sync = False
+            # repo_type="bucket" takes this same lock in LeRobotDatasetMetadata; it is not reentrant.
+            if repo_type != "bucket":
+                meta_lock = remote_meta_lock(root)
         if repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
         self.repo_id = repo_id
@@ -402,14 +406,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
-        self.meta = LeRobotDatasetMetadata(
-            self.repo_id,
-            self._requested_root,
-            self.revision,
-            force_cache_sync=force_cache_sync,
-            repo_type=repo_type,
-            token=token,
-        )
+        with meta_lock:
+            self.meta = LeRobotDatasetMetadata(
+                self.repo_id,
+                self._requested_root,
+                self.revision,
+                force_cache_sync=force_cache_sync,
+                repo_type=repo_type,
+                token=token,
+            )
         self.root = self.meta.root
         self.revision = self.meta.revision
         self.meta.rescale_depth_stats(self._depth_output_unit)

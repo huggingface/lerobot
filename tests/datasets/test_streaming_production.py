@@ -15,6 +15,7 @@ import time
 from itertools import islice
 from pathlib import Path
 
+import filelock
 import fsspec
 import fsspec.implementations.memory
 import pytest
@@ -22,6 +23,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset, _balanced_episode_shards
 from lerobot.datasets.streaming_sidecar import make_sidecar_spec
 from lerobot.utils.utils import cycle
@@ -413,6 +415,15 @@ def test_streaming_reads_complete_dataset_from_fsspec_root(
     monkeypatch.setattr("lerobot.datasets.storage.HF_LEROBOT_HOME", tmp_path / "cache")
     monkeypatch.chdir(tmp_path)
     calls = _spy_url_to_fs(monkeypatch, remote_root)
+    load_metadata = LeRobotDatasetMetadata._load_metadata
+
+    def load_metadata_under_refresh_lock(self) -> None:
+        # A meta/ refresh by another rank must wait until this read is done.
+        with pytest.raises(filelock.Timeout):
+            filelock.FileLock(self.root.parent / f".{self.root.name}.lock", timeout=0).acquire()
+        load_metadata(self)
+
+    monkeypatch.setattr(LeRobotDatasetMetadata, "_load_metadata", load_metadata_under_refresh_lock)
 
     streaming = StreamingLeRobotDataset(
         DUMMY_REPO_ID,
