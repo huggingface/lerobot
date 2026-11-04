@@ -275,6 +275,7 @@ def test_external_images_use_dataset_root(image_dataset_roots, tmp_path, monkeyp
         (None, None, "cached-token", "cached-token"),
         (False, None, "cached-token", False),
         (None, None, None, None),
+        (None, {"token": "storage-token", "revision": "image-branch"}, None, "storage-token"),
     ],
     ids=[
         "storage_only",
@@ -285,6 +286,7 @@ def test_external_images_use_dataset_root(image_dataset_roots, tmp_path, monkeyp
         "cached",
         "disabled",
         "anonymous",
+        "revision_override",
     ],
 )
 def test_external_hf_images_use_table_revision(
@@ -318,11 +320,13 @@ def test_external_hf_images_use_table_revision(
     )
     reader.get_raw_item(0)
     assert connection_options[0].get("token", token) == effective_token
+    effective_revision = (storage_options or {}).get("revision", revision)
+    assert connection_options[0]["revision"] == effective_revision
     encoded = io.BytesIO()
     Image.new("RGB", (2, 2)).save(encoded, format="PNG")
     if path_kind == "relative":
         path = "assets/frame.png"
-        expected_path = f"{root}@{revision}/{path}"
+        expected_path = f"{root}@{effective_revision}/{path}"
         expected_options = {"token": effective_token} if effective_token is not None else {}
     else:
         path = expected_path = f"{HF_ENDPOINT}/datasets/{DUMMY_REPO_ID}/resolve/{revision}/assets/frame.png"
@@ -340,6 +344,35 @@ def test_external_hf_images_use_table_revision(
 
     monkeypatch.setattr(fsspec, "open", open_image)
     image = reader._decode_image({"bytes": None, "path": path}, meta.image_keys[0], 0)
+    assert image.shape == (3, 2, 2)
+    reader.close()
+
+
+@pytest.mark.parametrize("root_suffix", ["/nested", "@uri-snapshot", "@uri-snapshot/nested"])
+def test_relative_hf_images_keep_root_path_and_pinned_revision(
+    image_dataset_roots, monkeypatch, root_suffix: str
+) -> None:
+    _, local_root = image_dataset_roots
+    root = f"hf://datasets/{DUMMY_REPO_ID}{root_suffix}"
+    meta = LeRobotDatasetMetadata(DUMMY_REPO_ID, root=local_root, revision="meta-snapshot")
+    monkeypatch.setattr(lance_backend, "resolve_lance_root", lambda *args: (root, local_root))
+    reader = lance_backend.LanceDatasetReader(
+        meta, root=root, storage_options={"revision": "image-branch"}, token=False
+    )
+    expected_root = (
+        root if root_suffix.startswith("@") else f"hf://datasets/{DUMMY_REPO_ID}@image-branch{root_suffix}"
+    )
+    encoded = io.BytesIO()
+    Image.new("RGB", (2, 2)).save(encoded, format="PNG")
+
+    def open_image(path, mode, **options):
+        assert path == f"{expected_root}/assets/frame.png"
+        assert mode == "rb"
+        assert options == {"token": False}
+        return io.BytesIO(encoded.getvalue())
+
+    monkeypatch.setattr(fsspec, "open", open_image)
+    image = reader._decode_image({"bytes": None, "path": "assets/frame.png"}, meta.image_keys[0], 0)
     assert image.shape == (3, 2, 2)
     reader.close()
 

@@ -46,7 +46,7 @@ from datasets.formatting import format_table, get_formatter
 from pyarrow import Table as ArrowTable
 
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
-from lerobot.streaming.location import hf_dataset_uri
+from lerobot.streaming.location import LocationKind, StorageLocation, hf_dataset_uri
 from lerobot.utils.import_utils import _lancedb_available, get_safe_default_video_backend, require_package
 
 if TYPE_CHECKING or _lancedb_available:
@@ -266,10 +266,22 @@ class LanceDatasetReader(BaseDatasetReader):
         }
         self._image_depth_units = image_depth_units(meta)
         self._read_features = get_hf_features_from_features(meta.features)
-        image_root = hf_dataset_uri(self.repo_id, self._hub_revision) if self._hub_revision else self._db_uri
-        image_token = _storage_options(self._db_uri, storage_options, self._hub_revision, token).get(
-            "token", token
-        )
+        image_options = _storage_options(self._db_uri, storage_options, self._hub_revision, token)
+        image_root = self._db_uri
+        image_location = StorageLocation.parse(image_root)
+        image_revision = image_options.get("revision")
+        if (
+            image_location.kind == LocationKind.HF_DATASET
+            and image_location.repo_id is not None
+            and image_location.revision is None
+            and image_revision
+        ):
+            image_root = image_root.replace(
+                hf_dataset_uri(image_location.repo_id),
+                hf_dataset_uri(image_location.repo_id, image_revision),
+                1,
+            )
+        image_token = image_options.get("token", token)
         for key in self.meta.image_keys:
             self._read_features[key] = DatasetImage(
                 image_root, token=image_token, storage_options=storage_options
