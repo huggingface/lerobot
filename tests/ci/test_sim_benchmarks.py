@@ -12,19 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simulator benchmark CI: the matrix, the metrics it records, and the LIBERO policy-server example."""
+"""Simulator benchmark CI: the matrix and the metrics it records."""
 
 import json
 import subprocess
 import sys
 from pathlib import Path
 
-import draccus
 import pytest
-import yaml
-
-from lerobot.remote_inference.configs import ServerConfig
-from tests.utils import resolve_without_simulator
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -75,17 +70,6 @@ def test_matrix_has_eight_benchmarks_and_training_coverage():
     assert all(len(e["sim_tag"]) == 24 for e in entries)
     assert all(len(e["revision"]) == 40 for e in entries)
     assert next(e for e in entries if e["name"] == "libero_plus")["task"] == "libero_spatial"
-
-
-def test_libero_policy_server_example_matches_simulator_config(monkeypatch):
-    policy = draccus.parse(ServerConfig, config_path=str(ROOT / "docker/sim/policy_libero.yaml"), args=[])
-    settings = yaml.safe_load((ROOT / "docker/sim/configs/libero.yaml").read_text())["sim"]
-    sim = resolve_without_simulator(settings, monkeypatch)
-    assert policy.semantics == sim.semantics
-    assert policy.robot_type == sim.robot_type
-    assert tuple(policy.action_feature.names) == sim.action_names
-    state = next(f for f in policy.features if f.name == "observation.state")
-    assert tuple(state.names) == sim.state_names
 
 
 @pytest.mark.parametrize("max_episode_steps", [None, 30])

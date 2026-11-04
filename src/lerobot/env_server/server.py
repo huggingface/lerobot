@@ -25,15 +25,15 @@ from typing import Any, cast
 
 import numpy as np
 
-from lerobot.sim.config import SimConfig, SimSettings
-from lerobot.sim.local_vector_env import LocalVectorEnv
-from lerobot.sim.types import EnvDescriptor
-from lerobot.transport.protocol.codec import RGBImage, decode_message, encode_message
-from lerobot.transport.protocol.envelope import (
+from lerobot.sim import EnvDescriptor, LocalVectorEnv, SimConfig, SimSettings
+from lerobot.transport.protocol import (
     Envelope,
     ErrorCode,
     MessageType,
     ProtocolError,
+    RGBImage,
+    decode_message,
+    encode_message,
     validate_segment,
 )
 from lerobot.transport.zenoh import (

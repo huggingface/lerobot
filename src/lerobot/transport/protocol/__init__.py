@@ -13,3 +13,32 @@
 # limitations under the License.
 
 """Versioned message envelopes, a size-limited codec and request/reply helpers shared by LeRobot services."""
+
+from .client import decode_reply, query_reply
+from .codec import CodecLimits, RGBImage, decode_message, encode_message, peek_envelope
+from .envelope import (
+    Envelope,
+    ErrorCode,
+    MessageType,
+    ProtocolError,
+    correlate_reply,
+    validate_reply,
+    validate_segment,
+)
+
+__all__ = [
+    "CodecLimits",
+    "Envelope",
+    "ErrorCode",
+    "MessageType",
+    "ProtocolError",
+    "RGBImage",
+    "correlate_reply",
+    "decode_message",
+    "decode_reply",
+    "encode_message",
+    "peek_envelope",
+    "query_reply",
+    "validate_reply",
+    "validate_segment",
+]

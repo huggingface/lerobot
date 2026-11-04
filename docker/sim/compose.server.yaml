@@ -10,11 +10,12 @@ services:
       # The EnvHub stage's repository files; unused by the other stages.
       additional_contexts:
         envhub: ${ENVHUB_DIR:-.}
-    command: [lerobot-env-server, --config_path=/config/sim.yaml, "--zenoh.listen_endpoints=[tcp/0.0.0.0:7448]"]
+    command: [lerobot-env-server, --config_path=/config/sim.yaml]
     volumes:
       - ${SIM_CONFIG:?Select a simulator YAML}:/config/sim.yaml:ro
-    ports:
-      - 127.0.0.1:${SIM_PORT:-7448}:7448
+    # On the host network, the server listens on the YAML's endpoint (localhost:7448 by default), as it does
+    # outside Docker.
+    network_mode: host
     gpus: all
     shm_size: 4gb
     healthcheck:
@@ -22,7 +23,7 @@ services:
         - CMD
         - python
         - -c
-        - "import yaml; from lerobot.env_server.client import EnvClient; d=yaml.safe_load(open('/config/sim.yaml')); c=EnvClient('tcp/127.0.0.1:7448', d['deployment'], handshake_timeout_s=5); c.describe(); c.close()"
+        - "import yaml; from lerobot.env_server.client import EnvClient; d=yaml.safe_load(open('/config/sim.yaml')); c=EnvClient(d.get('zenoh', {}).get('listen_endpoints', ['tcp/127.0.0.1:7448'])[0], d['deployment'], handshake_timeout_s=5); c.describe(); c.close()"
       interval: 5s
       timeout: 10s
       start_period: ${SIM_START_PERIOD:-60s}

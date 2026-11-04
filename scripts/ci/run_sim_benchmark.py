@@ -75,6 +75,10 @@ def main() -> None:
                 "all",
                 "--shm-size=4g",
                 args.sim_image,
+                "lerobot-env-server",
+                f"--config_path=/lerobot/{entry['sim_config']}",
+                # Only on this job's network, under the alias the driver connects to.
+                "--zenoh.listen_endpoints=[tcp/sim:7448]",
             ]
         )
         # Poll describe() until the server is up: it has a timeout and does not open a session.

@@ -16,7 +16,7 @@ from dataclasses import replace
 
 import pytest
 
-from lerobot.transport.protocol.envelope import (
+from lerobot.transport.protocol import (
     Envelope,
     ErrorCode,
     MessageType,
@@ -95,7 +95,7 @@ def test_both_clients_use_the_shared_reply_rules(service, failure):
     pytest.importorskip("msgpack")
     from types import SimpleNamespace
 
-    from lerobot.transport.protocol.codec import CodecLimits, decode_message, encode_message
+    from lerobot.transport.protocol import CodecLimits, decode_message, encode_message
 
     def query(_key, payload, *_args, **_kwargs):
         source = decode_message(payload)
@@ -111,7 +111,7 @@ def test_both_clients_use_the_shared_reply_rules(service, failure):
         return [encode_message(response)]
 
     if service == "sim":
-        from lerobot.env_server.client import EnvClient
+        from lerobot.env_server import EnvClient
 
         client = EnvClient.__new__(EnvClient)
         client.instance_id, client.session_id, client.generation = "instance", "session", 4

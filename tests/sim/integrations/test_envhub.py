@@ -21,9 +21,8 @@ import numpy as np
 import pytest
 
 from lerobot.envs import EnvClientConfig, HubEnvConfig
-from lerobot.sim.config import SimConfig
+from lerobot.sim import LocalVectorEnv, SimConfig
 from lerobot.sim.integrations import envhub
-from lerobot.sim.local_vector_env import LocalVectorEnv
 
 _ENVHUB_ENV = """
 import gymnasium as gym

@@ -266,6 +266,8 @@ def rollout(
     all_rewards = []
     all_successes = []
     all_dones = []
+    # What the simulator reports besides success, one row per step; empty for benchmarks that report nothing.
+    all_metrics: list[dict[str, np.ndarray]] = []
 
     # A relative-action policy predicts a chunk of offsets anchored to the state at prediction
     # time, but this loop reruns the pre/post pipeline every step, which would re-anchor queued
@@ -402,6 +404,14 @@ def rollout(
             all_rewards.append(torch.from_numpy(reward))
             all_dones.append(torch.from_numpy(done))
             all_successes.append(torch.tensor(successes))
+            all_metrics.append(
+                {
+                    key: np.asarray(value, dtype=np.float32)
+                    # Gymnasium's vector envs add a boolean presence mask per key of a sub-env's info.
+                    for key, value in (info.get("metrics") or {}).items()
+                    if not key.startswith("_")
+                }
+            )
 
             step += 1
             running_success_rate = (
@@ -431,6 +441,13 @@ def rollout(
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
     }
+    metric_names = sorted({key for metrics in all_metrics for key in metrics})
+    if metric_names:
+        missing = np.zeros(env.num_envs, dtype=np.float32)
+        ret["metrics"] = {
+            name: torch.from_numpy(np.stack([metrics.get(name, missing) for metrics in all_metrics], axis=1))
+            for name in metric_names
+        }
     if return_observations:
         stacked_observations = {}
         for key in all_observations[0]:
@@ -509,6 +526,7 @@ def eval_policy(
     max_rewards = []
     all_successes = []
     all_seeds: list[int | None] = []
+    episode_metrics: list[dict[str, float]] = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
 
@@ -603,6 +621,13 @@ def eval_policy(
             all_seeds.extend(seeds)
         else:
             all_seeds.extend([None] * env.num_envs)
+        batch_metrics = {
+            name: values.gather(1, done_indices[:, None]).squeeze(1).tolist()
+            for name, values in rollout_data.get("metrics", {}).items()
+        }
+        episode_metrics.extend(
+            {name: values[index] for name, values in batch_metrics.items()} for index in range(env.num_envs)
+        )
 
         # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
@@ -719,6 +744,10 @@ def eval_policy(
             "eval_ep_s": (time.time() - start) / n_episodes,
         },
     }
+
+    for episode, metrics in zip(info["per_episode"], episode_metrics[:n_episodes], strict=True):
+        if metrics:
+            episode["metrics"] = metrics
 
     if return_episode_data:
         info["episodes"] = episode_data

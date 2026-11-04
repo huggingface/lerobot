@@ -32,8 +32,8 @@ def sim_server():
     # Live-server tests need the `remote` extra; the base-dependency tier skips them.
     pytest.importorskip("zenoh")
     pytest.importorskip("msgpack")
-    from lerobot.env_server.server import EnvServer, EnvServerConfig
-    from lerobot.sim.config import SimSettings
+    from lerobot.env_server import EnvServer, EnvServerConfig
+    from lerobot.sim import SimSettings
     from lerobot.transport.zenoh import ZenohConfig
     from tests.fixtures.toy_env import ToyEnvConfig
 

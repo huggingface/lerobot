@@ -29,7 +29,7 @@ from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
 from lerobot.lerobot_types import EnvTransition, PolicyPrediction, RobotObservation
 from lerobot.processor import create_transition, transition_to_robot_action
-from lerobot.robots.sim_robot import start_episode
+from lerobot.robots.utils import start_episode
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import OBS_STR
 from lerobot.utils.action_interpolator import ActionInterpolator

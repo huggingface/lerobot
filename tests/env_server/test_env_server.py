@@ -22,12 +22,11 @@ import time
 import numpy as np
 import pytest
 
-from lerobot.env_server.client import EnvClient, RemoteVectorEnv
+from lerobot.env_server import EnvClient, EnvServer, EnvServerConfig, RemoteVectorEnv
 from lerobot.env_server.protocol import decode_descriptor, encode_descriptor, instance_prefix
-from lerobot.env_server.server import EnvServer, EnvServerConfig
 from lerobot.envs import EnvClientConfig
-from lerobot.sim.config import SimSettings
-from lerobot.transport.protocol.envelope import ErrorCode, MessageType, ProtocolError
+from lerobot.sim import SimSettings
+from lerobot.transport.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig
 from tests.fixtures.sim_server import free_port
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
@@ -339,6 +338,9 @@ def test_local_environment_matches_the_server(sim_server):
         for key in ("is_success", "elapsed_steps"):
             np.testing.assert_array_equal(actual[4][key], expected[4][key])
         assert tuple(actual[4]["task"]) == tuple(expected[4]["task"])
+        assert actual[4]["metrics"].keys() == expected[4]["metrics"].keys()
+        for name, values in expected[4]["metrics"].items():
+            np.testing.assert_array_equal(actual[4]["metrics"][name], values)
 
 
 def test_served_env_must_be_the_env_the_command_describes(sim_server):

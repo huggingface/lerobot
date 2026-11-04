@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# NOTE: gymnasium is currently a core dependency but is a candidate for moving to an
+# optional extra in the future. When that transition happens, uncomment the guard below
+# and update the extra name to the one that will contain gymnasium.
+# from lerobot.utils.import_utils import require_package
+# require_package("gymnasium", extra="<update_extra>", import_name="gymnasium")
+
 from .configs import (
     AlohaEnvConfig,
     EnvClientConfig,

@@ -18,13 +18,13 @@ from typing import Any
 
 import torch
 
+from lerobot.transport.protocol import Envelope, ErrorCode, ProtocolError
 from lerobot.transport.protocol.codec import (
     CodecLimits,
     RGBImage,
     decode_message,
     encode_message as _encode_message,
 )
-from lerobot.transport.protocol.envelope import Envelope, ErrorCode, ProtocolError
 
 __all__ = ["CodecLimits", "RGBImage", "decode_message", "encode_message"]
 
