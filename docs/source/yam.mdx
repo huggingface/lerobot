@@ -56,7 +56,7 @@ Each arm needs its own CAN interface, because both arms use the same motor IDs.
 lerobot-setup-can --mode=setup --interfaces=can0 --use_fd=false
 ```
 
-Use `--interfaces=can0,can1` for two arms. The command configures the Linux interfaces with `sudo ip link` and sends no motor commands; run it while no robot is connected. With two arms, `can0` and `can1` can swap after a reboot: check which arm each interface drives, or give them fixed names such as `can_follower_l` with I2RT's [software setup](https://doc.i2rt.com/getting-started/sw-setup), and use those names as the port.
+Use `--interfaces=can0,can1` for two arms. The command configures the Linux interfaces with `sudo ip link` and sends no motor commands. With two arms, `can0` and `can1` can swap after a reboot: check which arm each interface drives, or give them fixed names such as `can_follower_l` with I2RT's [software setup](https://doc.i2rt.com/getting-started/sw-setup), and use those names as the port.
 
 ## Device types
 
