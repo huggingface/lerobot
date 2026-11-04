@@ -64,6 +64,7 @@ def with_defaults(entry: dict) -> dict:
         # Maps simulator camera keys to the camera keys the checkpoint expects.
         "rename_map": {},
         "dockerfile": "docker/Dockerfile.sim",
+        "policy_extras": ["remote", "evaluation", "smolvla", "training", "hardware"],
         "episodes": 1,
         "batch_size": 1,
         # CI checks that the pipeline runs end to end, not the success rate, so short episodes are enough.
