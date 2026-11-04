@@ -956,17 +956,34 @@ class GR00TN17(PreTrainedModel):
             load_backbone_weights=load_backbone_weights,
             **kwargs,
         )
-        pretrained_model.backbone.set_trainable_parameters(
-            tune_visual=tune_visual,
+        _set_trainable_parameters(
+            pretrained_model,
             tune_llm=tune_llm,
-            tune_top_llm_layers=pretrained_model.config.tune_top_llm_layers,
-        )
-        pretrained_model.action_head.set_trainable_parameters(
+            tune_visual=tune_visual,
             tune_projector=tune_projector,
             tune_diffusion_model=tune_diffusion_model,
             tune_vlln=tune_vlln,
         )
         return pretrained_model
+
+
+def _set_trainable_parameters(
+    model: GR00TN17,
+    *,
+    tune_llm: bool,
+    tune_visual: bool,
+    tune_projector: bool,
+    tune_diffusion_model: bool,
+    tune_vlln: bool,
+) -> None:
+    """Set which parts of the backbone and the action head of `model` train, with `tune_top_llm_layers` from its
+    config."""
+    model.backbone.set_trainable_parameters(
+        tune_visual=tune_visual, tune_llm=tune_llm, tune_top_llm_layers=model.config.tune_top_llm_layers
+    )
+    model.action_head.set_trainable_parameters(
+        tune_projector=tune_projector, tune_diffusion_model=tune_diffusion_model, tune_vlln=tune_vlln
+    )
 
 
 def _register_with_transformers() -> None:
