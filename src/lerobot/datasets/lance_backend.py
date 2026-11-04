@@ -72,6 +72,7 @@ from .lance_utils import (  # noqa: F401
     _merge_spans,
     _RangeReader,
     _SparseBlobSource,
+    _storage_options,
     _VideoDecoderLRU,
     build_video_byte_index,
     lance_mp_context,
@@ -266,8 +267,13 @@ class LanceDatasetReader(BaseDatasetReader):
         self._image_depth_units = image_depth_units(meta)
         self._read_features = get_hf_features_from_features(meta.features)
         image_root = hf_dataset_uri(self.repo_id, self._hub_revision) if self._hub_revision else self._db_uri
+        image_token = _storage_options(self._db_uri, storage_options, self._hub_revision, token).get(
+            "token", token
+        )
         for key in self.meta.image_keys:
-            self._read_features[key] = DatasetImage(image_root, token=token, storage_options=storage_options)
+            self._read_features[key] = DatasetImage(
+                image_root, token=image_token, storage_options=storage_options
+            )
         self.set_image_transforms(image_transforms)
         self.return_uint8 = return_uint8
 

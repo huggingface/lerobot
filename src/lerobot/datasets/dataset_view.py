@@ -21,7 +21,7 @@ from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any, cast, overload
 
 import numpy as np
-from datasets import Features
+from datasets import Features, Image
 from datasets.formatting import get_formatter
 
 if TYPE_CHECKING:
@@ -104,15 +104,20 @@ class DatasetColumnView:
         )
 
     def __iter__(self) -> Iterator[Any]:
-        """Iterate over rows with bounded batch reads."""
+        """Iterate over rows, decoding image columns one row at a time."""
         if self._format_type in {"arrow", "pandas", "polars"}:
             for index in range(len(self)):
                 yield self[index]
             return
-        for batch in self.iter(batch_size=512):
+        for batch in self._iter_batches():
             size = len(batch[self._columns[0]])
             for index in range(size):
                 yield {key: values[index] for key, values in batch.items()}
+
+    def _iter_batches(self) -> Iterator[Any]:
+        """Limit implicit image reads while retaining batches for numeric projections."""
+        batch_size = 1 if any(isinstance(feature, Image) for feature in self.features.values()) else 512
+        return self.iter(batch_size=batch_size)
 
     def iter(self, batch_size: int = 512) -> Iterator[Any]:
         """Iterate over batches of the requested size."""
@@ -150,9 +155,9 @@ class DatasetColumn:
         return self._view[key][self._view.column_names[0]]
 
     def __iter__(self) -> Iterator[Any]:
-        """Read values in bounded batches."""
+        """Read values using the view's image-aware iteration batches."""
         name = self._view.column_names[0]
-        for batch in self._view.iter(batch_size=512):
+        for batch in self._view._iter_batches():
             yield from batch[name]
 
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:

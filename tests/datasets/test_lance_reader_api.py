@@ -16,6 +16,7 @@ import builtins
 import io
 import pickle
 import shutil
+from typing import Any
 
 import pytest
 
@@ -32,7 +33,7 @@ from huggingface_hub.constants import ENDPOINT as HF_ENDPOINT
 from lerobot_lancedb.convert import convert
 from PIL import Image
 
-from lerobot.datasets import lance_backend
+from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.io_utils import DatasetImage
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -141,6 +142,45 @@ def test_projection_is_lazy_and_avoids_images(image_dataset_roots, monkeypatch):
         lance_ds.select_columns("missing")
 
 
+@pytest.mark.parametrize("format_type", ["default", None, "numpy", "torch"])
+@pytest.mark.parametrize("iteration", ["rows", "image_column", "numeric_column"])
+def test_iteration_does_not_decode_unrequested_rows(
+    image_dataset_roots, monkeypatch, format_type: str | None, iteration: str
+) -> None:
+    src_root, lance_root = image_dataset_roots
+    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    image_key = "observation.images.front"
+    keys = ["action", *lance_ds.meta.image_keys]
+    expected = upstream.select_columns(keys)
+    view = lance_ds.select_columns(keys)
+    if format_type != "default":
+        expected = expected.with_format(format_type)
+        view = view.with_format(format_type)
+    calls: list[list[int]] = []
+    read_rows = lance_ds.reader.read_rows
+
+    def capture(indices: list[int], *args: Any, **kwargs: Any) -> Any:
+        calls.append(list(indices))
+        return read_rows(indices, *args, **kwargs)
+
+    monkeypatch.setattr(lance_ds.reader, "read_rows", capture)
+    key = image_key if iteration == "image_column" else "action"
+    iterator = iter(view if iteration == "rows" else view[key])
+    for index in range(2):
+        reference = expected[index] if iteration == "rows" else expected[index][key]
+        assert_read_equal(next(iterator), reference)
+    if iteration == "numeric_column":
+        assert calls == [list(range(min(512, len(view))))]
+    else:
+        assert calls == [[0], [1]]
+    iterator.close()
+    # Explicit batch iteration still honors the caller's requested size.
+    calls.clear()
+    assert_read_equal(next(view.iter(batch_size=3)), expected[:3])
+    assert calls == [[0, 1, 2]]
+
+
 def test_numeric_consumers_use_projected_rows(camera_dataset_roots, monkeypatch):
     from lerobot.policies.groot.processor_groot import _iter_action_state_training_samples
     from lerobot.scripts.augment_dataset_quantile_stats import collect_episode_arrays
@@ -223,25 +263,85 @@ def test_external_images_use_dataset_root(image_dataset_roots, tmp_path, monkeyp
     assert_read_equal(pickle.loads(pickle.dumps(lance_ds))[7], upstream[7])
 
 
-def test_external_hf_images_use_table_revision(image_dataset_roots, monkeypatch):
+@pytest.mark.parametrize("path_kind", ["relative", "https"])
+@pytest.mark.parametrize(
+    "token,storage_options,cached_token,effective_token",
+    [
+        (None, {"token": "storage-token"}, None, "storage-token"),
+        ("explicit-token", {"token": "storage-token"}, "cached-token", "storage-token"),
+        (False, {"token": "storage-token"}, "cached-token", "storage-token"),
+        ("explicit-token", {"token": False}, "cached-token", False),
+        ("explicit-token", None, "cached-token", "explicit-token"),
+        (None, None, "cached-token", "cached-token"),
+        (False, None, "cached-token", False),
+        (None, None, None, None),
+    ],
+    ids=[
+        "storage_only",
+        "storage_override",
+        "storage_override_false",
+        "storage_false",
+        "explicit",
+        "cached",
+        "disabled",
+        "anonymous",
+    ],
+)
+def test_external_hf_images_use_table_revision(
+    image_dataset_roots,
+    monkeypatch,
+    path_kind: str,
+    token: str | bool | None,
+    storage_options: dict[str, str | bool] | None,
+    cached_token: str | None,
+    effective_token: str | bool | None,
+) -> None:
     _, local_root = image_dataset_roots
     root = f"hf://datasets/{DUMMY_REPO_ID}"
     revision = "image-snapshot"
     meta = LeRobotDatasetMetadata(DUMMY_REPO_ID, root=local_root, revision=revision)
     monkeypatch.setattr(lance_backend, "resolve_lance_root", lambda *args: (root, local_root))
-    reader = lance_backend.LanceDatasetReader(meta, root=root, revision=revision, token=False)
+    monkeypatch.setattr(lance_utils.huggingface_hub, "get_token", lambda: cached_token)
+    monkeypatch.setattr("huggingface_hub.utils._headers.get_token", lambda: cached_token)
+    connection_options = []
+    original_connect = lance_backend._connect
+
+    def connect(
+        uri: str, options: dict | None, revision: str | None = None, token: str | bool | None = None
+    ) -> Any:
+        connection_options.append(lance_utils._storage_options(uri, options, revision, token))
+        return original_connect(str(local_root), None, token=False)
+
+    monkeypatch.setattr(lance_backend, "_connect", connect)
+    reader = lance_backend.LanceDatasetReader(
+        meta, root=root, revision=revision, token=token, storage_options=storage_options
+    )
+    reader.get_raw_item(0)
+    assert connection_options[0].get("token", token) == effective_token
     encoded = io.BytesIO()
     Image.new("RGB", (2, 2)).save(encoded, format="PNG")
+    if path_kind == "relative":
+        path = "assets/frame.png"
+        expected_path = f"{root}@{revision}/{path}"
+        expected_options = {"token": effective_token} if effective_token is not None else {}
+    else:
+        path = expected_path = f"{HF_ENDPOINT}/datasets/{DUMMY_REPO_ID}/resolve/{revision}/assets/frame.png"
+        expected_options = (
+            {"headers": {"Authorization": f"Bearer {effective_token}"}}
+            if isinstance(effective_token, str)
+            else {}
+        )
 
     def open_image(path, mode, **options):
-        assert path == f"{root}@{revision}/assets/frame.png"
+        assert path == expected_path
         assert mode == "rb"
-        assert options == {"token": False}
+        assert options == expected_options
         return io.BytesIO(encoded.getvalue())
 
     monkeypatch.setattr(fsspec, "open", open_image)
-    image = reader._decode_image({"bytes": None, "path": "assets/frame.png"}, meta.image_keys[0], 0)
+    image = reader._decode_image({"bytes": None, "path": path}, meta.image_keys[0], 0)
     assert image.shape == (3, 2, 2)
+    reader.close()
 
 
 @pytest.mark.parametrize(
