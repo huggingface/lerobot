@@ -599,3 +599,16 @@ def test_a_given_noise_is_left_unchanged(tiny_backbone):
         second = policy.predict_action_chunk(batch, noise=noise)
     assert torch.equal(noise, given)
     torch.testing.assert_close(second, first, rtol=0, atol=0)
+
+
+@skip_if_package_missing("transformers")
+def test_expert_histogram_is_int32_in_the_exported_graph():
+    from lerobot.policies.lingbot_vla_v2.model_core.qwen2_action_expert import Qwen2FusedExperts
+
+    experts = Qwen2FusedExperts(num_experts=4, hidden_size=8, intermediate_size=16)
+    tokens = torch.randn(5, 8)
+    weights = torch.softmax(torch.randn(5, 2), dim=-1)
+    selected = torch.tensor([[0, 1], [1, 2], [2, 3], [3, 0], [0, 2]])
+    graph = torch.export.export(experts, (weights, selected, tokens)).run_decompositions({}).graph
+    scatters = [n for n in graph.nodes if n.op == "call_function" and "scatter_add" in str(n.target)]
+    assert scatters and all(n.meta["val"].dtype == torch.int32 for n in scatters)

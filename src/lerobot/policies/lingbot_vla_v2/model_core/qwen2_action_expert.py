@@ -149,9 +149,10 @@ class Qwen2FusedExperts(nn.Module):
         sorted_token = flat_token[order]
         # Capture-safe expert histogram: torch.bincount internally does
         # input.max().item() (a host sync) to size its output, which aborts
-        # CUDA-graph capture; scatter_add_ has no host round-trip.
-        counts = torch.zeros(e, dtype=torch.long, device=hidden_states.device)
-        counts.scatter_add_(0, flat_expert, torch.ones_like(flat_expert))
+        # CUDA-graph capture; scatter_add_ has no host round-trip. The counts are int32
+        # because some ExecuTorch backends, such as MLX, have no int64 scatter-add.
+        counts = torch.zeros(e, dtype=torch.int32, device=hidden_states.device)
+        counts.scatter_add_(0, flat_expert, torch.ones_like(flat_expert, dtype=torch.int32))
         starts = torch.cumsum(counts, 0) - counts
         slot = torch.arange(t * top_k, device=hidden_states.device) - starts[sorted_expert]
 
