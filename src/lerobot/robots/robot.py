@@ -182,7 +182,7 @@ class Robot(abc.ABC):
         it to `bus` with the torque off, so that the motors store it, and return True."""
         if self.calibration:
             user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
+                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration again: "
             )
             if user_input.strip().lower() != "c":
                 logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
