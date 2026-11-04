@@ -152,7 +152,7 @@ Before the first action, and when no action arrives for `command_timeout_s` (1 s
 
 ## Example: MolmoAct2
 
-`allenai/MolmoAct2-BimanualYAM` was trained on two YAM arms with radians and a 0–1 gripper, and with three cameras in the order top, left, right. Convert it to a LeRobot checkpoint and keep its released normalization statistics; see [MolmoAct2](./molmoact2).
+[`lerobot/MolmoAct2-BimanualYAM-LeRobot`](https://huggingface.co/lerobot/MolmoAct2-BimanualYAM-LeRobot) is `allenai/MolmoAct2-BimanualYAM` in LeRobot format, with its released normalization statistics. It was trained on two YAM arms with radians and a 0–1 gripper, and with three cameras in the order top, left, right; see [MolmoAct2](./molmoact2).
 
 ```bash
 pip install -e ".[yam,molmoact2,dataset]"
@@ -166,7 +166,7 @@ lerobot-rollout \
     "left": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/LEFT_CAMERA", "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"},
     "right": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/RIGHT_CAMERA", "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"}
   }' \
-  --policy.path=/path/to/molmoact2-bimanual-yam \
+  --policy.path=lerobot/MolmoAct2-BimanualYAM-LeRobot \
   --inference.type=rtc --inference.rtc.execution_horizon=20 --inference.queue_threshold=20 \
   --device=cuda --interpolation_multiplier=2 \
   --interactive=true --play_sounds=false \
