@@ -53,6 +53,7 @@ def test_compute_topreward_progress_preserves_legacy_parquet_artifact(monkeypatc
             self.prompt_suffix_template = "{instruction}"
             self.add_chat_template = False
             self.max_input_length = 128
+            self.success_threshold = float("-inf")
 
     class FakeModel:
         def __init__(self, config: FakeConfig) -> None:
