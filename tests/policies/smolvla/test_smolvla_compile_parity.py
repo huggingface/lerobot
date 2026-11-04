@@ -139,6 +139,7 @@ def test_smolvla_compile_parity():
         actions_eager_retest = policy.predict_action_chunk(batch, noise=noise.clone())
 
         # 4. Verify grad-enabled context (as used by RTC guidance) reuses the compiled graph
+        policy.config.compile_denoise = True
         graphs_before = torch._dynamo.utils.counters["stats"]["unique_graphs"]
         with torch.enable_grad():
             actions_grad_ctx = policy.predict_action_chunk(batch, noise=noise.clone())
