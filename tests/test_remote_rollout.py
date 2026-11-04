@@ -80,6 +80,12 @@ class GateEngine(InferenceEngine):
         return torch.tensor([10.0 * self.pulls])
 
 
+def skip_return_waits(monkeypatch):
+    """Skip the return move's sleeps, and end its settle wait at the first tick without progress."""
+    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    monkeypatch.setattr("lerobot.rollout.strategies.core._RETURN_SETTLE_S", 0.0)
+
+
 def make_dispatch_context(engine):
     robot = PositionRobot()
     wrapper = ThreadSafeRobot(robot)
@@ -135,18 +141,60 @@ def test_terminal_fault_teardown_honors_configured_return(return_home, monkeypat
     ctx, robot = make_dispatch_context(engine)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
-    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    skip_return_waits(monkeypatch)
     strategy._teardown_hardware(ctx.hardware, return_to_initial_position=return_home)
     assert robot.sent[0] == {"joint.pos": 7.0}
     if return_home:
         positions = [action["joint.pos"] for action in robot.sent]
         assert positions[-1] == 0.0
         assert positions == sorted(positions, reverse=True)
-        assert robot.reads == 2
+        assert robot.reads > 2  # the return keeps reading the robot until it settles
     else:
         assert robot.sent == [{"joint.pos": 7.0}]
         assert robot.reads == 1
     assert not robot.is_connected
+
+
+class SpeedLimitedRobot(PositionRobot):
+    """Moves toward each command by at most `speed`, like a robot that limits its own joint speed."""
+
+    def __init__(self, speed):
+        super().__init__()
+        self.speed = speed
+
+    def send_action(self, action):
+        error = action["joint.pos"] - self.position
+        self.position += max(-self.speed, min(self.speed, error))
+        return super().send_action(action)
+
+
+def return_home(robot, monkeypatch, **kwargs):
+    monkeypatch.setattr("lerobot.rollout.strategies.core._RETURN_SETTLE_S", 0.05)
+    hw = SimpleNamespace(robot_wrapper=ThreadSafeRobot(robot), initial_position={"joint.pos": 0.0})
+    return BaseStrategy.return_to_initial_position(hw, duration_s=0.02, fps=500, **kwargs)
+
+
+def test_return_waits_for_a_speed_limited_robot_to_arrive(monkeypatch):
+    robot = SpeedLimitedRobot(speed=0.1)
+    assert return_home(robot, monkeypatch)
+    assert robot.position == 0.0  # the 0.02 s interpolation alone leaves it at 6.0
+
+
+def test_return_fails_while_the_robot_is_still_moving_at_the_timeout(monkeypatch, caplog):
+    robot = SpeedLimitedRobot(speed=0.01)
+    assert not return_home(robot, monkeypatch, timeout_s=0.05)
+    assert "still moving" in caplog.text
+
+
+def test_return_warns_when_the_robot_stops_short(monkeypatch, caplog):
+    assert return_home(PositionRobot(), monkeypatch)  # this robot never moves
+    assert "stopped 7 from its initial position, 0% of the way back" in caplog.text
+
+
+def test_return_ends_as_soon_as_a_stop_is_requested(monkeypatch):
+    robot = SpeedLimitedRobot(speed=0.1)
+    assert not return_home(robot, monkeypatch, stop_requested=lambda: len(robot.sent) >= 3)
+    assert len(robot.sent) == 3
 
 
 @pytest.mark.parametrize("operation", ["send_action", "hold"])
@@ -219,7 +267,7 @@ def test_engine_stop_failure_still_runs_local_shutdown(monkeypatch):
     ctx, robot = make_dispatch_context(engine)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
-    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    skip_return_waits(monkeypatch)
     with pytest.raises(RuntimeError, match="remote close failed"):
         strategy._teardown_hardware(ctx.hardware)
     assert robot.sent[0] == {"joint.pos": 7.0}
@@ -235,7 +283,7 @@ def test_return_move_io_failure_aborts_and_disconnects(operation, monkeypatch, c
     method = "get_observation" if operation == "read" else "send_action"
     failed_io = Mock(side_effect=OSError("return move failed"))
     monkeypatch.setattr(robot, method, failed_io)
-    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    skip_return_waits(monkeypatch)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
     strategy._teardown_hardware(ctx.hardware)
@@ -291,7 +339,7 @@ def test_terminal_fault_shutdown_orders_hold_stop_home_disconnect(monkeypatch):
     )
     monkeypatch.setattr(engine, "stop", lambda: events.append(("engine_stop", None)))
     monkeypatch.setattr(robot, "disconnect", lambda: events.append(("disconnect", None)))
-    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    skip_return_waits(monkeypatch)
     strategy._teardown_hardware(ctx.hardware)
     assert events[0] == ("action", {"joint.pos": 7.0})
     assert events[1] == ("engine_stop", None)

@@ -467,7 +467,10 @@ class RolloutController:
         if not self._ctx.hardware.initial_position:
             logger.warning("No initial position captured — skipping the return move")
             self._emit(RolloutEvent.RESET_SKIPPED)
-        elif self._strategy.return_to_initial_position(self._ctx.hardware):
+        elif self._strategy.return_to_initial_position(
+            self._ctx.hardware,
+            stop_requested=lambda: self._stop_requested.is_set() or self._global_shutdown.is_set(),
+        ):
             self._emit(RolloutEvent.RESET_DONE)
         else:
             # RESET_DONE guarantees "back at the initial position"; a failed move must not claim it.
