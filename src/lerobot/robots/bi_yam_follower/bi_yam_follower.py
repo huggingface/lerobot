@@ -64,6 +64,9 @@ class BiYamFollower(BimanualMixin, Robot):
             stop_event=self._stop,
         )
         self.arms = {"left": self.left_arm, "right": self.right_arm}
+        self.supports_position_hold = (
+            self.left_arm.supports_position_hold and self.right_arm.supports_position_hold
+        )
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
 
     @property

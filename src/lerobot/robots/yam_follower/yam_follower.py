@@ -314,6 +314,7 @@ class YamFollower(Robot):
 
     config_class = YamFollowerRobotConfig
     name = "yam_follower"
+    supports_position_hold = True
 
     def __init__(self, config: YamFollowerRobotConfig, stop_event: threading.Event | None = None) -> None:
         require_package("motorbridge", extra="yam")

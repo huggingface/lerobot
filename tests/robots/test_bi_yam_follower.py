@@ -97,6 +97,11 @@ def test_bimanual_composes_single_arm_followers(robot):
     assert robot.left_arm.servo.stop_event is robot.right_arm.servo.stop_event is robot._stop
 
 
+def test_position_hold_is_supported_with_position_only_actions(robot):
+    assert robot.supports_position_hold
+    assert all(name.endswith(".pos") for name in robot.action_features)
+
+
 def test_default_id_gives_each_arm_its_own_calibration_file(tmp_path, monkeypatch):
     monkeypatch.setattr(yam_module, "require_package", lambda *a, **kw: None)
     robot = BiYamFollower(
