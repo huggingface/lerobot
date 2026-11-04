@@ -20,13 +20,13 @@ import shutil
 from unittest.mock import patch
 
 import numpy as np
-import pandas as pd
-import pyarrow.parquet as pq
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pandas as pd
+import pyarrow.parquet as pq
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
