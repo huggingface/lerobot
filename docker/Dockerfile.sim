@@ -362,5 +362,6 @@ pytorch3d, trimesh; warp.torch; from curobo.types.math import Pose" ;; \
 # The server runs where its simulator expects: RoboTwin reads its assets relative to the working directory.
 ENV SIM_WORKDIR=${SIM_WORKDIR:-/lerobot}
 WORKDIR ${SIM_WORKDIR}
-# Inside its container the server listens on all interfaces; Docker decides what reaches it.
-CMD ["sh", "-c", "exec lerobot-env-server --config_path=/lerobot/docker/sim/configs/${SIM}.yaml '--zenoh.listen_endpoints=[tcp/0.0.0.0:7448]'"]
+# The server listens on its config's endpoint, localhost by default: run the container on the host network,
+# or pass the interface to listen on with --zenoh.listen_endpoints.
+CMD ["sh", "-c", "exec lerobot-env-server --config_path=/lerobot/docker/sim/configs/${SIM}.yaml"]

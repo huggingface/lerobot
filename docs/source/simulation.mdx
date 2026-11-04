@@ -87,7 +87,7 @@ For remote inference, keep the same `--robot.*` options and replace the local po
 --inference.semantics=libero-delta-v1
 ```
 
-Start the policy server separately using [remote inference setup](./remote_inference). Its schema must match the robot's observations after `--rename_map`. `docker/sim/policy_libero.yaml` provides the LIBERO policy-server configuration. Omit `--policy.path` from the rollout command because the policy server loads the checkpoint. For local RTC, use `--inference.type=rtc` with the policy's RTC settings.
+Start the policy server separately using [remote inference setup](./remote_inference). Its schema must match the robot's observations after `--rename_map`. Omit `--policy.path` from the rollout command because the policy server loads the checkpoint. For local RTC, use `--inference.type=rtc` with the policy's RTC settings.
 
 When the policy is late, holding a sim robot does not advance physics. Simulator failures propagate to rollout shutdown.
 
@@ -99,7 +99,7 @@ From a LeRobot source checkout (the image is built from it), run from the reposi
 lerobot-env-server --config_path=docker/sim/configs/libero.yaml --docker=true
 ```
 
-`--docker=true` uses `docker/sim/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another simulator. Each simulator's control rate, action convention, component names and robot type come from its integration's `conventions()`, so a YAML only names the task and the simulator's options.
+`--docker=true` uses `docker/sim/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and runs the container on the host network, so the server listens on `localhost:7448` unless `--zenoh.listen_endpoints` says otherwise. Swap the YAML to select another simulator. Each simulator's control rate, action convention, component names and robot type come from its integration's `conventions()`, so a YAML only names the task and the simulator's options.
 
 As for `lerobot-policy-server`, every YAML field accepts a nested command-line override, and the file stays unchanged. A dictionary value such as `sim.kwargs` is merged into the YAML's:
 
@@ -114,7 +114,7 @@ The effective configuration is kept under `$HF_LEROBOT_HOME/sim`, so a restarted
 > [!TIP]
 > If a simulator that renders with Vulkan (Isaac Sim, or ManiSkill/SAPIEN as in RoboMME, whose image ships its own Vulkan file) fails in the container with `vkCreateInstance failed` or `ERROR_INCOMPATIBLE_DRIVER` while it works outside Docker, the container has the NVIDIA driver's libraries but not the loader files that point at them (`/usr/share/vulkan/icd.d/nvidia_icd.json`, `/usr/share/glvnd/egl_vendor.d/10_nvidia.json`). The NVIDIA Container Toolkit's default mode, used by `gpus: all`, may not mount them; its [CDI mode](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html) does. Request the GPU through CDI (`--device nvidia.com/gpu=all` for `docker run`, `devices: [nvidia.com/gpu=all]` in place of `gpus: all` in `docker/sim/compose.server.yaml`), or add the two files to the image.
 
-Without `--docker=true`, the same command runs the server in the current environment: install the simulator's native dependencies in an isolated environment, install LeRobot with `--no-deps`, and install `docker/sim/requirements.txt`. It listens on localhost; `--zenoh.listen_endpoints='[tcp/0.0.0.0:7448]'` accepts other machines, and a `zenoh.config_file` in the YAML adds TLS and access control.
+Without `--docker=true`, the same command runs the server in the current environment: install the simulator's native dependencies in an isolated environment, install LeRobot with `--no-deps`, and install `docker/sim/requirements.txt`. Either way it listens on localhost; to accept other machines, pass the address of the network interface they reach, as in `--zenoh.listen_endpoints='[tcp/192.168.1.20:7448]'`, and add TLS and access control with a `zenoh.config_file` in the YAML.
 
 LIBERO runtime images use converted NumPy initial-state files. The image build converts trusted upstream assets with `scripts/ci/convert_libero_init_states.py`; the server rejects missing converted files. RoboTwin and RoboMME require their own torch for native planning and ManiSkill, respectively; their torch installations are isolated from the policy environment.
 
