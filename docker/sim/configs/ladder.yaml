@@ -1,0 +1,18 @@
+# Settings left out (fps, control_mode, semantics, component names) come from the integration's conventions().
+deployment: ladder
+sim:
+  type: ladder
+  # Empty: all tasks in the selected suite, one suite each. Clients pick theirs with --env.task.
+  task: ""
+  kwargs:
+    suite: simpler
+    action_mode: auto
+    control_mode: null
+    episode_length: null
+    front_camera_name: main
+    wrist_camera_name: wrist
+    observation_height: null
+    observation_width: null
+    root: null
+    assets_dir: null
+    seed: 42

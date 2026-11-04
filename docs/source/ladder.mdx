@@ -1,0 +1,121 @@
+# LADDER
+
+[LADDER](https://ladderrobotics.ai) is a long-horizon robot manipulation benchmark evaluating policies across **145 tasks** of 1 to 10 subgoals in three simulation suites, in-process or served by `lerobot-env-server`, and as a sim robot.
+
+- **Paper**: [Instruction Decomposition and Task Progress Verification Make Long-Horizon Manipulation Easier](https://arxiv.org/abs/2610.18053)
+- **GitHub**: [insait-institute/ladder](https://github.com/insait-institute/ladder)
+- **Website**: [ladderrobotics.ai](https://ladderrobotics.ai)
+
+## Available suites
+
+| Suite (`--env.suite`) | Benchmark Name | Simulator | Robot | Tasks | Default Episodes/Task | Action Dim |
+| :--- | :--- | :--- | :--- | :---: | :---: | :---: |
+| `simpler` | **SimplerEnv-Long** | SAPIEN 3 / ManiSkill 3 | WidowX | 54 | 24 | 7 |
+| `robot_arena` | **RobotArena-∞-Long** | Genesis | WidowX | 47 | 8 | 7 |
+| `robolab` | **RoboLab-Long** | Isaac Sim 6 / Isaac Lab 3 | Franka DROID | 44 | 8 | 8 (or 7 with `delta_ee`) |
+
+## Installation
+
+Clone the [insait-institute/ladder](https://github.com/insait-institute/ladder) repository and point `LADDER_ROOT` to it:
+
+```bash
+git clone https://github.com/insait-institute/ladder.git
+export LADDER_ROOT=$(pwd)/ladder
+```
+
+Install the simulator stack for the suite you want to evaluate:
+
+```bash
+# SimplerEnv-Long (SAPIEN 3 / ManiSkill 3)
+pip install mani_skill==3.0.1 sapien==3.0.3 transforms3d trimesh deepdiff frozendict overrides
+
+# RobotArena-Long (Genesis)
+pip install "genesis-world==0.4.3" "quadrants==0.4.4" "numpy<2" "scipy<1.15" "opencv-python-headless<4.12" deepdiff frozendict overrides
+
+# RoboLab-Long (Isaac Sim 6 / Isaac Lab 3, Python 3.12)
+pip install --pre --extra-index-url https://pypi.nvidia.com \
+  "isaacsim[all,extscache]==6.0.0.1" "isaaclab[isaacsim]==3.0.0b2" "pytorch-kinematics==0.7.6" deepdiff frozendict overrides
+```
+
+## Run it locally or served
+
+Run `lerobot-eval` directly in-process, or serve the simulator with `lerobot-env-server --config_path=docker/sim/configs/ladder.yaml` and pass `--env.server.endpoint=tcp/127.0.0.1:7448`:
+
+```bash
+# SimplerEnv-Long (WidowX, 24 episodes)
+lerobot-eval \
+  --policy.path=<your_bridge_policy_repo> \
+  --env.type=ladder \
+  --env.suite=simpler \
+  --env.task=all1_plate \
+  --eval.batch_size=24 \
+  --eval.n_episodes=24
+
+# RobotArena-Long (WidowX, 8 episodes)
+lerobot-eval \
+  --policy.path=<your_bridge_policy_repo> \
+  --env.type=ladder \
+  --env.suite=robot_arena \
+  --env.task=scene54_1goal \
+  --eval.batch_size=8 \
+  --eval.n_episodes=8
+
+# RoboLab-Long (Franka DROID, 8 episodes)
+lerobot-eval \
+  --policy.path=<your_droid_policy_repo> \
+  --env.type=ladder \
+  --env.suite=robolab \
+  --env.task=comp_bin_1 \
+  --env.action_mode=joint_vel \
+  --eval.batch_size=8 \
+  --eval.n_episodes=8
+```
+
+### Multi-task / full-suite evaluation
+
+Pass a comma-separated list of tasks (`--env.task=all1_plate,all1_towel,all2_plate`) or `--env.task=all` (or empty `--env.task=""`) to evaluate every task in the selected suite:
+
+```bash
+lerobot-eval \
+  --policy.path=<your_bridge_policy_repo> \
+  --env.type=ladder \
+  --env.suite=simpler \
+  --env.task=all \
+  --eval.batch_size=24 \
+  --eval.n_episodes=24
+```
+
+## Sim robot
+
+LADDER can also run as a `sim` robot in `lerobot-rollout`, `lerobot-record` and the other robot tools (see [Simulation: local or served](./simulation)):
+
+```bash
+lerobot-rollout \
+  --robot.type=sim --robot.env.type=ladder --robot.env.suite=simpler --robot.env.task=all1_plate --robot.task_id=0 \
+  --policy.path=<your_policy> --fps=5 ...
+```
+
+## Environment config reference
+
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `env.suite` | `simpler` | `simpler`, `robot_arena`, or `robolab` |
+| `env.task` | `all1_plate` | Task name, comma-separated task names, or `all` / empty for all tasks in the suite |
+| `env.action_mode` | `auto` (`delta_ee` on WidowX, `joint_pos` on `robolab`) | `auto`, `delta_ee`, `abs_ee`, `joint_pos`, or `joint_vel` |
+| `env.episode_length` | `1000` (`1500` on `robolab`) | Maximum steps per episode |
+| `env.front_camera_name` | `main` | Key under `observation.images.<name>` for the main camera |
+| `env.wrist_camera_name` | `wrist` | Key under `observation.images.<name>` for the wrist camera (`robolab`) |
+| `env.observation_height`, `env.observation_width` | unset (`480×640` on WidowX, `224×224` on `robolab`) | Target camera frame size |
+
+## Observations, actions and metrics
+
+- **Observations**:
+  - `observation.images.main`: `(480, 640, 3)` uint8 RGB on `simpler` and `robot_arena`, `(224, 224, 3)` uint8 RGB on `robolab`
+  - `observation.images.wrist`: `(224, 224, 3)` uint8 RGB on `robolab`
+  - `observation.state`: 7-D (`[x, y, z, rx, ry, rz, gripper]`) on `simpler` and `robot_arena`, 8-D (`7 joint positions + 1 gripper`) on `robolab`
+- **Actions**:
+  - `simpler` / `robot_arena`: 7-D end-effector delta (`delta_ee`) or absolute target (`abs_ee`) + gripper
+  - `robolab`: 8-D Franka DROID joint position (`joint_pos`) or velocity (`joint_vel`) + gripper, or 7-D end-effector delta (`delta_ee`) via IK
+- **Metrics**:
+  - `pc_success`: binary task completion percentage (`info["is_success"]`)
+  - `avg_max_reward`: mean subgoal progress in `[0.0, 1.0]` (`reward` at each step equals the fraction of subgoals completed)

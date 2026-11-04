@@ -131,6 +131,8 @@
 - sections:
   - local: adding_benchmarks
     title: Adding a Benchmark
+  - local: ladder
+    title: LADDER
   - local: libero
     title: LIBERO
   - local: libero_plus

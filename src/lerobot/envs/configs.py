@@ -796,6 +796,70 @@ class RoboCerebraEnvConfig(LiberoEnvConfig):
     )
 
 
+@EnvConfig.register_subclass("ladder")
+@dataclass
+class LadderEnvConfig(EnvConfig):
+    """LADDER long-horizon robot manipulation benchmark (SimplerEnv-Long, RobotArena-Long, RoboLab-Long).
+
+    145 tasks of 1 to 10 subgoals across three suites:
+    - ``simpler``: 54 WidowX tasks on SAPIEN 3 / ManiSkill 3 (24 episodes/task).
+    - ``robot_arena``: 47 WidowX tasks on Genesis (8 episodes/task).
+    - ``robolab``: 44 Franka DROID tasks on Isaac Sim 6 / Isaac Lab 3 (8 episodes/task).
+
+    See: https://github.com/insait-institute/ladder | https://ladderrobotics.ai
+    """
+
+    suite: str = "simpler"  # "simpler" | "robot_arena" | "robolab"
+    task: str | None = "all1_plate"  # single task, comma-separated tasks, or "all" / None for all suite tasks
+    fps: int = 5
+    episode_length: int | None = None
+    action_mode: str = "auto"  # "auto" | "delta_ee" | "abs_ee" | "joint_pos" | "joint_vel"
+    control_mode: str | None = None
+    front_camera_name: str = "main"
+    wrist_camera_name: str = "wrist"
+    observation_height: int | None = None
+    observation_width: int | None = None
+    root: str | None = None
+    assets_dir: str | None = None
+    seed: int = 42
+
+    def __post_init__(self) -> None:
+        if self.suite not in ("simpler", "robot_arena", "robolab"):
+            raise ValueError(
+                f"Unknown LADDER suite {self.suite!r}. Expected 'simpler', 'robot_arena', or 'robolab'."
+            )
+        if self.front_camera_name == self.wrist_camera_name:
+            raise ValueError("LADDER front and wrist camera names must be distinct.")
+        if self.task in ("all", "*", ""):
+            self.task = None
+        if self.action_mode == "auto":
+            self.action_mode = "joint_pos" if self.suite == "robolab" else "delta_ee"
+        if self.suite == "robolab" and self.fps == 5:
+            self.fps = 15
+
+    def sim_settings(self) -> dict[str, Any]:
+        return {
+            "type": "ladder",
+            "task": "" if self.server is not None else (self.task or ""),
+            "kwargs": {
+                "suite": self.suite,
+                "action_mode": self.action_mode,
+                "control_mode": self.control_mode,
+                "episode_length": self.episode_length,
+                "front_camera_name": self.front_camera_name,
+                "wrist_camera_name": self.wrist_camera_name,
+                "observation_height": self.observation_height,
+                "observation_width": self.observation_width,
+                "root": self.root,
+                "assets_dir": self.assets_dir,
+                "seed": self.seed,
+            },
+        }
+
+
+LadderEnv = LadderEnvConfig
+
+
 @EnvConfig.register_subclass("robotwin")
 @dataclass
 class RoboTwinEnvConfig(EnvConfig):
