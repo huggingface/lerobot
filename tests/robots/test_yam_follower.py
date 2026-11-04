@@ -33,6 +33,7 @@ from lerobot.robots.yam_follower.config_yam_follower import (
     MOTOR_NAMES,
     YAM_FEATURE_NAMES,
 )
+from lerobot.utils import DeviceNotConnectedError
 
 
 def gripper_calibration(closed=0.1, opened=6.1):
@@ -182,7 +183,7 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
         (i + 1, i + 17, "4340" if i < 3 else "4310") for i in range(7)
     ]
     motors = dict(bus.motors)
-    bus.enable_torque(np.array([0.2, 0.5, 0.3, 0, 0, 0, 6.1]))
+    bus.enable_torque_at(np.array([0.2, 0.5, 0.3, 0, 0, 0, 6.1]))
     motors["joint_1"].send_mit.assert_called_once_with(0.2, 0, 0, 0, 0)
     motors["gripper"].send_mit.assert_called_once_with(6.1, 0, 0, 0, 0)
     bus.send_mit(
@@ -385,7 +386,7 @@ def test_connect_keeps_torque_off_until_the_gripper_is_calibrated(tmp_path, monk
     robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
     robot.connect(calibrate=False)
-    robot.bus.enable_torque.assert_not_called()
+    robot.bus.enable_torque_at.assert_not_called()
     assert not robot.controller.active
     robot.disconnect()
 
@@ -404,7 +405,7 @@ def test_connect_calibrates_missing_gripper_limits(tmp_path, monkeypatch):
 
     assert robot.is_calibrated
     robot.bus.connect.assert_called_once()  # control starts on the calibration connection
-    robot.bus.enable_torque.assert_called_once()
+    robot.bus.enable_torque_at.assert_called_once()
     robot.disconnect()
 
 
@@ -413,9 +414,9 @@ def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch, calibrat
     mock_hardware(robot, monkeypatch)
     robot.connect(calibrate=calibrate)
     calls = [
-        name for name, *_ in robot.bus.mock_calls if name in ("connect", "set_mit_mode", "enable_torque")
+        name for name, *_ in robot.bus.mock_calls if name in ("connect", "set_mit_mode", "enable_torque_at")
     ]
-    assert calls == ["connect", "set_mit_mode", "enable_torque"]
+    assert calls == ["connect", "set_mit_mode", "enable_torque_at"]
     assert robot.controller.active
     robot.disconnect()
 
@@ -427,7 +428,7 @@ def test_initial_position_check_uses_degrees(robot, monkeypatch):
     robot.bus.read_states.return_value = states
     with pytest.raises(ValueError, match="initial_position_deg"):
         robot.connect()
-    robot.bus.enable_torque.assert_not_called()
+    robot.bus.enable_torque_at.assert_not_called()
 
 
 @pytest.mark.parametrize(("timeout", "detail"), [(0, "joint_2=off"), (8001, "joint_2=400.05 ms")])
@@ -436,7 +437,7 @@ def test_connect_requires_a_prompt_motor_can_timeout(robot, monkeypatch, timeout
     robot.bus.can_timeouts.return_value = {**dict.fromkeys(MOTOR_NAMES, 8000), "joint_2": timeout}
     with pytest.raises(ValueError, match="unsafe motor CAN timeout") as exc_info:
         robot.connect()
-    robot.bus.enable_torque.assert_not_called()
+    robot.bus.enable_torque_at.assert_not_called()
     assert detail in str(exc_info.value)
 
 
@@ -463,7 +464,10 @@ def test_float_parameters_come_from_the_config(robot, friction_compensation):
     np.testing.assert_allclose(arm.coulomb_friction, expected)
 
 
-def test_configure_refuses_while_controller_holds_the_arm(robot):
+def test_configure_needs_a_connection_and_a_stopped_controller(robot):
+    with pytest.raises(DeviceNotConnectedError):
+        robot.configure()
+    robot._connected = True
     mark_running(robot.controller)
     with pytest.raises(RuntimeError, match="before the controller starts"):
         robot.configure()
@@ -495,7 +499,7 @@ def test_gravity_model_loads_before_torque(robot, monkeypatch):
             robot.gravity_model = object()
 
     robot._load_gravity_model = load_model
-    robot.bus.enable_torque.side_effect = lambda *args: events.append("enable")
+    robot.bus.enable_torque_at.side_effect = lambda *args: events.append("enable")
     robot.connect()
     robot.disconnect()
     assert events == ["model", "enable"]
@@ -531,7 +535,7 @@ def test_single_arm_calibration_preserves_factory_zeros(tmp_path, monkeypatch):
     assert robot.controller._gripper_params.open == pytest.approx(6.1, abs=0.01)
     assert all("[test]" in text for text in prompts)
     assert robot.calibration_fpath.is_file()
-    robot.bus.enable_torque.assert_not_called()
+    robot.bus.enable_torque_at.assert_not_called()
     robot.disconnect()
 
 

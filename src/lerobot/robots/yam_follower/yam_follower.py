@@ -200,7 +200,7 @@ class _YamMotorsBus:
             name: int(motor.get_register_u32(_CAN_TIMEOUT_REGISTER)) for name, motor in self.motors.items()
         }
 
-    def enable_torque(self, hold: np.ndarray) -> None:
+    def enable_torque_at(self, hold: np.ndarray) -> None:
         """Send zero-gain commands at the `hold` motor positions, then enable torque."""
         motorbridge_controller, _ = self._require_connected()
         for name, value in zip(self.motor_names, hold, strict=True):
@@ -363,7 +363,7 @@ class YamFollower(Robot):
             calibrate (`bool`, *optional*, defaults to `True`):
                 Measure the gripper limits if none are saved.
         """
-        self._connect_bus()
+        self.connect_bus()
         try:
             if not self.is_calibrated and calibrate:
                 logger.info(f"No gripper calibration found for {self}")
@@ -372,7 +372,7 @@ class YamFollower(Robot):
                 camera.connect()
             self.configure()
             if self.is_calibrated:
-                self._prepare_controller()
+                self.prepare_controller()
                 self.controller.start()
         except BaseException:
             self.disconnect()
@@ -431,6 +431,7 @@ class YamFollower(Robot):
         self.controller.set_gripper_params(_yam_gripper_params(self.config, self.calibration["gripper"]))
         logger.info("Saved the gripper limits to %s. Joint zeros were not changed.", self.calibration_fpath)
 
+    @check_if_not_connected
     def configure(self) -> None:
         """Switch the motors to MIT mode and check their CAN timeouts, with torque off."""
         if self.controller.active:
@@ -438,6 +439,34 @@ class YamFollower(Robot):
             raise RuntimeError("Configure YAM motors before the controller starts, not while it runs")
         self.bus.set_mit_mode()
         self._check_can_timeouts()
+
+    @check_if_already_connected
+    def connect_bus(self) -> None:
+        """Connect the CAN interface, with torque off, once every motor answers.
+
+        `connect` starts with it. A bimanual robot calls it for both arms, before either is calibrated
+        or gets torque.
+        """
+        try:
+            self.bus.connect()
+            self.bus.read_states()
+            self._connected = True
+        except BaseException:
+            self._close()
+            raise
+
+    @check_if_not_connected
+    def prepare_controller(self) -> None:
+        """Load the gravity model and check the initial position, before the controller starts.
+
+        A bimanual robot calls it for both arms before starting either controller.
+
+        Raises:
+            ValueError: If a joint is not within `initial_tolerance_deg` of `initial_position_deg`.
+        """
+        self.controller.stop_event.clear()
+        self._load_gravity_model()
+        self._check_initial_position(self.controller.read_state().position)
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
@@ -495,22 +524,6 @@ class YamFollower(Robot):
         """Stop control and release all hardware resources."""
         self._close()
         logger.info(f"{self} disconnected.")
-
-    def _connect_bus(self) -> None:
-        """Open the CAN interface, with torque off, once every motor answers."""
-        try:
-            self.bus.connect()
-            self.bus.read_states()
-            self._connected = True
-        except BaseException:
-            self._close()
-            raise
-
-    def _prepare_controller(self) -> None:
-        """Load the gravity model and check the initial position, before the controller starts."""
-        self.controller.stop_event.clear()
-        self._load_gravity_model()
-        self._check_initial_position(self.controller.read_state().position)
 
     def _load_gravity_model(self) -> None:
         if not self.config.gravity_compensation or self.gravity_model is not None:

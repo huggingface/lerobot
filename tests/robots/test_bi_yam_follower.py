@@ -172,7 +172,7 @@ def test_connect_keeps_both_arms_off_until_both_are_calibrated(robot, monkeypatc
     robot.right_arm.calibration = {}
     robot.connect(calibrate=False)
     for arm in robot.arms.values():
-        arm.bus.enable_torque.assert_not_called()
+        arm.bus.enable_torque_at.assert_not_called()
     robot.disconnect()
 
 
@@ -200,7 +200,7 @@ def test_connect_calibrates_both_arms_before_enabling_torque(tmp_path, monkeypat
     assert robot.is_calibrated
     for arm in robot.arms.values():
         arm.bus.connect.assert_called_once()
-        arm.bus.enable_torque.assert_called_once()
+        arm.bus.enable_torque_at.assert_called_once()
     robot.disconnect()
 
 
@@ -210,7 +210,7 @@ def test_bad_second_arm_position_never_enables_first(robot, monkeypatch):
     with pytest.raises(ValueError, match="initial_position_deg"):
         robot.connect()
     for arm in robot.arms.values():
-        arm.bus.enable_torque.assert_not_called()
+        arm.bus.enable_torque_at.assert_not_called()
         arm.bus.disconnect.assert_called_once()
 
 
@@ -219,7 +219,7 @@ def test_both_arms_configure_before_either_is_enabled(robot, monkeypatch):
     events = []
     for side, arm in robot.arms.items():
         arm.bus.set_mit_mode.side_effect = lambda side=side: events.append(f"{side}:configure")
-        arm.bus.enable_torque.side_effect = lambda hold, side=side: events.append(f"{side}:enable")
+        arm.bus.enable_torque_at.side_effect = lambda hold, side=side: events.append(f"{side}:enable")
     robot.connect()
     robot.disconnect()
     assert events == ["left:configure", "right:configure", "left:enable", "right:enable"]

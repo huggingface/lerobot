@@ -277,7 +277,7 @@ class MitMotorsBus(Protocol):
         """
         ...
 
-    def enable_torque(self, hold: np.ndarray) -> None:
+    def enable_torque_at(self, hold: np.ndarray) -> None:
         """Enable torque for the arm, holding the given motor positions.
 
         Args:
@@ -528,7 +528,7 @@ class MitController:
             raise RuntimeError(f"{self.name} controller is already running")
         self._set_initial_state(self.read_state())
         self._failure = None
-        self._bus.enable_torque(_joint_to_motor(self.state.position, self._require_gripper_params()))
+        self._bus.enable_torque_at(_joint_to_motor(self.state.position, self._require_gripper_params()))
         self._thread = threading.Thread(target=self._run, name=f"{self.name}-controller", daemon=True)
         try:
             self._thread.start()
@@ -581,8 +581,8 @@ class MitController:
             ConnectionError: If the controller stopped or its feedback is stale.
         """
         with self._lock:
-            params = self._check_healthy()
-            if self.idle and params.idle_mode == "float":
+            self._check_healthy()
+            if self.idle and self._params.idle_mode == "float":
                 # Resume tracking from wherever the arm was moved by hand.
                 self._command = self.state.position.copy()
             self._target = target.copy()
@@ -605,20 +605,18 @@ class MitController:
             raise RuntimeError(f"{self.name} controller needs the gripper calibration")
         return self._gripper_params
 
-    def _check_healthy(self) -> MitArmParams:
+    def _check_healthy(self) -> None:
         if self._failure is not None or self.stop_event.is_set():
             raise ConnectionError(
                 f"{self.name} controller stopped after a motor/feedback error"
             ) from self._failure
-        params = self._params
         # A healthy loop's own read can take a full feedback timeout, so allow two plus a cycle.
-        progress_timeout_s = 2 * params.feedback_timeout_s + 1 / params.control_frequency
+        progress_timeout_s = 2 * self._params.feedback_timeout_s + 1 / self._params.control_frequency
         if time.monotonic() - self._updated_at > progress_timeout_s:
             self.stop_event.set()
             raise ConnectionError(
                 f"{self.name} controller feedback is stale; reconnect before commanding motion"
             )
-        return params
 
     def _run(self) -> None:
         previous = started = time.monotonic()

@@ -94,7 +94,7 @@ class FakeBus:
             self.controller.stop_event.set()
         return self.states
 
-    def enable_torque(self, hold):
+    def enable_torque_at(self, hold):
         self.hold = hold
         self.enabled = True
 
