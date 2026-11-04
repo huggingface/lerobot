@@ -119,14 +119,14 @@ def mark_running(servo):
     servo._thread.start()
 
 
-def reset_servo(robot):
+def set_initial_state(robot):
     zeros = np.zeros(7)
-    robot.servo.reset(mit_control.JointState(position=zeros, velocity=zeros, torque=zeros))
+    robot.servo._set_initial_state(mit_control.JointState(position=zeros, velocity=zeros, torque=zeros))
 
 
 def ready(robot):
     robot._connected = True
-    reset_servo(robot)
+    set_initial_state(robot)
     mark_running(robot.servo)
     return dict.fromkeys(robot.action_features, 0.0)
 
@@ -175,7 +175,7 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     monkeypatch.setattr(robot_module, "Controller", factory, raising=False)
     monkeypatch.setattr(robot_module, "can", SimpleNamespace(Bus=monitor), raising=False)
     bus = robot_module._YamBus("can0", feedback_timeout_s=0.2)
-    bus.open()
+    bus.connect()
     factory.assert_called_once_with(channel="can0")
     # The monitor only receives the seven feedback IDs, without error frames.
     assert [f["can_id"] for f in monitor.call_args.kwargs["can_filters"]] == list(range(17, 24))
@@ -184,7 +184,7 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
         (i + 1, i + 17, "4340" if i < 3 else "4310") for i in range(7)
     ]
     motors = dict(bus.motors)
-    bus.enable(np.array([0.2, 0.5, 0.3, 0, 0, 0, 6.1]))
+    bus.enable_torque(np.array([0.2, 0.5, 0.3, 0, 0, 0, 6.1]))
     motors["joint_1"].send_mit.assert_called_once_with(0.2, 0, 0, 0, 0)
     motors["gripper"].send_mit.assert_called_once_with(6.1, 0, 0, 0, 0)
     bus.send_mit(
@@ -193,7 +193,7 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     )
     assert motors["joint_1"].send_mit.call_args_list[-1].args == (0.1, 0.2, 3.0, 4.0, 5.0)
     controller.enable_all.assert_called_once()
-    bus.close()
+    bus.disconnect()
     controller.disable_all.assert_called_once()
     controller.close.assert_called_once()
 
@@ -207,10 +207,10 @@ def test_failed_torque_disable_still_closes_the_bus(monkeypatch):
         robot_module, "can", SimpleNamespace(Bus=MagicMock(return_value=monitor)), raising=False
     )
     bus = robot_module._YamBus("can0", feedback_timeout_s=0.2)
-    bus.open()
+    bus.connect()
     bus.enabled = True
     controller.disable_all.side_effect = RuntimeError("CAN write failed")
-    bus.close()
+    bus.disconnect()
     controller.close.assert_called_once()
     monitor.shutdown.assert_called_once()
 
@@ -385,7 +385,7 @@ def test_connect_keeps_torque_off_until_the_gripper_is_calibrated(tmp_path, monk
     robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
     robot.connect(calibrate=False)
-    robot.bus.enable.assert_not_called()
+    robot.bus.enable_torque.assert_not_called()
     assert not robot.servo.active
     robot.disconnect()
 
@@ -403,8 +403,8 @@ def test_connect_calibrates_missing_gripper_limits(tmp_path, monkeypatch):
     robot.connect()
 
     assert robot.is_calibrated
-    robot.bus.open.assert_called_once()  # control starts on the calibration connection
-    robot.bus.enable.assert_called_once()
+    robot.bus.connect.assert_called_once()  # control starts on the calibration connection
+    robot.bus.enable_torque.assert_called_once()
     robot.disconnect()
 
 
@@ -412,8 +412,10 @@ def test_connect_calibrates_missing_gripper_limits(tmp_path, monkeypatch):
 def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch, calibrate):
     mock_hardware(robot, monkeypatch)
     robot.connect(calibrate=calibrate)
-    calls = [name for name, *_ in robot.bus.mock_calls if name in ("open", "set_mit_mode", "enable")]
-    assert calls == ["open", "set_mit_mode", "enable"]
+    calls = [
+        name for name, *_ in robot.bus.mock_calls if name in ("connect", "set_mit_mode", "enable_torque")
+    ]
+    assert calls == ["connect", "set_mit_mode", "enable_torque"]
     assert robot.servo.active
     robot.disconnect()
 
@@ -425,7 +427,7 @@ def test_initial_position_check_uses_degrees(robot, monkeypatch):
     robot.bus.read_states.return_value = states
     with pytest.raises(ValueError, match="initial_position_deg"):
         robot.connect()
-    robot.bus.enable.assert_not_called()
+    robot.bus.enable_torque.assert_not_called()
 
 
 @pytest.mark.parametrize(("timeout", "detail"), [(0, "joint_2=off"), (8001, "joint_2=400.05 ms")])
@@ -434,7 +436,7 @@ def test_connect_requires_a_prompt_motor_can_timeout(robot, monkeypatch, timeout
     robot.bus.can_timeouts.return_value = {**dict.fromkeys(MOTOR_NAMES, 8000), "joint_2": timeout}
     with pytest.raises(ValueError, match="unsafe motor CAN timeout") as exc_info:
         robot.connect()
-    robot.bus.enable.assert_not_called()
+    robot.bus.enable_torque.assert_not_called()
     assert detail in str(exc_info.value)
 
 
@@ -473,12 +475,12 @@ def test_disconnect_can_retry_after_servo_join_timeout(robot):
     robot.servo.stop = MagicMock(side_effect=RuntimeError("YAM servo did not stop"))
     with pytest.raises(RuntimeError, match="did not stop"):
         robot.disconnect()
-    bus.disable.assert_called_once()
-    bus.close.assert_not_called()
+    bus.disable_torque.assert_called_once()
+    bus.disconnect.assert_not_called()
     assert robot.is_connected
     robot.servo.stop.side_effect = None
     robot.disconnect()
-    bus.close.assert_called_once()
+    bus.disconnect.assert_called_once()
     assert not robot.is_connected
 
 
@@ -493,7 +495,7 @@ def test_gravity_model_loads_before_torque(robot, monkeypatch):
             robot.gravity_model = object()
 
     robot._load_gravity_model = load_model
-    robot.bus.enable.side_effect = lambda *args: events.append("enable")
+    robot.bus.enable_torque.side_effect = lambda *args: events.append("enable")
     robot.connect()
     robot.disconnect()
     assert events == ["model", "enable"]
@@ -529,7 +531,7 @@ def test_single_arm_calibration_preserves_factory_zeros(tmp_path, monkeypatch):
     assert robot.servo._gripper_params.open == pytest.approx(6.1, abs=0.01)
     assert all("[test]" in text for text in prompts)
     assert robot.calibration_fpath.is_file()
-    robot.bus.enable.assert_not_called()
+    robot.bus.enable_torque.assert_not_called()
     robot.disconnect()
 
 
@@ -575,7 +577,7 @@ def test_recalibrating_turns_torque_off_once_the_arm_is_supported(robot, monkeyp
     prompts = measure_gripper(robot, monkeypatch, answers=["c", ""])
     assert "Support the arm" in prompts[1]
     assert not robot.servo.active
-    robot.bus.disable.assert_called_once()
+    robot.bus.disable_torque.assert_called_once()
     robot.disconnect()
 
 
@@ -600,8 +602,8 @@ def test_servo_waits_for_asynchronous_feedback(robot):
         return value
 
     robot.bus.monitor.recv = receive
-    reset_servo(robot)
-    reset_at = robot.servo._updated_at
+    set_initial_state(robot)
+    started_at = robot.servo._updated_at
     robot.servo._run()
     assert robot.servo._failure is None
-    assert robot.servo._updated_at > reset_at
+    assert robot.servo._updated_at > started_at

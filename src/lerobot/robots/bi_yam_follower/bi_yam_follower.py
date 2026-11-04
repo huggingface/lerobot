@@ -110,7 +110,7 @@ class BiYamFollower(BimanualMixin, Robot):
             raise RuntimeError("Disconnect both YAM arms before reconnecting")
         try:
             for arm in self.arms.values():
-                arm._open_bus()
+                arm._connect_bus()
             if not self.is_calibrated and calibrate:
                 logger.info(f"No gripper calibration found for {self}")
                 self.calibrate()

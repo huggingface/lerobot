@@ -155,7 +155,7 @@ class _YamBus:
         self._last_feedback: dict[int, float] = {}  # receive time per motor ID
         self._last_status: dict[int, int] = {}
 
-    def open(self) -> None:
+    def connect(self) -> None:
         """Open the SocketCAN monitor and MotorBridge devices."""
         self.enabled = False
         self.monitor = can.Bus(
@@ -189,7 +189,7 @@ class _YamBus:
 
     def set_mit_mode(self) -> None:
         """Put every motor into MIT control mode."""
-        controller, _ = self._require_open()
+        controller, _ = self._require_connected()
         controller.disable_all()
         for motor in self.motors.values():
             motor.ensure_mode(Mode.MIT)
@@ -200,9 +200,9 @@ class _YamBus:
             name: int(motor.get_register_u32(_CAN_TIMEOUT_REGISTER)) for name, motor in self.motors.items()
         }
 
-    def enable(self, hold: np.ndarray) -> None:
+    def enable_torque(self, hold: np.ndarray) -> None:
         """Send zero-gain commands at the `hold` motor positions, then enable torque."""
-        controller, _ = self._require_open()
+        controller, _ = self._require_connected()
         for name, value in zip(self.motor_names, hold, strict=True):
             self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
         self.enabled = True
@@ -219,7 +219,7 @@ class _YamBus:
             command.torque,
         )
 
-    def disable(self) -> None:
+    def disable_torque(self) -> None:
         """Disable torque if enabled; logs instead of raising so shutdown can continue."""
         if not self.enabled or self.controller is None:
             return
@@ -229,9 +229,9 @@ class _YamBus:
         except Exception:
             logger.exception("Could not disable YAM torque; use the hardware e-stop")
 
-    def close(self) -> None:
+    def disconnect(self) -> None:
         """Disable torque and close all CAN resources."""
-        self.disable()
+        self.disable_torque()
         for name, motor in self.motors.items():
             try:
                 motor.close()
@@ -253,13 +253,13 @@ class _YamBus:
             finally:
                 self.monitor = None
 
-    def _require_open(self) -> "tuple[Controller, can.BusABC]":
+    def _require_connected(self) -> "tuple[Controller, can.BusABC]":
         if self.controller is None or self.monitor is None:
-            raise RuntimeError(f"{self.port} bus is not open")
+            raise RuntimeError(f"{self.port} bus is not connected")
         return self.controller, self.monitor
 
     def _wait_for_fresh_states(self) -> dict[str, Any]:
-        controller, monitor = self._require_open()
+        controller, monitor = self._require_connected()
         for motor in self.motors.values():
             motor.request_feedback()
         deadline = time.monotonic() + self.feedback_timeout_s
@@ -326,9 +326,9 @@ class YamFollower(Robot):
             str(self.id),
             self.bus,
             _yam_arm_params(config),
-            None if gripper is None else _yam_gripper_params(config, gripper),
             self._gravity_torque,
             stop_event or threading.Event(),
+            gripper_params=None if gripper is None else _yam_gripper_params(config, gripper),
         )
         self._connected = False
 
@@ -363,7 +363,7 @@ class YamFollower(Robot):
             calibrate (`bool`, *optional*, defaults to `True`):
                 Measure the gripper limits if none are saved.
         """
-        self._open_bus()
+        self._connect_bus()
         try:
             if not self.is_calibrated and calibrate:
                 logger.info(f"No gripper calibration found for {self}")
@@ -496,10 +496,10 @@ class YamFollower(Robot):
         self._close()
         logger.info(f"{self} disconnected.")
 
-    def _open_bus(self) -> None:
+    def _connect_bus(self) -> None:
         """Open the CAN interface, with torque off, once every motor answers."""
         try:
-            self.bus.open()
+            self.bus.connect()
             self.bus.read_states()
             self._connected = True
         except BaseException:
@@ -507,12 +507,10 @@ class YamFollower(Robot):
             raise
 
     def _prepare_servo(self) -> None:
-        """Check the initial position and reset the servo to it, without torque."""
+        """Load the gravity model and check the initial position, before the servo starts."""
         self.servo.stop_event.clear()
         self._load_gravity_model()
-        state = self.servo.read_state()
-        self._check_initial_position(state.position)
-        self.servo.reset(state)
+        self._check_initial_position(self.servo.read_state().position)
 
     def _load_gravity_model(self) -> None:
         if not self.config.gravity_compensation or self.gravity_model is not None:
@@ -563,12 +561,12 @@ class YamFollower(Robot):
         except RuntimeError as exc:
             stop_error = exc
             # Leave CAN open while the thread might still be using it, but still try to disable torque.
-            self.bus.disable()
+            self.bus.disable_torque()
             logger.exception("YAM servo did not stop; CAN remains open for a disconnect retry")
         if stop_error is not None:
             raise stop_error
         try:
-            self.bus.close()
+            self.bus.disconnect()
         except Exception:
             logger.exception("Failed to close YAM arm")
         try:

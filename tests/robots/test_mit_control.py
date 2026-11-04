@@ -96,14 +96,14 @@ class FakeBus:
             self.servo.stop_event.set()
         return self.states
 
-    def enable(self, hold):
+    def enable_torque(self, hold):
         self.hold = hold
         self.enabled = True
 
     def send_mit(self, motor, command):
         self.sent.append((motor, command))
 
-    def disable(self):
+    def disable_torque(self):
         self.disable_calls += 1
         self.enabled = False
 
@@ -111,10 +111,10 @@ class FakeBus:
 def make_servo(bus=None, gravity=(0.0, 0.0), **overrides):
     bus = bus or FakeBus()
     servo = mit_control.MitServo(
-        "arm", bus, params(**overrides), gripper(), lambda _: np.asarray(gravity), threading.Event()
+        "arm", bus, params(**overrides), lambda _: np.asarray(gravity), threading.Event(), gripper()
     )
     bus.servo = servo
-    servo.reset(servo.read_state())
+    servo._set_initial_state(servo.read_state())
     return servo
 
 
@@ -366,49 +366,35 @@ def test_servo_start_refuses_a_second_thread():
     servo.stop()
 
 
-def test_servo_refuses_reset_while_it_runs():
-    servo = make_servo()
-    servo.start()
-    with pytest.raises(RuntimeError, match="stop it before reset"):
-        servo.reset(servo.state)
-    servo.stop()
-    assert not servo.active
-
-
-def test_servo_needs_the_gripper_calibration():
-    servo = mit_control.MitServo("arm", FakeBus(), params(), None, lambda _: np.zeros(2), threading.Event())
+def test_servo_needs_the_gripper_calibration_to_start():
+    bus = FakeBus()
+    servo = mit_control.MitServo("arm", bus, params(), lambda _: np.zeros(2), threading.Event())
     with pytest.raises(RuntimeError, match="gripper calibration"):
-        servo.read_state()
+        servo.start()
+    assert bus.hold is None  # torque stays off
     servo.set_gripper_params(gripper())
-    servo.reset(servo.read_state())
-    np.testing.assert_allclose(servo.state.position, [0.2, 0.5, 0.5])
+    servo.start()
+    servo.stop()
 
 
-def test_new_gripper_params_need_a_stopped_servo_and_a_new_reset():
+def test_gripper_params_change_only_while_stopped():
     servo = make_servo()
     servo.start()
     with pytest.raises(RuntimeError, match="before changing the gripper"):
         servo.set_gripper_params(gripper())
     servo.stop()
-    servo.set_gripper_params(gripper())
-    with pytest.raises(RuntimeError, match="reset"):
-        servo.start()
+    servo.set_gripper_params(gripper(closed=1.0, opened=5.0))
+    servo.start()
+    servo.stop()
+    np.testing.assert_allclose(servo.state.position, [0.2, 0.5, 0.25])  # raw 2.0 read with the new limits
 
 
-def test_start_enables_torque_at_the_reset_position():
+def test_start_enables_torque_at_the_measured_position():
     bus = FakeBus()
     servo = make_servo(bus)
     servo.start()
     servo.stop()
     np.testing.assert_allclose(bus.hold, [0.2, 0.5, 2.0])
-
-
-def test_servo_needs_reset_before_it_starts():
-    servo = mit_control.MitServo(
-        "arm", FakeBus(), params(), gripper(), lambda _: np.zeros(2), threading.Event()
-    )
-    with pytest.raises(RuntimeError, match="reset"):
-        servo.start()
 
 
 def test_foreground_watchdog_allows_one_late_feedback_window():
