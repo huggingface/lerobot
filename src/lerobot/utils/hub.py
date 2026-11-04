@@ -25,6 +25,28 @@ from .constants import CHECKPOINTS_DIR
 T = TypeVar("T", bound="HubMixin")
 
 
+def missing_hub_repo_message(repo_id: str, filename: str) -> str:
+    """Build an actionable error message for a Hub repo that does not exist (or is private).
+
+    A missing repository surfaces as a confusing raw "401/404 Client Error" (or as a
+    missing-file error), when in fact the whole repository is absent. This message states
+    that clearly and, for checkpoints known not to be released yet, points to the
+    documented fallback.
+    """
+    message = (
+        f"Cannot download '{filename}': the Hugging Face Hub repository '{repo_id}' does not exist "
+        f"(or is private). Double-check the repo id at https://huggingface.co/{repo_id}."
+    )
+    if "fineart" in repo_id.lower():
+        message += (
+            " Note that no public 'lerobot/fineart_vla_base' checkpoint has been released yet. "
+            "As a fallback, initialize FineART-VLA from the PI0.5 checkpoint instead: "
+            "--policy.type=fineart_vla --policy.pretrained_path=lerobot/pi05_base "
+            "(see https://huggingface.co/docs/lerobot/fineart_vla)."
+        )
+    return message
+
+
 # Sharded-training resume artifacts (torch DCP shard dirs + shard files). Published model repos
 # carry safetensors only, so publishing uploads exclude these — checkpoint pushes (which exist
 # for resume, not distribution) deliberately do not.
