@@ -125,7 +125,7 @@ class BiYamFollower(BimanualMixin, Robot):
                 for arm in self.arms.values():
                     arm._prepare_servo()
                 for arm in self.arms.values():
-                    arm._start_servo()
+                    arm.servo.start()
         except BaseException:
             self._stop.set()
             if any(arm.is_connected for arm in self.arms.values()):

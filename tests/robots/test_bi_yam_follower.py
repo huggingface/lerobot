@@ -42,6 +42,7 @@ def calibrate_arms(robot):
                 id=7, drive_mode=0, homing_offset=0, range_min=math.degrees(0.1), range_max=math.degrees(6.1)
             )
         }
+        arm.servo.set_gripper_params(yam_module._yam_gripper_params(arm.config, arm.calibration["gripper"]))
     return robot
 
 
@@ -79,7 +80,7 @@ def attach_bus(arm, bus):
 def mock_hardware(robot, monkeypatch):
     for arm in robot.arms.values():
         attach_bus(arm, mock_bus())
-        monkeypatch.setattr(arm.servo, "start", MagicMock())
+        monkeypatch.setattr(arm.servo, "_run", lambda: None)
 
 
 def mark_running(servo):
@@ -92,9 +93,7 @@ def ready(robot):
     zeros = np.zeros(7)
     for arm in robot.arms.values():
         arm._connected = True
-        arm.servo.reset(
-            mit_control.JointState(position=zeros, velocity=zeros, torque=zeros), arm._require_params()
-        )
+        arm.servo.reset(mit_control.JointState(position=zeros, velocity=zeros, torque=zeros))
         mark_running(arm.servo)
     return dict.fromkeys(robot.action_features, 0.0)
 

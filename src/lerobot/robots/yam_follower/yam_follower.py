@@ -54,8 +54,6 @@ from .mit_control import (
     MitServo,
     MotorStates,
     clip_to_limits,
-    joint_to_motor,
-    read_joint_state,
 )
 
 if TYPE_CHECKING or _motorbridge_available:
@@ -86,10 +84,8 @@ _MOTOR_IDS = range(1, len(MOTOR_NAMES) + 1)
 _FEEDBACK_ID_OFFSET = 0x10
 
 
-def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> MitArmParams:
-    """Build the internal control settings of a YAM arm from its config and gripper calibration."""
-    limits = (math.radians(gripper.range_min), math.radians(gripper.range_max))
-    closed, opened = limits[::-1] if gripper.drive_mode else limits
+def _yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
+    """Build the internal control settings of a YAM arm's joints from its config."""
     return MitArmParams(
         joint_limits=_JOINT_LIMITS,
         kp=np.asarray(config.kp, dtype=float),
@@ -98,15 +94,6 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
         max_tracking_error=math.radians(config.max_tracking_error_deg),
         gravity_factors=np.asarray(config.gravity_factors, dtype=float),
         max_gravity_torque=_MAX_GRAVITY_TORQUE_NM,
-        gripper=GripperParams(
-            closed=closed,
-            open=opened,
-            kp=config.gripper_kp,
-            kd=config.gripper_kd,
-            max_speed=config.max_gripper_speed,
-            force_limit_n=config.gripper_force_limit_n,
-            finger_stroke_m=_GRIPPER_FINGER_STROKE_M,
-        ),
         float_kd=np.asarray(config.float_kd, dtype=float),
         coulomb_friction=np.asarray(config.coulomb_friction, dtype=float)
         if config.friction_compensation
@@ -115,6 +102,21 @@ def _yam_arm_params(config: YamFollowerConfig, gripper: MotorCalibration) -> Mit
         feedback_timeout_s=config.feedback_timeout_s,
         command_timeout_s=config.command_timeout_s,
         idle_mode=config.idle_mode,
+    )
+
+
+def _yam_gripper_params(config: YamFollowerConfig, calibration: MotorCalibration) -> GripperParams:
+    """Build the internal settings of a YAM gripper from its config and calibration."""
+    limits = (math.radians(calibration.range_min), math.radians(calibration.range_max))
+    closed, opened = limits[::-1] if calibration.drive_mode else limits
+    return GripperParams(
+        closed=closed,
+        open=opened,
+        kp=config.gripper_kp,
+        kd=config.gripper_kd,
+        max_speed=config.max_gripper_speed,
+        force_limit_n=config.gripper_force_limit_n,
+        finger_stroke_m=_GRIPPER_FINGER_STROKE_M,
     )
 
 
@@ -319,7 +321,15 @@ class YamFollower(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
         self.bus = _YamBus(config.port, config.feedback_timeout_s)
         self.gravity_model: GravityCompensation | None = None
-        self.servo = MitServo(str(self.id), self.bus, self._gravity_torque, stop_event or threading.Event())
+        gripper = self.calibration.get("gripper")
+        self.servo = MitServo(
+            str(self.id),
+            self.bus,
+            _yam_arm_params(config),
+            None if gripper is None else _yam_gripper_params(config, gripper),
+            self._gravity_torque,
+            stop_event or threading.Event(),
+        )
         self._connected = False
 
     @property
@@ -363,7 +373,7 @@ class YamFollower(Robot):
             self.configure()
             if self.is_calibrated:
                 self._prepare_servo()
-                self._start_servo()
+                self.servo.start()
         except BaseException:
             self.disconnect()
             raise
@@ -418,6 +428,7 @@ class YamFollower(Robot):
             )
         }
         self._save_calibration()
+        self.servo.set_gripper_params(_yam_gripper_params(self.config, self.calibration["gripper"]))
         logger.info("Saved the gripper limits to %s. Joint zeros were not changed.", self.calibration_fpath)
 
     def configure(self) -> None:
@@ -485,11 +496,6 @@ class YamFollower(Robot):
         self._close()
         logger.info(f"{self} disconnected.")
 
-    def _require_params(self) -> MitArmParams:
-        if not self.is_calibrated:
-            raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper limits")
-        return _yam_arm_params(self.config, self.calibration["gripper"])
-
     def _open_bus(self) -> None:
         """Open the CAN interface, with torque off, once every motor answers."""
         try:
@@ -502,17 +508,11 @@ class YamFollower(Robot):
 
     def _prepare_servo(self) -> None:
         """Check the initial position and reset the servo to it, without torque."""
-        params = self._require_params()
         self.servo.stop_event.clear()
         self._load_gravity_model()
-        state = read_joint_state(self.bus, params)
+        state = self.servo.read_state()
         self._check_initial_position(state.position)
-        self.servo.reset(state, params)
-
-    def _start_servo(self) -> None:
-        """Enable torque at the measured position, then start the servo."""
-        self.bus.enable(joint_to_motor(self.servo.state.position, self._require_params()))
-        self.servo.start()
+        self.servo.reset(state)
 
     def _load_gravity_model(self) -> None:
         if not self.config.gravity_compensation or self.gravity_model is not None:

@@ -59,6 +59,7 @@ def make_robot(tmp_path, *, gripper=(0.1, 6.1), **overrides):
     robot = YamFollower(YamFollowerRobotConfig(**config))
     if gripper is not None:
         robot.calibration = {"gripper": gripper_calibration(*gripper)}
+        robot.servo.set_gripper_params(gripper_params(robot))
     return robot
 
 
@@ -74,7 +75,11 @@ def robot(tmp_path):
 
 
 def params(robot):
-    return robot_module._yam_arm_params(robot.config, robot.calibration["gripper"])
+    return robot_module._yam_arm_params(robot.config)
+
+
+def gripper_params(robot):
+    return robot_module._yam_gripper_params(robot.config, robot.calibration["gripper"])
 
 
 def raw_states(gripper=0.1):
@@ -105,7 +110,7 @@ def attach_bus(robot, bus):
 
 def mock_hardware(robot, monkeypatch):
     attach_bus(robot, mock_bus())
-    monkeypatch.setattr(robot.servo, "start", MagicMock())
+    monkeypatch.setattr(robot.servo, "_run", lambda: None)
 
 
 def mark_running(servo):
@@ -116,7 +121,7 @@ def mark_running(servo):
 
 def reset_servo(robot):
     zeros = np.zeros(7)
-    robot.servo.reset(mit_control.JointState(position=zeros, velocity=zeros, torque=zeros), params(robot))
+    robot.servo.reset(mit_control.JointState(position=zeros, velocity=zeros, torque=zeros))
 
 
 def ready(robot):
@@ -130,9 +135,9 @@ def ready(robot):
 def test_units_order_and_gripper_polarity(robot, opened):
     robot.calibration["gripper"] = gripper_calibration(0.1, opened)
     raw = [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, (0.1 + opened) / 2]
-    decoded = mit_control._motor_to_joint(np.asarray(raw), params(robot))
+    decoded = mit_control._motor_to_joint(np.asarray(raw), gripper_params(robot))
     np.testing.assert_allclose(decoded, [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, 0.5])
-    np.testing.assert_allclose(mit_control.joint_to_motor(decoded, params(robot)), raw)
+    np.testing.assert_allclose(mit_control._joint_to_motor(decoded, gripper_params(robot)), raw)
 
 
 @pytest.mark.parametrize("use_degrees", [True, False])
@@ -150,7 +155,7 @@ def test_measured_position_has_wider_tolerance_than_action(robot):
     states = raw_states(gripper=6.4)
     states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.08
     bus = attach_bus(robot, mock_bus(states))
-    measured = mit_control.read_joint_state(bus, params(robot)).position
+    measured = mit_control._read_joint_state(bus, params(robot), gripper_params(robot)).position
     assert measured[0] == pytest.approx(states.position[0])
     assert measured[6] == 1.0
     # Actions are clipped to the model limits instead of being rejected.
@@ -159,7 +164,7 @@ def test_measured_position_has_wider_tolerance_than_action(robot):
     assert robot.servo._target[0] == JOINT_LIMITS_RAD[0][0]
     states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.2
     with pytest.raises(ValueError, match="outside"):
-        mit_control.read_joint_state(bus, params(robot))
+        mit_control._read_joint_state(bus, params(robot), gripper_params(robot))
 
 
 def test_motorbridge_mapping_and_mit_radians(monkeypatch):
@@ -284,7 +289,9 @@ def test_yam_parameters_reach_the_motor_commands(robot):
     position = np.array([0.5, 0.5, 1.0, 0, 0, 0, 0.5])
     target = np.r_[position[:6], 1.0]
     gravity = np.array([30.0, 15, 1, 1, 1, 1])
-    command, packet = mit_control._track_step(params(robot), position, target, position, gravity, dt=0.01)
+    command, packet = mit_control._track_step(
+        params(robot), gripper_params(robot), position, target, position, gravity, dt=0.01
+    )
     # I2RT's gains, the per-joint gravity factors, and the 25 Nm cap on gravity torque.
     assert [(c.kp, c.kd) for c in packet] == [(80, 5)] * 3 + [(10, 1.5)] * 3
     np.testing.assert_allclose([c.torque for c in packet], [25.0, 16.5, 1.1, 1.2, 1.0, 1.0])
@@ -294,7 +301,7 @@ def test_yam_parameters_reach_the_motor_commands(robot):
 @pytest.mark.parametrize("polarity", [-1, 1])
 def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
     robot.calibration["gripper"] = gripper_calibration(0.1, 0.1 + polarity * 6.0)
-    grip = params(robot).gripper
+    grip = gripper_params(robot)
     assert (grip.kp, grip.kd, grip.force_limit_n, grip.finger_stroke_m) == (20.0, 0.5, 50.0, 0.096)
     limiter = mit_control._GripperForceLimiter(grip)
     # Free motion goes straight to the target, without a torque cap.
@@ -379,7 +386,7 @@ def test_connect_keeps_torque_off_until_the_gripper_is_calibrated(tmp_path, monk
     mock_hardware(robot, monkeypatch)
     robot.connect(calibrate=False)
     robot.bus.enable.assert_not_called()
-    robot.servo.start.assert_not_called()
+    assert not robot.servo.active
     robot.disconnect()
 
 
@@ -407,7 +414,7 @@ def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch, calibrat
     robot.connect(calibrate=calibrate)
     calls = [name for name, *_ in robot.bus.mock_calls if name in ("open", "set_mit_mode", "enable")]
     assert calls == ["open", "set_mit_mode", "enable"]
-    robot.servo.start.assert_called_once()
+    assert robot.servo.active
     robot.disconnect()
 
 
@@ -519,7 +526,7 @@ def test_single_arm_calibration_preserves_factory_zeros(tmp_path, monkeypatch):
     assert (calibration.homing_offset, calibration.drive_mode) == (0, 0)
     # Motor angles of the gripper limits, in whole degrees.
     assert (calibration.range_min, calibration.range_max) == (6, 350)
-    assert params(robot).gripper.open == pytest.approx(6.1, abs=0.01)
+    assert robot.servo._gripper_params.open == pytest.approx(6.1, abs=0.01)
     assert all("[test]" in text for text in prompts)
     assert robot.calibration_fpath.is_file()
     robot.bus.enable.assert_not_called()
@@ -540,8 +547,8 @@ def saved_calibration_robot(tmp_path, monkeypatch, *, closed=0.1, opened=6.1):
 def test_saved_calibration_loads_either_polarity(tmp_path, monkeypatch, closed, opened):
     robot = saved_calibration_robot(tmp_path, monkeypatch, closed=closed, opened=opened)
     assert robot.is_calibrated
-    assert params(robot).gripper.closed == pytest.approx(math.radians(round(math.degrees(closed))))
-    assert params(robot).gripper.open == pytest.approx(math.radians(round(math.degrees(opened))))
+    assert robot.servo._gripper_params.closed == pytest.approx(math.radians(round(math.degrees(closed))))
+    assert robot.servo._gripper_params.open == pytest.approx(math.radians(round(math.degrees(opened))))
 
 
 def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch):
@@ -554,8 +561,8 @@ def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch
     robot.bus.read_states.assert_not_called()
 
     prompts = measure_gripper(robot, monkeypatch, opened=5.1, answers=["c"])
-    assert len(prompts) == 3
-    assert params(robot).gripper.open == pytest.approx(math.radians(round(math.degrees(5.1))))
+    assert len(prompts) == 4  # reuse question, support, closed, open
+    assert robot.servo._gripper_params.open == pytest.approx(math.radians(round(math.degrees(5.1))))
     robot.disconnect()
 
 
