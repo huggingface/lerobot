@@ -29,8 +29,10 @@ from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
     _normalize_hub_result,
     _parse_hub_url,
+    _sub_env_has_attr,
     preprocess_observation,
 )
+from tests.mocks.mock_gym_pkg import MockEnv
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -119,6 +121,48 @@ def test_factory_custom_gym_id():
     finally:
         if gym_id in gym_registry:
             del gym_registry[gym_id]
+
+
+def test_create_envs_async_registers_env_in_workers():
+    # The forkserver workers start from a fresh interpreter, so importing the env package in the
+    # main process is not enough. Keep the module path as a literal: a reference to the module
+    # would be pickled with the config and import it in the workers, hiding the bug.
+    @EnvConfig.register_subclass("mock_gym")
+    @dataclass
+    class MockGymEnv(EnvConfig):
+        task: str = "MockTask-v0"
+
+        @property
+        def package_name(self) -> str:
+            return "tests.mocks.mock_gym_pkg"
+
+        @property
+        def gym_id(self) -> str:
+            return "lerobot_mock_gym/MockTask-v0"
+
+        @property
+        def gym_kwargs(self) -> dict:
+            return {}
+
+    env = MockGymEnv().create_envs(n_envs=2, use_async_envs=True)["mock_gym"][0]
+    try:
+        assert isinstance(env, gym.vector.AsyncVectorEnv)
+        obs, _ = env.reset(seed=0)
+        assert obs["agent_pos"].shape == (2, 6)
+    finally:
+        env.close()
+
+
+def test_sub_env_has_attr_keeps_async_workers_alive():
+    env = gym.vector.AsyncVectorEnv([MockEnv, MockEnv], context="forkserver")
+    try:
+        env.reset(seed=0)
+        assert _sub_env_has_attr(env, "_max_episode_steps")
+        assert not _sub_env_has_attr(env, "task_description")
+        # A worker that raised is shut down, so this step fails if the probe raised in the workers.
+        env.step(env.action_space.sample())
+    finally:
+        env.close()
 
 
 # Hub environment loading tests

@@ -26,6 +26,7 @@ from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
 from lerobot.scripts.lerobot_eval import rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
+from tests.mocks.mock_gym_pkg import MockEnv
 from tests.policies.flux3.helpers import task_config
 
 pytestmark = pytest.mark.dataset
@@ -146,3 +147,24 @@ def test_rollout_starts_each_episode_with_fresh_processor_state(pipeline_kind):
     if pipeline_kind == "flux3":
         # Delta 0.25 unnormalizes to 0.5 and must be added to B's initial measured position.
         torch.testing.assert_close(reused_actions[0, 0, :-1], torch.full((5,), 2.5), rtol=0, atol=0)
+
+
+def test_rollout_async_env_without_task_attributes():
+    # Like PushT, MockEnv has neither `task` nor `task_description`. Probing for them must not
+    # raise inside the AsyncVectorEnv workers, which shut down on any exception.
+    env = gym.vector.AsyncVectorEnv([MockEnv, MockEnv], context="forkserver")
+    try:
+        pre, post = make_policy_processor_pipelines([], [])
+        result = rollout(
+            env,
+            _RecordingPolicy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=pre,
+            postprocessor=post,
+            seeds=[0, 1],
+        )
+    finally:
+        env.close()
+
+    assert result[ACTION].shape == (2, MockEnv._max_episode_steps, 6)
