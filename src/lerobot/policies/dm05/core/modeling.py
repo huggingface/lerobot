@@ -37,7 +37,7 @@ from transformers import (
     PretrainedConfig,
     PreTrainedModel,
 )
-from transformers.cache_utils import Cache, CacheLayerMixin, DynamicCache
+from transformers.cache_utils import Cache, CacheLayerMixin, DynamicCache, DynamicLayer
 from transformers.modeling_layers import GradientCheckpointingLayer
 from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3CausalLMOutputWithPast,
@@ -84,20 +84,8 @@ def patch_decoder_layers(model):
         layer.__class__ = patched_decoder_layer
 
 
-class _OverwriteDynamicLayerBase(CacheLayerMixin):
+class _OverwriteDynamicLayerBase(DynamicLayer):
     """Overwrite-mode cache layer used by DM05 prefix/suffix forwards."""
-
-    is_sliding = False
-
-    def __init__(self):
-        super().__init__()
-        self.keys = None
-        self.values = None
-        self.is_initialized = True
-
-    def lazy_initialization(self, key_states: torch.Tensor, value_states: torch.Tensor) -> None:
-        """No-op; initialized in __init__."""
-        pass
 
     def update(
         self,
@@ -109,21 +97,8 @@ class _OverwriteDynamicLayerBase(CacheLayerMixin):
         self.device = key_states.device
         self.keys = key_states
         self.values = value_states
+        self.is_initialized = True
         return key_states, value_states
-
-    def get_mask_sizes(self, cache_position: torch.Tensor) -> tuple[int, int]:
-        kv_offset = 0
-        query_length = cache_position if isinstance(cache_position, int) else cache_position.shape[0]
-        kv_length = self.get_seq_length() + query_length
-        return kv_length, kv_offset
-
-    def get_seq_length(self) -> int:
-        if self.keys is None or self.keys.numel() == 0:
-            return 0
-        return self.keys.shape[-2]
-
-    def get_max_cache_shape(self) -> int:
-        return -1
 
 
 class OverwriteDynamicLayer(_OverwriteDynamicLayerBase):

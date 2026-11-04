@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+from datetime import timedelta
 
 import draccus
 import pytest
@@ -29,6 +30,7 @@ from lerobot.configs.accelerator import (
     FSDPConfig,
     GradientAccumulationConfig,
     GradScalerConfig,
+    InitProcessGroupConfig,
     MixedPrecisionPolicyConfig,
 )
 from lerobot.configs.parallelism import ParallelismConfig
@@ -65,6 +67,11 @@ class TestFieldValidation:
         with pytest.raises(ValueError, match=f"grad_scaler.{field}"):
             GradScalerConfig(**{field: value})
 
+    @pytest.mark.parametrize("timeout", [0, -1])
+    def test_init_process_group_timeout_positive(self, timeout):
+        with pytest.raises(ValueError, match="init_process_group.timeout"):
+            InitProcessGroupConfig(timeout=timeout)
+
     @pytest.mark.parametrize(
         "mixed_precision, policy, match",
         [
@@ -95,6 +102,7 @@ class TestDraccusRoundTrip:
                     ),
                 ),
                 ddp=DDPConfig(find_unused_parameters=False, static_graph=True),
+                init_process_group=InitProcessGroupConfig(backend="gloo", timeout=3600),
                 grad_scaler=GradScalerConfig(init_scale=1024.0, growth_interval=500),
                 compile=CompileConfig(enabled=True, mode="max-autotune", regional=False),
                 activation_checkpointing=ActivationCheckpointingConfig(mode=ActivationCheckpointingMode.FULL),
@@ -141,6 +149,16 @@ class TestRuntimeBuilders:
         handler = DDPConfig(find_unused_parameters=False, gradient_as_bucket_view=True).build_kwargs_handler()
         assert handler.find_unused_parameters is False
         assert handler.gradient_as_bucket_view is True
+
+    def test_init_process_group_kwargs_translation(self):
+        handler = InitProcessGroupConfig(
+            backend="gloo", init_method="env://", timeout=3600
+        ).build_kwargs_handler()
+        assert handler.backend == "gloo"
+        assert handler.init_method == "env://"
+        assert handler.timeout == timedelta(seconds=3600)
+        # accelerate passes only the fields that differ from its defaults
+        assert InitProcessGroupConfig().build_kwargs_handler().to_kwargs() == {}
 
     def test_gradient_accumulation_plugin_translation(self):
         plugin = GradientAccumulationConfig(steps=4, sync_each_batch=True).build_plugin()

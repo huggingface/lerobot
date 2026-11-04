@@ -151,9 +151,7 @@ def _tiny_siglip():
         num_attention_heads=4,
         vision_use_head=False,
     )
-    from transformers.models.siglip.modeling_siglip import SiglipVisionTransformer
-
-    return SiglipVisionTransformer(config).eval()
+    return transformers.SiglipVisionModel(config).eval()
 
 
 def test_single_frame_mem_matches_original_siglip():

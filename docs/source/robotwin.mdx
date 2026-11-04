@@ -68,6 +68,12 @@ ds = load_dataset("lerobot/robotwin_unified", split="train")
 
 ## Installation
 
+<Tip warning={true}>
+
+The current RoboTwin integration is broken and is not supported with LeRobot's default PyTorch 2.15 stack. Its benchmark CI job is temporarily disabled. The instructions below describe the legacy setup; they are not a working installation recipe for the current default dependencies. Compatibility fixes and simulator dependency isolation are deferred to [PR #4888](https://github.com/huggingface/lerobot/pull/4888).
+
+</Tip>
+
 RoboTwin 2.0 requires **Linux** with an NVIDIA GPU (CUDA 12.1 recommended). Installation takes approximately 20 minutes.
 
 ### 1. Create a conda environment
