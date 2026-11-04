@@ -231,7 +231,7 @@ def test_servo_holds_then_sends_one_command_per_motor():
     servo = make_servo(bus)
     bus.reads = 0
     servo._run()
-    assert servo.failure is None
+    assert servo._failure is None
     assert [name for name, _ in bus.sent[:3]] == ["shoulder", "elbow", "gripper"]
     assert bus.disable_calls == 0
     servo.stop()
@@ -243,10 +243,10 @@ def test_servo_holds_the_measured_position_once_commands_expire():
     servo = make_servo(bus, command_timeout_s=0.01)
     bus.stop_after, bus.reads = 1, 0  # run exactly one servo cycle
     servo.set_target(np.array([0.5, 0.5, 1.0]))
-    servo.commanded_at -= 1
+    servo._commanded_at -= 1
     servo._run()
-    assert servo.command_timed_out
-    np.testing.assert_allclose(servo.target, servo.state.position)
+    assert servo._command_timed_out
+    np.testing.assert_allclose(servo._target, servo.state.position)
 
 
 def test_servo_copies_submitted_target():
@@ -254,7 +254,7 @@ def test_servo_copies_submitted_target():
     target = np.array([0.5, 0.5, 1.0])
     servo.set_target(target)
     target[0] = -0.5
-    assert servo.target[0] == 0.5
+    assert servo._target[0] == 0.5
 
 
 def test_float_step_compensates_gravity_and_friction_without_stiffness():
@@ -274,12 +274,12 @@ def test_float_step_compensates_gravity_and_friction_without_stiffness():
 
 def run_cycles(servo, cycles):
     """Run ``cycles`` full servo cycles in this thread, then leave the servo ready for more."""
-    bus = servo.bus
+    bus = servo._bus
     bus.enabled, bus.stop_after, bus.reads = True, cycles + 1, 0
     bus.sent.clear()
     servo._run()
     servo.stop_event.clear()
-    servo.updated_at = time.monotonic()
+    servo._updated_at = time.monotonic()
 
 
 def joint_stiffness(bus):
@@ -306,7 +306,7 @@ def test_float_mode_floats_again_after_the_command_timeout():
     servo = make_servo(bus, idle_mode="float", command_timeout_s=0.01)
     bus.enabled = True
     servo.set_target(servo.state.position)
-    servo.commanded_at -= 1
+    servo._commanded_at -= 1
     run_cycles(servo, 1)
     assert servo.idle
     assert set(joint_stiffness(bus)) == {0.0}
@@ -332,7 +332,7 @@ def test_hold_mode_keeps_stiffness_while_idle():
 
 
 def start_enabled(servo):
-    servo.bus.enabled = True
+    servo._bus.enabled = True
     servo.start()
 
 
@@ -355,7 +355,7 @@ def test_fault_stops_commands_until_disconnect(cause):
         servo.latest()
     servo.stop()
     assert bus.disable_calls == 1
-    assert isinstance(servo.failure, ConnectionError) == (cause == "own fault")
+    assert isinstance(servo._failure, ConnectionError) == (cause == "own fault")
 
 
 def test_servo_start_refuses_a_second_thread():
@@ -368,6 +368,15 @@ def test_servo_start_refuses_a_second_thread():
     servo.stop()
 
 
+def test_servo_refuses_reset_while_it_runs():
+    servo = make_servo()
+    servo.start()
+    with pytest.raises(RuntimeError, match="stop it before reset"):
+        servo.reset(servo.state, params())
+    servo.stop()
+    assert not servo.active
+
+
 def test_servo_needs_reset_before_it_starts():
     servo = mit_control.MitServo("arm", FakeBus(), lambda _: np.zeros(2), threading.Event())
     with pytest.raises(RuntimeError, match="reset"):
@@ -376,8 +385,8 @@ def test_servo_needs_reset_before_it_starts():
 
 def test_foreground_watchdog_allows_one_late_feedback_window():
     servo = make_servo()
-    servo.updated_at = time.monotonic() - 1.5 * 0.2
+    servo._updated_at = time.monotonic() - 1.5 * 0.2
     servo.latest()
-    servo.updated_at = time.monotonic() - 3 * 0.2
+    servo._updated_at = time.monotonic() - 3 * 0.2
     with pytest.raises(ConnectionError, match="stale"):
         servo.latest()

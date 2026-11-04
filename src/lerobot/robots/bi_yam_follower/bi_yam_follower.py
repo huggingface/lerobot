@@ -98,7 +98,10 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """Connect both arms, checking both before either receives torque."""
+        """Connect both arms, checking both before either receives torque.
+
+        If one arm is out of its initial position, neither arm gets torque.
+        """
         if any(arm.is_connected for arm in self.arms.values()):
             raise RuntimeError("Disconnect both YAM arms before reconnecting")
         try:
@@ -108,6 +111,8 @@ class BiYamFollower(BimanualMixin, Robot):
                 if not self.is_calibrated:
                     self.calibrate()
                 # Open both arms, check their initial positions and set MIT mode before either gets torque.
+                # Opening clears the stop event both arms share, so it must come before either servo starts:
+                # clearing it later could erase a fault of the arm that started first.
                 for arm in self.arms.values():
                     arm.open()
                 self.configure()

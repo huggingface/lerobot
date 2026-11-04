@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import math
+import threading
 import time
 from collections import deque
 from types import SimpleNamespace
@@ -98,13 +99,19 @@ def mock_bus(states=None):
 
 
 def attach_bus(robot, bus):
-    robot.bus = robot.servo.bus = bus
+    robot.bus = robot.servo._bus = bus
     return bus
 
 
 def mock_hardware(robot, monkeypatch):
     attach_bus(robot, mock_bus())
     monkeypatch.setattr(robot.servo, "start", MagicMock())
+
+
+def mark_running(servo):
+    """Make the servo report active, with a finished thread that stop() can join."""
+    servo._thread = threading.Thread(target=lambda: None)
+    servo._thread.start()
 
 
 def reset_servo(robot):
@@ -115,7 +122,7 @@ def reset_servo(robot):
 def ready(robot):
     robot._connected = True
     reset_servo(robot)
-    robot.servo.active = True
+    mark_running(robot.servo)
     return dict.fromkeys(robot.action_features, 0.0)
 
 
@@ -135,8 +142,8 @@ def test_actions_are_clipped_to_the_limits(robot, use_degrees):
     action["gripper.pos"] = 100.4 if use_degrees else 1.004
     action["joint_2.pos"] = -1.0  # below the 0 lower limit in either unit
     robot.send_action(action)
-    assert robot.servo.target[6] == 1.0
-    assert robot.servo.target[1] == 0.0
+    assert robot.servo._target[6] == 1.0
+    assert robot.servo._target[1] == 0.0
 
 
 def test_measured_position_has_wider_tolerance_than_action(robot):
@@ -149,7 +156,7 @@ def test_measured_position_has_wider_tolerance_than_action(robot):
     # Actions are clipped to the model limits instead of being rejected.
     ready(robot)
     robot.send_action(dict(zip(YAM_FEATURE_NAMES, robot_module._to_public(measured, True), strict=True)))
-    assert robot.servo.target[0] == JOINT_LIMITS_RAD[0][0]
+    assert robot.servo._target[0] == JOINT_LIMITS_RAD[0][0]
     states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.2
     with pytest.raises(ValueError, match="outside"):
         mit_control.read_joint_state(bus, params(robot))
@@ -358,7 +365,7 @@ def test_single_arm_action_updates_target(robot):
     action["joint_1.pos"] = math.degrees(0.2)
     action["gripper.pos"] = 50.0
     assert robot.send_action(action) == pytest.approx(action)
-    np.testing.assert_allclose(robot.servo.target, [0.2, 0, 0, 0, 0, 0, 0.5])
+    np.testing.assert_allclose(robot.servo._target, [0.2, 0, 0, 0, 0, 0, 0.5])
 
 
 def test_single_arm_rejects_partial_action(robot):
@@ -447,7 +454,7 @@ def test_float_parameters_come_from_the_config(robot, friction_compensation):
 
 
 def test_configure_refuses_while_servo_holds_the_arm(robot):
-    robot.servo.active = True
+    mark_running(robot.servo)
     with pytest.raises(RuntimeError, match="before the servo starts"):
         robot.configure()
 
@@ -455,7 +462,7 @@ def test_configure_refuses_while_servo_holds_the_arm(robot):
 def test_start_refuses_second_servo_before_enabling_again(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     robot.connect()
-    robot.servo.active = True
+    mark_running(robot.servo)
     with pytest.raises(RuntimeError, match="already running"):
         robot.start()
     robot.bus.enable.assert_called_once()
@@ -583,7 +590,7 @@ def test_servo_waits_for_asynchronous_feedback(robot):
 
     robot.bus.monitor.recv = receive
     reset_servo(robot)
-    reset_at = robot.servo.updated_at
+    reset_at = robot.servo._updated_at
     robot.servo._run()
-    assert robot.servo.failure is None
-    assert robot.servo.updated_at > reset_at
+    assert robot.servo._failure is None
+    assert robot.servo._updated_at > reset_at

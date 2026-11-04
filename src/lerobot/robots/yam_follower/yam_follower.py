@@ -438,8 +438,7 @@ class YamFollower(Robot):
     def open(self) -> None:
         """Connect the cameras, check the initial position, and reset the servo to it, without torque.
 
-        Once the CAN interface is open, `connect` runs `open`, `configure` and `start`. A bimanual robot
-        opens both arms before starting either, so an arm out of its initial position never enables the other.
+        Once the CAN interface is open, `connect` runs `open`, `configure` and `start`.
         """
         params = self._require_params()
         self.servo.stop_event.clear()

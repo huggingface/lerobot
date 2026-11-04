@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import math
+import threading
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -71,7 +72,7 @@ def mock_bus():
 
 
 def attach_bus(arm, bus):
-    arm.bus = arm.servo.bus = bus
+    arm.bus = arm.servo._bus = bus
     return bus
 
 
@@ -81,6 +82,12 @@ def mock_hardware(robot, monkeypatch):
         monkeypatch.setattr(arm.servo, "start", MagicMock())
 
 
+def mark_running(servo):
+    """Make the servo report active, with a finished thread that stop() can join."""
+    servo._thread = threading.Thread(target=lambda: None)
+    servo._thread.start()
+
+
 def ready(robot):
     zeros = np.zeros(7)
     for arm in robot.arms.values():
@@ -88,7 +95,7 @@ def ready(robot):
         arm.servo.reset(
             mit_control.JointState(position=zeros, velocity=zeros, torque=zeros), arm._require_params()
         )
-        arm.servo.active = True
+        mark_running(arm.servo)
     return dict.fromkeys(robot.action_features, 0.0)
 
 
@@ -146,7 +153,7 @@ def test_per_arm_and_top_level_cameras_follow_bimanual_conventions(tmp_path, mon
 
 def test_stale_feedback_on_either_arm_stops_both(robot):
     action = ready(robot)
-    robot.right_arm.servo.updated_at -= 1
+    robot.right_arm.servo._updated_at -= 1
     with pytest.raises(ConnectionError, match="stale"):
         robot.send_action(action)
     assert robot._stop.is_set()
@@ -154,7 +161,7 @@ def test_stale_feedback_on_either_arm_stops_both(robot):
 
 def test_inactive_arm_refuses_its_action(robot):
     action = ready(robot)
-    robot.right_arm.servo.active = False
+    robot.right_arm.servo._thread = None
     with pytest.raises(RuntimeError, match="active servo"):
         robot.send_action(action)
 

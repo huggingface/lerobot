@@ -490,24 +490,27 @@ class MitServo:
         stop_event: threading.Event,
     ) -> None:
         self.name = name
-        self.bus = bus
+        self._bus = bus
         # Set by reset(), which every start() needs first.
-        self.params: MitArmParams | None = None
-        self.gravity = gravity
+        self._params: MitArmParams | None = None
+        self._gravity = gravity
         self.stop_event = stop_event
         self.state = JointState(position=np.zeros(0), velocity=np.zeros(0), torque=np.zeros(0))
-        self.target = np.zeros(0)
-        self.command = np.zeros(0)
-        self.updated_at = 0.0
-        self.commanded_at = 0.0
-        self.command_timed_out = False
-        self.has_target = False
-        self.failure: Exception | None = None
-        # True from start() until stop() succeeds, even if the loop already exited on a fault.
-        self.active = False
+        self._target = np.zeros(0)
+        self._command = np.zeros(0)
+        self._updated_at = 0.0
+        self._commanded_at = 0.0
+        self._command_timed_out = False
+        self._has_target = False
+        self._failure: Exception | None = None
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._gripper: _GripperForceLimiter | None = None
+
+    @property
+    def active(self) -> bool:
+        """Whether the servo runs: from `start` until `stop` succeeds, even after the loop stopped on a fault."""
+        return self._thread is not None
 
     def reset(self, state: JointState, params: MitArmParams) -> None:
         """Reset the target and command to a measured state, before the first action.
@@ -517,20 +520,25 @@ class MitServo:
                 Measured state to start from.
             params (`MitArmParams`):
                 Settings of the arm.
+
+        Raises:
+            RuntimeError: If the servo is running.
         """
-        self.params = params
+        if self.active:
+            raise RuntimeError(f"{self.name} servo is running; stop it before reset()")
+        self._params = params
         self.state = state
-        self.target = state.position.copy()
-        self.command = state.position.copy()
-        self.updated_at = self.commanded_at = time.monotonic()
-        self.command_timed_out = False
-        self.has_target = False
+        self._target = state.position.copy()
+        self._command = state.position.copy()
+        self._updated_at = self._commanded_at = time.monotonic()
+        self._command_timed_out = False
+        self._has_target = False
         self._gripper = _GripperForceLimiter(params.gripper)
 
     @property
     def idle(self) -> bool:
         """Whether the arm is waiting for a target: before the first one or after the timeout."""
-        return not self.has_target or self.command_timed_out
+        return not self._has_target or self._command_timed_out
 
     def start(self) -> None:
         """Start the background servo thread.
@@ -538,18 +546,17 @@ class MitServo:
         Raises:
             RuntimeError: If the servo is already running or was never reset.
         """
-        if self.active or self._thread is not None:
+        if self.active:
             raise RuntimeError(f"{self.name} servo is already running")
-        if self.params is None:
+        if self._params is None:
             raise RuntimeError(f"{self.name} servo needs reset() with the arm settings before it starts")
-        self.failure = None
+        self._failure = None
         self._thread = threading.Thread(target=self._run, name=f"{self.name}-servo", daemon=True)
         try:
             self._thread.start()
         except BaseException:
             self._thread = None
             raise
-        self.active = True
 
     def stop(self, timeout_s: float = 2.0) -> None:
         """Stop the servo thread and disable the motors.
@@ -567,8 +574,7 @@ class MitServo:
             if self._thread.is_alive():
                 raise RuntimeError(f"{self.name} servo did not stop; use the hardware e-stop")
             self._thread = None
-        self.bus.disable()
-        self.active = False
+        self._bus.disable()
 
     def latest(self) -> JointState:
         """Return the latest measured state.
@@ -600,21 +606,23 @@ class MitServo:
             params = self._check_healthy()
             if self.idle and params.idle_mode == "float":
                 # Resume tracking from wherever the arm was moved by hand.
-                self.command = self.state.position.copy()
-            self.target = target.copy()
-            self.commanded_at = time.monotonic()
-            self.command_timed_out = False
-            self.has_target = True
+                self._command = self.state.position.copy()
+            self._target = target.copy()
+            self._commanded_at = time.monotonic()
+            self._command_timed_out = False
+            self._has_target = True
 
     def _check_healthy(self) -> MitArmParams:
-        if self.failure is not None or self.stop_event.is_set():
-            raise ConnectionError(f"{self.name} servo stopped after a motor/feedback error") from self.failure
-        params = self.params
+        if self._failure is not None or self.stop_event.is_set():
+            raise ConnectionError(
+                f"{self.name} servo stopped after a motor/feedback error"
+            ) from self._failure
+        params = self._params
         if params is None:
             raise ConnectionError(f"{self.name} servo was never reset")
         # A healthy loop's own read can take a full feedback timeout, so allow two plus a cycle.
         progress_timeout_s = 2 * params.feedback_timeout_s + 1 / params.control_frequency
-        if time.monotonic() - self.updated_at > progress_timeout_s:
+        if time.monotonic() - self._updated_at > progress_timeout_s:
             self.stop_event.set()
             raise ConnectionError(f"{self.name} servo feedback is stale; reconnect before commanding motion")
         return params
@@ -623,56 +631,59 @@ class MitServo:
         previous = started = time.monotonic()
         max_cycle_gap = 0.0
         try:
-            params = self.params
+            params = self._params
             if params is None:
                 raise RuntimeError(f"{self.name} servo was never reset")
             while not self.stop_event.is_set():
                 started = time.monotonic()
                 max_cycle_gap = max(max_cycle_gap, started - previous)
-                state = read_joint_state(self.bus, params)
+                state = read_joint_state(self._bus, params)
                 position = state.position
                 with self._lock:
                     self.state = state
-                    self.updated_at = time.monotonic()
-                    if started - self.commanded_at > params.command_timeout_s and not self.command_timed_out:
-                        self.target = position.copy()
-                        self.command = position.copy()
-                        self.command_timed_out = True
-                    joint_commands: tuple[MitCommand, ...] = ()
-                    n = params.num_joints
-                    if self.bus.enabled and self.idle and params.idle_mode == "float":
-                        self.command, joint_commands = _float_step(
-                            params, state, self.command, self.gravity(position)
-                        )
-                    elif self.bus.enabled:
-                        self.command, joint_commands = _track_step(
-                            params,
-                            position,
-                            self.target,
-                            self.command,
-                            self.gravity(position),
-                            min(started - previous, _MAX_CONTROL_DT_S),
-                        )
+                    self._updated_at = time.monotonic()
+                    if (
+                        started - self._commanded_at > params.command_timeout_s
+                        and not self._command_timed_out
+                    ):
+                        self._target = position.copy()
+                        self._command = position.copy()
+                        self._command_timed_out = True
                     packet: list[tuple[str, MitCommand]] = []
-                    if self.bus.enabled:
-                        packet.extend(zip(self.bus.motor_names[:n], joint_commands, strict=True))
-                    if self.bus.enabled and self._gripper is not None:
-                        packet.append(
-                            (
-                                self.bus.motor_names[n],
-                                self._gripper.command(
-                                    float(position[n]),
-                                    float(state.velocity[n]),
-                                    float(state.torque[n]),
-                                    float(self.command[n]),
-                                    started,
-                                ),
+                    # Torque can be off while this thread still runs, after a stop() that timed out.
+                    if self._bus.enabled:
+                        n = params.num_joints
+                        if self.idle and params.idle_mode == "float":
+                            self._command, joint_commands = _float_step(
+                                params, state, self._command, self._gravity(position)
                             )
-                        )
+                        else:
+                            self._command, joint_commands = _track_step(
+                                params,
+                                position,
+                                self._target,
+                                self._command,
+                                self._gravity(position),
+                                min(started - previous, _MAX_CONTROL_DT_S),
+                            )
+                        packet = list(zip(self._bus.motor_names[:n], joint_commands, strict=True))
+                        if self._gripper is not None:
+                            packet.append(
+                                (
+                                    self._bus.motor_names[n],
+                                    self._gripper.command(
+                                        float(position[n]),
+                                        float(state.velocity[n]),
+                                        float(state.torque[n]),
+                                        float(self._command[n]),
+                                        started,
+                                    ),
+                                )
+                            )
                 for name, command in packet:
                     if self.stop_event.is_set():
                         break
-                    self.bus.send_mit(name, command)
+                    self._bus.send_mit(name, command)
                 previous = started
                 self.stop_event.wait(max(0, 1 / params.control_frequency - (time.monotonic() - started)))
         except Exception as exc:
@@ -680,11 +691,11 @@ class MitServo:
                 f"{self.name} maximum servo cycle gap: {max_cycle_gap * 1000:.1f} ms; "
                 f"current cycle elapsed: {(time.monotonic() - started) * 1000:.1f} ms"
             )
-            self.failure = exc
+            self._failure = exc
             self.stop_event.set()
             logger.error(
                 "%s servo stopped: %s; %s",
                 self.name,
-                self.failure,
-                "; ".join(getattr(self.failure, "__notes__", [])),
+                self._failure,
+                "; ".join(getattr(self._failure, "__notes__", [])),
             )
