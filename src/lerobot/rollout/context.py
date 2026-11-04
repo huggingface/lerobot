@@ -348,6 +348,7 @@ def _prepare_rollout_devices(
     wrapper = ThreadSafeRobot(robot)
     try:
         check_control_rate(robot, cfg.fps, "--fps", cfg.interpolation_multiplier)
+        #TODO: Consider refactoring the validation methods in the future.
         if isinstance(robot, SimRobot):
             if validate_simulator is not None:
                 validate_simulator(robot)
@@ -630,7 +631,7 @@ def build_rollout_context(
                 "rename_observations_processor": {"rename_map": cfg.rename_map},
             },
         )
-
+        # TODO: Consider compatibility for remote inference
         if isinstance(robot, SimRobot):
             # A sim robot runs the processors of its env around the policy's, in the order of evaluation.
             env_preprocessor, env_postprocessor = make_env_pre_post_processors(
