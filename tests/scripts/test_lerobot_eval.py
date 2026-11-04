@@ -62,6 +62,29 @@ class _TwoStepEnv(gym.Env):
         return self._observation(), 0.0, self.tick == self._max_episode_steps, False, {}
 
 
+class _SparseSuccessEnv(gym.Env):
+    task = "move"
+    task_description = "move the robot"
+    _max_episode_steps = 2
+    observation_space = gym.spaces.Dict({"agent_pos": gym.spaces.Box(-10.0, 10.0, (6,), np.float32)})
+    action_space = gym.spaces.Box(-100.0, 100.0, (6,), np.float32)
+
+    def __init__(self, success_after: int, success_type: type | None) -> None:
+        self.success_after = success_after
+        self.success_type = success_type
+
+    def reset(self, *, seed: int | None = None, options: dict | None = None) -> tuple[dict, dict]:
+        super().reset(seed=seed)
+        self.tick = 0
+        return {"agent_pos": np.zeros(6, np.float32)}, {}
+
+    def step(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
+        self.tick += 1
+        terminated = self.tick >= self.success_after
+        info = {"is_success": self.success_type(True)} if terminated and self.success_type else {}
+        return {"agent_pos": np.zeros(6, np.float32)}, 0.0, terminated, False, info
+
+
 class _RecordingPolicy(nn.Module):
     def reset(self):
         self.inputs = []
@@ -146,3 +169,35 @@ def test_rollout_starts_each_episode_with_fresh_processor_state(pipeline_kind):
     if pipeline_kind == "flux3":
         # Delta 0.25 unnormalizes to 0.5 and must be added to B's initial measured position.
         torch.testing.assert_close(reused_actions[0, 0, :-1], torch.full((5,), 2.5), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("success_type", [None, bool, np.bool_], ids=["missing", "bool", "numpy_bool"])
+@pytest.mark.parametrize(
+    "autoreset_mode", [gym.vector.AutoresetMode.SAME_STEP, gym.vector.AutoresetMode.NEXT_STEP]
+)
+def test_rollout_respects_vector_info_success_mask(
+    success_type: type | None, autoreset_mode: gym.vector.AutoresetMode
+) -> None:
+    env = gym.vector.SyncVectorEnv(
+        [lambda: _SparseSuccessEnv(1, success_type), lambda: _SparseSuccessEnv(2, success_type)],
+        autoreset_mode=autoreset_mode,
+    )
+    try:
+        pre, post = make_policy_processor_pipelines([], [])
+        result = rollout(
+            env,
+            _RecordingPolicy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=pre,
+            postprocessor=post,
+        )
+    finally:
+        env.close()
+
+    expected = (
+        [[True, autoreset_mode == gym.vector.AutoresetMode.SAME_STEP], [False, True]]
+        if success_type
+        else [[False, False], [False, False]]
+    )
+    torch.testing.assert_close(result["success"], torch.tensor(expected))
