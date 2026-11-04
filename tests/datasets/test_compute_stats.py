@@ -485,6 +485,27 @@ def test_running_quantile_stats_get_statistics_with_quantiles():
             assert np.all(stats[prev_q_key] <= stats[q_key])
 
 
+@pytest.mark.parametrize("num_quantile_bins", [1, 2, 8])
+@pytest.mark.parametrize("multiple_batches", [False, True])
+def test_running_quantile_stats_interpolates_first_bin(num_quantile_bins, multiple_batches):
+    quantiles = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+    running_stats = RunningQuantileStats(quantile_list=quantiles, num_quantile_bins=num_quantile_bins)
+    data = np.column_stack((np.arange(8.0), np.arange(8.0) + 10.0))
+    if multiple_batches:
+        # Keep the initial range fixed so this also exercises accumulated counts.
+        running_stats.update(data[[0, 2, 4, 7]])
+        running_stats.update(data[[1, 3, 5, 6]])
+    else:
+        running_stats.update(data)
+
+    stats = running_stats.get_statistics()
+
+    # Every bin has the same population: the inverse histogram CDF is linear,
+    # including quantiles inside the first bin and the endpoint quantiles.
+    for q in quantiles:
+        np.testing.assert_allclose(stats[f"q{int(q * 100):02d}"], [7 * q, 10 + 7 * q], atol=1e-9)
+
+
 def test_running_quantile_stats_histogram_adjustment():
     """Test that histograms adjust when min/max change."""
     running_stats = RunningQuantileStats()
