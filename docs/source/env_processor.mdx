@@ -1,6 +1,6 @@
 # Environment Processors
 
-Environment processors transform an environment's observations before the policy's own processors, and the policy's actions before the environment. Each environment config returns its pair from `get_env_processors()`, and `make_env_pre_post_processors` builds them for evaluation and training-time evaluation.
+Environment processors transform an environment's observations before the policy's own processors, and the policy's actions before the environment. Each environment config returns its pair from `get_env_processors()`, and `make_env_pre_post_processors` builds them for evaluation, training-time evaluation and a sim robot.
 
 ## Simulated environments need none
 
@@ -13,7 +13,7 @@ Put a new simulator's observation mapping in its integration and its control con
 - **Environments outside `lerobot.sim`.** Isaac Lab Arena runs through its repository's own `make_env`, with batched torch observations; `IsaaclabArenaProcessorStep` selects and concatenates its state keys and converts its cameras.
 - **Policy-specific environment adaptations.** `make_env_pre_post_processors` lets a policy replace the environment's pair, as XVLA and Cosmos3 do for LIBERO.
 
-Evaluation admits a checkpoint on what its environment processors produce: the observation after the preprocessor and the action after the postprocessor, both read from their `transform_features`. A step therefore declares its output there as a function of its input, the way it behaves at runtime, for example a step that builds the state only when its source key is present. A sim robot and remote inference apply no environment processors, so a checkpoint used there has to take the simulator's observation and command its action itself.
+Evaluation admits a checkpoint on what its environment processors produce: the observation after the preprocessor and the action after the postprocessor, both read from their `transform_features`. A step therefore declares its output there as a function of its input, the way it behaves at runtime, for example a step that builds the state only when its source key is present. Remote inference applies no environment processors, so a checkpoint served there has to take the simulator's observation and command its action itself.
 
 The processing order during evaluation is:
 

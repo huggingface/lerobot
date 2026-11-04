@@ -330,6 +330,43 @@ def test_rollout_rejects_checkpoint_schema_before_opening_environment(sim_server
 
 
 @pytest.mark.dataset
+def test_rollout_checks_a_sim_robot_with_its_env_processors(tmp_path, monkeypatch):
+    pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")
+    from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+    from lerobot.processor import IdentityProcessorStep, PolicyProcessorPipeline
+    from lerobot.rollout import context
+
+    class Decode(IdentityProcessorStep):
+        def transform_features(self, features):
+            action = PolicyFeature(type=FeatureType.ACTION, shape=(2,))
+            return {**features, PipelineFeatureType.ACTION: {"action": action}}
+
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
+    monkeypatch.setattr(context, "make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr(
+        context,
+        "make_env_pre_post_processors",
+        lambda *_: (PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[Decode()])),
+    )
+    cfg = SimpleNamespace(
+        robot=robot.config,
+        teleop=None,
+        rename_map={},
+        fps=robot.descriptor.fps,
+        interpolation_multiplier=1,
+        policy=SimpleNamespace(
+            input_features={},
+            output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(4,))},
+        ),
+    )
+    # The checkpoint predicts 4 values, and the env processors turn them into the 2 the simulator takes.
+    try:
+        context._prepare_rollout_devices(cfg)
+    finally:
+        robot.disconnect()
+
+
+@pytest.mark.dataset
 @pytest.mark.parametrize("mode", ["sync", "rtc"])
 def test_sim_robot_local_inference_engines(tmp_path, mode):
     pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")

@@ -38,6 +38,7 @@ from lerobot.datasets import (
     aggregate_pipeline_dataset_features,
     create_initial_features,
 )
+from lerobot.envs.factory import make_env_pre_post_processors
 from lerobot.envs.utils import validate_checkpoint
 from lerobot.inference import (
     FeatureSpec,
@@ -351,9 +352,16 @@ def _prepare_rollout_devices(
             if validate_simulator is not None:
                 validate_simulator(robot)
             elif cfg.policy is not None:
-                # A sim robot applies no environment processors, so the checkpoint has to take the
-                # simulator's observation and command its action itself.
-                validate_checkpoint(robot.descriptor, cfg.policy, cfg.rename_map)
+                env_preprocessor, env_postprocessor = make_env_pre_post_processors(
+                    robot.config.env, cfg.policy
+                )
+                validate_checkpoint(
+                    robot.descriptor,
+                    cfg.policy,
+                    cfg.rename_map,
+                    env_preprocessor=env_preprocessor,
+                    env_postprocessor=env_postprocessor,
+                )
         if require_hold:
             wrapper.configure_hold()
         teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
@@ -622,6 +630,14 @@ def build_rollout_context(
                 "rename_observations_processor": {"rename_map": cfg.rename_map},
             },
         )
+
+        if isinstance(robot, SimRobot):
+            # A sim robot runs the processors of its env around the policy's, in the order of evaluation.
+            env_preprocessor, env_postprocessor = make_env_pre_post_processors(
+                robot.config.env, policy_config
+            )
+            preprocessor.steps = [*env_preprocessor.steps, *preprocessor.steps]
+            postprocessor.steps = [*postprocessor.steps, *env_postprocessor.steps]
 
         # Keep relative-action anchors fixed while the local policy's queued chunk drains.
         bind_relative_anchor(policy, preprocessor)
