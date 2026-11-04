@@ -71,7 +71,8 @@ class ToyEnv:
         """Move the point by ``action``."""
         self.state += action
         success = bool(self.state[0] >= 1)
-        return self._obs(), float(success), success, False, {"is_success": success}
+        info = {"is_success": success, "metrics": {"progress": float(self.state[0])}}
+        return self._obs(), float(success), success, False, info
 
     def render(self) -> np.ndarray:
         """Return an image whose brightness encodes x."""
@@ -134,7 +135,7 @@ class ToyVectorEnv(gym.vector.VectorEnv):
             success.astype(np.float32),
             success,
             np.zeros(self.num_envs, bool),
-            {"is_success": success},
+            {"is_success": success, "metrics": {"progress": self.state[:, 0].copy()}},
         )
 
 

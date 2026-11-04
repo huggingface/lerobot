@@ -118,6 +118,10 @@ class StepResult:
             Whether each env completed its task, `bool`.
         elapsed_steps (`np.ndarray`):
             Steps since the last reset, `int64`.
+        metrics (`dict[str, np.ndarray]`, *optional*, defaults to `{}`):
+            What the simulator reports besides success, one `float32` value per env, e.g. a progress score.
+            An integration fills it from its own step info. LeRobot records the last value of each episode
+            and never aggregates it, so a simulator chooses its own names and units.
     """
 
     obs: dict[str, np.ndarray]
@@ -127,6 +131,7 @@ class StepResult:
     truncated: np.ndarray
     is_success: np.ndarray
     elapsed_steps: np.ndarray
+    metrics: dict[str, np.ndarray] = field(default_factory=dict)
 
     def frames(self) -> tuple[np.ndarray, ...]:
         """Return one frame per env from the first RGB observation, including terminal frames."""
@@ -137,4 +142,9 @@ class StepResult:
 
     def info(self) -> dict[str, Any]:
         """Return the Gymnasium `info` dict for this step."""
-        return {"is_success": self.is_success, "task": self.task, "elapsed_steps": self.elapsed_steps}
+        return {
+            "is_success": self.is_success,
+            "task": self.task,
+            "elapsed_steps": self.elapsed_steps,
+            "metrics": self.metrics,
+        }

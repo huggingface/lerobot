@@ -20,7 +20,7 @@ import logging
 import multiprocessing
 import traceback
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from functools import partial
 from multiprocessing.connection import Connection
 from typing import Any
@@ -49,13 +49,15 @@ _NO_AUTORESET = getattr(getattr(gym.vector, "AutoresetMode", None), "DISABLED", 
 
 @dataclass(frozen=True)
 class _LastStep:
-    """One env's latest observation, reward and episode flags."""
+    """One env's latest observation, reward, episode flags and metrics."""
 
     obs: dict[str, np.ndarray]
     reward: float = 0.0
     terminated: bool = False
     truncated: bool = False
     is_success: bool = False
+    # The latest value of each metric the env reported in this episode.
+    metrics: dict[str, float] = field(default_factory=dict)
 
     @property
     def done(self) -> bool:
@@ -344,7 +346,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         # Finished envs keep their terminal observation and flags, with zero reward.
         self._last = [replace(last, reward=0.0) if last.done else last for last in self._last]
         running = [i for i, last in enumerate(self._last) if not last.done]
-        for i, obs, reward, terminated, truncated, success in self._step_envs(actions, running):
+        for i, obs, reward, terminated, truncated, success, metrics in self._step_envs(actions, running):
             self._elapsed_steps[i] += 1
             self._last[i] = _LastStep(
                 obs=self._canonical_observation(obs),
@@ -352,6 +354,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
                 terminated=bool(terminated),
                 truncated=bool(truncated or self._elapsed_steps[i] >= self._max_steps[i]),
                 is_success=bool(success),
+                metrics={**self._last[i].metrics, **{name: float(value) for name, value in metrics.items()}},
             )
         result = self._snapshot()
         return result.obs, result.reward, result.terminated, result.truncated, result.info()
@@ -469,14 +472,21 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         return [env.reset(seed=env_seed)[0] for env, env_seed in zip(self._envs, seeds, strict=True)]
 
     def _step_envs(self, actions: np.ndarray, running: list[int]) -> list[tuple[Any, ...]]:
-        """Step the envs in `running`; return `(i, obs, reward, terminated, truncated, success)` for each."""
+        """Step the envs in `running`.
+
+        Return `(i, obs, reward, terminated, truncated, success, metrics)` for each.
+        """
         if self._batched:
             if not running:
                 return []
             # One vector env steps every env; the rows of finished envs are dropped.
             batch, rewards, terminated, truncated, info = self._envs[0].step(actions)
             success = info.get("is_success", info.get("success", np.zeros(self.num_envs, dtype=bool)))
-            return [(i, _row(batch, i), rewards[i], terminated[i], truncated[i], success[i]) for i in running]
+            metrics = info.get("metrics") or {}
+            return [
+                (i, _row(batch, i), rewards[i], terminated[i], truncated[i], success[i], _row(metrics, i))
+                for i in running
+            ]
         if self.use_async_envs:
             # Send every step before waiting, so the processes step in parallel.
             for i in running:
@@ -485,13 +495,23 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         else:
             results = [self._envs[i].step(actions[i]) for i in running]
         return [
-            (i, obs, reward, terminated, truncated, info.get("is_success", info.get("success", False)))
+            (
+                i,
+                obs,
+                reward,
+                terminated,
+                truncated,
+                info.get("is_success", info.get("success", False)),
+                info.get("metrics") or {},
+            )
             for i, (obs, reward, terminated, truncated, info) in zip(running, results, strict=True)
         ]
 
     def _snapshot(self) -> StepResult:
         """Return the batch's latest result, and keep it as `latest`."""
         obs = {key: np.stack([last.obs[key] for last in self._last]) for key in self._last[0].obs}
+        # A metric an env has not reported in this episode reads as zero.
+        names = dict.fromkeys(name for last in self._last for name in last.metrics)
         task = tuple(
             str(getattr(env, "task_description", getattr(env, "task", self.task_group))) for env in self._envs
         )
@@ -504,6 +524,10 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             truncated=np.array([last.truncated for last in self._last]),
             is_success=np.array([last.is_success for last in self._last]),
             elapsed_steps=self._elapsed_steps.copy(),
+            metrics={
+                name: np.array([last.metrics.get(name, 0.0) for last in self._last], dtype=np.float32)
+                for name in names
+            },
         )
         return self._latest
 

@@ -339,6 +339,9 @@ def test_local_environment_matches_the_server(sim_server):
         for key in ("is_success", "elapsed_steps"):
             np.testing.assert_array_equal(actual[4][key], expected[4][key])
         assert tuple(actual[4]["task"]) == tuple(expected[4]["task"])
+        assert actual[4]["metrics"].keys() == expected[4]["metrics"].keys()
+        for name, values in expected[4]["metrics"].items():
+            np.testing.assert_array_equal(actual[4]["metrics"][name], values)
 
 
 def test_served_env_must_be_the_env_the_command_describes(sim_server):
