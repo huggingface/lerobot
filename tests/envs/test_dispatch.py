@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 
 import gymnasium as gym
@@ -204,3 +205,23 @@ def test_custom_get_env_processors_override():
 
     pre, post = _Env().get_env_processors()
     assert isinstance(pre, DataProcessorPipeline)
+
+
+def test_xvla_libero_processors_build_its_input():
+    from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+
+    pre, _ = make_env_pre_post_processors(LiberoEnvConfig(), XVLAConfig())
+    step = pre.steps[0]
+    rotated = torch.rand(1, 3, 4, 4)
+    state = torch.tensor([[0.1, 0.2, 0.3, 0.0, 0.0, math.pi / 2, 0.04, -0.04]])
+
+    out = step.observation(
+        {f"{OBS_IMAGES}.image": rotated, f"{OBS_IMAGES}.image2": rotated, OBS_STATE: state}
+    )
+
+    assert torch.equal(out[f"{OBS_IMAGES}.image"], rotated)
+    assert torch.equal(out[f"{OBS_IMAGES}.image2"], torch.flip(rotated, dims=[2, 3]))
+    # A quarter turn about z in the frame of the quaternion is the identity in the controller frame.
+    torch.testing.assert_close(out[OBS_STATE], torch.tensor([[0.1, 0.2, 0.3, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]]))
+    with pytest.raises(ValueError, match="8 wide"):
+        step.observation({OBS_STATE: torch.zeros(1, 20)})
