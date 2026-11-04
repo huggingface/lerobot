@@ -312,10 +312,10 @@ def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
 
 
 def test_gravity_model_is_loaded_from_bucket_cache(robot, monkeypatch, tmp_path):
-    model_path = tmp_path / "linear_4310.urdf"
+    model_path = tmp_path / "yam" / "v1" / "linear_4310.urdf"
     ensure_model = MagicMock(return_value=model_path)
     gravity_model = MagicMock()
-    monkeypatch.setattr(robot_module, "_GRAVITY_MODEL_LOCAL_PATH", model_path)
+    monkeypatch.setattr(robot_module, "HF_LEROBOT_ROBOT_URDFS", tmp_path)
     monkeypatch.setattr(robot_module, "ensure_bucket_file", ensure_model)
     monkeypatch.setattr(robot_module, "GravityCompensation", gravity_model)
     robot.config.gravity_compensation = True

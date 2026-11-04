@@ -33,7 +33,7 @@ from lerobot.utils import (
     ensure_bucket_file,
     require_package,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import HF_LEROBOT_ROBOT_URDFS, ROBOT_URDFS_BUCKET_ID
 from lerobot.utils.import_utils import (
     _can_available,
     _motorbridge_available,
@@ -72,9 +72,7 @@ _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
 # DM4310 gripper's force limit to motor torque.
 _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRIPPER_FINGER_STROKE_M = 0.096
-_GRAVITY_MODEL_BUCKET_ID = "lerobot/robot-urdfs"
 _GRAVITY_MODEL_REMOTE_PATH = "yam/v1/linear_4310.urdf"
-_GRAVITY_MODEL_LOCAL_PATH = HF_LEROBOT_HOME / "robot-urdfs" / _GRAVITY_MODEL_REMOTE_PATH
 _MAX_GRAVITY_TORQUE_NM = 25.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
 _JOINT_FEEDBACK_TOLERANCE_RAD = 0.15
@@ -532,9 +530,9 @@ class YamFollower(Robot):
         if not self.config.gravity_compensation or self.gravity_model is not None:
             return
         model_path = ensure_bucket_file(
-            _GRAVITY_MODEL_BUCKET_ID,
+            ROBOT_URDFS_BUCKET_ID,
             _GRAVITY_MODEL_REMOTE_PATH,
-            _GRAVITY_MODEL_LOCAL_PATH,
+            HF_LEROBOT_ROBOT_URDFS / _GRAVITY_MODEL_REMOTE_PATH,
             token=False,
         )
         self.gravity_model = GravityCompensation(model_path, _MODEL_ARM_JOINTS, base_frame="base")
