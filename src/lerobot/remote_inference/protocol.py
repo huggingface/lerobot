@@ -17,13 +17,7 @@
 import math
 from typing import Any
 
-from lerobot.transport.protocol.envelope import (
-    Envelope,
-    ErrorCode,
-    MessageType,
-    ProtocolError,
-    validate_segment,
-)
+from lerobot.transport.protocol import Envelope, ErrorCode, MessageType, ProtocolError, validate_segment
 
 __all__ = [
     "PROTOCOL_VERSION",

@@ -26,7 +26,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
-from lerobot.sim.types import EnvDescriptor
+from lerobot.sim import EnvDescriptor
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 

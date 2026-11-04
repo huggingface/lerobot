@@ -25,9 +25,9 @@ import pytest
 from gymnasium import spaces
 from gymnasium.wrappers.vector import RecordEpisodeStatistics
 
-from lerobot.env_server.client import EnvClient, RemoteVectorEnv
+from lerobot.env_server import EnvClient, RemoteVectorEnv
 from lerobot.envs import EnvClientConfig
-from lerobot.sim.config import SimConfig
+from lerobot.sim import SimConfig
 from lerobot.sim.integrations.utils import canonical_observation
 from lerobot.sim.local_vector_env import LocalVectorEnv, _ProcessEnv
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig

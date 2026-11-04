@@ -26,18 +26,17 @@ import draccus
 import gymnasium as gym
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.env_server.protocol import DEFAULT_MAX_PAYLOAD_BYTES
+from lerobot.env_server import DEFAULT_MAX_PAYLOAD_BYTES
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sim.config import SimConfig
+from lerobot.sim import EnvDescriptor, SimConfig
 from lerobot.sim.integrations import envhub
-from lerobot.sim.types import EnvDescriptor
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 if TYPE_CHECKING:
-    from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.local_vector_env import LocalVectorEnv
+    from lerobot.env_server import RemoteVectorEnv
+    from lerobot.sim import LocalVectorEnv
 
 logger = logging.getLogger(__name__)
 
@@ -151,12 +150,12 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         task_group: str | None = None,
         task_id: int | None = None,
     ) -> tuple[EnvDescriptor, Callable[[str, int], LocalVectorEnv | RemoteVectorEnv]]:
-        from lerobot.sim.local_vector_env import LocalVectorEnv
+        from lerobot.sim import LocalVectorEnv
 
         settings = self.sim_settings()
         server = self.server
         if server is not None:
-            from lerobot.env_server.client import EnvClient, RemoteVectorEnv
+            from lerobot.env_server import EnvClient, RemoteVectorEnv
 
             if self.max_parallel_tasks != 1:
                 raise ValueError("A served environment runs one task at a time")

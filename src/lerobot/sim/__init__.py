@@ -18,3 +18,15 @@ A `SimConfig` names an integration (`lerobot.sim.integrations.<type>`) and its o
 `LocalVectorEnv` runs it, and `lerobot.env_server` serves it. Simulator packages are imported only
 when used.
 """
+
+from .config import SimConfig, SimSettings
+from .local_vector_env import LocalVectorEnv
+from .types import EnvDescriptor, StepResult
+
+__all__ = [
+    "EnvDescriptor",
+    "LocalVectorEnv",
+    "SimConfig",
+    "SimSettings",
+    "StepResult",
+]

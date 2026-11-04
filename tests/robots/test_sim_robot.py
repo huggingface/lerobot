@@ -29,7 +29,8 @@ from lerobot.envs import EnvClientConfig
 from lerobot.envs.utils import validate_checkpoint
 from lerobot.processor import make_default_processors
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
-from lerobot.robots.sim_robot import SimRobot, SimRobotConfig, episode_ended, start_episode
+from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
+from lerobot.robots.utils import episode_ended, start_episode
 from lerobot.transport.zenoh import ZenohConfig
 from tests.fixtures.sim_server import free_port
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig

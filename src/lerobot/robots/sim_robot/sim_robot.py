@@ -14,7 +14,6 @@
 
 """A sim env behind the `Robot` interface, run locally or on an env server."""
 
-import math
 from dataclasses import replace
 from functools import cached_property
 from typing import TYPE_CHECKING
@@ -22,7 +21,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.sim.types import EnvDescriptor, StepResult
+from lerobot.sim import EnvDescriptor, StepResult
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.feature_spec import FeatureSpec
@@ -31,8 +30,8 @@ from ..robot import Robot
 from .config_sim_robot import SimRobotConfig
 
 if TYPE_CHECKING:
-    from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sim.local_vector_env import LocalVectorEnv
+    from lerobot.env_server import RemoteVectorEnv
+    from lerobot.sim import LocalVectorEnv
 
 
 class SimRobot(Robot):
@@ -171,27 +170,3 @@ class SimRobot(Robot):
         # Not decorated: it must also close an env that was built but never connected.
         self._env.close()
         self._connected = False
-
-
-def check_control_rate(robot: Robot, fps: float, flag: str | None = None, multiplier: int = 1) -> None:
-    """Raise unless `fps * multiplier` commands per second match a sim robot's control rate."""
-    if not isinstance(robot, SimRobot):
-        return
-    sent, rate = fps * multiplier, robot.descriptor.fps
-    if not math.isclose(sent, rate):
-        hint = f": pass {flag}={rate / multiplier:g}" if flag else ""
-        raise ValueError(
-            f"The control loop sends {sent:g} commands per second but the simulator control rate is {rate:g} Hz"
-            f"{hint}"
-        )
-
-
-def start_episode(robot: Robot) -> None:
-    """Start a new episode. A sim robot resets its environment; a real robot's scene is reset by hand."""
-    if isinstance(robot, SimRobot):
-        robot.start_episode()
-
-
-def episode_ended(robot: Robot) -> bool:
-    """Return whether a sim robot's episode just ended; always False for a real robot."""
-    return isinstance(robot, SimRobot) and robot.episode_ended

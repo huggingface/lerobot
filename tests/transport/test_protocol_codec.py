@@ -11,15 +11,18 @@ import pytest
 pytest.importorskip("msgpack")
 import msgpack
 
-from lerobot.transport.protocol import codec
-from lerobot.transport.protocol.codec import (
+from lerobot.transport.protocol import (
     CodecLimits,
+    Envelope,
+    ErrorCode,
+    MessageType,
+    ProtocolError,
     RGBImage,
+    codec,
     decode_message,
     encode_message,
     peek_envelope,
 )
-from lerobot.transport.protocol.envelope import Envelope, ErrorCode, MessageType, ProtocolError
 
 
 def message(body=None):

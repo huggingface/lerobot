@@ -17,3 +17,15 @@
 ``lerobot-env-server`` is the server. ``RemoteVectorEnv`` is the client, with the same API as
 ``LocalVectorEnv``.
 """
+
+from .client import EnvClient, RemoteVectorEnv
+from .protocol import DEFAULT_MAX_PAYLOAD_BYTES
+from .server import EnvServer, EnvServerConfig
+
+__all__ = [
+    "DEFAULT_MAX_PAYLOAD_BYTES",
+    "EnvClient",
+    "EnvServer",
+    "EnvServerConfig",
+    "RemoteVectorEnv",
+]

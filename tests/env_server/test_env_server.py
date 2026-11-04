@@ -22,12 +22,11 @@ import time
 import numpy as np
 import pytest
 
-from lerobot.env_server.client import EnvClient, RemoteVectorEnv
+from lerobot.env_server import EnvClient, EnvServer, EnvServerConfig, RemoteVectorEnv
 from lerobot.env_server.protocol import decode_descriptor, encode_descriptor, instance_prefix
-from lerobot.env_server.server import EnvServer, EnvServerConfig
 from lerobot.envs import EnvClientConfig
-from lerobot.sim.config import SimSettings
-from lerobot.transport.protocol.envelope import ErrorCode, MessageType, ProtocolError
+from lerobot.sim import SimSettings
+from lerobot.transport.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig
 from tests.fixtures.sim_server import free_port
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig

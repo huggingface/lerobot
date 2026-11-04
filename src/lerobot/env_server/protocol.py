@@ -22,9 +22,8 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.sim.types import EnvDescriptor, StepResult
-from lerobot.transport.protocol.codec import CodecLimits
-from lerobot.transport.protocol.envelope import validate_segment
+from lerobot.sim import EnvDescriptor, StepResult
+from lerobot.transport.protocol import CodecLimits, validate_segment
 from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
 # The env server's own version, separate from the remote inference and envelope versions.

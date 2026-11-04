@@ -37,7 +37,7 @@ import yaml
 from huggingface_hub import snapshot_download
 
 import lerobot
-from lerobot.env_server.server import EnvServer, EnvServerConfig
+from lerobot.env_server import EnvServer, EnvServerConfig
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 

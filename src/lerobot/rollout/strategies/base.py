@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 
-from lerobot.robots.sim_robot import episode_ended
+from lerobot.robots.utils import episode_ended
 from lerobot.utils.cycle_timer import CycleTimer
 
 from ..context import RolloutContext

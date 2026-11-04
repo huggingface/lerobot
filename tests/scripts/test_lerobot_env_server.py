@@ -27,12 +27,11 @@ import numpy as np
 import pytest
 import yaml
 
-from lerobot.env_server.client import EnvClient
-from lerobot.env_server.server import EnvServerConfig
+from lerobot.env_server import EnvClient, EnvServerConfig
 from lerobot.envs.configs import EnvConfig, check_served
 from lerobot.scripts import lerobot_env_server
 from lerobot.scripts.lerobot_env_server import EnvServerLaunchConfig
-from lerobot.sim.config import SimSettings
+from lerobot.sim import SimSettings
 from tests.fixtures.sim_server import free_port
 from tests.fixtures.toy_env import ToyEnvConfig
 from tests.utils import resolve_without_simulator
@@ -205,10 +204,10 @@ def test_native_server_listens_on_localhost_unless_told_otherwise(tmp_path, monk
     monkeypatch.setattr(lerobot_env_server, "EnvServer", Server)
     config = tmp_path / "toy.yaml"
     config.write_text("deployment: toy\nsim:\n  type: toy\n  task: reach\n  semantics: toy-delta-v1\n")
-    argv = ["lerobot-env-server", f"--config_path={config}", "--zenoh.listen_endpoints=[tcp/0.0.0.0:7999]"]
+    argv = ["lerobot-env-server", f"--config_path={config}", "--zenoh.listen_endpoints=[tcp/127.0.0.1:7999]"]
     monkeypatch.setattr(sys, "argv", argv)
     lerobot_env_server.main()
-    assert configs[0].zenoh.listen_endpoints == ["tcp/0.0.0.0:7999"]
+    assert configs[0].zenoh.listen_endpoints == ["tcp/127.0.0.1:7999"]
 
 
 def test_the_server_runs_in_its_own_process_and_stops_on_sigterm(tmp_path):
