@@ -813,12 +813,22 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         trust_remote_code=cfg.trust_remote_code,
     )
 
+    # Environment-specific preprocessor and postprocessor (e.g. for LIBERO environments), built before
+    # admission: a checkpoint is admitted on the observation and the action they produce.
+    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
+
     # Check the checkpoint against the sim before loading the policy. Hub-only and native-batch envs have
     # no descriptor.
     first_env = next(env for tasks in envs.values() for env in tasks.values())
     descriptor = getattr(first_env, "descriptor", None)
     if descriptor is not None:
-        validate_checkpoint(descriptor, cfg.policy, cfg.rename_map)
+        validate_checkpoint(
+            descriptor,
+            cfg.policy,
+            cfg.rename_map,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
+        )
 
     logging.info("Making policy.")
     policy = make_policy(
@@ -841,9 +851,6 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         pretrained_revision=cfg.policy.pretrained_revision,
         preprocessor_overrides=preprocessor_overrides,
     )
-
-    # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
-    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
 
     recording_dir = Path(cfg.output_dir) / "recordings" if cfg.eval.recording else None
     max_episodes_rendered = 0 if cfg.eval.recording else 10

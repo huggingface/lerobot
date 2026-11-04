@@ -20,9 +20,32 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoint
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from tests.fixtures.toy_env import ToyEnvConfig
+
+
+class _Declares(ProcessorStep):
+    """An env processor step that outputs one feature of its own shape, e.g. a decoded action or a built state."""
+
+    def __init__(self, kind: PipelineFeatureType, feature: PolicyFeature, key: str):
+        self.kind, self.feature, self.key = kind, feature, key
+
+    def __call__(self, transition):
+        return transition
+
+    def get_config(self):
+        return {"key": self.key, "shape": self.feature.shape}
+
+    def transform_features(self, features):
+        return {**features, self.kind: {**features[self.kind], self.key: self.feature}}
+
+
+def _decodes_action(*shape: int) -> PolicyProcessorPipeline:
+    return PolicyProcessorPipeline(
+        steps=[_Declares(PipelineFeatureType.ACTION, PolicyFeature(FeatureType.ACTION, shape), "action")]
+    )
 
 
 def test_checkpoint_admission():
@@ -66,6 +89,20 @@ def test_checkpoint_admission():
     config.input_features["observation.state"] = PolicyFeature(FeatureType.STATE, (2,))
     config.output_features["action"] = PolicyFeature(FeatureType.ACTION, (7,))
     with pytest.raises(ValueError, match="action dimension"):
+        validate_checkpoint(descriptor, config, rename_map)
+    # A checkpoint is admitted on what its env processors produce: the action they command ...
+    validate_checkpoint(descriptor, config, rename_map, env_postprocessor=_decodes_action(2))
+    with pytest.raises(ValueError, match="command \\(3,\\) and the simulator expects \\(2,\\)"):
+        validate_checkpoint(descriptor, config, rename_map, env_postprocessor=_decodes_action(3))
+    # ... and the observation they build, renamed after them.
+    config.output_features["action"] = PolicyFeature(FeatureType.ACTION, (2,))
+    config.input_features["observation.state"] = PolicyFeature(FeatureType.STATE, (5,))
+    state = PolicyFeature(FeatureType.STATE, (5,))
+    builds_state = PolicyProcessorPipeline(
+        steps=[_Declares(PipelineFeatureType.OBSERVATION, state, "observation.state")]
+    )
+    validate_checkpoint(descriptor, config, rename_map, env_preprocessor=builds_state)
+    with pytest.raises(ValueError, match="shape mismatch"):
         validate_checkpoint(descriptor, config, rename_map)
 
 

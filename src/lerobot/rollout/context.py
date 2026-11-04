@@ -351,6 +351,8 @@ def _prepare_rollout_devices(
             if validate_simulator is not None:
                 validate_simulator(robot)
             elif cfg.policy is not None:
+                # A sim robot applies no environment processors, so the checkpoint has to take the
+                # simulator's observation and command its action itself.
                 validate_checkpoint(robot.descriptor, cfg.policy, cfg.rename_map)
         if require_hold:
             wrapper.configure_hold()
