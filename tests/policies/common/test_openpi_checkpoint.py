@@ -32,8 +32,8 @@ from lerobot.policies.common import openpi_checkpoint
 from lerobot.policies.common.openpi_checkpoint import (
     _load_state_dict_into_meta_model,
     _parameter_to_meta,
-    _parameters_on_meta,
     load_complete_checkpoint,
+    parameters_on_meta,
 )
 from tests.utils import require_cuda
 
@@ -92,7 +92,7 @@ def checkpoint():
 
 
 def load_on_meta(state_dict):
-    with _parameters_on_meta():
+    with parameters_on_meta():
         model = Toy()
     _load_state_dict_into_meta_model(model, state_dict, "cpu")
     return model
@@ -104,7 +104,7 @@ def load_toy_policy(policy_cls, path):
 
 def test_other_threads_build_real_parameters():
     built = []
-    with _parameters_on_meta():
+    with parameters_on_meta():
         worker = threading.Thread(target=lambda: built.append(nn.Linear(2, 2)))
         worker.start()
         worker.join()
@@ -126,23 +126,23 @@ def test_hook_is_registered_once(monkeypatch):
     registered = []
     monkeypatch.setattr(openpi_checkpoint, "_hook_registered", False)
     monkeypatch.setattr(openpi_checkpoint, "register_module_parameter_registration_hook", registered.append)
-    with _parameters_on_meta():
+    with parameters_on_meta():
         pass
-    with _parameters_on_meta(), _parameters_on_meta():
+    with parameters_on_meta(), parameters_on_meta():
         pass
     assert registered == [_parameter_to_meta]
 
 
 def test_leaving_a_nested_block_keeps_the_outer_one():
-    with _parameters_on_meta():
-        with _parameters_on_meta():
+    with parameters_on_meta():
+        with parameters_on_meta():
             pass
         assert nn.Linear(2, 2).weight.is_meta
     assert not nn.Linear(2, 2).weight.is_meta
 
 
 def test_shared_parameter_stays_shared():
-    with _parameters_on_meta():
+    with parameters_on_meta():
         model = Shared()
         model.c = nn.Module()
         model.c.weight = model.a.weight
@@ -151,7 +151,7 @@ def test_shared_parameter_stays_shared():
 
 @require_cuda
 def test_tensors_move_to_the_device_as_they_load(checkpoint):
-    with _parameters_on_meta():
+    with parameters_on_meta():
         model = Toy()
     _load_state_dict_into_meta_model(model, checkpoint, "cuda")
     for name, tensor in model.state_dict().items():
@@ -185,7 +185,7 @@ def test_each_tensor_is_copied_on_its_device_then_moved_before_the_next(checkpoi
         events.append("copy" if device is None else f"to {device}")
         return to(tensor, *args, **kwargs)
 
-    with _parameters_on_meta():
+    with parameters_on_meta():
         model = Toy()
     monkeypatch.setattr(torch.Tensor, "to", record)
     _load_state_dict_into_meta_model(model, checkpoint, "cpu")
@@ -292,6 +292,13 @@ def test_loading_a_module_drops_the_weights_of_the_modules_on_its_way():
     assert_same(loaded.toy, expected)
 
 
+def test_loading_a_module_inside_parameters_on_meta_raises():
+    parent = parent_on_meta()
+    state_dict = {f"toy.{name}": tensor for name, tensor in Toy().state_dict().items()}
+    with parameters_on_meta(), pytest.raises(RuntimeError, match="inside a parameters_on_meta block"):
+        openpi_checkpoint.load_modules(parent, state_dict, ["toy"], "cpu")
+
+
 def test_loading_a_module_copies_a_shared_parameter_once(monkeypatch):
     with torch.device("meta"):
         parent = nn.Module()
@@ -395,3 +402,25 @@ def test_loading_a_module_reports_a_parameter_the_file_lacks_even_if_it_is_not_o
     state_dict = {f"toy.{name}": tensor for name, tensor in Toy().state_dict().items()}
     with pytest.raises(RuntimeError, match=r"does not hold toy\.extra\.$"):
         openpi_checkpoint.load_modules(parent, state_dict, ["toy"], "cpu")
+
+
+def test_strict_loading_refuses_a_tensor_the_module_lacks():
+    state_dict = {f"toy.{name}": tensor for name, tensor in Toy().state_dict().items()}
+    # Outside the listed module too: a policy built with fewer layers than the checkpoint holds lacks them.
+    state_dict["toy.extra"] = state_dict["layers.9.weight"] = torch.ones(2)
+    assert isinstance(openpi_checkpoint.load_modules(parent_on_meta(), state_dict, ["toy"], "cpu").toy, Toy)
+    with pytest.raises(
+        RuntimeError, match=r"holds toy\.extra, which the policy lacks; holds layers\.9\.weight, which"
+    ):
+        openpi_checkpoint.load_modules(parent_on_meta(), state_dict, ["toy"], "cpu", strict=True)
+
+
+def test_strict_loading_refuses_a_shared_weight_under_two_names():
+    with torch.device("meta"):
+        parent = nn.Module()
+        parent.shared = Shared()
+    state_dict = {"shared.a.weight": torch.arange(4.0), "shared.b.weight": torch.arange(4.0)}
+    with pytest.raises(
+        RuntimeError, match=r"holds one shared weight as shared\.a\.weight, shared\.b\.weight\.$"
+    ):
+        openpi_checkpoint.load_modules(parent, state_dict, ["shared"], "cpu", strict=True)

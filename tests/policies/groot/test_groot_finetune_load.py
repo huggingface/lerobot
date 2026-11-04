@@ -794,9 +794,19 @@ def test_finetune_without_a_base_config_or_its_base_model_fails_the_regular_way(
 
 
 @pytest.mark.parametrize(
-    ("consent", "config_consent"), [(False, None), (True, None), (False, True), (True, False)]
+    ("consent", "config_consent", "loader"),
+    [
+        (False, None, "from_pretrained"),
+        (True, None, "from_pretrained"),
+        (False, True, "from_pretrained"),
+        (True, False, "from_pretrained"),
+        (False, None, "load_checkpoint_modules"),
+        (True, True, "load_checkpoint_modules"),
+    ],
 )
-def test_saved_base_config_runs_backbone_custom_code_only_with_consent(tmp_path, consent, config_consent):
+def test_saved_base_config_runs_backbone_custom_code_only_with_consent(
+    tmp_path, consent, config_consent, loader
+):
     base, finetune = _save_finetune(tmp_path)
     # A backbone folder whose config asks transformers to run a module that leaves a mark when imported. Its
     # name is unique, as transformers imports a module of the same folder name only once per process.
@@ -817,8 +827,153 @@ def test_saved_base_config_runs_backbone_custom_code_only_with_consent(tmp_path,
     config = None
     if config_consent is not None:
         config = PreTrainedConfig.from_pretrained(finetune, trust_remote_code=config_consent)
-    GrootPolicy.from_pretrained(finetune, config=config, trust_remote_code=consent)
-    # The caller's config is left as it was.
-    assert config is None or config.trust_remote_code is config_consent
+    if loader == "from_pretrained":
+        GrootPolicy.from_pretrained(finetune, config=config, trust_remote_code=consent)
+        # The caller's config is left as it was.
+        assert config is None or config.trust_remote_code is config_consent
+    else:
+        GrootPolicy.load_checkpoint_modules(finetune, CHOSEN_MODULES[:1], config=config)
 
     assert mark.exists() is consent
+
+
+CHOSEN_MODULES = [
+    "_groot_model.action_head",
+    # The checkpoint holds this tied weight under the LM head's name.
+    "_groot_model.backbone.model.model.language_model.embed_tokens",
+]
+
+
+@pytest.mark.parametrize("saved", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("loaded_as", [torch.float32, torch.bfloat16])
+def test_chosen_modules_load_as_in_the_full_load(tmp_path, monkeypatch, saved, loaded_as):
+    base, finetune = _save_finetune(tmp_path, dtype=saved)
+
+    def config():
+        config = GrootConfig.from_pretrained(finetune)
+        # A checkpoint can load in another dtype than it was saved in, as an export to bfloat16 does.
+        config.dtype = loaded_as
+        return config
+
+    full = _load_regular(finetune, monkeypatch, config=config())
+
+    (base / "model.safetensors").unlink()
+    policy = GrootPolicy.load_checkpoint_modules(finetune, CHOSEN_MODULES, config=config())
+
+    assert not policy.training
+    for name in CHOSEN_MODULES:
+        _assert_same(_tensors(full.get_submodule(name)), _tensors(policy.get_submodule(name)))
+    # The rest has no weights, so code that reaches it fails instead of reading random ones.
+    assert policy._groot_model.backbone.model.model.visual is None
+    assert not any(parameter.is_meta for parameter in policy.parameters())
+
+
+def test_chosen_modules_leave_the_global_random_state_as_it_was(tmp_path):
+    _, finetune = _save_finetune(tmp_path)
+    config = GrootConfig.from_pretrained(finetune)
+    state = torch.get_rng_state()
+
+    GrootPolicy.load_checkpoint_modules(finetune, CHOSEN_MODULES, config=config)
+
+    assert torch.equal(torch.get_rng_state(), state)
+
+
+def test_chosen_backbone_keeps_its_tied_weight_shared(tmp_path):
+    _, finetune = _save_finetune(tmp_path)
+
+    policy = GrootPolicy.load_checkpoint_modules(
+        finetune, ["_groot_model.backbone"], config=GrootConfig.from_pretrained(finetune)
+    )
+
+    lm_head, embedding = modeling_groot._TIED_WEIGHT_NAMES
+    assert policy._groot_model.get_parameter(lm_head) is policy._groot_model.get_parameter(embedding)
+
+
+def test_chosen_modules_refuse_a_subclass(tmp_path):
+    class Subclass(GrootPolicy):
+        pass
+
+    with pytest.raises(ValueError, match="Only GrootPolicy"):
+        Subclass.load_checkpoint_modules(tmp_path, CHOSEN_MODULES, config=GrootConfig())
+
+
+def test_chosen_modules_of_an_older_checkpoint_read_the_base_config_at_base_model_path(tmp_path, monkeypatch):
+    base, finetune = _save_finetune(tmp_path)
+    full = _load_regular(finetune, monkeypatch)
+    # As a checkpoint saved before the config kept the base config.
+    _name_base(finetune, str(base))
+    (base / "model.safetensors").unlink()
+
+    policy = GrootPolicy.load_checkpoint_modules(
+        finetune, CHOSEN_MODULES[:1], config=GrootConfig.from_pretrained(finetune)
+    )
+
+    _assert_same(
+        _tensors(full.get_submodule(CHOSEN_MODULES[0])), _tensors(policy.get_submodule(CHOSEN_MODULES[0]))
+    )
+
+
+def test_chosen_modules_need_a_base_config(tmp_path):
+    _, finetune = _save_finetune(tmp_path)
+    # A base model on another machine, which is not a repo id either.
+    _name_base(finetune, str(tmp_path / "elsewhere" / "base"))
+
+    with pytest.raises(ValueError, match="Found no GR00T base config"):
+        GrootPolicy.load_checkpoint_modules(
+            finetune, CHOSEN_MODULES, config=GrootConfig.from_pretrained(finetune)
+        )
+
+
+def test_chosen_modules_refuse_bfloat16_from_a_base_config_without_dtype(tmp_path):
+    _, finetune = _save_finetune(tmp_path)
+    config = GrootConfig.from_pretrained(finetune)
+    config.base_model_config["dtype"] = None
+    config.dtype = torch.bfloat16
+
+    with pytest.raises(ValueError, match="names no dtype"):
+        GrootPolicy.load_checkpoint_modules(finetune, CHOSEN_MODULES, config=config)
+
+
+def test_chosen_modules_take_the_fine_tunes_tuning_choices(tmp_path, monkeypatch):
+    _, finetune = _save_finetune(tmp_path, tune_backbone=False)
+    config = GrootConfig.from_pretrained(finetune)
+    # Not what the base config says, so the base config alone gives other requires_grad flags.
+    config.tune_visual, config.tune_projector = True, False
+    full = _load_regular(finetune, monkeypatch, config=config)
+
+    policy = GrootPolicy.load_checkpoint_modules(finetune, ["_groot_model"], config=config)
+
+    _assert_same(_tensors(full._groot_model), _tensors(policy._groot_model))
+
+
+def test_chosen_modules_take_the_hub_options_and_read_the_config_saved_with_the_weights(
+    tmp_path, monkeypatch
+):
+    base, finetune = _save_finetune(tmp_path)
+    full = _load_regular(finetune, monkeypatch)
+    # Only in this cache, which nothing finds unless it is given.
+    commit = "0" * 40
+    repo = tmp_path / "hub" / "models--someone--groot-finetune"
+    shutil.copytree(finetune, repo / "snapshots" / commit)
+    (repo / "refs").mkdir()
+    (repo / "refs" / "main").write_text(commit)
+
+    shutil.rmtree(base)
+    policy = GrootPolicy.load_checkpoint_modules(
+        "someone/groot-finetune", CHOSEN_MODULES[:1], cache_dir=tmp_path / "hub", local_files_only=True
+    )
+
+    _assert_same(
+        _tensors(full.get_submodule(CHOSEN_MODULES[0])), _tensors(policy.get_submodule(CHOSEN_MODULES[0]))
+    )
+
+
+def test_chosen_modules_refuse_a_weight_the_policy_lacks(tmp_path):
+    _, finetune = _save_finetune(tmp_path)
+    weights = load_file(finetune / "model.safetensors")
+    # Outside the listed modules, as from_pretrained refuses it too.
+    weights["_groot_model.backbone.extra"] = torch.ones(2)
+    save_file(weights, finetune / "model.safetensors")
+
+    with pytest.raises(RuntimeError, match="holds _groot_model.backbone.extra, which the policy lacks"):
+        GrootPolicy.load_checkpoint_modules(finetune, CHOSEN_MODULES[:1])
