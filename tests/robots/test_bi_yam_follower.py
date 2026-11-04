@@ -190,7 +190,7 @@ def test_connect_calibrates_both_arms_before_enabling_torque(tmp_path, monkeypat
 
     assert robot.is_calibrated
     for arm in robot.arms.values():
-        assert arm.bus.open.call_count == 2
+        arm.bus.open.assert_called_once()
         arm.bus.enable.assert_called_once()
     robot.disconnect()
 

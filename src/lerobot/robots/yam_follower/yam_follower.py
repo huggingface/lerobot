@@ -357,27 +357,21 @@ class YamFollower(Robot):
 
         Args:
             calibrate (`bool`, *optional*, defaults to `True`):
-                Measure missing gripper limits before starting control. When `False`, connect
-                only the CAN interface so calibration can be run explicitly.
+                Measure missing gripper limits, then start control. When `False`, connect only the CAN
+                interface, with torque off, so calibration can be run explicitly.
         """
-        if not calibrate:
-            self._open_for_calibration()
-            logger.info(f"{self} connected for calibration.")
-            return
-        if not self.is_calibrated:
-            self._open_for_calibration()
+        self._open_bus()
+        if calibrate:
             try:
-                self.calibrate()
-            finally:
+                if not self.is_calibrated:
+                    self.calibrate()
+                self.open()
+                self.configure()
+                self.start()
+            except BaseException:
                 self.disconnect()
-        self.open()
-        try:
-            self.configure()
-            self.start()
-        except BaseException:
-            self.disconnect()
-            raise
-        logger.info(f"{self} connected.")
+                raise
+        logger.info(f"{self} connected." if calibrate else f"{self} connected with torque off.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -439,27 +433,21 @@ class YamFollower(Robot):
         self._check_can_timeouts()
         self.servo.reset(read_joint_state(self.bus, self._require_params()))
 
-    @check_if_already_connected
+    @check_if_not_connected
     def open(self) -> None:
-        """Connect CAN and cameras without torque, check the initial position, and reset the servo to it.
+        """Connect the cameras, check the initial position, and reset the servo to it, without torque.
 
-        `connect` runs `open`, `configure` and `start`. A bimanual robot opens both arms before starting
-        either, so an arm out of its initial position never enables the other.
+        Once the CAN interface is open, `connect` runs `open`, `configure` and `start`. A bimanual robot
+        opens both arms before starting either, so an arm out of its initial position never enables the other.
         """
         params = self._require_params()
-        try:
-            self.servo.stop_event.clear()
-            self._load_gravity_model()  # before the hardware, so a missing package or download fails first
-            self.bus.open()
-            for camera in self.cameras.values():
-                camera.connect()
-            state = read_joint_state(self.bus, params)
-            self._check_initial_position(state.position)
-            self.servo.reset(state)
-            self._connected = True
-        except BaseException:
-            self._close()
-            raise
+        self.servo.stop_event.clear()
+        self._load_gravity_model()
+        for camera in self.cameras.values():
+            camera.connect()
+        state = read_joint_state(self.bus, params)
+        self._check_initial_position(state.position)
+        self.servo.reset(state)
 
     @check_if_not_connected
     def start(self) -> None:
@@ -536,11 +524,11 @@ class YamFollower(Robot):
             raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper limits")
         return self.servo.params
 
-    def _open_for_calibration(self) -> None:
-        """Open the CAN interface without cameras, servo or torque."""
+    def _open_bus(self) -> None:
+        """Open the CAN interface, with torque off, once every motor answers."""
         try:
             self.bus.open()
-            self.bus.read_states()  # every motor must answer before measuring the gripper
+            self.bus.read_states()
             self._connected = True
         except BaseException:
             self._close()

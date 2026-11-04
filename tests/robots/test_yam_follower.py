@@ -372,14 +372,6 @@ def test_calibration_connection_never_enables_motor(robot, monkeypatch):
     robot.disconnect()
 
 
-def test_open_without_calibration_touches_no_hardware(tmp_path, monkeypatch):
-    robot = make_robot(tmp_path, gripper=None)
-    mock_hardware(robot, monkeypatch)
-    with pytest.raises(ValueError, match="lerobot-calibrate"):
-        robot.open()
-    robot.bus.open.assert_not_called()
-
-
 def test_connect_calibrates_missing_gripper_limits(tmp_path, monkeypatch):
     robot = make_robot(tmp_path, gripper=None)
     mock_hardware(robot, monkeypatch)
@@ -393,7 +385,7 @@ def test_connect_calibrates_missing_gripper_limits(tmp_path, monkeypatch):
     robot.connect()
 
     assert robot.is_calibrated
-    assert robot.bus.open.call_count == 2
+    robot.bus.open.assert_called_once()  # control starts on the calibration connection
     robot.bus.enable.assert_called_once()
     robot.disconnect()
 
@@ -481,7 +473,7 @@ def test_disconnect_can_retry_after_servo_join_timeout(robot):
     assert not robot.is_connected
 
 
-def test_gravity_model_loads_before_hardware(robot, monkeypatch):
+def test_gravity_model_loads_before_torque(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     robot.config.gravity_compensation = True
     events = []
@@ -492,10 +484,10 @@ def test_gravity_model_loads_before_hardware(robot, monkeypatch):
             robot.gravity_model = object()
 
     robot._load_gravity_model = load_model
-    robot.bus.open.side_effect = lambda: events.append("connect")
+    robot.bus.enable.side_effect = lambda *args: events.append("enable")
     robot.connect()
     robot.disconnect()
-    assert events[:2] == ["model", "connect"]
+    assert events == ["model", "enable"]
 
 
 def measure_gripper(robot, monkeypatch, *, closed=0.1, opened=6.1, answers=()):

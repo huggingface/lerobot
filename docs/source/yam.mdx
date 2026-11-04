@@ -186,7 +186,7 @@ Float mode lets you start the policy from any position: add `--robot.left_arm_co
 | The wrong arm moves                             | Check which arm each interface drives, or give the interfaces fixed names.                                   |
 | `unsafe motor CAN timeout`                      | Set every motor's CAN timeout to at most 400 ms with the I2RT SDK.                                           |
 | `not within initial_tolerance_deg`              | Fold the arm, with every joint at zero, before connecting.                                                   |
-| `Run lerobot-calibrate with this robot.id`      | Calibrate, or use the same `--robot.id` as during calibration.                                               |
+| Connecting asks you to calibrate again          | Use the same `--robot.id` as during calibration.                                                             |
 | The arm drifts in float mode                    | Adjust `gravity_factors` for the cameras or payload on the arm.                                              |
 | MolmoAct2 moves the arms to the wrong positions | Set `use_degrees=false` on both arms: the model uses radians and a 0–1 gripper.                              |
 
