@@ -60,24 +60,11 @@ from lerobot.utils.import_utils import (
 if TYPE_CHECKING or _pyarrow_available:
     import pyarrow as pa
     import pyarrow.parquet as pq
-else:
-    pa = None  # type: ignore[assignment]
-    pq = None  # type: ignore[assignment]
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import LeRobotDataset
-else:
-    LeRobotDataset = None  # type: ignore[assignment, misc]
 
 DEFAULT_OUTPUT_FILENAME = "topreward_progress.parquet"
-
-
-def _require_dataset_dependencies() -> None:
-    """Require packages used only by dataset scoring and parquet IO."""
-    require_package("pyarrow", extra="dataset")
-    if LeRobotDataset is None:
-        require_package("datasets", extra="dataset")
-        require_package("av", extra="dataset")
 
 
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
@@ -85,8 +72,6 @@ def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     if not parquet_path.exists():
         return None
     require_package("pyarrow", extra="dataset")
-    if pq is None:
-        raise ImportError("pyarrow.parquet is required to read reward-model metadata")
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -115,13 +100,6 @@ def normalize_rewards(rewards: list[float] | np.ndarray) -> np.ndarray:
     if r_max == r_min:
         return np.ones_like(rewards_arr, dtype=np.float32)
     return ((rewards_arr - r_min) / (r_max - r_min)).astype(np.float32)
-
-
-def _apply_legacy_success_threshold(log_probability: torch.Tensor, threshold: float) -> torch.Tensor:
-    """Preserve the old script output for configs that selected binary success."""
-    if np.isfinite(threshold):
-        return (log_probability > threshold).float()
-    return log_probability
 
 
 def compute_instruction_rewards_for_prefixes(
@@ -157,10 +135,6 @@ def compute_instruction_rewards_for_prefixes(
 
         with torch.inference_mode():
             log_probability = model.compute_log_probability(batch)
-        log_probability = _apply_legacy_success_threshold(
-            log_probability,
-            model.config.success_threshold,
-        )
         rewards.append(float(log_probability.item()))
 
     normalized_rewards = normalize_rewards(rewards)
@@ -186,9 +160,9 @@ def compute_topreward_progress(
     episodes: list[int] | None = None,
 ) -> Path:
     """Run TOPReward over a dataset and write per-frame progress."""
-    _require_dataset_dependencies()
-    if pa is None or pq is None or LeRobotDataset is None:
-        raise ImportError("TOPReward dataset scoring requires pyarrow and LeRobotDataset")
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
+    require_package("pyarrow", extra="dataset")
 
     if reward_model_path is not None:
         logging.info(f"Loading TOPReward config from: {reward_model_path}")

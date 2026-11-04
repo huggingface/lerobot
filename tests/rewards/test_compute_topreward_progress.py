@@ -23,26 +23,7 @@ import torch
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.topreward import compute_rabc_weights
-from lerobot.rewards.topreward.compute_rabc_weights import (
-    _apply_legacy_success_threshold,
-    normalize_rewards,
-)
-
-
-def test_legacy_success_threshold_preserves_raw_log_probabilities_when_disabled():
-    values = torch.tensor([-2.0, -0.5])
-
-    result = _apply_legacy_success_threshold(values, float("-inf"))
-
-    assert result is values
-
-
-def test_legacy_success_threshold_preserves_binary_script_behavior():
-    values = torch.tensor([-2.0, -0.5, 0.0])
-
-    result = _apply_legacy_success_threshold(values, -1.0)
-
-    assert torch.equal(result, torch.tensor([0.0, 1.0, 1.0]))
+from lerobot.rewards.topreward.compute_rabc_weights import normalize_rewards
 
 
 def test_normalize_rewards_preserves_constant_and_varying_episode_behavior():
@@ -53,6 +34,7 @@ def test_normalize_rewards_preserves_constant_and_varying_episode_behavior():
     )
 
 
+@pytest.mark.dataset
 def test_compute_topreward_progress_preserves_legacy_parquet_artifact(monkeypatch, tmp_path: Path) -> None:
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
@@ -71,7 +53,6 @@ def test_compute_topreward_progress_preserves_legacy_parquet_artifact(monkeypatc
             self.prompt_suffix_template = "{instruction}"
             self.add_chat_template = False
             self.max_input_length = 128
-            self.success_threshold = float("-inf")
 
     class FakeModel:
         def __init__(self, config: FakeConfig) -> None:
