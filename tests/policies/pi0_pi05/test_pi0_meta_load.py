@@ -27,6 +27,7 @@ import transformers.utils  # noqa: E402
 from safetensors import SafetensorError  # noqa: E402
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
+from lerobot.policies.common.openpi_checkpoint import load_checkpoint_modules  # noqa: E402
 from lerobot.policies.pi0 import PI0Config, PI0Policy, modeling_pi0  # noqa: E402
 from tests.policies.common.meta_load import (  # noqa: E402
     DOWNLOAD_ARGUMENTS,
@@ -196,3 +197,16 @@ def test_loading_inside_torch_device_meta_raises(config, tmp_path):
     path = save(config, tmp_path / "ckpt")
     with pytest.raises(NotImplementedError, match="meta tensor"), torch.device("meta"):
         PI0Policy.from_pretrained(path, config=config)
+
+
+def test_a_policy_loaded_in_parts_switches_to_evaluation_mode(config, tmp_path):
+    config.freeze_vision_encoder = True
+    config.train_expert_only = True
+    path = save_checkpoint(PI0Policy, config, tmp_path / "ckpt", RENAMES)
+    part = load_checkpoint_modules(
+        PI0Policy, str(path / "model.safetensors"), config, ["model.paligemma_with_expert.gemma_expert.model"]
+    )
+
+    part.eval()
+
+    assert not any(module.training for module in part.modules())

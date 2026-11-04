@@ -282,9 +282,10 @@ class PaliGemmaWithExpertModel(
 
     def train(self, mode: bool = True):
         super().train(mode)
-        if self.freeze_vision_encoder:
+        # Only training needs this, and a policy loaded in parts may lack these modules.
+        if mode and self.freeze_vision_encoder:
             self.paligemma.model.vision_tower.eval()
-        if self.train_expert_only:
+        if mode and self.train_expert_only:
             self.paligemma.eval()
 
     def embed_image(self, image: torch.Tensor):
