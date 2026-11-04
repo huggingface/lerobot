@@ -83,6 +83,8 @@ from lerobot.optim.ema import EMA
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
+from lerobot.policies.imprint.configuration_imprint import ImprintConfig
+from lerobot.policies.imprint.dataset_imprint import ImprintDataset
 from lerobot.processor import ImageAugmentationProcessorStep
 from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
@@ -445,13 +447,18 @@ def make_dataloaders(
             if is_main_process():
                 logging.info("Resuming streaming data order at local sample %d", stream_offset)
 
+    loader_dataset: torch.utils.data.Dataset | torch.utils.data.IterableDataset = dataset
+    if isinstance(active_cfg, ImprintConfig):
+        if isinstance(dataset, StreamingLeRobotDataset):
+            raise ValueError("IMPRINT episode-prefix training requires a map-style dataset.")
+        loader_dataset = ImprintDataset(dataset, active_cfg, cfg.rename_map)
     device_type = parallel_dims.device_type
     # Only swap in the language-aware collate when the dataset actually
     # declares language columns; otherwise stay on PyTorch's default
     # collate so non-language training runs are unaffected.
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
     dataloader = torch.utils.data.DataLoader(
-        dataset,
+        loader_dataset,
         num_workers=train_num_workers if cfg.dataset.streaming else cfg.num_workers,
         batch_size=cfg.batch_size,
         shuffle=shuffle and not cfg.dataset.streaming,
@@ -480,7 +487,12 @@ def make_dataloaders(
     # Build eval dataloader if a held-out split exists
     eval_dataloader = None
     if eval_dataset is not None:
-        eval_ds = eval_dataset
+        eval_source = (
+            ImprintDataset(eval_dataset, active_cfg, cfg.rename_map)
+            if isinstance(active_cfg, ImprintConfig)
+            else eval_dataset
+        )
+        eval_ds = eval_source
         valid_frames = None
         drop_n_first_frames = getattr(active_cfg, "drop_n_first_frames", 0)
         drop_n_last_frames = getattr(active_cfg, "drop_n_last_frames", 0)
@@ -495,7 +507,7 @@ def make_dataloaders(
                     absolute_to_relative_idx=eval_dataset.absolute_to_relative_idx,
                 )
             )
-            eval_ds = torch.utils.data.Subset(eval_dataset, valid_frames)
+            eval_ds = torch.utils.data.Subset(eval_source, valid_frames)
         if cfg.max_eval_samples > 0 and hasattr(eval_dataset, "hf_dataset"):
             task_arr = eval_dataset.hf_dataset.data.column("task_index").to_numpy()
             if valid_frames is not None:

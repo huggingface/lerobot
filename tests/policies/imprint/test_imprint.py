@@ -65,6 +65,7 @@ def tiny_config(**overrides: object) -> ImprintConfig:
     params: dict[str, object] = {
         "device": "cpu",
         "history_length": 4,
+        "history_downsample": 1,
         "chunk_size": 4,
         "n_action_steps": 1,
         "chunk_frames": 2,
@@ -134,9 +135,9 @@ def test_default_joint_step_matches_the_user_example() -> None:
     policy = ImprintPolicy(config)
     policy.train()
     batch = {
-        CAM: _visual(1, config.history_length, image),
-        OBS_STATE: _state(1, config.history_length, state_dim),
-        ACTION: _action(1, config.history_length + config.chunk_size, action_dim),
+        CAM: _visual(1, 7, image),
+        OBS_STATE: _state(1, 7, state_dim),
+        ACTION: _action(1, 7 + config.chunk_size, action_dim),
     }
     loss, logs = policy(batch)
     assert torch.isfinite(loss)
@@ -263,7 +264,7 @@ def test_disabled_modulation_is_identity() -> None:
 def test_memory_stage_backward() -> None:
     torch.manual_seed(2)
     config = tiny_config(training_stage="memory")
-    assert config.action_delta_indices == list(range(-config.history_length, 0))
+    assert config.action_delta_indices == [-1]
     policy = ImprintPolicy(config)
     policy.train()
     history = config.history_length
@@ -291,10 +292,10 @@ def test_joint_stage_backward_recurrent_and_full() -> None:
         torch.manual_seed(3)
         config = tiny_config(encoder=encoder)
         history = config.history_length
-        assert config.action_delta_indices[0] == -history
+        assert config.action_delta_indices[0] == -1
         assert config.action_delta_indices[-1] == config.chunk_size - 1
         assert config.observation_delta_indices[-1] == 0
-        assert len(config.observation_delta_indices) == history
+        assert config.observation_delta_indices == [0]
         policy = ImprintPolicy(config)
         policy.train()
         action = _action(2, history + config.chunk_size)

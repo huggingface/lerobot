@@ -48,8 +48,11 @@ class ImprintConfig(PreTrainedConfig):
     CLI: ``--policy.type=imprint``.
     """
 
-    # Observation window ending at the current step. Paper histories are much longer.
-    history_length: int = 4
+    # Maximum sampled episode-prefix frames, including the current frame. The
+    # loader rejects longer episodes instead of silently truncating their memory.
+    history_length: int = 1024
+    # Canonical paper framing: every second frame since episode start, plus t.
+    history_downsample: int = 2
     # Action horizon. Paper RMBench uses 50 and RoboCasa uses 20.
     chunk_size: int = 16
     n_action_steps: int = 16
@@ -130,13 +133,15 @@ class ImprintConfig(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        self.n_obs_steps = self.history_length
+        self.n_obs_steps = 1
         if self.encoder not in ("recurrent", "full_attention"):
             raise ValueError(f"encoder must be 'recurrent' or 'full_attention', got {self.encoder!r}.")
         if self.training_stage not in ("memory", "joint"):
             raise ValueError(f"training_stage must be 'memory' or 'joint', got {self.training_stage!r}.")
         if self.history_length < 1:
             raise ValueError(f"history_length must be positive, got {self.history_length}.")
+        if self.history_downsample < 1:
+            raise ValueError("history_downsample must be positive.")
         if self.chunk_frames < 1:
             raise ValueError(f"chunk_frames must be positive, got {self.chunk_frames}.")
         if self.chunk_size < 1:
@@ -218,15 +223,15 @@ class ImprintConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list[int]:
-        return list(range(1 - self.history_length, 1))
+        # The episode-prefix adapter gathers these single-frame rows dynamically.
+        return [0]
 
     @property
     def action_delta_indices(self) -> list[int]:
-        # Joint batches carry causal history and the future chunk in one action tensor.
-        # Memory batches carry only the causal history. Index 0 is the current frame.
+        # Each raw row supplies the causal action plus the current target chunk.
         if self.training_stage == "memory":
-            return list(range(-self.history_length, 0))
-        return list(range(-self.history_length, self.chunk_size))
+            return [-1]
+        return [-1, *range(self.chunk_size)]
 
     @property
     def reward_delta_indices(self) -> None:

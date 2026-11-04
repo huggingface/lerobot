@@ -54,7 +54,7 @@ def _policy_config(training_stage: str) -> ImprintConfig:
         device="cpu",
         push_to_hub=False,
         training_stage=training_stage,
-        history_length=4,
+        history_length=8,
         chunk_size=4,
         n_action_steps=1,
         chunk_frames=2,

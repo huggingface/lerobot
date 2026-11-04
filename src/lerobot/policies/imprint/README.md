@@ -47,10 +47,15 @@ config = ImprintConfig(
 )
 policy = ImprintPolicy(config)
 policy.train()
+# Prefix for current frame 7: every second frame since reset, plus frame 7.
+frames = torch.tensor([[0, 2, 4, 6, 7]])
+history = frames.shape[1]
 batch = {
-    "observation.images.cam": torch.rand(1, config.history_length, 3, 16, 16),
-    "observation.state": torch.randn(1, config.history_length, 6),
-    "action": torch.randn(1, config.history_length + config.chunk_size, 6),
+    "observation.images.cam": torch.rand(1, history, 3, 16, 16),
+    "observation.state": torch.randn(1, history, 6),
+    "action": torch.cat([torch.zeros(1, 1, 6), torch.randn(1, history - 1 + config.chunk_size, 6)], dim=1),
+    "observation.imprint.length": torch.tensor([history]),
+    "observation.imprint.frame_indices": frames,
 }
 loss, logs = policy(batch)
 loss.backward()
@@ -64,18 +69,31 @@ uses width 1024 and 256 queries. Those values are comments on the config, not th
 
 ## Batch contract
 
+`lerobot-train` uses an episode-prefix adapter for map-style IMPRINT datasets.
+For frame `t`, it gathers frames `0, 2, 4, ... <= t`, then appends `t` if needed.
+`history_downsample` controls that stride (default 2, as in the paper's canonical
+framing). Each action input is the action from the preceding original frame,
+with zero at episode start. Current observations remain current at every query.
+
+`history_length` is the sampled-prefix capacity (default 1024), not a rolling
+window. Episodes above that capacity raise before training; increase the capacity
+to train them. No history is silently discarded. The adapter decodes only real
+frames, shares duplicate row reads within a batch, and pads to the longest prefix
+in that batch. Streaming datasets are not supported for prefix training.
+
 Joint training (`training_stage="joint"`, the default):
 
-- Images and `observation.state` have time length `history_length`. Index 0 is the oldest frame. The last index is the current frame. `observation_delta_indices` is `1 - history_length ... 0`.
-- `action` has time length `history_length + chunk_size`. The first `history_length` steps are the causal actions for that window. The last `chunk_size` steps are the flow-matching target, starting at the current frame.
-- `action_delta_indices` is `-history_length ... chunk_size - 1`. A LeRobot dataset that honors those indices builds this tensor. Do not shift it again.
+- Images and `observation.state` have batch time length `H <= history_length`.
+- `observation.imprint.length` has shape `(B,)` and counts each sample's real prefix frames. Its current frame is at `length - 1`. Right padding has `*_is_pad=True`.
+- `observation.imprint.frame_indices` has shape `(B, H)` and records original episode frame indices. Chunk positions count from episode start. Each sample's finalized chunks and recent tail are split at its own real length, independently of batch padding.
+- `action` has time length `H + chunk_size`. Its first `H` steps are already causal; the remaining steps are targets starting at `t`. Padded causal actions become zero and padded targets do not contribute to the flow loss.
+- Raw dataset rows use `observation_delta_indices=[0]` and `action_delta_indices=[-1, 0, ..., chunk_size-1]`. The adapter combines those rows into prefixes. A raw row alone is not a training prefix.
 
 Stage 1 (`training_stage="memory"`):
 
-- Images, state, and `action` all have time length `history_length`.
-- `action_delta_indices` is `-history_length ... -1`. That window is already the causal stream.
+- Images, state, and causal `action` all have batch time length `H`. Raw rows use `action_delta_indices=[-1]`.
 - `episode_progress` has shape `(B,)` and is the current step divided by the last demonstration step. `lerobot-train` fills it from `frame_index` and the episode length. A hand-built batch must pass it.
-- Optional `query_steps` has shape `(B, Q)` and selects past frames to reconstruct. If it is missing, the policy samples `num_query_samples` indices.
+- Optional `query_steps` has shape `(B, Q)` and selects real prefix slots to reconstruct. If missing, the policy samples only real slots. The decoder receives their original episode frame indices; `max_query_steps` must cover the training episodes.
 
 After stage 1, keep the memory and drop the decoder:
 
@@ -103,7 +121,7 @@ postprocessor.save_pretrained(joint_init)
 
 `observation.language.embedding` has shape `(B, lang_dim)` when you have an external language vector. If the key is missing, language FiLM is skipped. Text strings are ignored.
 
-`select_action` takes one environment step, shape `(B, C, H, W)` or `(B, 1, C, H, W)` for images and `(B, D)` or `(B, 1, D)` for state. Call `reset()` at every episode boundary. The batch size must stay the same until `reset()`. `predict_action_chunk` recomputes memory from the batch and does not change the episode state.
+`select_action` takes one environment step, shape `(B, C, H, W)` or `(B, 1, C, H, W)` for images and `(B, D)` or `(B, 1, D)` for state. Call `reset()` at every episode boundary. The batch size must stay the same until `reset()`. Its memory uses the same canonical prefix as training. Unsampled current frames are provisional and never permanently change the recurrent state. `predict_action_chunk` recomputes memory from its supplied prefix and does not change episode state. Chunk serving is refused because episode memory requires `select_action`.
 
 ## Limits
 
@@ -112,7 +130,7 @@ postprocessor.save_pretrained(joint_init)
 - No JAX checkpoint, Orbax loader, or Hugging Face weight file from `Amazon-FAR/imprint_models` is read. `load_memory_weights` copies this package's own stage-1 memory, not those checkpoints.
 - Stage 1 and joint training use separate configs. The joint model has no decoder. `load_memory_weights` is the handoff.
 - `chunkwise_wy` is not implemented. Long histories in this port use the Python event loop.
-- Standard `lerobot-train` supplies the causal actions only when the dataset uses `action_delta_indices`.
+- Training requires the episode-prefix adapter used by standard `lerobot-train`, or a hand-built batch with the same prefix contract. Direct unpadded prefixes may omit length metadata; they must still start at episode frame zero.
 - This package does not report RMBench, RoboCasa, or real-robot success rates.
 - The paper's training stack is Linux x86_64, Python 3.11, CUDA 12.8, four 80 GB GPUs, frozen Wan 2.2 and DINOv3, and a Pi0.5 flow-matching expert. That run is not launched here.
 - The optimizer preset is AdamW at `1e-4` for this small policy. The paper's stage-2 peak is `2.5e-5` on the VLA.

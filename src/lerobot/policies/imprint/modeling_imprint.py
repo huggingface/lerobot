@@ -40,6 +40,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_imprint import ImprintConfig
+from .history import PREFIX_FRAMES, PREFIX_LENGTH
 from .memory import (
     FullAttentionMemory,
     ImprintDecoder,
@@ -78,6 +79,7 @@ _TRANSFER_FIELDS = (
     "tokenizer_hidden",
     "chunk_frames",
     "tokens_per_view",
+    "history_downsample",
 )
 
 
@@ -246,6 +248,8 @@ class ImprintPolicy(PreTrainedPolicy):
         self._committed_steps = 0
         self._last_action = None
         self._recurrent_state = None
+        self._episode_step = 0
+        self._provisional_step: tuple[Tensor, Tensor, Tensor] | None = None
 
     def load_memory_weights(self, stage1_dir: str | Path) -> dict[str, tuple[str, ...]]:
         """Copy a stage-1 memory checkpoint into this joint policy.
@@ -337,7 +341,7 @@ class ImprintPolicy(PreTrainedPolicy):
         state = _with_time(batch[OBS_STATE], name=OBS_STATE)
         _check_aligned(visual, state)
         causal = self._causal_from_batch(batch, visual.shape[1], state.shape[0], state.device, state.dtype)
-        obs = self._obs_token(visual[:, -1], state[:, -1])
+        obs = self._current_observation(visual, state, batch)
         memory, valid = self._encode_memory(
             visual, causal, state, _language(batch, self.config.lang_dim), batch
         )
@@ -365,12 +369,17 @@ class ImprintPolicy(PreTrainedPolicy):
             causal = visual.new_zeros(batch_size, self.action_dim)
         else:
             causal = self._last_action
-        self._append_step(visual[:, 0], state[:, 0], causal)
+        if self._episode_step % self.config.history_downsample == 0:
+            self._append_step(visual[:, 0], state[:, 0], causal)
+            self._provisional_step = None
+        else:
+            self._provisional_step = (visual[:, 0].detach(), state[:, 0].detach().clone(), causal.detach())
+        self._episode_step += 1
         self._commit_chunks()
         if len(self._action_queue) == 0:
             assert self._hist_visual is not None
             assert self._hist_state is not None
-            obs = self._obs_token(self._hist_visual[:, -1], self._hist_state[:, -1])
+            obs = self._obs_token(visual[:, 0], state[:, 0])
             memory, valid = self._memory_from_rollout(_language(batch, self.config.lang_dim))
             actions = self._sample_actions(obs, memory, valid)
             self._action_queue.extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
@@ -385,7 +394,7 @@ class ImprintPolicy(PreTrainedPolicy):
         state = _with_time(batch[OBS_STATE], name=OBS_STATE)
         _check_aligned(visual, state)
         target, causal = self._split_joint_action(batch, visual.shape[1])
-        obs = self._obs_token(visual[:, -1], state[:, -1])
+        obs = self._current_observation(visual, state, batch)
         memory, valid = self._encode_memory(
             visual, causal, state, _language(batch, self.config.lang_dim), batch
         )
@@ -401,7 +410,7 @@ class ImprintPolicy(PreTrainedPolicy):
         noisy = time[:, None, None] * noise + (1.0 - time[:, None, None]) * target
         velocity = self.expert(noisy, time, obs, memory, valid, use_memory=self.config.use_memory)
         loss = (velocity - (noise - target)).square().mean(dim=-1)
-        target_valid = _valid_steps(batch, ACTION, batch[ACTION])[:, self.config.history_length :]
+        target_valid = _valid_steps(batch, ACTION, batch[ACTION])[:, visual.shape[1] :]
         per_sample = (loss * target_valid).mean(dim=-1)
         logs = {"loss_action": float(per_sample.mean().detach())}
         if reduction == "none":
@@ -429,7 +438,8 @@ class ImprintPolicy(PreTrainedPolicy):
         if memory is None:
             raise RuntimeError("Stage-1 IMPRINT requires use_memory=True.")
         steps = self._query_steps(batch, visual.shape[1], state.shape[0], state.device)
-        prediction = self.decoder(memory, steps)
+        decoder_steps = _gather_time(batch[PREFIX_FRAMES], steps) if PREFIX_FRAMES in batch else steps
+        prediction = self.decoder(memory, decoder_steps)
         targets = {
             "align": _gather_time(visual, steps).detach(),
             "action": _gather_time(causal, steps).detach(),
@@ -488,6 +498,31 @@ class ImprintPolicy(PreTrainedPolicy):
         if not self.config.use_memory or self.memory is None:
             return None, None
         batch = {} if batch is None else batch
+        if PREFIX_LENGTH in batch:
+            # Padding must not move a sample's chunk boundary or recent window.
+            # Group equal-length prefixes so the scan has exactly the rollout layout.
+            lengths = batch[PREFIX_LENGTH]
+            outputs, rows = [], []
+            for length in lengths.unique().tolist():
+                index = (lengths == length).nonzero(as_tuple=True)[0]
+                subset = {key: value[index] for key, value in batch.items() if key.endswith("_is_pad")}
+                # The zero causal action at episode start is a real memory event,
+                # even though the dataset marks its unavailable predecessor padded.
+                if f"{ACTION}_is_pad" in subset:
+                    subset[f"{ACTION}_is_pad"] = subset[f"{ACTION}_is_pad"].clone()
+                    subset[f"{ACTION}_is_pad"][:, 0] = False
+                tokens, _ = self._encode_memory(
+                    visual[index, :length],
+                    causal[index, :length],
+                    state[index, :length],
+                    lang[index] if lang is not None else None,
+                    subset,
+                )
+                assert tokens is not None
+                outputs.append(tokens)
+                rows.append(index)
+            tokens = torch.cat(outputs)[torch.cat(rows).argsort()]
+            return tokens, torch.ones(tokens.shape[:2], dtype=torch.bool, device=tokens.device)
         visual_valid = torch.stack([_valid_steps(batch, key, visual) for key in self.image_keys], dim=-1)
         visual_valid = visual_valid.repeat_interleave(self.config.tokens_per_view, dim=-1)
         action_valid = _valid_steps(batch, ACTION, causal)
@@ -554,9 +589,28 @@ class ImprintPolicy(PreTrainedPolicy):
                 self._recurrent_state = self.memory.init_state(
                     self._hist_visual.shape[0], self._hist_visual.device, self._hist_visual.dtype
                 )
-            tokens = self.memory.read(self._recurrent_state, recent_v, recent_a, recent_p, lang)
+            state = self._recurrent_state
+            if self._provisional_step is not None:
+                visual, proprio, action = self._provisional_step
+                recent_v = torch.cat([recent_v, self.to_recent(visual)], dim=1)
+                recent_a = torch.cat([recent_a, action.unsqueeze(1)], dim=1)
+                recent_p = torch.cat([recent_p, proprio.unsqueeze(1)], dim=1)
+                if recent_a.shape[1] == self.config.chunk_frames:
+                    tail = self._hist_visual[:, self._committed_steps :]
+                    chunk = self.to_chunk(torch.cat([tail, visual.unsqueeze(1)], dim=1)).mean(dim=1)
+                    # A provisional t may complete a chunk, but must not enter the
+                    # persistent state: the next sampled frame replaces it.
+                    state = self.memory.update_incremental(state, chunk, recent_a, recent_p)
+                    recent_v, recent_a, recent_p = recent_v[:, :0], recent_a[:, :0], recent_p[:, :0]
+            tokens = self.memory.read(state, recent_v, recent_a, recent_p, lang)
         else:
-            tokens, valid = self._encode_memory(self._hist_visual, self._hist_causal, self._hist_state, lang)
+            visual, causal, proprio = self._hist_visual, self._hist_causal, self._hist_state
+            if self._provisional_step is not None:
+                v, p, a = self._provisional_step
+                visual = torch.cat([visual, v.unsqueeze(1)], dim=1)
+                causal = torch.cat([causal, a.unsqueeze(1)], dim=1)
+                proprio = torch.cat([proprio, p.unsqueeze(1)], dim=1)
+            tokens, valid = self._encode_memory(visual, causal, proprio, lang)
             return tokens, valid
         valid = torch.ones(tokens.shape[:2], dtype=torch.bool, device=tokens.device)
         return tokens, valid
@@ -609,26 +663,27 @@ class ImprintPolicy(PreTrainedPolicy):
         pooled = visual.mean(dim=1)
         return (self.obs_visual(pooled) + self.obs_state(state)).unsqueeze(1)
 
+    def _current_observation(self, visual: Tensor, state: Tensor, batch: dict[str, Tensor]) -> Tensor:
+        if PREFIX_LENGTH not in batch:
+            return self._obs_token(visual[:, -1], state[:, -1])
+        index = (batch[PREFIX_LENGTH] - 1).unsqueeze(1)
+        return self._obs_token(_gather_time(visual, index)[:, 0], _gather_time(state, index)[:, 0])
+
     def _split_joint_action(self, batch: dict[str, Tensor], time_steps: int) -> tuple[Tensor, Tensor]:
         action = _action_tensor(batch)
         if action is None:
             raise ValueError("Joint IMPRINT training requires an action tensor.")
         if action.ndim != 3:
             raise ValueError(f"action must have shape (B, T, A), got {tuple(action.shape)}.")
-        history = self.config.history_length
+        history = time_steps
         expected = history + self.config.chunk_size
         if action.shape[1] != expected:
             raise ValueError(
                 "Joint IMPRINT expects action shape "
-                f"(B, history_length + chunk_size, A) = (B, {expected}, {self.action_dim}). "
-                "The first history_length steps are causal actions for the observation window. "
+                f"(B, H + chunk_size, A) = (B, {expected}, {self.action_dim}). "
+                "The first H steps are causal actions for the observation prefix. "
                 "The last chunk_size steps are the flow-matching target. "
                 f"Got {tuple(action.shape)}."
-            )
-        if time_steps != history:
-            raise ValueError(
-                f"Joint IMPRINT expects {history} observation steps, got {time_steps}. "
-                "That window is history_length, ending at the current frame."
             )
         causal = action[:, :history].masked_fill(~_valid_steps(batch, ACTION, action)[:, :history, None], 0)
         return action[:, history:], causal
@@ -648,15 +703,15 @@ class ImprintPolicy(PreTrainedPolicy):
             if action.ndim != 3 or action.shape[1] != time_steps:
                 raise ValueError(
                     "Stage-1 IMPRINT expects action shape "
-                    f"(B, history_length, A) = (B, {self.config.history_length}, {self.action_dim}). "
+                    f"(B, H, A) = (B, {time_steps}, {self.action_dim}). "
                     f"Got {tuple(action.shape)}."
                 )
             return action.masked_fill(~_valid_steps(batch, ACTION, action).unsqueeze(-1), 0)
-        joint_length = self.config.history_length + self.config.chunk_size
+        joint_length = time_steps + self.config.chunk_size
         action = _action_tensor(batch)
         if action is not None and action.ndim == 3 and action.shape[1] == joint_length:
-            return action[:, : self.config.history_length].masked_fill(
-                ~_valid_steps(batch, ACTION, action)[:, : self.config.history_length, None], 0
+            return action[:, :time_steps].masked_fill(
+                ~_valid_steps(batch, ACTION, action)[:, :time_steps, None], 0
             )
         return torch.zeros(batch_size, time_steps, self.action_dim, device=device, dtype=dtype)
 
@@ -669,6 +724,8 @@ class ImprintPolicy(PreTrainedPolicy):
                 raise ValueError(f"query_steps must have shape (B, Q), got {tuple(steps.shape)}.")
             return steps
         queries = min(self.config.num_query_samples, time_steps)
+        if PREFIX_LENGTH in batch:
+            return (torch.rand(batch_size, queries, device=device) * batch[PREFIX_LENGTH][:, None]).long()
         return torch.randint(0, time_steps, (batch_size, queries), device=device)
 
     def _check_rollout_batch(self, batch_size: int, device: torch.device) -> None:
