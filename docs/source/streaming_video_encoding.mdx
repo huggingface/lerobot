@@ -12,6 +12,14 @@ Frames can be encoded in real-time during capture:
 
 This makes `save_episode()` near-instant (the video is already encoded by the time the episode ends) and removes the blocking wait that previously occurred between episodes, especially with multiple cameras in long episodes.
 
+When `streaming_encoding=false`, asynchronous PNG/TIFF writes use a separate image-writer queue.
+`--dataset.image_writer_queue_maxsize` limits pending writes across all cameras and workers (default: 30).
+If that queue remains full for 0.1 seconds, `add_frame()` raises `queue.Full` instead of dropping a frame.
+`lerobot-record` then exits recording and drains accepted writes during cleanup; slow or stuck disk I/O can
+still delay that drain. Increase the limit or image-writer worker count if short
+disk stalls are expected, but allow for the extra image memory. This setting does not affect the
+streaming encoder's per-camera `encoder_queue_maxsize` or its frame-dropping policy.
+
 ## 2. Tuning Parameters
 
 | Parameter               | CLI Flag                          | Type          | Default       | Description                                                       |
