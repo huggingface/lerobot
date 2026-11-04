@@ -38,7 +38,7 @@ _JOINT_FEEDBACK_TOLERANCE_RAD = 0.15
 _GRIPPER_FEEDBACK_TOLERANCE = 0.10
 
 # Blocked-gripper detection and force limiting, from I2RT's GripperForceLimiter.
-_GRIPPER_EFFORT_WINDOW_S = 0.1
+_GRIPPER_TORQUE_WINDOW_S = 0.1
 _GRIPPER_BLOCKED_TORQUE_NM = 0.5
 _GRIPPER_BLOCKED_SPEED_RAD_S = 0.3
 _GRIPPER_RELEASED_TORQUE_NM = 0.2
@@ -150,58 +150,51 @@ class GripperParams:
 
 
 class _GripperForceLimiter:
-    """Gripper commands that move freely, but limit the force once the gripper is blocked on an object.
-
-    Port of I2RT's `GripperForceLimiter`. The gripper is blocked when its average torque over the last
-    0.1 s is high while it barely moves. It then pushes with the torque that gives `force_limit_n` at
-    the fingers, until the target opens it or the torque drops.
-    """
+    """Limits the gripper's force once it is blocked on an object, and lets it move freely otherwise."""
 
     def __init__(self, gripper_params: GripperParams) -> None:
         self.gripper_params = gripper_params
         self.blocked = False
-        self._efforts: list[tuple[float, float]] = []
+        self._torques: list[tuple[float, float]] = []
         self._limited_goal: float | None = None
         self._last_goal: float | None = None
 
-    def command(
-        self, measured: float, velocity: float, torque: float, commanded: float, now: float
-    ) -> MitCommand:
-        """Return the MIT command that moves the gripper toward `commanded`.
+    def step(self, position: float, velocity: float, torque: float, command: float, now: float) -> MitCommand:
+        """Return the MIT command that moves the gripper toward `command`.
 
         Openings go from 0 (closed) to 1 (open), and `velocity` is in strokes per second.
         """
         params = self.gripper_params
-        current_raw, target_raw = params.to_raw(measured), params.to_raw(commanded)
-        self._efforts = [(t, e) for t, e in self._efforts if now - t <= _GRIPPER_EFFORT_WINDOW_S]
-        self._efforts.append((now, torque))
-        average_effort = abs(float(np.mean([e for _, e in self._efforts])))
+        position_raw, command_raw = params.to_raw(position), params.to_raw(command)
+        self._torques = [(t, value) for t, value in self._torques if now - t <= _GRIPPER_TORQUE_WINDOW_S]
+        self._torques.append((now, torque))
+        average_torque = abs(float(np.mean([value for _, value in self._torques])))
         speed_raw = abs(velocity * params.stroke)
 
         if self.blocked:
-            if measured < commanded or average_effort < _GRIPPER_RELEASED_TORQUE_NM:
+            if position < command or average_torque < _GRIPPER_RELEASED_TORQUE_NM:
                 self.blocked = False
-        elif average_effort > _GRIPPER_BLOCKED_TORQUE_NM and speed_raw < _GRIPPER_BLOCKED_SPEED_RAD_S:
+        elif average_torque > _GRIPPER_BLOCKED_TORQUE_NM and speed_raw < _GRIPPER_BLOCKED_SPEED_RAD_S:
             self.blocked = True
 
         if self.blocked:
             # Aim past the zero-torque position, so the position gain pushes with the torque that
             # gives force_limit_n at the fingers, plus friction.
-            limit_torque = (
+            torque_limit = (
                 params.force_limit_n * params.finger_stroke_m / abs(params.stroke) + _GRIPPER_FRICTION_NM
             )
-            direction = float(np.sign(target_raw - current_raw))
-            last_goal = current_raw if self._last_goal is None else self._last_goal
+            direction = float(np.sign(command_raw - position_raw))
+            last_goal = position_raw if self._last_goal is None else self._last_goal
             zero_torque_raw = last_goal - direction * abs(torque) / params.kp
-            goal = zero_torque_raw + direction * limit_torque / params.kp
+            goal = zero_torque_raw + direction * torque_limit / params.kp
             if self._limited_goal is None:
                 self._limited_goal = goal
             self._limited_goal += _GRIPPER_GOAL_FILTER * (goal - self._limited_goal)
             goal = self._limited_goal
         else:
             # The next force limit starts from where the gripper is, as in I2RT.
-            self._limited_goal = current_raw
-            goal = target_raw
+            self._limited_goal = position_raw
+            goal = command_raw
         goal = float(np.clip(goal, min(params.closed, params.open), max(params.closed, params.open)))
         self._last_goal = goal
         return MitCommand(position=goal, velocity=0.0, kp=params.kp, kd=params.kd, torque=0.0)
@@ -667,7 +660,7 @@ class MitServo:
                         packet.append(
                             (
                                 self._bus.motor_names[n],
-                                gripper.command(
+                                gripper.step(
                                     float(position[n]),
                                     float(state.velocity[n]),
                                     float(state.torque[n]),

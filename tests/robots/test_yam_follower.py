@@ -303,15 +303,15 @@ def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
     assert (grip.kp, grip.kd, grip.force_limit_n, grip.finger_stroke_m) == (20.0, 0.5, 50.0, 0.096)
     limiter = mit_control._GripperForceLimiter(grip)
     # Free motion goes straight to the target, without a torque cap.
-    command = limiter.command(measured=0.5, velocity=1.0, torque=0.1, commanded=1.0, now=0.0)
+    command = limiter.step(position=0.5, velocity=1.0, torque=0.1, command=1.0, now=0.0)
     assert_mit_command(command, position=grip.to_raw(1.0), velocity=0, kp=20, kd=0.5, torque=0)
     # Blocked while closing; the limit is 50 N * 0.096 m / 6 rad + 0.3 Nm = 1.1 Nm at the motor.
     at_limit = mit_control._GripperForceLimiter(grip)
-    command = at_limit.command(measured=0.5, velocity=0.0, torque=1.1, commanded=0.0, now=0.0)
+    command = at_limit.step(position=0.5, velocity=0.0, torque=1.1, command=0.0, now=0.0)
     assert at_limit.blocked
     assert command.position == pytest.approx(grip.to_raw(0.5))  # pressing with the limit: hold
     harder = mit_control._GripperForceLimiter(grip)
-    command = harder.command(measured=0.5, velocity=0.0, torque=2.1, commanded=0.0, now=0.0)
+    command = harder.step(position=0.5, velocity=0.0, torque=2.1, command=0.0, now=0.0)
     # 1 Nm too much: back off 1 Nm / kp 20 = 0.05 rad toward open.
     assert command.position == pytest.approx(grip.to_raw(0.5) + polarity * 0.05)
 

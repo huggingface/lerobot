@@ -173,7 +173,7 @@ def test_track_step_returns_from_past_a_limit_without_jumping():
 @pytest.mark.parametrize("closed,opened", [(1.0, 3.0), (3.0, 1.0)])
 def test_free_gripper_goes_straight_to_its_target(closed, opened):
     limiter = mit_control._GripperForceLimiter(gripper(closed, opened))
-    command = limiter.command(measured=0.5, velocity=1.0, torque=0.1, commanded=0.0, now=0.0)
+    command = limiter.step(position=0.5, velocity=1.0, torque=0.1, command=0.0, now=0.0)
     assert_mit_command(command, position=closed, velocity=0, kp=4, kd=0.1, torque=0)
     assert not limiter.blocked
 
@@ -181,7 +181,7 @@ def test_free_gripper_goes_straight_to_its_target(closed, opened):
 def blocked_limiter(torque):
     """A closing gripper stopped by an object at mid-stroke (raw 2.0), pressing with ``torque``."""
     limiter = mit_control._GripperForceLimiter(gripper())
-    command = limiter.command(measured=0.5, velocity=0.0, torque=torque, commanded=0.0, now=0.0)
+    command = limiter.step(position=0.5, velocity=0.0, torque=torque, command=0.0, now=0.0)
     assert limiter.blocked
     return limiter, command
 
@@ -197,23 +197,23 @@ def test_blocked_gripper_backs_off_to_the_force_limit():
 
 def test_blocked_gripper_releases_when_asked_to_open():
     limiter, _ = blocked_limiter(torque=2.0)
-    command = limiter.command(measured=0.5, velocity=0.0, torque=2.0, commanded=1.0, now=0.01)
+    command = limiter.step(position=0.5, velocity=0.0, torque=2.0, command=1.0, now=0.01)
     assert not limiter.blocked
     assert command.position == pytest.approx(3.0)
 
 
 def test_blocked_gripper_releases_once_its_torque_drops():
     limiter, _ = blocked_limiter(torque=2.0)
-    limiter.command(measured=0.5, velocity=0.0, torque=0.0, commanded=0.0, now=0.05)
+    limiter.step(position=0.5, velocity=0.0, torque=0.0, command=0.0, now=0.05)
     assert limiter.blocked  # 0.1 s average still above 0.2 Nm
-    command = limiter.command(measured=0.5, velocity=0.0, torque=0.0, commanded=0.0, now=0.2)
+    command = limiter.step(position=0.5, velocity=0.0, torque=0.0, command=0.0, now=0.2)
     assert not limiter.blocked
     assert command.position == pytest.approx(1.0)
 
 
 def test_moving_gripper_is_not_considered_blocked():
     limiter = mit_control._GripperForceLimiter(gripper())
-    limiter.command(measured=0.5, velocity=0.5, torque=2.0, commanded=0.0, now=0.0)  # 1 rad/s raw
+    limiter.step(position=0.5, velocity=0.5, torque=2.0, command=0.0, now=0.0)  # 1 rad/s raw
     assert not limiter.blocked
 
 
