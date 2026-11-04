@@ -49,7 +49,7 @@ def make_env_pre_post_processors(
     from lerobot.policies.cosmos3.configuration_cosmos3 import Cosmos3Config
     from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 
-    if isinstance(policy_cfg, XVLAConfig) and isinstance(env_cfg, LiberoEnv):
+    if isinstance(policy_cfg, XVLAConfig) and isinstance(env_cfg, LiberoEnvConfig):
         from lerobot.policies.xvla.processor_xvla import make_xvla_libero_pre_post_processors
 
         return make_xvla_libero_pre_post_processors()
