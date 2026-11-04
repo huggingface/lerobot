@@ -31,6 +31,7 @@ from .configuration_keyboard import (
     KeyboardRoverTeleopConfig,
     KeyboardTeleopConfig,
 )
+from lerobot.rollout.hardware_gate import send_action_checked_with_approval
 
 PYNPUT_AVAILABLE = _pynput_available
 if TYPE_CHECKING:
@@ -330,7 +331,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
 
         while teleop.is_connected:
             action = teleop.get_action()
-            robot.send_action(action)
+            send_action_checked_with_approval(robot, action)
         ```
     """
 

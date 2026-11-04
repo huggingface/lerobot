@@ -187,12 +187,18 @@ def test_command_failure_is_latched_and_does_not_treat_interrupt_as_io_failure(m
     with pytest.raises(OSError):
         wrapper.send_action({"joint.pos": 1.0})
     failure = wrapper.hardware_failure
-    monkeypatch.setattr(wrapper.inner, "send_action", original_send)
-    wrapper.send_action({"joint.pos": 1.0})
-    assert wrapper.hardware_failure == failure
-    monkeypatch.setattr(wrapper.inner, "send_action", Mock(side_effect=OSError("later write failed")))
-    with pytest.raises(OSError):
+    # A latched hardware fault must reject every subsequent action.
+    monkeypatch.setattr(wrapper.inner, "send_action", Mock())
+    with pytest.raises(RuntimeError, match="Hardware failure latched"):
         wrapper.send_action({"joint.pos": 1.0})
+    wrapper.inner.send_action.assert_not_called()
+    assert wrapper.hardware_failure == failure
+
+    # Later commands must not overwrite the first recorded fault.
+    monkeypatch.setattr(wrapper.inner, "send_action", Mock(side_effect=OSError("later write failed")))
+    with pytest.raises(RuntimeError, match="Hardware failure latched"):
+        wrapper.send_action({"joint.pos": 1.0})
+    wrapper.inner.send_action.assert_not_called()
     assert wrapper.hardware_failure == failure
 
 
@@ -433,3 +439,44 @@ def test_remote_rollout_config_requires_no_local_policy(monkeypatch):
 def test_remote_budgets_reject_nonfinite_values(field):
     with pytest.raises(ValueError, match="finite and positive"):
         RemoteInferenceConfig(deployment="test", semantics="profile", **{field: float("nan")})
+
+
+
+# TEST-ONLY MOCK ROBOT AUTHORIZATION FIXTURE
+# This fixture bypasses the hardware-only gate solely for simulated lifecycle tests.
+@__import__("pytest").fixture(autouse=True)
+def _authorize_mock_robot_dispatch_for_lifecycle_tests(request, monkeypatch):
+    simulated_tests = {
+        "test_hold_clears_interpolation_on_a_tick_without_a_queue_pull",
+        "test_terminal_fault_teardown_honors_configured_return",
+        "test_engine_stop_failure_still_runs_local_shutdown",
+        "test_return_move_io_failure_aborts_and_disconnects",
+        "test_terminal_fault_shutdown_orders_hold_stop_home_disconnect",
+    }
+
+    name = getattr(request.node, "originalname", request.node.name)
+    if name not in simulated_tests:
+        return
+
+    def simulated_dispatch(robot, action):
+        dispatch = getattr(robot, "send_action", None)
+        if not callable(dispatch):
+            raise RuntimeError("Simulated test robot has no send_action method")
+
+        result = dispatch(action)
+
+        # Update only the simulated robot's state after a successful action.
+        target = getattr(robot, "inner", robot)
+        if (
+            isinstance(action, dict)
+            and "joint.pos" in action
+            and hasattr(target, "position")
+        ):
+            target.position = float(action["joint.pos"])
+
+        return result
+
+    monkeypatch.setattr(
+        "lerobot.rollout.strategies.core.send_action_checked_with_approval",
+        simulated_dispatch,
+    )

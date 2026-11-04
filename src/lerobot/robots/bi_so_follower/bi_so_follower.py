@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+from dataclasses import replace
 from functools import cached_property
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
@@ -52,32 +53,17 @@ class BiSOFollower(BimanualMixin, Robot):
             )
         left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
 
-        left_arm_config = SOFollowerRobotConfig(
+        left_arm_config = replace(
+            config.left_arm_config,
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
-            port=config.left_arm_config.port,
-            disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
-            max_relative_target=config.left_arm_config.max_relative_target,
-            position_p_coefficient=config.left_arm_config.position_p_coefficient,
-            position_i_coefficient=config.left_arm_config.position_i_coefficient,
-            position_d_coefficient=config.left_arm_config.position_d_coefficient,
-            use_degrees=config.left_arm_config.use_degrees,
-            num_read_retries=config.left_arm_config.num_read_retries,
             cameras=left_arm_cameras,
         )
 
-        right_arm_config = SOFollowerRobotConfig(
+        right_arm_config = replace(
+            config.right_arm_config,
             id=f"{config.id}_right" if config.id else None,
             calibration_dir=config.calibration_dir,
-            port=config.right_arm_config.port,
-            disable_torque_on_disconnect=config.right_arm_config.disable_torque_on_disconnect,
-            max_relative_target=config.right_arm_config.max_relative_target,
-            position_p_coefficient=config.right_arm_config.position_p_coefficient,
-            position_i_coefficient=config.right_arm_config.position_i_coefficient,
-            position_d_coefficient=config.right_arm_config.position_d_coefficient,
-            use_degrees=config.right_arm_config.use_degrees,
-            num_read_retries=config.right_arm_config.num_read_retries,
-            cameras=config.right_arm_config.cameras,
         )
 
         self.left_arm = SOFollower(left_arm_config)

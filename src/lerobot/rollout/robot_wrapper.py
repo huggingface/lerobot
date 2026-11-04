@@ -64,12 +64,82 @@ class ThreadSafeRobot:
         with self._lock:
             return self._observation_time
 
+
+    def _validate_joint_limits_locked(self, action):
+        """Validate SO101 follower joint targets under the existing lock."""
+        from dataclasses import asdict, is_dataclass
+
+        from lerobot.rollout.joint_limit_guard import JointLimitGuard
+
+        robot = self._robot
+
+        if getattr(robot, "robot_type", None) not in {"so100_follower", "so101_follower"}:
+            return
+
+        config = getattr(robot, "config", None)
+
+        if config is None or getattr(config, "use_degrees", None) is not True:
+            raise RuntimeError(
+                "SO101 joint guard requires degree mode"
+            )
+
+        calibration = getattr(robot, "calibration", None)
+
+        if not isinstance(calibration, dict):
+            raise RuntimeError(
+                "SO101 calibration unavailable"
+            )
+
+        calibration_dict = {}
+
+        for joint in (
+            "shoulder_pan",
+            "shoulder_lift",
+            "elbow_flex",
+            "wrist_flex",
+            "wrist_roll",
+        ):
+            if joint not in calibration:
+                raise RuntimeError(
+                    f"Missing SO101 calibration: {joint}"
+                )
+
+            item = calibration[joint]
+
+            if is_dataclass(item) and not isinstance(item, type):
+                calibration_dict[joint] = asdict(item)
+            elif isinstance(item, dict):
+                calibration_dict[joint] = item.copy()
+            else:
+                raise RuntimeError(
+                    f"Invalid calibration object: {joint}"
+                )
+
+        guard = JointLimitGuard(calibration_dict)
+
+        guard.validate(action)
+
     def send_action(self, action: dict[str, Any] | Any) -> Any:
+        # SO101_UNIFIED_DISPATCH_GATE_V1
+        from lerobot.rollout.hardware_gate import send_action_checked_with_approval
+
+        if getattr(self._robot, "robot_type", None) in {"so100_follower", "so101_follower"}:
+            # Authorization is checked before entering checked dispatch.
+            return send_action_checked_with_approval(
+                self, action
+            )
+
         with self._lock:
+            if self._hardware_failure is not None:
+                raise RuntimeError(
+                    f"Hardware failure latched: {self._hardware_failure}"
+                )
             try:
                 applied_action = self._robot.send_action(action)
                 if self._position_hold_enabled:
-                    self._last_applied_action = self._validated_positions(applied_action)
+                    self._last_applied_action = self._validated_positions(
+                        applied_action
+                    )
                 return applied_action
             except Exception as exc:
                 self._record_hardware_failure("send_action", exc)
@@ -120,18 +190,155 @@ class ThreadSafeRobot:
         any command, use the last finite measured pose. The robot may still settle
         toward these targets; this is not an instantaneous physical stop.
         """
+        from os import environ
         with self._lock:
+            if getattr(self._robot, "robot_type", None) in {"so100_follower", "so101_follower"} and environ.get("SO101_HARDWARE_APPROVED") != "1":
+                raise RuntimeError("SO101 safety gate: hardware dispatch disabled")
+            if self._hardware_failure is not None:
+                raise RuntimeError(f"Hardware failure latched: {self._hardware_failure}")
+
             if not self._position_hold_enabled:
                 raise RuntimeError("Local hold was not configured for this robot")
+
+            if getattr(self._robot, "robot_type", None) in {
+                "so100_follower", "so101_follower"
+            }:
+                self._check_gripper_feedback_locked()
+
+            gripper_guard = getattr(self, "_gripper_safety_guard", None)
+            if gripper_guard is not None and gripper_guard.fault_latched:
+                from lerobot.rollout.gripper_safety import GripperSafetyError
+
+                raise GripperSafetyError(
+                    f"GRIPPER LOCKED: {gripper_guard.fault_reason}"
+                )
+
             try:
                 target = self._last_applied_action
                 if target is None:
                     target = self._validated_positions(self._observed_positions)
+                self._validate_joint_limits_locked(target)
                 applied_action = self._robot.send_action(target.copy())
                 self._last_applied_action = self._validated_positions(applied_action)
             except Exception as exc:
                 self._record_hardware_failure("hold", exc)
                 raise
+
+    def _check_gripper_feedback_locked(self):
+        """Read and validate fresh SO101 gripper feedback.
+
+        Caller must own self._lock.
+        """
+        from lerobot.rollout.gripper_safety import (
+            GripperStatus,
+            GripperSafetyGuard,
+            GripperSafetyError,
+        )
+        from lerobot.rollout.so101_gripper_feedback import (
+            parse_sts3215_feedback,
+        )
+
+        robot = self._robot
+
+        if getattr(robot, "robot_type", None) not in {
+            "so100_follower", "so101_follower"
+        }:
+            raise RuntimeError("Checked dispatch supports SO101 follower only")
+
+        if not hasattr(robot, "bus"):
+            raise RuntimeError("Robot motor bus unavailable")
+
+        if not hasattr(self, "_gripper_safety_guard"):
+            self._gripper_safety_guard = GripperSafetyGuard()
+
+        guard = self._gripper_safety_guard
+
+        if guard.fault_latched:
+            raise GripperSafetyError(
+                f"GRIPPER LOCKED: {guard.fault_reason}"
+            )
+
+        try:
+            raw_feedback = {
+                "present_load": robot.bus.read(
+                    "Present_Load", "gripper", normalize=False
+                ),
+                "present_voltage": robot.bus.read(
+                    "Present_Voltage", "gripper", normalize=False
+                ),
+                "present_temperature": robot.bus.read(
+                    "Present_Temperature", "gripper", normalize=False
+                ),
+                "present_current": robot.bus.read(
+                    "Present_Current", "gripper", normalize=False
+                ),
+                "status": robot.bus.read(
+                    "status", "gripper", normalize=False
+                ),
+            }
+
+            feedback = parse_sts3215_feedback(raw_feedback)
+
+            status = GripperStatus(
+                load=feedback.load_value,
+                current=feedback.current_raw,
+                temperature=feedback.temperature_c,
+                voltage=feedback.voltage_v,
+                overload_detected=False,
+            )
+
+        except Exception as exc:
+            guard._fault(
+                f"Gripper feedback read failure: {exc!r}"
+            )
+
+        guard.check(status)
+        return feedback
+
+    def send_action_checked(self, action):
+        """Authorized SO101 dispatch with fresh gripper feedback."""
+        from os import environ
+        from lerobot.rollout.gripper_safety import GripperSafetyError
+
+        if environ.get("SO101_HARDWARE_APPROVED") != "1":
+            raise RuntimeError(
+                "SO101 safety gate: hardware dispatch disabled"
+            )
+
+        with self._lock:
+            if self._hardware_failure is not None:
+                raise RuntimeError(
+                    f"Hardware failure latched: {self._hardware_failure}"
+                )
+
+            guard = getattr(self, "_gripper_safety_guard", None)
+
+            try:
+                self._check_gripper_feedback_locked()
+            except GripperSafetyError:
+                raise
+
+            self._validate_joint_limits_locked(action)
+
+            try:
+                applied_action = self._robot.send_action(action)
+
+                if self._position_hold_enabled:
+                    self._last_applied_action = self._validated_positions(
+                        applied_action
+                    )
+
+                return applied_action
+
+            except Exception as exc:
+                try:
+                    self._gripper_safety_guard._fault(
+                        f"Robot action dispatch failure: {exc!r}"
+                    )
+                except GripperSafetyError as safety_exc:
+                    raise safety_exc from exc
+                raise
+
 
     # -- Read-only proxies (no lock needed) -----------------------------------
 

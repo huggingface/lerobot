@@ -1560,6 +1560,10 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
     assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
     _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
 
+@pytest.fixture(autouse=True)
+def _authorize_mock_rollout_dispatch(monkeypatch):
+    """Authorize dispatch only inside mocked rollout tests."""
+    monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
 
 # ---------------------------------------------------------------------------
 # Policy side outputs
