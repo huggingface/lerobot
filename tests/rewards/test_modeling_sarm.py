@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for SARM's typed progress capability."""
+"""Tests for SARM's predict_progress() and calculate_rewards()."""
 
 from __future__ import annotations
 

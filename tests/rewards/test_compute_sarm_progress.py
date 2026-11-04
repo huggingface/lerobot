@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Characterization tests for SARM's legacy progress artifact."""
+"""Tests for SARM's RA-BC progress script."""
 
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -23,22 +23,12 @@ import torch
 from lerobot.rewards.sarm import SARMPrediction
 
 
-def test_compute_sarm_progress_preserves_legacy_parquet_artifact(monkeypatch, tmp_path: Path) -> None:
-    import importlib
-    import sys
-
+@pytest.mark.dataset
+def test_compute_sarm_progress_writes_progress_parquet(monkeypatch, tmp_path: Path) -> None:
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
-
-    # The legacy script keeps visualization helpers in the scoring module.
-    # This artifact test does not exercise them, so avoid requiring the
-    # optional matplotlib dependency just to import the scoring boundary.
-    matplotlib = ModuleType("matplotlib")
-    matplotlib.__path__ = []  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "matplotlib", matplotlib)
-    monkeypatch.setitem(sys.modules, "matplotlib.gridspec", ModuleType("matplotlib.gridspec"))
-    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", ModuleType("matplotlib.pyplot"))
-    compute_rabc_weights = importlib.import_module("lerobot.rewards.sarm.compute_rabc_weights")
+    pytest.importorskip("matplotlib")
+    from lerobot.rewards.sarm import compute_rabc_weights
 
     image_key = "observation.images.top"
 

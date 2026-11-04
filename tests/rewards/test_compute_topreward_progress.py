@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Characterization tests for TOPReward's legacy progress conversion."""
+"""Tests for TOPReward's RA-BC progress script."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,7 +35,7 @@ def test_normalize_rewards_preserves_constant_and_varying_episode_behavior():
 
 
 @pytest.mark.dataset
-def test_compute_topreward_progress_preserves_legacy_parquet_artifact(monkeypatch, tmp_path: Path) -> None:
+def test_compute_topreward_progress_writes_progress_parquet(monkeypatch, tmp_path: Path) -> None:
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
 

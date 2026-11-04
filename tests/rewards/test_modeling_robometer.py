@@ -214,12 +214,7 @@ def test_robometer_predict_progress_returns_typed_frame_signals(monkeypatch):
     success_logits = torch.tensor([[0.0, 5.0], [0.0, -5.0]])
     _patch_build(monkeypatch)
 
-    cfg = RobometerConfig(
-        device="cpu",
-        reward_output="success",
-        success_threshold=0.99,
-        progress_loss_type="l2",
-    )
+    cfg = RobometerConfig(device="cpu", progress_loss_type="l2")
     model = RobometerRewardModel(cfg)
     model.train()
     call_state = {}

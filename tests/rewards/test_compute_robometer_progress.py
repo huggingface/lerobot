@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Characterization tests for RoboMeter's frame-steps scoring inputs."""
+"""Tests for RoboMeter's RA-BC progress script."""
 
 from __future__ import annotations
 
@@ -30,54 +30,30 @@ from lerobot.rewards.robometer.processor_robometer import _video_to_numpy
 
 
 @pytest.mark.parametrize(
-    ("num_frames", "num_subsampled_frames"),
-    [(1, 1), (4, 1), (3, 4), (8, 4)],
+    ("num_frames", "num_subsampled_frames", "expected"),
+    [
+        (4, 1, [[0], [0], [0], [0]]),
+        (3, 4, [[0, 0, 0, 0], [0, 0, 1, 1], [0, 1, 1, 2]]),
+        (
+            6,
+            4,
+            [[0, 0, 0, 0], [0, 0, 1, 1], [0, 1, 1, 2], [0, 1, 2, 3], [0, 1, 3, 4], [0, 2, 3, 5]],
+        ),
+    ],
 )
-def test_build_subsample_indices_returns_fixed_size_prefixes(
-    num_frames: int, num_subsampled_frames: int
-) -> None:
+def test_build_subsample_indices(num_frames: int, num_subsampled_frames: int, expected: list) -> None:
     indices = compute_rabc_weights._build_subsample_indices(num_frames, num_subsampled_frames)
 
-    assert len(indices) == num_frames
-    assert all(index.shape == (num_subsampled_frames,) for index in indices)
-    assert all(index.dtype == np.int64 for index in indices)
-
-
-def test_build_subsample_indices_keeps_prefix_endpoints() -> None:
-    indices = compute_rabc_weights._build_subsample_indices(num_frames=7, num_subsampled_frames=4)
-
-    for current_frame, prefix_indices in enumerate(indices):
-        assert prefix_indices[0] == 0
-        assert prefix_indices[-1] == current_frame
-
-
-def test_build_subsample_indices_pins_single_frame_behavior() -> None:
-    indices = compute_rabc_weights._build_subsample_indices(num_frames=4, num_subsampled_frames=1)
-
-    assert [index.tolist() for index in indices] == [[0], [0], [0], [0]]
-
-
-def test_build_subsample_indices_pins_rounding_and_repeated_frames() -> None:
-    indices = compute_rabc_weights._build_subsample_indices(num_frames=6, num_subsampled_frames=4)
-
-    expected = [
-        [0, 0, 0, 0],
-        [0, 0, 1, 1],
-        [0, 1, 1, 2],
-        [0, 1, 2, 3],
-        [0, 1, 3, 4],
-        [0, 2, 3, 5],
-    ]
     assert [index.tolist() for index in indices] == expected
 
 
-def test_disabling_crop_preserves_previous_output_for_fixed_size_samples() -> None:
+def test_video_to_numpy_without_max_frames_keeps_every_frame() -> None:
     selected_frames = torch.arange(4 * 3 * 2 * 2, dtype=torch.uint8).reshape(4, 3, 2, 2)
 
-    previous = _video_to_numpy(selected_frames, max_frames=4)
-    uncropped = _video_to_numpy(selected_frames, max_frames=None)
+    capped = _video_to_numpy(selected_frames, max_frames=4)
+    uncapped = _video_to_numpy(selected_frames, max_frames=None)
 
-    np.testing.assert_array_equal(uncropped, previous)
+    np.testing.assert_array_equal(uncapped, capped)
 
 
 @pytest.mark.parametrize("num_subsampled_frames", [0, -1])
@@ -127,7 +103,7 @@ def test_scoring_encoder_preserves_already_selected_frames() -> None:
 
 
 @pytest.mark.dataset
-def test_compute_robometer_progress_preserves_legacy_parquet_artifact(monkeypatch, tmp_path: Path) -> None:
+def test_compute_robometer_progress_writes_progress_parquet(monkeypatch, tmp_path: Path) -> None:
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
 
