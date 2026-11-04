@@ -407,6 +407,79 @@ def test_controller_segment_ended_event_on_natural_end():
     assert controller.stopped
 
 
+def test_controller_pause_keeps_pose_and_task_and_resume_continues():
+    controller, events, strategy, engine, _parent, run_started = _make_controller()
+    thread = _serve_thread(controller)
+    assert controller.pause() is False  # nothing to pause before start()
+    assert controller.resume() is False  # nor to resume
+
+    assert controller.start() is True
+    assert _wait_for(run_started.is_set)
+    assert controller.set_task("grab the red cube") is True
+    assert controller.resume() is False  # already running
+
+    assert controller.pause() is True
+    assert _wait_for(lambda: controller.paused)
+    assert RolloutEvent.SEGMENT_PAUSED in events
+    assert not controller.running
+    assert engine.pause.call_count >= 1
+    # Unlike reset(): no move home, no task restore, and not reported as a natural end.
+    strategy.return_to_initial_position.assert_not_called()
+    assert engine.task == "grab the red cube"
+    assert RolloutEvent.SEGMENT_ENDED not in events
+
+    run_started.clear()
+    assert controller.resume() is True
+    assert _wait_for(run_started.is_set)
+    assert not controller.paused
+    assert strategy.run.call_count == 2
+    assert engine.task == "grab the red cube"
+
+    controller.stop()
+    _join_session(thread)
+    assert controller.pause() is False
+    assert controller.resume() is False
+
+
+def test_controller_reset_and_stop_end_the_pause():
+    controller, _events, strategy, _engine, _parent, run_started = _make_controller()
+    thread = _serve_thread(controller)
+    controller.start()
+    assert _wait_for(run_started.is_set)
+    controller.pause()
+    assert _wait_for(lambda: controller.paused)
+
+    controller.reset()  # the robot goes home, so there is nothing left to resume
+    assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 1)
+    assert not controller.paused
+    assert controller.resume() is False
+
+    # A reset right after a pause wins: the segment ends as a reset, not as a pause.
+    run_started.clear()
+    controller.start()
+    assert _wait_for(run_started.is_set)
+    controller.pause()
+    controller.reset()
+    assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 2)
+    assert not controller.paused
+
+    controller.stop()
+    _join_session(thread)
+    assert not controller.paused
+
+
+def test_controller_pause_racing_a_consumed_start_skips_the_segment():
+    controller, events, strategy, _engine, _parent, _run_started = _make_controller()
+    controller._running.set()  # as serve() does, under the control lock
+    assert controller.pause() is True
+    controller._run_segment()
+    strategy.run.assert_not_called()
+    assert events == [RolloutEvent.SEGMENT_PAUSED]
+    assert not controller.running
+    assert controller.paused
+    assert not controller._pause_requested.is_set()  # the next segment runs normally
+
+
 # --- InteractiveSession (the stdin CLI front-end) ---
 
 
@@ -473,6 +546,37 @@ def test_session_unknown_input_does_not_start(capsys):
         assert "commands start with '/'" in out
 
         session._handle_line("/stop")
+        _join_session(thread)
+
+
+def test_session_pause_and_resume_over_the_command_stream(capsys):
+    with _pipe_stream() as (reader, writer):
+        session, strategy, _engine, _parent, run_started = _make_session(reader)
+        thread = _start_session_thread(session)
+
+        def send(line):
+            writer.write(f"{line}\n")
+            writer.flush()
+
+        send("/pause")
+        assert _wait_for(lambda: "nothing to pause" in capsys.readouterr().out)
+        send("/resume")
+        assert _wait_for(lambda: "nothing to resume" in capsys.readouterr().out)
+        strategy.run.assert_not_called()
+
+        send("/start")
+        assert _wait_for(run_started.is_set)
+        send("/pause")
+        assert _wait_for(lambda: "Rollout paused" in capsys.readouterr().out)
+        assert not session.controller.running
+        strategy.return_to_initial_position.assert_not_called()
+
+        run_started.clear()
+        send("/resume")
+        assert _wait_for(run_started.is_set)
+        assert strategy.run.call_count == 2
+
+        send("/stop")
         _join_session(thread)
 
 
