@@ -50,7 +50,7 @@ uv run lerobot-score \
 
 Scorer options are only passed to the scorer when set: `--batch_size` and `--num_subsampled_frames` for RoboMeter, `--num_samples` for TOPReward, `--head_mode`, `--stride` and `--batch_size` for SARM.
 
-By default, the score is named after the scorer, such as `robometer`. Use `--name=robometer-4b` to keep results from a specific model or configuration and `--episodes='[0,1]'` to select episodes.
+By default, the score is named after the scorer, such as `robometer`. Use `--name=robometer-4b` to keep results from a specific model or configuration and `--episodes='[0,1]'` to score, and download, only those episodes.
 
 Scoring requires a writable local LeRobot dataset root, not the Hub cache LeRobot downloads to by default. Pass `--dataset_root=/path/to/dataset`; a Hub dataset is downloaded there if it isn't yet.
 

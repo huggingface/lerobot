@@ -89,7 +89,12 @@ def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
     assert captured["make_scorer"] == (fake_model, {"batch_size": 8, "num_subsampled_frames": 6})
     assert captured["dataset_load"] == (
         "user/dataset",
-        {"root": tmp_path / "dataset", "revision": "dataset-revision", "download_videos": True},
+        {
+            "root": tmp_path / "dataset",
+            "revision": "dataset-revision",
+            "episodes": [1],
+            "download_videos": True,
+        },
     )
     assert captured["add_score"] == (
         fake_scorer,

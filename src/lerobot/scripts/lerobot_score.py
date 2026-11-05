@@ -93,6 +93,7 @@ def run_score(cfg: ScoreConfig) -> None:
         cfg.dataset_repo_id,
         root=cfg.dataset_root,
         revision=cfg.dataset_revision,
+        episodes=cfg.episodes,
         download_videos=True,
     )
     score_name = cfg.name or scorer.name
