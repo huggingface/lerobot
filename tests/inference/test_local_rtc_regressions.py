@@ -35,6 +35,8 @@ from tests.inference.rtc_helpers import ControlledPolicy, make_engine, observe, 
 from tests.mocks.mock_robot import MockRobot, MockRobotConfig
 from tests.utils import wait_for
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize("temporal_contract", [False, True])
 def test_unsupported_local_policy_explains_sync_fallback_before_hardware(monkeypatch, temporal_contract):
@@ -51,6 +53,7 @@ def test_unsupported_local_policy_explains_sync_fallback_before_hardware(monkeyp
         policy=ACTConfig(device="cpu", pretrained_path=Path("unused")),
         inference=RTCInferenceConfig(rtc=RTCConfig(enabled=False)),
         device="cpu",
+        tf32=None,
     )
     monkeypatch.setattr(context, "_load_pretrained_policy", lambda _: policy)
 

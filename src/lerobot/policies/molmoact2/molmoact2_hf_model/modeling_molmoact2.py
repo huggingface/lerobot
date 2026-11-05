@@ -2597,9 +2597,8 @@ class MolmoAct2TextModel(MolmoAct2PreTrainedModel):
             # Prepare mask arguments
             mask_kwargs = {
                 "config": self.config,
-                "input_embeds": inputs_embeds,
+                "inputs_embeds": inputs_embeds,
                 "attention_mask": attention_mask,
-                "cache_position": cache_position,
                 "past_key_values": past_key_values,
                 "position_ids": position_ids,
             }
@@ -4677,9 +4676,8 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
     @staticmethod
     def create_masks_for_generate(
         config: PretrainedConfig,
-        input_embeds: torch.Tensor,
+        inputs_embeds: torch.Tensor,
         attention_mask: torch.Tensor | None,
-        cache_position: torch.Tensor,
         past_key_values: Cache | None,
         position_ids: torch.Tensor | None,
         token_type_ids: torch.Tensor | None = None,
@@ -4688,17 +4686,16 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
         # Prepare mask arguments
         mask_kwargs = {
             "config": config.get_text_config(),
-            "input_embeds": input_embeds,
+            "inputs_embeds": inputs_embeds,
             "attention_mask": attention_mask,
-            "cache_position": cache_position,
             "past_key_values": past_key_values,
             "position_ids": position_ids,
         }
         # Add the token type ids mask for generate as well
-        if token_type_ids is not None and input_embeds.shape[1] != 1:
+        if token_type_ids is not None and inputs_embeds.shape[1] != 1:
             # We need to pass an additional mask function to account for token type ids, and it needs to be an `or`
             mask_kwargs["or_mask_function"] = token_type_ids_mask_function(
-                token_type_ids.to(cache_position.device)
+                token_type_ids.to(inputs_embeds.device)
             )
 
         return create_masks_for_generate(**mask_kwargs)

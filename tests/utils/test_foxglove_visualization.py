@@ -117,3 +117,57 @@ def test_playback_times_ns():
 
     assert fv._playback_times_ns(WithHF()) == [0, 100_000_000, 200_000_000]
     assert fv._playback_times_ns(NoHF()) == [0, 100_000_000, 200_000_000]
+
+
+def test_prediction_logs_the_first_env_on_prediction_topics(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    import torch
+
+    logged = {}
+
+    class FakeChannel:
+        def __init__(self, topic, **kwargs):
+            self.topic = topic
+
+        def log(self, message, **kwargs):
+            logged[self.topic] = message
+
+    monkeypatch.setitem(sys.modules, "foxglove", SimpleNamespace(Channel=FakeChannel))
+    monkeypatch.setattr(fv.log_foxglove_data, "channels", {}, raising=False)
+    monkeypatch.setitem(fv._IMAGE_SIZES, "/observation/images/top", (100, 200))
+    monkeypatch.setattr(fv, "_log_foxglove_image", lambda topic, name, arr, **k: logged.update({topic: arr}))
+    monkeypatch.setattr(
+        fv, "_log_foxglove_scalars", lambda topic, values, **k: logged.update({topic: values})
+    )
+    monkeypatch.setattr(
+        fv,
+        "_log_foxglove_boxes",
+        lambda topic, answer, size, log_time: logged.update({topic: (answer, size)}),
+    )
+
+    fv._log_foxglove_prediction(
+        {
+            "observation": {
+                "observation.images.top": torch.stack([torch.zeros(3, 4, 6), torch.ones(3, 4, 6)]),
+                "observation.state": torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+            },
+            "language": {"subtask": ["reach", "grasp"]},
+            "boxes": {
+                "observation.images.top": [
+                    {"detections": []},
+                    {"detections": [{"label": "c", "bbox": [0, 0, 1, 1]}]},
+                ],
+                "observation.images.wrist": [{"detections": []}, {"detections": []}],  # camera never logged
+            },
+        },
+        compress_images=False,
+        log_time=0,
+    )
+
+    assert logged["/prediction/images/top"].shape == (3, 4, 6) and logged["/prediction/images/top"].max() == 0
+    assert logged["/prediction/state"] == {"state_0": 1.0, "state_1": 2.0}
+    assert logged["/prediction/subtask"] == {"text": "reach"}
+    assert logged["/observation/images/top/prediction"] == ({"detections": []}, (100, 200))
+    assert "/observation/images/wrist/prediction" not in logged

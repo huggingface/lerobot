@@ -30,6 +30,8 @@ pytest.importorskip("torchcodec", reason="torchcodec is required (install lerobo
 
 from lerobot.datasets.video_utils import VideoDecoderCache  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 TEST_ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "artifacts" / "encoded_videos"
 SRC_CLIP = TEST_ARTIFACTS_DIR / "clip_4frames.mp4"
 

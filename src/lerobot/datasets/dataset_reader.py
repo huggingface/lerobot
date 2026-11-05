@@ -16,7 +16,7 @@
 """Private reader component for LeRobotDataset. Handles random-access reading (HF dataset, delta indices, video decoding)."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -76,7 +76,7 @@ class BaseDatasetReader(ABC):
 
     @property
     @abstractmethod
-    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+    def absolute_to_relative_idx(self) -> Mapping[int, int] | None:
         """Mapping from absolute frame indices to relative row positions.
 
         Non-None only for episode-filtered datasets where absolute indices

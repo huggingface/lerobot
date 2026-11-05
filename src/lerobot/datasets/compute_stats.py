@@ -63,7 +63,7 @@ class RunningQuantileStats:
         """
         batch = batch.reshape(-1, batch.shape[-1])
         # Promote integer and low-precision inputs before computing squared statistics.
-        batch = batch.astype(np.result_type(batch.dtype, np.float32), copy=False)
+        batch = batch.astype(np.float64, copy=False)
         num_elements, vector_length = batch.shape
 
         # First batch: the running statistics are still unset.

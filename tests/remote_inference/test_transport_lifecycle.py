@@ -37,6 +37,8 @@ from lerobot.transport.zenoh import ZenohConfig, ZenohTransport
 from tests.remote_inference.helpers import control_request, open_request
 from tests.utils import wait_for
 
+pytestmark = pytest.mark.dataset
+
 
 def exchange(transport, key, request):
     replies = transport.query(key, encode_message(request), timeout=2)

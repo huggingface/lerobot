@@ -41,10 +41,13 @@ from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 from tests.conftest import assert_contract_is_typed
 
+pytestmark = pytest.mark.dataset
+
 TRANSITION_KEYS = frozenset(
     {
         TransitionKey.OBSERVATION,
         TransitionKey.ACTION,
+        TransitionKey.PREDICTION,
         TransitionKey.REWARD,
         TransitionKey.DONE,
         TransitionKey.TRUNCATED,
@@ -1948,6 +1951,7 @@ def test_state_file_naming_with_multiple_processors():
         assert loaded_post.steps[0].window_size == 10
 
 
+@pytest.mark.gpu
 def test_override_with_device_strings():
     """Test overriding device parameters with string values."""
 
@@ -2440,3 +2444,54 @@ def test_initial_camera_not_overridden_by_step_image():
     key = f"{OBS_IMAGES}.front"
     assert key in out
     assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial
+
+
+def _artifact_config(relative_path: str) -> dict[str, Any]:
+    """Minimal loaded-config shape carrying one declared artifact."""
+    return {
+        "steps": [
+            {
+                "registry_name": "some_step",
+                "config": {},
+                "artifacts": {"asset": relative_path},
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "expected_pattern"),
+    [
+        ("tokenizer", "tokenizer/**"),
+        ("action_tokenizer.safetensors", "action_tokenizer.safetensors"),
+    ],
+)
+def test_artifact_download_pattern_matches_directories_and_files(
+    tmp_path, monkeypatch, relative_path, expected_pattern
+):
+    """A file artifact must be fetched by name; globbing it as a directory matches nothing."""
+    captured: dict[str, Any] = {}
+
+    def fake_snapshot_download(**kwargs):
+        captured.update(kwargs)
+        target = tmp_path / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if Path(relative_path).suffix:
+            target.write_text("{}")
+        else:
+            target.mkdir(exist_ok=True)
+        return str(tmp_path)
+
+    monkeypatch.setattr("lerobot.processor.pipeline.snapshot_download", fake_snapshot_download)
+    loaded_config = _artifact_config(relative_path)
+
+    DataProcessorPipeline._resolve_artifact_paths(
+        loaded_config,
+        model_id="some/repo",
+        base_path=tmp_path,
+        config_filename="policy_preprocessor.json",
+        hub_download_kwargs={},
+    )
+
+    assert captured["allow_patterns"] == expected_pattern
+    assert loaded_config["steps"][0]["config"]["asset"] == str(tmp_path / relative_path)

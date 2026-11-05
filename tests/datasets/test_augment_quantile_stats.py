@@ -26,6 +26,8 @@ from lerobot.scripts.augment_dataset_quantile_stats import (
     has_quantile_stats,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def _numeric_keys(dataset):
     return [

@@ -68,12 +68,18 @@ ds = load_dataset("lerobot/robotwin_unified", split="train")
 
 ## Installation
 
+<Tip warning={true}>
+
+The current RoboTwin integration is broken and is not supported with LeRobot's default PyTorch 2.15 stack. Its benchmark CI job is temporarily disabled. The instructions below describe the legacy setup; they are not a working installation recipe for the current default dependencies. Compatibility fixes and simulator dependency isolation are deferred to [PR #4888](https://github.com/huggingface/lerobot/pull/4888).
+
+</Tip>
+
 RoboTwin 2.0 requires **Linux** with an NVIDIA GPU (CUDA 12.1 recommended). Installation takes approximately 20 minutes.
 
 ### 1. Create a conda environment
 
 ```bash
-conda create -n robotwin python=3.10 -y
+conda create -n robotwin python=3.12 -y
 conda activate robotwin
 ```
 
@@ -206,7 +212,7 @@ Key parameters for `RoboTwinEnvConfig`:
 | -------------------- | ---------------------------------------- | ---------------------------------- |
 | `task`               | `"beat_block_hammer"`                    | Comma-separated task name(s)       |
 | `fps`                | `25`                                     | Simulation FPS                     |
-| `episode_length`     | `300`                                    | Max steps per episode              |
+| `episode_length`     | `1200`                                   | Max steps per episode              |
 | `obs_type`           | `"pixels_agent_pos"`                     | `"pixels"` or `"pixels_agent_pos"` |
 | `camera_names`       | `"head_camera,left_camera,right_camera"` | Comma-separated active cameras     |
 | `observation_height` | `240`                                    | Camera pixel height                |

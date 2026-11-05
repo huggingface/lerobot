@@ -48,6 +48,8 @@ from tests.fixtures.constants import (
 )
 from tests.fixtures.dataset_factories import add_frames
 
+pytestmark = pytest.mark.dataset
+
 
 # Per-codec skip markers — validation tests only fire when the codec is available
 def _require_encoder(vcodec: str) -> pytest.MarkDecorator:

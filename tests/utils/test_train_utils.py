@@ -187,6 +187,7 @@ def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypa
         train_utils.resolve_resume_checkpoint("u/run", tmp_path / "run")
 
 
+@pytest.mark.dataset
 @pytest.mark.skipif(not _datasets_available, reason="requires datasets")
 @pytest.mark.parametrize("frames,drop_first,drop_last,max_eval_samples", [(12, 2, 3, 3), (64, 0, 32, 0)])
 def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
@@ -235,6 +236,7 @@ def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
     assert torch.equal(rng, torch.get_rng_state())
 
 
+@pytest.mark.dataset
 @pytest.mark.skipif(not _datasets_available, reason="requires datasets")
 @pytest.mark.parametrize(("num_workers", "expected"), [(0, 0), (1, 1), (4, 4), (16, 8)])
 def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_workers, expected):
@@ -272,6 +274,7 @@ def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_worke
     assert train.num_workers == expected
 
 
+@pytest.mark.dataset
 @pytest.mark.skipif(not _datasets_available, reason="requires datasets")
 def test_streaming_dataloader_receives_the_trainers_data_parallel_rank():
     class StreamingDataset(torch.utils.data.IterableDataset):

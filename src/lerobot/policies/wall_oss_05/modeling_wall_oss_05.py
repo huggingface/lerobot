@@ -35,7 +35,7 @@ if TYPE_CHECKING or _transformers_available:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
         Qwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLRotaryEmbedding,
-        apply_multimodal_rotary_pos_emb,
+        apply_rotary_pos_emb,
         repeat_kv,
     )
 
@@ -189,14 +189,7 @@ class WallOSS05JointAttention(nn.Module):
         key = key.transpose(1, 2)
         value = value.transpose(1, 2)
         cosine, sine = position_embeddings
-        query, key = apply_multimodal_rotary_pos_emb(
-            query,
-            key,
-            cosine,
-            sine,
-            self.mrope_section,
-            unsqueeze_dim=1,
-        )
+        query, key = apply_rotary_pos_emb(query, key, cosine, sine, unsqueeze_dim=1)
         projection_dtype = self.qkv_proj_experts[0].weight.dtype
         query = query.to(projection_dtype)
         key = key.to(projection_dtype)
@@ -943,13 +936,14 @@ class WallOSS05Policy(PreTrainedPolicy):
         return loss, metrics
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
-        del kwargs
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+        """`noise` is the optional starting sample, shape `(batch_size, chunk_size, max_action_dim)`."""
         inputs = self._pretokenized_inputs(batch)
         output = self.model.generate_flow_action(
             action_horizon=self.config.chunk_size,
             action_dim=self.config.max_action_dim,
             num_inference_timesteps=self.config.num_inference_timesteps,
+            noise=noise,
             **inputs,
         )
         return output["predict_action"]
@@ -983,8 +977,8 @@ class WallOSS05Policy(PreTrainedPolicy):
         return require_single_text_output(outputs, policy_name="Wall-OSS-0.5")
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         if not self._queues[ACTION]:
-            chunk = self.predict_action_chunk(batch, **kwargs)
+            chunk = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(chunk[:, : self.config.n_action_steps].transpose(0, 1))
         return self._queues[ACTION].popleft()

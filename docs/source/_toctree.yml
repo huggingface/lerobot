@@ -79,8 +79,12 @@
     title: LingBot-VA
   - local: lingbot_vla_v2
     title: LingBot-VLA 2.0
+  - local: g05
+    title: OpenGalaxea G0.5
   - local: fastwam
     title: FastWAM
+  - local: longwam
+    title: Long-WAM
   - local: flux3
     title: FLUX 3 Action (flux3)
   - local: evo1
@@ -97,6 +101,8 @@
     title: Wall-OSS-0.5
   - local: dm05
     title: DM05
+  - local: cosmos3
+    title: Cosmos3
   title: "Policies"
 - sections:
   - local: sarm
@@ -179,6 +185,8 @@
     title: OpenArm
   - local: rebot_b601
     title: reBot B601
+  - local: yam
+    title: YAM
   - local: third_party_robots
     title: Third-Party Robots & Teleoperators
   title: "Robots"

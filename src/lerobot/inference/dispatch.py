@@ -33,6 +33,12 @@ from contextlib import nullcontext
 
 import torch
 
+from lerobot.lerobot_types import PolicyPrediction
+from lerobot.processor import (
+    policy_output_to_transition,
+    transition_to_policy_action,
+    transition_to_prediction,
+)
 from lerobot.utils import ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
 
@@ -65,6 +71,7 @@ def next_interpolated_action(
     *,
     hold: Callable[[], None] | None = None,
     timer: CycleTimer | None = None,
+    on_prediction: Callable[[PolicyPrediction], None] | None = None,
 ) -> torch.Tensor | None:
     """Return the next interpolated target, pulling one policy action when needed.
 
@@ -73,15 +80,22 @@ def next_interpolated_action(
     action, so interpolation ticks pay nothing; asynchronous engines ignore the
     frame. Returns ``None`` while denied or starved. A starved tick is counted on
     ``timer`` when one is given, and the pull is timed as its ``infer`` step.
+
+    The engine may return the action with the policy's prediction (an ``EnvTransition``,
+    see ``PreTrainedPolicy.select_action``); only the action is interpolated, and a
+    non-empty prediction is handed to ``on_prediction`` on the tick that pulled it.
     """
     if not dispatch_permitted(engine, interpolator, hold):
         return None
     if interpolator.needs_new_action():
         with timer.section("infer") if timer is not None else nullcontext():
             frame = obs_frame() if callable(obs_frame) else obs_frame
-            action = engine.get_action(frame)
-        if action is not None:
-            interpolator.add(action.cpu())
+            result = engine.get_action(frame)
+        if result is not None:
+            step = policy_output_to_transition(result)
+            interpolator.add(transition_to_policy_action(step).cpu())
+            if on_prediction is not None and (prediction := transition_to_prediction(step)):
+                on_prediction(prediction)
     if not dispatch_permitted(engine, interpolator, hold):
         return None
     target = interpolator.get()

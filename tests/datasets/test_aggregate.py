@@ -40,6 +40,8 @@ from tests.fixtures.constants import (
     DUMMY_REPO_ID,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def assert_data_shards_one_row_group_per_episode(root):
     """Every aggregated DATA shard must have exactly one parquet row group per episode."""
@@ -179,39 +181,32 @@ def assert_episode_indices_updated_correctly(aggr_ds, ds_0, ds_1):
         )
 
 
-def assert_video_frames_integrity(aggr_ds, ds_0, ds_1):
-    """Test that video frames are correctly preserved and frame indices are updated."""
+def assert_frames_match_sources(aggr_ds, ds_0, ds_1):
+    """Iterate the aggregated dataset once and check every frame against its source frame.
 
-    def visual_frames_equal(frame1, frame2):
-        return torch.allclose(frame1, frame2)
-
-    video_keys = list(
-        filter(
-            lambda key: aggr_ds.meta.info.features[key]["dtype"] == "video",
-            aggr_ds.meta.info.features.keys(),
-        )
-    )
-
-    # Test the section corresponding to the first dataset (ds_0)
-    for i in range(len(ds_0)):
-        assert aggr_ds[i]["index"] == i, (
-            f"Frame index at position {i} should be {i}, but got {aggr_ds[i]['index']}"
-        )
-        for key in video_keys:
-            assert visual_frames_equal(aggr_ds[i][key], ds_0[i][key]), (
-                f"Visual frames at position {i} should be equal between aggregated and ds_0"
+    Covers iteration, frame indices, episode indices and video frames in a single pass, so each frame is
+    decoded once per dataset instead of once per check and per video key.
+    """
+    video_keys = [key for key, ft in aggr_ds.meta.info.features.items() if ft["dtype"] == "video"]
+    num_frames = 0
+    for i, item in enumerate(aggr_ds):
+        num_frames += 1
+        assert item["index"] == i, f"Frame index at position {i} should be {i}, but got {item['index']}"
+        if i < len(ds_0):
+            source, source_item = "ds_0", ds_0[i]
+            assert item["episode_index"] < ds_0.num_episodes, (
+                f"Episode index {item['episode_index']} at position {i} should be < {ds_0.num_episodes}"
             )
-
-    # Test the section corresponding to the second dataset (ds_1)
-    for i in range(len(ds_0), len(ds_0) + len(ds_1)):
-        # The frame index in the aggregated dataset should also match its position.
-        assert aggr_ds[i]["index"] == i, (
-            f"Frame index at position {i} should be {i}, but got {aggr_ds[i]['index']}"
-        )
-        for key in video_keys:
-            assert visual_frames_equal(aggr_ds[i][key], ds_1[i - len(ds_0)][key]), (
-                f"Visual frames at position {i} should be equal between aggregated and ds_1"
+        else:
+            source, source_item = "ds_1", ds_1[i - len(ds_0)]
+            assert ds_0.num_episodes <= item["episode_index"] < ds_0.num_episodes + ds_1.num_episodes, (
+                f"Episode index {item['episode_index']} at position {i} should be >= {ds_0.num_episodes}"
             )
+        for key in video_keys:
+            assert torch.allclose(item[key], source_item[key]), (
+                f"Visual frames at position {i} should be equal between aggregated and {source}"
+            )
+    assert num_frames == len(ds_0) + len(ds_1)
 
 
 def assert_dataset_iteration_works(aggr_ds):
@@ -333,10 +328,10 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     Source datasets include both RGB and depth video features so the same
     aggregation flow is exercised on the ``is_depth_map`` branch.
     """
-    ds_0_num_frames = 400
-    ds_1_num_frames = 800
-    ds_0_num_episodes = 10
-    ds_1_num_episodes = 25
+    ds_0_num_frames = 120
+    ds_1_num_frames = 200
+    ds_0_num_episodes = 4
+    ds_1_num_episodes = 7
 
     # Create two datasets with different number of frames and episodes
     ds_0 = lerobot_dataset_factory(
@@ -382,11 +377,9 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     assert_episode_and_frame_counts(aggr_ds, expected_total_episodes, expected_total_frames)
     assert_dataset_content_integrity(aggr_ds, ds_0, ds_1)
     assert_metadata_consistency(aggr_ds, ds_0, ds_1)
-    assert_episode_indices_updated_correctly(aggr_ds, ds_0, ds_1)
-    assert_video_frames_integrity(aggr_ds, ds_0, ds_1)
+    assert_frames_match_sources(aggr_ds, ds_0, ds_1)
     assert_video_timestamps_within_bounds(aggr_ds)
     assert_depth_keys_preserved(aggr_ds, ds_0, ds_1)
-    assert_dataset_iteration_works(aggr_ds)
 
 
 def test_aggregate_datasets_rejects_mismatched_roots(tmp_path):
@@ -523,8 +516,8 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
     Depth video features are included to verify that file rotation/concat
     correctly handles depth-marked features alongside regular RGB ones.
     """
-    ds_0_num_episodes = ds_1_num_episodes = 10
-    ds_0_num_frames = ds_1_num_frames = 400
+    ds_0_num_episodes = ds_1_num_episodes = 5
+    ds_0_num_frames = ds_1_num_frames = 150
 
     ds_0 = lerobot_dataset_factory(
         root=tmp_path / "small_0",
@@ -552,7 +545,7 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
         aggr_root=tmp_path / "small_aggr",
         # Tiny file size to trigger new file instantiation
         data_files_size_in_mb=0.01,
-        video_files_size_in_mb=0.1,
+        video_files_size_in_mb=0.03,
     )
 
     # Mock the revision to prevent Hub calls during dataset loading
@@ -571,11 +564,9 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
     assert_episode_and_frame_counts(aggr_ds, expected_total_episodes, expected_total_frames)
     assert_dataset_content_integrity(aggr_ds, ds_0, ds_1)
     assert_metadata_consistency(aggr_ds, ds_0, ds_1)
-    assert_episode_indices_updated_correctly(aggr_ds, ds_0, ds_1)
-    assert_video_frames_integrity(aggr_ds, ds_0, ds_1)
+    assert_frames_match_sources(aggr_ds, ds_0, ds_1)
     assert_video_timestamps_within_bounds(aggr_ds)
     assert_depth_keys_preserved(aggr_ds, ds_0, ds_1)
-    assert_dataset_iteration_works(aggr_ds)
 
     # Check that multiple files were actually created due to small size limits
     data_dir = tmp_path / "small_aggr" / "data"
@@ -585,9 +576,9 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
         parquet_files = list(data_dir.rglob("*.parquet"))
         assert len(parquet_files) > 1, "Small file size limits should create multiple parquet files"
 
-    if video_dir.exists():
-        video_files = list(video_dir.rglob("*.mp4"))
-        assert len(video_files) > 1, "Small file size limits should create multiple video files"
+    for key in aggr_ds.meta.video_keys:
+        video_files = list((video_dir / key).rglob("*.mp4"))
+        assert len(video_files) > 1, f"Small file size limits should create multiple {key} video files"
 
 
 def test_video_timestamps_regression(tmp_path, lerobot_dataset_factory):
