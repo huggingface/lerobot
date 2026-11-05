@@ -164,6 +164,8 @@ The methods called by the train/eval loops:
 
 Batches are flat dictionaries keyed by the constants in [`lerobot.utils.constants`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/constants.py): `OBS_STATE` (`observation.state.<motor>`), `OBS_IMAGES` (`observation.images.<camera>`), `OBS_LANGUAGE`, `ACTION`, etc. Reuse the constants — don't invent new prefixes.
 
+Proprioception and actions are singular: `config.robot_state_feature` returns only the input feature named `observation.state`, and `config.action_feature` only the output feature named `action`. Any other non-visual `observation.*` column — `observation.effort`, say — is still typed as a state feature, normalised and moved to the device every step, and still listed under `input_features` in the saved `config.json`, but no policy reads it. `make_policy` warns when it finds one; to actually use those values, concatenate them into `observation.state` in the dataset.
+
 If your model is large enough to warrant [sharded multi-GPU training](./multi_gpu_training#sharded-training-fsdp), also declare its FSDP wrap units — the repeated block classes sharding operates on:
 
 ```python
