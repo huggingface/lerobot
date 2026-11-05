@@ -21,6 +21,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
@@ -152,6 +153,36 @@ def test_topreward_frame_scorer_applies_a_finite_success_threshold_before_normal
     # Log-probabilities -4, -2 and 0 become 0, 1 and 1 against the threshold.
     np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.0, 0.5, 1.0, 1.0, 1.0])
     assert scorer.provenance["scorer"]["options"]["success_threshold"] == -3.0
+
+
+def test_topreward_scores_publish_without_a_success_threshold(tmp_path):
+    class FakeDataset(LeRobotDataset):
+        absolute_to_relative_idx = None
+        episodes = None
+        reader = SimpleNamespace()
+        writer = None
+        _storage_root = None
+
+        def __init__(self) -> None:
+            self.root = tmp_path
+            self.repo_id = "test/dataset"
+            self.revision = "dataset-revision"
+            self.meta = SimpleNamespace(
+                total_episodes=1,
+                total_frames=5,
+                storage_format="lerobot",
+                episodes=[{"dataset_from_index": 0, "dataset_to_index": 5}],
+            )
+
+        def __getitem__(self, position: int):
+            return {IMAGE_KEY: torch.full((3, 2, 2), float(position)), "task": "pick up the cube"}
+
+    dataset = FakeDataset()
+    dataset.add_score(TOPRewardFrameScorer(_FakeModel(), _FakeEncoder(), num_samples=3))
+
+    assert list(dataset.read_score("topreward")[PROGRESS_SIGNAL]) == [0.0, 0.25, 0.5, 0.75, 1.0]
+    options = dataset.get_score_provenance("topreward")["scoring"]["scorer"]["options"]
+    assert options["success_threshold"] is None
 
 
 def test_topreward_frame_scorer_supports_episode_filtered_dataset_views():

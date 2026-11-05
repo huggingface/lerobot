@@ -101,7 +101,10 @@ class TOPRewardFrameScorer:
                     "prompt_prefix": config.prompt_prefix,
                     "prompt_suffix_template": config.prompt_suffix_template,
                     "add_chat_template": config.add_chat_template,
-                    "success_threshold": config.success_threshold,
+                    # Score metadata is strict JSON, so the default -inf (no threshold) is stored as None.
+                    "success_threshold": (
+                        config.success_threshold if np.isfinite(config.success_threshold) else None
+                    ),
                     "num_samples": self.num_samples,
                 },
             },
