@@ -130,8 +130,6 @@ def run_in_docker(cfg: EnvServerLaunchConfig) -> None:
         location = Path(hub_path.split(":")[0])
         name = f"local-{location.resolve().name}" if location.is_dir() else hub_path
         env.setdefault("SIM_TAG", re.sub(r"[^a-z0-9_.-]+", "-", name.lower()).lstrip("-.")[:128])
-        # A repository's simulator may take minutes to start (e.g. Isaac Sim compiling shaders).
-        env.setdefault("SIM_START_PERIOD", "600s")
         _, separator, file_path = hub_path.partition(":")
         data["sim"]["kwargs"]["hub_path"] = ENVHUB_IMAGE_DIR + separator + file_path
     # The container bind-mounts this file; keep it after startup so a restarted container can read it.

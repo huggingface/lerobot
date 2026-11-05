@@ -228,10 +228,12 @@ def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str
             return [plain(item) for item in value]
         return value
 
+    # A server opens any of the tasks it configures (all of them for an empty list), so the requested tasks
+    # are checked against the descriptor's task list instead.
     errors = [
         f"{key}: server {served.get(key)!r}, expected {value!r}"
         for key, value in expected.items()
-        if key != "kwargs" and value is not None and plain(value) != plain(served.get(key))
+        if key not in ("kwargs", "task") and value is not None and plain(value) != plain(served.get(key))
     ]
     served_kwargs = served.get("kwargs") or {}
     # hub_path and trust_remote_code may differ: the env server loads EnvHub repos from its own image.
@@ -873,5 +875,41 @@ class RoboMMEEnvConfig(EnvConfig):
                 "task_ids": self.task_ids,
                 "front_camera_name": self.front_camera_name,
                 "wrist_camera_name": self.wrist_camera_name,
+            },
+        }
+
+
+@EnvConfig.register_subclass("robolab")
+@dataclass
+class RoboLabEnvConfig(EnvConfig):
+    """NVIDIA RoboLab: 120 tabletop tasks for a DROID robot (Franka + Robotiq 2F-85), on Isaac Lab.
+
+    Each task is its own suite; `task` is a comma-separated list of task names, or empty for all 120. The envs of a
+    task share one Isaac Lab world on the GPU. Actions are 7 absolute joint positions and a gripper command (closed
+    above 0.5), at 15 Hz.
+
+    Requires Isaac Sim and RoboLab, best run from the robolab_native stage of docker/Dockerfile.sim.
+    Benchmark: https://github.com/NVlabs/RoboLab
+    """
+
+    task: str | None = None
+    fps: int = 15
+    # A camera preset of robolab.registrations.droid.camera_presets, e.g. WRIST_LEFT or WRIST_LEFT_RIGHT.
+    cameras: str = "WRIST_LEFT"
+    # Which of each task's instructions the policy gets: default, vague or specific.
+    instruction_type: str = "default"
+    # Resize camera frames on the GPU before sending them; RoboLab renders 1280x720.
+    observation_height: int | None = None
+    observation_width: int | None = None
+
+    def sim_settings(self) -> dict[str, Any]:
+        return {
+            "type": "robolab",
+            "task": self.task or "",
+            "kwargs": {
+                "cameras": self.cameras,
+                "instruction_type": self.instruction_type,
+                "observation_height": self.observation_height,
+                "observation_width": self.observation_width,
             },
         }

@@ -349,6 +349,12 @@ def test_served_env_must_be_the_env_the_command_describes(sim_server):
         config.create_envs(n_envs=1)
 
 
+def test_served_env_refuses_a_task_its_server_does_not_run(sim_server):
+    config = ToyEnvConfig(task="other", server=EnvClientConfig(sim_server[1]))
+    with pytest.raises(ValueError, match=r"Unknown task 'other'; this environment has \['reach'\]"):
+        config.create_envs(n_envs=1)
+
+
 @pytest.mark.parametrize("task_id", [None, 0])
 def test_the_first_session_reuses_the_environment_built_to_describe(sim_server, task_id):
     # Without a task ID a session runs the suite's first task, which the startup env already runs.

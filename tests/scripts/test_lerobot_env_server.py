@@ -130,7 +130,7 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     command, options = calls[-1]
     assert command[-5:] == ["up", "-d", "--wait", "--build", "sim"]
     env = options["env"]
-    assert (env["SIM"], env["SIM_TAG"], env["SIM_START_PERIOD"]) == ("envhub", "user-my-env-v1", "600s")
+    assert (env["SIM"], env["SIM_TAG"]) == ("envhub", "user-my-env-v1")
     # Downloaded on the host, then copied as plain files into the build context.
     assert downloads == [("User/My-Env", "v1")]
     assert (Path(env["ENVHUB_DIR"]) / "env.py").is_file() and Path(env["ENVHUB_DIR"]) != snapshot
@@ -183,6 +183,11 @@ def test_server_configs_serve_what_their_env_options_describe(path, monkeypatch)
     served = asdict(resolve_without_simulator(sim, monkeypatch))
     expected = EnvConfig.get_choice_class(sim["type"])(task=sim["task"]).sim_settings()
     check_served(served, expected, str(path))
+
+
+def test_client_may_ask_for_one_of_the_tasks_a_server_configures():
+    # A server with an empty task list runs all of them; the descriptor's task list decides what a client opens.
+    check_served({"type": "robolab", "task": ""}, {"type": "robolab", "task": "BananaInBowlTask"}, "tcp/...")
 
 
 def test_native_server_listens_on_localhost_unless_told_otherwise(tmp_path, monkeypatch):
