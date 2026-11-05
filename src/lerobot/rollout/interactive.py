@@ -136,6 +136,8 @@ class InteractiveSession:
         # name -> (handler, argument hint, help line); /help and the banner render from this table.
         self._commands: dict[str, tuple[Callable[[InteractiveCommand], None], str, str]] = {
             "start": (self._cmd_start, "", "start (or restart) the policy control loop"),
+            "pause": (self._cmd_pause, "", "stop the policy where the robot is, keeping the task"),
+            "resume": (self._cmd_resume, "", "continue the task after /pause, from where the robot is"),
             "subtask": (self._cmd_subtask, " <text>", "set the instruction the policy follows"),
             "vqa": (self._cmd_vqa, " <text>", "ask the policy a question about what it sees"),
             "autosteer": (
@@ -186,7 +188,13 @@ class InteractiveSession:
             log_say("Starting rollout", self._play_sounds)
             self._print(
                 f"Rollout running — task {_format_task(self.controller.task)}. "
-                "/subtask <text> to change it, /reset to return to initial position, /stop to shut down."
+                "/subtask <text> to change it, /pause to stop where it is, "
+                "/reset to return to initial position, /stop to shut down."
+            )
+        elif event is RolloutEvent.SEGMENT_PAUSED:
+            self._print(
+                "Rollout paused — the robot stays where it is. "
+                "/resume to continue the task, /reset to return to initial position, /stop to shut down."
             )
         elif event is RolloutEvent.SEGMENT_ENDED:
             self._print(
@@ -272,9 +280,29 @@ class InteractiveSession:
             return
         # start() also refuses while stopping or after a failure — don't mislabel an idle robot.
         if self.controller.running:
-            self._print("Already running — /reset to pause first, or /stop to shut down.")
+            self._print("Already running — /pause or /reset first, or /stop to shut down.")
         else:
             self._print("Can't start — the session is stopping or has failed.")
+
+    def _cmd_pause(self, cmd: InteractiveCommand) -> None:
+        if self.controller.pause():
+            return
+        if self.controller.stopped:
+            self._print("Can't pause — the session has stopped.")
+        else:
+            self._print("Not running — nothing to pause. /start to run.")
+
+    def _cmd_resume(self, cmd: InteractiveCommand) -> None:
+        if self.controller.resume():
+            return
+        if self.controller.running:
+            self._print("Already running — /pause first to stop where it is.")
+        elif self.controller.stopped:
+            self._print("Can't resume — the session has stopped.")
+        elif not self.controller.paused:
+            self._print("Not paused — nothing to resume. /start to run.")
+        else:
+            self._print("Can't resume — the session is stopping or has failed.")
 
     def _cmd_subtask(self, cmd: InteractiveCommand) -> None:
         # Strip quotes before the emptiness check, so /subtask "" reports the task instead of
