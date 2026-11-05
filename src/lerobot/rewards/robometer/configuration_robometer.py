@@ -56,9 +56,6 @@ class RobometerConfig(RewardModelConfig):
     default_task: str | None = None
 
     max_frames: int | None = 8
-    # Unused; kept so existing checkpoints such as lerobot/Robometer-4B still load.
-    reward_output: str = "progress"
-    success_threshold: float = 0.5
 
     license: str | None = "apache-2.0"
     tags: list[str] | None = field(
@@ -92,8 +89,6 @@ class RobometerConfig(RewardModelConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.reward_output not in {"progress", "success"}:
-            raise ValueError(f"reward_output must be 'progress' or 'success', got {self.reward_output!r}")
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
         if self.frame_pooling not in {"mean", "boundary", "attention"}:

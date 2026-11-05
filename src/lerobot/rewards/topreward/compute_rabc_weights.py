@@ -134,10 +134,8 @@ def compute_instruction_rewards_for_prefixes(
         }
 
         with torch.inference_mode():
-            reward = model.compute_log_probability(batch)
-        if np.isfinite(model.config.success_threshold):
-            reward = (reward > model.config.success_threshold).float()
-        rewards.append(float(reward.item()))
+            log_probability = model.compute_log_probability(batch)
+        rewards.append(float(log_probability.item()))
 
     normalized_rewards = normalize_rewards(rewards)
 

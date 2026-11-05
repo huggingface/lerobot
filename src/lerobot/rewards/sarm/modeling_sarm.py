@@ -29,7 +29,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
@@ -531,20 +530,6 @@ class SARMRewardModel(PreTrainedRewardModel):
         state_features = batch.get("state_features")
         lengths = batch.get("lengths")
 
-        if not isinstance(text_embeddings, Tensor):
-            text_embeddings = torch.as_tensor(text_embeddings, dtype=torch.float32)
-        if not isinstance(video_embeddings, Tensor):
-            video_embeddings = torch.as_tensor(video_embeddings, dtype=torch.float32)
-        if state_features is not None and not isinstance(state_features, Tensor):
-            state_features = torch.as_tensor(state_features, dtype=torch.float32)
-
-        if text_embeddings.ndim == 1:
-            # Handle single sample case
-            text_embeddings = text_embeddings.unsqueeze(0)
-            video_embeddings = video_embeddings.unsqueeze(0)
-            if state_features is not None:
-                state_features = state_features.unsqueeze(0)
-
         batch_size, seq_len = video_embeddings.shape[:2]
         device = video_embeddings.device
 
@@ -553,8 +538,6 @@ class SARMRewardModel(PreTrainedRewardModel):
         # Default lengths if not provided
         if lengths is None:
             lengths = torch.full((batch_size,), seq_len, dtype=torch.int32, device=device)
-        elif not isinstance(lengths, Tensor):
-            lengths = torch.as_tensor(lengths, dtype=torch.int32, device=device)
 
         if lengths.ndim != 1 or lengths.shape[0] != batch_size:
             raise ValueError(f"SARM `lengths` must have shape ({batch_size},), got {tuple(lengths.shape)}")
@@ -626,97 +609,6 @@ class SARMRewardModel(PreTrainedRewardModel):
             stage_confidence=stage_conf.float(),
             valid_mask=valid_mask,
         )
-
-    @torch.no_grad()
-    def calculate_rewards(
-        self,
-        text_embeddings: np.ndarray | torch.Tensor,
-        video_embeddings: np.ndarray | torch.Tensor,
-        state_features: np.ndarray | torch.Tensor | None = None,
-        lengths: np.ndarray | torch.Tensor | None = None,
-        return_all_frames: bool = False,
-        return_stages: bool = False,
-        return_confidence: bool = False,
-        head_mode: Literal["sparse", "dense"] | None = "sparse",
-        frame_index: int | None = None,
-    ) -> np.ndarray | tuple:
-        """
-        Calculate rewards for given text, video, and state representations.
-
-        This compatibility method is used for:
-        - Inference/visualization by existing research code
-        - RA-BC weight computation
-
-        New tensor-based consumers should call :meth:`predict_progress`.
-
-        Args:
-            text_embeddings: Encoded text representations (batch_size, 512)
-            video_embeddings: Encoded video representations (batch_size, num_frames, 512)
-            state_features: Joint state features (batch_size, num_frames, state_dim)
-            lengths: Valid sequence lengths (batch_size,)
-            return_all_frames: If True, return rewards for all frames
-            return_stages: If True, also return stage predictions
-            return_confidence: If True, also return stage confidence
-            head_mode: Which head to use ("sparse" or "dense")
-            frame_index: Index of the target frame to extract (default: n_obs_steps).
-
-        Returns:
-            Rewards and optionally stage probs/confidence.
-        """
-        if head_mode is None:
-            head_mode = "sparse"
-        if head_mode not in {"sparse", "dense"}:
-            raise ValueError(f"head_mode must be 'sparse' or 'dense', got {head_mode!r}")
-
-        single_sample = text_embeddings.ndim == 1
-        device = next(self.stage_model.parameters()).device
-        prepared_batch = {
-            "text_features": torch.as_tensor(text_embeddings, dtype=torch.float32, device=device),
-            "video_features": torch.as_tensor(video_embeddings, dtype=torch.float32, device=device),
-            "state_features": (
-                torch.as_tensor(state_features, dtype=torch.float32, device=device)
-                if state_features is not None
-                else None
-            ),
-            "lengths": (
-                torch.as_tensor(lengths, dtype=torch.int32, device=device) if lengths is not None else None
-            ),
-        }
-        prediction = self.predict_progress(
-            prepared_batch,
-            head_mode=head_mode,
-        )
-
-        normalized_reward = prediction.progress
-        stage_probs = prediction.stage_probabilities
-        stage_conf = prediction.stage_confidence
-
-        # Default frame index is n_obs_steps (last observation frame)
-        if frame_index is None:
-            frame_index = self.config.n_obs_steps
-
-        # Prepare outputs (batch mode or no smoothing)
-        if return_all_frames:
-            rewards = normalized_reward.cpu().numpy()
-        else:
-            rewards = normalized_reward[:, frame_index].cpu().numpy()
-
-        if single_sample:
-            rewards = rewards[0] if not return_all_frames else rewards[0]
-
-        outputs = [rewards]
-        if return_stages:
-            probs = stage_probs.cpu().numpy()
-            if single_sample:
-                probs = probs[0]
-            outputs.append(probs)
-        if return_confidence:
-            conf = stage_conf.cpu().numpy()
-            if single_sample:
-                conf = conf[0]
-            outputs.append(conf)
-
-        return outputs[0] if len(outputs) == 1 else tuple(outputs)
 
     def train(self, mode: bool = True):
         """Set training mode for both models."""

@@ -67,9 +67,6 @@ class TOPRewardConfig(RewardModelConfig):
         add_chat_template: If ``True``, wrap the full prompt with the
             tokenizer's chat template before tokenisation (matches
             upstream ``add_chat_template=True``).
-        success_threshold: Legacy serialized log-probability threshold kept
-            for checkpoint compatibility. ``compute_log_probability`` always
-            returns the raw value; consumers apply thresholds explicitly.
         max_input_length: Hard limit on the total tokenized input length;
             samples that exceed it raise a ``ValueError``.
     """
@@ -93,7 +90,6 @@ class TOPRewardConfig(RewardModelConfig):
     prompt_suffix_template: str = DEFAULT_PROMPT_SUFFIX_TEMPLATE
     add_chat_template: bool = False
 
-    success_threshold: float = float("-inf")
     max_input_length: int = 32768
 
     license: str | None = "mit"  # matches upstream TOPReward
