@@ -56,9 +56,18 @@ Scoring requires a writable local LeRobot dataset root. Pass `--dataset_root=/pa
 
 Pass `--push_to_hub=true` to upload the completed score to the dataset repository. The dataset API owns its Hub location and local staging data.
 
-For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model_revision`. The requested revisions are stored in provenance and must match when resuming.
+For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model.pretrained_revision`. The requested revisions are stored in provenance and must match when resuming.
 
 The command is resumable by default. A retry skips completed episodes only when the dataset revision, model revision, scorer options, episode selection, and schema are unchanged. Completed parts are combined into the final score in episode order, with one Parquet row group per episode. Published scores are immutable; choose another name or pass `--overwrite=true` to replace one atomically.
+
+To score a large dataset in parallel, give each worker its own episodes and score name, then merge the results into one score:
+
+```python
+dataset.add_score(scorer, name=f"sarm-rank{rank}", episodes=my_episodes)  # on each worker
+dataset.merge_scores([f"sarm-rank{rank}" for rank in range(world_size)], name="sarm")  # once at the end
+```
+
+`merge_scores()` requires the same signals and provenance in every score and rejects episodes scored twice.
 
 ## Python API
 
@@ -102,8 +111,6 @@ Every new sidecar contains:
 `bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run. The first storage version validates structure and alignment; descriptor bounds and `allow_nan` remain metadata for consumers.
 
 `read_score()` returns a Hugging Face `datasets.Dataset`. The dataset-owned storage component keeps Arrow, Parquet, and filesystem paths private. Descriptors and provenance are encoded once in storage metadata rather than repeated on every frame row.
-
-The reader also recognizes older LeRobot `progress_sparse` and `progress_dense` Parquet sidecars. It preserves their column names and attaches explicit legacy provenance rather than pretending they were produced by the new schema.
 
 ## Scope
 

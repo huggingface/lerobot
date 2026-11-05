@@ -25,6 +25,7 @@ import datasets
 
 from lerobot.datasets import FrameSignals, LeRobotDataset, SignalDescriptor
 
+pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
 
 pytestmark = pytest.mark.dataset
@@ -309,3 +310,59 @@ def test_dataset_score_metadata_provenance_is_nested(tmp_path):
 
     provenance = dataset.get_score_provenance("test")
     assert set(provenance) == {"lerobot_version", "dataset", "scoring"}
+
+
+def test_read_score_rejects_parquet_without_score_metadata(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [1])
+    path = dataset.root / "reward_signals" / "other.parquet"
+    path.parent.mkdir(parents=True)
+    pq.write_table(pa.table({"value": [1.0]}), path)
+
+    with pytest.raises(ValueError, match="Not a LeRobot dataset score"):
+        dataset.read_score("other")
+
+
+def test_dataset_score_merge_combines_disjoint_episodes(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 3, 1])
+    dataset.add_score(FakeScorer(dense_signals), name="part-1", episodes=[2, 0])
+    dataset.add_score(FakeScorer(dense_signals), name="part-0", episodes=[1])
+
+    dataset.merge_scores(["part-1", "part-0"], name="test")
+
+    scores = dataset.read_score("test")
+    assert list(scores["episode_index"]) == [0, 0, 1, 1, 1, 2]
+    assert list(scores["frame_index"]) == [0, 1, 0, 1, 2, 0]
+    assert dataset.get_score_descriptors("test") == {PROGRESS_NAME: PROGRESS_DESCRIPTOR}
+    assert dataset.get_score_provenance("test") == dataset.get_score_provenance("part-0")
+    assert pq.ParquetFile(dataset.root / "reward_signals" / "test.parquet").metadata.num_row_groups == 3
+    assert dataset.list_scores() == ["part-0", "part-1", "test"]
+
+
+def test_dataset_score_merge_rejects_shared_episodes(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 2])
+    dataset.add_score(FakeScorer(dense_signals), name="a", episodes=[0, 1])
+    dataset.add_score(FakeScorer(dense_signals), name="b", episodes=[1])
+
+    with pytest.raises(ValueError, match="repeats episodes"):
+        dataset.merge_scores(["a", "b"], name="test")
+
+
+def test_dataset_score_merge_rejects_different_provenance(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 2])
+    dataset.add_score(FakeScorer(dense_signals), name="a", episodes=[0])
+    other_model = FakeScorer(dense_signals, provenance={"model": {"id": "other/model"}})
+    dataset.add_score(other_model, name="b", episodes=[1])
+
+    with pytest.raises(ValueError, match="different signals or provenance"):
+        dataset.merge_scores(["a", "b"], name="test")
+
+
+def test_dataset_score_merge_replaces_a_score_only_with_overwrite(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 2])
+    dataset.add_score(FakeScorer(dense_signals), name="a", episodes=[0])
+    dataset.add_score(FakeScorer(dense_signals), name="b", episodes=[1])
+    dataset.merge_scores(["a", "b"], name="test")
+
+    with pytest.raises(FileExistsError, match="Published dataset score"):
+        dataset.merge_scores(["a", "b"], name="test")
+    dataset.merge_scores(["a", "b"], name="test", overwrite=True)

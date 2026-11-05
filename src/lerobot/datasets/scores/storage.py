@@ -54,9 +54,7 @@ _FORMAT_KEY = b"lerobot.scores.format"
 _SCHEMA_VERSION_KEY = b"lerobot.scores.schema_version"
 _PROVENANCE_KEY = b"lerobot.scores.provenance"
 _DESCRIPTORS_KEY = b"lerobot.scores.descriptors"
-_LEGACY_SOURCE_KEY = b"lerobot.scores.legacy_source"
 _MANIFEST_FILENAME = "manifest.json"
-_LEGACY_PROGRESS_COLUMNS = ("progress_sparse", "progress_dense")
 _SIGNAL_DIRECTIONS = {"higher", "lower", "none"}
 
 logger = logging.getLogger(__name__)
@@ -185,18 +183,14 @@ def _build_metadata(
     *,
     descriptors: Mapping[str, SignalDescriptor],
     provenance: Mapping[str, Any],
-    legacy_source: str | None = None,
 ) -> dict[bytes, bytes]:
     descriptor_payload = {name: asdict(descriptor) for name, descriptor in sorted(descriptors.items())}
-    metadata = {
+    return {
         _FORMAT_KEY: SCORING_FORMAT.encode(),
         _SCHEMA_VERSION_KEY: str(SCORING_SCHEMA_VERSION).encode(),
         _PROVENANCE_KEY: _canonical_json(dict(provenance), label="score provenance").encode(),
         _DESCRIPTORS_KEY: _canonical_json(descriptor_payload, label="signal descriptors").encode(),
     }
-    if legacy_source is not None:
-        metadata[_LEGACY_SOURCE_KEY] = legacy_source.encode()
-    return metadata
 
 
 def _decode_descriptors(schema: pa.Schema) -> dict[str, SignalDescriptor]:
@@ -321,35 +315,12 @@ class _ScoreWriter:
         shutil.rmtree(self.parts_dir, ignore_errors=True)
 
 
-def _legacy_metadata(schema: pa.Schema, path: Path) -> dict[bytes, bytes]:
-    """Describe an older progress_sparse / progress_dense sidecar, which has no score metadata."""
-    progress_columns = [name for name in _LEGACY_PROGRESS_COLUMNS if name in schema.names]
-    if not progress_columns or set(schema.names) != {*RESERVED_COLUMNS, *progress_columns}:
-        raise ValueError(f"Not a recognized LeRobot dataset score sidecar: {path}")
-
-    # The SARM and TOPReward scripts write NaN for frames they skip.
-    descriptor = SignalDescriptor(
-        description="Progress imported from a legacy LeRobot reward-model sidecar.",
-        direction="higher",
-        allow_nan=True,
-    )
-    scoring: dict[str, Any] = {"legacy_output": True, "source_path": str(path)}
-    reward_model_path = (schema.metadata or {}).get(b"reward_model_path")
-    if reward_model_path is not None:
-        scoring["reward_model_path"] = reward_model_path.decode(errors="replace")
-    return _build_metadata(
-        descriptors=dict.fromkeys(progress_columns, descriptor),
-        provenance={"scoring": scoring},
-        legacy_source="progress_sparse/progress_dense parquet",
-    )
-
-
 def _read_score_schema(path: Path) -> pa.Schema:
     """Read and check a score file's schema without loading its rows."""
     schema = pq.read_schema(path)
     metadata = schema.metadata or {}
     if metadata.get(_FORMAT_KEY) != SCORING_FORMAT.encode():
-        return schema.with_metadata(_legacy_metadata(schema, path))
+        raise ValueError(f"Not a LeRobot dataset score: {path}")
 
     version = metadata.get(_SCHEMA_VERSION_KEY)
     if version != str(SCORING_SCHEMA_VERSION).encode():
@@ -365,7 +336,7 @@ def _read_score_schema(path: Path) -> pa.Schema:
 
 
 def _read_score_path(path: str | Path) -> pa.Table:
-    """Read a current or recognized legacy score sidecar by path."""
+    """Read a score sidecar by path."""
     path = Path(path)
     schema = _read_score_schema(path)
     return pq.read_table(path).replace_schema_metadata(schema.metadata)
@@ -425,6 +396,39 @@ class DatasetScoreStorage:
             raise RuntimeError("Dataset scoring produced no signal descriptors")
         writer.finalize(descriptors)
         logger.info("Published dataset score %r to %s", score_name, output_path)
+
+    def merge(self, names: list[str], *, name: str, overwrite: bool = False) -> None:
+        if not names:
+            raise ValueError("At least one score must be given to merge")
+        output_path = _score_path(self._dataset, name)
+        _validate_writable_storage(self._dataset)
+        if output_path.exists() and not overwrite:
+            raise FileExistsError(
+                f"Published dataset score already exists at {output_path}; "
+                "choose another name or set overwrite=True"
+            )
+
+        tables = [_read_score_path(_score_path(self._dataset, part)) for part in names]
+        reference = tables[0].schema
+        merged_episodes: set[int] = set()
+        for part, table in zip(names, tables, strict=True):
+            # Equal schemas, metadata included, mean equal columns, dtypes, descriptors and provenance.
+            if not table.schema.equals(reference, check_metadata=True):
+                raise ValueError(f"Score {part!r} has different signals or provenance than {names[0]!r}")
+            episodes = {int(index) for index in np.unique(table.column("episode_index").to_numpy())}
+            shared = sorted(merged_episodes & episodes)
+            if shared:
+                raise ValueError(f"Score {part!r} repeats episodes of earlier scores: {shared}")
+            merged_episodes |= episodes
+
+        merged = pa.concat_tables(tables).sort_by(
+            [("episode_index", "ascending"), ("frame_index", "ascending")]
+        )
+        with _atomic_path(output_path) as temporary_path:
+            write_table_one_row_group_per_episode(
+                merged.replace_schema_metadata(reference.metadata), temporary_path
+            )
+        logger.info("Published merged dataset score %r to %s", name, output_path)
 
     def read(self, name: str) -> datasets.Dataset:
         return datasets.Dataset(_read_score_path(_score_path(self._dataset, name)))

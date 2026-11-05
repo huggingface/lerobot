@@ -465,7 +465,7 @@ For each frame, the scorer runs SARM on the window of frames around it and keeps
 Frames that fail to score are stored as NaN.
 
 > [!NOTE]
-> Older versions of this script wrote `sarm_progress.parquet` at the dataset root. Move that file into `reward_signals/` (locally and on the Hub) so RA-BC can read it as the `sarm_progress` score.
+> RA-BC reads only dataset scores. Progress files written by the removed `compute_rabc_weights.py` script, such as `sarm_progress.parquet`, are not read: score the dataset again with `lerobot-score`.
 
 ### Step 5b: Train Policy with RA-BC
 

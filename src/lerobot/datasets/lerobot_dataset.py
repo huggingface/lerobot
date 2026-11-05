@@ -689,6 +689,24 @@ class LeRobotDataset(torch.utils.data.Dataset):
             overwrite=overwrite,
         )
 
+    def merge_scores(self, names: list[str], *, name: str, overwrite: bool = False) -> None:
+        """Merge scores of disjoint episodes into one named score.
+
+        Delegates to :meth:`DatasetScoreStorage.merge`. Useful when episodes were scored in
+        parallel, each worker with its own score name. The merged scores are kept.
+
+        Args:
+            names: Scores to merge. They must have the same signals and provenance and share no
+                episode.
+            name: Name of the merged score.
+            overwrite: If ``True``, replace an existing score with that name.
+
+        Raises:
+            FileExistsError: If the score exists and ``overwrite`` is ``False``.
+            ValueError: If the scores differ in signals or provenance, or share an episode.
+        """
+        self.score_storage.merge(names, name=name, overwrite=overwrite)
+
     def read_score(self, name: str) -> datasets.Dataset:
         """Read a named score as a Hugging Face dataset.
 
