@@ -52,6 +52,7 @@ class _FakeNativeConfig:
 
     def __init__(self, **values) -> None:
         self.values = values or {"model_type": "rynn_value_lang", "hidden_size": 16}
+        self.vision_config = SimpleNamespace(_attn_implementation=None)
 
     def to_dict(self):
         return self.values
@@ -239,6 +240,13 @@ def test_predict_remaining_time_returns_native_seconds(monkeypatch):
     assert torch.equal(prediction.remaining_time_s, torch.tensor([2.0, 1.0]))
     assert model.is_trainable is False
     assert not hasattr(model, "compute_reward")
+
+
+def test_value_slot_attention_applies_to_the_language_model_only(monkeypatch):
+    _patch_checkpoint_load(monkeypatch)
+    native_config = RynnValueRewardModel(RynnValueConfig(device="cpu")).model.config
+    assert native_config._attn_implementation == "pred_slot_isolated_eager"
+    assert native_config.vision_config._attn_implementation == "eager"
 
 
 def test_legacy_reward_output_does_not_change_native_prediction(monkeypatch):

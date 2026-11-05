@@ -117,13 +117,17 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             model_config = RynnValueLangConfig.from_pretrained(
                 config.model_id, revision=config.model_revision
             )
-            model_config._attn_implementation = config.attn_implementation
+        else:
+            model_config = RynnValueLangConfig.from_dict(config.model_config)
+        model_config._attn_implementation = config.attn_implementation
+        # Since transformers 5.22, Qwen3-VL passes the value-slot tensors on to the vision tower
+        # too, which the official model runs without them, i.e. as plain eager attention.
+        model_config.vision_config._attn_implementation = "eager"
+        if config.model_config is None:
             self.model = RynnValueLangModel.from_pretrained(
                 config.model_id, revision=config.model_revision, config=model_config, dtype=dtype
             )
         else:
-            model_config = RynnValueLangConfig.from_dict(config.model_config)
-            model_config._attn_implementation = config.attn_implementation
             self.model = RynnValueLangModel._from_config(model_config, dtype=dtype)
 
     def predict_remaining_time(self, batch: Mapping[str, Any]) -> RynnValuePrediction:
