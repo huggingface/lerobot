@@ -14,14 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree G1 robot controllers: locomotion (GR00T, Holosoma) and whole-body (SONIC)."""
+"""Unitree G1 robot controllers: locomotion (GR00T, Holosoma), whole-body (SONIC) and motion
+tracking (SuperMimic)."""
 
 from .gr00t_locomotion import GrootLocomotionController
 from .holosoma_locomotion import HolosomaLocomotionController
 from .sonic_whole_body import SonicWholeBodyController
+from .supermimic_tracking import SuperMimicController
 
 __all__ = [
     "GrootLocomotionController",
     "HolosomaLocomotionController",
     "SonicWholeBodyController",
+    "SuperMimicController",
 ]

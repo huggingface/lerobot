@@ -25,6 +25,36 @@ from .g1_embodiments import get_g1_embodiment
 from .g1_utils import NUM_MOTORS
 
 
+@dataclass
+class SuperMimicControllerConfig:
+    """Settings for ``SuperMimicController``: reference-motion tracking with a SuperMimic actor."""
+
+    # Local directory or Hugging Face Hub model repo holding actor.ts and manifest.json.
+    export: str | None = None
+    export_revision: str | None = None
+    # A reference clip CSV, or a directory of them (cycled in file-name order). One row per frame:
+    # [root_pos(3), root_quat_xyzw(4), 29 joint positions].
+    motions: str | None = None
+    motion_fps: float = 30.0
+    # Clip (file stem) selected at startup; None selects the first one.
+    start_clip: str | None = None
+    # Play a clip as soon as it is selected instead of balancing at its first frame until
+    # START (or `controller.play`) is pressed.
+    autoplay: bool = False
+    # Select the next clip when one finishes, wrapping around after the last.
+    auto_advance: bool = False
+    # Re-run the export's golden vectors when loading the actor.
+    check_golden_vectors: bool = True
+    # CPU threads for actor inference.
+    num_threads: int = 1
+
+    def __post_init__(self) -> None:
+        if self.motion_fps <= 0:
+            raise ValueError("supermimic.motion_fps must be positive")
+        if self.num_threads < 1:
+            raise ValueError("supermimic.num_threads must be at least 1")
+
+
 @RobotConfig.register_subclass("unitree_g1")
 @dataclass
 class UnitreeG1Config(RobotConfig):
@@ -53,6 +83,10 @@ class UnitreeG1Config(RobotConfig):
     # Toggle the viewer on or off
     sim_onscreen: bool | None = None
 
+    # Hold the simulated robot up by its torso with the sim's elastic band. Without it, every
+    # reset places the robot standing on the floor in the controller's start pose.
+    sim_elastic_band: bool = True
+
     # Socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"  # default G1 IP
 
@@ -63,8 +97,11 @@ class UnitreeG1Config(RobotConfig):
     gravity_compensation: bool = False
 
     # Controller class name, e.g. GrootLocomotionController / HolosomaLocomotionController /
-    # SonicWholeBodyController. None disables it.
+    # SonicWholeBodyController / SuperMimicController. None disables it.
     controller: str | None = None
+
+    # Used when controller=SuperMimicController.
+    supermimic: SuperMimicControllerConfig = field(default_factory=SuperMimicControllerConfig)
 
     embodiment: str = "g1_29"
 
@@ -73,6 +110,12 @@ class UnitreeG1Config(RobotConfig):
         spec = get_g1_embodiment(self.embodiment)
         if self.controller in spec.unsupported_controllers:
             raise ValueError(f"{self.controller} is not supported for {self.embodiment}")
+        if self.controller == "SuperMimicController" and (
+            self.supermimic.export is None or self.supermimic.motions is None
+        ):
+            raise ValueError(
+                "SuperMimicController needs --robot.supermimic.export and --robot.supermimic.motions"
+            )
         if self.gravity_compensation and not spec.supports_gravity_compensation:
             raise ValueError(f"Gravity compensation is not implemented for {self.embodiment}")
         default_kp, default_kd = spec.default_gains()

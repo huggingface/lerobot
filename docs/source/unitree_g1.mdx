@@ -32,6 +32,7 @@ config = UnitreeG1Config(embodiment="g1_23", is_simulation=False)
 | MuJoCo simulation                                   | Supported                     | Not yet supported; native model planned      |
 | Locomotion controllers                              | GR00T and Holosoma            | GR00T and Holosoma                           |
 | SONIC whole-body controller                         | Supported                     | Not supported; the policy requires 29 DoF    |
+| SuperMimic motion-tracking controller               | Supported (simulation only)   | Not supported; the actor requires 29 DoF     |
 | Gravity compensation                                | Supported, off by default     | Not yet supported; native kinematics planned |
 
 Both variants use the same 29-slot DDS message layout. G1-29 uses all 29 slots, while
@@ -431,6 +432,38 @@ the token back to its connect-time value. `/stop` still closes the remote sessio
 the robot through the normal controller shutdown path.
 
 With `SonicWholeBodyController`, the observation state is the 64-D token echo rather than the 29 joint positions, so a compatible checkpoint must be trained against that state. On connect, the robot eases joints to the decoder's `default_angles` before the controller takes over.
+
+---
+
+## Part 6: SuperMimic Motion Tracking (Simulation)
+
+`SuperMimicController` replays reference motion clips with a [Uni-SuperMimic](https://github.com/Motphys/Uni-SuperMimic) actor. One actor tracks every clip it was trained on: each 50 Hz tick it reads the robot state and the next 10 reference frames and outputs joint targets that keep the robot balanced while following the clip. It has no velocity interface, so the motion is the clip's and cannot be steered.
+
+The controller needs an actor export (`actor.ts` + `manifest.json`, local directory or Hub repo) and one reference CSV or a directory of them, each row `[root_pos(3), root_quat_xyzw(4), 29 joint positions]` at `--robot.supermimic.motion_fps` (30 by default). Turn off the simulator's elastic band so the robot carries its own weight; on reset it is placed standing on the floor in the first clip frame.
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.sim_publish_images=false \
+  --robot.sim_onscreen=true \
+  --robot.sim_elastic_band=false \
+  --robot.controller=SuperMimicController \
+  --robot.supermimic.export=<export_dir_or_repo> \
+  --robot.supermimic.motions=<clip.csv_or_directory> \
+  --teleop.type=unitree_g1
+```
+
+The robot balances at the selected clip's first frame until you press START on the Unitree remote, or on a gamepad connected before the simulator starts. R1 / L1 select the next / previous clip, and START replays a finished one. Without a gamepad, `--robot.supermimic.autoplay=true --robot.supermimic.auto_advance=true` plays every clip in file-name order. Switching clips mid-motion is outside the actor's training and may make the robot fall.
+
+The controller is validated in simulation only; do not run it on the physical robot yet.
+
+<Tip>
+  On hybrid-GPU laptops where OpenGL falls back to `llvmpipe` (check with
+  `glxinfo -B`), the MuJoCo viewer renders on the CPU and slows the simulator.
+  Run with `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia` to
+  render on the NVIDIA GPU.
+</Tip>
 
 ---
 
