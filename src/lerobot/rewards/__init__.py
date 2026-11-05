@@ -20,9 +20,13 @@ from .factory import (
     make_reward_model_config as make_reward_model_config,
     make_reward_pre_post_processors as make_reward_pre_post_processors,
 )
-from .prediction import ProgressPrediction as ProgressPrediction
+from .prediction import (
+    ProgressPrediction as ProgressPrediction,
+    RemainingTimePrediction as RemainingTimePrediction,
+)
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
+from .rynnvalue.configuration_rynnvalue import RynnValueConfig as RynnValueConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
 from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfig
 
@@ -30,12 +34,14 @@ __all__ = [
     # Configuration classes
     "RewardClassifierConfig",
     "RobometerConfig",
+    "RynnValueConfig",
     "SARMConfig",
     "TOPRewardConfig",
     # Base class
     "PreTrainedRewardModel",
     # Predictions
     "ProgressPrediction",
+    "RemainingTimePrediction",
     # Factory functions
     "get_reward_model_class",
     "make_frame_scorer",

@@ -1,0 +1,153 @@
+# RynnValue
+
+RynnValue is a language-conditioned robotic value model that predicts the remaining time, in seconds, until a task is completed. The native LeRobot API preserves that temporal-distance meaning. Offline and online consumers may derive the higher-is-better potential used by the paper:
+
+```text
+potential = -remaining_time
+```
+
+**Paper**: [RynnValue: Scaling Robotic Value Foundation Models with Temporal Distance](https://arxiv.org/abs/2608.09853)
+**Original code**: [github.com/alibaba-damo-academy/RynnValue](https://github.com/alibaba-damo-academy/RynnValue)
+**Checkpoints**: [RynnValue-4B](https://huggingface.co/Alibaba-DAMO-Academy/RynnValue-4B), [RynnValue-8B](https://huggingface.co/Alibaba-DAMO-Academy/RynnValue-8B)
+
+## LeRobot integration
+
+The integration ports the released architecture into LeRobot rather than executing checkpoint code with `trust_remote_code`. It preserves:
+
+- Interleaved image, `<relative_value>`, and `<value>` query groups.
+- Eight-token grouped representations concatenated before each value head.
+- Distributional absolute and relative temporal heads.
+- Symlog-spaced, two-hot value decoding.
+- Value-isolation attention during inference.
+- Official sharded 4B and 8B checkpoint loading.
+
+The integration is inference-only. It does not reproduce the paper's 7,000-hour data mixture, temporal sampling augmentations, or training pipeline.
+
+## Installation
+
+From a source checkout:
+
+```bash
+uv sync --extra rynnvalue
+```
+
+Or with pip:
+
+```bash
+pip install -e ".[rynnvalue]"
+```
+
+The 4B checkpoint is approximately 10 GB. A CUDA GPU with enough memory for the selected checkpoint is strongly recommended.
+
+## Loading
+
+The LeRobot checkpoint [lerobot/RynnValue-4B](https://huggingface.co/lerobot/RynnValue-4B) uses the LeRobot format: `config.json` embeds the native architecture configuration as `model_config`, and `model.safetensors` holds the weights. The tokenizer and image processor load from the official checkpoint named by `model_id`.
+
+```python
+from lerobot.configs.rewards import RewardModelConfig
+from lerobot.rewards.rynnvalue import RynnValueRewardModel
+
+config = RewardModelConfig.from_pretrained(
+    "lerobot/RynnValue-4B",
+    cli_overrides=[
+        "--device=cuda",
+        "--robot_description=a single-arm robot",
+        "--camera_description=a third-person workspace camera",
+    ],
+)
+model = RynnValueRewardModel.from_pretrained("lerobot/RynnValue-4B", config=config)
+```
+
+A config without `model_config` builds the model from the official checkpoint instead, set by `model_id` (default `Alibaba-DAMO-Academy/RynnValue-4B`) and optionally pinned with `model_revision`. Saving that model writes a LeRobot checkpoint:
+
+```python
+from lerobot.rewards.rynnvalue import RynnValueConfig, RynnValueRewardModel
+
+model = RynnValueRewardModel(RynnValueConfig(model_id="Alibaba-DAMO-Academy/RynnValue-8B"))
+model.save_pretrained("outputs/rynnvalue-8b")
+```
+
+## Inputs and outputs
+
+The preprocessor reads:
+
+- `observation.images.top` by default, as one frame or a chronological frame sequence.
+- `task` as the natural-language instruction.
+- Fixed robot and camera descriptions through `robot_description` and `camera_description`.
+
+The released checkpoints have metadata prompting enabled. Provide at least one robot or camera description unless you deliberately set `use_meta=False` for an ablation.
+
+When a trajectory contains more than `max_frames` frames, the processor uniformly samples the full history while retaining its first and last frames. The default is eight frames.
+
+`predict_remaining_time()` returns a `lerobot.rewards.RemainingTimePrediction` with one value per trajectory:
+
+- `prediction.remaining_time_s` contains `v_end`, the final queried frame's predicted remaining time.
+- The tensor stays on the model device.
+- Potential, progress normalization, interpolation, and thresholding belong to workflow consumers.
+
+If a checkpoint has multiple absolute-value heads, LeRobot averages them before selecting the final frame.
+
+## Usage
+
+With `config` and `model` loaded as above:
+
+```python
+import torch
+
+from lerobot.rewards import make_reward_pre_post_processors
+
+preprocessor, _ = make_reward_pre_post_processors(config)
+
+batch = {
+    "observation.images.top": frames,  # (T,C,H,W) or (B,T,C,H,W)
+    "task": "put the cube in the drawer",
+}
+model.eval()
+with torch.inference_mode():
+    prediction = model.predict_remaining_time(preprocessor(batch))
+remaining_time_s = prediction.remaining_time_s
+```
+
+`predict_remaining_time()` changes neither the model mode nor gradients, so call it in `eval()` mode under `torch.inference_mode()` for inference.
+
+## Offline dataset scoring
+
+Use the shared scoring command rather than a RynnValue-specific dataset script:
+
+```bash
+uv run lerobot-score \
+    --dataset_repo_id=lerobot/example-dataset \
+    --dataset_root=/path/to/local/dataset \
+    --reward_model.path=lerobot/RynnValue-4B \
+    --reward_model.device=cuda \
+    --reward_model.robot_description="a single-arm robot" \
+    --reward_model.camera_description="a fixed third-person camera"
+```
+
+RynnValue runs on the trajectory prefix ending at about one frame per second of the dataset, set with `--inference_fps` (default 1), each with at most `max_frames` evenly spaced frames, set with `--reward_model.max_frames` (default 8). The scorer interpolates linearly between the frames RynnValue runs on and writes the dataset score `rynnvalue` with one signal, `reward.rynnvalue.remaining_time_s`, in seconds, lower is better. RA-BC needs a higher-is-better progress signal, so it can't weight samples with this score.
+
+From Python, build the scorer and add the score to the dataset:
+
+```python
+from lerobot.rewards.rynnvalue.scoring_rynnvalue import make_rynnvalue_frame_scorer
+
+dataset.add_score(make_rynnvalue_frame_scorer(model))
+scores = dataset.read_score("rynnvalue")
+```
+
+## Reward shaping
+
+The potential derived from remaining time is a state potential, not a complete transition reward. Apply potential-based shaping in the RL loop:
+
+```text
+r_shape = gamma * potential_next - potential
+```
+
+The paper combines this term with a sparse task reward. LeRobot does not infer task termination or success from the language generation branch in `predict_remaining_time()`.
+
+## Limitations
+
+- Inference uses eager custom attention; Flash Attention and SDPA do not implement RynnValue's prediction-slot isolation.
+- The current API scores complete supplied histories and is not a streaming KV-cache reward server.
+- Natural-language video analysis, match, and success generation remain available in the native core model but are not used by `predict_remaining_time()`.
+- Training RynnValue from scratch is outside this integration.
