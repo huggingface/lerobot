@@ -24,8 +24,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
+from lerobot.rewards.prediction import RemainingTimePrediction
 from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig
-from lerobot.rewards.rynnvalue.modeling_rynnvalue import RynnValuePrediction
 from lerobot.rewards.rynnvalue.scoring_rynnvalue import (
     REMAINING_TIME_SIGNAL,
     RynnValueFrameScorer,
@@ -141,7 +141,7 @@ class _FakeModel:
     def predict_remaining_time(self, batch):
         assert torch.is_inference_mode_enabled()
         # Four seconds remain at frame 0, then one second less per frame.
-        return RynnValuePrediction(remaining_time_s=4.0 - batch["observation.last_frame"])
+        return RemainingTimePrediction(remaining_time_s=4.0 - batch["observation.last_frame"])
 
 
 def test_rynnvalue_frame_scorer_scores_prefixes_and_interpolates_remaining_time():
