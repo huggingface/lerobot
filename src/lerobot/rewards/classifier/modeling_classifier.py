@@ -30,7 +30,7 @@ class ClassifierOutput:
     def __init__(
         self,
         logits: Tensor,
-        probabilities: Tensor,
+        probabilities: Tensor | None = None,
         hidden_states: Tensor | None = None,
     ):
         self.logits = logits
@@ -282,6 +282,8 @@ class Classifier(PreTrainedRewardModel):
         """
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
         probs = self.predict(images).probabilities
+        if probs is None:
+            raise ValueError("Classifier.predict() returned no probabilities")
 
         if self.config.num_classes == 2:
             logging.debug(f"Predicted reward images: {probs}")

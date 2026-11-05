@@ -271,6 +271,37 @@ def test_robometer_predict_progress_decodes_discrete_logits(monkeypatch):
 
 
 @skip_if_package_missing("transformers")
+def test_robometer_predict_progress_ignores_legacy_scalar_selection_config(monkeypatch):
+    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
+
+    progress = torch.tensor([[0.2, 0.8]])
+    success_logits = torch.tensor([[-2.0, 2.0]])
+    _patch_build(monkeypatch)
+
+    predictions = []
+    for reward_output, threshold in [("progress", 0.1), ("success", 0.9)]:
+        model = RobometerRewardModel(
+            RobometerConfig(
+                device="cpu",
+                reward_output=reward_output,
+                success_threshold=threshold,
+                progress_loss_type="l2",
+            )
+        )
+        monkeypatch.setattr(
+            model,
+            "_compute_rbm_logits",
+            lambda _inputs: (progress, success_logits),
+        )
+        predictions.append(
+            model.predict_progress(_make_batch({"input_ids": torch.zeros(1, 2, dtype=torch.long)}))
+        )
+
+    assert torch.equal(predictions[0].progress, predictions[1].progress)
+    assert torch.equal(predictions[0].success_probability, predictions[1].success_probability)
+
+
+@skip_if_package_missing("transformers")
 def test_robometer_predict_progress_does_not_mutate_input(monkeypatch):
     from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
 
@@ -327,6 +358,8 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
         # Knobs the user might tweak — must survive the round-trip.
         image_key="observation.images.cam_top",
         task_key="task",
+        reward_output="success",
+        success_threshold=0.7,
         progress_loss_type="l2",
     )
     model = RobometerRewardModel(cfg)
@@ -354,6 +387,8 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
 
     assert reloaded.config.image_key == "observation.images.cam_top"
     assert reloaded.config.task_key == "task"
+    assert reloaded.config.reward_output == "success"
+    assert reloaded.config.success_threshold == 0.7
     assert reloaded.config.progress_loss_type == "l2"  # came back from config.json
 
     # A successful load must restore values, not merely recreate keys. Compare

@@ -178,6 +178,27 @@ def test_topreward_compute_log_probability_returns_one_scalar_per_sample(monkeyp
 
 
 @skip_if_package_missing("transformers")
+def test_topreward_compute_log_probability_ignores_legacy_success_threshold(monkeypatch):
+    """Serialized threshold metadata must not alter the raw model quantity."""
+    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
+
+    _patch_build(monkeypatch)
+    cfg = TOPRewardConfig(device="cpu", success_threshold=0.0)
+    model = TOPRewardModel(cfg)
+
+    input_ids = torch.randint(0, 100, (2, 10))
+    attention_mask = torch.ones(2, 10, dtype=torch.long)
+    labels = _terminal_labels(input_ids)
+
+    batch = _make_batch(input_ids, attention_mask, labels)
+    rewards = model.compute_log_probability(batch)
+
+    assert rewards.shape == (2,)
+    assert torch.all(rewards <= 0.0)
+    assert not set(rewards.tolist()).issubset({0.0, 1.0})
+
+
+@skip_if_package_missing("transformers")
 def test_topreward_compute_log_probability_errors_when_inputs_missing(monkeypatch):
     from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
@@ -255,6 +276,7 @@ def test_topreward_from_pretrained_local_dir_roundtrips_config(monkeypatch, tmp_
         fps=4.0,
         image_key="observation.images.front",
         add_chat_template=True,
+        success_threshold=-1.5,
     )
     TOPRewardModel(cfg).save_pretrained(str(tmp_path))
 
@@ -265,6 +287,7 @@ def test_topreward_from_pretrained_local_dir_roundtrips_config(monkeypatch, tmp_
     assert reloaded.config.fps == 4.0
     assert reloaded.config.image_key == "observation.images.front"
     assert reloaded.config.add_chat_template is True
+    assert reloaded.config.success_threshold == -1.5
 
 
 @skip_if_package_missing("transformers")
