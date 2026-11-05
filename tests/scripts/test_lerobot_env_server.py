@@ -185,6 +185,11 @@ def test_server_configs_serve_what_their_env_options_describe(path, monkeypatch)
     check_served(served, expected, str(path))
 
 
+def test_client_may_ask_for_one_of_the_tasks_a_server_configures():
+    # A server with an empty task list runs all of them; the descriptor's task list decides what a client opens.
+    check_served({"type": "robolab", "task": ""}, {"type": "robolab", "task": "BananaInBowlTask"}, "tcp/...")
+
+
 def test_native_server_listens_on_localhost_unless_told_otherwise(tmp_path, monkeypatch):
     assert EnvServerConfig.__dataclass_fields__["zenoh"].default_factory().listen_endpoints == [
         "tcp/127.0.0.1:7448"

@@ -228,10 +228,12 @@ def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str
             return [plain(item) for item in value]
         return value
 
+    # A server opens any of the tasks it configures (all of them for an empty list), so the requested tasks
+    # are checked against the descriptor's task list instead.
     errors = [
         f"{key}: server {served.get(key)!r}, expected {value!r}"
         for key, value in expected.items()
-        if key != "kwargs" and value is not None and plain(value) != plain(served.get(key))
+        if key not in ("kwargs", "task") and value is not None and plain(value) != plain(served.get(key))
     ]
     served_kwargs = served.get("kwargs") or {}
     # hub_path and trust_remote_code may differ: the env server loads EnvHub repos from its own image.

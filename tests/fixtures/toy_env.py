@@ -189,7 +189,7 @@ class ToyEnvConfig(EnvConfig):
     def sim_settings(self) -> dict:
         return {
             "type": self.type,
-            "task": "reach",
+            "task": self.task or "reach",
             "fps": self.fps,
             "control_mode": "delta",
             "semantics": "toy-delta-v1",
