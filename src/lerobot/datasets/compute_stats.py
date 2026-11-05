@@ -321,6 +321,10 @@ def _reshape_for_vector_stats(
     value: np.ndarray, keepdims: bool, original_shape: tuple[int, ...]
 ) -> np.ndarray:
     """Reshape statistics for vector data (axis=0 or axis=(0,))."""
+    if len(original_shape) > 2:
+        value = value.reshape(original_shape[1:])
+        return value.reshape(1, *original_shape[1:]) if keepdims else value
+
     if not keepdims:
         return value
 
@@ -406,6 +410,10 @@ def _prepare_array_for_stats(array: np.ndarray, axis: int | tuple[int, ...] | No
         reshaped = array
         if array.ndim == 1:
             reshaped = array.reshape(-1, 1)
+        elif array.ndim > 2:
+            # Multi-dimensional per-frame features: flatten each frame so every element gets its own
+            # stats. The stats are reshaped back to the per-frame shape in `_reshape_for_vector_stats`.
+            reshaped = array.reshape(array.shape[0], -1)
         return reshaped, array.shape[0]
 
     if axis == (1,):  # Feature-wise statistics
