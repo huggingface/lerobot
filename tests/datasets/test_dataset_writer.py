@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 import torch
 from PIL import Image
@@ -26,7 +27,8 @@ from PIL import Image
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.configs import VideoEncoderConfig
-from lerobot.datasets.dataset_writer import _encode_video_worker
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.dataset_writer import DatasetWriter, _encode_video_worker
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
@@ -189,6 +191,58 @@ def test_save_multiple_episodes(tmp_path):
 
     assert dataset.meta.total_episodes == 3
     assert dataset.meta.total_frames == total_frames
+
+
+def test_save_episode_interrupted_while_encoding_writes_no_data(tmp_path):
+    """A Ctrl-C while encoding must not leave data rows of an episode the metadata never records."""
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {"dtype": "video", "shape": (32, 32, 3), "names": ["height", "width", "channels"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=tmp_path / "ds", use_videos=True
+    )
+    dataset.add_frame(_make_frame(features))
+    dataset.save_episode()
+
+    dataset.add_frame(_make_frame(features))
+    with (
+        patch.object(DatasetWriter, "_encode_temporary_episode_video", side_effect=KeyboardInterrupt),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        dataset.save_episode()
+    dataset.finalize()
+
+    data_rows = sum(pq.read_metadata(f).num_rows for f in (tmp_path / "ds" / "data").rglob("*.parquet"))
+    assert data_rows == dataset.meta.total_frames
+
+
+def test_resume_drops_data_rows_of_an_unsaved_episode(tmp_path):
+    """Rows left by a save interrupted before its metadata commit are dropped when recording resumes."""
+    root = tmp_path / "ds"
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root
+    )
+    dataset.add_frame(_make_frame(SIMPLE_FEATURES))
+    dataset.save_episode()
+
+    dataset.add_frame(_make_frame(SIMPLE_FEATURES))
+    with (
+        patch.object(LeRobotDatasetMetadata, "save_episode", side_effect=KeyboardInterrupt),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+    resumed.add_frame(_make_frame(SIMPLE_FEATURES))
+    resumed.save_episode()
+    resumed.finalize()
+
+    files = sorted((root / "data").rglob("*.parquet"))
+    episode_indices = [i for f in files for i in pq.read_table(f)["episode_index"].to_pylist()]
+    assert episode_indices == [0, 1]  # the unsaved episode's row is gone, the re-recorded one kept
 
 
 # ── clear / lifecycle ────────────────────────────────────────────────

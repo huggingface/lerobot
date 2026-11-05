@@ -153,6 +153,10 @@ class DatasetWriter:
         self._recorded_frames: int = initial_frames
         self._finalized = False
 
+        if self._meta.episodes is not None and len(self._meta.episodes) > 0:
+            # Resuming: clean up after a `save_episode` interrupted in a previous session, before recording.
+            self._drop_unrecorded_rows(self._meta.episodes[-1])
+
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self._meta.total_episodes if episode_index is None else episode_index
         ep_buffer: dict = {}
@@ -323,8 +327,7 @@ class DatasetWriter:
         else:
             ep_stats = compute_episode_stats(episode_buffer, self._meta.features)
 
-        ep_metadata = self._save_episode_data(episode_buffer)
-
+        video_metadata: dict = {}
         if streaming_encoder is not None:
             streaming_results = streaming_encoder.finish_episode()
             for video_key in self._meta.video_keys:
@@ -337,7 +340,7 @@ class DatasetWriter:
                         else np.squeeze(v.reshape(1, -1, 1, 1) / normalization_factor, axis=0)
                         for k, v in video_stats.items()
                     }
-                ep_metadata.update(self._save_episode_video(video_key, episode_index, temp_path=temp_path))
+                video_metadata.update(self._save_episode_video(video_key, episode_index, temp_path=temp_path))
         elif has_video_keys and not use_batched_encoding:
             num_cameras = len(self._meta.video_keys)
             if parallel_encoding and num_cameras > 1:
@@ -367,12 +370,17 @@ class DatasetWriter:
 
                 for video_key in self._meta.video_keys:
                     temp_path = results[video_key]
-                    ep_metadata.update(
+                    video_metadata.update(
                         self._save_episode_video(video_key, episode_index, temp_path=temp_path)
                     )
             else:
                 for video_key in self._meta.video_keys:
-                    ep_metadata.update(self._save_episode_video(video_key, episode_index))
+                    video_metadata.update(self._save_episode_video(video_key, episode_index))
+
+        # Write the data rows only after encoding: an interruption while encoding (e.g. Ctrl-C) must not
+        # leave rows of an episode that `meta.save_episode` never records, or they would shift every
+        # later frame once recording resumes.
+        ep_metadata = {**self._save_episode_data(episode_buffer), **video_metadata}
 
         # `meta.save_episode` need to be executed after encoding the videos
         self._meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
@@ -437,6 +445,47 @@ class DatasetWriter:
             episode_df = episode_df.combine_first(video_ep_df)
             episode_df.to_parquet(episode_df_path)
             self._meta.episodes = load_episodes(self._root)
+
+    def _drop_unrecorded_rows(self, latest_ep: dict) -> None:
+        """Remove trailing rows of the last data file that belong to no saved episode.
+
+        A ``save_episode`` interrupted between writing the data and committing the metadata leaves such
+        rows behind. Resuming writes to a new file and frames are read by position across all files, so
+        they would shift every later frame.
+        """
+        path = self._root / self._meta.data_path.format(
+            chunk_index=latest_ep["data/chunk_index"], file_index=latest_ep["data/file_index"]
+        )
+        if not path.exists():  # e.g. resuming into a root that only holds meta/
+            return
+        last_saved = latest_ep["episode_index"]
+        with pq.ParquetFile(path) as pf:
+            # Each episode is appended as its own row groups, so rows of unsaved episodes are whole trailing
+            # row groups. Only their first `episode_index` is read: a clean file costs one tiny column chunk.
+            keep = pf.num_row_groups
+            while (
+                keep > 0
+                and pf.read_row_group(keep - 1, columns=["episode_index"])["episode_index"][0].as_py()
+                > last_saved
+            ):
+                keep -= 1
+            if keep == pf.num_row_groups:
+                return
+            logger.warning(
+                f"Dropping rows of episodes after {last_saved} from {path}: they were never saved."
+            )
+            tmp_path = path.with_name(path.name + ".tmp")
+            try:
+                with pq.ParquetWriter(
+                    tmp_path, pf.schema_arrow, compression="snappy", use_dictionary=True
+                ) as w:
+                    for i in range(keep):  # one row group at a time keeps memory bounded by an episode
+                        table = pf.read_row_group(i)
+                        w.write_table(table, row_group_size=table.num_rows or None)
+            except BaseException:
+                tmp_path.unlink(missing_ok=True)
+                raise
+        tmp_path.replace(path)
 
     def _save_episode_data(self, episode_buffer: dict) -> dict:
         """Save episode data to a parquet file."""
