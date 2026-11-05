@@ -13,11 +13,7 @@
 # limitations under the License.
 
 from .act.configuration_act import ACTConfig as ACTConfig
-from .chunk import (
-    ChunkPolicySpec,
-    ExecutionMode,
-    FeatureSpec,
-)
+from .chunk import ChunkPolicySpec, ExecutionMode
 from .cosmos3.configuration_cosmos3 import (
     Cosmos3Config,
     Cosmos3EdgeConfig as Cosmos3EdgeConfig,
@@ -124,7 +120,6 @@ __all__ = [
     # Chunk execution contracts
     "ChunkPolicySpec",
     "ExecutionMode",
-    "FeatureSpec",
     # Base class
     "PreTrainedPolicy",
     # RTC utilities

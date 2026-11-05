@@ -19,6 +19,20 @@ Zenoh requires ``lerobot[remote]`` only when used. Importing this namespace
 requires neither backend.
 """
 
+from .protocol import (
+    CodecLimits,
+    Envelope,
+    ErrorCode,
+    MessageType,
+    ProtocolError,
+    RGBImage,
+    decode_message,
+    decode_reply,
+    encode_message,
+    query_reply,
+    validate_reply,
+    validate_segment,
+)
 from .zenoh import (
     BoundedQueryable,
     BoundedSubscriber,
@@ -38,11 +52,23 @@ from .zenoh import (
 __all__ = [
     "BoundedQueryable",
     "BoundedSubscriber",
+    "CodecLimits",
+    "Envelope",
+    "ErrorCode",
+    "MessageType",
     "PendingQuery",
     "PresenceEvent",
     "PresenceToken",
+    "ProtocolError",
     "QueryCancelled",
+    "RGBImage",
     "TransportError",
     "ZenohConfig",
     "ZenohTransport",
+    "decode_message",
+    "decode_reply",
+    "encode_message",
+    "query_reply",
+    "validate_reply",
+    "validate_segment",
 ]

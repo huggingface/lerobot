@@ -26,9 +26,10 @@ from torch import Tensor, nn
 from lerobot.configs import FeatureType
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
+from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from ..chunk import ChunkPolicySpec, FeatureSpec
+from ..chunk import ChunkPolicySpec
 from ..pretrained import (
     PreTrainedPolicy,
     T,

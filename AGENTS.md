@@ -34,7 +34,7 @@ pre-commit run --all-files                           # Lint + format (ruff, typo
 - **`policies/`** — Each policy in its own subdir. All inherit `PreTrainedPolicy` (`nn.Module` + `HubMixin`) from `pretrained.py`. Factory with lazy imports in `factory.py`.
 - **`processor/`** — Data transformation pipeline. `ProcessorStep` base with registry. `DataProcessorPipeline` / `PolicyProcessorPipeline` chain steps.
 - **`datasets/`** — `LeRobotDataset` (episode-aware sampling + video decoding) and `LeRobotDatasetMetadata`.
-- **`envs/`** — `EnvConfig` base in `configs.py`, factory in `factory.py`. Each env subclass defines `gym_kwargs` and `create_envs()`.
+- **`envs/`** — `EnvConfig` base in `configs.py`, factory in `factory.py`. Each env subclass defines `sim_settings()`, which names the `lerobot.sim` integration that `create_envs()` runs locally or through `lerobot.env_server`.
 - **`robots/`, `motors/`, `cameras/`, `teleoperators/`** — Hardware abstraction layers.
 - **`utils/`** — Low-level helpers (constants, import flags, device, hub). Importing `lerobot.utils` pulls in only base dependencies and no other lerobot package. Import from its modules, not from the package (`from lerobot.utils.constants import ACTION`).
 - **`common/`** — Code that bridges packages (checkpointing, robot control, Trackio logging). May import other lerobot packages and optional extras. Import from its modules, not from the package (`from lerobot.common.train_utils import save_checkpoint`).

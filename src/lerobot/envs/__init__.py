@@ -19,42 +19,44 @@
 # require_package("gymnasium", extra="<update_extra>", import_name="gymnasium")
 
 from .configs import (
-    AlohaEnv,
+    AlohaEnvConfig,
+    EnvClientConfig,
     EnvConfig,
     G1EndEffector,
     HILSerlRobotEnvConfig,
     HubEnvConfig,
-    PushtEnv,
-    UnitreeG1MujocoEnv,
+    PushtEnvConfig,
+    UnitreeG1MujocoEnvConfig,
 )
 from .factory import make_env, make_env_config, make_env_pre_post_processors
 from .utils import (
-    NEW_ROLLOUT_OPTION,
     check_env_attributes_and_types,
     close_envs,
     env_to_policy_features,
+    prepare_canonical_observation,
     preprocess_observation,
+    validate_checkpoint,
 )
 
 # TODO: rename the homonymic classes so their names are unambiguous:
-# configs.LiberoEnv and libero.LiberoEnv, configs.MetaworldEnv and metaworld.MetaworldEnv,
-# configs.RoboCasaEnv and robocasa.RoboCasaEnv, configs.VLABenchEnv and vlabench.VLABenchEnv,
 # configs.RewardClassifierConfig and rewards.classifier.configuration_classifier.RewardClassifierConfig.
 
 __all__ = [
-    "AlohaEnv",
+    "AlohaEnvConfig",
+    "EnvClientConfig",
     "EnvConfig",
     "G1EndEffector",
     "HILSerlRobotEnvConfig",
     "HubEnvConfig",
-    "NEW_ROLLOUT_OPTION",
-    "PushtEnv",
-    "UnitreeG1MujocoEnv",
+    "PushtEnvConfig",
+    "UnitreeG1MujocoEnvConfig",
     "check_env_attributes_and_types",
     "close_envs",
     "env_to_policy_features",
     "make_env",
     "make_env_config",
     "make_env_pre_post_processors",
+    "prepare_canonical_observation",
     "preprocess_observation",
+    "validate_checkpoint",
 ]

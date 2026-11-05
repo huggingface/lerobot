@@ -27,6 +27,7 @@ import draccus
 from lerobot.configs import DatasetRecordConfig, PreTrainedConfig, parser
 from lerobot.inference import InferenceEngineConfig, RemoteInferenceConfig, SyncInferenceConfig
 from lerobot.robots import RobotConfig
+from lerobot.robots.sim_robot import SimRobotConfig
 from lerobot.teleoperators import TeleoperatorConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
@@ -61,6 +62,8 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     dataset_mode: ClassVar[str] = "none"
     # Whether --teleop.type is mandatory (human-in-the-loop strategies).
     requires_teleop: ClassVar[bool] = False
+    # Whether the strategy can drive a sim robot: it must start a new episode when one ends.
+    supports_sim_robot: ClassVar[bool] = False
 
     @property
     def type(self) -> str:
@@ -89,6 +92,7 @@ class BaseStrategyConfig(RolloutStrategyConfig):
     """Autonomous rollout with no data recording."""
 
     supports_interactive: ClassVar[bool] = True
+    supports_sim_robot: ClassVar[bool] = True
 
 
 @RolloutStrategyConfig.register_subclass("sentry")
@@ -184,6 +188,7 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
     """
 
     dataset_mode: ClassVar[str] = "required"
+    supports_sim_robot: ClassVar[bool] = True
 
     # This only applies if there are no teleop leaders specified.
     # When True (default), moves the robot back to the joint positions captured at startup.
@@ -360,6 +365,11 @@ class RolloutConfig:
         # Read off the strategy's declarations, never its concrete type, so a
         # third-party strategy is validated exactly like a built-in one.
         strategy = self.strategy
+        if isinstance(self.robot, SimRobotConfig) and not strategy.supports_sim_robot:
+            raise ValueError(
+                f"{strategy.type} strategy does not support a sim robot yet: use --strategy.type=episodic "
+                "to record, or --strategy.type=base to run without recording"
+            )
         if strategy.requires_teleop and self.teleop is None:
             raise ValueError(f"{strategy.type} strategy requires --teleop.type to be set")
         if strategy.dataset_mode == "required" and self.dataset is None:
@@ -371,6 +381,13 @@ class RolloutConfig:
             )
         if self.dataset is not None and not self.dataset.repo_id:
             raise ValueError("--dataset.repo_id must be set when passing --dataset.* flags")
+        # One frame is recorded per control cycle: a dataset at another rate would replay at the wrong speed.
+        # A resumed dataset keeps its own rate, checked when it is opened.
+        if self.dataset is not None and not self.resume and not math.isclose(self.dataset.fps, self.fps):
+            raise ValueError(
+                f"--dataset.fps ({self.dataset.fps}) must equal --fps ({self.fps:g}): "
+                f"pass --dataset.fps={self.fps:g}"
+            )
 
         # Interactive mode calls strategy.run() once per segment, so only strategies
         # declaring ``supports_interactive`` may be driven by it.

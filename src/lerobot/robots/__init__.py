@@ -16,11 +16,18 @@
 
 from .config import RobotConfig
 from .robot import Robot
-from .utils import make_robot_from_config
+from .utils import check_control_rate, episode_ended, make_robot_from_config, start_episode
 
 # NOTE: Robot implementations (SOFollower, etc.) and so_follower.robot_kinematic_processor are intentionally
 # NOT re-exported here to avoid pulling device-specific dependencies and lerobot.processor.
 # TODO: move robot_kinematic_processor to a robot-agnostic location.
 # Import from submodules: ``from lerobot.robots.so_follower import SOFollower``
 
-__all__ = ["Robot", "RobotConfig", "make_robot_from_config"]
+__all__ = [
+    "Robot",
+    "RobotConfig",
+    "check_control_rate",
+    "episode_ended",
+    "make_robot_from_config",
+    "start_episode",
+]
