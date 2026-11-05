@@ -481,6 +481,10 @@ class ACT(nn.Module):
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
             for img in batch[OBS_IMAGES]:
+                if img.device.type == "cuda":
+                    # cuDNN runs these convolutions in NHWC; NCHW input costs a layout transpose
+                    # around every conv, forward and backward.
+                    img = img.contiguous(memory_format=torch.channels_last)
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
@@ -563,8 +567,10 @@ class ACTEncoderLayer(nn.Module):
         if self.pre_norm:
             x = self.norm1(x)
         q = k = x if pos_embed is None else x + pos_embed
-        x = self.self_attn(q, k, value=x, key_padding_mask=key_padding_mask)
-        x = x[0]  # note: [0] to select just the output, not the attention weights
+        # need_weights=False lets nn.MultiheadAttention dispatch to scaled_dot_product_attention
+        # (flash / memory-efficient kernels) instead of always materializing the
+        # (batch, heads, seq, seq) attention probabilities, which nothing reads.
+        x = self.self_attn(q, k, value=x, key_padding_mask=key_padding_mask, need_weights=False)[0]
         x = skip + self.dropout1(x)
         if self.pre_norm:
             skip = x
@@ -647,7 +653,7 @@ class ACTDecoderLayer(nn.Module):
         if self.pre_norm:
             x = self.norm1(x)
         q = k = self.maybe_add_pos_embed(x, decoder_pos_embed)
-        x = self.self_attn(q, k, value=x)[0]  # select just the output, not the attention weights
+        x = self.self_attn(q, k, value=x, need_weights=False)[0]  # see ACTEncoderLayer.forward
         x = skip + self.dropout1(x)
         if self.pre_norm:
             skip = x
@@ -659,7 +665,8 @@ class ACTDecoderLayer(nn.Module):
             query=self.maybe_add_pos_embed(x, decoder_pos_embed),
             key=self.maybe_add_pos_embed(encoder_out, encoder_pos_embed),
             value=encoder_out,
-        )[0]  # select just the output, not the attention weights
+            need_weights=False,
+        )[0]
         x = skip + self.dropout2(x)
         if self.pre_norm:
             skip = x

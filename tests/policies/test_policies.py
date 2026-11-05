@@ -507,6 +507,48 @@ def test_act_ignores_padded_actions():
     assert valid_loss_dict["l1_loss"] != loss_dict["l1_loss"]
 
 
+def test_act_attention_does_not_return_weights(monkeypatch):
+    """Every ACT attention call asks for no weights, so torch can dispatch to
+    scaled_dot_product_attention instead of materializing (batch, heads, seq, seq) probabilities."""
+    chunk_size = 10
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
+            OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(4,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
+        chunk_size=chunk_size,
+        n_action_steps=chunk_size,
+        dim_model=32,
+        n_heads=2,
+        dim_feedforward=64,
+        n_encoder_layers=1,
+        n_vae_encoder_layers=1,
+        latent_dim=8,
+        device="cpu",
+    )
+    policy = ACTPolicy(config)
+    policy.train()  # the VAE encoder (with its key padding mask) only runs in training
+    need_weights = []
+    mha_forward = torch.nn.MultiheadAttention.forward
+
+    def spy(self, *args, **kwargs):
+        need_weights.append(kwargs.get("need_weights", True))
+        return mha_forward(self, *args, **kwargs)
+
+    monkeypatch.setattr(torch.nn.MultiheadAttention, "forward", spy)
+    policy.forward(
+        {
+            OBS_STATE: torch.randn(2, 4),
+            OBS_ENV_STATE: torch.randn(2, 4),
+            ACTION: torch.randn(2, chunk_size, 2),
+            "action_is_pad": torch.zeros(2, chunk_size, dtype=torch.bool),
+        }
+    )
+    # VAE encoder layer, encoder layer, decoder self- and cross-attention.
+    assert need_weights == [False] * 4
+
+
 def test_act_temporal_ensembler():
     """Check that the online method in ACTTemporalEnsembler matches a simple offline calculation."""
     temporal_ensemble_coeff = 0.01
