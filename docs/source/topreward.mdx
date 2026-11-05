@@ -72,7 +72,7 @@ In LeRobot datasets the preprocessor reads:
 | `reward_model.fps`        | `2.0`                       | Metadata passed to the Qwen video processor   |
 | `reward_model.vlm_name`   | `Qwen/Qwen3-VL-8B-Instruct` | Hugging Face Hub id of the underlying VLM     |
 
-The model returns one float32 tensor of shape `(batch_size,)` through `compute_log_probability(batch)`. Higher values mean better task-video alignment. The method always returns the raw log-probability; thresholding and normalization belong to the consumer.
+The model returns one float32 tensor of shape `(batch_size,)` through `compute_log_probability(batch)`. Higher values mean better task-video alignment. The method always returns the raw log-probability; thresholding and normalization belong to the consumer. A config with a finite `success_threshold`, from an older LeRobot, raises an error.
 
 ## Usage
 
@@ -125,8 +125,6 @@ uv run python -m lerobot.rewards.topreward.compute_rabc_weights \
     --num-samples 15 \
     --device cuda
 ```
-
-If the config sets a finite `success_threshold`, the labeling script applies it before per-episode normalization; `compute_log_probability()` ignores it.
 
 Then render the progress overlay for any episode:
 
