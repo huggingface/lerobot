@@ -78,36 +78,26 @@ class RABCWeights(SampleWeighter):
         self.fallback_weight = fallback_weight
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.progress_column = signal_name
-
         logging.info("Loading signal %s from dataset score %s", signal_name, score_name)
         scores = dataset.read_score(score_name)
         descriptors = dataset.get_score_descriptors(score_name)
 
-        # Check that the requested signal exists.
-        if self.progress_column not in scores.column_names:
-            available = [
-                column
-                for column in scores.column_names
-                if column not in {"index", "episode_index", "frame_index"}
-            ]
+        if signal_name not in descriptors:
             raise ValueError(
-                f"Column '{self.progress_column}' not found. Available signal columns: {available}"
+                f"Signal '{signal_name}' not found in score '{score_name}'. Available signals: {sorted(descriptors)}"
             )
-        descriptor = descriptors[self.progress_column]
+        descriptor = descriptors[signal_name]
         if descriptor.direction != "higher":
             raise ValueError(
                 f"RA-BC requires a signal where higher values indicate better progress, "
-                f"but {self.progress_column!r} declares direction={descriptor.direction!r}"
+                f"but {signal_name!r} declares direction={descriptor.direction!r}"
             )
 
         global_indices = np.asarray(scores["index"])
-        progress_values = np.asarray(scores[self.progress_column])
+        progress_values = np.asarray(scores[signal_name])
         episode_indices = np.asarray(scores["episode_index"])
         if progress_values.dtype.kind not in "iuf":
-            raise ValueError(f"RA-BC signal {self.progress_column!r} must be numeric")
-
-        logging.info(f"Using progress column: {self.progress_column}")
+            raise ValueError(f"RA-BC signal {signal_name!r} must be numeric")
 
         self.progress_lookup: dict[int, float] = {}
         self.episode_lookup: dict[int, int] = {}
@@ -308,7 +298,7 @@ class RABCWeights(SampleWeighter):
             "num_frames": len(self.progress_lookup),
             "chunk_size": self.chunk_size,
             "score_name": self.score_name,
-            "signal_name": self.progress_column,
+            "signal_name": self.signal_name,
             "delta_mean": self.delta_mean,
             "delta_std": self.delta_std,
             "kappa": self.kappa,

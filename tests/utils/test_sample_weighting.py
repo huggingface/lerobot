@@ -373,7 +373,7 @@ def test_rabc_accepts_namespaced_signal():
         device=torch.device("cpu"),
     )
 
-    assert weighter.progress_column == "reward.robometer.progress"
+    assert weighter.signal_name == "reward.robometer.progress"
     assert weighter.get_stats()["signal_name"] == "reward.robometer.progress"
 
 
@@ -422,7 +422,7 @@ def test_factory_creates_rabc_weighter(sample_score_dataset):
 
     assert isinstance(weighter, RABCWeights)
     assert isinstance(weighter, SampleWeighter)
-    assert weighter.progress_column == "progress_sparse"
+    assert weighter.signal_name == "progress_sparse"
 
 
 def test_factory_rejects_signal_name_in_extra_params(sample_score_dataset):

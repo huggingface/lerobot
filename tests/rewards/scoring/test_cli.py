@@ -16,21 +16,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.scripts import lerobot_score
 from lerobot.scripts.lerobot_score import ScoreConfig
+
+pytestmark = pytest.mark.dataset
 
 
 def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
     pytest.importorskip("datasets")
     pytest.importorskip("av")
-    import lerobot.datasets
 
-    reward_config = RobometerConfig(
-        pretrained_path="old/model",
-        device="cpu",
-        vlm_config={"model_type": "fake", "text_config": {"vocab_size": 10}},
-    )
+    reward_config = object()
     fake_model = object()
     fake_scorer = SimpleNamespace(name="robometer")
     captured: dict[str, object] = {}
@@ -46,8 +42,8 @@ def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
 
     fake_dataset = FakeDataset()
 
-    def fake_from_pretrained(path, *, revision):
-        captured["config_load"] = (path, revision)
+    def fake_from_pretrained(path, *, revision, cli_overrides):
+        captured["config_load"] = (path, revision, cli_overrides)
         return reward_config
 
     def fake_dataset_class(repo_id, **kwargs):
@@ -55,7 +51,7 @@ def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
         return fake_dataset
 
     monkeypatch.setattr(lerobot_score.RewardModelConfig, "from_pretrained", fake_from_pretrained)
-    monkeypatch.setattr(lerobot.datasets, "LeRobotDataset", fake_dataset_class)
+    monkeypatch.setattr(lerobot_score, "LeRobotDataset", fake_dataset_class)
     monkeypatch.setattr(lerobot_score, "make_reward_model", lambda config: fake_model)
     monkeypatch.setattr(
         lerobot_score,
@@ -79,7 +75,11 @@ def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
     )
 
     assert lerobot_score.run_score(cfg) is None
-    assert captured["config_load"] == ("user/robometer", "model-revision")
+    assert captured["config_load"] == (
+        "user/robometer",
+        "model-revision",
+        ["--device=cpu", "--image_key=observation.images.wrist"],
+    )
     assert captured["dataset_load"] == (
         "user/dataset",
         {
@@ -88,11 +88,6 @@ def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
             "download_videos": True,
         },
     )
-    assert reward_config.pretrained_path == "user/robometer"
-    assert reward_config.pretrained_revision == "model-revision"
-    assert reward_config.image_key == "observation.images.wrist"
-    assert "observation.images.wrist" in reward_config.input_features
-    assert "observation.images.top" not in reward_config.input_features
     assert captured["make_scorer"] == (
         fake_model,
         {"batch_size": 8, "num_subsampled_frames": 6},

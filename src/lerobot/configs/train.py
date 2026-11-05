@@ -86,43 +86,6 @@ def _migrate_legacy_wandb_section(config: dict[str, Any]) -> dict[str, Any] | No
     return migrated_config
 
 
-def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
-    """Return migrated payload for legacy RA-BC fields, or None when no migration is needed."""
-    legacy_fields = (
-        "use_rabc",
-        "rabc_progress_path",
-        "rabc_kappa",
-        "rabc_epsilon",
-        "rabc_head_mode",
-    )
-    if not any(key in config for key in legacy_fields):
-        return None
-
-    migrated_config = dict(config)
-    use_rabc = bool(migrated_config.pop("use_rabc", False))
-    rabc_progress_path = migrated_config.pop("rabc_progress_path", None)
-    rabc_kappa = migrated_config.pop("rabc_kappa", None)
-    rabc_epsilon = migrated_config.pop("rabc_epsilon", None)
-    rabc_head_mode = migrated_config.pop("rabc_head_mode", None)
-
-    # New configs may already define sample_weighting explicitly. In that case,
-    # legacy fields are ignored after being stripped from the payload.
-    if migrated_config.get("sample_weighting") is None and use_rabc:
-        sample_weighting: dict[str, Any] = {"type": "rabc"}
-        if rabc_progress_path is not None:
-            filename = str(rabc_progress_path).rstrip("/").rsplit("/", maxsplit=1)[-1]
-            sample_weighting["score_name"] = filename.removesuffix(".parquet")
-        if rabc_kappa is not None:
-            sample_weighting["kappa"] = rabc_kappa
-        if rabc_epsilon is not None:
-            sample_weighting["epsilon"] = rabc_epsilon
-        if rabc_head_mode is not None:
-            sample_weighting["signal_name"] = f"progress_{rabc_head_mode}"
-        migrated_config["sample_weighting"] = sample_weighting
-
-    return migrated_config
-
-
 @dataclass
 class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
@@ -497,19 +460,14 @@ class TrainPipelineConfig(HubMixin):
                 )
 
         cli_args = kwargs.pop("cli_args", [])
-        # Legacy migrations (RA-BC fields, pre-Trackio `wandb` section) only apply to framework-saved
-        # checkpoints (always JSON). Hand-written YAML/TOML configs are expected to use the current schema.
+        # The pre-Trackio `wandb` migration only applies to framework-saved checkpoints (always JSON).
+        # Hand-written YAML/TOML configs are expected to use the current schema.
         if config_file is not None and config_file.endswith(".json"):
             with open(config_file) as f:
-                config = json.load(f)
-            migrated = False
-            for migrate in (_migrate_legacy_rabc_fields, _migrate_legacy_wandb_section):
-                migrated_config = migrate(config)
-                if migrated_config is not None:
-                    config, migrated = migrated_config, True
-            if migrated:
+                migrated_config = _migrate_legacy_wandb_section(json.load(f))
+            if migrated_config is not None:
                 with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
-                    json.dump(config, f)
+                    json.dump(migrated_config, f)
                     config_file = f.name
 
         with draccus.config_type("json"):
