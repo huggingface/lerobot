@@ -318,153 +318,160 @@ def make_policy(
     if pretrained_path is not None:
         cfg.pretrained_path = Path(pretrained_path)
 
-    kwargs: dict[str, Any] = {}
-    if ds_meta is not None:
-        features = dataset_to_policy_features(ds_meta.features)
-    else:
-        if not cfg.pretrained_path:
-            logging.warning(
-                "You are instantiating a policy from scratch and its features are parsed from an environment "
-                "rather than a dataset. Normalization modules inside the policy will have infinite values "
-                "by default without stats from a dataset."
-            )
-        if env_cfg is None:
-            raise ValueError("env_cfg cannot be None when ds_meta is not provided")
-        features = env_to_policy_features(env_cfg)
-
-    if rename_map:
-        features = {rename_map.get(key, key): feature for key, feature in features.items()}
-
-    if ds_meta is not None or not cfg.output_features:
-        cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    if not cfg.input_features:
-        cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
-
-    # Store action feature names for relative_exclude_joints support
-    if ds_meta is not None and hasattr(cfg, "action_feature_names"):
-        raw_action_feature = next(
-            (
-                feature
-                for raw_key, feature in ds_meta.features.items()
-                if (rename_map or {}).get(raw_key, raw_key) == ACTION
-            ),
-            None,
-        )
-        action_names = raw_action_feature.get("names") if raw_action_feature is not None else None
-        if action_names is not None:
-            # Grouped metadata stores dimension names in the values, not the group keys.
-            if isinstance(action_names, dict) and all(
-                isinstance(group, (list, tuple)) for group in action_names.values()
-            ):
-                action_names = [name for group in action_names.values() for name in group]
-            cfg.action_feature_names = list(action_names)
-    if ds_meta is not None:
-        set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
-        if callable(set_dataset_feature_metadata):
-            ds_feature = ds_meta.features
-            if rename_map:  # use the policy-side (renamed) keys
-                ds_feature = {
-                    rename_map.get(dataset_key, dataset_key): feature
-                    for dataset_key, feature in ds_meta.features.items()
-                }
-            set_dataset_feature_metadata(ds_feature)
-        cfg._runtime_dataset_meta = ds_meta
-
-    kwargs["config"] = cfg
-
-    # Pass dataset_stats to the policy if available (needed for some policies like SARM)
-    if ds_meta is not None and hasattr(ds_meta, "stats"):
-        kwargs["dataset_stats"] = ds_meta.stats
-
-    if ds_meta is not None:
-        kwargs["dataset_meta"] = ds_meta
-
-    if not cfg.pretrained_path and cfg.use_peft:
-        raise ValueError(
-            "Instantiating a policy with `use_peft=True` without a checkpoint is not supported since that requires "
-            "the PEFT config parameters to be set. For training with PEFT, see `lerobot_train.py` on how to do that."
-        )
-
-    # When `use_peft=True` and a checkpoint is given, the checkpoint can be one of two things:
-    # 1. A base model checkpoint (e.g., a pretrained policy) on which we want to start a fresh PEFT fine-tune.
-    # 2. A PEFT adapter checkpoint (e.g., a previously trained PEFT adapter)
-    # We distinguish between these two cases
-    load_existing_adapter = (
-        cfg.pretrained_path
-        and cfg.use_peft
-        and has_peft_adapter_config(cfg.pretrained_path, cfg.pretrained_revision)
-    )
-
-    if cfg.pretrained_path and not load_existing_adapter:
-        if defer_weight_load:
-            # Same construction path as from_pretrained (config already resolved from the
-            # checkpoint by the caller; dataset_stats/dataset_meta kwargs identical), minus the
-            # weight load — parity by construction.
-            policy = policy_cls(**kwargs)
-            policy.eval()
+    try:
+        kwargs: dict[str, Any] = {}
+        if ds_meta is not None:
+            features = dataset_to_policy_features(ds_meta.features)
         else:
-            # Load a pretrained policy and override the config if needed (for example, if there
-            # are inference-time hyperparameters that we want to vary). This also covers starting
-            # a fresh PEFT fine-tune on top of a base model: the base weights are loaded here and
-            # `wrap_with_peft` builds the adapter afterwards.
-            kwargs["pretrained_name_or_path"] = cfg.pretrained_path
-            kwargs["revision"] = cfg.pretrained_revision
-            policy = policy_cls.from_pretrained(**kwargs)
-    elif load_existing_adapter:
-        # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo
-        # of the adapter and the adapter's config contains the path to the base policy. So we need the
-        # adapter config first, then load the correct policy and then apply PEFT.
-        require_package("peft", extra="peft")
+            if not cfg.pretrained_path:
+                logging.warning(
+                    "You are instantiating a policy from scratch and its features are parsed from an "
+                    "environment rather than a dataset. Normalization modules inside the policy will have "
+                    "infinite values by default without stats from a dataset."
+                )
+            if env_cfg is None:
+                raise ValueError("env_cfg cannot be None when ds_meta is not provided")
+            features = env_to_policy_features(env_cfg)
 
-        logging.info("Loading policy's PEFT adapter.")
+        if rename_map:
+            features = {rename_map.get(key, key): feature for key, feature in features.items()}
 
-        peft_pretrained_path = str(cfg.pretrained_path)
-        peft_config = PeftConfig.from_pretrained(
-            peft_pretrained_path,
-            revision=cfg.pretrained_revision,
-        )
+        if ds_meta is not None or not cfg.output_features:
+            cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+        if not cfg.input_features:
+            cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
-        kwargs["pretrained_name_or_path"] = peft_config.base_model_name_or_path
-        if not kwargs["pretrained_name_or_path"]:
-            # This means that there's a bug or we trained a policy from scratch using PEFT.
-            # It is more likely that this is a bug so we'll raise an error.
+        # Store action feature names for relative_exclude_joints support
+        if ds_meta is not None and hasattr(cfg, "action_feature_names"):
+            raw_action_feature = next(
+                (
+                    feature
+                    for raw_key, feature in ds_meta.features.items()
+                    if (rename_map or {}).get(raw_key, raw_key) == ACTION
+                ),
+                None,
+            )
+            action_names = raw_action_feature.get("names") if raw_action_feature is not None else None
+            if action_names is not None:
+                # Grouped metadata stores dimension names in the values, not the group keys.
+                if isinstance(action_names, dict) and all(
+                    isinstance(group, (list, tuple)) for group in action_names.values()
+                ):
+                    action_names = [name for group in action_names.values() for name in group]
+                cfg.action_feature_names = list(action_names)
+        if ds_meta is not None:
+            set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
+            if callable(set_dataset_feature_metadata):
+                ds_feature = ds_meta.features
+                if rename_map:  # use the policy-side (renamed) keys
+                    ds_feature = {
+                        rename_map.get(dataset_key, dataset_key): feature
+                        for dataset_key, feature in ds_meta.features.items()
+                    }
+                set_dataset_feature_metadata(ds_feature)
+            cfg._runtime_dataset_meta = ds_meta
+
+        kwargs["config"] = cfg
+
+        # Pass dataset_stats to the policy if available (needed for some policies like SARM)
+        if ds_meta is not None and hasattr(ds_meta, "stats"):
+            kwargs["dataset_stats"] = ds_meta.stats
+
+        if ds_meta is not None:
+            kwargs["dataset_meta"] = ds_meta
+
+        if not cfg.pretrained_path and cfg.use_peft:
             raise ValueError(
-                "No pretrained model name found in adapter config. Can't instantiate the pre-trained policy on which "
-                "the adapter was trained."
+                "Instantiating a policy with `use_peft=True` without a checkpoint is not supported since "
+                "that requires the PEFT config parameters to be set. For training with PEFT, see "
+                "`lerobot_train.py` on how to do that."
             )
 
-        kwargs["revision"] = peft_config.revision
-        policy = policy_cls.from_pretrained(**kwargs)
-        if defer_weight_load:
-            peft_config.inference_mode = False  # trainable, as `is_trainable=True` below
-            policy.name_or_path = peft_config.base_model_name_or_path
-            policy = get_peft_model(policy, peft_config)
-        else:
-            policy = PeftModel.from_pretrained(
-                policy,
+        # When `use_peft=True` and a checkpoint is given, the checkpoint can be one of two things:
+        # 1. A base model checkpoint (e.g., a pretrained policy) on which we want to start a fresh PEFT
+        #    fine-tune.
+        # 2. A PEFT adapter checkpoint (e.g., a previously trained PEFT adapter)
+        # We distinguish between these two cases
+        load_existing_adapter = (
+            cfg.pretrained_path
+            and cfg.use_peft
+            and has_peft_adapter_config(cfg.pretrained_path, cfg.pretrained_revision)
+        )
+
+        if cfg.pretrained_path and not load_existing_adapter:
+            if defer_weight_load:
+                # Same construction path as from_pretrained (config already resolved from the
+                # checkpoint by the caller; dataset_stats/dataset_meta kwargs identical), minus the
+                # weight load — parity by construction.
+                policy = policy_cls(**kwargs)
+                policy.eval()
+            else:
+                # Load a pretrained policy and override the config if needed (for example, if there
+                # are inference-time hyperparameters that we want to vary). This also covers starting
+                # a fresh PEFT fine-tune on top of a base model: the base weights are loaded here and
+                # `wrap_with_peft` builds the adapter afterwards.
+                kwargs["pretrained_name_or_path"] = cfg.pretrained_path
+                kwargs["revision"] = cfg.pretrained_revision
+                policy = policy_cls.from_pretrained(**kwargs)
+        elif load_existing_adapter:
+            # Load a pretrained PEFT model on top of the policy. The pretrained path points to the folder/repo
+            # of the adapter and the adapter's config contains the path to the base policy. So we need the
+            # adapter config first, then load the correct policy and then apply PEFT.
+            require_package("peft", extra="peft")
+
+            logging.info("Loading policy's PEFT adapter.")
+
+            peft_pretrained_path = str(cfg.pretrained_path)
+            peft_config = PeftConfig.from_pretrained(
                 peft_pretrained_path,
-                config=peft_config,
                 revision=cfg.pretrained_revision,
-                is_trainable=True,
             )
 
-    else:
-        # Make a fresh policy.
-        policy = policy_cls(**kwargs)
+            kwargs["pretrained_name_or_path"] = peft_config.base_model_name_or_path
+            if not kwargs["pretrained_name_or_path"]:
+                # This means that there's a bug or we trained a policy from scratch using PEFT.
+                # It is more likely that this is a bug so we'll raise an error.
+                raise ValueError(
+                    "No pretrained model name found in adapter config. Can't instantiate the pre-trained "
+                    "policy on which the adapter was trained."
+                )
 
-    if pretrained_path is not None:
-        cfg.pretrained_path = parent_path
-        base_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
-        base_policy.config.pretrained_path = parent_path
+            kwargs["revision"] = peft_config.revision
+            policy = policy_cls.from_pretrained(**kwargs)
+            if defer_weight_load:
+                peft_config.inference_mode = False  # trainable, as `is_trainable=True` below
+                policy.name_or_path = peft_config.base_model_name_or_path
+                policy = get_peft_model(policy, peft_config)
+            else:
+                policy = PeftModel.from_pretrained(
+                    policy,
+                    peft_pretrained_path,
+                    config=peft_config,
+                    revision=cfg.pretrained_revision,
+                    is_trainable=True,
+                )
 
-    policy.to(cfg.device)
-    assert isinstance(policy, torch.nn.Module)
+        else:
+            # Make a fresh policy.
+            policy = policy_cls(**kwargs)
 
-    # policy = torch.compile(policy, mode="reduce-overhead")
+        if pretrained_path is not None:
+            base_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
+            base_policy.config.pretrained_path = parent_path
 
-    if not rename_map:
-        validate_visual_features_consistency(cfg, features)
-        # TODO: (jadechoghari) - add a check_state(cfg, features) and check_action(cfg, features)
+        policy.to(cfg.device)
+        assert isinstance(policy, torch.nn.Module)
+
+        # policy = torch.compile(policy, mode="reduce-overhead")
+
+        if not rename_map:
+            validate_visual_features_consistency(cfg, features)
+            # TODO: (jadechoghari) - add a check_state(cfg, features) and check_action(cfg, features)
+    finally:
+        # Restore the parent model even when feature preparation or weight loading raises, so a
+        # caller that catches the exception and retries does not resume from the failed checkpoint.
+        if pretrained_path is not None:
+            cfg.pretrained_path = parent_path
 
     return policy
 
