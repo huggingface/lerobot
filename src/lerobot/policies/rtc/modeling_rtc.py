@@ -27,7 +27,7 @@ import math
 import torch
 from torch import Tensor
 
-from lerobot.configs import RTCAttentionSchedule
+from lerobot.configs import RTCAttentionSchedule, RTCGuidanceJacobian
 
 from .configuration_rtc import RTCConfig
 from .debug_tracker import Tracker
@@ -156,7 +156,7 @@ class RTCProcessor:
               right-padded with zeros to match ``T``.
             - Prefix weights are constructed via ``get_prefix_weights(inference_delay, execution_horizon, T)``
               and broadcast to ``(B, T, A)``.
-            - Guidance correction is computed via autograd using ``x1_t = x_t + time * v_t`` and
+            - Guidance correction is computed via autograd using ``x1_t = x_t - time * v_t`` and
               ``error = (prev_chunk_left_over - x1_t) * weights``.
             - The final guidance weight is clamped by ``max_guidance_weight`` from the config.
 
@@ -197,9 +197,14 @@ class RTCProcessor:
         batch_size = x_t.shape[0]
         action_chunk_size = x_t.shape[1]
         action_dim = x_t.shape[2]
+        # Dims beyond the previous chunk's width are model padding, not observations.
+        # Callers must pass the truncated leftover, not a padded one, or no dims are masked.
+        observed_dim = min(prev_chunk_left_over.shape[2], action_dim)
 
         if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
-            padded = torch.zeros(batch_size, action_chunk_size, action_dim).to(x_t.device)
+            padded = torch.zeros(
+                batch_size, action_chunk_size, action_dim, dtype=x_t.dtype, device=x_t.device
+            )
             padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
             prev_chunk_left_over = padded
 
@@ -214,13 +219,24 @@ class RTCProcessor:
         )
 
         with torch.enable_grad():
-            v_t = original_denoise_step_partial(x_t)
-            x_t.requires_grad_(True)
+            if self.rtc_config.guidance_jacobian == RTCGuidanceJacobian.VJP:
+                # x_t must enter the graph before the denoiser runs, otherwise d(x1_t)/d(x_t) = I.
+                x_t.requires_grad_(True)
+                v_t = original_denoise_step_partial(x_t)
+            else:
+                # Historical behaviour: v_t is disconnected from x_t, so the correction uses J = I.
+                v_t = original_denoise_step_partial(x_t)
+                x_t.requires_grad_(True)
 
             x1_t = x_t - time * v_t  # noqa: N806
             err = (prev_chunk_left_over - x1_t) * weights
+            if self.rtc_config.guidance_jacobian == RTCGuidanceJacobian.VJP:
+                # Padding dims hold no observation; through J their error would leak into real dims.
+                err = err * (torch.arange(action_dim, device=x_t.device) < observed_dim).to(err.dtype)
             grad_outputs = err.clone().detach()
             correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
+
+        v_t = v_t.detach()
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
         tau_tensor = torch.as_tensor(tau)

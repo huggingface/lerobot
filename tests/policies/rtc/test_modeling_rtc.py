@@ -795,3 +795,119 @@ def test_denoise_step_deterministic_with_same_inputs():
 
     # Should produce identical results
     assert torch.allclose(result1, result2)
+
+
+# ====================== Guidance Jacobian Tests ======================
+
+
+def _linear_denoiser(x1_map, time):
+    """Denoiser whose estimate is x1 = x - t * v(x) = M x."""
+    n = x1_map.shape[0]
+    v_map = (torch.eye(n, dtype=x1_map.dtype) - x1_map) / time
+    return lambda x: (x.reshape(x.shape[0], -1) @ v_map.T).reshape(x.shape)
+
+
+def _correction(guidance_jacobian, x1_map, time, delay, schedule=RTCAttentionSchedule.ZEROS):
+    chunk_size, action_dim = 10, 2
+    gen = torch.Generator().manual_seed(0)
+    x_t = torch.randn(1, chunk_size, action_dim, generator=gen)
+    prev_chunk = torch.randn(1, chunk_size, action_dim, generator=gen)
+    processor = RTCProcessor(
+        RTCConfig(debug=True, prefix_attention_schedule=schedule, guidance_jacobian=guidance_jacobian)
+    )
+    result = processor.denoise_step(
+        x_t, prev_chunk, delay, time, _linear_denoiser(x1_map, time), execution_horizon=delay
+    )
+    step = processor.get_all_debug_steps()[-1]
+    return step.correction, step.err, result
+
+
+def test_identity_jacobian_correction_is_the_weighted_error():
+    """Default keeps historical behaviour: the correction is the error itself, zero outside the prefix."""
+    torch.manual_seed(0)
+    x1_map = 0.5 * torch.eye(20) + 0.5 * torch.randn(20, 20) / 20**0.5
+    correction, err, _ = _correction("identity", x1_map, time=0.5, delay=4)
+    assert torch.allclose(correction, err)
+    assert torch.count_nonzero(correction[:, 4:]) == 0
+
+
+def test_vjp_jacobian_is_the_vector_jacobian_product():
+    """With x1 = M x the correction must be M^T err, which also reaches the steps after the prefix."""
+    torch.manual_seed(0)
+    x1_map = 0.5 * torch.eye(20) + 0.5 * torch.randn(20, 20) / 20**0.5
+    correction, err, result = _correction("vjp", x1_map, time=0.5, delay=4)
+    expected = (err.reshape(1, -1) @ x1_map).reshape(err.shape)
+    assert torch.allclose(correction, expected, atol=1e-6)
+    assert correction[:, 4:].abs().max() > 1e-2
+    assert not result.requires_grad
+
+
+def test_vjp_matches_identity_when_denoiser_jacobian_is_identity():
+    """If x1 does not depend on x_t beyond the identity, both modes agree."""
+    correction_vjp, _, _ = _correction("vjp", torch.eye(20), time=0.5, delay=4)
+    correction_id, _, _ = _correction("identity", torch.eye(20), time=0.5, delay=4)
+    assert torch.allclose(correction_vjp, correction_id, atol=1e-6)
+
+
+def test_vjp_ignores_model_padding_dims():
+    """Policies pad actions to max_action_dim; padded dims are not observations and get no guidance."""
+    processor = RTCProcessor(
+        RTCConfig(prefix_attention_schedule=RTCAttentionSchedule.ZEROS, guidance_jacobian="vjp")
+    )
+    x_t = torch.randn(2, 10, 8)
+    prev_chunk = torch.randn(2, 10, 3)
+    mixing = torch.randn(8, 8)
+    result = processor.denoise_step(x_t, prev_chunk, 4, 0.5, lambda x: x @ mixing, execution_horizon=10)
+    assert torch.isfinite(result).all()
+    # v = x @ mixing couples dims, so leaked padding error would show up in the real dims.
+    # At t = 0.5 the paper's guidance weight is (1 - tau) / (tau * r_tau^2) = 2.
+    x1_map_t = torch.eye(8) - 0.5 * mixing
+    x1 = x_t @ x1_map_t
+    masked_err = torch.zeros_like(x_t)
+    masked_err[:, :4, :3] = (prev_chunk - x1[..., :3])[:, :4]
+    expected = x_t @ mixing - 2.0 * masked_err @ x1_map_t.T
+    assert torch.allclose(result, expected, atol=1e-5)
+
+
+def test_vjp_matches_explicit_autograd_grad_on_a_nonlinear_denoiser():
+    """Nonlinear denoiser: the correction must match an explicit ``autograd.grad``."""
+    torch.manual_seed(0)
+    chunk_size, action_dim, delay, time = 10, 3, 3, 0.6
+    weight = torch.randn(action_dim, action_dim) * 0.8
+    denoiser = lambda x: torch.tanh(x @ weight)  # noqa: E731
+    processor = RTCProcessor(RTCConfig(execution_horizon=8, guidance_jacobian="vjp"))
+
+    x_t = torch.randn(1, chunk_size, action_dim)
+    prev_chunk = torch.randn(1, 6, action_dim)
+    result = processor.denoise_step(x_t, prev_chunk, delay, time, denoiser, execution_horizon=8)
+
+    # Reference VJP; the 6-row leftover clamps execution_horizon to 6 for the weights.
+    x_ref = x_t.clone().requires_grad_(True)
+    v_ref = denoiser(x_ref)
+    x1_ref = x_ref - time * v_ref
+    weights = processor.get_prefix_weights(delay, 6, chunk_size).view(1, chunk_size, 1)
+    padded = torch.zeros_like(x_t)
+    padded[:, :6] = prev_chunk
+    err = ((padded - x1_ref) * weights).detach()
+    (vjp,) = torch.autograd.grad(x1_ref, x_ref, err)
+    tau = 1.0 - time
+    guidance_weight = min((1.0 - tau) / tau * ((1.0 - tau) ** 2 + tau**2) / (1.0 - tau) ** 2, 10.0)
+
+    assert torch.allclose(result, v_ref.detach() - guidance_weight * vjp, atol=1e-6)
+    # Must differ from the identity variant, which uses err in place of J^T err.
+    assert not torch.allclose(result, v_ref.detach() - guidance_weight * err, atol=1e-3)
+
+
+@pytest.mark.parametrize("guidance_jacobian", ["identity", "vjp"])
+def test_denoise_step_result_carries_no_autograd_graph(guidance_jacobian):
+    """Called with grad mode on and trainable weights, the returned velocity must be graph-free."""
+    torch.manual_seed(0)
+    chunk_size, action_dim = 10, 2
+    x_t = torch.randn(1, chunk_size, action_dim)
+    prev_chunk = torch.randn(1, chunk_size, action_dim)
+    linear = torch.nn.Linear(action_dim, action_dim)  # weights require grad by default
+
+    processor = RTCProcessor(RTCConfig(guidance_jacobian=guidance_jacobian))
+    result = processor.denoise_step(x_t, prev_chunk, 4, 0.5, linear, execution_horizon=4)
+
+    assert not result.requires_grad
