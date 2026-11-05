@@ -162,6 +162,7 @@ pip install -e ".[dataset,robometer]"
 
 uv run lerobot-score \
     --dataset_repo_id=lerobot/libero_10_image \
+    --dataset_root=/path/to/local/dataset \
     --reward_model.path=lerobot/Robometer-4B \
     --reward_model.device=cuda
 ```

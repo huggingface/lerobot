@@ -205,7 +205,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views():
     np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.5, 0.6])
 
 
-def test_robometer_vertical_slice_preserves_legacy_progress_values_and_adds_success(tmp_path):
+def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):
     image_key = "observation.images.top"
 
     class FakeDataset(LeRobotDataset):
@@ -256,8 +256,6 @@ def test_robometer_vertical_slice_preserves_legacy_progress_values_and_adds_succ
     dataset.add_score(scorer)
 
     scores = dataset.read_score("robometer")
-    # The old progress_sparse fixture produced [0.0, 0.5, 1.0] for these
-    # processed frames. The new sidecar preserves those values exactly.
     assert list(scores[PROGRESS_SIGNAL]) == [0.0, 0.5, 1.0]
     assert list(scores[SUCCESS_PROBABILITY_SIGNAL]) == [0.0, 0.25, 0.5]
     assert scores.features[PROGRESS_SIGNAL].dtype == "float32"

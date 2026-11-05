@@ -52,7 +52,7 @@ Scorer options are only passed to the scorer when set: `--batch_size` and `--num
 
 By default, the score is named after the scorer, such as `robometer`. Use `--name=robometer-4b` to keep results from a specific model or configuration and `--episodes='[0,1]'` to select episodes.
 
-Scoring requires a writable local LeRobot dataset root. Pass `--dataset_root=/path/to/dataset` when the dataset is not already materialized locally.
+Scoring requires a writable local LeRobot dataset root, not the Hub cache LeRobot downloads to by default. Pass `--dataset_root=/path/to/dataset`; a Hub dataset is downloaded there if it isn't yet.
 
 Pass `--push_to_hub=true` to upload the completed score to the dataset repository. The dataset API owns its Hub location and local staging data.
 
@@ -76,7 +76,7 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.rewards.robometer import RobometerRewardModel
 from lerobot.rewards.robometer.scoring_robometer import make_robometer_frame_scorer
 
-dataset = LeRobotDataset("user/my_dataset")
+dataset = LeRobotDataset("user/my_dataset", root="/path/to/local/dataset")
 model = RobometerRewardModel.from_pretrained("lerobot/Robometer-4B")
 scorer = make_robometer_frame_scorer(model)
 

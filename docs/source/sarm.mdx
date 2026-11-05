@@ -439,6 +439,7 @@ First, run the SARM model on all frames in your dataset with the shared [offline
 ```bash
 uv run lerobot-score \
   --dataset_repo_id=your-username/your-dataset \
+  --dataset_root=/path/to/local/dataset \
   --reward_model.path=your-username/sarm-model \
   --reward_model.device=cuda \
   --head_mode=sparse \

@@ -377,6 +377,19 @@ def test_rabc_accepts_namespaced_signal():
     assert weighter.get_stats()["signal_name"] == "reward.robometer.progress"
 
 
+def test_rabc_rejects_a_signal_missing_from_the_score(sample_score_dataset):
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    with pytest.raises(ValueError, match="not found in score 'sarm'"):
+        RABCWeights(
+            dataset=sample_score_dataset,
+            score_name="sarm",
+            signal_name="reward.sarm.dense_progress",
+            chunk_size=1,
+            device=torch.device("cpu"),
+        )
+
+
 def test_rabc_rejects_lower_is_better_signal():
     from lerobot.rewards.sarm.rabc import RABCWeights
 
