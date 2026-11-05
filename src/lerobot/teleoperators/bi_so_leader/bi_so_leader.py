@@ -20,6 +20,7 @@ from functools import cached_property
 from lerobot.lerobot_types import RobotAction
 from lerobot.utils.bimanual import BimanualMixin
 from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceAlreadyConnectedError
 
 from ..so_leader import SOLeader, SOLeaderTeleopConfig
 from ..teleoperator import Teleoperator
@@ -58,6 +59,54 @@ class BiSOLeader(BimanualMixin, Teleoperator):
 
         self.left_arm = SOLeader(left_arm_config)
         self.right_arm = SOLeader(right_arm_config)
+
+    def connect(self, calibrate: bool = True) -> None:
+        """Connect both arms transactionally; roll back on failure."""
+        if self.left_arm.is_connected or self.right_arm.is_connected:
+            raise DeviceAlreadyConnectedError(
+                "BiSOLeader has an already-connected arm. "
+                "Disconnect both arms before reconnecting."
+            )
+
+        try:
+            self.left_arm.connect(calibrate)
+            self.right_arm.connect(calibrate)
+        except Exception as original_error:
+            # Roll back in reverse connection order.
+            for arm_name in ("right_arm", "left_arm"):
+                arm = getattr(self, arm_name)
+                try:
+                    if arm.is_connected:
+                        arm.disconnect()
+                except Exception as cleanup_error:
+                    if hasattr(original_error, "add_note"):
+                        original_error.add_note(
+                            f"{arm_name} rollback failed: "
+                            f"{cleanup_error!r}"
+                        )
+            raise
+
+    def disconnect(self) -> None:
+        """Attempt cleanup of each connected arm independently."""
+        errors = []
+
+        for arm_name in ("left_arm", "right_arm"):
+            arm = getattr(self, arm_name)
+            try:
+                if arm.is_connected:
+                    arm.disconnect()
+            except Exception as exc:
+                errors.append((arm_name, exc))
+
+        if errors:
+            first_name, first_error = errors[0]
+            if hasattr(first_error, "add_note"):
+                for name, error in errors[1:]:
+                    first_error.add_note(
+                        f"{name} disconnect also failed: {error!r}"
+                    )
+            raise first_error
+
 
     @cached_property
     def action_features(self) -> dict[str, type]:

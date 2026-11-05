@@ -54,6 +54,7 @@ from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
 from ..robot_wrapper import ThreadSafeRobot
 from .core import RolloutStrategy, safe_push_to_hub, send_next_action
+from ..hardware_gate import send_action_checked_with_approval
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +330,7 @@ class EpisodicStrategy(RolloutStrategy):
                 act = teleop.get_action()
                 act_teleop = processors.teleop_action_processor((act, obs))
                 robot_action = processors.robot_action_processor((act_teleop, obs))
-                robot.send_action(robot_action)
+                send_action_checked_with_approval(ctx.hardware.robot_wrapper, robot_action)
 
                 if display_data:
                     obs_processed = processors.robot_observation_processor(obs)

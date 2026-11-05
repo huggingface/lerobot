@@ -122,7 +122,8 @@ def test_get_observation_uses_read_retries(follower):
     follower.bus.sync_read.assert_called_once_with("Present_Position", num_retry=7)
 
 
-def test_send_action_uses_read_retries(follower):
+def test_send_action_uses_read_retries(follower, monkeypatch):
+    monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
     follower.config.max_relative_target = 10.0
     follower.config.num_read_retries = 7
     follower.connect()
@@ -133,7 +134,8 @@ def test_send_action_uses_read_retries(follower):
     follower.bus.sync_read.assert_called_once_with("Present_Position", num_retry=7)
 
 
-def test_send_action(follower):
+def test_send_action(follower, monkeypatch):
+    monkeypatch.setenv("SO101_HARDWARE_APPROVED", "1")
     follower.connect()
 
     action = {f"{m}.pos": i * 10 for i, m in enumerate(follower.bus.motors, 1)}
@@ -143,6 +145,26 @@ def test_send_action(follower):
 
     goal_pos = {m: (i + 1) * 10 for i, m in enumerate(follower.bus.motors)}
     follower.bus.sync_write.assert_called_once_with("Goal_Position", goal_pos)
+
+
+
+def test_send_action_rejects_without_approval(follower, monkeypatch):
+    monkeypatch.delenv("SO101_HARDWARE_APPROVED", raising=False)
+
+    follower.connect()
+
+    action = {
+        f"{motor}.pos": float(i * 10)
+        for i, motor in enumerate(follower.bus.motors, 1)
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="hardware dispatch disabled",
+    ):
+        follower.send_action(action)
+
+    follower.bus.sync_write.assert_not_called()
 
 
 def test_configure_writes_position_pid_coefficients():
@@ -158,6 +180,9 @@ def test_configure_writes_position_pid_coefficients():
     )
 
     SO100Follower.configure(robot)
+
+    bus_mock.disable_torque.assert_called_once_with()
+    bus_mock.enable_torque.assert_not_called()
 
     bus_mock.write.assert_any_call("P_Coefficient", "shoulder_pan", 32)
     bus_mock.write.assert_any_call("I_Coefficient", "shoulder_pan", 1)

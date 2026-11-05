@@ -53,12 +53,16 @@ class SOFollowerConfig:
     num_read_retries: int = 2
 
 
-@RobotConfig.register_subclass("so101_follower")
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
 class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
-    pass
+    """Shared SO100 follower configuration."""
 
 
 SO100FollowerConfig = SOFollowerRobotConfig
-SO101FollowerConfig = SOFollowerRobotConfig
+
+
+@RobotConfig.register_subclass("so101_follower")
+@dataclass
+class SO101FollowerConfig(SOFollowerRobotConfig):
+    """Configuration for SO101 follower."""

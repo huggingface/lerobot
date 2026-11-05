@@ -53,6 +53,7 @@ from threading import Event, Lock, Thread
 
 import numpy as np
 
+from lerobot.rollout.hardware_gate import send_action_checked_with_approval
 from lerobot.common.control_utils import (
     follower_smooth_move_to,
     teleop_smooth_move_to,
@@ -433,7 +434,7 @@ class DAggerStrategy(RolloutStrategy):
                                 (processed_teleop, obs)
                             )
                         with timer.section("send"):
-                            robot.send_action(robot_action_to_send)
+                            send_action_checked_with_approval(ctx.hardware.robot_wrapper, robot_action_to_send)
                         last_action = robot_action_to_send
                         with timer.section("telemetry"):
                             self._log_telemetry(
@@ -459,7 +460,7 @@ class DAggerStrategy(RolloutStrategy):
                                 if robot.supports_hold:
                                     robot.hold()
                                 else:
-                                    robot.send_action(last_action)
+                                    send_action_checked_with_approval(ctx.hardware.robot_wrapper, last_action)
 
                     # --- AUTONOMOUS: policy control ---
                     else:
@@ -525,9 +526,13 @@ class DAggerStrategy(RolloutStrategy):
                 logger.info("DAgger continuous control loop ended — pausing engine")
                 timer.log_run_summary()
                 engine.pause()
-                with contextlib.suppress(Exception):
+                logger.info("Attempting to save final in-progress episode")
+                try:
                     with self._episode_lock:
                         dataset.save_episode()
+                except Exception:
+                    logger.exception("FINAL EPISODE SAVE FAILED")
+                else:
                     self._needs_push.set()
                     logger.info("Final in-progress episode saved")
 
@@ -588,6 +593,11 @@ class DAggerStrategy(RolloutStrategy):
                     transition = events.consume_transition()
                     if transition is not None:
                         old_phase, new_phase = transition
+                        logger.info(
+                            "DAGGER TRACE TRANSITION: %s -> %s",
+                            old_phase.value,
+                            new_phase.value,
+                        )
                         self._apply_transition(
                             old_phase,
                             new_phase,
@@ -650,7 +660,7 @@ class DAggerStrategy(RolloutStrategy):
                                 (processed_teleop, obs)
                             )
                         with timer.section("send"):
-                            robot.send_action(robot_action_to_send)
+                            send_action_checked_with_approval(ctx.hardware.robot_wrapper, robot_action_to_send)
                         last_action = robot_action_to_send
                         with timer.section("telemetry"):
                             self._log_telemetry(
@@ -678,7 +688,7 @@ class DAggerStrategy(RolloutStrategy):
                                 if robot.supports_hold:
                                     robot.hold()
                                 else:
-                                    robot.send_action(last_action)
+                                    send_action_checked_with_approval(ctx.hardware.robot_wrapper, last_action)
 
                     # --- AUTONOMOUS: policy control (no recording) ---
                     else:
@@ -703,9 +713,13 @@ class DAggerStrategy(RolloutStrategy):
                 logger.info("DAgger corrections-only loop ended — pausing engine")
                 timer.log_run_summary()
                 engine.pause()
-                with contextlib.suppress(Exception):
+                logger.info("Attempting to save final in-progress episode")
+                try:
                     with self._episode_lock:
                         dataset.save_episode()
+                except Exception:
+                    logger.exception("FINAL EPISODE SAVE FAILED")
+                else:
                     self._needs_push.set()
                     logger.info("Final in-progress episode saved")
 
@@ -761,6 +775,11 @@ class DAggerStrategy(RolloutStrategy):
                 # teleop_smooth_move_to silently no-ops and the arm doesn't move.
                 logger.info("Smooth handover: moving leader arm to follower position")
                 teleop_smooth_move_to(teleop, prev_action)
+
+            # One-key correction workflow:
+            # after the normal AUTONOMOUS -> PAUSED handover,
+            # automatically request the standard PAUSED -> CORRECTING transition.
+            self._events.request_transition("correction")
 
         elif old_phase == DAggerPhase.PAUSED and new_phase == DAggerPhase.CORRECTING:
             logger.info("Entering correction mode - human teleop control")
