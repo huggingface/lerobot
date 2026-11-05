@@ -807,9 +807,35 @@ class VLAFlowMatching(nn.Module):
             use_cache=self.config.use_cache,
         )
         num_steps = self.config.num_steps
+        if past_key_values is not None and hasattr(past_key_values, "layers"):
+            past_key_values = tuple((layer.keys, layer.values) for layer in past_key_values.layers)
+
+        if self.config.compile_denoise:
+            compile_mode = self.config.compile_mode
+            if (
+                getattr(self, "_compiled_denoise_step", None) is None
+                or getattr(self, "_compiled_denoise_mode", None) != compile_mode
+            ):
+                self._compiled_denoise_step = torch.compile(
+                    self.__class__.denoise_step, mode=compile_mode, dynamic=True
+                )
+                self._compiled_denoise_mode = compile_mode
+            compiled_fn = self._compiled_denoise_step
+
+            def step_fn(prefix_pad_masks, past_key_values, x_t, timestep):
+                with torch.no_grad():
+                    return compiled_fn(
+                        self,
+                        prefix_pad_masks=prefix_pad_masks,
+                        past_key_values=past_key_values,
+                        x_t=x_t,
+                        timestep=timestep,
+                    )
+        else:
+            step_fn = self.denoise_step
 
         return euler_integrate(
-            lambda input_x_t, current_timestep: self.denoise_step(
+            lambda input_x_t, current_timestep: step_fn(
                 x_t=input_x_t,
                 prefix_pad_masks=prefix_pad_masks,
                 past_key_values=past_key_values,
@@ -852,7 +878,7 @@ class VLAFlowMatching(nn.Module):
             inputs_embeds=[None, suffix_embs],
             use_cache=self.config.use_cache,
         )
-        if past_key_values is not None:
+        if past_key_values is not None and hasattr(past_key_values, "crop"):
             # Self-attention layers append suffix K/V in place; restore the prefix for the next step.
             for layer in past_key_values.layers:
                 layer.crop(prefix_len - layer.get_seq_length())
