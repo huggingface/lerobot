@@ -1255,6 +1255,70 @@ def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
     assert f"{OBS_IMAGES}.image2" not in output[TransitionKey.OBSERVATION]
 
 
+@pytest.mark.parametrize("dtype", [torch.uint8, torch.float32])
+@pytest.mark.parametrize(
+    ("input_horizon", "video_horizon", "expected_timesteps"),
+    [
+        (None, None, [0]),
+        (3, None, [0, 1, 2]),
+        (2, 4, [0, 0, 0, 1]),
+        (4, 2, [2, 3]),
+    ],
+)
+def test_groot_n1_7_pack_inputs_video_layout(dtype, input_horizon, video_horizon, expected_timesteps):
+    def camera(camera_id):
+        # Every frame is filled with 100 * batch + 10 * camera + timestep.
+        timesteps = input_horizon or 1
+        frame_ids = 100 * torch.arange(2).view(2, 1) + 10 * camera_id + torch.arange(timesteps)
+        image = frame_ids.view(2, timesteps, 1, 1, 1).expand(2, timesteps, 3, 4, 5).to(torch.uint8)
+        if input_horizon is None:
+            image = image[:, 0]
+        return image.to(dtype) / 255 if dtype.is_floating_point else image
+
+    step = GrootN17PackInputsStep(normalize_min_max=False, video_horizon=video_horizon)
+    transition = {
+        TransitionKey.OBSERVATION: {
+            f"{OBS_IMAGES}.wrist": camera(2),
+            f"{OBS_IMAGES}.front": camera(1),
+            OBS_STATE: torch.zeros(2, 8),
+        },
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move", "Move"]},
+    }
+
+    video = np.asarray(step(transition)[TransitionKey.OBSERVATION]["video"])
+
+    expected_ids = np.array(
+        [[[100 * b + 10 * c + t for c in (1, 2)] for t in expected_timesteps] for b in range(2)],
+        dtype=np.uint8,
+    )
+    assert video.dtype == np.uint8
+    assert video.shape == (2, len(expected_timesteps), 2, 4, 5, 3)
+    np.testing.assert_array_equal(video, np.broadcast_to(expected_ids[..., None, None, None], video.shape))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_groot_n1_7_pack_inputs_keeps_cuda_video_on_device():
+    images = torch.rand(2, 3, 4, 5, generator=torch.Generator().manual_seed(0))
+
+    def pack(device):
+        step = GrootN17PackInputsStep(normalize_min_max=False, video_horizon=2)
+        transition = {
+            TransitionKey.OBSERVATION: {
+                f"{OBS_IMAGES}.front": images.to(device),
+                f"{OBS_IMAGES}.wrist": images.flip(-1).to(device),
+                OBS_STATE: torch.zeros(2, 8, device=device),
+            },
+            TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move", "Move"]},
+        }
+        return step(transition)[TransitionKey.OBSERVATION]["video"]
+
+    video = pack("cuda")
+
+    assert isinstance(video, torch.Tensor)
+    assert video.is_cuda
+    np.testing.assert_array_equal(video.cpu().numpy(), pack("cpu"), strict=True)
+
+
 def test_groot_n1_7_postprocessor_clips_normalized_action_before_unnormalizing():
     step = GrootActionUnpackUnnormalizeStep(
         env_action_dim=3,
@@ -1837,6 +1901,51 @@ def test_groot_n1_7_vlm_encode_packs_images_time_major_then_camera_order():
         "pixel_values",
         "image_grid_thw",
     }
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")),
+    ],
+)
+def test_groot_n1_7_vlm_encode_builds_frames_on_target_device(device):
+    frame_ids = np.arange(12, dtype=np.uint8).reshape(2, 2, 3, 1, 1, 1)
+    video = np.broadcast_to(3 * frame_ids + np.arange(3, dtype=np.uint8), (2, 2, 3, 4, 5, 3)).copy()
+
+    frames = GrootN17VLMEncodeStep()._build_sample_images(
+        video, batch_size=2, target_device=torch.device(device)
+    )
+
+    for batch_idx, sample_frames in enumerate(frames):
+        assert len(sample_frames) == 6
+        for frame_idx, frame in enumerate(sample_frames):
+            timestep, view_idx = divmod(frame_idx, 3)
+            assert frame.device.type == device
+            torch.testing.assert_close(
+                frame.cpu(), torch.from_numpy(video[batch_idx, timestep, view_idx]).permute(2, 0, 1)
+            )
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")),
+    ],
+)
+def test_groot_n1_7_vlm_encode_albumentations_accepts_tensor_video(device):
+    pytest.importorskip("cv2", exc_type=ImportError)
+    video = np.random.default_rng(0).integers(0, 256, size=(1, 2, 2, 12, 16, 3), dtype=np.uint8)
+    step = GrootN17VLMEncodeStep(use_albumentations=True, image_target_size=[8, 8], image_crop_size=[6, 6])
+
+    expected = step._build_sample_images(video, batch_size=1, target_device=None)
+    actual = step._build_sample_images(torch.from_numpy(video).to(device), batch_size=1, target_device=None)
+
+    assert len(actual[0]) == len(expected[0]) == 4
+    for actual_frame, expected_frame in zip(actual[0], expected[0], strict=True):
+        np.testing.assert_array_equal(actual_frame, expected_frame)
 
 
 def test_groot_n1_7_vlm_image_transform_matches_albumentations_eval_path():

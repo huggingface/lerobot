@@ -37,7 +37,7 @@ from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .chunk import ChunkPolicySpec, ExecutionMode, FeatureSpec
-from .utils import log_model_loading_keys
+from .utils import log_model_loading_keys, rename_legacy_vision_model_keys
 
 if TYPE_CHECKING or _peft_available:
     from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
@@ -106,6 +106,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 f"`model = {self.__class__.__name__}.from_pretrained(PRETRAINED_MODEL_NAME)`"
             )
         self.config = config
+        self.register_load_state_dict_pre_hook(rename_legacy_vision_model_keys)
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -204,8 +205,6 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     revision=revision,
                     cache_dir=cache_dir,
                     force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
                     token=token,
                     local_files_only=local_files_only,
                 )
@@ -509,7 +508,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             self.name_or_path = str(self.config.pretrained_path)
 
         # Wrap with PEFT
-        peft_model = get_peft_model(self, final_config)
+        peft_model = get_peft_model(self, final_config, revision=self.config.pretrained_revision)
 
         # Mark config as using PEFT for proper loading later
         peft_model.config.use_peft = True

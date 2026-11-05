@@ -529,6 +529,8 @@ def eval_policy(
     # Collect predicted-video latents across a rollout (world-model policies only). The latents are
     # concatenated and decoded once after the rollout, matching upstream LingBot-VA's visualization path.
     def collect_predicted_latents(policy: PreTrainedPolicy):
+        if _peft_available and isinstance(policy, PeftModel):
+            policy = policy.get_base_model()
         latents = getattr(policy, "last_predicted_latents", None)
         if latents is not None:
             pred_latents.append(
@@ -788,7 +790,9 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     device = get_safe_torch_device(cfg.policy.device, log=True)
 
     torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
     set_seed(cfg.seed)
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
@@ -820,6 +824,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
+        pretrained_revision=cfg.policy.pretrained_revision,
         preprocessor_overrides=preprocessor_overrides,
     )
 

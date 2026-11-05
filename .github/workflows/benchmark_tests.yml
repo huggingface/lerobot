@@ -333,14 +333,18 @@ jobs:
   # Isolated image: full RoboTwin 2.0 stack — SAPIEN, mplib, CuRobo,
   # pytorch3d, + simulation assets (~4 GB).
   # Build takes ~20 min on first run; subsequent runs hit the layer cache.
-  # Requires an NVIDIA GPU runner with CUDA 12.1 drivers.
+  # Requires an NVIDIA GPU runner whose driver supports the base image's CUDA version.
   robotwin-integration-test:
     permissions:
       contents: read
     name: RoboTwin 2.0 — build image + 1-episode eval
     runs-on:
       group: aws-g6-4xlarge-plus
+    # Temporarily disabled: the legacy RoboTwin stack is incompatible with the default Torch stack.
+    # Restore benchmark coverage with simulator dependency isolation in:
+    # https://github.com/huggingface/lerobot/pull/4888
     if: |
+      false &&
       github.repository == 'huggingface/lerobot' && (
         github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
       )

@@ -28,11 +28,15 @@ Two artifact channels with distinct owners:
 Every function that touches sharded state is a collective and must run on ALL ranks.
 """
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
+
+from lerobot.optim.ema import EMA
+from lerobot.utils.constants import EMA_SHARDED_STATE
 
 from .utils import is_main_process
 
@@ -241,6 +245,38 @@ def load_sharded_optimizer(
         model,
         str(input_dir / f"{OPTIMIZER_NAME}_0"),
     )
+
+
+def save_sharded_ema(ema: EMA, output_dir: Path) -> None:
+    """Write the DCP shards of the EMA averages (`ema_state/`). Collective: call on all ranks.
+
+    Args:
+        ema (EMA): The EMA of the sharded model.
+        output_dir (Path): The directory the shard subdirectory is created in.
+    """
+    import torch.distributed.checkpoint as dcp
+
+    dcp.save({"ema": ema}, checkpoint_id=output_dir / EMA_SHARDED_STATE)
+
+
+def load_sharded_ema(ema: EMA, input_dir: Path) -> None:
+    """Load the DCP shards of the EMA averages, resharded to this topology. Collective: call on all ranks.
+
+    A checkpoint without them restarts the EMA from the resumed weights.
+
+    Args:
+        ema (EMA): The EMA of the prepared (sharded) model to restore into.
+        input_dir (Path): The directory containing the `ema_state/` shard subdirectory.
+    """
+    if not (input_dir / EMA_SHARDED_STATE).is_dir():
+        if is_main_process():
+            logging.warning(
+                "No %s in the checkpoint: the EMA restarts from the resumed weights.", EMA_SHARDED_STATE
+            )
+        return
+    import torch.distributed.checkpoint as dcp
+
+    dcp.load({"ema": ema}, checkpoint_id=input_dir / EMA_SHARDED_STATE)  # nosec B614
 
 
 def dcp_to_safetensors(dcp_dir: Path, output_dir: Path, *, delete_dcp: bool = False) -> Path:
