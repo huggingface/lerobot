@@ -1,0 +1,74 @@
+# Fit a Gaussian action readout
+
+A Gaussian readout replaces the Euler loop with a fixed-noise feature pass and small
+motion and gripper heads. It is opt in for pi0, pi0.5, SmolVLA and FineART-VLA.
+The checkpoint and its original processors stay frozen. Use offline fitting and
+validation before choosing a readout for deployment.
+
+Install LeRobot's `dataset` extra and the extra for your policy. Use a checkpoint
+saved with its preprocessor and postprocessor. Choose separate demonstration
+episodes for fitting and tuning, and reserve further episodes for final evaluation.
+
+```bash
+python -m lerobot.scripts.lerobot_fit_gaussian_readout \
+  --policy /path/to/pretrained_model \
+  --dataset owner/dataset \
+  --fit-episodes 0 1 2 3 \
+  --tune-episodes 4 5 \
+  --fit-contexts 64 --tune-contexts 16 \
+  --draws 32 --updates 2000 \
+  --open-command -1 --close-command 1 --threshold 0 \
+  --device cpu \
+  --output outputs/readout.safetensors
+```
+
+Set the physical gripper commands and the threshold for your robot's action
+convention. The final action channel must be its single binary gripper. These are
+configuration values, not measured quality settings. Use `--policy-revision` and
+`--dataset-revision` to pin Hub commits, or local checkpoints and datasets for an
+offline run. The command samples the full configured teacher chunk at each selected
+observation. It fits continuous motion moments and binary gripper frequencies, then
+selects head weights on tuning contexts. It does not train the teacher.
+
+The output includes a `.safetensors` artifact and a `.json` report with the input
+configuration, teacher and processor identities, selected updates, tuning motion
+mean error, and the same error for the fixed-probe one-step teacher. Tuning error is
+an offline diagnostic. It does not measure task success or inference speed. The
+command repeats public inference for each teacher draw; large checkpoints can make
+collection expensive. Use `--help` to inspect the available controls.
+
+Load the checkpoint and its own processors through the normal factory, then select
+the artifact:
+
+```python
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+
+checkpoint = "/path/to/pretrained_model"
+config = PreTrainedConfig.from_pretrained(checkpoint)
+config.gaussian_readout_path = "outputs/readout.safetensors"
+policy = get_policy_class(config.type).from_pretrained(checkpoint, config=config)
+preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=checkpoint)
+actions = postprocessor(policy.predict_action_chunk(preprocessor(observation)))
+```
+
+The processor factory binds the real pipeline identity automatically. Readout loading
+checks teacher weights, inference buffers, timestep periods, processor identity and
+action layout. Ordinary weight updates trigger revalidation. For a teacher constructed
+inside `torch.inference_mode()`, call `prepare_gaussian_readout_teacher(policy)` from
+`lerobot.policies.common.gaussian_readout` once before creating optimizers or other
+tensor references. It makes tracked copies of inference tensors.
+
+## Limits
+
+The fitting command supports single observations, standard affine action
+postprocessing, and a continuous action prefix followed by one binary gripper.
+Relative actions, ALOHA adaptation, memory, compilation, alternative attention
+backends, real-time chunking and uncached SmolVLA prefixes are rejected. The artifact
+format is `lerobot-gar-v2`; regenerate older artifacts with the fitting command.
+Rebuild the processor pair after changing its configuration or statistics.
+Direct writes through `.data`, NumPy, shared storage, concurrent writes, or artifact
+replacement that preserves file identity, size and timestamps require explicit
+cache invalidation (`policy.model._gar_cache = None`). Ordinary tracked updates and
+storage replacement are checked automatically. No robot success rate, speed gain,
+or equivalence at matched task quality is guaranteed by fitting.
