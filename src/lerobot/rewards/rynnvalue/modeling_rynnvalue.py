@@ -15,13 +15,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor
 
+from lerobot.rewards.prediction import RemainingTimePrediction
 from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_PREFIX, RynnValueConfig
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -40,13 +40,6 @@ RYNNVALUE_MODEL_INPUT_KEYS = (
     "image_grid_thw",
     "mm_token_type_ids",
 )
-
-
-@dataclass(frozen=True)
-class RynnValuePrediction:
-    """RynnValue's native temporal-distance prediction on the model device."""
-
-    remaining_time_s: Tensor
 
 
 def _torch_dtype(name: str) -> torch.dtype:
@@ -130,7 +123,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         else:
             self.model = RynnValueLangModel._from_config(model_config, dtype=dtype)
 
-    def predict_remaining_time(self, batch: Mapping[str, Any]) -> RynnValuePrediction:
+    def predict_remaining_time(self, batch: Mapping[str, Any]) -> RemainingTimePrediction:
         """Predict the seconds until the task is completed, at the last frame of each trajectory.
 
         It changes neither the model mode nor gradients: for inference, call it in `eval()` mode under
@@ -141,7 +134,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
                 Output of the RynnValue preprocessor.
 
         Returns:
-            `RynnValuePrediction`: One remaining time per trajectory.
+            `RemainingTimePrediction`: One remaining time per trajectory.
         """
         inputs: dict[str, Any] = {}
         for key in RYNNVALUE_MODEL_INPUT_KEYS:
@@ -179,7 +172,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             batch_size=int(inputs["input_ids"].shape[0]),
             slot_counts=slot_counts,
         )
-        return RynnValuePrediction(remaining_time_s=remaining_time)
+        return RemainingTimePrediction(remaining_time_s=remaining_time)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         self.config.model_config = self.model.config.to_dict()
