@@ -30,7 +30,6 @@ class RynnValueConfig(RewardModelConfig):
     model_id: str = "Alibaba-DAMO-Academy/RynnValue-4B"
     model_revision: str | None = None
     torch_dtype: str = "bfloat16"
-    attn_implementation: str = "pred_slot_isolated_eager"
     # Native architecture config, embedded on save so a LeRobot checkpoint rebuilds
     # the model from its own `config.json` and `model.safetensors`.
     model_config: dict[str, Any] | None = None
@@ -42,11 +41,6 @@ class RynnValueConfig(RewardModelConfig):
     robot_description: str | None = None
     camera_description: str | None = None
     use_meta: bool | None = None
-
-    # Load-only compatibility for checkpoints created by the unpublished
-    # pre-capability integration. Native inference always returns remaining
-    # time; consumers decide whether to derive potential or progress.
-    reward_output: str | None = None
 
     license: str | None = "apache-2.0"
     tags: list[str] | None = field(
@@ -71,13 +65,6 @@ class RynnValueConfig(RewardModelConfig):
         super().__post_init__()
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
-        if self.reward_output not in {None, "potential", "remaining_time"}:
-            raise ValueError(
-                "reward_output is a load-only compatibility field and must be "
-                f"None, 'potential', or 'remaining_time', got {self.reward_output!r}"
-            )
-        if self.attn_implementation != "pred_slot_isolated_eager":
-            raise ValueError("RynnValue checkpoints require attn_implementation='pred_slot_isolated_eager'")
         if self.image_key not in self.input_features:
             self.input_features[self.image_key] = PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL)
         self.output_features.setdefault(
