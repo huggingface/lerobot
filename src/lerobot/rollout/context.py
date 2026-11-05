@@ -349,7 +349,7 @@ def _prepare_rollout_devices(
     wrapper = ThreadSafeRobot(robot)
     try:
         check_control_rate(robot, cfg.fps, "--fps", cfg.interpolation_multiplier)
-        #TODO: Consider refactoring the validation methods in the future.
+        # TODO: Consider refactoring the validation methods in the future.
         if isinstance(robot, SimRobot):
             if validate_simulator is not None:
                 validate_simulator(robot)

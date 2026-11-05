@@ -178,6 +178,7 @@ def _observation_features(descriptor: EnvDescriptor) -> dict[str, PolicyFeature]
             features[spec.name] = PolicyFeature(FeatureType.STATE, spec.shape)
     return features
 
+
 # TODO: Consider refactoring the validation ways in the future.
 def validate_checkpoint(
     descriptor: EnvDescriptor,
