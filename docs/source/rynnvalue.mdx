@@ -41,7 +41,7 @@ The 4B checkpoint is approximately 10 GB. A CUDA GPU with enough memory for the 
 
 ## Loading
 
-LeRobot RynnValue checkpoints, [lerobot/RynnValue-4B](https://huggingface.co/lerobot/RynnValue-4B) and [lerobot/RynnValue-8B](https://huggingface.co/lerobot/RynnValue-8B), use the LeRobot format: `config.json` embeds the native architecture configuration as `model_config`, and `model.safetensors` holds the weights. The tokenizer and image processor load from the official checkpoint named by `model_id`.
+The LeRobot checkpoint [lerobot/RynnValue-4B](https://huggingface.co/lerobot/RynnValue-4B) uses the LeRobot format: `config.json` embeds the native architecture configuration as `model_config`, and `model.safetensors` holds the weights. The tokenizer and image processor load from the official checkpoint named by `model_id`.
 
 ```python
 from lerobot.configs.rewards import RewardModelConfig
