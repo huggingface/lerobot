@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -155,7 +156,8 @@ def make_robometer_frame_scorer(
     num_subsampled_frames: int = DEFAULT_NUM_SUBSAMPLED_FRAMES,
 ) -> RobometerFrameScorer:
     """Construct the standard RoboMeter offline frame scorer."""
-    preprocessor, _ = make_robometer_pre_post_processors(model.config)
+    # Each prefix is already sub-sampled, so the processor must not crop it to `max_frames`.
+    preprocessor, _ = make_robometer_pre_post_processors(replace(model.config, max_frames=None))
     return RobometerFrameScorer(
         model,
         preprocessor,

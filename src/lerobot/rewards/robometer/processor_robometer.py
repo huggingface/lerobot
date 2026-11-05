@@ -27,6 +27,7 @@ from torch import Tensor
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
@@ -69,8 +70,10 @@ def _frames_to_pil(frames: np.ndarray) -> list[Image.Image]:
     return [Image.fromarray(frames[i]) for i in range(frames.shape[0])]
 
 
-def _video_to_numpy(video: Tensor) -> np.ndarray:
+def _video_to_numpy(video: Tensor, *, max_frames: int | None) -> np.ndarray:
     """Convert one trajectory tensor to a ``(T, H, W, C) uint8`` numpy array."""
+    if max_frames is not None:
+        video = video[-max_frames:]
     if video.shape[1] in (1, 3):
         video = video.permute(0, 2, 3, 1)
     elif video.shape[-1] not in (1, 3):
@@ -112,7 +115,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
 
     At call time the step reads:
 
-    - ``observation[image_key]``: ``(B, T, C, H, W)`` or ``(T, C, H, W)`` frames.
+    - ``observation[image_key]``: ``(B, T, C, H, W)`` or ``(B, C, H, W)`` frames.
     - ``complementary_data[task_key]``: a string or list of strings.
 
     and writes ``observation[f"{ROBOMETER_FEATURE_PREFIX}<name>"]`` for:
@@ -128,6 +131,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
     image_key: str = OBS_IMAGES + ".top"
     task_key: str = "task"
     default_task: str | None = None
+    max_frames: int | None = 8
     use_multi_image: bool = True
     use_per_frame_progress_token: bool = True
     max_length: int = 1024
@@ -168,10 +172,10 @@ class RobometerEncoderProcessorStep(ProcessorStep):
         frames = observation[self.image_key]
         tensor = frames.detach().cpu() if isinstance(frames, Tensor) else torch.as_tensor(frames)
         if tensor.ndim == 4:
-            tensor = tensor.unsqueeze(0)
+            tensor = tensor.unsqueeze(1)
         elif tensor.ndim != 5:
             raise ValueError(
-                f"Expected Robometer frames with shape (T,C,H,W) or (B,T,C,H,W); got {tuple(tensor.shape)}"
+                f"Expected Robometer frames with shape (B,C,H,W) or (B,T,C,H,W); got {tuple(tensor.shape)}"
             )
 
         batch_size = tensor.shape[0]
@@ -181,7 +185,9 @@ class RobometerEncoderProcessorStep(ProcessorStep):
             default=self.default_task,
         )
 
-        samples = [(_video_to_numpy(tensor[i]), tasks[i]) for i in range(batch_size)]
+        samples = [
+            (_video_to_numpy(tensor[i], max_frames=self.max_frames), tasks[i]) for i in range(batch_size)
+        ]
         encoded = self.encode_samples(samples)
 
         new_observation = dict(observation)
@@ -286,6 +292,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
             "image_key": self.image_key,
             "task_key": self.task_key,
             "default_task": self.default_task,
+            "max_frames": self.max_frames,
             "use_multi_image": self.use_multi_image,
             "use_per_frame_progress_token": self.use_per_frame_progress_token,
             "max_length": self.max_length,
@@ -301,20 +308,22 @@ def make_robometer_pre_post_processors(
 ]:
     """Pipeline that pre-encodes frames + task into Qwen-VL tensors.
 
-    The preprocessor encodes one trajectory `(T, C, H, W)` or a batch
-    `(B, T, C, H, W)` without dropping frames, then moves the inputs to the
-    configured device. The postprocessor is the identity: `predict_progress()`
-    returns a `RobometerPrediction`.
+    The preprocessor adds a batch dimension if needed, runs Robometer's
+    encoder, and moves everything to the configured device. The
+    postprocessor is the identity: `predict_progress()` returns a
+    `RobometerPrediction`.
     """
     del dataset_stats  # Robometer has its own normalisation inside the Qwen-VL processor.
 
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         steps=[
+            AddBatchDimensionProcessorStep(),
             RobometerEncoderProcessorStep(
                 base_model_id=config.base_model_id,
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,
+                max_frames=config.max_frames,
                 use_multi_image=config.use_multi_image,
                 use_per_frame_progress_token=config.use_per_frame_progress_token,
             ),

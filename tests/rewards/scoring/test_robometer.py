@@ -53,28 +53,28 @@ def test_build_subsample_indices_keeps_prefix_endpoints():
         assert indices[-1] == current_frame
 
 
-def test_make_robometer_frame_scorer_uses_canonical_processor(monkeypatch):
+def test_make_robometer_frame_scorer_builds_processor_without_frame_cap(monkeypatch):
     import lerobot.rewards.robometer.scoring_robometer as scoring_robometer
+    from lerobot.rewards.robometer import RobometerConfig
 
-    config = SimpleNamespace(
-        image_key="observation.images.top",
-        task_key="task",
-        default_task="do the task",
-        base_model_id="fake/backbone",
-        use_multi_image=True,
-        use_per_frame_progress_token=True,
+    config = RobometerConfig(
+        device="cpu", vlm_config={"model_type": "fake", "text_config": {"vocab_size": 10}}
     )
     model = SimpleNamespace(config=config)
     preprocessor = object()
-    monkeypatch.setattr(
-        scoring_robometer,
-        "make_robometer_pre_post_processors",
-        lambda received_config: (preprocessor, object()),
-    )
+    received = {}
+
+    def fake_make_processors(received_config):
+        received["config"] = received_config
+        return preprocessor, object()
+
+    monkeypatch.setattr(scoring_robometer, "make_robometer_pre_post_processors", fake_make_processors)
 
     scorer = make_robometer_frame_scorer(model)
 
     assert scorer.preprocessor is preprocessor
+    assert received["config"].max_frames is None
+    assert config.max_frames == 8
 
 
 def test_robometer_frame_scorer_returns_dense_namespaced_signals():
