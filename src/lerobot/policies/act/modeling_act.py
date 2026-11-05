@@ -462,9 +462,10 @@ class ACT(nn.Module):
             # When not using the VAE encoder, we set the latent to be all zeros.
             mu = log_sigma_x2 = None
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
-            latent_sample = torch.zeros([batch_size, self.config.latent_dim], dtype=torch.float32).to(
-                batch[OBS_STATE].device
-            )
+            # Match the weights' dtype so a half-precision model (or its ONNX export) runs end to end.
+            latent_sample = torch.zeros(
+                [batch_size, self.config.latent_dim], dtype=self.encoder_latent_input_proj.weight.dtype
+            ).to(batch[OBS_STATE].device)
 
         # Prepare transformer encoder inputs.
         encoder_in_tokens = [self.encoder_latent_input_proj(latent_sample)]

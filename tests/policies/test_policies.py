@@ -507,6 +507,71 @@ def test_act_ignores_padded_actions():
     assert valid_loss_dict["l1_loss"] != loss_dict["l1_loss"]
 
 
+def test_act_inference_in_bfloat16():
+    """The zero latent used at inference follows the weights' dtype, so a cast model predicts chunks."""
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
+            OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(4,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
+        chunk_size=10,
+        n_action_steps=10,
+        dim_model=32,
+        n_heads=2,
+        dim_feedforward=64,
+        n_encoder_layers=1,
+        n_vae_encoder_layers=1,
+        latent_dim=8,
+        device="cpu",
+    )
+    policy = ACTPolicy(config).eval()
+    batch = {OBS_STATE: torch.randn(2, 4), OBS_ENV_STATE: torch.randn(2, 4)}
+    expected = policy.predict_action_chunk(batch)
+
+    policy.to(torch.bfloat16)
+    actions = policy.predict_action_chunk({k: v.to(torch.bfloat16) for k, v in batch.items()})
+    assert actions.dtype == torch.bfloat16
+    torch.testing.assert_close(actions.float(), expected, atol=0.1, rtol=0.1)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_act_image_inference_cast_and_action_queue(dtype):
+    image_key = f"{OBS_IMAGES}.camera"
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
+            image_key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
+        pretrained_backbone_weights=None,
+        chunk_size=2,
+        n_action_steps=2,
+        dim_model=32,
+        n_heads=2,
+        dim_feedforward=64,
+        n_encoder_layers=1,
+        n_vae_encoder_layers=1,
+        latent_dim=8,
+        device="cpu",
+    )
+    with seeded_context(42):
+        policy = ACTPolicy(config).eval()
+        batch = {OBS_STATE: torch.randn(1, 4), image_key: torch.rand(1, 3, 32, 32)}
+    expected = policy.predict_action_chunk(batch)
+    policy.to(dtype)
+    cast_batch = {key: value.to(dtype) for key, value in batch.items()}
+    actual = policy.predict_action_chunk(cast_batch)
+    assert actual.dtype == dtype
+    assert torch.isfinite(actual).all()
+    torch.testing.assert_close(actual.float(), expected, atol=0.1, rtol=0.1)
+    policy.reset()
+    for step in range(2):
+        torch.testing.assert_close(policy.select_action(cast_batch), actual[:, step], atol=0, rtol=0)
+    policy.reset()
+    torch.testing.assert_close(policy.select_action(cast_batch), actual[:, 0], atol=0, rtol=0)
+
+
 def test_act_temporal_ensembler():
     """Check that the online method in ACTTemporalEnsembler matches a simple offline calculation."""
     temporal_ensemble_coeff = 0.01
