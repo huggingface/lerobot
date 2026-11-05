@@ -46,9 +46,9 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
-from lerobot.utils.import_utils import _datasets_available
+from lerobot.utils.import_utils import _av_available, _datasets_available
 
-if TYPE_CHECKING or _datasets_available:
+if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.scripts.lerobot_train import make_dataloaders
 
 
@@ -188,7 +188,7 @@ def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypa
 
 
 @pytest.mark.dataset
-@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+@pytest.mark.skipif(not (_datasets_available and _av_available), reason="requires datasets")
 @pytest.mark.parametrize("frames,drop_first,drop_last,max_eval_samples", [(12, 2, 3, 3), (64, 0, 32, 0)])
 def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
     frames, drop_first, drop_last, max_eval_samples
@@ -237,7 +237,7 @@ def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
 
 
 @pytest.mark.dataset
-@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+@pytest.mark.skipif(not (_datasets_available and _av_available), reason="requires datasets")
 @pytest.mark.parametrize(("num_workers", "expected"), [(0, 0), (1, 1), (4, 4), (16, 8)])
 def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_workers, expected):
     class Dataset(torch.utils.data.IterableDataset):
@@ -275,7 +275,7 @@ def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_worke
 
 
 @pytest.mark.dataset
-@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+@pytest.mark.skipif(not (_datasets_available and _av_available), reason="requires datasets")
 def test_streaming_dataloader_receives_the_trainers_data_parallel_rank():
     class StreamingDataset(torch.utils.data.IterableDataset):
         meta = SimpleNamespace(has_language_columns=False)

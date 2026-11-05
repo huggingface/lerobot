@@ -28,7 +28,12 @@ import torchvision.transforms.v2.functional as tv_functional
 from einops import rearrange
 from torchvision.transforms import InterpolationMode
 
-from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
+from lerobot.utils.import_utils import (
+    _av_available,
+    _datasets_available,
+    _transformers_available,
+    require_package,
+)
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import (
@@ -45,7 +50,7 @@ else:
     Qwen3VLProcessor = None
     Qwen3VLVideoProcessor = None
 
-if TYPE_CHECKING or _datasets_available:
+if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import LeRobotDataset
 else:
     LeRobotDataset = None
@@ -818,6 +823,7 @@ def _make_relative_action_training_stats_from_dataset_meta(
         return None
 
     require_package("datasets", extra="groot")
+    require_package("av", extra="groot")
 
     # Relative stats are computed per chunk timestep at the native N1.7 horizon, so the
     # stats dataset must yield native-length action windows even when config.chunk_size

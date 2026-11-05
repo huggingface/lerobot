@@ -31,13 +31,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from huggingface_hub import snapshot_download
 
-from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
+from lerobot.utils.import_utils import _pyarrow_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoProcessor
     from transformers.dynamic_module_utils import get_class_from_dynamic_module
 # pyarrow ships with the dataset extra; tokenizer fitting reads training parquet shards.
-if TYPE_CHECKING or _datasets_available:
+if TYPE_CHECKING or _pyarrow_available:
     import pyarrow as pa
     import pyarrow.parquet as pq
 

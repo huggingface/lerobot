@@ -54,9 +54,9 @@ from lerobot.annotations import (
     make_vlm_client,
 )
 from lerobot.configs import parser
-from lerobot.utils.import_utils import _datasets_available, require_package
+from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
-if TYPE_CHECKING or _datasets_available:
+if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import CODEBASE_VERSION, create_lerobot_dataset_card, load_info
 
 logger = logging.getLogger(__name__)
