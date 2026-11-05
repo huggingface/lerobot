@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
@@ -911,5 +912,62 @@ class RoboLabEnvConfig(EnvConfig):
                 "instruction_type": self.instruction_type,
                 "observation_height": self.observation_height,
                 "observation_width": self.observation_width,
+            },
+        }
+
+
+@EnvConfig.register_subclass("so101_bench")
+@dataclass
+class SO101BenchEnvConfig(EnvConfig):
+    """SO-101 Bench: SO-101 pick-and-place in Isaac Sim 5.1 (https://github.com/5hadytru/so101_bench).
+
+    The simulator runs in its own Isaac Lab (Python 3.11) process, started from an SO-101 Bench checkout
+    (``so101_bench_root``). ``episode_set`` is an episode set of that checkout (``val_set``, the public
+    validation set, or ``mmrv_eval``) or a tasks JSONL path (then also set ``layouts``). Suites are
+    task-family x object-split cells (``seen/bin_1``, ...), selected with ``task`` (default: all); task ids
+    are trial ids. Each task is one fixed scene, so evaluate with ``--eval.n_episodes=1``.
+    """
+
+    task: str | None = None  # suites, e.g. "seen/bin_1,seen/move"; None runs every suite
+    episode_set: str = "val_set"
+    layouts: str | None = None
+    episodes: str | None = None  # subset of trial ids, e.g. "0-9,20"
+    # Cameras become observation.images.<name>; "overhead_init" / "wrist_init" are the cameras' frames at
+    # robot start, held for the whole episode.
+    cameras: str = "overhead,wrist"
+    so101_bench_root: str | None = field(default_factory=lambda: os.environ.get("SO101_BENCH_ROOT"))
+    isaaclab_sh: str | None = field(default_factory=lambda: os.environ.get("ISAACLAB_SH"))
+    isaac_venv: str | None = field(default_factory=lambda: os.environ.get("SO101_BENCH_ISAAC_VENV"))
+    port: int = 0  # 0 picks a free port
+    seed: int = 0
+    max_joint_step_deg: float = 15.0
+    initial_hold_time_s: float = 1.5
+    sim_log: str | None = None  # default: <so101_bench_root>/outputs/lerobot_sim_server.log
+
+    def __post_init__(self):
+        from lerobot.sim.integrations.so101_bench import parse_cameras
+
+        parse_cameras(self.cameras)
+        if self.max_parallel_tasks != 1:
+            raise ValueError(
+                "SO-101 Bench runs its tasks one at a time in a single simulator; use --env.max_parallel_tasks=1."
+            )
+
+    def sim_settings(self) -> dict[str, Any]:
+        return {
+            "type": "so101_bench",
+            "task": self.episode_set,
+            "kwargs": {
+                "so101_bench_root": self.so101_bench_root,
+                "isaaclab_sh": self.isaaclab_sh,
+                "isaac_venv": self.isaac_venv,
+                "layouts": self.layouts,
+                "episodes": self.episodes,
+                "cameras": self.cameras,
+                "seed": self.seed,
+                "port": self.port,
+                "max_joint_step_deg": self.max_joint_step_deg,
+                "initial_hold_time_s": self.initial_hold_time_s,
+                "sim_log": self.sim_log,
             },
         }

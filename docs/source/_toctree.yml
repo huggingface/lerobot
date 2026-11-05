@@ -151,6 +151,8 @@
     title: NVIDIA IsaacLab Arena Environments
   - local: vlabench
     title: VLABench
+  - local: so101_bench
+    title: SO-101 Bench
   title: "Benchmarks"
 - sections:
   - local: introduction_processors
