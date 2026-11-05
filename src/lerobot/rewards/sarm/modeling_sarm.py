@@ -25,6 +25,7 @@ Paper: https://arxiv.org/abs/2509.25358
 import json
 import logging
 import random
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -643,11 +644,7 @@ class SARMRewardModel(PreTrainedRewardModel):
         """
         Calculate rewards for given text, video, and state representations.
 
-        This compatibility method is used for:
-        - Inference/visualization by existing research code
-        - RA-BC weight computation
-
-        New tensor-based consumers should call :meth:`predict_progress`.
+        Deprecated: use :meth:`predict_progress` instead, which returns tensors for every frame.
 
         Args:
             text_embeddings: Encoded text representations (batch_size, 512)
@@ -663,6 +660,12 @@ class SARMRewardModel(PreTrainedRewardModel):
         Returns:
             Rewards and optionally stage probs/confidence.
         """
+        warnings.warn(
+            "SARMRewardModel.calculate_rewards is deprecated and will be removed in a future version. "
+            "Use predict_progress(batch, head_mode=...) instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
         if head_mode is None:
             head_mode = "sparse"
         if head_mode not in {"sparse", "dense"}:

@@ -141,16 +141,17 @@ def test_sarm_calculate_rewards_preserves_numpy_compatibility():
     with torch.inference_mode():
         prediction = model.predict_progress(batch, head_mode="sparse")
 
-    progress, stage_probabilities, confidence = model.calculate_rewards(
-        text_embeddings=batch["text_features"],
-        video_embeddings=batch["video_features"],
-        state_features=batch["state_features"],
-        lengths=batch["lengths"],
-        return_all_frames=True,
-        return_stages=True,
-        return_confidence=True,
-        head_mode="sparse",
-    )
+    with pytest.warns(FutureWarning, match="predict_progress"):
+        progress, stage_probabilities, confidence = model.calculate_rewards(
+            text_embeddings=batch["text_features"],
+            video_embeddings=batch["video_features"],
+            state_features=batch["state_features"],
+            lengths=batch["lengths"],
+            return_all_frames=True,
+            return_stages=True,
+            return_confidence=True,
+            head_mode="sparse",
+        )
 
     np.testing.assert_allclose(progress, prediction.progress.numpy())
     np.testing.assert_allclose(stage_probabilities, prediction.stage_probabilities.numpy())
@@ -168,12 +169,13 @@ def test_sarm_calculate_rewards_preserves_unbatched_default_frame_behavior():
         }
     )
 
-    progress = model.calculate_rewards(
-        text_embeddings=batch["text_features"][0],
-        video_embeddings=batch["video_features"][0],
-        state_features=batch["state_features"][0],
-        head_mode=None,
-    )
+    with pytest.warns(FutureWarning, match="predict_progress"):
+        progress = model.calculate_rewards(
+            text_embeddings=batch["text_features"][0],
+            video_embeddings=batch["video_features"][0],
+            state_features=batch["state_features"][0],
+            head_mode=None,
+        )
 
     assert isinstance(progress, np.floating)
     assert progress == pytest.approx(prediction.progress[0, model.config.n_obs_steps].item())
