@@ -90,7 +90,7 @@ def make_reward_model_config(reward_type: str, **kwargs: Any) -> RewardModelConf
 
     Args:
         reward_type: A registered reward model type, such as
-                     "reward_classifier", "sarm", "robometer" or "topreward".
+                     "reward_classifier", "sarm", "robometer", "topreward" or "rynnvalue".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:

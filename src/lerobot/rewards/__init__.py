@@ -23,6 +23,7 @@ from .factory import (
 from .prediction import ProgressOutput as ProgressOutput
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
+from .rynnvalue.configuration_rynnvalue import RynnValueConfig as RynnValueConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
 from .scoring import (
     FrameScorer as FrameScorer,
@@ -37,6 +38,7 @@ __all__ = [
     # Configuration classes
     "RewardClassifierConfig",
     "RobometerConfig",
+    "RynnValueConfig",
     "SARMConfig",
     "TOPRewardConfig",
     # Base class
