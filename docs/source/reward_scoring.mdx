@@ -32,17 +32,25 @@ The model-specific scorer owns sampling, preprocessing, and conversion from nati
 
 ## Score a Dataset
 
-The scoring command currently supports RoboMeter:
+The scoring command supports RoboMeter and TOPReward. Load a checkpoint with `--reward_model.path`, or build a zero-shot model from its type with `--reward_model.type`; other `--reward_model.<field>` flags override its config:
 
 ```bash
 uv run lerobot-score \
     --dataset_repo_id=lerobot/libero_10_image \
     --dataset_root=/path/to/local/dataset \
-    --reward_model_path=lerobot/Robometer-4B \
-    --device=cuda
+    --reward_model.path=lerobot/Robometer-4B \
+    --reward_model.device=cuda
+
+uv run lerobot-score \
+    --dataset_repo_id=lerobot/libero_10_image \
+    --dataset_root=/path/to/local/dataset \
+    --reward_model.type=topreward \
+    --reward_model.device=cuda
 ```
 
-By default, the score is named `robometer`. Use `--name=robometer-4b` to keep results from a specific model or configuration and `--episodes='[0,1]'` to select episodes.
+Scorer options are only passed to the scorer when set: `--batch_size` and `--num_subsampled_frames` for RoboMeter, `--num_samples` for TOPReward.
+
+By default, the score is named after the scorer, such as `robometer`. Use `--name=robometer-4b` to keep results from a specific model or configuration and `--episodes='[0,1]'` to select episodes.
 
 Scoring requires a writable local LeRobot dataset root. Pass `--dataset_root=/path/to/dataset` when the dataset is not already materialized locally.
 

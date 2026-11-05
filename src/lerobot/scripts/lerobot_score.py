@@ -35,48 +35,55 @@ class ScoreConfig:
     """Configuration for ``lerobot-score``."""
 
     dataset_repo_id: str
-    reward_model_path: str
+    # Loaded with --reward_model.path=..., or built with --reward_model.type=... for zero-shot models.
+    reward_model: RewardModelConfig | None = None
     dataset_root: Path | None = None
     dataset_revision: str | None = None
-    reward_model_revision: str | None = None
     name: str | None = None
     episodes: list[int] | None = None
-    device: str | None = None
-    image_key: str | None = None
-    batch_size: int = 32
-    num_subsampled_frames: int = 4
+    # Scorer options: only the ones set are passed, so each scorer keeps its own defaults.
+    batch_size: int | None = None
+    num_subsampled_frames: int | None = None
+    num_samples: int | None = None
     resume: bool = True
     overwrite: bool = False
     push_to_hub: bool = False
 
     def __post_init__(self) -> None:
-        if self.batch_size < 1:
-            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
-        if self.num_subsampled_frames < 1:
-            raise ValueError(f"num_subsampled_frames must be >= 1, got {self.num_subsampled_frames}")
+        reward_model_path = parser.get_path_arg("reward_model")
+        if reward_model_path:
+            self.reward_model = RewardModelConfig.from_pretrained(
+                reward_model_path,
+                revision=parser.get_pretrained_revision("reward_model"),
+                cli_overrides=parser.get_cli_overrides("reward_model"),
+            )
+
+    @classmethod
+    def __get_path_fields__(cls) -> list[str]:
+        """Keys for draccus pretrained-path loading."""
+        return ["reward_model"]
+
+    @property
+    def scorer_options(self) -> dict[str, int]:
+        options = {
+            "batch_size": self.batch_size,
+            "num_subsampled_frames": self.num_subsampled_frames,
+            "num_samples": self.num_samples,
+        }
+        return {name: value for name, value in options.items() if value is not None}
 
 
 def run_score(cfg: ScoreConfig) -> None:
     """Load the model and dataset, then publish a score sidecar."""
     require_package("datasets", extra="dataset")
     require_package("av", extra="dataset")
+    if cfg.reward_model is None:
+        raise ValueError(
+            "lerobot-score needs a reward model: pass --reward_model.path=... or --reward_model.type=..."
+        )
 
-    overrides = []
-    if cfg.device is not None:
-        overrides.append(f"--device={cfg.device}")
-    if cfg.image_key is not None:
-        overrides.append(f"--image_key={cfg.image_key}")
-    reward_config = RewardModelConfig.from_pretrained(
-        cfg.reward_model_path,
-        revision=cfg.reward_model_revision,
-        cli_overrides=overrides,
-    )
-    model = make_reward_model(reward_config)
-    scorer = make_frame_scorer(
-        model,
-        batch_size=cfg.batch_size,
-        num_subsampled_frames=cfg.num_subsampled_frames,
-    )
+    model = make_reward_model(cfg.reward_model)
+    scorer = make_frame_scorer(model, **cfg.scorer_options)
 
     dataset = LeRobotDataset(
         cfg.dataset_repo_id,

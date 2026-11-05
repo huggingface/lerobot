@@ -34,7 +34,7 @@ Because the method only depends on a frozen VLM, TOPReward is **zero-shot**: the
 - Prompt assembly + tokenisation in the processor (matching upstream `QwenClient.compute_instruction_reward`).
 - `compute_log_probability()` returns one raw scalar log-probability per sample.
 - LeRobot reward-model save/load — `save_pretrained` writes only `config.json` (the VLM is identified by `vlm_name`).
-- An offline labeling script that writes a `topreward_progress.parquet` (SARM-compatible schema) for RA-BC and overlay.
+- A frame scorer for `lerobot-score` that writes the dataset score `topreward` for RA-BC and visualization.
 
 The current LeRobot port supports the **Qwen3-VL client only**. Other upstream clients (Gemini, OpenAI, Gemma, Molmo) can be added as follow-up extras.
 
@@ -114,16 +114,27 @@ with torch.inference_mode():
     log_probability = reward_model.compute_log_probability(encoded_batch)
 ```
 
-### Offline dataset labeling
+### Score a LeRobot Dataset
 
-Write the dataset score `reward_signals/topreward_progress.parquet` for RA-BC training and overlay videos:
+Score every frame of a dataset with the shared [offline scoring workflow](./reward_scoring):
 
 ```bash
-# Sparse-dense (15 anchors per episode, matches upstream)
-uv run python -m lerobot.rewards.topreward.compute_rabc_weights \
-    --dataset-repo-id lerobot/libero_10_image \
-    --num-samples 15 \
-    --device cuda
+uv run lerobot-score \
+    --dataset_repo_id=lerobot/libero_10_image \
+    --reward_model.type=topreward \
+    --reward_model.device=cuda \
+    --num_samples=15
+```
+
+For each episode, the scorer computes the log-probability of the task for `--num_samples` evenly spaced prefixes (15 by default, every prefix when the episode is shorter), normalizes them per episode with min-max, and interpolates between them. Each prefix is passed whole, without the `max_frames` cap. The dataset score `topreward` holds one dense signal, `reward.topreward.progress`, in `[0, 1]`.
+
+For RA-BC weighting, select it explicitly:
+
+```yaml
+sample_weighting:
+  type: rabc
+  score_name: topreward
+  signal_name: reward.topreward.progress
 ```
 
 Then render the progress overlay for any episode:
@@ -157,6 +168,7 @@ Both are exposed on `TOPRewardConfig` for ablation. The suffix template **must**
 
 - The current LeRobot port is **inference-only and zero-shot**; `forward()` is not overridden and `is_trainable` returns `False`.
 - Only the **Qwen3-VL family** is supported; other upstream clients are out of scope.
+- Video preprocessing differs from upstream TOPReward: LeRobot encodes the frames it receives at their resolution, while upstream resizes them with `qwen_vl_utils` and lets the Qwen video processor resample them. Log-probabilities are therefore not directly comparable with upstream's published numbers.
 - TOPReward inherits the underlying VLM's biases.
 
 ## References

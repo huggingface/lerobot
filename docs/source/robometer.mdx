@@ -160,8 +160,8 @@ pip install -e ".[dataset,robometer]"
 
 uv run lerobot-score \
     --dataset_repo_id=lerobot/libero_10_image \
-    --reward_model_path=lerobot/Robometer-4B \
-    --device=cuda
+    --reward_model.path=lerobot/Robometer-4B \
+    --reward_model.device=cuda
 ```
 
 The default dataset score, named `robometer`, contains:
