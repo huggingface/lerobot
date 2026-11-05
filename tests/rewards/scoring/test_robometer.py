@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.rewards.robometer.modeling_robometer import RobometerPrediction
 from lerobot.rewards.robometer.scoring_robometer import (
     PROGRESS_SIGNAL,
@@ -27,6 +32,27 @@ from lerobot.rewards.robometer.scoring_robometer import (
     build_subsample_indices,
     make_robometer_frame_scorer,
 )
+
+pytestmark = pytest.mark.dataset
+
+
+@dataclass
+class _FrameIdsEncoderStep(ProcessorStep):
+    """Stand in for RoboMeter's encoder: write each frame's first pixel as `observation.encoded`."""
+
+    image_key: str = "observation.images.top"
+
+    def __call__(self, transition):
+        observation = dict(transition[TransitionKey.OBSERVATION])
+        observation["observation.encoded"] = observation[self.image_key][:, :, 0, 0, 0]
+        return {**transition, TransitionKey.OBSERVATION: observation}
+
+    def transform_features(self, features):
+        return features
+
+
+def _make_preprocessor() -> PolicyProcessorPipeline:
+    return PolicyProcessorPipeline(steps=[_FrameIdsEncoderStep()])
 
 
 def test_build_subsample_indices_matches_upstream_frame_steps():
@@ -92,12 +118,6 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals():
                 "task": "pick up the cube",
             }
 
-    class FakeEncoder:
-        def __call__(self, transition):
-            frames = transition[TransitionKey.OBSERVATION][image_key]
-            frame_ids = frames[:, :, 0, 0, 0]
-            return {TransitionKey.OBSERVATION: {"encoded": frame_ids}}
-
     class FakeModel:
         config = SimpleNamespace(
             type="robometer",
@@ -111,7 +131,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals():
             return self
 
         def predict_progress(self, batch):
-            progress = batch["encoded"].float() / 2.0
+            progress = batch["observation.encoded"].float() / 2.0
             return RobometerPrediction(
                 progress=progress,
                 success_probability=progress / 2.0,
@@ -119,7 +139,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals():
 
     dataset = FakeDataset()
     model = FakeModel()
-    preprocessor = FakeEncoder()
+    preprocessor = _make_preprocessor()
     scorer = RobometerFrameScorer(model, preprocessor, batch_size=2, num_subsampled_frames=2)
 
     result = scorer.score_episode(dataset, episode_index=0)
@@ -137,11 +157,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals():
 
     episode_frames = torch.stack([dataset[index][image_key] for index in range(3)])
     prefix_batch = torch.stack([episode_frames[indices] for indices in build_subsample_indices(3, 2)])
-    direct_transition = {
-        TransitionKey.OBSERVATION: {image_key: prefix_batch},
-        TransitionKey.COMPLEMENTARY_DATA: {"task": "pick up the cube"},
-    }
-    direct = model.predict_progress(preprocessor(direct_transition)[TransitionKey.OBSERVATION])
+    direct = model.predict_progress(preprocessor({image_key: prefix_batch, "task": "pick up the cube"}))
     np.testing.assert_allclose(
         result.signals[PROGRESS_SIGNAL],
         direct.progress[:, -1].numpy(),
@@ -172,15 +188,6 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views():
                 "task": "selected task",
             }
 
-    class FakeEncoder:
-        def __call__(self, transition):
-            frames = transition[TransitionKey.OBSERVATION][image_key]
-            return {
-                TransitionKey.OBSERVATION: {
-                    "encoded": frames[:, :, 0, 0, 0],
-                }
-            }
-
     class FakeModel:
         config = SimpleNamespace(image_key=image_key, task_key="task")
 
@@ -188,10 +195,10 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views():
             return self
 
         def predict_progress(self, batch):
-            values = batch["encoded"].float() / 10.0
+            values = batch["observation.encoded"].float() / 10.0
             return RobometerPrediction(progress=values, success_probability=values)
 
-    scorer = RobometerFrameScorer(FakeModel(), FakeEncoder(), num_subsampled_frames=2)
+    scorer = RobometerFrameScorer(FakeModel(), _make_preprocessor(), num_subsampled_frames=2)
 
     result = scorer.score_episode(FakeDataset(), episode_index=1)
 
@@ -225,11 +232,6 @@ def test_robometer_vertical_slice_preserves_legacy_progress_values_and_adds_succ
                 "task": "pick up the cube",
             }
 
-    class FakeEncoder:
-        def __call__(self, transition):
-            frames = transition[TransitionKey.OBSERVATION][image_key]
-            return {TransitionKey.OBSERVATION: {"encoded": frames[:, :, 0, 0, 0]}}
-
     class FakeModel:
         config = SimpleNamespace(
             type="robometer",
@@ -243,13 +245,13 @@ def test_robometer_vertical_slice_preserves_legacy_progress_values_and_adds_succ
             return self
 
         def predict_progress(self, batch):
-            progress = batch["encoded"].float() / 2.0
+            progress = batch["observation.encoded"].float() / 2.0
             return RobometerPrediction(
                 progress=progress,
                 success_probability=progress / 2.0,
             )
 
-    scorer = RobometerFrameScorer(FakeModel(), FakeEncoder(), batch_size=2, num_subsampled_frames=2)
+    scorer = RobometerFrameScorer(FakeModel(), _make_preprocessor(), batch_size=2, num_subsampled_frames=2)
     dataset = FakeDataset()
     dataset.add_score(scorer)
 

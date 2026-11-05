@@ -24,7 +24,6 @@ import torch
 from numpy.typing import NDArray
 
 from lerobot.datasets.scores import FrameSignals, SignalDescriptor
-from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline
 
 from .modeling_robometer import RobometerRewardModel
@@ -129,13 +128,8 @@ class RobometerFrameScorer:
                 prefixes = torch.stack(
                     [episode_frames[subsample_indices[frame]] for frame in range(start, end)]
                 )
-                encoded = self.preprocessor(
-                    {
-                        TransitionKey.OBSERVATION: {config.image_key: prefixes},
-                        TransitionKey.COMPLEMENTARY_DATA: {config.task_key: task},
-                    }
-                )
-                prediction = self.model.predict_progress(encoded[TransitionKey.OBSERVATION])
+                encoded = self.preprocessor({config.image_key: prefixes, config.task_key: task})
+                prediction = self.model.predict_progress(encoded)
                 progress[start:end] = prediction.progress[:, -1].cpu().numpy()
                 success_probability[start:end] = prediction.success_probability[:, -1].cpu().numpy()
 

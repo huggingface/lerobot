@@ -24,7 +24,6 @@ import torch
 from numpy.typing import NDArray
 
 from lerobot.datasets.scores import FrameSignals, SignalDescriptor
-from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline
 
 from .modeling_topreward import TOPRewardModel
@@ -129,14 +128,9 @@ class TOPRewardFrameScorer:
         with torch.inference_mode():
             for i, length in enumerate(prefix_lengths):
                 encoded = self.preprocessor(
-                    {
-                        TransitionKey.OBSERVATION: {config.image_key: episode_frames[:length].unsqueeze(0)},
-                        TransitionKey.COMPLEMENTARY_DATA: {config.task_key: task},
-                    }
+                    {config.image_key: episode_frames[:length].unsqueeze(0), config.task_key: task}
                 )
-                log_probabilities[i] = self.model.compute_log_probability(
-                    encoded[TransitionKey.OBSERVATION]
-                ).item()
+                log_probabilities[i] = self.model.compute_log_probability(encoded).item()
         if np.isfinite(config.success_threshold):
             log_probabilities = (log_probabilities > config.success_threshold).astype(np.float64)
 

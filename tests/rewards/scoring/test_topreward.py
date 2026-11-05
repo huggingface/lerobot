@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 import numpy as np
@@ -21,6 +22,7 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.lerobot_types import TransitionKey
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.scoring_topreward import (
     PROGRESS_SIGNAL,
@@ -73,14 +75,32 @@ class _FakeDataset:
         return {IMAGE_KEY: torch.full((3, 2, 2), float(position)), "task": "pick up the cube"}
 
 
-class _FakeEncoder:
-    def __init__(self):
-        self.prefix_shapes = []
+@dataclass
+class _PrefixLengthEncoderStep(ProcessorStep):
+    """Stand in for TOPReward's encoder: record each prefix and write its length."""
+
+    prefix_shapes: list[tuple[int, ...]] = field(default_factory=list)
 
     def __call__(self, transition):
-        frames = transition[TransitionKey.OBSERVATION][IMAGE_KEY]
+        observation = dict(transition[TransitionKey.OBSERVATION])
+        frames = observation[IMAGE_KEY]
         self.prefix_shapes.append(tuple(frames.shape))
-        return {TransitionKey.OBSERVATION: {"prefix_length": frames.shape[1]}}
+        observation["observation.prefix_length"] = frames.shape[1]
+        return {**transition, TransitionKey.OBSERVATION: observation}
+
+    def transform_features(self, features):
+        return features
+
+
+class _FakeEncoder(PolicyProcessorPipeline):
+    """A real preprocessor pipeline around the stand-in encoder step."""
+
+    def __init__(self):
+        super().__init__(steps=[_PrefixLengthEncoderStep()])
+
+    @property
+    def prefix_shapes(self) -> list[tuple[int, ...]]:
+        return self.steps[0].prefix_shapes
 
 
 class _FakeModel:
@@ -103,7 +123,7 @@ class _FakeModel:
 
     def compute_log_probability(self, batch):
         # Longer prefixes get higher log-probabilities: -4, -2 and 0 for lengths 1, 3 and 5.
-        return torch.tensor([float(batch["prefix_length"]) - 5.0])
+        return torch.tensor([float(batch["observation.prefix_length"]) - 5.0])
 
 
 def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress():
