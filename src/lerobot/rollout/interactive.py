@@ -202,7 +202,7 @@ class InteractiveSession:
             self._print("Robot paused — no initial position captured, holding current pose. /start to run.")
         elif event is RolloutEvent.RESET_FAILED:
             self._print(
-                "Reset FAILED — the return move errored, so the robot may NOT be at its "
+                "Reset FAILED — the return move did not finish, so the robot may NOT be at its "
                 "initial position. Check the robot before /start."
             )
         elif event is RolloutEvent.ENGINE_FAILED:

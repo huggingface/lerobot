@@ -109,8 +109,8 @@ class RolloutEvent(Enum):
     """No initial position was captured; the robot holds its current pose."""
 
     RESET_FAILED = "reset_failed"
-    """The return move errored partway: the robot may be holding an arbitrary pose, *not* the
-    initial position."""
+    """The return move errored, timed out or was stopped partway: the robot may be holding an
+    arbitrary pose, *not* the initial position."""
 
     QUERY_ANSWERED = "query_answered"
     """A text query resolved (an :meth:`RolloutController.ask` question or an autosteer turn); the
