@@ -54,23 +54,33 @@ def hw_to_dataset_features(
     or camera image shapes) and formats it into the standard LeRobot feature
     specification. Single-channel cameras (shape ``(H, W, 1)``) are flagged as depth
     maps via ``info["is_depth_map"] = True``; three-channel cameras ``(H, W, 3)`` are
-    treated as RGB.
+    treated as RGB. A non-visual :class:`PolicyFeature` with a multi-dimensional shape
+    describes a fixed-shape numeric array that is not an image (e.g. a sensor grid or a
+    short history of readings) and becomes a standalone ``float32`` feature of that shape.
 
     Args:
         hw_features (Mapping): Mapping from feature names to their type (``float`` for joints),
-            shape (tuple for images), or a :class:`PolicyFeature` (non-visual ones count as joints).
+            shape (tuple for images), or a :class:`PolicyFeature` (non-visual ones with a 1-D shape
+            count as joints; non-visual ones with more dimensions become standalone N-D features).
         prefix (str): The prefix to add to the feature keys (e.g., "observation"
             or "action").
         use_video (bool): If True, image features are marked as "video", otherwise "image".
 
     Returns:
-        dict: A LeRobot features dictionary. Depth cameras carry ``info["is_depth_map"] = True``.
+        dict: A LeRobot features dictionary. Depth cameras carry ``info["is_depth_map"] = True``;
+            N-D numeric features are keyed ``"{prefix}.{name}"`` with ``names`` set to ``None``.
     """
     features: dict[str, dict[str, Any]] = {}
     joint_fts = {
         key: ftype
         for key, ftype in hw_features.items()
-        if ftype is float or (isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL)
+        if ftype is float
+        or (isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL and len(ftype.shape) <= 1)
+    }
+    nd_fts = {
+        key: ftype.shape
+        for key, ftype in hw_features.items()
+        if isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL and len(ftype.shape) > 1
     }
     # TODO(CarolinePascal): we should not rely on the shape to determine if a feature is a camera !
     cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
@@ -89,9 +99,16 @@ def hw_to_dataset_features(
             "names": list(joint_fts),
         }
 
+    for key, shape in nd_fts.items():
+        if f"{prefix}.{key}" in features:
+            raise ValueError(f"Feature name collision: {prefix}.{key}")
+        features[f"{prefix}.{key}"] = {"dtype": "float32", "shape": tuple(shape), "names": None}
+
     for key, shape in cam_fts.items():
         dtype = "video" if use_video else "image"
         if len(shape) == 3 and shape[2] in (1, 3):
+            if f"{prefix}.images.{key}" in features:
+                raise ValueError(f"Feature name collision: {prefix}.images.{key}")
             features[f"{prefix}.images.{key}"] = {
                 "dtype": dtype,
                 "shape": shape,
@@ -114,7 +131,9 @@ def build_dataset_frame(
     """Construct a single data frame from raw values based on dataset features.
 
     A "frame" is a dictionary containing all the data for a single timestep,
-    formatted as numpy arrays according to the feature specification.
+    formatted as numpy arrays according to the feature specification. Scalars listed
+    in a 1-D feature's ``names`` are gathered into one vector; N-D ``float32`` features
+    and images are copied from the value stored under the feature name without its prefix.
 
     Args:
         ds_features (dict): The LeRobot dataset features dictionary.
@@ -131,6 +150,8 @@ def build_dataset_frame(
             continue
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+        elif ft["dtype"] == "float32" and len(ft["shape"]) > 1:
+            frame[key] = np.asarray(values[key.removeprefix(f"{prefix}.")], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
