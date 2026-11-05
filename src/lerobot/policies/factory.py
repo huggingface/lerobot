@@ -44,6 +44,7 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from lerobot.utils.feature_utils import dataset_to_policy_features
+from lerobot.utils.hub import hub_safe_id
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .pretrained import PreTrainedPolicy
@@ -418,7 +419,8 @@ def make_policy(
 
         logging.info("Loading policy's PEFT adapter.")
 
-        peft_pretrained_path = str(cfg.pretrained_path)
+        assert cfg.pretrained_path is not None  # implied by load_existing_adapter
+        peft_pretrained_path = hub_safe_id(cfg.pretrained_path)
         peft_config = PeftConfig.from_pretrained(
             peft_pretrained_path,
             revision=cfg.pretrained_revision,

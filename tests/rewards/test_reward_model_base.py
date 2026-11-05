@@ -21,7 +21,9 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from huggingface_hub.utils import validate_repo_id
 
+import lerobot.configs.rewards as reward_configs
 from lerobot.common.train_utils import generate_model_card
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.optim.optimizers import AdamWConfig
@@ -198,6 +200,59 @@ def test_reward_model_config_from_pretrained_roundtrip(tmp_path):
     assert loaded.latent_dim == 64
     assert loaded.num_cameras == 1
     assert loaded.learning_rate == 5e-4
+
+
+@pytest.mark.parametrize("as_path", [False, True])
+def test_reward_model_config_from_pretrained_hub_id_and_revision(tmp_path, monkeypatch, as_path):
+    """A Hub id keeps its forward slash even when given as a ``Path`` (Windows would
+    stringify it with a backslash), and the download arguments are forwarded."""
+    _DummyHubRewardConfig(device="cpu")._save_pretrained(tmp_path)
+    calls = []
+
+    def download(**kwargs):
+        validate_repo_id(kwargs["repo_id"])
+        calls.append(kwargs)
+        return str(tmp_path / "config.json")
+
+    monkeypatch.setattr(reward_configs, "hf_hub_download", download)
+    source = Path("test-owner/reward-probe") if as_path else "test-owner/reward-probe"
+    config = RewardModelConfig.from_pretrained(
+        source,
+        revision="test-revision",
+        local_files_only=True,
+        token=False,
+        cache_dir=tmp_path / "cache",
+        cli_overrides=["--license=apache-2.0"],
+    )
+    assert config.pretrained_path == "test-owner/reward-probe"
+    assert config.pretrained_revision == "test-revision"
+    assert config.license == "apache-2.0"
+    assert calls == [
+        {
+            "repo_id": "test-owner/reward-probe",
+            "filename": "config.json",
+            "revision": "test-revision",
+            "cache_dir": tmp_path / "cache",
+            "force_download": False,
+            "token": False,
+            "local_files_only": True,
+        }
+    ]
+
+
+def test_reward_model_config_from_pretrained_local_dir_does_not_use_hub(tmp_path, monkeypatch):
+    """A local directory, even one with spaces in its name, never reaches the Hub."""
+    directory = tmp_path / "checkpoint with spaces"
+    directory.mkdir()
+    _DummyHubRewardConfig(device="cpu")._save_pretrained(directory)
+
+    def unexpected_download(**kwargs):
+        raise AssertionError("local directory must not invoke the Hub")
+
+    monkeypatch.setattr(reward_configs, "hf_hub_download", unexpected_download)
+    loaded = RewardModelConfig.from_pretrained(directory)
+    assert Path(loaded.pretrained_path) == directory
+    assert loaded.pretrained_revision is None
 
 
 # ---------------------------------------------------------------------------
