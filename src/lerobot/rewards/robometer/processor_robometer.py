@@ -307,10 +307,10 @@ def make_robometer_pre_post_processors(
 ]:
     """Pipeline that pre-encodes frames + task into Qwen-VL tensors.
 
-    The encoder accepts one trajectory or an existing trajectory batch and
-    moves the encoded model inputs to the configured device. The
-    postprocessor is the identity: `predict_progress()` returns a
-    `RobometerPrediction`.
+    The preprocessor encodes one trajectory `(T, C, H, W)` or a batch
+    `(B, T, C, H, W)` without dropping frames, then moves the inputs to the
+    configured device. The postprocessor is the identity: `predict_progress()`
+    returns a `RobometerPrediction`.
     """
     del dataset_stats  # Robometer has its own normalisation inside the Qwen-VL processor.
 

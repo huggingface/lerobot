@@ -107,12 +107,11 @@ class RobometerFrameScorer:
         num_frames = episode_end - episode_start
 
         mapping = dataset.absolute_to_relative_idx
-        samples = [
-            dataset[index if mapping is None else mapping[index]]
-            for index in range(episode_start, episode_end)
+        positions = [
+            index if mapping is None else mapping[index] for index in range(episode_start, episode_end)
         ]
-        episode_frames = torch.stack([sample[config.image_key] for sample in samples])
-        task = samples[0].get(config.task_key)
+        task = dataset[positions[0]].get(config.task_key)
+        episode_frames = torch.stack([dataset[position][config.image_key] for position in positions])
 
         subsample_indices = build_subsample_indices(num_frames, self.num_subsampled_frames)
         progress: NDArray[np.float32] = np.empty(num_frames, dtype=np.float32)
