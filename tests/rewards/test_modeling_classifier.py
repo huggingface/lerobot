@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -77,7 +78,8 @@ def test_binary_classifier_with_default_params():
     rewards = classifier.predict_reward(input, threshold=0.5)
     assert rewards.shape == torch.Size([batch_size])
     assert set(rewards.tolist()).issubset({0.0, 1.0})
-    assert not hasattr(classifier, "compute_reward")
+    with pytest.raises(NotImplementedError, match="predict_reward"):
+        classifier.compute_reward(input)
 
 
 @skip_if_package_missing("transformers")

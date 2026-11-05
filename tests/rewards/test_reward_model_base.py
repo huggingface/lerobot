@@ -77,8 +77,10 @@ def test_factory_unknown_raises():
         get_reward_model_class("nonexistent_reward_model")
 
 
-def test_pretrained_reward_model_has_no_universal_inference_method():
-    assert not hasattr(PreTrainedRewardModel, "compute_reward")
+def test_pretrained_reward_model_compute_reward_points_to_native_methods():
+    model = _DummyHubReward(_DummyHubRewardConfig())
+    with pytest.raises(NotImplementedError, match=r"_DummyHubReward\.compute_reward\(\) was removed"):
+        model.compute_reward({})
 
 
 def test_pretrained_reward_model_requires_config_class():
