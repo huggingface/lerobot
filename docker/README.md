@@ -35,7 +35,7 @@ A CUDA-enabled image based on `nvidia/cuda`. This is the image for training — 
 
 ### `Dockerfile.rocm` (AMD GPU)
 
-An image for AMD Instinct accelerators, based on a ROCm PyTorch image (`rocm/primus` by default, override with `--build-arg BASE_IMAGE=...`). The base image owns the PyTorch install: LeRobot's `torch`, `torchvision` and `numpy` bounds may differ from what a ROCm image ships, and a normal install takes torch from PyPI, whose Linux wheels are CUDA builds, so installing normally would swap in CUDA wheels and leave the GPUs unusable. Those packages are therefore pinned with `uv pip install --override`, the same approach `Dockerfile.benchmark.robomme` uses for its own irreconcilable pins, and the rest of the dependency tree resolves from `pyproject.toml` as usual.
+An image for AMD Instinct accelerators, based on a ROCm PyTorch image (`rocm/primus` by default, override with `--build-arg BASE_IMAGE=...`). The base image owns the PyTorch install: LeRobot's `torch`, `torchvision` and `numpy` bounds may differ from what a ROCm image ships, and a normal install takes torch from PyPI, whose Linux wheels are CUDA builds, so installing normally would swap in CUDA wheels and leave the GPUs unusable. Those packages are therefore pinned with `uv pip install --override`, the same approach the `robomme_native` stage of `Dockerfile.sim` uses for its own irreconcilable pins, and the rest of the dependency tree resolves from `pyproject.toml` as usual.
 
 The default base image is compiled for `gfx942`/`gfx950` (MI300X / MI308X / MI325X / MI350X). Other architectures need a base image built for them.
 
@@ -47,6 +47,10 @@ Builds `torch`/`torchcodec`/`torchvision` from source with CUDA support for NVID
 docker build -f docker/Dockerfile.jetson -t lerobot-jetson .
 docker run -it --rm --runtime nvidia lerobot-jetson
 ```
+
+### `Dockerfile.sim` and `Dockerfile.policy` (simulation benchmarks)
+
+`Dockerfile.sim --build-arg SIM=<name>` builds one simulator behind `lerobot-env-server`, which needs no torch (only simulators that use it, like RoboTwin and RoboMME, ship their own). `Dockerfile.policy` builds the policy side, which runs `lerobot-eval --env.server.endpoint=...` against it. `lerobot-env-server --config_path=docker/sim/configs/<name>.yaml --docker=true` builds and starts a simulator image (see [Simulation: local or served](https://huggingface.co/docs/lerobot/simulation)).
 
 ## Usage
 

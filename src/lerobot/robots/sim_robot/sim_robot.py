@@ -1,0 +1,172 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""A sim env behind the `Robot` interface, run locally or on an env server."""
+
+from dataclasses import replace
+from functools import cached_property
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.sim import EnvDescriptor, StepResult
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.feature_spec import FeatureSpec
+
+from ..robot import Robot
+from .config_sim_robot import SimRobotConfig
+
+if TYPE_CHECKING:
+    from lerobot.env_server import RemoteVectorEnv
+    from lerobot.sim import LocalVectorEnv
+
+
+class SimRobot(Robot):
+    """A simulated environment as a robot: swappable with hardware.
+
+    Each action advances the environment by one step. When an episode ends, the robot stays in its final state
+    and ignores actions until `start_episode` is called; `latest` keeps the final reward, termination and
+    success. `robot_type` is the body the environment declares, or `sim_robot` if it declares none.
+    """
+
+    config_class = SimRobotConfig
+    name = "sim_robot"
+    supports_command_hold = True
+
+    def __init__(self, config: SimRobotConfig):
+        super().__init__(config)
+        self.config = config
+        self._connected = False
+        self.latest: StepResult | None = None
+        # Use the env's suite if `task` names exactly one; otherwise the sim's first suite.
+        task = config.env.task
+        task_group = task if task and "," not in task else None
+        # Build the env here, not in connect(): scripts read the features and descriptor before connecting.
+        self._env: LocalVectorEnv | RemoteVectorEnv = config.env.create_env(task_group, config.task_id)
+        descriptor = self._env.descriptor
+        self.robot_type = descriptor.robot_type or self.name
+        state = next((feature for feature in descriptor.features if feature.name == OBS_STATE), None)
+        if state is None or not state.names:
+            self._env.close()
+            raise ValueError(f"A sim robot needs an {OBS_STATE} feature with component names")
+        self._state_feature: FeatureSpec = state
+        self._camera_names: dict[str, str] = {
+            feature.name: feature.name.removeprefix(f"{OBS_IMAGES}.").removeprefix(f"{OBS_STR}.")
+            for feature in descriptor.features
+            if feature.kind == "rgb"
+        }
+        # Name cameras like a real robot's dataset (observation.images.<camera>), whatever the env calls them.
+        self.descriptor: EnvDescriptor = replace(
+            descriptor,
+            features=tuple(
+                replace(feature, name=f"{OBS_IMAGES}.{self._camera_names[feature.name]}")
+                if feature.kind == "rgb"
+                else feature
+                for feature in descriptor.features
+            ),
+        )
+
+    @property
+    def cameras(self) -> dict[str, str]:
+        """Map each camera name to its observation feature, keyed like a real robot's cameras."""
+        return {camera: f"{OBS_IMAGES}.{camera}" for camera in self._camera_names.values()}
+
+    @property
+    def _state_ft(self) -> dict[str, type]:
+        return dict.fromkeys(self._state_feature.names, float)
+
+    @property
+    def _cameras_ft(self) -> dict[str, tuple[int, ...]]:
+        return {
+            f.name.removeprefix(f"{OBS_IMAGES}."): f.shape
+            for f in self.descriptor.features
+            if f.kind == "rgb"
+        }
+
+    @cached_property
+    def observation_features(self) -> dict[str, type | tuple[int, ...]]:
+        return {**self._state_ft, **self._cameras_ft}
+
+    @cached_property
+    def action_features(self) -> dict[str, type]:
+        return dict.fromkeys(self.descriptor.action_feature.names, float)
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    @property
+    def is_calibrated(self) -> bool:
+        return True
+
+    def calibrate(self) -> None:
+        pass
+
+    def configure(self) -> None:
+        pass
+
+    @check_if_already_connected
+    def connect(self, calibrate: bool = True) -> None:
+        # Start the first episode so the robot has a state to observe.
+        try:
+            self.start_episode()
+        except BaseException:
+            self.disconnect()
+            raise
+        self._connected = True
+
+    @check_if_not_connected
+    def get_observation(self) -> RobotObservation:
+        result = self._env.latest
+        state = result.obs[self._state_feature.name][0]
+        obs_dict: RobotObservation = {
+            name: float(value) for name, value in zip(self._state_feature.names, state, strict=True)
+        }
+        for feature_name, cam_key in self._camera_names.items():
+            obs_dict[cam_key] = result.obs[feature_name][0]
+        return obs_dict
+
+    @check_if_not_connected
+    def send_action(self, action: RobotAction) -> RobotAction:
+        names = self.descriptor.action_feature.names
+        if set(action) != set(names):
+            raise ValueError(
+                f"This sim robot takes exactly the actions {list(names)}; missing "
+                f"{sorted(set(names) - set(action))}, unknown {sorted(set(action) - set(names))}. A "
+                "teleoperator must send the simulated robot's action names, as for the real follower."
+            )
+        values = np.asarray([[action[name] for name in names]], dtype=np.float32)
+        if not self.episode_ended:
+            self._env.step(values)
+            self.latest = self._env.latest
+        return {name: float(value) for name, value in zip(names, values[0], strict=True)}
+
+    def start_episode(self, seed: int | None = None) -> None:
+        """Reset the environment; a `seed` makes the episode repeatable."""
+        self._env.reset(seed=seed)
+        self.latest = self._env.latest
+
+    @property
+    def episode_ended(self) -> bool:
+        return self.latest is not None and bool(self.latest.terminated[0] or self.latest.truncated[0])
+
+    def hold(self) -> None:
+        """Nothing to do: the simulation advances only on send_action()."""
+
+    def disconnect(self) -> None:
+        # Not decorated: it must also close an env that was built but never connected.
+        self._env.close()
+        self._connected = False

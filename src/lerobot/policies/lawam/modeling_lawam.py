@@ -26,13 +26,14 @@ from lerobot.configs import FeatureType
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
 from lerobot.utils import ACTION, OBS_STATE
+from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import (
     _diffusers_available,
     _transformers_available,
     require_package,
 )
 
-from ..chunk import ChunkPolicySpec, FeatureSpec
+from ..chunk import ChunkPolicySpec
 from .configuration_lawam import LaWAMConfig
 
 _lawam_deps_available = _transformers_available and _diffusers_available
