@@ -363,7 +363,7 @@ class TestPositionHold:
         robot = factory(controller=TokenController())
 
         assert robot.supports_position_hold
-        thread_safe(robot).configure_position_hold()
+        thread_safe(robot).configure_hold()
 
     @pytest.mark.dataset
     def test_locomotion_controller_is_not_holdable(self, make_robot):
@@ -373,7 +373,7 @@ class TestPositionHold:
 
         assert not robot.supports_position_hold
         with pytest.raises(ValueError, match="position-hold"):
-            thread_safe(robot).configure_position_hold()
+            thread_safe(robot).configure_hold()
 
     @pytest.mark.dataset
     def test_raw_joint_control_is_not_holdable(self, make_robot):
@@ -382,7 +382,7 @@ class TestPositionHold:
 
         assert not robot.supports_position_hold
         with pytest.raises(ValueError, match="position-hold"):
-            thread_safe(robot).configure_position_hold()
+            thread_safe(robot).configure_hold()
 
     @pytest.mark.dataset
     def test_hold_before_first_command_replays_the_echoed_token(self, make_robot):
@@ -397,7 +397,7 @@ class TestPositionHold:
         robot = factory(controller=controller)
         robot._lowstate = G1_29_LowState()  # get_observation() is empty until a state arrives
         wrapper = thread_safe(robot)
-        wrapper.configure_position_hold()
+        wrapper.configure_hold()
 
         wrapper.get_observation()
         wrapper.hold()
