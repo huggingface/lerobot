@@ -329,6 +329,110 @@ def test_generation_preparation_synthesizes_cache_positions():
     assert torch.equal(prepared["cache_position"], torch.arange(3))
 
 
+def test_prepare_inputs_for_generation_derives_moe_token_types_from_inputs_embeds():
+    # Empty input_ids with real inputs_embeds: default routing must cover the
+    # embedding tokens, not stay empty like zeros_like(input_ids) would.
+    input_ids = torch.empty(1, 0, dtype=torch.long)
+    inputs_embeds = torch.randn(1, 3, 16)
+    cache_position = torch.arange(3)
+    past_key_values = SimpleNamespace(get_seq_length=lambda: 3)
+
+    prepared = Qwen2_5_VLMoEForAction.prepare_inputs_for_generation(
+        SimpleNamespace(),
+        input_ids,
+        past_key_values=past_key_values,
+        inputs_embeds=inputs_embeds,
+        cache_position=cache_position,
+    )
+
+    assert prepared["input_ids"] is None
+    assert torch.equal(prepared["inputs_embeds"], inputs_embeds)
+    assert prepared["moe_token_types"].shape == (1, 3)
+    assert torch.all(prepared["moe_token_types"] == 0)
+    assert prepared["moe_token_types"].device == inputs_embeds.device
+    assert prepared["moe_token_types"].dtype == torch.long
+
+
+def test_prepare_inputs_for_generation_standard_input_ids_moe_token_types():
+    input_ids = torch.tensor([[1, 2, 3]])
+
+    prepared = Qwen2_5_VLMoEForAction.prepare_inputs_for_generation(
+        SimpleNamespace(),
+        input_ids,
+        attention_mask=torch.ones_like(input_ids),
+    )
+
+    assert prepared["moe_token_types"].shape == (1, 3)
+    assert torch.all(prepared["moe_token_types"] == 0)
+    assert prepared["moe_token_types"].dtype == torch.long
+
+
+def test_prepare_inputs_for_generation_caller_provided_moe_token_types_preserved():
+    input_ids = torch.tensor([[1, 2, 3]])
+    moe_token_types = torch.tensor([[0, 1, 0]])
+
+    prepared = Qwen2_5_VLMoEForAction.prepare_inputs_for_generation(
+        SimpleNamespace(),
+        input_ids,
+        moe_token_types=moe_token_types,
+    )
+
+    assert torch.equal(prepared["moe_token_types"], moe_token_types)
+
+
+def test_prepare_inputs_for_generation_cache_slicing_selects_unprocessed_tokens():
+    input_ids = torch.tensor([[1, 2, 3, 4, 5]])
+    cache_position = torch.tensor([3, 4])
+    past_key_values = SimpleNamespace(get_seq_length=lambda: 3)
+
+    prepared = Qwen2_5_VLMoEForAction.prepare_inputs_for_generation(
+        SimpleNamespace(),
+        input_ids,
+        past_key_values=past_key_values,
+        cache_position=cache_position,
+    )
+
+    assert torch.equal(prepared["input_ids"], torch.tensor([[4, 5]]))
+    assert torch.equal(prepared["moe_token_types"], torch.tensor([[0, 0]]))
+    assert torch.equal(prepared["cache_position"], cache_position)
+
+
+def test_moe_model_forward_accepts_inputs_embeds_with_matching_token_types():
+    hidden_size = 16
+    expert_config = {
+        "hidden_size": hidden_size,
+        "intermediate_size": 32,
+        "hidden_act": "silu",
+    }
+    config = Qwen2_5_VLTextConfig(
+        vocab_size=32,
+        hidden_size=hidden_size,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=4,
+        max_position_embeddings=32,
+        layer_types=["full_attention", "full_attention"],
+        rope_parameters={
+            "rope_type": "default",
+            "rope_theta": 1_000_000.0,
+            "mrope_section": [1, 1, 0],
+        },
+        num_experts=2,
+        experts=[expert_config, expert_config],
+        dim_inputs=(hidden_size, hidden_size),
+        mlp_moe=True,
+    )
+    config._attn_implementation = "eager"
+    model = Qwen2_5_VLMoEModel(config)
+    inputs_embeds = torch.randn(1, 3, hidden_size)
+    moe_token_types = torch.zeros(1, 3, dtype=torch.long)
+
+    output = model(inputs_embeds=inputs_embeds, moe_token_types=moe_token_types)
+
+    assert output.last_hidden_state.shape == (1, 3, hidden_size)
+
+
 def test_policy_answers_a_rendered_vqa_question():
     assert WallXPolicy.generate_text is not PreTrainedPolicy.generate_text
     assert WallXPolicy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
