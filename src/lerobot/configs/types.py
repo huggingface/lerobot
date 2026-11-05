@@ -50,3 +50,12 @@ class RTCAttentionSchedule(str, Enum):
     ONES = "ONES"
     LINEAR = "LINEAR"
     EXP = "EXP"
+
+
+class StreamingSamplingStrategy(str, Enum):
+    """How the episode pool picks the next anchor among resident episodes."""
+
+    # Pick an episode proportionally to its remaining anchors.
+    REMAINING = "remaining"
+    # Shuffle resident episodes each round and draw one anchor from each.
+    ROUND_ROBIN = "round_robin"

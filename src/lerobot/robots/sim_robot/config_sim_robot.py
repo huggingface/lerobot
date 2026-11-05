@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, get_args, get_type_hints
 
 from draccus.choice_types import ChoiceType
 
-from lerobot.envs.configs import EnvConfig
+from lerobot.envs import EnvConfig
 
 from ..config import RobotConfig
 

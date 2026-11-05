@@ -58,14 +58,13 @@ from lerobot.common.control_utils import (
     teleop_smooth_move_to,
     teleop_supports_feedback,
 )
-from lerobot.datasets import VideoEncodingManager
-from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.datasets import DEFAULT_VIDEO_FILE_SIZE_IN_MB, VideoEncodingManager
 from lerobot.inference import InferenceEngine
 from lerobot.lerobot_types import RobotAction
 from lerobot.processor import robot_action_to_transition, transition_to_robot_action
 from lerobot.teleoperators import Teleoperator
-from lerobot.utils import ACTION, OBS_STR
 from lerobot.utils.action_interpolator import ActionInterpolator
+from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.keyboard_input import create_key_listener

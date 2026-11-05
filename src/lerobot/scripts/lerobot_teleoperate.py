@@ -91,7 +91,9 @@ from lerobot.robots import (  # noqa: F401
     bi_rebot_b601_follower,
     bi_so_follower,
     bi_yam_follower,
+    check_control_rate,
     earthrover_mini_plus,
+    episode_ended,
     hope_jr,
     koch_follower,
     make_robot_from_config,
@@ -101,10 +103,10 @@ from lerobot.robots import (  # noqa: F401
     rebot_b601_follower,
     sim_robot,
     so_follower,
+    start_episode,
     unitree_g1 as unitree_g1_robot,
     yam_follower,
 )
-from lerobot.robots.utils import check_control_rate, episode_ended, start_episode
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,

@@ -20,8 +20,7 @@ from typing import Any
 
 from torch.utils.data._utils.collate import default_collate
 
-from lerobot.datasets.language import LANGUAGE_COLUMNS
-from lerobot.utils.constants import MESSAGES_RENDERED
+from .constants import LANGUAGE_COLUMNS, MESSAGES_RENDERED
 
 _PYTHON_LIST_KEYS = {MESSAGES_RENDERED, "message_streams", "target_message_indices", *LANGUAGE_COLUMNS}
 

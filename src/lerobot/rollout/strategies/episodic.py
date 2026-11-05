@@ -41,7 +41,7 @@ from lerobot.common.control_utils import (
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
 from lerobot.processor import transition_to_robot_action
-from lerobot.robots.utils import episode_ended
+from lerobot.robots import episode_ended
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer

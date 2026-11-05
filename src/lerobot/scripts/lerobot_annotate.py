@@ -42,24 +42,22 @@ from typing import TYPE_CHECKING
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
-from lerobot.annotations.steerable_pipeline.executor import Executor
-from lerobot.annotations.steerable_pipeline.frames import make_frame_provider
-from lerobot.annotations.steerable_pipeline.modules import (
+from lerobot.annotations import (
+    AnnotationPipelineConfig,
+    Executor,
     GeneralVqaModule,
     InterjectionsAndSpeechModule,
+    LanguageColumnsWriter,
     PlanSubtasksMemoryModule,
+    StagingValidator,
+    make_frame_provider,
+    make_vlm_client,
 )
-from lerobot.annotations.steerable_pipeline.validator import StagingValidator
-from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
-from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
 from lerobot.configs import parser
-from lerobot.utils.import_utils import _datasets_available, require_package
+from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
-if TYPE_CHECKING or _datasets_available:
-    from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
-    from lerobot.datasets.io_utils import load_info
-    from lerobot.datasets.utils import create_lerobot_dataset_card
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import CODEBASE_VERSION, create_lerobot_dataset_card, load_info
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +78,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
     if cfg.job.is_remote:
         # Imported lazily: the submitter pulls in LeRobotDataset (the `dataset`
         # extra), which a local annotation run over --root doesn't need.
-        from lerobot.jobs.annotate import submit_annotate_to_hf
+        from lerobot.jobs import submit_annotate_to_hf
 
         return submit_annotate_to_hf(cfg)
 

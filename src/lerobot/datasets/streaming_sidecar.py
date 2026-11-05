@@ -19,9 +19,16 @@ from uuid import uuid4
 import fsspec
 from huggingface_hub import HfApi
 
-from lerobot.streaming.location import LocationKind, StorageLocation, hf_dataset_uri
-from lerobot.streaming.manifest import EpisodeVideoManifest, video_file_groups
-from lerobot.streaming.sidecar import SidecarSpec, ensure_mp4_sidecar, sidecar_cache_path
+from lerobot.streaming import (
+    EpisodeVideoManifest,
+    LocationKind,
+    SidecarSpec,
+    StorageLocation,
+    ensure_mp4_sidecar,
+    hf_dataset_uri,
+    sidecar_cache_path,
+    video_file_groups,
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 from .dataset_metadata import LeRobotDatasetMetadata

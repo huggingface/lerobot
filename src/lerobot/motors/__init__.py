@@ -14,12 +14,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .calibration_gui import RangeFinderGUI
+from .damiao import DamiaoMotorsBus
+from .damiao.damiao import MotorState
 from .motors_bus import (
     DriveMode,
     Motor,
     MotorCalibration,
     MotorNormMode,
+    MotorsBusBase,
+    NameOrID,
     SerialMotorsBus,
 )
 
-__all__ = ["DriveMode", "Motor", "MotorCalibration", "MotorNormMode", "SerialMotorsBus"]
+# TODO: rename the homonymic MotorState classes so the exported name is unambiguous:
+# motors.damiao.damiao.MotorState (exported), motors.robstride.robstride.MotorState,
+# robots.unitree_g1.unitree_g1.MotorState, robots.unitree_g1.unitree_sdk2_socket.LowStateMsg.MotorState.
+
+__all__ = [
+    "DamiaoMotorsBus",
+    "DriveMode",
+    "Motor",
+    "MotorCalibration",
+    "MotorNormMode",
+    "MotorState",
+    "MotorsBusBase",
+    "NameOrID",
+    "RangeFinderGUI",
+    "SerialMotorsBus",
+]

@@ -45,7 +45,7 @@ from .sidecar_utils import (
 )
 
 if TYPE_CHECKING:
-    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+    from lerobot.datasets import LeRobotDatasetMetadata
 
 
 @dataclass(frozen=True)

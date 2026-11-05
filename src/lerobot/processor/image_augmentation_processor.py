@@ -29,7 +29,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import RobotObservation
 from lerobot.transforms import BatchedImageTransforms, ImageTransformConfig, ImageTransformsConfig
 from lerobot.utils.constants import OBS_IMAGE, OBS_IMAGES

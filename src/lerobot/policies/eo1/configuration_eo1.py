@@ -23,10 +23,8 @@ from typing import TYPE_CHECKING, Literal
 
 import torch
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
@@ -167,7 +165,7 @@ class EO1Config(PreTrainedConfig):
         super().__post_init__()
 
         if self.recipe_path is not None:
-            from lerobot.datasets.recipe import resolve_recipe_override
+            from lerobot.datasets import resolve_recipe_override
 
             self.recipe = asdict(resolve_recipe_override(self.recipe, self.recipe_path))
 

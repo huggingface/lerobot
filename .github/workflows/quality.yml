@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Examples that need a physical robot, a serial port or a Hub download are skipped by content.
-      # Everything else has to actually run. See src/lerobot/utils/doctest_utils.py.
+      # Everything else has to actually run. See tests/doctest_utils.py.
       SKIP_HARDWARE_DOCTEST: "1"
       SKIP_CUDA_DOCTEST: "1"
     steps:

@@ -64,19 +64,8 @@ from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 from requests import HTTPError
 
-from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset, aggregate_stats
-from lerobot.datasets.io_utils import (
-    cast_stats_to_numpy,
-    get_file_size_in_mb,
-    get_parquet_file_size_in_mb,
-    get_parquet_num_frames,
-    load_info,
-    write_episodes,
-    write_info,
-    write_stats,
-    write_tasks,
-)
-from lerobot.datasets.utils import (
+from lerobot.datasets import (
+    CODEBASE_VERSION,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -87,9 +76,21 @@ from lerobot.datasets.utils import (
     LEGACY_EPISODES_STATS_PATH,
     LEGACY_TASKS_PATH,
     DatasetInfo,
+    LeRobotDataset,
+    aggregate_stats,
+    cast_stats_to_numpy,
+    concatenate_video_files,
+    get_file_size_in_mb,
+    get_parquet_file_size_in_mb,
+    get_parquet_num_frames,
+    get_video_duration_in_s,
+    load_info,
     update_chunk_file_indices,
+    write_episodes,
+    write_info,
+    write_stats,
+    write_tasks,
 )
-from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.io_utils import load_json
 from lerobot.utils.utils import flatten_dict, init_logging

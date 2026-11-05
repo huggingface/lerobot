@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Protocol
 import av
 import huggingface_hub
 
-from lerobot.streaming.location import StorageLocation, hf_dataset_uri
+from lerobot.streaming import StorageLocation, hf_dataset_uri
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import _lancedb_available, require_package
 

@@ -59,17 +59,16 @@ from lerobot.common.train_utils import (
     should_save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.configs import EvalConfig, JobConfig, parser
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import EvalConfig, JobConfig, RewardModelConfig, parser
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.datasets import (
     EpisodeAwareSampler,
     LeRobotDataset,
+    MultiLeRobotDataset,
     StreamingLeRobotDataset,
     compute_sampler_state,
+    make_train_eval_datasets,
 )
-from lerobot.datasets.factory import make_train_eval_datasets
-from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.distributed import (
     ParallelDims,
     finalize_sharded_policy,
@@ -79,12 +78,9 @@ from lerobot.distributed import (
 )
 from lerobot.envs import EnvConfig, close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
-from lerobot.optim.ema import EMA
-from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
-from lerobot.policies.factory import ProcessorConfigKwargs
-from lerobot.processor import ImageAugmentationProcessorStep
-from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
+from lerobot.optim import EMA, make_optimizer_and_scheduler
+from lerobot.policies import PreTrainedPolicy, ProcessorConfigKwargs, make_policy, make_pre_post_processors
+from lerobot.processor import ImageAugmentationProcessorStep, rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
@@ -97,13 +93,7 @@ from lerobot.utils.import_utils import (
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.sample_weighting import SampleWeighter
-from lerobot.utils.utils import (
-    cycle,
-    format_big_number,
-    has_method,
-    init_logging,
-    inside_slurm,
-)
+from lerobot.utils.utils import cycle, format_big_number, has_method, init_logging, inside_slurm
 
 if TYPE_CHECKING or _peft_available:
     from peft import PeftModel

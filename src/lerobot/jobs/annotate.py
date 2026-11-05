@@ -40,7 +40,7 @@ from .dataset import ensure_dataset_available
 from .hf import _pod_forwarded_args, follow_job, resolve_job_tags
 
 if TYPE_CHECKING:
-    from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
+    from lerobot.annotations import AnnotationPipelineConfig
 
 LEROBOT_GIT_URL = "https://github.com/huggingface/lerobot.git"
 

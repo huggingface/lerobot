@@ -17,4 +17,8 @@
 from .config_unitree_g1 import UnitreeG1Config
 from .unitree_g1 import UnitreeG1
 
+# NOTE: g1_kinematics and g1_utils are intentionally NOT re-exported here to avoid a cycle
+# (config_unitree_g1 imports lerobot.envs, which imports lerobot.robots).
+# Import from submodules: ``from lerobot.robots.unitree_g1.g1_kinematics import G1_29_ArmIK``
+
 __all__ = ["UnitreeG1", "UnitreeG1Config"]

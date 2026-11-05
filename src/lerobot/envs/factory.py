@@ -46,16 +46,15 @@ def make_env_pre_post_processors(
     ``env_cfg.get_env_processors()``.  The XVLAConfig and Cosmos3Config overrides for LIBERO environments
     stay here because they depend on the *policy* config, not the env config.
     """
-    from lerobot.policies.cosmos3.configuration_cosmos3 import Cosmos3Config
-    from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+    from lerobot.policies import Cosmos3Config, XVLAConfig
 
     if isinstance(policy_cfg, XVLAConfig) and isinstance(env_cfg, LiberoEnvConfig):
-        from lerobot.policies.xvla.processor_xvla import make_xvla_libero_pre_post_processors
+        from lerobot.policies import make_xvla_libero_pre_post_processors
 
         return make_xvla_libero_pre_post_processors()
 
     if isinstance(policy_cfg, Cosmos3Config) and isinstance(env_cfg, LiberoEnvConfig):
-        from lerobot.policies.cosmos3.processor_cosmos3 import make_cosmos3_libero_pre_post_processors
+        from lerobot.policies import make_cosmos3_libero_pre_post_processors
 
         return make_cosmos3_libero_pre_post_processors()
 

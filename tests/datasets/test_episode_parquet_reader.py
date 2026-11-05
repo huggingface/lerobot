@@ -16,7 +16,7 @@ from unittest.mock import Mock
 import fsspec
 import pytest
 
-pytest.importorskip("pyarrow", reason="pyarrow is required (install lerobot[dataset])")
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 import pyarrow as pa
 import pyarrow.parquet as pq

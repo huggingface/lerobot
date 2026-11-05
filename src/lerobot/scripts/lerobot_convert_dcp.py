@@ -37,7 +37,7 @@ from huggingface_hub import HfApi
 
 import lerobot.policies  # noqa: F401  (registers the policy config types)
 from lerobot.configs import PreTrainedConfig, parser
-from lerobot.distributed.checkpoint import dcp_to_safetensors
+from lerobot.distributed import dcp_to_safetensors
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 from lerobot.utils.import_utils import register_third_party_plugins, require_package
 from lerobot.utils.utils import init_logging
@@ -100,7 +100,7 @@ def _publish_converted(pretrained_dir: Path, repo_id: str, private: bool | None)
         logging.warning(f"{TRAIN_CONFIG_NAME} missing; README will lack training metadata.")
     if train_cfg is not None:
         try:
-            from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+            from lerobot.datasets import LeRobotDatasetMetadata
 
             dataset_meta = LeRobotDatasetMetadata(
                 repo_id=train_cfg.dataset.repo_id,

@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING
 import torch
 
 if TYPE_CHECKING:
-    from lerobot.policies.pretrained import PreTrainedPolicy
+    from lerobot.policies import PreTrainedPolicy
 
 
 class SampleWeighter(ABC):
@@ -149,7 +149,7 @@ def _make_rabc_weighter(
         dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
     """
     # Import here to avoid circular imports and keep RABC code in SARM module
-    from lerobot.rewards.sarm.rabc import RABCWeights
+    from lerobot.rewards import RABCWeights
 
     # Extract chunk_size from policy config
     chunk_size = getattr(policy.config, "chunk_size", None)

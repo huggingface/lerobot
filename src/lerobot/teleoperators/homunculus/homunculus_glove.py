@@ -21,8 +21,7 @@ from collections.abc import Mapping
 from pprint import pformat
 from typing import TYPE_CHECKING
 
-from lerobot.motors import MotorCalibration
-from lerobot.motors.motors_bus import MotorNormMode
+from lerobot.motors import MotorCalibration, MotorNormMode
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _serial_available, require_package
 

@@ -124,7 +124,7 @@ class WallOSS05Config(PreTrainedConfig):
         cameras_by_slot = {slot: key for key, slot in self.camera_key_mapping.items()}
         self.camera_key_mapping = {key: slot for slot, key in cameras_by_slot.items()}
         if self.recipe_path is not None:
-            from lerobot.datasets.recipe import resolve_recipe_override
+            from lerobot.datasets import resolve_recipe_override
 
             recipe = resolve_recipe_override(self.recipe, self.recipe_path)
             self.recipe = asdict(recipe) if recipe is not None else None

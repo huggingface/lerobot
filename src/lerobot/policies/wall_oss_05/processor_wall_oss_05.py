@@ -614,7 +614,7 @@ def make_wall_oss_05_pre_post_processors(
     _configure_wall_quantile_eps(steps.unnormalize)
     recipe = None
     if config.recipe is not None:
-        from lerobot.datasets.recipe import TrainingRecipe
+        from lerobot.datasets import TrainingRecipe
 
         recipe = TrainingRecipe.from_dict(config.recipe)
     render_training = config.recipe is not None and bool(config.use_language_recipe or config.recipe_path)

@@ -11,19 +11,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from enum import Enum
 
 import numpy as np
 from numpy.typing import NDArray
 
-
-class StreamingSamplingStrategy(str, Enum):
-    """How the episode pool picks the next anchor among resident episodes."""
-
-    # Pick an episode proportionally to its remaining anchors.
-    REMAINING = "remaining"
-    # Shuffle resident episodes each round and draw one anchor from each.
-    ROUND_ROBIN = "round_robin"
+from lerobot.configs import StreamingSamplingStrategy
 
 
 class ExactCoveragePool:

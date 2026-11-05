@@ -34,10 +34,8 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
-    load_pretrained_policy_processors,
-)
-from lerobot.processor.converters import (
     batch_to_transition,
+    load_pretrained_policy_processors,
     policy_action_to_transition,
     transition_to_policy_action,
 )

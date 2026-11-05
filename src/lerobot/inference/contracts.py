@@ -31,11 +31,8 @@ import numpy as np
 import torch
 
 from lerobot.lerobot_types import PolicyPrediction
-from lerobot.policies import (
-    ChunkPolicySpec as ChunkPolicySpec,
-    ExecutionMode as ExecutionMode,
-    FeatureSpec as FeatureSpec,
-)
+from lerobot.policies import ChunkPolicySpec as ChunkPolicySpec, ExecutionMode as ExecutionMode
+from lerobot.utils.feature_spec import FeatureSpec as FeatureSpec
 
 DEFAULT_MAX_TEXT_INPUT_CHARS = 4096
 DEFAULT_MAX_TEXT_OUTPUT_CHARS = 8192

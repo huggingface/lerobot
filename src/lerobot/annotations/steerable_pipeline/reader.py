@@ -38,8 +38,7 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
-from lerobot.datasets.io_utils import load_tasks
-from lerobot.datasets.utils import DEFAULT_TASKS_PATH
+from lerobot.datasets import DEFAULT_TASKS_PATH, load_tasks
 
 
 @dataclass

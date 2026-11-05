@@ -16,8 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGES
 
 # Default prompt scaffolding from the upstream TOPReward paper / reference

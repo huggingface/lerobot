@@ -28,6 +28,8 @@ import numpy as np
 import pytest
 from filelock import FileLock
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.streaming import manifest as manifest_module, sidecar_utils
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import Mp4Index
@@ -37,6 +39,8 @@ from lerobot.streaming.sidecar import (
     ensure_mp4_sidecar,
     sidecar_cache_path,
 )
+
+pytestmark = pytest.mark.dataset
 
 
 @pytest.fixture(autouse=True)

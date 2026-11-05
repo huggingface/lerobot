@@ -31,13 +31,13 @@ from transformers.cache_utils import Cache
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.qwen3_vl.modeling_qwen3_vl import apply_rotary_pos_emb
 
-from lerobot.policies.common.flow_matching import FlowConvention, make_flow_matching_inputs
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc.modeling_rtc import RTCProcessor
-from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
+from ..common.flow_matching import FlowConvention, make_flow_matching_inputs
+from ..pretrained import PreTrainedPolicy
+from ..rtc.modeling_rtc import RTCProcessor
+from ..utils import populate_queues
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config
 from .model_core.align_heads import TaskTokenDepthHead
 from .model_core.depth_teachers import MoGe2, MoRGBDEncoder, load_depth_teacher

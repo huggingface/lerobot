@@ -33,11 +33,6 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     policy_action_to_transition,
 )
-from lerobot.rewards.topreward.configuration_topreward import (
-    DEFAULT_PROMPT_PREFIX,
-    DEFAULT_PROMPT_SUFFIX_TEMPLATE,
-    TOPRewardConfig,
-)
 from lerobot.utils.constants import (
     OBS_IMAGES,
     OBS_PREFIX,
@@ -45,6 +40,12 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from .configuration_topreward import (
+    DEFAULT_PROMPT_PREFIX,
+    DEFAULT_PROMPT_SUFFIX_TEMPLATE,
+    TOPRewardConfig,
+)
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoProcessor

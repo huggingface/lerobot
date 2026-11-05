@@ -100,8 +100,7 @@ from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.common.control_utils import sanity_check_dataset_robot_compatibility
-from lerobot.configs import parser
-from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.configs import DatasetRecordConfig, parser
 from lerobot.datasets import (
     LeRobotDataset,
     VideoEncodingManager,
@@ -122,7 +121,9 @@ from lerobot.robots import (  # noqa: F401
     bi_rebot_b601_follower,
     bi_so_follower,
     bi_yam_follower,
+    check_control_rate,
     earthrover_mini_plus,
+    episode_ended,
     hope_jr,
     koch_follower,
     make_robot_from_config,
@@ -132,10 +133,10 @@ from lerobot.robots import (  # noqa: F401
     rebot_b601_follower,
     sim_robot,
     so_follower,
+    start_episode,
     unitree_g1 as unitree_g1_robot,
     yam_follower,
 )
-from lerobot.robots.utils import check_control_rate, episode_ended, start_episode
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -160,10 +161,7 @@ from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.keyboard_input import init_keyboard_listener
-from lerobot.utils.utils import (
-    init_logging,
-    log_say,
-)
+from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import (
     init_visualization,
     log_visualization_data,

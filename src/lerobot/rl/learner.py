@@ -86,8 +86,7 @@ from lerobot.datasets import LeRobotDataset, make_dataset
 from lerobot.optim import load_optimizer_state
 from lerobot.policies import make_policy, make_pre_post_processors
 from lerobot.robots import so_follower  # noqa: F401
-from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
-from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.teleoperators import TeleopEvents, gamepad, so_leader  # noqa: F401
 from lerobot.transport.utils import (
     MAX_MESSAGE_SIZE,
     bytes_to_python_object,
@@ -107,10 +106,7 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
 from lerobot.utils.random_utils import load_rng_state, set_seed
-from lerobot.utils.utils import (
-    format_big_number,
-    init_logging,
-)
+from lerobot.utils.utils import format_big_number, init_logging
 
 from .algorithms.base import RLAlgorithm
 from .algorithms.factory import make_algorithm

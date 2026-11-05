@@ -33,7 +33,7 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
 )
-from lerobot.utils import OBS_STATE, QUERY_KIND, QUERY_TEXT
+from lerobot.utils.constants import OBS_STATE, QUERY_KIND, QUERY_TEXT
 
 from .contracts import (
     DEFAULT_MAX_TEXT_INPUT_CHARS,

@@ -21,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, BinaryIO, TypedDict
 
+import av
 import torch
 
 from .manifest import EpisodeVideoManifest
@@ -450,10 +451,6 @@ class _PyAVVideoDecoder:
 
     def __init__(self, file_like_or_bytesio: BinaryIO) -> None:
         """Open a seekable in-memory video and initialize decoder lifetime accounting."""
-        # Imported at use: lerobot.streaming stays importable without lerobot.utils' optional-dependency
-        # probes (see tests/test_streaming_core_imports.py), so the _av_available guard does not apply here.
-        import av
-
         self._source = file_like_or_bytesio
         self._container = av.open(file_like_or_bytesio)
         self._stream = self._container.streams.video[0]

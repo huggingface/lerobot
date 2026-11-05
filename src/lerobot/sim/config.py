@@ -19,8 +19,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from lerobot.sim.integrations import simulator_required
-from lerobot.sim.types import CONTROL_MODES
+from .integrations import simulator_required
+from .types import CONTROL_MODES
 
 
 @dataclass

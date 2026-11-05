@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 # Root parsing is shared with the streaming primitives, which cannot depend on this package.
-from lerobot.streaming.location import (
+from lerobot.streaming import (
     LocationKind,
     StorageLocation,
     hf_bucket_uri,

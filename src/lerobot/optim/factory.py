@@ -14,12 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from lerobot.configs.train import TrainPipelineConfig
-from lerobot.policies import PreTrainedPolicy
+if TYPE_CHECKING:
+    from lerobot.configs.train import TrainPipelineConfig
+    from lerobot.policies import PreTrainedPolicy
 
 
 def make_optimizer_and_scheduler(

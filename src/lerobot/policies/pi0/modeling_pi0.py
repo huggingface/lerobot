@@ -47,12 +47,7 @@ else:
 
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.utils.constants import (
-    ACTION,
-    OBS_LANGUAGE_ATTENTION_MASK,
-    OBS_LANGUAGE_TOKENS,
-    OBS_STATE,
-)
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 from ..common.flow_matching import (
     FlowConvention,

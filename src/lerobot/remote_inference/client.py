@@ -46,8 +46,10 @@ from lerobot.transport import (
     QueryCancelled,
     ZenohConfig,
     ZenohTransport,
+    decode_reply,
+    query_reply,
+    validate_reply,
 )
-from lerobot.transport.protocol import decode_reply, query_reply, validate_reply
 
 from .chunk_contract import (
     RTC_MODEL_SPACE,

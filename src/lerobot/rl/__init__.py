@@ -26,9 +26,14 @@ from .algorithms.factory import (
     make_algorithm_config as make_algorithm_config,
 )
 from .algorithms.sac.configuration_sac import SACAlgorithmConfig as SACAlgorithmConfig
+from .algorithms.sac.sac_algorithm import SACAlgorithm
 from .buffer import ReplayBuffer as ReplayBuffer
 from .data_sources import DataMixer as DataMixer, OnlineOfflineMixer as OnlineOfflineMixer
 from .trainer import RLTrainer as RLTrainer
+
+# NOTE: gym_manipulator is intentionally NOT re-exported here to avoid pulling the camera, robot
+# and teleoperator stacks.
+# Import from submodules: ``from lerobot.rl.gym_manipulator import make_robot_env``
 
 __all__ = [
     "RLAlgorithm",
@@ -36,6 +41,7 @@ __all__ = [
     "TrainingStats",
     "make_algorithm",
     "make_algorithm_config",
+    "SACAlgorithm",
     "SACAlgorithmConfig",
     "RLTrainer",
     "ReplayBuffer",

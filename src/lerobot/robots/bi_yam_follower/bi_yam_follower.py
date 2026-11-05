@@ -22,8 +22,9 @@ from functools import cached_property
 
 from lerobot.cameras import CameraConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.utils import DeviceNotConnectedError, check_if_already_connected, check_if_not_connected
 from lerobot.utils.bimanual import BimanualMixin
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..robot import Robot
 from ..yam_follower import YamFollower, YamFollowerConfig, YamFollowerRobotConfig

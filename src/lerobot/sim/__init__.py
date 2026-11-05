@@ -23,6 +23,10 @@ from .config import SimConfig, SimSettings
 from .local_vector_env import LocalVectorEnv
 from .types import EnvDescriptor, StepResult
 
+# NOTE: The simulator integrations (lerobot.sim.integrations.<type>) are intentionally NOT re-exported here,
+# so each simulator package is imported only when used.
+# Import from the subpackage: ``from lerobot.sim.integrations import envhub``
+
 __all__ = [
     "EnvDescriptor",
     "LocalVectorEnv",

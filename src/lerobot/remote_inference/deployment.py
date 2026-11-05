@@ -28,8 +28,12 @@ from huggingface_hub import snapshot_download
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.inference import ExecutionMode, ObservationSnapshot, PolicyRunner
-from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
-from lerobot.policies.factory import has_peft_adapter_config
+from lerobot.policies import (
+    PreTrainedPolicy,
+    get_policy_class,
+    has_peft_adapter_config,
+    make_pre_post_processors,
+)
 from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.utils.import_utils import _peft_available, require_package
 

@@ -18,9 +18,7 @@ import logging
 import time
 
 from lerobot.lerobot_types import RobotAction
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.damiao import DamiaoMotorsBus
-from lerobot.motors.damiao.damiao import MotorState
+from lerobot.motors import DamiaoMotorsBus, Motor, MotorCalibration, MotorNormMode, MotorState
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator

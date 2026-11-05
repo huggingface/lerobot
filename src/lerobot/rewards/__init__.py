@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from .classifier.configuration_classifier import RewardClassifierConfig as RewardClassifierConfig
+from .classifier.modeling_classifier import Classifier
 from .factory import (
     get_reward_model_class as get_reward_model_class,
     make_reward_model as make_reward_model,
@@ -22,7 +23,13 @@ from .factory import (
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
+from .sarm.rabc import RABCWeights
 from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfig
+
+# NOTE: Reward model classes and reward-specific helpers not used by other lerobot packages are intentionally
+# NOT re-exported here to avoid pulling heavy optional dependencies. get_reward_model_class() loads the model
+# classes lazily.
+# Import from submodules: ``from lerobot.rewards.robometer import RobometerRewardModel``
 
 __all__ = [
     # Configuration classes
@@ -32,6 +39,9 @@ __all__ = [
     "TOPRewardConfig",
     # Base class
     "PreTrainedRewardModel",
+    # Model classes
+    "Classifier",
+    "RABCWeights",
     # Factory functions
     "get_reward_model_class",
     "make_reward_model",

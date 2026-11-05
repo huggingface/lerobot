@@ -45,12 +45,11 @@ from huggingface_hub.utils import httpx
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from lerobot.__version__ import __version__
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot import __version__
+from lerobot.configs import PolicyFeature, PreTrainedConfig, RewardModelConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
-from lerobot.configs.types import PolicyFeature
-from lerobot.distributed.checkpoint import (
+from lerobot.distributed import (
+    is_main_process,
     is_sharded_module,
     load_sharded_ema,
     load_sharded_model,
@@ -60,17 +59,17 @@ from lerobot.distributed.checkpoint import (
     save_sharded_model,
     save_sharded_optimizer,
 )
-from lerobot.distributed.utils import is_main_process
 from lerobot.optim import (
+    EMA,
+    load_ema_state,
     load_optimizer_state,
     load_scaler_state,
     load_scheduler_state,
+    save_ema_state,
     save_optimizer_state,
     save_scaler_state,
     save_scheduler_state,
 )
-from lerobot.optim.ema import EMA, load_ema_state, save_ema_state
-from lerobot.policies import PreTrainedPolicy
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
@@ -87,8 +86,9 @@ from lerobot.utils.random_utils import load_rng_state, save_rng_state
 if TYPE_CHECKING:
     from accelerate import Accelerator
 
-    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-    from lerobot.rewards.pretrained import PreTrainedRewardModel
+    from lerobot.datasets import LeRobotDatasetMetadata
+    from lerobot.policies import PreTrainedPolicy
+    from lerobot.rewards import PreTrainedRewardModel
 
 
 def get_step_identifier(step: int, total_steps: int) -> str:
@@ -218,7 +218,7 @@ def save_checkpoint(
     checkpoint_dir: Path,
     step: int,
     cfg: TrainPipelineConfig,
-    policy: PreTrainedPolicy,
+    policy: "PreTrainedPolicy",
     optimizer: Optimizer,
     scheduler: LRScheduler | None = None,
     preprocessor: PolicyProcessorPipeline | None = None,
@@ -308,7 +308,7 @@ def save_checkpoint(
 def save_pretrained_model(
     pretrained_dir: Path,
     cfg: TrainPipelineConfig,
-    policy: PreTrainedPolicy,
+    policy: "PreTrainedPolicy",
     preprocessor: PolicyProcessorPipeline | None = None,
     postprocessor: PolicyProcessorPipeline | None = None,
     accelerator: "Accelerator | None" = None,
@@ -362,7 +362,7 @@ def save_training_state(
     accelerator: "Accelerator | None" = None,
     *,
     sharded: bool = False,
-    model: PreTrainedPolicy | None = None,
+    model: "PreTrainedPolicy | None" = None,
     ema: EMA | None = None,
 ) -> None:
     """Write training_state/. Collective under sharding: call on every rank.
@@ -537,7 +537,7 @@ def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) ->
 def resume_after_prepare(
     cfg: TrainPipelineConfig,
     accelerator: "Accelerator",
-    policy: PreTrainedPolicy,
+    policy: "PreTrainedPolicy",
     optimizer: Optimizer | dict[str, Optimizer],
     scheduler: LRScheduler | None,
     ema: EMA | None = None,

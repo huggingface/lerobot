@@ -18,8 +18,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available, require_package
 
