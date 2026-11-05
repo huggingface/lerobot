@@ -892,17 +892,30 @@ class SerialMotorsBus(MotorsBusBase):
             raw position of each motor, by name.
 
         Raises:
-            ValueError: If a motor did not move: its lowest and highest positions are equal.
+            ValueError: If a motor did not move, or consecutive samples jump by more than half
+                an encoder turn. Such a jump can indicate a wrap that cannot be represented
+                by a single minimum/maximum range. Restart calibration with the joints held
+                in the middle of their travel during homing, and move them slowly.
         """
         motor_names = self._get_motors_list(motors)
 
         start_positions = self.sync_read("Present_Position", motor_names, normalize=False, num_retry=5)
         mins = start_positions.copy()
         maxes = start_positions.copy()
+        previous_positions = start_positions
+        half_turns = {motor: self.resolution(self.motors[motor].model) / 2 for motor in motor_names}
 
         user_pressed_enter = False
         while not user_pressed_enter:
             positions = self.sync_read("Present_Position", motor_names, normalize=False, num_retry=5)
+            for motor in motor_names:
+                if abs(positions[motor] - previous_positions[motor]) > half_turns[motor]:
+                    raise ValueError(
+                        f"Motor '{motor}' position jumped from {previous_positions[motor]} to "
+                        f"{positions[motor]}; the encoder may have wrapped. Restart calibration, "
+                        "hold the joint in the middle of its travel during homing, and move it slowly."
+                    )
+            previous_positions = positions
             mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
             maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
 
