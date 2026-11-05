@@ -92,6 +92,8 @@ If a checkpoint has multiple absolute-value heads, LeRobot averages them before 
 With `config` and `model` loaded as above:
 
 ```python
+import torch
+
 from lerobot.rewards import make_reward_pre_post_processors
 
 preprocessor, _ = make_reward_pre_post_processors(config)
@@ -100,10 +102,13 @@ batch = {
     "observation.images.top": frames,  # (T,C,H,W) or (B,T,C,H,W)
     "task": "put the cube in the drawer",
 }
-encoded = preprocessor(batch)
-prediction = model.predict_remaining_time(encoded)
+model.eval()
+with torch.inference_mode():
+    prediction = model.predict_remaining_time(preprocessor(batch))
 remaining_time_s = prediction.remaining_time_s
 ```
+
+`predict_remaining_time()` changes neither the model mode nor gradients, so call it in `eval()` mode under `torch.inference_mode()` for inference.
 
 ## Offline dataset scoring
 
@@ -112,37 +117,21 @@ Use the shared scoring command rather than a RynnValue-specific dataset script:
 ```bash
 uv run lerobot-score \
     --dataset_repo_id=lerobot/example-dataset \
-    --reward_model_path=outputs/rynnvalue-4b \
-    --device=cuda \
-    --batch_size=2 \
-    --inference_fps=1 \
-    --max_frames=8 \
-    --robot_description="a single-arm robot" \
-    --camera_description="a fixed third-person camera"
+    --dataset_root=/path/to/local/dataset \
+    --reward_model.path=lerobot/RynnValue-4B \
+    --reward_model.device=cuda \
+    --reward_model.robot_description="a single-arm robot" \
+    --reward_model.camera_description="a fixed third-person camera"
 ```
 
-RynnValue runs on causal trajectory prefixes at the configured inference frequency. The scorer linearly interpolates between inference frames and writes the dataset score `rynnvalue` with:
-
-- `reward.rynnvalue.remaining_time_s`;
-- `reward.rynnvalue.potential`;
-- `reward.rynnvalue.is_inference_frame`.
-
-Pass `--horizon_s=SECONDS` to additionally write bounded `reward.rynnvalue.progress`:
-
-```text
-progress = clip(1 - remaining_time_s / horizon_s, 0, 1)
-```
-
-The horizon is explicit and stored in provenance; LeRobot never normalizes remaining time relative to the observed episode maximum.
+RynnValue runs on the trajectory prefix ending at about one frame per second of the dataset, set with `--inference_fps` (default 1), each with at most `max_frames` evenly spaced frames, set with `--reward_model.max_frames` (default 8). The scorer interpolates linearly between the frames RynnValue runs on and writes the dataset score `rynnvalue` with one signal, `reward.rynnvalue.remaining_time_s`, in seconds, lower is better. RA-BC needs a higher-is-better progress signal, so it can't weight samples with this score.
 
 From Python, build the scorer and add the score to the dataset:
 
 ```python
 from lerobot.rewards.rynnvalue.scoring_rynnvalue import make_rynnvalue_frame_scorer
 
-scorer = make_rynnvalue_frame_scorer(reward_model, dataset_fps=dataset.fps)
-dataset.add_score(scorer)
-
+dataset.add_score(make_rynnvalue_frame_scorer(model))
 scores = dataset.read_score("rynnvalue")
 ```
 

@@ -35,11 +35,11 @@ def test_score_config_loads_reward_model_from_path(monkeypatch):
     monkeypatch.setattr(lerobot_score.parser, "get_cli_overrides", lambda field: ["--device=cpu"])
     monkeypatch.setattr(lerobot_score.RewardModelConfig, "from_pretrained", fake_from_pretrained)
 
-    cfg = ScoreConfig(dataset_repo_id="user/dataset", num_samples=4, head_mode="dense")
+    cfg = ScoreConfig(dataset_repo_id="user/dataset", num_samples=4, head_mode="dense", inference_fps=0.5)
 
     assert cfg.reward_model is loaded_config
     assert captured["load"] == ("user/robometer", "model-revision", ["--device=cpu"])
-    assert cfg.scorer_options == {"num_samples": 4, "head_mode": "dense"}
+    assert cfg.scorer_options == {"num_samples": 4, "head_mode": "dense", "inference_fps": 0.5}
 
 
 def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):

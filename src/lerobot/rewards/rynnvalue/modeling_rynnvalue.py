@@ -131,10 +131,17 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             self.model = RynnValueLangModel._from_config(model_config, dtype=dtype)
 
     def predict_remaining_time(self, batch: Mapping[str, Any]) -> RynnValuePrediction:
-        """Predict seconds remaining for each encoded trajectory prefix.
+        """Predict the seconds until the task is completed, at the last frame of each trajectory.
 
-        Potential, progress, interpolation, and reward shaping are consumer
-        transforms and intentionally do not live in the model API.
+        It changes neither the model mode nor gradients: for inference, call it in `eval()` mode under
+        `torch.inference_mode()`.
+
+        Args:
+            batch (`Mapping[str, Any]`):
+                Output of the RynnValue preprocessor.
+
+        Returns:
+            `RynnValuePrediction`: One remaining time per trajectory.
         """
         inputs: dict[str, Any] = {}
         for key in RYNNVALUE_MODEL_INPUT_KEYS:
@@ -150,12 +157,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             if required not in inputs:
                 raise KeyError(f"RynnValue batch missing `{RYNNVALUE_FEATURE_PREFIX}{required}`.")
 
-        device = next(self.model.parameters()).device
-        inputs = {key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()}
-        self.eval()
-        with torch.inference_mode():
-            outputs = self.model(**inputs)
-
+        outputs = self.model(**inputs)
         pred_value = outputs.value.pred_value
         if pred_value is None:
             raise RuntimeError("RynnValue checkpoint did not produce absolute temporal values")
