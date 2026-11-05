@@ -243,21 +243,28 @@ def test_forward_returns_per_sample_losses_under_reduction_none(monkeypatch):
     assert per_sample_loss.shape == (2,)
 
 
-def test_rabc_sample_weighter_uses_the_full_action_horizon(tmp_path):
-    pd = pytest.importorskip("pandas")
+def test_rabc_sample_weighter_uses_the_full_action_horizon():
+    hf_datasets = pytest.importorskip("datasets")
     from types import SimpleNamespace
 
+    from lerobot.datasets import SignalDescriptor
     from lerobot.utils.sample_weighting import SampleWeightingConfig, make_sample_weighter
 
-    progress = tmp_path / "sarm_progress.parquet"
-    pd.DataFrame({"index": range(40), "episode_index": [0] * 40, "progress_sparse": [0.0] * 40}).to_parquet(
-        progress
-    )
+    class ScoreDataset:
+        def read_score(self, name):
+            return hf_datasets.Dataset.from_dict(
+                {"index": list(range(40)), "episode_index": [0] * 40, "progress": [0.0] * 40}
+            )
+
+        def get_score_descriptors(self, name):
+            return {"progress": SignalDescriptor(description="Task progress.", direction="higher")}
+
     cfg = FastWAMConfig(action_horizon=16, n_action_steps=4, base_model_id=None)
     weighter = make_sample_weighter(
-        SampleWeightingConfig(type="rabc", progress_path=str(progress)),
+        SampleWeightingConfig(type="rabc", score_name="sarm", signal_name="progress"),
         SimpleNamespace(config=cfg),
         torch.device("cpu"),
+        dataset=ScoreDataset(),
     )
     assert weighter.chunk_size == 16
 

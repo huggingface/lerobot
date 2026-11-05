@@ -95,30 +95,42 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
         "rabc_epsilon",
         "rabc_head_mode",
     )
-    if not any(key in config for key in legacy_fields):
+    # RA-BC now reads a dataset score, so a saved progress file and head can't be carried over.
+    progress_file_fields = ("progress_path", "head_mode")
+    saved_sample_weighting = config.get("sample_weighting") or {}
+    has_progress_file_fields = any(key in saved_sample_weighting for key in progress_file_fields)
+    if not any(key in config for key in legacy_fields) and not has_progress_file_fields:
         return None
 
     migrated_config = dict(config)
     use_rabc = bool(migrated_config.pop("use_rabc", False))
-    rabc_progress_path = migrated_config.pop("rabc_progress_path", None)
+    migrated_config.pop("rabc_progress_path", None)
     rabc_kappa = migrated_config.pop("rabc_kappa", None)
     rabc_epsilon = migrated_config.pop("rabc_epsilon", None)
-    rabc_head_mode = migrated_config.pop("rabc_head_mode", None)
+    migrated_config.pop("rabc_head_mode", None)
 
     # New configs may already define sample_weighting explicitly. In that case,
     # legacy fields are ignored after being stripped from the payload.
     if migrated_config.get("sample_weighting") is None and use_rabc:
         sample_weighting: dict[str, Any] = {"type": "rabc"}
-        if rabc_progress_path is not None:
-            sample_weighting["progress_path"] = rabc_progress_path
         if rabc_kappa is not None:
             sample_weighting["kappa"] = rabc_kappa
         if rabc_epsilon is not None:
             sample_weighting["epsilon"] = rabc_epsilon
-        if rabc_head_mode is not None:
-            sample_weighting["head_mode"] = rabc_head_mode
         migrated_config["sample_weighting"] = sample_weighting
+    elif has_progress_file_fields:
+        migrated_config["sample_weighting"] = {
+            key: value for key, value in saved_sample_weighting.items() if key not in progress_file_fields
+        }
 
+    weighting = migrated_config.get("sample_weighting")
+    if weighting and weighting.get("type", "rabc") == "rabc" and not weighting.get("score_name"):
+        logging.warning(
+            f"Loaded a {TRAIN_CONFIG_NAME} whose RA-BC read a progress file, which LeRobot no longer reads. "
+            "Score the dataset with `lerobot-score`, then pass `--sample_weighting.score_name` and "
+            "`--sample_weighting.signal_name`, e.g. `--sample_weighting.score_name=sarm "
+            "--sample_weighting.signal_name=reward.sarm.sparse_progress`."
+        )
     return migrated_config
 
 

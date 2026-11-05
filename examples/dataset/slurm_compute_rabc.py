@@ -15,23 +15,28 @@
 # limitations under the License.
 
 """
-SLURM-distributed SARM RA-BC annotation pipeline.
+SLURM-distributed SARM scoring for RA-BC.
 
-Computes SARM progress values for all frames in a dataset, distributed across
-SLURM workers, then merges the shards into a single sarm_progress.parquet.
+Scores every frame of a dataset with SARM across SLURM workers, then merges the
+workers' scores into the dataset score `sarm`, which RA-BC reads with
+score_name=sarm and signal_name=reward.sarm.sparse_progress.
 
 Two subcommands, each a separate SLURM submission:
 
-  compute    – N workers, each computes progress for a subset of episodes
-  aggregate  – 1 worker, merges N shards into sarm_progress.parquet, pushes to hub
+  compute    – N workers, each scores a subset of episodes as the score `sarm-rank<N>`
+  aggregate  – 1 worker, merges the worker scores into `sarm`, optionally pushes it
+
+Both subcommands read and write the same dataset root, so it must be a writable
+directory shared by all workers, with the dataset already downloaded.
 
 Usage:
     python slurm_compute_rabc.py compute \\
-        --repo-id user/dataset --reward-model-path user/sarm_model \\
+        --repo-id user/dataset --dataset-root /shared/user/dataset \\
+        --reward-model-path user/sarm_model \\
         --stride 10 --device cpu --workers 50 --partition cpu
 
     python slurm_compute_rabc.py aggregate \\
-        --repo-id user/dataset --reward-model-path user/sarm_model \\
+        --repo-id user/dataset --dataset-root /shared/user/dataset \\
         --partition cpu --push-to-hub
 """
 
@@ -43,255 +48,85 @@ from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
 
 
-class ComputeProgressShards(PipelineStep):
-    """Each worker computes SARM progress for its assigned episodes."""
+class ComputeWorkerScores(PipelineStep):
+    """Each worker scores its assigned episodes as its own dataset score."""
 
     def __init__(
-        self, repo_id, reward_model_path, stride=1, head_mode="sparse", device="cpu", shard_dir="rabc_shards"
+        self, repo_id, dataset_root, reward_model_path, score_name, stride=1, head_mode="sparse", device="cpu"
     ):
         super().__init__()
-        if stride < 1:
-            raise ValueError(f"stride must be >= 1, got {stride}")
         self.repo_id = repo_id
+        self.dataset_root = dataset_root
         self.reward_model_path = reward_model_path
+        self.score_name = score_name
         self.stride = stride
         self.head_mode = head_mode
         self.device = device
-        self.shard_dir = shard_dir
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import logging
-        from pathlib import Path
 
-        import numpy as np
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-        import torch
-        from tqdm import tqdm
-
-        from lerobot.rewards.sarm.compute_rabc_weights import (
-            generate_all_frame_indices,
-            interpolate_progress,
-            load_sarm_resources,
-        )
+        from lerobot.configs.rewards import RewardModelConfig
+        from lerobot.datasets import LeRobotDataset
+        from lerobot.rewards import make_frame_scorer, make_reward_model
         from lerobot.utils.utils import init_logging
 
         init_logging()
 
-        dataset, reward_model, preprocess = load_sarm_resources(
-            self.repo_id,
-            self.reward_model_path,
-            self.device,
-        )
-
-        if hasattr(preprocess, "eval"):
-            preprocess.eval()
-        for step in preprocess.steps:
-            if hasattr(step, "eval"):
-                step.eval()
-
-        image_key = reward_model.config.image_key
-        state_key = reward_model.config.state_key
-        frame_gap = reward_model.config.frame_gap
-        center_idx = reward_model.config.n_obs_steps // 2
-
-        dual_mode = reward_model.config.uses_dual_heads
-        compute_sparse = self.head_mode in ("sparse", "both") or not dual_mode
-        compute_dense = self.head_mode in ("dense", "both") and dual_mode
-
+        dataset = LeRobotDataset(self.repo_id, root=self.dataset_root)
         my_episodes = list(range(dataset.num_episodes))[rank::world_size]
         if not my_episodes:
             logging.info(f"Rank {rank}: no episodes assigned")
             return
         logging.info(f"Rank {rank}: {len(my_episodes)} / {dataset.num_episodes} episodes")
 
-        all_rows = []
-
-        for ep_idx in tqdm(my_episodes, desc=f"Rank {rank}"):
-            ep = dataset.meta.episodes[ep_idx]
-            ep_start, ep_end = ep["dataset_from_index"], ep["dataset_to_index"]
-            task = dataset[ep_start].get("task", "perform the task")
-
-            all_ep_indices = generate_all_frame_indices(ep_start, ep_end, frame_gap)
-            if self.stride > 1:
-                compute_indices = [i for i in all_ep_indices if (i - ep_start) % self.stride == 0]
-                if (ep_end - 1) not in compute_indices:
-                    compute_indices.append(ep_end - 1)
-                compute_indices = sorted(set(compute_indices))
-            else:
-                compute_indices = all_ep_indices
-
-            frame_results = {}
-            for qi in tqdm(compute_indices, desc=f"  Ep {ep_idx}", leave=False):
-                try:
-                    sample = dataset[qi]
-                    batch = {
-                        image_key: sample[image_key],
-                        "task": task,
-                        "index": qi,
-                        "episode_index": ep_idx,
-                    }
-                    if state_key in sample:
-                        batch[state_key] = sample[state_key]
-
-                    with torch.no_grad():
-                        processed = preprocess(batch)
-                        vf = processed["video_features"].to(self.device)
-                        tf = processed["text_features"].to(self.device)
-                        sf = processed.get("state_features")
-                        if sf is not None:
-                            sf = sf.to(self.device)
-                        lengths = processed.get("lengths")
-
-                        sparse_val = dense_val = np.nan
-                        if compute_sparse:
-                            prediction = reward_model.predict_progress(
-                                {
-                                    "text_features": tf,
-                                    "video_features": vf,
-                                    "state_features": sf,
-                                    "lengths": lengths,
-                                },
-                                head_mode="sparse",
-                            )
-                            sparse_val = prediction.progress[0, center_idx].cpu().item()
-                        if compute_dense:
-                            prediction = reward_model.predict_progress(
-                                {
-                                    "text_features": tf,
-                                    "video_features": vf,
-                                    "state_features": sf,
-                                    "lengths": lengths,
-                                },
-                                head_mode="dense",
-                            )
-                            dense_val = prediction.progress[0, center_idx].cpu().item()
-
-                        frame_results[qi] = (sparse_val, dense_val)
-                except Exception as e:
-                    logging.warning(f"Failed frame {qi}: {e}")
-
-            if not frame_results:
-                logging.warning(f"Episode {ep_idx}: all frames failed, skipping")
-                continue
-
-            # Interpolate to all frames in this episode
-            computed_idx = np.array(sorted(frame_results.keys()))
-            all_frame_arr = np.arange(ep_start, ep_end)
-
-            sparse_vals = np.array([frame_results[i][0] for i in computed_idx]) if compute_sparse else None
-            dense_vals = np.array([frame_results[i][1] for i in computed_idx]) if compute_dense else None
-
-            if self.stride > 1 and len(computed_idx) > 1:
-                if compute_sparse:
-                    sparse_vals = interpolate_progress(computed_idx, sparse_vals, all_frame_arr)
-                if compute_dense:
-                    dense_vals = interpolate_progress(computed_idx, dense_vals, all_frame_arr)
-                output_frames = all_frame_arr
-            else:
-                # Use only successfully computed frames to avoid indexing mismatch on failures
-                output_frames = computed_idx
-
-            for i, fi in enumerate(output_frames):
-                row = {"index": int(fi), "episode_index": ep_idx, "frame_index": int(fi - ep_start)}
-                if compute_sparse:
-                    row["progress_sparse"] = float(sparse_vals[i])
-                if compute_dense:
-                    row["progress_dense"] = float(dense_vals[i])
-                all_rows.append(row)
-
-        if all_rows:
-            import pandas as pd
-
-            df = pd.DataFrame(all_rows).sort_values("index").reset_index(drop=True)
-            table = pa.Table.from_pandas(df, preserve_index=False)
-            table = table.replace_schema_metadata({b"reward_model_path": self.reward_model_path.encode()})
-            shard_dir = Path(self.shard_dir)
-            shard_dir.mkdir(parents=True, exist_ok=True)
-            out = shard_dir / f"shard_{rank:05d}.parquet"
-            pq.write_table(table, out)
-            logging.info(f"Rank {rank}: saved {len(df)} rows to {out}")
+        config = RewardModelConfig.from_pretrained(
+            self.reward_model_path, cli_overrides=[f"--device={self.device}"]
+        )
+        scorer = make_frame_scorer(make_reward_model(config), head_mode=self.head_mode, stride=self.stride)
+        dataset.add_score(scorer, name=f"{self.score_name}-rank{rank:05d}", episodes=my_episodes)
 
 
-class AggregateProgress(PipelineStep):
-    """Merge all shard parquets into final sarm_progress.parquet."""
+class MergeWorkerScores(PipelineStep):
+    """Merge the workers' scores into one dataset score."""
 
-    def __init__(self, repo_id, reward_model_path, shard_dir="rabc_shards", push_to_hub=False):
+    def __init__(self, repo_id, dataset_root, score_name, push_to_hub=False):
         super().__init__()
         self.repo_id = repo_id
-        self.reward_model_path = reward_model_path
-        self.shard_dir = shard_dir
+        self.dataset_root = dataset_root
+        self.score_name = score_name
         self.push_to_hub = push_to_hub
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
-        import datetime
         import logging
-        import os
-        from pathlib import Path
-
-        import pandas as pd
-        import pyarrow as pa
-        import pyarrow.parquet as pq
 
         from lerobot.datasets import LeRobotDataset
         from lerobot.utils.utils import init_logging
 
         init_logging()
+
         if rank != 0:
             return
 
-        shard_dir = Path(self.shard_dir)
-        shards = sorted(shard_dir.glob("shard_*.parquet"))
-        if not shards:
-            raise FileNotFoundError(f"No shards found in {shard_dir}")
-
-        # Log shard modification time range to help detect stale files
-        mtimes = [os.path.getmtime(s) for s in shards]
-        oldest = datetime.datetime.fromtimestamp(min(mtimes)).isoformat(timespec="seconds")
-        newest = datetime.datetime.fromtimestamp(max(mtimes)).isoformat(timespec="seconds")
-        logging.info(f"Aggregating {len(shards)} shards (oldest: {oldest}, newest: {newest})")
-
-        df = pd.concat([pd.read_parquet(s) for s in shards], ignore_index=True)
-        df = df.sort_values("index").reset_index(drop=True)
-
-        table = pa.Table.from_pandas(df, preserve_index=False)
-        table = table.replace_schema_metadata({b"reward_model_path": self.reward_model_path.encode()})
-
-        temp_ds = LeRobotDataset(self.repo_id, download_videos=False)
-        out_path = Path(temp_ds.root) / "sarm_progress.parquet"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(table, out_path)
-        logging.info(f"Saved {len(df)} rows to {out_path}")
-
-        for col in ["progress_sparse", "progress_dense"]:
-            if col in df.columns:
-                v = df[col].dropna()
-                logging.info(
-                    f"{col}: mean={v.mean():.4f} std={v.std():.4f} min={v.min():.4f} max={v.max():.4f}"
-                )
+        dataset = LeRobotDataset(self.repo_id, root=self.dataset_root)
+        worker_scores = [name for name in dataset.list_scores() if name.startswith(f"{self.score_name}-rank")]
+        if not worker_scores:
+            raise ValueError(f"No worker scores named {self.score_name}-rank* in {dataset.root}")
+        logging.info(f"Merging {len(worker_scores)} worker scores into {self.score_name!r}")
+        dataset.merge_scores(worker_scores, name=self.score_name)
 
         if self.push_to_hub:
-            from huggingface_hub import HfApi
-
-            api = HfApi()
-            hub_path = "sarm_progress.parquet"
-            logging.info(f"Uploading to {self.repo_id}/{hub_path}")
-            api.upload_file(
-                path_or_fileobj=str(out_path),
-                path_in_repo=hub_path,
-                repo_id=self.repo_id,
-                repo_type="dataset",
-            )
-            logging.info(f"Uploaded: https://huggingface.co/datasets/{self.repo_id}/blob/main/{hub_path}")
+            dataset.push_score_to_hub(self.score_name)
 
 
 def make_compute_executor(
     repo_id,
+    dataset_root,
     reward_model_path,
+    score_name,
     stride,
     head_mode,
     device,
-    shard_dir,
     logs_dir,
     job_name,
     slurm,
@@ -302,7 +137,9 @@ def make_compute_executor(
 ):
     kwargs = {
         "pipeline": [
-            ComputeProgressShards(repo_id, reward_model_path, stride, head_mode, device, str(shard_dir)),
+            ComputeWorkerScores(
+                repo_id, str(dataset_root), reward_model_path, score_name, stride, head_mode, device
+            ),
         ],
         "logging_dir": str(logs_dir / job_name),
     }
@@ -327,8 +164,8 @@ def make_compute_executor(
 
 def make_aggregate_executor(
     repo_id,
-    reward_model_path,
-    shard_dir,
+    dataset_root,
+    score_name,
     logs_dir,
     job_name,
     slurm,
@@ -339,7 +176,7 @@ def make_aggregate_executor(
 ):
     kwargs = {
         "pipeline": [
-            AggregateProgress(repo_id, reward_model_path, str(shard_dir), push_to_hub),
+            MergeWorkerScores(repo_id, str(dataset_root), score_name, push_to_hub),
         ],
         "logging_dir": str(logs_dir / job_name),
     }
@@ -370,10 +207,16 @@ def _add_shared_args(p):
         help="Hugging Face repository identifier, e.g. 'user/dataset'.",
     )
     p.add_argument(
-        "--shard-dir",
+        "--dataset-root",
         type=Path,
-        default=Path("rabc_shards"),
-        help="Directory to read/write per-rank parquet shards.",
+        required=True,
+        help="Writable dataset root shared by all workers, with the dataset already downloaded.",
+    )
+    p.add_argument(
+        "--score-name",
+        type=str,
+        default="sarm",
+        help="Name of the merged dataset score; workers write <score-name>-rank<N>.",
     )
     p.add_argument(
         "--logs-dir",
@@ -415,7 +258,7 @@ def _add_shared_args(p):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="SLURM-distributed SARM RA-BC annotation pipeline",
+        description="SLURM-distributed SARM scoring for RA-BC",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -423,7 +266,7 @@ def main():
     # compute subcommand
     cp = sub.add_parser(
         "compute",
-        help="Distribute progress computation across SLURM workers.",
+        help="Distribute scoring across SLURM workers.",
     )
     _add_shared_args(cp)
     cp.add_argument(
@@ -455,25 +298,19 @@ def main():
         "--workers",
         type=int,
         default=50,
-        help="Number of parallel SLURM tasks (one shard per worker).",
+        help="Number of parallel SLURM tasks (one worker score each).",
     )
 
     # aggregate subcommand
     ap = sub.add_parser(
         "aggregate",
-        help="Merge per-rank shards into a single sarm_progress.parquet.",
+        help="Merge the worker scores into one dataset score.",
     )
     _add_shared_args(ap)
     ap.add_argument(
-        "--reward-model-path",
-        type=str,
-        required=True,
-        help="Path or HF repo id of the SARM reward model (stored in parquet metadata).",
-    )
-    ap.add_argument(
         "--push-to-hub",
         action="store_true",
-        help="Upload sarm_progress.parquet to the Hugging Face Hub after aggregation.",
+        help="Upload the merged score to the Hugging Face Hub.",
     )
 
     args = parser.parse_args()

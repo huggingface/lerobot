@@ -19,13 +19,19 @@ Create MP4 (or GIF) videos with per-frame progress overlay for specified episode
 
 Downloads datasets from HuggingFace, seeks directly into the episode segment
 of the source video, draws a progress line on each frame, and writes the result.
-The progress data is read from a parquet file that lives alongside the dataset
-(configurable via ``--progress-file``).
+The progress is one signal of a dataset score written by ``lerobot-score``, by
+default the score ``sarm`` (configurable via ``--score-name`` and ``--signal-name``).
 
 Usage:
     python examples/dataset/create_progress_videos.py \
         --repo-id lerobot-data-collection/level2_final_quality3 \
         --episode 1100
+
+    python examples/dataset/create_progress_videos.py \
+        --repo-id lerobot-data-collection/level2_final_quality3 \
+        --episode 1100 \
+        --score-name robometer \
+        --signal-name reward.robometer.progress
 
     python examples/dataset/create_progress_videos.py \
         --repo-id lerobot-data-collection/level2_final_quality3 \
@@ -48,6 +54,8 @@ import numpy as np
 import pandas as pd
 from huggingface_hub import snapshot_download
 
+from lerobot.datasets import LeRobotDataset
+
 GRAPH_Y_TOP_FRAC = 0.01
 GRAPH_Y_BOT_FRAC = 0.99
 LINE_THICKNESS = 3
@@ -55,33 +63,22 @@ SHADOW_THICKNESS = 6
 REF_ALPHA = 0.45
 FILL_ALPHA = 0.55
 SCORE_FONT_SCALE = 0.8
+DEFAULT_SCORE_NAME = "sarm"
 TASK_FONT_SCALE = 0.55
 
 
-def download_episode_metadata(
-    repo_id: str, episode: int, progress_file: str = "sarm_progress.parquet"
-) -> Path:
-    """Download only the metadata and per-frame progress file for a dataset.
+def load_episode_dataset(repo_id: str, episode: int) -> LeRobotDataset:
+    """Load the metadata, the episode's data and the dataset scores, without videos.
 
     Args:
         repo_id: HuggingFace dataset repository ID.
-        episode: Episode index (used for logging only; all meta is fetched).
-        progress_file: Filename of the per-frame progress parquet inside the
-            dataset repo.
+        episode: Episode index to download.
 
     Returns:
-        Local cache path for the downloaded snapshot.
+        The dataset restricted to that episode.
     """
-    logging.info("[1/4] Downloading metadata + %s for %s (episode %d) ...", progress_file, repo_id, episode)
-    local_path = Path(
-        snapshot_download(
-            repo_id=repo_id,
-            repo_type="dataset",
-            allow_patterns=["meta/**", progress_file],
-            ignore_patterns=["*.mp4"],
-        )
-    )
-    return local_path
+    logging.info("[1/4] Downloading metadata, episode %d and dataset scores for %s ...", episode, repo_id)
+    return LeRobotDataset(repo_id, episodes=[episode], download_videos=False)
 
 
 def load_episode_meta(local_path: Path, episode: int, camera_key: str | None) -> dict:
@@ -222,42 +219,38 @@ def download_video_file(repo_id: str, local_path: Path, video_rel: str) -> Path:
 
 
 def load_progress_data(
-    local_path: Path, episode: int, progress_file: str = "sarm_progress.parquet"
+    dataset: LeRobotDataset, episode: int, score_name: str, signal_name: str | None = None
 ) -> np.ndarray | None:
-    """Load per-frame progress values for an episode.
+    """Load an episode's per-frame values of one dataset score signal.
 
     Args:
-        local_path: Dataset cache root.
+        dataset: Dataset holding the score.
         episode: Episode index.
-        progress_file: Filename of the per-frame progress parquet.
+        score_name: Name of the dataset score, such as ``sarm``.
+        signal_name: Signal to read. Defaults to the score's first signal, which for
+            SARM is the dense-head progress when the score has it.
 
     Returns:
-        Sorted (N, 2) array of (frame_index, progress), or None if unavailable.
+        Sorted (N, 2) array of (frame_index, value), or None if unavailable.
     """
-    parquet_path = local_path / progress_file
-    if not parquet_path.exists():
-        logging.warning("%s not found", progress_file)
+    available = dataset.list_scores()
+    if score_name not in available:
+        logging.warning("Dataset score %r not found; available scores: %s", score_name, available)
         return None
-    df = pd.read_parquet(parquet_path)
-    logging.info("   %s columns: %s", progress_file, list(df.columns))
-    episode_df = df[df["episode_index"] == episode].copy()
+    signals = sorted(dataset.get_score_descriptors(score_name))
+    signal_name = signal_name or signals[0]
+    if signal_name not in signals:
+        logging.warning("Signal %r not in score %r; available signals: %s", signal_name, score_name, signals)
+        return None
+
+    scores = dataset.read_score(score_name).to_pandas()
+    episode_df = scores[scores["episode_index"] == episode].sort_values("frame_index")
     if episode_df.empty:
-        logging.warning("No progress rows for episode %d in %s", episode, progress_file)
+        logging.warning("No rows for episode %d in score %r", episode, score_name)
         return None
-    episode_df = episode_df.sort_values("frame_index")
 
-    if "progress_dense" in episode_df.columns and episode_df["progress_dense"].notna().any():
-        progress_column = "progress_dense"
-    elif "progress_sparse" in episode_df.columns:
-        progress_column = "progress_sparse"
-    else:
-        progress_columns = [c for c in episode_df.columns if "progress" in c.lower()]
-        if not progress_columns:
-            return None
-        progress_column = progress_columns[0]
-
-    logging.info("   Using progress column: '%s'", progress_column)
-    return episode_df[["frame_index", progress_column]].rename(columns={progress_column: "progress"}).values
+    logging.info("   Using signal %r of score %r", signal_name, score_name)
+    return episode_df[["frame_index", signal_name]].to_numpy()
 
 
 def _precompute_pixel_coords(
@@ -585,7 +578,8 @@ def process_dataset(
     camera_key: str | None,
     output_dir: Path,
     create_gif: bool = False,
-    progress_file: str = "sarm_progress.parquet",
+    score_name: str = DEFAULT_SCORE_NAME,
+    signal_name: str | None = None,
 ) -> Path | None:
     """Full pipeline: download, extract metadata, composite progress, write output.
 
@@ -595,8 +589,8 @@ def process_dataset(
         camera_key: Camera key to use, or None for auto-selection.
         output_dir: Directory to write output files.
         create_gif: If True, also generate a GIF from the MP4.
-        progress_file: Filename of the per-frame progress parquet inside the
-            dataset repo.
+        score_name: Name of the dataset score holding the progress.
+        signal_name: Signal of that score to draw, or None for its first signal.
 
     Returns:
         Path to the final output file, or None on failure.
@@ -604,7 +598,8 @@ def process_dataset(
     safe_name = repo_id.replace("/", "_")
     logging.info("Processing: %s  |  episode %d", repo_id, episode)
 
-    local_path = download_episode_metadata(repo_id, episode, progress_file)
+    dataset = load_episode_dataset(repo_id, episode)
+    local_path = Path(dataset.root)
     logging.info("   Local cache: %s", local_path)
 
     episode_meta = load_episode_meta(local_path, episode, camera_key)
@@ -612,9 +607,9 @@ def process_dataset(
 
     video_path = download_video_file(repo_id, local_path, episode_meta["video_rel"])
 
-    progress_data = load_progress_data(local_path, episode, progress_file)
+    progress_data = load_progress_data(dataset, episode, score_name, signal_name)
     if progress_data is None:
-        logging.error("Could not load progress data from %s. Skipping overlay.", progress_file)
+        logging.error("Could not load progress data from score %r. Skipping overlay.", score_name)
         return None
 
     logging.info("   Progress frames: %d", len(progress_data))
@@ -671,13 +666,16 @@ def main() -> None:
         help="Also generate a GIF from the MP4 output.",
     )
     parser.add_argument(
-        "--progress-file",
+        "--score-name",
         type=str,
-        default="sarm_progress.parquet",
-        help=(
-            "Filename of the per-frame progress parquet inside the dataset repo "
-            "(default: 'sarm_progress.parquet')."
-        ),
+        default=DEFAULT_SCORE_NAME,
+        help=f"Dataset score holding the progress (default: '{DEFAULT_SCORE_NAME}').",
+    )
+    parser.add_argument(
+        "--signal-name",
+        type=str,
+        default=None,
+        help="Signal of the score to draw, e.g. 'reward.sarm.sparse_progress' (default: its first signal).",
     )
     args = parser.parse_args()
 
@@ -691,7 +689,8 @@ def main() -> None:
         camera_key=args.camera_key,
         output_dir=args.output_dir,
         create_gif=args.gif,
-        progress_file=args.progress_file,
+        score_name=args.score_name,
+        signal_name=args.signal_name,
     )
 
     if result:
