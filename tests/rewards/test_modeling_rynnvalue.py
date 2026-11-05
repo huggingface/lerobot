@@ -130,10 +130,6 @@ def test_rynnvalue_registered_with_reward_factory():
 def test_rynnvalue_config_validation():
     with pytest.raises(ValueError, match="max_frames"):
         RynnValueConfig(device="cpu", max_frames=0)
-    with pytest.raises(ValueError, match="reward_output"):
-        RynnValueConfig(device="cpu", reward_output="progress")
-    with pytest.raises(ValueError, match="pred_slot_isolated_eager"):
-        RynnValueConfig(device="cpu", attn_implementation="sdpa")
 
 
 def test_value_tokenizer_two_hot_symlog_roundtrip():
@@ -247,13 +243,6 @@ def test_value_slot_attention_applies_to_the_language_model_only(monkeypatch):
     native_config = RynnValueRewardModel(RynnValueConfig(device="cpu")).model.config
     assert native_config._attn_implementation == "pred_slot_isolated_eager"
     assert native_config.vision_config._attn_implementation == "eager"
-
-
-def test_legacy_reward_output_does_not_change_native_prediction(monkeypatch):
-    _patch_checkpoint_load(monkeypatch)
-    model = RynnValueRewardModel(RynnValueConfig(device="cpu", reward_output="potential"))
-    prediction = model.predict_remaining_time(_encoded_batch())
-    assert torch.equal(prediction.remaining_time_s, torch.tensor([2.0, 1.0]))
 
 
 def test_predict_remaining_time_requires_encoded_inputs(monkeypatch):

@@ -119,7 +119,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             )
         else:
             model_config = RynnValueLangConfig.from_dict(config.model_config)
-        model_config._attn_implementation = config.attn_implementation
+        model_config._attn_implementation = "pred_slot_isolated_eager"
         # Since transformers 5.22, Qwen3-VL passes the value-slot tensors on to the vision tower
         # too, which the official model runs without them, i.e. as plain eager attention.
         model_config.vision_config._attn_implementation = "eager"
