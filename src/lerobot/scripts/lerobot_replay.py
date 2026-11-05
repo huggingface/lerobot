@@ -57,6 +57,7 @@ from lerobot.robots import (  # noqa: F401
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
+    bi_yam_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
@@ -68,6 +69,7 @@ from lerobot.robots import (  # noqa: F401
     rebot_b601_follower,
     so_follower,
     unitree_g1,
+    yam_follower,
 )
 from lerobot.utils.constants import ACTION
 from lerobot.utils.cycle_timer import CycleTimer

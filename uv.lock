@@ -3900,6 +3900,13 @@ wallx = [
 xvla = [
     { name = "transformers" },
 ]
+yam = [
+    { name = "cmeel-tinyxml2" },
+    { name = "cmeel-urdfdom" },
+    { name = "motorbridge" },
+    { name = "placo" },
+    { name = "python-can" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -3947,6 +3954,7 @@ requires-dist = [
     { name = "lerobot", extras = ["av-dep"], marker = "extra == 'evaluation'" },
     { name = "lerobot", extras = ["can-dep"], marker = "extra == 'damiao'" },
     { name = "lerobot", extras = ["can-dep"], marker = "extra == 'robstride'" },
+    { name = "lerobot", extras = ["can-dep"], marker = "extra == 'yam'" },
     { name = "lerobot", extras = ["cosmos3"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["damiao"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["damiao"], marker = "extra == 'openarms'" },
@@ -4008,6 +4016,7 @@ requires-dist = [
     { name = "lerobot", extras = ["metaworld"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["molmoact2"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["motorbridge-dep"], marker = "extra == 'rebot'" },
+    { name = "lerobot", extras = ["motorbridge-dep"], marker = "extra == 'yam'" },
     { name = "lerobot", extras = ["motorbridge-smart-servo-dep"], marker = "extra == 'rebot'" },
     { name = "lerobot", extras = ["multi-task-dit"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["notebook"], marker = "extra == 'dev'" },
@@ -4023,6 +4032,7 @@ requires-dist = [
     { name = "lerobot", extras = ["pi"], marker = "extra == 'fineart-vla'" },
     { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'hilserl'" },
     { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'kinematics'" },
+    { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'yam'" },
     { name = "lerobot", extras = ["pusht"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'gamepad'" },
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'hopejr'" },
@@ -4097,6 +4107,7 @@ requires-dist = [
     { name = "lerobot", extras = ["wall-oss-05"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["wallx"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["xvla"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["yam"], marker = "extra == 'all'" },
     { name = "lerobot-lancedb", marker = "extra == 'lancedb-convert'", specifier = ">=0.3.1,<0.4.0" },
     { name = "liger-kernel", marker = "sys_platform == 'linux' and extra == 'fineart-vla-kernels'", specifier = ">=0.8.0,<0.9.0" },
     { name = "matplotlib", marker = "extra == 'matplotlib-dep'", specifier = ">=3.10.3,<4.0.0" },
@@ -4160,7 +4171,7 @@ requires-dist = [
     { name = "trackio", extras = ["gpu"], marker = "sys_platform != 'darwin' and extra == 'training'", specifier = ">=0.44.0,<1.0.0" },
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.22.0,<5.23.0" },
 ]
-provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "sentencepiece-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "rustypot-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "serial-motors", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "dm05", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "longwam", "fastwam", "flux3", "evo1", "fineart-vla", "fineart-vla-kernels", "hilserl", "vla-jepa", "lingbot-va", "lingbot-vla-v2", "wall-oss-05", "g05", "lawam", "cosmos3", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "sentencepiece-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "rustypot-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "serial-motors", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "yam", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "dm05", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "longwam", "fastwam", "flux3", "evo1", "fineart-vla", "fineart-vla-kernels", "hilserl", "vla-jepa", "lingbot-va", "lingbot-vla-v2", "wall-oss-05", "g05", "lawam", "cosmos3", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "lerobot-lancedb"
