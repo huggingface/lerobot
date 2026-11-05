@@ -28,6 +28,7 @@ from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from .classifier.configuration_classifier import RewardClassifierConfig
 from .pretrained import PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig
+from .rynnvalue.configuration_rynnvalue import RynnValueConfig
 from .sarm.configuration_sarm import SARMConfig
 from .topreward.configuration_topreward import TOPRewardConfig
 
@@ -219,6 +220,14 @@ def make_reward_pre_post_processors(
         from lerobot.rewards.topreward.processor_topreward import make_topreward_pre_post_processors
 
         return make_topreward_pre_post_processors(
+            config=reward_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(reward_cfg, RynnValueConfig):
+        from lerobot.rewards.rynnvalue.processor_rynnvalue import make_rynnvalue_pre_post_processors
+
+        return make_rynnvalue_pre_post_processors(
             config=reward_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
