@@ -16,13 +16,18 @@ from collections.abc import Callable, Mapping
 from types import SimpleNamespace
 from typing import Any
 
-import datasets
 import numpy as np
 import pytest
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+import datasets
 
 from lerobot.datasets import FrameSignals, LeRobotDataset, SignalDescriptor
 
 pq = pytest.importorskip("pyarrow.parquet")
+
+pytestmark = pytest.mark.dataset
 
 PROGRESS_NAME = "reward.test.progress"
 PROGRESS_DESCRIPTOR = SignalDescriptor(

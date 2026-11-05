@@ -17,10 +17,14 @@
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.scores.storage import _decode_descriptors, _decode_provenance, _read_score_path
 
 pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
+
+pytestmark = pytest.mark.dataset
 
 
 def test_read_score_recognizes_legacy_progress_sidecar(tmp_path):
