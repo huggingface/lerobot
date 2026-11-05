@@ -31,8 +31,8 @@ class RynnValueConfig(RewardModelConfig):
     model_revision: str | None = None
     torch_dtype: str = "bfloat16"
     attn_implementation: str = "pred_slot_isolated_eager"
-    # Embedded by the conversion script so LeRobot checkpoints can construct
-    # the architecture without consulting the original repository.
+    # Native architecture config, embedded on save so a LeRobot checkpoint rebuilds
+    # the model from its own `config.json` and `model.safetensors`.
     model_config: dict[str, Any] | None = None
 
     image_key: str = OBS_IMAGES + ".top"
