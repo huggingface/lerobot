@@ -342,6 +342,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self._download(download_videos, token=token)
             reader.load_and_activate()
 
+        # Fail fast on episodes whose metadata points past the end of their video
+        # files (e.g. datasets truncated during upload or conversion).
+        reader.validate_episode_video_timestamps(tolerance_s=self.tolerance_s)
+
         # Detect write-mode params for backward compatibility
         _has_write_params = streaming_encoding or batch_encoding_size != 1
         if _has_write_params:
