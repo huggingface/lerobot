@@ -383,7 +383,10 @@ class RolloutStrategy(abc.ABC):
                 robot.send_action(dict(target))
                 precise_sleep(1 / fps)
                 obs = robot.get_observation()
-                distance = max(abs(float(obs[k]) - target[k]) for k in target)
+                positions = {k: float(obs[k]) for k in target}
+                if not all(math.isfinite(value) for value in positions.values()):
+                    raise ValueError("Return movement requires finite observed positions")
+                distance = max(abs(positions[k] - target[k]) for k in target)
                 now = time.perf_counter()
                 if distance < closest - _RETURN_PROGRESS_FRACTION * start_distance:
                     closest, closer_at = distance, now

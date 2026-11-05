@@ -197,6 +197,22 @@ def test_return_ends_as_soon_as_a_stop_is_requested(monkeypatch):
     assert len(robot.sent) == 3
 
 
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("invalid_first", [False, True])
+def test_return_rejects_nonfinite_settle_observation(
+    monkeypatch, invalid: float, invalid_first: bool
+) -> None:
+    robot = PositionRobot()
+    keys = ["joint.pos", "other.pos"] if invalid_first else ["other.pos", "joint.pos"]
+    readings = iter([dict.fromkeys(keys, 7.0)])
+    monkeypatch.setattr(
+        robot, "get_observation", lambda: next(readings, {"joint.pos": invalid, "other.pos": 0.0})
+    )
+    skip_return_waits(monkeypatch)
+    hw = SimpleNamespace(robot_wrapper=ThreadSafeRobot(robot), initial_position=dict.fromkeys(keys, 0.0))
+    assert not BaseStrategy.return_to_initial_position(hw, duration_s=0.02, fps=50)
+
+
 @pytest.mark.parametrize("operation", ["send_action", "hold"])
 def test_hardware_io_failure_prevents_teardown_motion(operation, monkeypatch, caplog):
     engine = GateEngine()
