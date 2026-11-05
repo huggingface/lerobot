@@ -99,6 +99,8 @@ def _(
         return torch.tensor(value.item(), dtype=dtype, device=device)
 
     # Create tensor from numpy array.
+    if any(stride < 0 for stride in value.strides):
+        value = value.copy()
     tensor = torch.from_numpy(value)
 
     # Apply dtype and device conversion if specified.
