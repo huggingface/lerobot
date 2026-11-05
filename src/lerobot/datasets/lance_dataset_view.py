@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lazy, read-only column views for storage-specific dataset readers."""
+"""Lazy, read-only column views for the Lance dataset reader."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from datasets.formatting import get_formatter
 if TYPE_CHECKING:
     import datasets
 
-    from .dataset_reader import BaseDatasetReader
+    from .lance_backend import LanceDatasetReader
 
 
 class DatasetColumnView:
@@ -41,7 +41,7 @@ class DatasetColumnView:
 
     def __init__(
         self,
-        reader: BaseDatasetReader,
+        reader: LanceDatasetReader,
         column_names: str | list[str],
         format_type: str | None = "custom",
         format_kwargs: dict[str, Any] | None = None,

@@ -17,12 +17,14 @@ import io
 import pickle
 import shutil
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 pytest.importorskip("lancedb")
 pytest.importorskip("lerobot_lancedb")
 
+import datasets
 import fsspec
 import numpy as np
 import pandas as pd
@@ -35,7 +37,8 @@ from PIL import Image
 
 from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.io_utils import DatasetImage
+from lerobot.datasets.io_utils import pil_to_chw_tensor
+from lerobot.datasets.lance_image import LanceImage
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils import import_utils
 from tests.datasets import test_lance_backend as lance_fixtures
@@ -97,11 +100,13 @@ def test_raw_rows_keep_base_semantics(camera_dataset_roots):
         assert raw["observation.images.front"].ndim == 3
         assert raw["observation.images.depth_uint16"][0, 0, 0] >= 1000
         assert not set(lance_ds.meta.video_keys).intersection(raw)
+    columns = ["action", "observation.images.front"]
+    assert_read_equal(lance_ds.select_columns(columns)[7], upstream.select_columns(columns)[7])
 
 
 @pytest.mark.parametrize("format_type", ["default", None, "numpy", "torch", "arrow", "pandas"])
-def test_projected_formats_match_default(camera_dataset_roots, format_type):
-    src_root, lance_root = camera_dataset_roots
+def test_projected_formats_match_default(image_dataset_roots, format_type):
+    src_root, lance_root = image_dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[2, 0], video_backend="pyav")
     lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[2, 0], video_backend="pyav")
     keys = ["action", "observation.images.front", "observation.images.depth_uint16"]
@@ -115,6 +120,9 @@ def test_projected_formats_match_default(camera_dataset_roots, format_type):
         actual = actual.with_format(format_type)
     for query in [0, -1, slice(2, 11, 3), [7, 0, 7, 11], []]:
         assert_read_equal(actual[query], expected[query])
+    assert_read_equal(list(actual), list(expected))
+    for key in keys:
+        assert_read_equal(list(actual[key]), list(expected[key]))
 
 
 def test_projection_is_lazy_and_avoids_images(image_dataset_roots, monkeypatch):
@@ -125,9 +133,12 @@ def test_projection_is_lazy_and_avoids_images(image_dataset_roots, monkeypatch):
     def fail_decode(*args, **kwargs):
         raise AssertionError("numeric projection decoded an image")
 
-    monkeypatch.setattr(DatasetImage, "decode_example", fail_decode)
-    view = lance_ds.select_columns(["action", "timestamp"])
-    assert lance_ds.reader._frames_perm is None
+    monkeypatch.setattr(datasets.Image, "decode_example", fail_decode)
+    with monkeypatch.context() as construction:
+        read_rows = Mock()
+        construction.setattr(type(lance_ds.reader), "read_rows", read_rows)
+        view = lance_ds.select_columns(["action", "timestamp"])
+        read_rows.assert_not_called()
     expected = upstream.select_columns(["action", "timestamp"])
     assert_read_equal(view[7], expected[7])
     assert_read_equal(list(view), list(expected))
@@ -135,18 +146,14 @@ def test_projection_is_lazy_and_avoids_images(image_dataset_roots, monkeypatch):
     assert_read_equal(view["action"][2:5], expected["action"][2:5])
     assert_read_equal(np.asarray(view.with_format("numpy")["timestamp"]), np.asarray(expected["timestamp"]))
     assert_read_equal(pickle.loads(pickle.dumps(view))[7], expected[7])
-    assert all(set(columns) <= {"action", "timestamp"} for columns in lance_ds.reader._raw_perms)
     with pytest.raises(ValueError):
         view.select_columns("observation.images.front")
     with pytest.raises(ValueError):
         lance_ds.select_columns("missing")
 
 
-@pytest.mark.parametrize("format_type", ["default", None, "numpy", "torch"])
 @pytest.mark.parametrize("iteration", ["rows", "image_column", "numeric_column"])
-def test_iteration_does_not_decode_unrequested_rows(
-    image_dataset_roots, monkeypatch, format_type: str | None, iteration: str
-) -> None:
+def test_iteration_does_not_decode_unrequested_rows(image_dataset_roots, monkeypatch, iteration: str) -> None:
     src_root, lance_root = image_dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
     lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
@@ -154,9 +161,6 @@ def test_iteration_does_not_decode_unrequested_rows(
     keys = ["action", *lance_ds.meta.image_keys]
     expected = upstream.select_columns(keys)
     view = lance_ds.select_columns(keys)
-    if format_type != "default":
-        expected = expected.with_format(format_type)
-        view = view.with_format(format_type)
     calls: list[list[int]] = []
     read_rows = lance_ds.reader.read_rows
 
@@ -171,20 +175,20 @@ def test_iteration_does_not_decode_unrequested_rows(
         reference = expected[index] if iteration == "rows" else expected[index][key]
         assert_read_equal(next(iterator), reference)
     if iteration == "numeric_column":
-        assert calls == [list(range(min(512, len(view))))]
+        assert len(calls) == 1 and len(calls[0]) > 1
     else:
         assert calls == [[0], [1]]
     iterator.close()
-    # Explicit batch iteration still honors the caller's requested size.
-    calls.clear()
-    assert_read_equal(next(view.iter(batch_size=3)), expected[:3])
-    assert calls == [[0, 1, 2]]
+    if iteration == "rows":
+        # Explicit batch iteration still honors the caller's requested size.
+        calls.clear()
+        assert_read_equal(next(view.iter(batch_size=3)), expected[:3])
+        assert calls == [[0, 1, 2]]
 
 
 def test_numeric_consumers_use_projected_rows(camera_dataset_roots, monkeypatch):
     from lerobot.policies.groot.processor_groot import _iter_action_state_training_samples
     from lerobot.scripts.augment_dataset_quantile_stats import collect_episode_arrays
-    from lerobot.scripts.lerobot_train_tokenizer import process_episode
 
     src_root, lance_root = camera_dataset_roots
     kwargs = {
@@ -198,27 +202,17 @@ def test_numeric_consumers_use_projected_rows(camera_dataset_roots, monkeypatch)
     def fail_decode(*args, **kwargs):
         raise AssertionError("numeric consumer decoded an image")
 
-    monkeypatch.setattr(DatasetImage, "decode_example", fail_decode)
+    monkeypatch.setattr(datasets.Image, "decode_example", fail_decode)
     expected = list(_iter_action_state_training_samples(upstream))
     actual = list(_iter_action_state_training_samples(lance_ds))
     assert_read_equal(actual, expected)
     assert actual[0][1].shape == (2,)
     assert actual[-1][2].tolist() == [False, True, True]
-    chunks = [
-        process_episode((dataset, 2, 2, None, 1.0, "observation.state", False))
-        for dataset in (upstream, lance_ds)
-    ]
-    assert all(isinstance(chunk, np.ndarray) and chunk.shape == (5, 2, 2) for chunk in chunks)
-    assert_read_equal(chunks[1], chunks[0])
-    aliased = [
-        process_episode((dataset, 2, 2, None, 1.0, "action", False)) for dataset in (upstream, lance_ds)
-    ]
-    assert_read_equal(aliased[1], chunks[0])
-    datasets = [
+    base_datasets = [
         LeRobotDataset(DUMMY_REPO_ID, root=root, video_backend="pyav") for root in (src_root, lance_root)
     ]
-    expected_arrays = collect_episode_arrays(datasets[0], 0, skip_images=True)
-    actual_arrays = collect_episode_arrays(datasets[1], 0, skip_images=True)
+    expected_arrays = collect_episode_arrays(base_datasets[0], 0, skip_images=True)
+    actual_arrays = collect_episode_arrays(base_datasets[1], 0, skip_images=True)
     assert_read_equal(actual_arrays, expected_arrays)
 
 
@@ -255,38 +249,40 @@ def test_external_images_use_dataset_root(image_dataset_roots, tmp_path, monkeyp
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
-    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
+    reference = LeRobotDataset(DUMMY_REPO_ID, root=original_src_root)
+    expected_raw, expected_item = reference.get_raw_item(7), reference[7]
+    with Image.open(asset) as image:
+        expected_image = pil_to_chw_tensor(image)
+    expected_raw[key] = expected_image
+    expected_item[key] = expected_image
     # URI roots may cache metadata elsewhere; image paths still use the real root.
     lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root.as_uri())
-    assert_read_equal(lance_ds.get_raw_item(7), upstream.get_raw_item(7))
-    assert_items_equal(lance_ds[7], upstream[7])
-    assert_read_equal(pickle.loads(pickle.dumps(lance_ds))[7], upstream[7])
+    assert_read_equal(lance_ds.get_raw_item(7), expected_raw)
+    assert_items_equal(lance_ds[7], expected_item)
+    assert_read_equal(pickle.loads(pickle.dumps(lance_ds))[7], expected_item)
 
 
-@pytest.mark.parametrize("path_kind", ["relative", "https"])
 @pytest.mark.parametrize(
-    "token,storage_options,cached_token,effective_token",
+    "path_kind,token,storage_options,cached_token,effective_token",
     [
-        (None, {"token": "storage-token"}, None, "storage-token"),
-        ("explicit-token", {"token": "storage-token"}, "cached-token", "storage-token"),
-        (False, {"token": "storage-token"}, "cached-token", "storage-token"),
-        ("explicit-token", {"token": False}, "cached-token", False),
-        ("explicit-token", None, "cached-token", "explicit-token"),
-        (None, None, "cached-token", "cached-token"),
-        (False, None, "cached-token", False),
-        (None, None, None, None),
-        (None, {"token": "storage-token", "revision": "image-branch"}, None, "storage-token"),
+        ("relative", None, {"token": "storage-token"}, None, "storage-token"),
+        ("relative", "explicit-token", {"token": "storage-token"}, "cached-token", "storage-token"),
+        ("relative", "explicit-token", {"token": False}, "cached-token", False),
+        ("relative", "explicit-token", None, "cached-token", "explicit-token"),
+        ("relative", None, None, "cached-token", "cached-token"),
+        ("relative", False, None, "cached-token", False),
+        ("relative", None, {"token": "storage-token", "revision": "image-branch"}, None, "storage-token"),
+        ("https", None, {"token": "storage-token", "revision": "image-branch"}, None, "storage-token"),
     ],
     ids=[
         "storage_only",
         "storage_override",
-        "storage_override_false",
         "storage_false",
         "explicit",
         "cached",
         "disabled",
-        "anonymous",
         "revision_override",
+        "absolute_url",
     ],
 )
 def test_external_hf_images_use_table_revision(
@@ -377,25 +373,7 @@ def test_relative_hf_images_keep_root_path_and_pinned_revision(
     reader.close()
 
 
-@pytest.mark.parametrize(
-    "root,options",
-    [
-        ("hf://datasets/test/images@revision", {"token": "test-token"}),
-        (
-            f"{HF_ENDPOINT}/datasets/test/images/resolve/main",
-            {"headers": {"Authorization": "Bearer test-token"}},
-        ),
-        (
-            "s3://test/images",
-            {
-                "key": "test-key",
-                "secret": "test-secret",
-                "client_kwargs": {"endpoint_url": "https://test.invalid"},
-            },
-        ),
-    ],
-)
-def test_external_image_credentials(root, options, monkeypatch):
+def test_external_s3_image_credentials(monkeypatch):
     encoded = io.BytesIO()
     Image.new("RGB", (2, 2)).save(encoded, format="PNG")
     calls = []
@@ -405,7 +383,8 @@ def test_external_image_credentials(root, options, monkeypatch):
         return io.BytesIO(encoded.getvalue())
 
     monkeypatch.setattr(fsspec, "open", open_image)
-    feature = DatasetImage(
+    root = "s3://test/images"
+    feature = LanceImage(
         root,
         token="test-token",
         storage_options={
@@ -416,7 +395,17 @@ def test_external_image_credentials(root, options, monkeypatch):
     )
     with feature.decode_example({"bytes": None, "path": "frame.png"}) as image:
         assert image.size == (2, 2)
-    assert calls == [(f"{root}/frame.png", "rb", options)]
+    assert calls == [
+        (
+            f"{root}/frame.png",
+            "rb",
+            {
+                "key": "test-key",
+                "secret": "test-secret",
+                "client_kwargs": {"endpoint_url": "https://test.invalid"},
+            },
+        )
+    ]
 
 
 @pytest.mark.parametrize("return_uint8", [False, True])

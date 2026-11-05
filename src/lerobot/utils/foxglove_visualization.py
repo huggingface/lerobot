@@ -480,11 +480,11 @@ def _feature_dim_names(feature: dict | None) -> list[str] | None:
     labels: list[str] | None = None
     if isinstance(names, dict):
         values = list(names.values())
-        if values and all(isinstance(v, list | tuple) for v in values):
+        if values and all(isinstance(v, (list, tuple)) for v in values):
             labels = [str(n) for group in values for n in group]
         elif values and all(isinstance(v, int) and not isinstance(v, bool) for v in values):
             labels = [name for name, _ in sorted(names.items(), key=lambda kv: kv[1])]
-    elif isinstance(names, list | tuple):
+    elif isinstance(names, (list, tuple)):
         labels = [str(n) for n in names]
     if labels is not None and dim is not None and len(labels) == dim:
         return labels

@@ -48,6 +48,7 @@ else:
 
 if TYPE_CHECKING or _datasets_available:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets.utils import delta_window
 else:
     LeRobotDataset = None
 
@@ -693,6 +694,7 @@ def _iter_action_state_training_samples(dataset: Any) -> Iterator[tuple[Any, Any
     ensure_reader = getattr(dataset, "_ensure_reader", None)
     select_columns = getattr(dataset, "select_columns", None)
     if callable(ensure_reader) and callable(select_columns) and getattr(dataset, "supports_raw_reads", True):
+        require_package("datasets", extra="groot")
         reader = ensure_reader()
         columns = [key for key in (ACTION, OBS_STATE, "index", "episode_index") if key in dataset.features]
         rows = select_columns(columns)
@@ -707,12 +709,8 @@ def _iter_action_state_training_samples(dataset: Any) -> Iterator[tuple[Any, Any
                 ep_idx = _as_int(item["episode_index"])
                 abs_idx = _as_int(item["index"])
                 episode = dataset.meta.episodes[ep_idx]
-                start, stop = episode["dataset_from_index"], episode["dataset_to_index"]
-                indices = [abs_idx + delta for delta in delta_indices[ACTION]]
-                pad_mask = torch.tensor(
-                    [index < start or index >= stop for index in indices], dtype=torch.bool
-                )
-                clipped = [min(max(index, start), stop - 1) for index in indices]
+                start, stop = int(episode["dataset_from_index"]), int(episode["dataset_to_index"])
+                clipped, pad_mask = delta_window(abs_idx, delta_indices[ACTION], start, stop)
                 selected = (
                     [relative_indices[index] for index in clipped]
                     if relative_indices is not None

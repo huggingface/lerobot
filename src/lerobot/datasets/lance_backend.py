@@ -57,7 +57,9 @@ from .dataset_metadata import LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader
 from .depth_utils import dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
-from .io_utils import DatasetImage, hf_transform_to_torch, pil_to_chw_tensor, require_image
+from .io_utils import hf_transform_to_torch, pil_to_chw_tensor
+from .lance_dataset_view import DatasetColumnView
+from .lance_image import LanceImage, require_image
 
 # Re-exported: storage.py resolves localize_root on this module; the others are
 # this format's public helpers (converters, DataLoader worker context).
@@ -283,7 +285,7 @@ class LanceDatasetReader(BaseDatasetReader):
             )
         image_token = image_options.get("token", token)
         for key in self.meta.image_keys:
-            self._read_features[key] = DatasetImage(
+            self._read_features[key] = LanceImage(
                 image_root, token=image_token, storage_options=storage_options
             )
         self.set_image_transforms(image_transforms)
@@ -477,6 +479,14 @@ class LanceDatasetReader(BaseDatasetReader):
         """HF feature schema for the frames table's declared base columns."""
         return self._read_features
 
+    def get_raw_item(self, idx: int) -> dict:
+        """Read one base row using the default tensor conversion."""
+        return self.read_rows([idx], query_type="row")
+
+    def select_columns(self, column_names: str | list[str]) -> DatasetColumnView:
+        """Return a lazy projection of the Lance frames table."""
+        return DatasetColumnView(self, column_names)
+
     def read_rows(
         self,
         indices: list[int],
@@ -554,31 +564,28 @@ class LanceDatasetReader(BaseDatasetReader):
             convert_image_depth_units(item, self._image_depth_units, self._depth_output_unit)
         return items
 
-    def _read_images(self, plans: list[_SamplePlan]) -> list[dict[str, torch.Tensor]]:
+    def _read_images(self, plans: list[_SamplePlan]) -> list[dict[str, torch.Tensor | None]]:
         """Read and decode each (camera, row) once, then assemble independent samples.
 
-        Each image column reads its own frame windows and current rows for validation,
-        so action or other cameras' windows never fetch unrelated images. Image delta windows keep
+        Each image column reads only its own frame windows, so action or other
+        cameras' windows never fetch unrelated images. Image delta windows keep
         their time dimension even when they contain a single frame, matching the
         default reader's non-video column stacking.
         """
-        items: list[dict[str, torch.Tensor]] = [{} for _ in plans]
+        items: list[dict[str, torch.Tensor | None]] = [{} for _ in plans]
         for key, permutation in self._image_perms.items():
             windows = [plan["windows"].get(key, [plan["abs_idx"]]) for plan in plans]
-            rows = sorted({row for window in windows for row in window} | {plan["abs_idx"] for plan in plans})
+            rows = sorted({row for window in windows for row in window})
             column = permutation.__getitems__(rows).column(to_lance_column(key))
-            decoded = {
-                row: require_image(self._decode_image(column[pos].as_py(), key, row), key, row)
-                for pos, row in enumerate(rows)
-            }
+            decoded = {row: self._decode_image(column[pos].as_py(), key, row) for pos, row in enumerate(rows)}
             for item, plan, window in zip(items, plans, windows, strict=True):
                 # Copy before augmentations: duplicate samples must not share
                 # writable pixels with each other or with overlapping windows.
-                item[key] = (
-                    torch.stack([decoded[row] for row in window])
-                    if key in plan["windows"]
-                    else decoded[window[0]].clone()
-                )
+                if key in plan["windows"]:
+                    item[key] = torch.stack([require_image(decoded[row], key, row) for row in window])
+                else:
+                    image = decoded[window[0]]
+                    item[key] = image.clone() if image is not None else None
         return items
 
     def _decode_image(self, value: dict | None, key: str, row: int) -> torch.Tensor | None:

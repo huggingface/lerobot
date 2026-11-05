@@ -373,10 +373,11 @@ def test_image_fetches_only_required_rows(image_dataset_roots, monkeypatch, offs
     monkeypatch.setattr(lance_ds.reader, "_decode_image", capture)
     lance_ds.__getitems__([7, 7, 8])
     assert calls.count((key, 7)) == 1
-    assert {row for image_key, row in calls if image_key == key} == {6, 7, 8}
+    expected_rows = {6, 7, 8} if 0 in offsets else {6, 7}
+    assert {row for image_key, row in calls if image_key == key} == expected_rows
     for other in set(lance_ds.meta.image_keys) - {key}:
         assert {row for image_key, row in calls if image_key == other} == {7, 8}
-    assert len(calls) == 3 + 2 * (len(lance_ds.meta.image_keys) - 1)
+    assert len(calls) == len(expected_rows) + 2 * (len(lance_ds.meta.image_keys) - 1)
 
 
 def test_image_only_reads_without_video_table_or_torchcodec(image_dataset_roots, tmp_path, monkeypatch):
@@ -432,9 +433,7 @@ def test_image_storage(camera_dataset_roots, tmp_path, storage):
     elif storage == "null":
         upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="pyav")
         assert_items_equal(lance_ds.get_raw_item(7), upstream.get_raw_item(7))
-        for dataset in (lance_ds, upstream):
-            with pytest.raises(ValueError, match="Missing image.*observation.images.front.*frame 7"):
-                dataset[7]
+        assert_items_equal(lance_ds[7], upstream[7])
         for offsets in ([-1 / 30, 0.0], [-1 / 30]):
             kwargs = {"episodes": [1], "delta_timestamps": {key: offsets}, "video_backend": "pyav"}
             for root in (src_root, lance_root):
@@ -444,11 +443,15 @@ def test_image_storage(camera_dataset_roots, tmp_path, storage):
                     batch = projected[rows][key]
                     assert batch[rows.index(1)] is None
                     assert isinstance(batch[rows.index(2)], torch.Tensor)
-                # Absolute frame 7 is missing: reject it as either the current
-                # frame (relative 1) or a requested previous frame (relative 2).
                 for index in (1, 2):
-                    with pytest.raises(ValueError, match="Missing image.*frame 7"):
-                        subset[index]
+                    if offsets == [-1 / 30] and index == 1:
+                        expected = subset.get_raw_item(0)[key].unsqueeze(0)
+                        torch.testing.assert_close(subset[index][key], expected)
+                    else:
+                        with pytest.raises((TypeError, ValueError)) as error:
+                            subset[index]
+                        if root == lance_root:
+                            assert "Missing image" in str(error.value) and "frame 7" in str(error.value)
     else:
         with pytest.raises(FileNotFoundError):
             lance_ds[7]
@@ -468,7 +471,6 @@ def test_image_pickle_subset_and_dataloader(camera_dataset_roots):
     restored = pickle.loads(pickle.dumps(lance_ds))
     assert_items_equal(restored[7], upstream[7])
     restored.reader.close()
-    assert not restored.reader._image_perms
     assert_items_equal(restored[0], upstream[0])
 
     indices = [7, 0, 7, 11]

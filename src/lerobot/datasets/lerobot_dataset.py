@@ -331,7 +331,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms=image_transforms,
             return_uint8=return_uint8,
             depth_output_unit=depth_output_unit,
-            token=token,
         )
         self.reader = reader
 

@@ -24,6 +24,10 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+from PIL import Image
+
 from lerobot.datasets import LeRobotDataset, register_dataset_reader
 from lerobot.datasets.dataset_reader import BaseDatasetReader, DatasetReader
 from lerobot.datasets.io_utils import hf_transform_to_torch
@@ -79,6 +83,50 @@ def test_legacy_reader_can_keep_its_existing_contract():
     assert reader.get_item(0)["index"].item() == 0
     with pytest.raises(NotImplementedError, match="base-row"):
         reader.get_raw_item(0)
+    with pytest.raises(NotImplementedError, match="column projection"):
+        reader.select_columns("index")
+
+
+def test_default_reader_preserves_nullable_image_reads(tmp_path, lerobot_dataset_factory):
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=1, total_frames=4, use_videos=False
+    )
+    key = dataset.meta.image_keys[0]
+    data_path = next((dataset.root / "data").glob("*/*.parquet"))
+    table = pq.read_table(data_path)
+    values = table.column(key).to_pylist()
+    values[1] = None
+    pq.write_table(
+        table.set_column(
+            table.schema.get_field_index(key),
+            table.schema.field(key),
+            pa.array(values, type=table.column(key).type),
+        ),
+        data_path,
+    )
+    dataset = LeRobotDataset(
+        DUMMY_REPO_ID,
+        root=dataset.root,
+        video_backend="pyav",
+    )
+    assert dataset.get_raw_item(1)[key] is None
+    assert dataset[1][key] is None
+    previous = LeRobotDataset(
+        DUMMY_REPO_ID, root=dataset.root, delta_timestamps={key: [-1 / dataset.fps]}, video_backend="pyav"
+    )
+    torch.testing.assert_close(previous[1][key], dataset.get_raw_item(0)[key].unsqueeze(0))
+    with pytest.raises(TypeError, match="NoneType"):
+        previous[2]
+
+
+def test_hf_transform_handles_nullable_and_empty_images():
+    image = Image.new("RGB", (1, 1))
+    for values in ([None, image], [image, None]):
+        pixels = hf_transform_to_torch({"image": values})["image"]
+        null_index = values.index(None)
+        assert pixels[null_index] is None
+        torch.testing.assert_close(pixels[1 - null_index], torch.zeros(3, 1, 1))
+    assert hf_transform_to_torch({"image": []}) == {"image": []}
 
 
 def test_try_load_returns_false_when_no_data(tmp_path):
