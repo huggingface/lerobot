@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
@@ -67,10 +68,9 @@ class TOPRewardConfig(RewardModelConfig):
         add_chat_template: If ``True``, wrap the full prompt with the
             tokenizer's chat template before tokenisation (matches
             upstream ``add_chat_template=True``).
-        success_threshold: Optional log-prob threshold. If finite,
-            :meth:`TOPRewardModel.compute_reward` returns
-            ``(reward > success_threshold).float()`` instead of the raw
-            log-prob.
+        success_threshold: Kept so existing configs load; must stay
+            ``-inf``. ``compute_log_probability`` returns the raw value, so
+            apply a threshold to it yourself.
         max_input_length: Hard limit on the total tokenized input length;
             samples that exceed it raise a ``ValueError``.
     """
@@ -124,6 +124,12 @@ class TOPRewardConfig(RewardModelConfig):
             )
         if self.max_input_length <= 0:
             raise ValueError(f"max_input_length must be > 0, got {self.max_input_length}")
+        if math.isfinite(self.success_threshold):
+            raise ValueError(
+                f"success_threshold={self.success_threshold} is no longer supported: "
+                "`compute_log_probability()` returns the raw log-probability. Remove `success_threshold` "
+                "from the config, and compare the log-probability with your threshold instead."
+            )
 
         if self.image_key not in self.input_features:
             self.input_features[self.image_key] = PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL)

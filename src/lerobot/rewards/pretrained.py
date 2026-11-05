@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import abc
 import builtins
 import logging
 import os
@@ -36,8 +35,11 @@ if TYPE_CHECKING:
 T = TypeVar("T", bound="PreTrainedRewardModel")
 
 
-class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
-    """Base class for reward models."""
+class PreTrainedRewardModel(nn.Module, HubMixin):
+    """Base class for reward models: configuration, Hub save and load, and training.
+
+    Each model exposes inference methods named after what it predicts, such as `predict_progress()`.
+    """
 
     config_class: type[RewardModelConfig]
     name: str
@@ -160,23 +162,22 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         """Reset any internal state."""
         pass
 
-    @abc.abstractmethod
     def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
-        """Compute a scalar reward signal for a batch of observations.
+        """Removed: each reward model now has its own prediction method, such as `predict_progress()`.
 
-        Args:
-            batch: Dictionary containing at minimum observation tensors.
-                   May also contain "action", "next_observation.*", etc.
-
-        Returns:
-            Tensor of shape ``(batch_size,)`` with reward values.
+        Raises:
+            NotImplementedError: Always, naming the method to use instead.
         """
-        ...
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.compute_reward() was removed. Use the model's own prediction method "
+            "instead: `predict_progress()` for RoboMeter and SARM, `compute_log_probability()` for TOPReward, "
+            "or `predict_reward()` for the reward classifier."
+        )
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
         """Training forward pass — override for trainable reward models."""
         raise NotImplementedError(
-            f"{self.__class__.__name__} is not trainable. Only use compute_reward() for inference."
+            f"{self.__class__.__name__} is not trainable: it is used for inference only."
         )
 
     @property

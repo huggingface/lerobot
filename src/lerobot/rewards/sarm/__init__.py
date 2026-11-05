@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from .configuration_sarm import SARMConfig
-from .modeling_sarm import SARMRewardModel
+from .modeling_sarm import SARMPrediction, SARMRewardModel
 from .processor_sarm import make_sarm_pre_post_processors
 
-__all__ = ["SARMConfig", "SARMRewardModel", "make_sarm_pre_post_processors"]
+__all__ = ["SARMConfig", "SARMPrediction", "SARMRewardModel", "make_sarm_pre_post_processors"]
