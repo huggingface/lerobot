@@ -13,6 +13,7 @@ from gymnasium.envs.registration import register, registry as gym_registry
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig, LiberoEnvConfig
 from lerobot.envs.factory import make_env, make_env_config, make_env_pre_post_processors
+from lerobot.policies.cosmos3.processor_cosmos3 import make_cosmos3_libero_pre_post_processors
 from lerobot.processor import LiberoProcessorStep
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_PREFIX, OBS_STATE
 from tests.fixtures.toy_env import DictObservationEnv
@@ -81,6 +82,9 @@ def test_libero_processors_are_identity():
     pre, post = make_env_pre_post_processors(LiberoEnvConfig(), policy_cfg=object())
 
     assert len(pre.steps) == 0 and len(post.steps) == 0
+    # A Cosmos3 policy only decodes its action there.
+    pre, post = make_cosmos3_libero_pre_post_processors()
+    assert len(pre.steps) == 0 and len(post.steps) == 1
 
 
 def test_libero_processor_transform_features_replaces_state_components():
