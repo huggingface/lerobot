@@ -1811,9 +1811,19 @@ class G05Policy(PreTrainedPolicy):
         map_location: str,
         strict: bool,
     ) -> G05Policy:
-        """Load the weights from a safetensors file."""
+        """Load the weights from the checkpoint's files.
+
+        A bfloat16 policy on CUDA casts each floating tensor to bfloat16 on the CPU on its way, so the
+        float32 checkpoint is never on the GPU. `G05Policy.to`, which `from_pretrained` calls next, gives
+        the float32 islands back their dtype.
+        """
         device = resolve_safetensors_device(map_location)
-        state_dict = checkpoint.load_state_dict(device=device, backend="pread")
+        cast = model.config.dtype == torch.bfloat16 and torch.device(map_location).type == "cuda"
+        state_dict = {}
+        for name, tensor in checkpoint.tensors("cpu" if cast else device, backend="pread"):
+            if cast and tensor.is_floating_point():
+                tensor = tensor.to(torch.bfloat16)
+            state_dict[name] = tensor.to(device)
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False, assign=True)
         model.backend.materialize_runtime_buffers(device)
         remaining_meta = [name for name, parameter in model.named_parameters() if parameter.is_meta]
