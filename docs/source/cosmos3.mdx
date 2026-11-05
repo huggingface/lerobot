@@ -336,7 +336,7 @@ lerobot-eval \
 
 - For a checkpoint of your own training run, pass the EMA weights: `--policy.path=outputs/train/cosmos3_nano_libero_10/checkpoints/last/pretrained_model_ema`.
 - `--env.observation_height=256 --env.observation_width=256` renders the cameras at the 256x256 resolution of the training data.
-- The LIBERO environment adds the Cosmos3 action conversion to its processors automatically: the 10D rot6d actions are converted back to the 7D axis angle actions of LIBERO. When you run the policy outside `lerobot-eval`, build the environment processors with `make_env_pre_post_processors(env_cfg, policy_cfg)` from `lerobot.envs.factory` as well.
+- The LIBERO environment adds the Cosmos3 action conversion to its processors automatically: the 10D rot6d actions are converted back to the 7D axis angle actions of LIBERO. When you run the policy outside `lerobot-eval` and a sim robot, build the environment processors with `make_env_pre_post_processors(env_cfg, policy_cfg)` from `lerobot.envs.factory` as well.
 - See the [LIBERO guide](./libero) for the evaluation protocol and the other options.
 
 ### Predicted video

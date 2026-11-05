@@ -25,7 +25,8 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature, PreTrainedConfig
+from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.sim import EnvDescriptor
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
@@ -163,14 +164,40 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     return policy_features
 
 
-def validate_checkpoint(
-    descriptor: EnvDescriptor, config: PreTrainedConfig, rename_map: dict[str, str]
-) -> None:
-    """Raise if the checkpoint's features don't match the sim's `descriptor`, after `rename_map`.
+def _observation_features(descriptor: EnvDescriptor) -> dict[str, PolicyFeature]:
+    """Return the sim's observation features as the policy side receives them, images channel first."""
+    features = {}
+    for spec in descriptor.features:
+        if spec.kind == "rgb":
+            features[spec.name] = PolicyFeature(
+                FeatureType.VISUAL, (spec.shape[2], spec.shape[0], spec.shape[1])
+            )
+        elif spec.name == OBS_ENV_STATE:
+            features[spec.name] = PolicyFeature(FeatureType.ENV, spec.shape)
+        else:
+            features[spec.name] = PolicyFeature(FeatureType.STATE, spec.shape)
+    return features
 
-    Image sizes and the policy's placeholder cameras (`empty_cameras`) are not checked.
+# TODO: Consider refactoring the validation ways in the future.
+def validate_checkpoint(
+    descriptor: EnvDescriptor,
+    config: PreTrainedConfig,
+    rename_map: dict[str, str],
+    *,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
+    env_postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
+) -> None:
+    """Raise if the checkpoint's features don't match the sim's `descriptor`.
+
+    The checkpoint is admitted on what the environment processors produce, read from their
+    `transform_features`: the observation after `env_preprocessor` and then `rename_map`, and the action
+    after `env_postprocessor`. Image sizes and the policy's placeholder cameras (`empty_cameras`) are not checked.
     """
-    available = {rename_map.get(f.name, f.name): f for f in descriptor.features}
+    observed = _observation_features(descriptor)
+    if env_preprocessor is not None:
+        features = {PipelineFeatureType.OBSERVATION: observed, PipelineFeatureType.ACTION: {}}
+        observed = env_preprocessor.transform_features(features)[PipelineFeatureType.OBSERVATION]
+    available = {rename_map.get(name, name): feature for name, feature in observed.items()}
     placeholders = {f"{OBS_IMAGES}.empty_camera_{i}" for i in range(getattr(config, "empty_cameras", 0))}
     for name, expected in (config.input_features or {}).items():
         if name in placeholders:
@@ -178,22 +205,27 @@ def validate_checkpoint(
         if name not in available:
             raise ValueError(f"Checkpoint feature missing from the simulator (check --rename_map): {name}")
         actual = available[name]
-        shape: tuple[int, ...]
-        if actual.kind == "rgb":
-            compatible = len(expected.shape) == 3 and expected.shape[0] == actual.shape[2]
-            shape = (actual.shape[2], actual.shape[0], actual.shape[1])
+        if actual.type is FeatureType.VISUAL:
+            compatible = len(expected.shape) == 3 and expected.shape[0] == actual.shape[0]
         else:
-            compatible = tuple(expected.shape) == actual.shape
-            shape = actual.shape
+            compatible = tuple(expected.shape) == tuple(actual.shape)
         if not compatible:
             raise ValueError(
-                f"Checkpoint feature shape mismatch for {name}: expected {expected.shape}, got {shape}"
+                f"Checkpoint feature shape mismatch for {name}: expected {expected.shape}, got {actual.shape}"
             )
     action = (config.output_features or {}).get(ACTION)
     if action is None:
         raise ValueError("Checkpoint must declare the canonical action feature")
-    if tuple(action.shape) != descriptor.action_feature.shape:
-        raise ValueError("Checkpoint action dimension differs from the simulator")
+    commanded = action
+    if env_postprocessor is not None:
+        features = {PipelineFeatureType.ACTION: {ACTION: action}, PipelineFeatureType.OBSERVATION: {}}
+        commanded = env_postprocessor.transform_features(features)[PipelineFeatureType.ACTION][ACTION]
+    if tuple(commanded.shape) != descriptor.action_feature.shape:
+        raise ValueError(
+            f"Checkpoint action dimension differs from the simulator: the checkpoint predicts "
+            f"{tuple(action.shape)}, its environment processors command {tuple(commanded.shape)} and the "
+            f"simulator expects {descriptor.action_feature.shape}"
+        )
 
 
 def _sub_env_has_attr(env: gym.vector.VectorEnv, attr: str) -> bool:
