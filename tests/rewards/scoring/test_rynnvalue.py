@@ -96,8 +96,8 @@ def test_make_rynnvalue_frame_scorer_preserves_scorer_selected_prefixes(monkeypa
         max_frames=6,
     )
 
-    assert captured["model_id"] == "converted/rynnvalue"
-    assert captured["model_revision"] == "checkpoint-commit"
+    assert captured["model_id"] == "original/rynnvalue"
+    assert captured["model_revision"] == "original-commit"
     assert captured["max_frames"] is None
     assert scorer.max_frames == 6
 

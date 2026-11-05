@@ -187,7 +187,7 @@ def test_encoder_can_override_checkpoint_meta_setting(monkeypatch):
     assert fake.refresh_count == 1
 
 
-def test_converted_checkpoint_loads_processor_assets_from_lerobot_path(monkeypatch):
+def test_processor_loads_assets_from_the_official_checkpoint(monkeypatch):
     from lerobot.rewards.rynnvalue import processor_rynnvalue
 
     captured = {}
@@ -205,13 +205,14 @@ def test_converted_checkpoint_loads_processor_assets_from_lerobot_path(monkeypat
     )
     config = RynnValueConfig(
         device="cpu",
-        pretrained_path="lerobot/converted-rynnvalue",
-        pretrained_revision="converted-revision",
-        model_config={"model_type": "rynn_value_lang"},
+        model_id="Alibaba-DAMO-Academy/RynnValue-8B",
+        model_revision="abc123",
+        pretrained_path="user/rynnvalue-config",
+        pretrained_revision="config-revision",
     )
     make_rynnvalue_pre_post_processors(config)
-    assert captured["model_id"] == "lerobot/converted-rynnvalue"
-    assert captured["revision"] == "converted-revision"
+    assert captured["model_id"] == "Alibaba-DAMO-Academy/RynnValue-8B"
+    assert captured["revision"] == "abc123"
 
 
 def test_encoder_requires_task_or_default(monkeypatch):

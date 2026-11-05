@@ -298,13 +298,9 @@ def make_rynnvalue_frame_scorer(
 ) -> RynnValueFrameScorer:
     """Construct the standard RynnValue offline scorer."""
     config: RynnValueConfig = model.config
-    processor_source = config.pretrained_path or config.model_id
-    processor_revision = (
-        config.pretrained_revision if config.pretrained_path is not None else config.model_revision
-    )
     encoder = RynnValueEncoderProcessorStep(
-        model_id=processor_source,
-        model_revision=processor_revision,
+        model_id=config.model_id,
+        model_revision=config.model_revision,
         image_key=config.image_key,
         task_key=config.task_key,
         default_task=config.default_task,

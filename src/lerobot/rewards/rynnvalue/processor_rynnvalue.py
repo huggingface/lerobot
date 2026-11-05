@@ -214,16 +214,12 @@ def make_rynnvalue_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     del dataset_stats
-    processor_id = str(config.pretrained_path) if config.pretrained_path is not None else config.model_id
-    processor_revision = (
-        config.pretrained_revision if config.pretrained_path is not None else config.model_revision
-    )
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         steps=[
             AddBatchDimensionProcessorStep(),
             RynnValueEncoderProcessorStep(
-                model_id=processor_id,
-                model_revision=processor_revision,
+                model_id=config.model_id,
+                model_revision=config.model_revision,
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,

@@ -17,11 +17,13 @@ A Success-Aware Reward Model (SARM) predicts a dense reward signal from observat
 ROBOMETER is a general-purpose video-language robotic reward model built on a fine-tuned Qwen3-VL-4B backbone with progress, preference, and success heads. Given a trajectory video and a task description, it predicts dense, frame-level task progress in [0, 1] and frame-level success probabilities for downstream robot learning, including offline RL, online RL, data filtering and retrieval, and automated failure detection.
 {% elif model_name == "topreward" %}
 TOPReward is a **zero-shot** reward model that extracts token log-probabilities from an off-the-shelf vision-language model (default Qwen3-VL) as a reward signal. Given a video trajectory and a task instruction, it returns the VLM's log-likelihood of the instruction being true, with no fine-tuning required.
+{% elif model_name == "rynnvalue" %}
+RynnValue is a language-conditioned robotic value model built on Qwen3-VL. Given a trajectory video and a task description, it predicts the remaining time, in seconds, until the task is completed.
 {% else %}
 _Reward model type not recognized — please update this template._
 {% endif %}
 
-{% if model_name in ["robometer", "topreward"] %}
+{% if model_name in ["robometer", "topreward", "rynnvalue"] %}
 This reward model is inference-only in [LeRobot](https://github.com/huggingface/lerobot): it can't be trained with `lerobot-train`.
 {% else %}
 This reward model has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
@@ -53,9 +55,11 @@ progress = prediction.progress
 success_probability = prediction.success_probability
 {% elif model_name == "topreward" %}
 log_probability = reward_model.compute_log_probability(batch)
+{% elif model_name == "rynnvalue" %}
+remaining_time_s = reward_model.predict_remaining_time(batch).remaining_time_s
 {% endif %}
 ```
-{% if model_name not in ["robometer", "topreward"] %}
+{% if model_name not in ["robometer", "topreward", "rynnvalue"] %}
 ### Train from scratch
 
 ```bash

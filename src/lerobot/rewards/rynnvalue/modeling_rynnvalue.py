@@ -14,16 +14,14 @@
 
 from __future__ import annotations
 
-import builtins
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor
 
-from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_PREFIX, RynnValueConfig
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -42,8 +40,6 @@ RYNNVALUE_MODEL_INPUT_KEYS = (
     "image_grid_thw",
     "mm_token_type_ids",
 )
-
-T = TypeVar("T", bound="RynnValueRewardModel")
 
 
 @dataclass(frozen=True)
@@ -100,49 +96,35 @@ def reduce_remaining_time(
 
 
 class RynnValueRewardModel(PreTrainedRewardModel):
-    """Native LeRobot wrapper around official RynnValue checkpoints."""
+    """RynnValue zero-shot reward model.
 
+    A config without `model_config` builds the model from the official checkpoint `model_id`. Saving
+    embeds `model_config`, so a LeRobot checkpoint rebuilds the architecture from its own
+    `config.json` before `from_pretrained()` loads `model.safetensors`.
+    """
+
+    config: RynnValueConfig
     name = "rynnvalue"
     config_class = RynnValueConfig
 
-    def __init__(self, config: RynnValueConfig, model: Any | None = None) -> None:
+    def __init__(self, config: RynnValueConfig) -> None:
         require_package("transformers", extra="rynnvalue")
         super().__init__(config)
         self.config = config
 
-        if model is not None:
-            self.model = model
-            return
-
         dtype = _torch_dtype(config.torch_dtype)
-        if config.pretrained_path is not None and config.model_config is None:
-            raise ValueError(
-                "RynnValue LeRobot checkpoint is missing `model_config`. "
-                "Reconvert the official checkpoint with "
-                "`python -m lerobot.rewards.rynnvalue.convert_rynnvalue_checkpoint`."
+        if config.model_config is None:
+            model_config = RynnValueLangConfig.from_pretrained(
+                config.model_id, revision=config.model_revision
             )
-        if config.model_config is not None:
+            model_config._attn_implementation = config.attn_implementation
+            self.model = RynnValueLangModel.from_pretrained(
+                config.model_id, revision=config.model_revision, config=model_config, dtype=dtype
+            )
+        else:
             model_config = RynnValueLangConfig.from_dict(config.model_config)
             model_config._attn_implementation = config.attn_implementation
-            previous_dtype = torch.get_default_dtype()
-            torch.set_default_dtype(dtype)
-            try:
-                self.model = RynnValueLangModel(model_config)
-            finally:
-                torch.set_default_dtype(previous_dtype)
-            return
-
-        model_config = RynnValueLangConfig.from_pretrained(
-            config.model_id,
-            revision=config.model_revision,
-        )
-        model_config._attn_implementation = config.attn_implementation
-        self.model = RynnValueLangModel.from_pretrained(
-            config.model_id,
-            revision=config.model_revision,
-            config=model_config,
-            dtype=dtype,
-        )
+            self.model = RynnValueLangModel._from_config(model_config, dtype=dtype)
 
     def predict_remaining_time(self, batch: Mapping[str, Any]) -> RynnValuePrediction:
         """Predict seconds remaining for each encoded trajectory prefix.
@@ -194,53 +176,5 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         return RynnValuePrediction(remaining_time_s=remaining_time)
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        native_config = getattr(self.model, "config", None)
-        if native_config is None or not callable(getattr(native_config, "to_dict", None)):
-            raise TypeError("RynnValue native model must expose a serializable `config.to_dict()`")
-        self.config.model_config = native_config.to_dict()
+        self.config.model_config = self.model.config.to_dict()
         super()._save_pretrained(save_directory)
-
-    @classmethod
-    def from_pretrained(
-        cls: builtins.type[T],
-        pretrained_name_or_path: str | Path,
-        *,
-        config: RewardModelConfig | None = None,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        strict: bool = False,
-        **kwargs: Any,
-    ) -> T:
-        if config is None:
-            config = RewardModelConfig.from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                **kwargs,
-            )
-        if not isinstance(config, RynnValueConfig):
-            raise TypeError(f"Expected RynnValueConfig, got {type(config).__name__}")
-        config.pretrained_path = str(pretrained_name_or_path)
-        config.pretrained_revision = revision
-        return super().from_pretrained(
-            pretrained_name_or_path,
-            config=config,
-            force_download=force_download,
-            resume_download=resume_download,
-            proxies=proxies,
-            token=token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            revision=revision,
-            strict=strict,
-        )

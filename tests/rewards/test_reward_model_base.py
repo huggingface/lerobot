@@ -26,6 +26,8 @@ from lerobot.common.train_utils import generate_model_card
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.rewards.pretrained import PreTrainedRewardModel
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig
+from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 
 
 @RewardModelConfig.register_subclass(name="_dummy_hub_reward")
@@ -495,15 +497,20 @@ def test_reward_model_generate_model_card_leaves_an_unknown_license_out(_offline
     assert card.data.license is None
 
 
-def test_inference_only_reward_model_card_does_not_advertise_training(_offline_model_card):
-    from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
-
-    card = generate_model_card(TOPRewardConfig(), cfg=_make_train_cfg("user/my_dataset"))
+@pytest.mark.parametrize(
+    ("config_class", "prediction_method"),
+    [(TOPRewardConfig, "compute_log_probability"), (RynnValueConfig, "predict_remaining_time")],
+)
+def test_inference_only_reward_model_card_does_not_advertise_training(
+    _offline_model_card, config_class, prediction_method
+):
+    card = generate_model_card(config_class(), cfg=_make_train_cfg("user/my_dataset"))
     body = str(card)
 
     assert "inference-only" in body
+    assert "not recognized" not in body
     assert "### Train from scratch" not in body
-    assert "compute_log_probability" in body
+    assert prediction_method in body
 
 
 def test_publish_trained_model_uploads_expected_reward_files(monkeypatch, _offline_model_card):

@@ -39,17 +39,33 @@ pip install -e ".[rynnvalue]"
 
 The 4B checkpoint is approximately 10 GB. A CUDA GPU with enough memory for the selected checkpoint is strongly recommended.
 
-## Convert an official checkpoint
+## Loading
 
-Convert the official weights, native architecture configuration, tokenizer, and image processor into one self-contained LeRobot checkpoint:
+LeRobot RynnValue checkpoints, [lerobot/RynnValue-4B](https://huggingface.co/lerobot/RynnValue-4B) and [lerobot/RynnValue-8B](https://huggingface.co/lerobot/RynnValue-8B), use the LeRobot format: `config.json` embeds the native architecture configuration as `model_config`, and `model.safetensors` holds the weights. The tokenizer and image processor load from the official checkpoint named by `model_id`.
 
-```bash
-uv run python -m lerobot.rewards.rynnvalue.convert_rynnvalue_checkpoint \
-    --source-model-id Alibaba-DAMO-Academy/RynnValue-4B \
-    --output-dir outputs/rynnvalue-4b
+```python
+from lerobot.configs.rewards import RewardModelConfig
+from lerobot.rewards.rynnvalue import RynnValueRewardModel
+
+config = RewardModelConfig.from_pretrained(
+    "lerobot/RynnValue-4B",
+    cli_overrides=[
+        "--device=cuda",
+        "--robot_description=a single-arm robot",
+        "--camera_description=a third-person workspace camera",
+    ],
+)
+model = RynnValueRewardModel.from_pretrained("lerobot/RynnValue-4B", config=config)
 ```
 
-The output directory contains LeRobot's `config.json` and `model.safetensors` alongside the processor assets. It can be uploaded as one model repository or used locally without executing remote model code.
+A config without `model_config` builds the model from the official checkpoint instead, set by `model_id` (default `Alibaba-DAMO-Academy/RynnValue-4B`) and optionally pinned with `model_revision`. Saving that model writes a LeRobot checkpoint:
+
+```python
+from lerobot.rewards.rynnvalue import RynnValueConfig, RynnValueRewardModel
+
+model = RynnValueRewardModel(RynnValueConfig(model_id="Alibaba-DAMO-Academy/RynnValue-8B"))
+model.save_pretrained("outputs/rynnvalue-8b")
+```
 
 ## Inputs and outputs
 
@@ -75,19 +91,12 @@ The legacy `reward_output` configuration key is accepted only so unpublished con
 
 ## Usage
 
+With `config` and `model` loaded as above:
+
 ```python
 from lerobot.rewards import make_reward_pre_post_processors
-from lerobot.rewards.rynnvalue import RynnValueRewardModel
 
-model = RynnValueRewardModel.from_pretrained(
-    "outputs/rynnvalue-4b",
-    cli_overrides=[
-        "device=cuda",
-        "robot_description='a single-arm robot'",
-        "camera_description='a third-person workspace camera'",
-    ],
-)
-preprocessor, _ = make_reward_pre_post_processors(model.config)
+preprocessor, _ = make_reward_pre_post_processors(config)
 
 batch = {
     "observation.images.top": frames,  # (T,C,H,W) or (B,T,C,H,W)
@@ -97,26 +106,6 @@ encoded = preprocessor(batch)
 prediction = model.predict_remaining_time(encoded)
 remaining_time_s = prediction.remaining_time_s
 ```
-
-Use `Alibaba-DAMO-Academy/RynnValue-8B` as the converter's `--source-model-id` to select the larger checkpoint. `--revision` can pin a Hub commit.
-
-## Checkpoint format
-
-The converted `config.json` embeds the native architecture configuration, while `model.safetensors` stores weights under the LeRobot reward wrapper. Loading the converted checkpoint therefore does not need the original repository to construct the model. Processor assets are loaded from the same local directory or Hub repository.
-
-Subsequent calls to `save_pretrained()` refresh the embedded native configuration before writing the checkpoint. A LeRobot checkpoint is never reconstructed from the upstream `model_id`; older checkpoints without embedded `model_config` must be reconverted.
-
-## Original-checkpoint parity
-
-An opt-in GPU test compares the released implementation and the converted LeRobot checkpoint on identical deterministic frames. It loads the models sequentially to reduce peak memory:
-
-```bash
-LEROBOT_RYNNVALUE_ORIGINAL_CHECKPOINT=/path/to/original \
-LEROBOT_RYNNVALUE_CONVERTED_CHECKPOINT=/path/to/converted \
-uv run pytest tests/rewards/test_rynnvalue_original_parity.py -v
-```
-
-The original path is the only parity-only surface that uses its released remote model code. Normal LeRobot loading never uses `trust_remote_code`.
 
 ## Offline dataset scoring
 
