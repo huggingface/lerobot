@@ -1589,6 +1589,9 @@ def modify_tasks(
     Per episode, the task is resolved with precedence:
     `episode_tasks` > `task_replacements` > `new_task` > original task. An episode that ends
     up with no task (none of the above apply and it had no original task) raises an error.
+    In mixed-task episodes, replacements apply to matching frame labels and preserve the
+    others. If any original task matches, `new_task` does not apply to that episode.
+    Explicit episode overrides and applicable defaults replace every frame label.
 
     The dataset is modified in-place, updating only the task-related files:
     - meta/tasks.parquet
@@ -1603,7 +1606,7 @@ def modify_tasks(
         episode_tasks: Optional dict mapping episode indices to task strings. Takes precedence
             over both `task_replacements` and `new_task`.
         task_replacements: Optional dict mapping existing task strings to new ones. Applied to
-            episodes whose current task matches a key. Every key must be an existing task.
+            each matching frame label. Every key must be an existing task.
 
     At least one of `new_task`, `episode_tasks`, or `task_replacements` must be provided.
 
@@ -1649,26 +1652,31 @@ def modify_tasks(
         if invalid_tasks:
             raise ValueError(f"Task replacements reference unknown tasks: {sorted(invalid_tasks)}")
 
-    # Build the mapping from episode index to task string
-    episode_to_task: dict[int, str] = {}
+    # Retain original task indices until all frame labels have been remapped.
+    original_task_to_index = (
+        dataset.meta.tasks["task_index"].to_dict() if dataset.meta.tasks is not None else {}
+    )
+    episode_to_tasks: dict[int, list[str]] = {}
+    episode_overrides: dict[int, str] = {}
     for ep_idx in range(dataset.meta.total_episodes):
         original_tasks = dataset.meta.episodes[ep_idx]["tasks"]
-        original_task = original_tasks[0] if original_tasks else None
 
         if episode_tasks and ep_idx in episode_tasks:
-            episode_to_task[ep_idx] = episode_tasks[ep_idx]
-        elif task_replacements and original_task in task_replacements:
-            episode_to_task[ep_idx] = task_replacements[original_task]
+            episode_overrides[ep_idx] = episode_tasks[ep_idx]
+            tasks = [episode_tasks[ep_idx]]
+        elif task_replacements and any(task in task_replacements for task in original_tasks):
+            tasks = [task_replacements.get(task, task) for task in original_tasks]
         elif new_task:
-            episode_to_task[ep_idx] = new_task
-        elif original_task:
-            # Keep original task if not overridden and no default provided
-            episode_to_task[ep_idx] = original_task
+            episode_overrides[ep_idx] = new_task
+            tasks = [new_task]
+        elif original_tasks:
+            tasks = original_tasks
         else:
             raise ValueError(f"Episode {ep_idx} has no task; provide new_task or episode_tasks")
+        episode_to_tasks[ep_idx] = list(dict.fromkeys(tasks))
 
     # Collect all unique tasks and create new task mapping
-    unique_tasks = sorted(set(episode_to_task.values()))
+    unique_tasks = sorted({task for tasks in episode_to_tasks.values() for task in tasks})
     new_task_df = pd.DataFrame(
         {"task_index": list(range(len(unique_tasks)))}, index=pd.Index(unique_tasks, name="task")
     )
@@ -1686,14 +1694,19 @@ def modify_tasks(
     for parquet_path in tqdm(sorted(data_dir.rglob("*.parquet")), desc="Updating data"):
         df = pd.read_parquet(parquet_path)
 
-        # Build a mapping from episode_index to new task_index for rows in this file
-        episode_indices_in_file = df["episode_index"].unique()
-        ep_to_new_task_idx = {
-            ep_idx: task_to_index[episode_to_task[ep_idx]] for ep_idx in episode_indices_in_file
-        }
-
-        # Update task_index column
-        df["task_index"] = df["episode_index"].map(ep_to_new_task_idx)
+        for ep_idx in df["episode_index"].unique():
+            mask = df["episode_index"] == ep_idx
+            if ep_idx in episode_overrides:
+                df.loc[mask, "task_index"] = task_to_index[episode_overrides[ep_idx]]
+            else:
+                # Map original indices once, so replacements cannot cascade or collapse mixed tasks.
+                task_index_mapping = {
+                    original_task_to_index[task]: task_to_index[
+                        task_replacements.get(task, task) if task_replacements else task
+                    ]
+                    for task in dataset.meta.episodes[ep_idx]["tasks"]
+                }
+                df.loc[mask, "task_index"] = df.loc[mask, "task_index"].map(task_index_mapping)
         df.to_parquet(parquet_path, index=False)
 
     # Update episodes metadata - modify tasks column
@@ -1704,7 +1717,7 @@ def modify_tasks(
         df = pd.read_parquet(parquet_path)
 
         # Update tasks column
-        df["tasks"] = df["episode_index"].apply(lambda ep_idx: [episode_to_task[ep_idx]])
+        df["tasks"] = df["episode_index"].map(episode_to_tasks)
         df.to_parquet(parquet_path, index=False)
 
     # Write new tasks.parquet
