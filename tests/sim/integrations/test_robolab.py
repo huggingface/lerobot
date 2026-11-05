@@ -14,6 +14,7 @@
 
 """The RoboLab integration on a stand-in for RoboLab's Isaac Lab env: Isaac Sim needs an RTX GPU."""
 
+import importlib
 import json
 import sys
 from types import ModuleType, SimpleNamespace
@@ -119,7 +120,8 @@ def robolab(tmp_path, monkeypatch):
         for key, value in values.items():
             monkeypatch.setattr(sys.modules[name], key, value, raising=False)
 
-    from lerobot.sim.integrations import robolab as integration
+    # The module the env loader imports, not a stale package attribute an earlier test left behind.
+    integration = importlib.import_module("lerobot.sim.integrations.robolab")
 
     monkeypatch.setattr(integration, "_launch_app", lambda: None)
     return worlds
