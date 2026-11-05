@@ -29,6 +29,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.g05.configuration_g05 import (
     G05_CAMERA_PROFILES,
@@ -2280,3 +2281,84 @@ def test_recipe_training_uses_the_rendered_task_rephrasing():
 
     assert rephrased["command"] == "gather every cube in the blue square"
     assert canonical["command"] == "operator task"
+
+
+class _IslandBackend(TinyG05Backend):
+    """Keeps its bias in float32, as the native backend keeps its float32 islands."""
+
+    def apply_fp32_params(self):
+        self.proj.bias.data = self.proj.bias.data.float()
+
+
+def _record_moves(monkeypatch) -> list[torch.dtype]:
+    """The dtypes of the tensors the loader moves, the CPU standing in for the GPU this test does not have."""
+    monkeypatch.setattr(
+        "lerobot.policies.g05.modeling_g05.resolve_safetensors_device", lambda location: "cpu:0"
+    )
+    moved = []
+    to = torch.Tensor.to
+
+    def recording_to(tensor, *args, **kwargs):
+        # Only the loader's move names the stand-in device, however it passes it.
+        device = kwargs.get("device", args[0] if args else None)
+        if isinstance(device, str | torch.device) and torch.device(device) == torch.device("cpu:0"):
+            moved.append(tensor.dtype)
+        return to(tensor, *args, **kwargs)
+
+    monkeypatch.setattr(torch.Tensor, "to", recording_to)
+    return moved
+
+
+@pytest.mark.parametrize("sharded", [False, True])
+def test_a_bfloat16_policy_reaches_the_gpu_with_its_weights_already_cast(tmp_path, monkeypatch, sharded):
+    # Cast after the move, the whole float32 checkpoint would be on the GPU first, more than a small
+    # board holds.
+    saved = G05Policy(_config(), backend=TinyG05Backend()).state_dict()
+    tensors = list(saved.items())
+    parts = [tensors[:1], tensors[1:]] if sharded else [tensors]
+    files = [tmp_path / f"model-{index}.safetensors" for index in range(len(parts))]
+    for part, file in zip(parts, files, strict=True):
+        save_file(dict(part), file)
+    with torch.device("meta"):
+        policy = G05Policy(_config(dtype=torch.bfloat16), backend=_IslandBackend())
+    moved = _record_moves(monkeypatch)
+    G05Policy._load_checkpoint(policy, SafetensorsCheckpoint(files), "cuda", strict=True)
+    # Each tensor is already in its parameter's final dtype when it moves.
+    assert sorted(moved, key=str) == [torch.bfloat16, torch.float32]
+    weight, bias = policy.backend.proj.weight, policy.backend.proj.bias
+    # Each tensor lands in its parameter's final dtype, with the values `to` would give it on the GPU.
+    assert (weight.dtype, bias.dtype) == (torch.bfloat16, torch.float32)
+    assert torch.equal(weight, saved["backend.proj.weight"].to(torch.bfloat16))
+    assert torch.equal(bias, saved["backend.proj.bias"].to(torch.bfloat16).float())
+
+
+def test_a_float32_policy_is_read_uncast_straight_onto_its_device(tmp_path, monkeypatch):
+    saved = G05Policy(_config(), backend=TinyG05Backend()).state_dict()
+    save_file(saved, tmp_path / "model.safetensors")
+    with torch.device("meta"):
+        policy = G05Policy(_config(dtype=torch.float32), backend=_IslandBackend())
+    _record_moves(monkeypatch)
+    read_on = []
+    tensors = SafetensorsCheckpoint.tensors
+
+    def record(self, device="cpu", **kwargs):
+        read_on.append(device)
+        return tensors(self, "cpu", **kwargs)
+
+    monkeypatch.setattr(SafetensorsCheckpoint, "tensors", record)
+    G05Policy._load_as_safetensor(policy, str(tmp_path / "model.safetensors"), "cuda", strict=True)
+    assert read_on == ["cpu:0"]
+    weight = policy.backend.proj.weight
+    assert weight.dtype == torch.float32
+    assert torch.equal(weight, saved["backend.proj.weight"])
+
+
+def test_a_tensor_the_policy_does_not_have_stays_off_the_gpu(tmp_path, monkeypatch):
+    # Moved, a float32 tensor the policy does not have would sit uncast on the GPU until the load ends.
+    saved = G05Policy(_config(), backend=TinyG05Backend()).state_dict()
+    save_file({**saved, "backend.unused": torch.zeros(20)}, tmp_path / "model.safetensors")
+    with torch.device("meta"):
+        policy = G05Policy(_config(dtype=torch.bfloat16), backend=_IslandBackend())
+    moved = _record_moves(monkeypatch)
+    G05Policy._load_as_safetensor(policy, str(tmp_path / "model.safetensors"), "cuda", strict=False)
+    assert sorted(moved, key=str) == [torch.bfloat16, torch.float32]

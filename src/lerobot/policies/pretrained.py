@@ -328,7 +328,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         time, wherever they were built. Mapped on a GPU, all of it would first be copied there,
         beside the parameters. `map_location` is the device `from_pretrained` moves the policy to
         afterwards: only a loader that assigns the file's tensors as the weights, as G0.5's does,
-        maps them there. A loader does not move the policy.
+        reads them itself and puts each one there. A loader does not move the policy.
         """
         device = "cpu"
         if len(checkpoint.files) == 1:
