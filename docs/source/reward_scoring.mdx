@@ -62,7 +62,7 @@ Scores are stored separately from the frame data. Language annotations instead l
 
 Scoring requires a writable local dataset root. Pass `--dataset_root=/path/to/local/dataset` to download or load the dataset there. Writing scores into LeRobot's default Hub snapshot cache is not supported.
 
-Load a checkpoint with `--reward_model.path`, or build a zero-shot model with `--reward_model.type`. Other `--reward_model.<field>` flags override its config. Set `--reward_model.image_key` to a camera in your dataset.
+The scoring command supports RoboMeter, RynnValue, SARM and TOPReward. Load a checkpoint with `--reward_model.path`, or build a zero-shot model with `--reward_model.type`. Other `--reward_model.<field>` flags override its config. Set `--reward_model.image_key` to a camera in your dataset.
 
 ### RoboMeter
 
