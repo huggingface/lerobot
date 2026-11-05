@@ -55,7 +55,6 @@ class RobometerConfig(RewardModelConfig):
     task_key: str = "task"
     default_task: str | None = None
 
-    max_frames: int | None = 8
     # Unused; kept so existing checkpoints such as lerobot/Robometer-4B still load. `reward_output`
     # must stay "progress": `predict_progress()` returns both progress and success probability.
     reward_output: str = "progress"
@@ -99,8 +98,6 @@ class RobometerConfig(RewardModelConfig):
                 "`progress` and `success_probability`. Remove `reward_output` from the config, and compare "
                 "`success_probability` with your threshold instead."
             )
-        if self.max_frames is not None and self.max_frames < 1:
-            raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
         if self.frame_pooling not in {"mean", "boundary", "attention"}:
             raise ValueError(f"frame_pooling must be mean/boundary/attention; got {self.frame_pooling!r}")
         if self.frame_pooling_attn_temperature <= 0:

@@ -66,7 +66,7 @@ def _skip_if_robometer_extras_missing(func):
 
 def test_video_to_numpy_chw_float_is_converted_to_thwc_uint8():
     video = torch.rand(4, 3, 8, 8)  # (T, C, H, W) floats in [0, 1]
-    array = _video_to_numpy(video, max_frames=None)
+    array = _video_to_numpy(video)
 
     assert array.shape == (4, 8, 8, 3)
     assert array.dtype == np.uint8
@@ -75,37 +75,22 @@ def test_video_to_numpy_chw_float_is_converted_to_thwc_uint8():
 
 def test_video_to_numpy_already_thwc_uint8_passes_through():
     video = torch.randint(0, 256, (3, 8, 8, 3), dtype=torch.uint8)  # (T, H, W, C)
-    array = _video_to_numpy(video, max_frames=None)
+    array = _video_to_numpy(video)
 
     assert array.shape == (3, 8, 8, 3)
     assert array.dtype == np.uint8
 
 
-def test_video_to_numpy_max_frames_tail_crops_recent_frames():
-    """``max_frames`` should keep the **last** K frames (most recent)."""
-    video = torch.zeros(10, 3, 4, 4)
-    for t in range(10):
-        video[t] = t / 9.0  # marker: 0 at t=0, ≈1 at t=9
-
-    array = _video_to_numpy(video, max_frames=3)
-
-    assert array.shape == (3, 4, 4, 3)
-    # The first kept frame is t=7 → marker ≈ 7/9 → uint8 ≈ 198
-    assert int(array[0, 0, 0, 0]) == int(round(7 / 9 * 255))
-    # The last kept frame is t=9 → marker = 1.0 → uint8 = 255
-    assert int(array[-1, 0, 0, 0]) == 255
-
-
 def test_video_to_numpy_rejects_3d_input():
     with pytest.raises(ValueError, match="Expected channel dim"):
-        _video_to_numpy(torch.zeros(4, 8, 8), max_frames=None)
+        _video_to_numpy(torch.zeros(4, 8, 8))
 
 
 def test_video_to_numpy_floats_above_one_pass_through_without_rescaling():
     """If ``array.max() > 1`` the helper assumes the tensor is already in the
     [0, 255] range (uint8-as-float), so values pass through unchanged."""
     video = torch.full((1, 3, 2, 2), 5.0)
-    array = _video_to_numpy(video, max_frames=None)
+    array = _video_to_numpy(video)
 
     assert array.shape == (1, 2, 2, 3)
     assert int(array.max()) == 5
@@ -114,7 +99,7 @@ def test_video_to_numpy_floats_above_one_pass_through_without_rescaling():
 def test_video_to_numpy_clips_very_large_floats_to_uint8_max():
     """Out-of-uint8-range floats are clipped at 255 before the cast."""
     video = torch.full((1, 3, 2, 2), 300.0)
-    array = _video_to_numpy(video, max_frames=None)
+    array = _video_to_numpy(video)
 
     assert int(array.max()) == 255
 
@@ -264,7 +249,6 @@ def test_encoder_step_get_config_roundtrips_user_fields(monkeypatch):
         image_key="observation.images.cam_top",
         task_key="task",
         default_task="do the thing",
-        max_frames=12,
         use_multi_image=True,
         use_per_frame_progress_token=True,
         max_length=2048,
@@ -276,7 +260,6 @@ def test_encoder_step_get_config_roundtrips_user_fields(monkeypatch):
         "image_key": "observation.images.cam_top",
         "task_key": "task",
         "default_task": "do the thing",
-        "max_frames": 12,
         "use_multi_image": True,
         "use_per_frame_progress_token": True,
         "max_length": 2048,
@@ -312,7 +295,6 @@ def test_canonical_processor_preserves_temporal_batch(monkeypatch):
         image_key="observation.images.top",
         task_key="task",
         default_task="do the task",
-        max_frames=2,
         use_multi_image=True,
         use_per_frame_progress_token=True,
         device="cpu",
@@ -322,7 +304,6 @@ def test_canonical_processor_preserves_temporal_batch(monkeypatch):
 
     assert len(preprocessor.steps) == 2
     assert isinstance(preprocessor.steps[0], RobometerEncoderProcessorStep)
-    assert preprocessor.steps[0].max_frames is None
     assert isinstance(preprocessor.steps[1], DeviceProcessorStep)
 
 
@@ -331,7 +312,7 @@ def test_canonical_processor_preserves_temporal_batch(monkeypatch):
     ("shape", "tasks", "expected_batch"), [((5, 3, 4, 4), "task", 1), ((2, 5, 3, 4, 4), ["a", "b"], 2)]
 )
 def test_encoder_accepts_single_or_batched_trajectories(monkeypatch, shape, tasks, expected_batch):
-    step = _build_step(monkeypatch, max_frames=None)
+    step = _build_step(monkeypatch)
     captured: list[tuple[np.ndarray, str]] = []
 
     def encode_samples(samples):

@@ -58,11 +58,12 @@ ROBOMETER expects:
 
 In LeRobot datasets, the preprocessor reads:
 
-| Config field              | Default                  | Meaning                                               |
-| ------------------------- | ------------------------ | ----------------------------------------------------- |
-| `reward_model.image_key`  | `observation.images.top` | Camera/video observation used by ROBOMETER            |
-| `reward_model.task_key`   | `task`                   | Key in complementary data that stores the task string |
-| `reward_model.max_frames` | `8`                      | Maximum number of frames passed to ROBOMETER          |
+| Config field             | Default                  | Meaning                                               |
+| ------------------------ | ------------------------ | ----------------------------------------------------- |
+| `reward_model.image_key` | `observation.images.top` | Camera/video observation used by ROBOMETER            |
+| `reward_model.task_key`  | `task`                   | Key in complementary data that stores the task string |
+
+The preprocessor encodes every frame it receives, so select the frames before calling it.
 
 `predict_progress()` returns a `RobometerPrediction` with two float32 tensors of shape `(batch_size, num_frames)`:
 
@@ -89,7 +90,7 @@ reward = prediction.progress[:, -1]
 reward = (prediction.success_probability[:, -1] > 0.5).float()
 ```
 
-Offline dataset scoring exposes both signals explicitly through the shared [offline scoring workflow](./reward_scoring). It does not read the compatibility-only `reward_output` field.
+Offline dataset scoring exposes both signals explicitly through the shared [offline scoring workflow](./reward_scoring).
 
 ## Usage
 

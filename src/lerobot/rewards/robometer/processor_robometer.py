@@ -69,10 +69,8 @@ def _frames_to_pil(frames: np.ndarray) -> list[Image.Image]:
     return [Image.fromarray(frames[i]) for i in range(frames.shape[0])]
 
 
-def _video_to_numpy(video: Tensor, *, max_frames: int | None) -> np.ndarray:
+def _video_to_numpy(video: Tensor) -> np.ndarray:
     """Convert one trajectory tensor to a ``(T, H, W, C) uint8`` numpy array."""
-    if max_frames is not None:
-        video = video[-max_frames:]
     if video.shape[1] in (1, 3):
         video = video.permute(0, 2, 3, 1)
     elif video.shape[-1] not in (1, 3):
@@ -130,7 +128,6 @@ class RobometerEncoderProcessorStep(ProcessorStep):
     image_key: str = OBS_IMAGES + ".top"
     task_key: str = "task"
     default_task: str | None = None
-    max_frames: int | None = 8
     use_multi_image: bool = True
     use_per_frame_progress_token: bool = True
     max_length: int = 1024
@@ -184,9 +181,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
             default=self.default_task,
         )
 
-        samples = [
-            (_video_to_numpy(tensor[i], max_frames=self.max_frames), tasks[i]) for i in range(batch_size)
-        ]
+        samples = [(_video_to_numpy(tensor[i]), tasks[i]) for i in range(batch_size)]
         encoded = self.encode_samples(samples)
 
         new_observation = dict(observation)
@@ -291,7 +286,6 @@ class RobometerEncoderProcessorStep(ProcessorStep):
             "image_key": self.image_key,
             "task_key": self.task_key,
             "default_task": self.default_task,
-            "max_frames": self.max_frames,
             "use_multi_image": self.use_multi_image,
             "use_per_frame_progress_token": self.use_per_frame_progress_token,
             "max_length": self.max_length,
@@ -321,7 +315,6 @@ def make_robometer_pre_post_processors(
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,
-                max_frames=None,
                 use_multi_image=config.use_multi_image,
                 use_per_frame_progress_token=config.use_per_frame_progress_token,
             ),
