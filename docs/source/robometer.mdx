@@ -75,7 +75,8 @@ The model predicts per-frame progress and success internally. The LeRobot reward
 ### Load the Reward Model Directly
 
 ```python
-from lerobot.rewards.robometer import RobometerConfig, RobometerRewardModel
+from lerobot.rewards import RobometerConfig
+from lerobot.rewards.robometer import RobometerRewardModel
 
 cfg = RobometerConfig(
     pretrained_path="lerobot/Robometer-4B",

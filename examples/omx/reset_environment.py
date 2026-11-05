@@ -26,8 +26,8 @@ import logging
 
 import numpy as np
 
+from lerobot.robots import Robot
 from lerobot.robots.omx_follower import OmxFollower, OmxFollowerConfig
-from lerobot.robots.robot import Robot
 from lerobot.utils.robot_utils import precise_sleep
 
 logger = logging.getLogger(__name__)

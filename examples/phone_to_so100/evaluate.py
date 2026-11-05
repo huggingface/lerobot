@@ -22,10 +22,9 @@ from lerobot.common.control_utils import predict_action
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.datasets import LeRobotDataset, aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.model.kinematics import RobotKinematics
-from lerobot.policies import make_pre_post_processors
+from lerobot.model import RobotKinematics
+from lerobot.policies import make_pre_post_processors, make_robot_action
 from lerobot.policies.act import ACTPolicy
-from lerobot.policies.utils import make_robot_action
 from lerobot.processor import (
     RobotProcessorPipeline,
     make_default_teleop_action_processor,

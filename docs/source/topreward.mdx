@@ -81,7 +81,8 @@ The model returns:
 ### Load the reward model directly
 
 ```python
-from lerobot.rewards.topreward import TOPRewardConfig, TOPRewardModel
+from lerobot.rewards import TOPRewardConfig
+from lerobot.rewards.topreward import TOPRewardModel
 
 cfg = TOPRewardConfig(
     vlm_name="Qwen/Qwen3-VL-8B-Instruct",

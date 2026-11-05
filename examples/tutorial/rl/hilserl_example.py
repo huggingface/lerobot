@@ -6,12 +6,11 @@ from queue import Empty, Full
 import torch
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.envs.configs import HILSerlProcessorConfig, HILSerlRobotEnvConfig
-from lerobot.policies import GaussianActorConfig
-from lerobot.policies.gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
-from lerobot.rewards.classifier.modeling_classifier import Classifier
-from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
-from lerobot.rl.buffer import ReplayBuffer
+from lerobot.envs import HILSerlRobotEnvConfig
+from lerobot.envs.configs import HILSerlProcessorConfig
+from lerobot.policies import GaussianActorConfig, GaussianActorPolicy
+from lerobot.rewards import Classifier
+from lerobot.rl import ReplayBuffer, SACAlgorithm, SACAlgorithmConfig
 from lerobot.rl.gym_manipulator import make_robot_env
 from lerobot.robots.so_follower import SO100FollowerConfig
 from lerobot.teleoperators import TeleopEvents

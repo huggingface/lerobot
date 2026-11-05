@@ -28,10 +28,10 @@ import draccus
 import numpy as np
 import torch
 
-from lerobot.configs.types import FeatureType
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.flux3 import Flux3Config, Flux3Policy, make_flux3_pre_post_processors
+from lerobot.configs import FeatureType
+from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.policies import Flux3Config
+from lerobot.policies.flux3 import Flux3Policy, make_flux3_pre_post_processors
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
 

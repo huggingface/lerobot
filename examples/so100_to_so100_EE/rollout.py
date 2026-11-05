@@ -27,7 +27,7 @@ from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.configs import PreTrainedConfig
 from lerobot.inference import SyncInferenceConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model import RobotKinematics
 from lerobot.processor import (
     RobotProcessorPipeline,
     observation_to_transition,
@@ -40,8 +40,7 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,
 )
-from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
-from lerobot.rollout.strategies import BaseStrategy
+from lerobot.rollout import BaseStrategy, BaseStrategyConfig, RolloutConfig, build_rollout_context
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
 

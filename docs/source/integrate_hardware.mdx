@@ -421,7 +421,7 @@ lerobot_teleoperator_my_awesome_teleop/
   ```python
   from dataclasses import dataclass
 
-  from lerobot.teleoperators.config import TeleoperatorConfig
+  from lerobot.teleoperators import TeleoperatorConfig
 
   @TeleoperatorConfig.register_subclass("my_awesome_teleop")
   @dataclass
@@ -433,7 +433,7 @@ lerobot_teleoperator_my_awesome_teleop/
 - **`my_awesome_teleop.py`**: Implements the device. The class name `MyAwesomeTeleop` matches its config class name (**Convention \#2**). This file structure adheres to **Convention \#3**.
 
   ```python
-  from lerobot.teleoperators.teleoperator import Teleoperator
+  from lerobot.teleoperators import Teleoperator
 
   from .config_my_awesome_teleop import MyAwesomeTeleopConfig
 

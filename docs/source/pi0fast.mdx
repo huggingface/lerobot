@@ -134,7 +134,8 @@ policy.use_kv_cache=true
 ### Inference Example
 
 ```python
-from lerobot.policies.pi0_fast import PI0FastPolicy, PI0FastConfig
+from lerobot.policies import PI0FastConfig
+from lerobot.policies.pi0_fast import PI0FastPolicy
 
 # Load the policy
 policy = PI0FastPolicy.from_pretrained("your-model-path")

@@ -39,7 +39,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from lerobot.teleoperators.teleoperator import Teleoperator
+from lerobot.teleoperators import Teleoperator
 from lerobot.utils.import_utils import is_package_available
 
 from .config_isaac_teleop import IsaacTeleopConfig

@@ -31,7 +31,7 @@ EE space is more intuitive for tasks like pick-and-place because it directly des
 LeRobot provides processor steps for converting between joint and EE spaces using forward and inverse kinematics. These are built on top of `RobotKinematics`, which loads a URDF model of your robot.
 
 ```python
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model import RobotKinematics
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     ForwardKinematicsJointsToEE,
     InverseKinematicsEEToJoints,

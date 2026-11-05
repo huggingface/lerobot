@@ -18,7 +18,7 @@
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.datasets import LeRobotDataset, aggregate_pipeline_dataset_features, create_initial_features
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.model.kinematics import RobotKinematics
+from lerobot.model import RobotKinematics
 from lerobot.processor import (
     RobotProcessorPipeline,
     observation_to_transition,
