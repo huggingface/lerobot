@@ -169,7 +169,7 @@ The default dataset score, named `robometer`, contains:
 - `reward.robometer.progress`
 - `reward.robometer.success_probability`
 
-Both are dense float32 frame signals in `[0, 1]`. ROBOMETER's frame scorer uses the characterized fixed-prefix sampling rule, while the shared scoring workflow handles validation, atomic episode writes, resume, and deterministic merging.
+Both are dense float32 frame signals in `[0, 1]`. Like ROBOMETER's own frame-step evaluation, the frame scorer predicts each frame from 4 frames spread over the prefix ending at it. The shared scoring workflow handles validation, atomic episode writes, resume, and deterministic merging.
 
 For RA-BC weighting, select the namespaced progress signal explicitly:
 

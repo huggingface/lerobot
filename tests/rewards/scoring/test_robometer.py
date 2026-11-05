@@ -29,16 +29,19 @@ from lerobot.rewards.robometer.scoring_robometer import (
 )
 
 
-def test_build_subsample_indices_pins_characterized_legacy_rule():
+def test_build_subsample_indices_matches_upstream_frame_steps():
     actual = build_subsample_indices(6, 4)
 
     assert [indices.tolist() for indices in actual] == [
+        np.linspace(0, frame_index, 4, dtype=int).tolist() for frame_index in range(6)
+    ]
+    assert [indices.tolist() for indices in actual] == [
         [0, 0, 0, 0],
-        [0, 0, 1, 1],
-        [0, 1, 1, 2],
+        [0, 0, 0, 1],
+        [0, 0, 1, 2],
         [0, 1, 2, 3],
-        [0, 1, 3, 4],
-        [0, 2, 3, 5],
+        [0, 1, 2, 4],
+        [0, 1, 3, 5],
     ]
 
 

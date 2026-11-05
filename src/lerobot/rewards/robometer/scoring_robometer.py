@@ -51,9 +51,12 @@ ROBOMETER_SIGNAL_DESCRIPTORS = {
 
 
 def build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> list[np.ndarray]:
-    """For each frame, pick ``num_subsampled_frames`` indices spread over the prefix ending at it."""
+    """For each frame, pick ``num_subsampled_frames`` indices spread over the prefix ending at it.
+
+    Indices are truncated, not rounded, as in RoboMeter's own frame-step evaluation.
+    """
     return [
-        np.linspace(0, frame_index, num_subsampled_frames).round().astype(np.int64)
+        np.linspace(0, frame_index, num_subsampled_frames, dtype=np.int64)
         for frame_index in range(num_frames)
     ]
 
