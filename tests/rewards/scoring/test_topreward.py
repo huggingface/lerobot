@@ -95,6 +95,7 @@ class _FakeModel:
         prompt_prefix="prefix",
         prompt_suffix_template="{instruction}",
         add_chat_template=False,
+        success_threshold=float("-inf"),
     )
 
     def eval(self):
@@ -119,6 +120,18 @@ def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress(
     assert scorer.name == "topreward"
     assert scorer.provenance["scorer"]["options"]["num_samples"] == 3
     assert scorer.provenance["scorer"]["options"]["vlm_name"] == "fake/vlm"
+
+
+def test_topreward_frame_scorer_applies_a_finite_success_threshold_before_normalizing():
+    model = _FakeModel()
+    model.config = SimpleNamespace(**{**vars(_FakeModel.config), "success_threshold": -3.0})
+    scorer = TOPRewardFrameScorer(model, _FakeEncoder(), num_samples=3)
+
+    result = scorer.score_episode(_FakeDataset([{"dataset_from_index": 0, "dataset_to_index": 5}]), 0)
+
+    # Log-probabilities -4, -2 and 0 become 0, 1 and 1 against the threshold.
+    np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.0, 0.5, 1.0, 1.0, 1.0])
+    assert scorer.provenance["scorer"]["options"]["success_threshold"] == -3.0
 
 
 def test_topreward_frame_scorer_supports_episode_filtered_dataset_views():

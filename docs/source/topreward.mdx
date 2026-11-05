@@ -126,7 +126,7 @@ uv run lerobot-score \
     --num_samples=15
 ```
 
-For each episode, the scorer computes the log-probability of the task for `--num_samples` evenly spaced prefixes (15 by default, every prefix when the episode is shorter), normalizes them per episode with min-max, and interpolates between them. Each prefix is passed whole, without the `max_frames` cap. The dataset score `topreward` holds one dense signal, `reward.topreward.progress`, in `[0, 1]`.
+For each episode, the scorer computes the log-probability of the task for `--num_samples` evenly spaced prefixes (15 by default, every prefix when the episode is shorter), normalizes them per episode with min-max, and interpolates between them. Each prefix is passed whole, without the `max_frames` cap. The dataset score `topreward` holds one dense signal, `reward.topreward.progress`, in `[0, 1]`. If the config sets a finite `success_threshold`, each prefix's log-probability first becomes 1 above the threshold and 0 otherwise; `compute_log_probability()` itself ignores it.
 
 For RA-BC weighting, select it explicitly:
 
