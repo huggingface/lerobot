@@ -1,14 +1,6 @@
 # RoboColosseum
 
-<Tip>
-  RoboColosseum is a **real-world** benchmark. Unlike the simulation benchmarks
-  in this section, it is not a `lerobot-eval` environment: there is no
-  `--env.type` for it. Evaluations run on physical robots operated by the
-  RoboColosseum team, who connect to your policy through their policy API or
-  serve your checkpoint next to the robot.
-</Tip>
-
-[RoboColosseum](https://robocolosseum.ai/) is a distributed real-world benchmark for evaluating general-purpose robot policies on physical robots deployed in the wild. Evaluations run on standardized setups: Unitree G1 humanoids, bimanual YAM stations, Franka arms in the DROID setup, and SO-101 arms. Every evaluation run, failures included, is published on the Hugging Face Hub in LeRobot format.
+[RoboColosseum](https://robocolosseum.ai/) is a distributed real-world benchmark for evaluating general-purpose robot policies on physical robots deployed in the wild. Evaluations run on standardized setups: Unitree G1 humanoids, bimanual YAM, Franka arms in the DROID setup, and SO-101. Every evaluation run, failures included, is published on the Hugging Face Hub in LeRobot format.
 
 This page covers how to prepare a LeRobot policy for its two evaluation tracks. To have a policy evaluated, apply on the RoboColosseum website.
 
@@ -25,14 +17,14 @@ This page covers how to prepare a LeRobot policy for its two evaluation tracks. 
 
 ## Fine-tune Track
 
-The Fine-tune Track provides task demonstrations for adapting a policy to a fixed robot embodiment and task before physical evaluation. Each task is a separate LeRobot `v3.0` dataset on the Hub, recorded at 30 fps with about 100 episodes:
+The Fine-tune Track provides task demonstrations for adapting a policy to a fixed robot embodiment and task before physical evaluation. Each task is a separate LeRobot `v3.0` dataset on the Hub, recorded with 100 episodes:
 
-| Embodiment     | Datasets                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Cameras                              | State / action dims |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ------------------- |
-| Bimanual YAM   | [`yam-cups`](https://huggingface.co/datasets/RoboColosseum/yam-cups), [`yam-drawer`](https://huggingface.co/datasets/RoboColosseum/yam-drawer), [`yam-dustpan`](https://huggingface.co/datasets/RoboColosseum/yam-dustpan), [`yam-microwave`](https://huggingface.co/datasets/RoboColosseum/yam-microwave), [`yam-tray`](https://huggingface.co/datasets/RoboColosseum/yam-tray)                                                                                             | `top`, `left`, `right`               | See below           |
-| Franka (DROID) | [`droid-close-laptop`](https://huggingface.co/datasets/RoboColosseum/droid-close-laptop), [`droid-mug-on-coaster`](https://huggingface.co/datasets/RoboColosseum/droid-mug-on-coaster), [`droid-open-drawer`](https://huggingface.co/datasets/RoboColosseum/droid-open-drawer), [`droid-put-marker-pen`](https://huggingface.co/datasets/RoboColosseum/droid-put-marker-pen), [`droid-towel-in-basket`](https://huggingface.co/datasets/RoboColosseum/droid-towel-in-basket) | `left_image`, `right_image`, `wrist` | 8 / 8               |
-| SO-101         | [`so101-cube-drawer`](https://huggingface.co/datasets/RoboColosseum/so101-cube-drawer), [`so101-remove-screwdriver`](https://huggingface.co/datasets/RoboColosseum/so101-remove-screwdriver), [`so101-stack-bowls`](https://huggingface.co/datasets/RoboColosseum/so101-stack-bowls), [`so101-stack-cubes`](https://huggingface.co/datasets/RoboColosseum/so101-stack-cubes), [`so101-upright-bottle`](https://huggingface.co/datasets/RoboColosseum/so101-upright-bottle)   | `front`, `wrist`                     | 6 / 6               |
-| Unitree G1     | [`g1-carry-box`](https://huggingface.co/datasets/RoboColosseum/g1-carry-box), [`g1-fold-towel`](https://huggingface.co/datasets/RoboColosseum/g1-fold-towel), [`g1-hang-keys`](https://huggingface.co/datasets/RoboColosseum/g1-hang-keys), [`g1-load-clothes-washing-machine`](https://huggingface.co/datasets/RoboColosseum/g1-load-clothes-washing-machine), [`g1-plate-into-rack`](https://huggingface.co/datasets/RoboColosseum/g1-plate-into-rack)                     | `head`, `left_wrist`, `right_wrist`  | 29 / 23             |
+| Embodiment     | Datasets                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Cameras                              |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Bimanual YAM   | [`yam-cups`](https://huggingface.co/datasets/RoboColosseum/yam-cups), [`yam-drawer`](https://huggingface.co/datasets/RoboColosseum/yam-drawer), [`yam-dustpan`](https://huggingface.co/datasets/RoboColosseum/yam-dustpan), [`yam-microwave`](https://huggingface.co/datasets/RoboColosseum/yam-microwave), [`yam-tray`](https://huggingface.co/datasets/RoboColosseum/yam-tray)                                                                                             | `top`, `left`, `right`               |
+| Franka (DROID) | [`droid-close-laptop`](https://huggingface.co/datasets/RoboColosseum/droid-close-laptop), [`droid-mug-on-coaster`](https://huggingface.co/datasets/RoboColosseum/droid-mug-on-coaster), [`droid-open-drawer`](https://huggingface.co/datasets/RoboColosseum/droid-open-drawer), [`droid-put-marker-pen`](https://huggingface.co/datasets/RoboColosseum/droid-put-marker-pen), [`droid-towel-in-basket`](https://huggingface.co/datasets/RoboColosseum/droid-towel-in-basket) | `left_image`, `right_image`, `wrist` |
+| SO-101         | [`so101-cube-drawer`](https://huggingface.co/datasets/RoboColosseum/so101-cube-drawer), [`so101-remove-screwdriver`](https://huggingface.co/datasets/RoboColosseum/so101-remove-screwdriver), [`so101-stack-bowls`](https://huggingface.co/datasets/RoboColosseum/so101-stack-bowls), [`so101-stack-cubes`](https://huggingface.co/datasets/RoboColosseum/so101-stack-cubes), [`so101-upright-bottle`](https://huggingface.co/datasets/RoboColosseum/so101-upright-bottle)   | `front`, `wrist`                     |
+| Unitree G1     | [`g1-carry-box`](https://huggingface.co/datasets/RoboColosseum/g1-carry-box), [`g1-fold-towel`](https://huggingface.co/datasets/RoboColosseum/g1-fold-towel), [`g1-hang-keys`](https://huggingface.co/datasets/RoboColosseum/g1-hang-keys), [`g1-load-clothes-washing-machine`](https://huggingface.co/datasets/RoboColosseum/g1-load-clothes-washing-machine), [`g1-plate-into-rack`](https://huggingface.co/datasets/RoboColosseum/g1-plate-into-rack)                     | `head`, `left_wrist`, `right_wrist`  |
 
 All datasets are under the `RoboColosseum/` namespace. Load one with `LeRobotDataset`, which downloads it on first use:
 
@@ -54,49 +46,17 @@ lerobot-train \
 
 The exact policy configuration, camera mapping, action representation and training recipe depend on the policy being adapted. If your policy expects different camera names, map them with [`--rename_map`](./rename_map).
 
-<Tip warning={true}>
-The Bimanual YAM datasets have no `observation.state` or `action` feature. They store several representations side by side:
-
-- state: `observation.state_joint_angles` (14) and `observation.state_eef_absolute` (16)
-- action: `action_joint_angles` (14), `action_eef_absolute` (16) and `action_eef_delta` (16)
-
-LeRobot policies expect `observation.state` and `action`, so choose one state and one action representation and store them under those names before training with `lerobot-train`. `--rename_map` only renames observation keys, so it cannot select the action. The RoboColosseum MolmoAct2 baseline uses the 14-D absolute joint state and action.
-
-</Tip>
-
 ## Open Track
 
 The Open Track evaluates a frozen checkpoint on real-world tasks. No training is performed on RoboColosseum Open Track evaluation data.
 
 If your policy does not yet support the target embodiment, first adapt it on public robot data for that embodiment, then freeze the resulting checkpoint before evaluation. Recommended public bootstrap datasets:
 
-| Target embodiment | Public bootstrap data                                                                                            | Format                                               |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Franka (DROID)    | [`lerobot/droid_1.0.1`](https://huggingface.co/datasets/lerobot/droid_1.0.1)                                     | LeRobot `v3.0`, 15 fps, 8-D state / action           |
-| Bimanual YAM      | [`allenai/MolmoAct2-BimanualYAM-Dataset`](https://huggingface.co/datasets/allenai/MolmoAct2-BimanualYAM-Dataset) | LeRobot `v3.0`, 30 fps, 14-D state / action          |
-| SO-100 / SO-101   | [`allenai/MolmoAct2-SO100_101-Dataset`](https://huggingface.co/datasets/allenai/MolmoAct2-SO100_101-Dataset)     | Manifest of source datasets, not a trainable dataset |
-
-The Franka and Bimanual YAM datasets work with `lerobot-train` directly:
-
-```bash
-# Franka (DROID)
-lerobot-train \
-  --dataset.repo_id=lerobot/droid_1.0.1 \
-  --policy.type=<policy_type> \
-  --policy.repo_id=${HF_USER}/<policy_type>_droid \
-  --output_dir=./outputs/<policy_type>_droid
-```
-
-```bash
-# Bimanual YAM
-lerobot-train \
-  --dataset.repo_id=allenai/MolmoAct2-BimanualYAM-Dataset \
-  --policy.type=<policy_type> \
-  --policy.repo_id=${HF_USER}/<policy_type>_bimanual_yam \
-  --output_dir=./outputs/<policy_type>_bimanual_yam
-```
-
-Camera names can differ from the RoboColosseum recordings: for example, `lerobot/droid_1.0.1` uses `exterior_1_left`, `exterior_2_left` and `wrist_left`, while the RoboColosseum DROID datasets use `left_image`, `right_image` and `wrist`. Keep track of the camera mapping your checkpoint is trained with.
+| Target embodiment | Public bootstrap data                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| SO-100 / SO-101   | [`allenai/MolmoAct2-SO100_101-Dataset`](https://huggingface.co/datasets/allenai/MolmoAct2-SO100_101-Dataset)     |
+| Franka (DROID)    | [DROID](https://droid-dataset.github.io/)                                                                        |
+| Bimanual YAM      | [`allenai/MolmoAct2-BimanualYAM-Dataset`](https://huggingface.co/datasets/allenai/MolmoAct2-BimanualYAM-Dataset) |
 
 `allenai/MolmoAct2-SO100_101-Dataset` lists the SO-100 and SO-101 LeRobot datasets used to train MolmoAct2, with per-episode language annotations. Download the list of source repositories with:
 
@@ -107,5 +67,17 @@ hf download allenai/MolmoAct2-SO100_101-Dataset repo_list.json \
 ```
 
 Each entry in `repo_list.json` is a Hub dataset ID prefixed with `lerobot:` (for example `lerobot:<user>/<dataset>`). Select compatible SO-100 / SO-101 datasets from the list and train on those. Many of them use the LeRobot `v2.1` format: convert them to `v3.0` before loading (see [Using LeRobotDataset](./lerobot-dataset-v3)).
+
+DROID is released in the RLDS format. Convert it to a LeRobot dataset by following the DROID example in [Porting Large Datasets](./porting_datasets_v3), then train on the converted dataset with `lerobot-train`.
+
+The Bimanual YAM dataset works with `lerobot-train` directly:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=allenai/MolmoAct2-BimanualYAM-Dataset \
+  --policy.type=<policy_type> \
+  --policy.repo_id=${HF_USER}/<policy_type>_bimanual_yam \
+  --output_dir=./outputs/<policy_type>_bimanual_yam
+```
 
 The bootstrap stage only makes the policy compatible with the target embodiment. The checkpoint submitted to the Open Track stays frozen during evaluation.
