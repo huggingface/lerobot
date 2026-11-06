@@ -33,7 +33,7 @@ Put image orientation, quaternion conversion and state ordering in that simulato
 2. `eval_policy_all()` runs `n_episodes` rollouts of each task, one task at a time (or `--env.max_parallel_tasks` at once).
 3. Results are aggregated per episode, task, suite and overall: `pc_success` (success rate), `avg_sum_reward` and `avg_max_reward`. Every success rate comes with its counts (`n_success` out of `n_episodes`) and a 95% Wilson interval in percent (`pc_success_ci95`). The interval covers sampling noise over episodes only; it says nothing about variation between training runs of the same recipe.
 
-Success comes from `info["is_success"]`, which your environment reports on every `step()`. Your environment can also report numbers of its own. It puts them in `info["metrics"]`, a map from each name to one float per environment. They reach each episode's entry under `per_episode[i]["metrics"]`, taken at the step the episode ended.
+Success comes from `info["is_success"]`, which your environment reports on every `step()`. Your environment can also report numbers of its own. It puts them in `info["metrics"]`, a map from each name to one float per environment. They reach each episode's entry under `per_episode[i]["metrics"]`, taken at the step the episode ended. In `eval_info.json`, that is `per_task[k]["metrics"]["per_episode"][i]["metrics"]`.
 
 ## What your environment must provide
 
