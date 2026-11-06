@@ -58,11 +58,16 @@ class RolloutRingBuffer:
     # ------------------------------------------------------------------
 
     def append(self, frame: dict) -> None:
-        """Add *frame* to the buffer, evicting the oldest if at capacity."""
+        """Add *frame*, evicting the oldest at capacity; skip a frame larger than the memory cap."""
         frame_bytes = _estimate_frame_bytes(frame)
+        if self._max_frames == 0 or frame_bytes > self._max_bytes:
+            return
 
-        # Evict oldest frames until we are under the memory cap
-        while self._current_bytes + frame_bytes > self._max_bytes and self._buffer:
+        # Account for both limits explicitly: deque's implicit maxlen eviction
+        # otherwise removes a frame without subtracting it from the byte count.
+        while self._buffer and (
+            len(self._buffer) >= self._max_frames or self._current_bytes + frame_bytes > self._max_bytes
+        ):
             evicted = self._buffer.popleft()
             self._current_bytes -= _estimate_frame_bytes(evicted)
 
