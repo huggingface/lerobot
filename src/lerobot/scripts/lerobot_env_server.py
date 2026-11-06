@@ -15,7 +15,7 @@
 """Run an env server from a YAML config or an EnvHub repository.
 
 lerobot-env-server --config_path=docker/sim/configs/libero.yaml --docker=true   # in its Docker image, on :7448
-lerobot-env-server --envhub=<user/repo[@revision]> --docker=true                 # serve an EnvHub repository
+lerobot-env-server --envhub=<user/repo@commit> --trust_remote_code=true --docker=true  # serve an EnvHub repository
 lerobot-env-server --config_path=docker/sim/configs/metaworld.yaml             # in the current Python environment
 
 Every key of the config takes a nested override, e.g. `--sim.task=libero_10`.
@@ -53,8 +53,12 @@ class EnvServerLaunchConfig(EnvServerConfig):
 
     Args:
         envhub (`str`, *optional*):
-            EnvHub repository to serve: `user/repo[@revision]`, or a local directory. Its `env.py` is trusted
-            and run. Settings left unset come from its `LEROBOT_SIM`, else from the EnvHub defaults.
+            EnvHub repository to serve: `user/repo[@revision]`, or a local directory. Settings left unset come
+            from its `LEROBOT_SIM`, else from the EnvHub defaults. Serving it runs its code, so it needs
+            `trust_remote_code`.
+        trust_remote_code (`bool`, *optional*, defaults to `False`):
+            Consent to run the `envhub` repository's code: its `env.py` and, with `docker`, the installation
+            of its `requirements.txt` and `packages.txt`.
         docker (`bool`, *optional*, defaults to `False`):
             Run the server in its Docker image, built from this LeRobot checkout, on `localhost:7448`.
         build (`bool`, *optional*, defaults to `False`):
@@ -64,6 +68,7 @@ class EnvServerLaunchConfig(EnvServerConfig):
     """
 
     envhub: str | None = None
+    trust_remote_code: bool = False
     docker: bool = False
     build: bool = False
     stop: bool = False
@@ -75,6 +80,16 @@ class EnvServerLaunchConfig(EnvServerConfig):
         if (self.build or self.stop) and not self.docker:
             raise ValueError("--build and --stop apply to --docker=true")
         if self.envhub:
+            if not (self.trust_remote_code or self.stop):
+                pin = (
+                    ""
+                    if Path(self.envhub.split(":")[0]).is_dir()
+                    else ", pin the commit you read (user/repo@<commit>)"
+                )
+                raise ValueError(
+                    f"--envhub={self.envhub} runs the repository's code. Read its env.py, requirements.txt and "
+                    f"packages.txt{pin}, then pass --trust_remote_code=true"
+                )
             if self.sim.type not in ("", "envhub"):
                 raise ValueError(f"--envhub serves an EnvHub repository, not sim.type={self.sim.type!r}")
             self.sim.type = "envhub"
@@ -82,7 +97,7 @@ class EnvServerLaunchConfig(EnvServerConfig):
                 "make_env_kwargs": {},
                 **self.sim.kwargs,
                 "hub_path": self.envhub,
-                "trust_remote_code": True,
+                "trust_remote_code": self.trust_remote_code,
             }
             self.deployment = self.deployment or "envhub"
         super().__post_init__()

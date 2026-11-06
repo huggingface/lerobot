@@ -121,6 +121,7 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     argv = [
         "lerobot-env-server",
         "--envhub=User/My-Env@v1",
+        "--trust_remote_code=true",
         "--sim.fps=50",
         "--sim.kwargs={make_env_kwargs: {episode_length: 900}}",
         "--docker=true",
@@ -152,7 +153,13 @@ def test_docker_launch_builds_a_local_envhub_directory(tmp_path, monkeypatch):
         lerobot_env_server.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs))
     )
     (tmp_path / "custom.py").write_text("")
-    argv = ["lerobot-env-server", f"--envhub={tmp_path}:custom.py", "--docker=true", "--build=true"]
+    argv = [
+        "lerobot-env-server",
+        f"--envhub={tmp_path}:custom.py",
+        "--trust_remote_code=true",
+        "--docker=true",
+        "--build=true",
+    ]
     monkeypatch.setattr(sys, "argv", argv)
     lerobot_env_server.main()
     env = calls[-1][1]["env"]
@@ -160,6 +167,17 @@ def test_docker_launch_builds_a_local_envhub_directory(tmp_path, monkeypatch):
     assert env["SIM_TAG"] == f"local-{tmp_path.name.lower()}"
     hub_path = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())["sim"]["kwargs"]["hub_path"]
     assert hub_path == f"{lerobot_env_server.ENVHUB_IMAGE_DIR}:custom.py"
+
+
+def test_serving_an_envhub_repository_needs_explicit_consent(tmp_path):
+    with pytest.raises(ValueError, match="pin the commit you read.*--trust_remote_code=true"):
+        EnvServerLaunchConfig(envhub="user/repo")
+    # A local folder needs the same consent, but has no commit to pin.
+    with pytest.raises(ValueError, match="packages.txt, then pass --trust_remote_code=true"):
+        EnvServerLaunchConfig(envhub=str(tmp_path))
+    assert EnvServerLaunchConfig(envhub="user/repo", trust_remote_code=True).sim.kwargs["trust_remote_code"]
+    # Stopping the server runs nothing.
+    EnvServerLaunchConfig(envhub="user/repo", docker=True, stop=True)
 
 
 def test_build_and_stop_require_docker():
