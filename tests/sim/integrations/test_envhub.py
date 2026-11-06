@@ -62,10 +62,11 @@ def make_env(n_envs=1, use_async_envs=False):
 @pytest.fixture
 def hub_repo(tmp_path, monkeypatch):
     """Return a function that sets the `env.py` the Hub repository `user/reach` downloads."""
-    env_file = tmp_path / "env.py"
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
     # Only the network download is stubbed; the consent check and URL parsing run for real.
-    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    return env_file.write_text
+    monkeypatch.setattr(envhub, "snapshot_download", lambda **kwargs: str(snapshot))
+    return (snapshot / "env.py").write_text
 
 
 def _envhub(hub_path: str = "user/reach", trust_remote_code: bool = True) -> SimConfig:
@@ -126,18 +127,47 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
         env.close()
 
 
+def test_envhub_repository_files_sit_next_to_env_py(hub_repo, tmp_path):
+    # The whole repository is downloaded, so env.py finds its other files as in a local directory.
+    (tmp_path / "snapshot" / "task.txt").write_text("Reach the target.")
+    hub_repo(
+        'from pathlib import Path\nTASK = (Path(__file__).parent / "task.txt").read_text()\n' + _ENVHUB_ENV
+    )
+    env = LocalVectorEnv(_envhub())
+    try:
+        assert env.tasks == {"reach_suite": [0]}
+    finally:
+        env.close()
+
+
+def test_envhub_names_a_file_missing_from_the_repository(tmp_path, monkeypatch):
+    downloads = []
+
+    def download(**kwargs):
+        downloads.append((kwargs["repo_id"], kwargs["revision"]))
+        return str(tmp_path)
+
+    monkeypatch.setattr(envhub, "snapshot_download", download)
+    with pytest.raises(FileNotFoundError, match="custom.py in repository user/reach@v1"):
+        LocalVectorEnv(_envhub(hub_path="user/reach@v1:custom.py"))
+    assert downloads == [("user/reach", "v1")]
+
+
 def test_envhub_runs_a_local_directory(tmp_path, monkeypatch):
     (tmp_path / "env.py").write_text(_ENVHUB_ENV)
 
     def no_download(**kwargs):
         raise AssertionError("A local directory is not downloaded")
 
-    monkeypatch.setattr(envhub, "hf_hub_download", no_download)
+    monkeypatch.setattr(envhub, "snapshot_download", no_download)
     env = LocalVectorEnv(_envhub(hub_path=str(tmp_path)))
     try:
         assert env.tasks == {"reach_suite": [0]}
     finally:
         env.close()
+    # A local directory needs the same consent as a Hub repository.
+    with pytest.raises(RuntimeError, match="Refusing to execute remote code in"):
+        LocalVectorEnv(_envhub(hub_path=str(tmp_path), trust_remote_code=False))
 
 
 def test_envhub_module_runs_once_per_server_process(hub_repo, monkeypatch):
