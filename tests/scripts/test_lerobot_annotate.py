@@ -15,6 +15,8 @@
 # limitations under the License.
 
 import json
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +28,17 @@ from huggingface_hub.errors import RevisionNotFoundError
 # ``dataset`` extra. Skip in tiers without it instead of erroring.
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 pytestmark = pytest.mark.dataset
+
+
+def test_import_without_the_dataset_extra_names_the_extra():
+    # As in an install without the dataset extra.
+    code = """
+import sys
+sys.modules["datasets"] = sys.modules["pyarrow"] = None
+import lerobot.scripts.lerobot_annotate
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert "pip install 'lerobot[dataset]'" in result.stderr, result.stderr
 
 
 def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):

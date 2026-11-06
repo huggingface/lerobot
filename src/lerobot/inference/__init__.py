@@ -14,6 +14,10 @@
 
 """Policy execution contracts, scheduling and synchronous/asynchronous backends."""
 
+from typing import TYPE_CHECKING
+
+from lerobot.utils.import_utils import lazy_exports
+
 from .base import (
     EXTERNAL_HISTORY_DEFAULT,
     InferenceEngine,
@@ -35,8 +39,6 @@ from .contracts import (
     PolicyCapabilities,
     QueryKind,
 )
-from .dispatch import commit_action, dispatch_permitted, dispatch_tick, next_interpolated_action
-from .execution import ChunkRequest, ChunkRuntime, HoldState, estimate_delay, trained_overlap_valid
 from .factory import (
     InferenceEngineConfig,
     RemoteInferenceConfig,
@@ -44,10 +46,38 @@ from .factory import (
     SyncInferenceConfig,
     create_inference_engine,
 )
-from .policy_runner import PolicyRunner
-from .prediction import ChunkPrediction, chunk_inference_context, predict_chunk
-from .rtc import RTCInferenceEngine, supports_rtc_inference, validate_local_chunk_policy
-from .sync import SyncInferenceEngine
+
+# These import torch, so each is imported the first time it is used.
+if TYPE_CHECKING:
+    from .dispatch import commit_action, dispatch_permitted, dispatch_tick, next_interpolated_action
+    from .execution import ChunkRequest, ChunkRuntime, HoldState, estimate_delay, trained_overlap_valid
+    from .policy_runner import PolicyRunner
+    from .prediction import ChunkPrediction, chunk_inference_context, predict_chunk
+    from .rtc import RTCInferenceEngine, supports_rtc_inference, validate_local_chunk_policy
+    from .sync import SyncInferenceEngine
+else:
+    __getattr__, __dir__ = lazy_exports(
+        __name__,
+        {
+            "commit_action": ".dispatch.commit_action",
+            "dispatch_permitted": ".dispatch.dispatch_permitted",
+            "dispatch_tick": ".dispatch.dispatch_tick",
+            "next_interpolated_action": ".dispatch.next_interpolated_action",
+            "ChunkRequest": ".execution.ChunkRequest",
+            "ChunkRuntime": ".execution.ChunkRuntime",
+            "HoldState": ".execution.HoldState",
+            "estimate_delay": ".execution.estimate_delay",
+            "trained_overlap_valid": ".execution.trained_overlap_valid",
+            "PolicyRunner": ".policy_runner.PolicyRunner",
+            "ChunkPrediction": ".prediction.ChunkPrediction",
+            "chunk_inference_context": ".prediction.chunk_inference_context",
+            "predict_chunk": ".prediction.predict_chunk",
+            "RTCInferenceEngine": ".rtc.RTCInferenceEngine",
+            "supports_rtc_inference": ".rtc.supports_rtc_inference",
+            "validate_local_chunk_policy": ".rtc.validate_local_chunk_policy",
+            "SyncInferenceEngine": ".sync.SyncInferenceEngine",
+        },
+    )
 
 __all__ = [
     "DEFAULT_MAX_TEXT_INPUT_CHARS",

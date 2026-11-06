@@ -304,13 +304,15 @@ def test_wrap_uses_cleaned_config_for_draccus_parse():
     @parser.wrap()
     def main(cfg: _DummyConfig) -> _DummyConfig:
         captured["cfg"] = cfg
+        # Read during the call: wrap() forgets the path fields when it returns.
+        captured["path_args"] = dict(_config_path_args)
         return cfg
 
     with patch.object(sys, "argv", ["prog", f"--config_path={config_path}"]):
         main()
 
     assert captured["cfg"].other == "set-via-yaml"
-    assert _config_path_args["nested"] == "some/checkpoint"
+    assert captured["path_args"]["nested"] == "some/checkpoint"
     # Cleaned config dropped `nested:` entirely; defaults stand for this wrapper
     # class (a real PreTrainedConfig would now load the checkpoint and apply
     # the captured yaml_overrides via from_pretrained()).

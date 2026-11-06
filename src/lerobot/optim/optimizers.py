@@ -14,19 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import logging
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import draccus
 import torch
+from draccus.choice_types import ChoiceRegistryBase
 from safetensors.torch import load_file, save_file
 
 from lerobot.utils.constants import (
     OPTIMIZER_PARAM_GROUPS,
     OPTIMIZER_STATE,
 )
+from lerobot.utils.import_utils import import_on_demand
 from lerobot.utils.io_utils import deserialize_json_into_object, write_json
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 
@@ -42,8 +45,74 @@ OptimizerParams = (
 )
 
 
+class ChoicesFromPolicies(ChoiceRegistryBase):
+    """Base for a draccus registry that policy packages add choices to, like the optimizers and schedulers.
+
+    Policies are imported on demand, so a name a policy registers imports that policy first, and a name that
+    is still not registered then imports every policy in the registry's `POLICY_CHOICES` before the lookup
+    fails, so the error can list every choice. It is not a `draccus.ChoiceRegistry` itself, since the
+    registries that use it would then share one set of choices.
+    """
+
+    # The names policy packages register in this registry, each with the package that registers it. A class
+    # from another module cannot register one of these names, and `get_choice_class` imports the owner package
+    # on every lookup of the name, as `PreTrainedConfig.get_choice_class` does for a policy. Each registry has
+    # its own table, so it imports only the policies that add to it.
+    # tests/configs/test_policy_registration.py keeps the tables in sync.
+    POLICY_CHOICES: ClassVar[dict[str, str]] = {}
+
+    @classmethod
+    def register_subclass(cls, name: str, choice_type: Any = None) -> Any:
+        owner = cls.POLICY_CHOICES.get(name)
+        if (
+            choice_type is not None
+            and owner is not None
+            and choice_type.__module__ != f"lerobot.policies.{owner}"
+            and not choice_type.__module__.startswith(f"lerobot.policies.{owner}.")
+        ):
+            raise ValueError(f"'{name}' is reserved for lerobot.policies.{owner}. Use a different name.")
+        return super().register_subclass(name, choice_type)
+
+    @classmethod
+    def get_choice_class(cls, name: str) -> Any:
+        if not isinstance(name, str):
+            raise KeyError(name)
+        if name in cls.POLICY_CHOICES:
+            import_on_demand(f"lerobot.policies.{cls.POLICY_CHOICES[name]}")
+        if name not in cls._choice_registry:
+            cls.load_all_choices()
+        return super().get_choice_class(name)
+
+    @classmethod
+    def get_known_choices(cls) -> dict[str, Any]:
+        # A copy: a lookup in another thread can register a choice while the caller walks the registry.
+        return dict(cls._choice_registry)
+
+    @classmethod
+    def get_choice_name(cls, subcls: type) -> str:
+        # As in draccus, but over that copy.
+        for name, choice in cls.get_known_choices().items():
+            if choice == subcls:
+                return name
+        raise ValueError(f"Cannot find choice name for {subcls}")
+
+    @classmethod
+    def load_all_choices(cls) -> None:
+        """Import the packages in `POLICY_CHOICES`, the only policies that add choices here. A package that fails
+        to import is skipped with a warning, as in `PreTrainedConfig.load_all_choices`."""
+        for owner in sorted(set(cls.POLICY_CHOICES.values())):
+            try:
+                import_on_demand(f"lerobot.policies.{owner}")
+            except ImportError as e:
+                logging.getLogger(cls.__module__).warning(
+                    f"Skipping lerobot.policies.{owner}, which failed to import: {e}"
+                )
+
+
 @dataclass
-class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
+class OptimizerConfig(ChoicesFromPolicies, draccus.ChoiceRegistry, abc.ABC):
+    POLICY_CHOICES = {"molmoact2_adamw": "molmoact2"}
+
     lr: float
     weight_decay: float
     grad_clip_norm: float
