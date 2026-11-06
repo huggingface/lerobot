@@ -21,7 +21,7 @@ def run_command(cmd, module, args):
 
 
 def lerobot_train(args):
-    return run_command(cmd="lerobot-train", module="lerobot_train", args=args)
+    return run_command(cmd="lerobot-train", module="lerobot_train", args=[*args, "--trackio.enable=false"])
 
 
 def resolve_model_id_for_peft_training(policy_type):
