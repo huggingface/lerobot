@@ -46,6 +46,10 @@ from .configuration_opencv import ColorMode, OpenCVCameraConfig
 # treat the same cameras as new devices. Thus we select a higher bound to search indices.
 MAX_OPENCV_INDEX = 60
 
+# Windows camera discovery: indices are contiguous in practice, so the scan stops after
+# this many consecutive misses once at least one camera has been found.
+_WINDOWS_MAX_CONSECUTIVE_MISSES = 10
+
 logger = logging.getLogger(__name__)
 
 
@@ -311,18 +315,87 @@ class OpenCVCamera(Camera):
             )
 
     @staticmethod
+    def _probe_camera(target: str | int, backend: int | None = None) -> dict[str, Any] | None:
+        """Open one camera target and describe it, or return ``None`` when it does not open."""
+        camera = cv2.VideoCapture(target) if backend is None else cv2.VideoCapture(target, backend)
+        try:
+            if not camera.isOpened():
+                return None
+            default_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+            default_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            default_fps = camera.get(cv2.CAP_PROP_FPS)
+            default_format = camera.get(cv2.CAP_PROP_FORMAT)
+
+            # Get FOURCC code and convert to string
+            default_fourcc_code = camera.get(cv2.CAP_PROP_FOURCC)
+            default_fourcc_code_int = int(default_fourcc_code)
+            default_fourcc = "".join([chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
+
+            backend_api = camera.getBackendName()
+            return {
+                "name": f"OpenCV Camera @ {target}",
+                "type": "OpenCV",
+                "id": target,
+                "backend_api": backend_api,
+                # Reused by lerobot-find-cameras so it connects through the backend that
+                # was proven to work, instead of letting OpenCV pick again.
+                "backend": backend_api,
+                "default_stream_profile": {
+                    "format": default_format,
+                    "fourcc": default_fourcc,
+                    "width": default_width,
+                    "height": default_height,
+                    "fps": default_fps,
+                },
+            }
+        finally:
+            camera.release()
+
+    @staticmethod
+    def _find_cameras_windows() -> list[dict[str, Any]]:
+        """Probe Windows camera indices with OpenCV's default backend selection.
+
+        Windows has no ``/dev/video*`` equivalent, so indices are probed. Camera indices
+        are contiguous in practice, so once a camera has been found the scan stops after
+        `_WINDOWS_MAX_CONSECUTIVE_MISSES` empty indices instead of walking all
+        `MAX_OPENCV_INDEX` of them (which takes seconds on a laptop with a virtual camera).
+        """
+        found: list[dict[str, Any]] = []
+        consecutive_misses = 0
+        for index in range(MAX_OPENCV_INDEX):
+            info = OpenCVCamera._probe_camera(index)
+            if info is None:
+                consecutive_misses += 1
+                if found and consecutive_misses >= _WINDOWS_MAX_CONSECUTIVE_MISSES:
+                    break
+                continue
+            consecutive_misses = 0
+            found.append(info)
+        if found:
+            logger.info(
+                "Found %d Windows camera(s) via %s.",
+                len(found),
+                ", ".join(sorted({c.get("backend_api", "?") for c in found})),
+            )
+        return found
+
+    @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
         """
         Detects available OpenCV cameras connected to the system.
 
         On Linux, it scans '/dev/video*' paths. On other systems (like macOS, Windows),
-        it checks indices from 0 up to `MAX_OPENCV_INDEX`.
+        it checks indices from 0 up to `MAX_OPENCV_INDEX`; on Windows the scan stops
+        early once the indices run dry (`_find_cameras_windows`).
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
             where each dictionary contains 'type', 'id' (port index or path),
             and the default profile properties (width, height, fps, format).
         """
+        if platform.system() == "Windows":
+            return OpenCVCamera._find_cameras_windows()
+
         found_cameras_info = []
 
         targets_to_scan: list[str | int]
@@ -333,38 +406,9 @@ class OpenCVCamera(Camera):
             targets_to_scan = [int(i) for i in range(MAX_OPENCV_INDEX)]
 
         for target in targets_to_scan:
-            camera = cv2.VideoCapture(target)
-            try:
-                if camera.isOpened():
-                    default_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    default_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    default_fps = camera.get(cv2.CAP_PROP_FPS)
-                    default_format = camera.get(cv2.CAP_PROP_FORMAT)
-
-                    # Get FOURCC code and convert to string
-                    default_fourcc_code = camera.get(cv2.CAP_PROP_FOURCC)
-                    default_fourcc_code_int = int(default_fourcc_code)
-                    default_fourcc = "".join(
-                        [chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)]
-                    )
-
-                    camera_info = {
-                        "name": f"OpenCV Camera @ {target}",
-                        "type": "OpenCV",
-                        "id": target,
-                        "backend_api": camera.getBackendName(),
-                        "default_stream_profile": {
-                            "format": default_format,
-                            "fourcc": default_fourcc,
-                            "width": default_width,
-                            "height": default_height,
-                            "fps": default_fps,
-                        },
-                    }
-
-                    found_cameras_info.append(camera_info)
-            finally:
-                camera.release()
+            info = OpenCVCamera._probe_camera(target)
+            if info is not None:
+                found_cameras_info.append(info)
 
         return found_cameras_info
 
@@ -444,6 +488,14 @@ class OpenCVCamera(Camera):
             raise RuntimeError(
                 f"{self} frame width={w} or height={h} do not match configured width={self.capture_width} or height={self.capture_height}."
             )
+
+        if c == 4:
+            # Windows delivers 4-channel frames more often than POSIX: Media Foundation
+            # streams BGRA for some UVC cameras, and OpenCV 4.13's image backend returns
+            # the alpha channel of an RGBA image or PNG source. Drop the alpha channel
+            # instead of failing: the alpha carries nothing a robot policy can use.
+            image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+            c = 3
 
         if c != 3:
             raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
