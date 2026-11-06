@@ -4,8 +4,12 @@ Simulation environments are configured through [`EnvConfig`] and built by [`make
 [`make_task_env`] for one task. A config holds options only; its `sim_settings()` maps them to its
 simulator integration's keyword arguments.
 
-See [Environments from the Hub](../envhub) for using published environments and
-[Adding a New Benchmark](../adding_benchmarks) for contributing one.
+See [Simulation](../simulation) for how environments are used, [EnvHub](../envhub) for using and publishing
+environments on the Hub, and [Adding a Benchmark](../adding_benchmarks) for contributing one.
+
+## HubEnvConfig
+
+[[autodoc]] lerobot.envs.configs.HubEnvConfig
 
 ## EnvConfig
 
