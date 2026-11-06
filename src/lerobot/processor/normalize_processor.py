@@ -584,4 +584,5 @@ def hotswap_stats(
             step.stats = stats
             # Re-initialize tensor_stats on the correct device.
             step._tensor_stats = to_tensor(stats, device=step.device, dtype=step.dtype)
+            step._reshape_visual_stats()
     return rp
