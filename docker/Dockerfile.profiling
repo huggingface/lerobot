@@ -1,0 +1,3 @@
+# The cached GPU runners require root to access their root-owned NFS cache.
+FROM huggingface/lerobot-gpu@sha256:adc6313d3f7f183746cd84895b64f438cb818d8a61e9e903d877b13f497de633
+USER root
