@@ -843,6 +843,12 @@ class SerialMotorsBus(MotorsBusBase):
         if without := [motor for motor in motor_names if motor not in signs]:
             raise ValueError(f"Motors {without} have no homing offset.")
 
+        # An inverted Dynamixel motor (Drive_Mode = 1) subtracts the homing offset from the
+        # position it reports, so its effective sign is the opposite of its definition's.
+        for motor, drive_mode in self._sync_read_where("Drive_Mode").items():
+            if motor in signs and int(drive_mode) == 1:
+                signs[motor] = -signs[motor]
+
         self.reset_calibration(motor_names)
         positions = self.sync_read("Present_Position", motor_names, normalize=False)
         homing_offsets = self._get_half_turn_homings(positions, signs)
