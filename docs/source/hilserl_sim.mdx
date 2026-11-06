@@ -33,7 +33,6 @@ To use `gym_hil` with LeRobot, you need to create a configuration file. An examp
 ```json
 {
   "env": {
-    "type": "gym_manipulator",
     "name": "gym_hil",
     "task": "PandaPickCubeGamepad-v0",
     "fps": 10
@@ -47,6 +46,8 @@ Available tasks:
 - `PandaPickCubeBase-v0`: Basic environment
 - `PandaPickCubeGamepad-v0`: With gamepad control
 - `PandaPickCubeKeyboard-v0`: With keyboard control
+
+**Note**: Do not add `"type": "gym_manipulator"` to `env` in this file. `python -m lerobot.rl.gym_manipulator` stops with ``error: `env`: The fields `type` are not valid for HILSerlRobotEnvConfig``. Only the training config used by the learner and actor sets `"type": "gym_manipulator"`.
 
 ### Processor Configuration
 
@@ -101,7 +102,6 @@ To collect a dataset, set the mode to `record` whilst defining the repo_id and n
 ```json
 {
   "env": {
-    "type": "gym_manipulator",
     "name": "gym_hil",
     "task": "PandaPickCubeGamepad-v0"
   },
