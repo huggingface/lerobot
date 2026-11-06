@@ -128,9 +128,8 @@ def load_complete_checkpoint(
     policy's `_convert_openpi_state_dict`, as on the regular path, but on tensors that still point into the
     file, so converting it reads only the values it changes. A conversion that only renames or reuses
     tensors, as the in-tree ones do, therefore never makes a second full copy of the weights; one that
-    computes new values holds them until they are copied. Weights the policy does not have are skipped. The
-    regular path gives the same weights: it copies all the other weights, then catches the error about the
-    extra ones.
+    computes new values holds them until they are copied. Weights the policy does not have are skipped, as the
+    regular path skips them.
 
     Only a class that sets `_supports_meta_load` in its own body takes this path, so a subclass has to opt in.
     That promises the constructor never reads a parameter's values, holds on to one or attaches a hook or an
