@@ -42,7 +42,7 @@ from lerobot.configs import (
 
 from .compute_stats import compute_episode_stats
 from .dataset_metadata import LeRobotDatasetMetadata
-from .distributed import DistributedEpisodeResult, DistributedEpisodeSpec
+from .distributed import DistributedEpisodeResult, DistributedEpisodeSpec, artifact_digest
 from .feature_utils import (
     get_hf_features_from_features,
     validate_episode_buffer,
@@ -79,8 +79,9 @@ def _encode_video_worker(
     fps: int,
     video_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
+    temporary_root: Path | None = None,
 ) -> Path:
-    temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
+    temp_path = Path(tempfile.mkdtemp(dir=temporary_root or root)) / f"{video_key}_{episode_index:03d}.mp4"
     path_template = (
         DEFAULT_DEPTH_PATH
         if video_encoder is not None and isinstance(video_encoder, DepthEncoderConfig)
@@ -117,6 +118,8 @@ class DatasetWriter:
         batch_encoding_size: int,
         streaming_encoder: StreamingVideoEncoder | None = None,
         initial_frames: int = 0,
+        initial_file_indices: tuple[int, int] | None = None,
+        single_file: bool = False,
     ):
         """Initialize the writer with metadata, codec, and encoder config.
 
@@ -136,6 +139,10 @@ class DatasetWriter:
             streaming_encoder: Optional pre-built :class:`StreamingVideoEncoder`
                 for real-time encoding. ``None`` disables streaming mode.
             initial_frames: Starting frame count (non-zero when resuming).
+            initial_file_indices: Exclusive starting file slot for a distributed
+                shard in private staging. Ordinary recording leaves this unset.
+            single_file: Keep this task's episodes in one file per stream. The
+                distributed caller checks soft size targets after each episode.
         """
         self._meta = meta
         self._root = root
@@ -155,6 +162,8 @@ class DatasetWriter:
         self._recorded_frames: int = initial_frames
         self._finalized = False
         self._distributed_episode_started = False
+        self._initial_file_indices = initial_file_indices
+        self._single_file = single_file
 
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self._meta.total_episodes if episode_index is None else episode_index
@@ -510,6 +519,11 @@ class DatasetWriter:
             self.episode_buffer = self._create_episode_buffer(spec.episode_index)
             self._distributed_episode_started = False
             raise
+        finally:
+            shutil.rmtree(
+                self._root / ".distributed-video-tmp" / f"episode-{spec.episode_index:06d}",
+                ignore_errors=True,
+            )
 
         if self._meta.image_keys:
             self._delete_camera_frame_dirs(self._meta.image_keys)
@@ -527,6 +541,9 @@ class DatasetWriter:
             video_metadata=video_metadata,
             video_info=video_info,
             stats=stats,
+            artifact_digests={
+                str(path.relative_to(self._root)): artifact_digest(path) for path in [data_path, *video_paths]
+            },
             depth_units={
                 key: self._meta.features[key]["info"]["depth_unit"]
                 for key in self._meta.depth_keys
@@ -599,6 +616,10 @@ class DatasetWriter:
             chunk_idx, file_idx = 0, 0
             global_frame_index = 0
             self._current_file_start_frame = 0
+            if self._initial_file_indices is not None:
+                chunk_idx, file_idx = self._initial_file_indices
+                global_frame_index = self._meta.total_frames
+                self._current_file_start_frame = global_frame_index
             if self._meta.episodes is not None and len(self._meta.episodes) > 0:
                 latest_ep = self._meta.episodes[-1]
                 global_frame_index = latest_ep["dataset_to_index"]
@@ -621,7 +642,10 @@ class DatasetWriter:
                 latest_size_in_mb / frames_in_current_file if frames_in_current_file > 0 else 0
             )
 
-            if latest_size_in_mb + av_size_per_frame * ep_num_frames >= self._meta.data_files_size_in_mb:
+            if (
+                not self._single_file
+                and latest_size_in_mb + av_size_per_frame * ep_num_frames >= self._meta.data_files_size_in_mb
+            ):
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self._meta.chunks_size)
                 self.close_writer()
                 self._current_file_start_frame = global_frame_index
@@ -679,6 +703,8 @@ class DatasetWriter:
             or f"videos/{video_key}/chunk_index" not in self._meta.latest_episode
         ):
             chunk_idx, file_idx = 0, 0
+            if self._initial_file_indices is not None:
+                chunk_idx, file_idx = self._initial_file_indices
             if self._meta.episodes is not None and len(self._meta.episodes) > 0:
                 old_chunk_idx = self._meta.episodes[-1][f"videos/{video_key}/chunk_index"]
                 old_file_idx = self._meta.episodes[-1][f"videos/{video_key}/file_index"]
@@ -702,7 +728,10 @@ class DatasetWriter:
             latest_size_in_mb = get_file_size_in_mb(latest_path)
             latest_duration_in_s = latest_ep[f"videos/{video_key}/to_timestamp"][0]
 
-            if latest_size_in_mb + ep_size_in_mb >= self._meta.video_files_size_in_mb:
+            if (
+                not self._single_file
+                and latest_size_in_mb + ep_size_in_mb >= self._meta.video_files_size_in_mb
+            ):
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self._meta.chunks_size)
                 new_path = self._root / video_path_template.format(
                     video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
@@ -720,7 +749,7 @@ class DatasetWriter:
         shutil.rmtree(str(ep_path.parent))
 
         # Update video info (only needed when first episode is encoded)
-        if episode_index == 0:
+        if episode_index == 0 and self._initial_file_indices is None:
             self._meta.update_video_info(
                 video_key,
                 video_encoder=self._depth_encoder
@@ -785,6 +814,10 @@ class DatasetWriter:
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """Use ffmpeg to convert frames stored as png/tiff into mp4 videos."""
         is_depth = video_key in self._meta.depth_keys
+        temporary_root = None
+        if self._distributed_episode_started:
+            temporary_root = self._root / ".distributed-video-tmp" / f"episode-{episode_index:06d}"
+            temporary_root.mkdir(parents=True, exist_ok=True)
         return _encode_video_worker(
             video_key,
             episode_index,
@@ -792,6 +825,7 @@ class DatasetWriter:
             self._meta.fps,
             self._depth_encoder if is_depth else self._rgb_encoder,
             self._encoder_threads,
+            temporary_root=temporary_root,
         )
 
     def close_writer(self) -> None:

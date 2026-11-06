@@ -39,6 +39,7 @@ from .dataset_tools import (
 from .distributed import (
     DistributedEpisodeResult,
     DistributedEpisodeSpec,
+    DistributedShardSpec,
     DistributedWritePlan,
     DistributedWriteSession,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "DEFAULT_QUANTILES",
     "DistributedEpisodeResult",
     "DistributedEpisodeSpec",
+    "DistributedShardSpec",
     "DistributedWritePlan",
     "DistributedWriteSession",
     "EVENT_ONLY_STYLES",

@@ -18,13 +18,18 @@
 
 import json
 import multiprocessing as mp
+import os
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
+from filelock import Timeout
 
+import lerobot.datasets.dataset_writer as dataset_writer_module
+import lerobot.datasets.distributed as distributed_module
 from lerobot.configs import DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT, DepthEncoderConfig
 from lerobot.datasets.distributed import (
     DistributedWritePlan,
@@ -44,6 +49,7 @@ RGB_IMAGE_KEY = "observation.images.left"
 RGB_VIDEO_KEY = "observation.images.right"
 DEPTH_IMAGE_KEY = "observation.depth.front"
 DEPTH_VIDEO_KEY = "observation.depth.wrist"
+HARD_KILL_EXIT_CODE = 86
 
 
 def add_episode_frames(dataset: LeRobotDataset, tasks: tuple[str, ...] | list[str]) -> None:
@@ -129,6 +135,120 @@ def _write_distributed_spec_with_session(root: str, repo_id: str, spec, session,
     queue.put(result.episode_index)
 
 
+def _try_duplicate_episode(root: str, repo_id: str, spec, session, queue) -> None:
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    try:
+        worker.start_distributed_episode(spec)
+    except Timeout:
+        queue.put("locked")
+    else:
+        queue.put("acquired")
+    finally:
+        worker.finalize()
+
+
+def _write_artifacts_then_hard_exit(root: str, repo_id: str, spec, session, video_key: str | None) -> None:
+    """Crash after artifacts are published but before the session result is recorded."""
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    worker.start_distributed_episode(spec)
+    if video_key is None:
+        add_episode_frames(worker, spec.tasks)
+    else:
+        add_video_frames(worker, spec.tasks, video_key)
+    worker.writer.save_distributed_episode(spec)
+    os._exit(HARD_KILL_EXIT_CODE)
+
+
+def _write_result_then_hard_exit_before_metadata_publish(
+    root: str, repo_id: str, publish: bool | str = False, append: bool = False
+) -> None:
+    """Crash the driver after a durable worker result but before the metadata commit."""
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    if append:
+        add_episode_frames(driver, ["existing"])
+        driver.save_episode()
+        driver.finalize()
+        driver = LeRobotDataset.resume(repo_id, root=root)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["pick"] * 2],
+    )
+    session = driver.create_distributed_write_session(plan)
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    worker.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(worker, plan.episodes[0].tasks)
+    worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+    if publish == "between_swaps":
+        real_replace = os.replace
+
+        def replace_then_exit(source, destination):
+            real_replace(source, destination)
+            if Path(source) == Path(root) / "meta":
+                os._exit(HARD_KILL_EXIT_CODE)
+
+        with patch.object(distributed_module.os, "replace", side_effect=replace_then_exit):
+            driver.commit_distributed_results(plan, session.load_results())
+    elif publish:
+        with patch.object(driver.meta, "_load_metadata", side_effect=lambda: os._exit(HARD_KILL_EXIT_CODE)):
+            driver.commit_distributed_results(plan, session.load_results())
+    os._exit(HARD_KILL_EXIT_CODE)
+
+
+def _publish_metadata_then_hard_exit_after_backup(root: str, staging_root: str, crash_point: str) -> None:
+    """Crash at a durable step of metadata publication."""
+    root_path = Path(root)
+    real_replace = distributed_module.os.replace
+
+    def replace_then_exit(source, destination):
+        real_replace(source, destination)
+        destination = Path(destination)
+        if (
+            (crash_point == "journal" and destination.name == ".distributed-metadata-publish.json")
+            or (crash_point == "backup" and Path(source) == root_path / "meta")
+            or (crash_point == "published" and destination == root_path / "meta")
+        ):
+            os._exit(HARD_KILL_EXIT_CODE)
+
+    distributed_module.os.replace = replace_then_exit
+    publish_distributed_metadata(root_path, Path(staging_root))
+
+
+def _write_result_record_then_hard_exit_before_replace(root: str, repo_id: str, spec, session) -> None:
+    """Crash after writing a temporary result record but before publishing it."""
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root)
+    worker.start_distributed_episode(spec)
+    add_episode_frames(worker, spec.tasks)
+    result = worker.save_distributed_episode(spec)
+    worker.finalize()
+    result_path = session.result_path(spec.episode_index)
+    real_replace = distributed_module.os.replace
+
+    def exit_before_result_replace(source, destination):
+        if Path(destination) == result_path:
+            os._exit(HARD_KILL_EXIT_CODE)
+        return real_replace(source, destination)
+
+    distributed_module.os.replace = exit_before_result_replace
+    session.record_result(result)
+
+
+def _write_partial_video_then_hard_exit(root: str, repo_id: str, spec, session, video_key: str) -> None:
+    """Crash while encoding a temporary video after the Parquet artifact is written."""
+
+    def write_partial_video_then_exit(image_dir, output_path, *args, **kwargs):
+        del image_dir, args, kwargs
+        Path(output_path).write_bytes(b"partial video")
+        os._exit(HARD_KILL_EXIT_CODE)
+
+    dataset_writer_module.encode_video_frames = write_partial_video_then_exit
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    worker.start_distributed_episode(spec)
+    add_video_frames(worker, spec.tasks, video_key)
+    worker.save_distributed_episode(spec)
+
+
 def _write_multimodal_spec_from_shared_root(root: str, repo_id: str, spec, queue) -> None:
     """Simulate a remote worker that reconstructs all state from shared storage."""
     session = LeRobotDataset.resume_distributed_write_session(root)
@@ -186,6 +306,7 @@ def write_specs_in_processes(root: Path, repo_id: str, plan: DistributedWritePla
 
 def test_write_plan_allocates_contiguous_ranges_and_unique_files():
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[3, 2, 4],
         episode_tasks=[
             ["pick"] * 3,
@@ -211,6 +332,235 @@ def test_write_plan_allocates_contiguous_ranges_and_unique_files():
     assert plan.task_to_index == {"pick": 0, "place": 1}
 
 
+def test_write_plan_can_start_after_existing_dataset_indices():
+    plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
+        episode_lengths=[2, 1],
+        episode_tasks=[["existing", "new"], ["new"]],
+        chunks_size=2,
+        start_episode_index=3,
+        start_dataset_index=10,
+        start_chunk_index=0,
+        start_file_index=1,
+        task_to_index={"existing": 0},
+    )
+
+    assert [
+        (
+            spec.episode_index,
+            spec.dataset_from_index,
+            spec.dataset_to_index,
+            spec.data_chunk_index,
+            spec.data_file_index,
+            spec.task_indices,
+        )
+        for spec in plan.episodes
+    ] == [
+        (3, 10, 12, 0, 1, (0, 1)),
+        (4, 12, 13, 1, 0, (1,)),
+    ]
+    assert plan.task_to_index == {"existing": 0, "new": 1}
+
+
+@pytest.mark.parametrize("append", [False, True])
+def test_session_recovery_preserves_task_order_and_replays_completed_workers(tmp_path, append):
+    root = tmp_path / "dataset"
+    repo_id = "test/recovery-task-order"
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    if append:
+        add_episode_frames(driver, ["z-existing"])
+        driver.save_episode()
+        driver.finalize()
+        driver = LeRobotDataset.resume(repo_id, root=root)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False, episode_lengths=[2], episode_tasks=[["z-task", "a-task"]]
+    )
+    session = driver.create_distributed_write_session(plan)
+    spec = plan.episodes[0]
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    worker.start_distributed_episode(spec)
+    add_episode_frames(worker, spec.tasks)
+    original = worker.save_distributed_episode(spec)
+    worker.finalize()
+    original_bytes = original.data_path.read_bytes()
+    session = LeRobotDataset.resume_distributed_write_session(root)
+    for _committed in (False, True):
+        retry = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+        retry.start_distributed_episode(spec)
+        add_episode_frames(retry, spec.tasks)
+        reused = retry.save_distributed_episode(spec)
+        retry.finalize()
+        assert reused.artifact_digests == original.artifact_digests
+        assert original.data_path.read_bytes() == original_bytes
+        driver.commit_distributed_results(session.plan, session.load_results())
+    driver.finalize()
+    loaded = LeRobotDataset(repo_id, root=root)
+    expected = (["z-existing"] if append else []) + ["z-task", "a-task"]
+    assert [loaded[i]["task"] for i in range(len(loaded))] == expected
+
+
+def test_worker_lock_prevents_duplicate_attempt_and_cleanup(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/attempt-lock"
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False, episode_lengths=[1], episode_tasks=[["pick"]]
+    )
+    session = driver.create_distributed_write_session(plan)
+    first = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    second = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    first.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(first, ["pick"])
+    with pytest.raises(Timeout):
+        second.start_distributed_episode(plan.episodes[0])
+    with pytest.raises(Timeout):
+        session.cleanup_orphaned_artifacts()
+    context = mp.get_context("spawn")
+    queue = context.Queue()
+    process = context.Process(
+        target=_try_duplicate_episode,
+        args=(str(root), repo_id, plan.episodes[0], session, queue),
+    )
+    process.start()
+    process.join(timeout=60)
+    assert process.exitcode == 0
+    assert queue.get(timeout=5) == "locked"
+    first.save_distributed_episode(plan.episodes[0])
+    first.finalize()
+    second.start_distributed_episode(plan.episodes[0])
+    second.save_distributed_episode(plan.episodes[0])
+    second.finalize()
+    assert session.pending_specs() == []
+
+
+def test_worker_retries_hard_exit_without_global_cleanup(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/automatic-retry"
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False, episode_lengths=[2], episode_tasks=[["pick", "pick"]]
+    )
+    session = driver.create_distributed_write_session(plan)
+    process = mp.get_context("spawn").Process(
+        target=_write_artifacts_then_hard_exit,
+        args=(str(root), repo_id, plan.episodes[0], session, None),
+    )
+    process.start()
+    process.join(timeout=60)
+    assert process.exitcode == HARD_KILL_EXIT_CODE
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    worker.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(worker, ["pick", "pick"])
+    worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+    driver.commit_distributed_results(plan, session.load_results())
+    driver.finalize()
+    assert LeRobotDataset(repo_id, root=root).num_frames == 2
+
+
+def test_commit_rejects_changed_results_after_success(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/commit-conflict"
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False, episode_lengths=[1], episode_tasks=[["pick"]]
+    )
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root)
+    worker.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(worker, ["pick"])
+    result = worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+    driver.commit_distributed_results(plan, [result])
+    with pytest.raises(ValueError, match="Conflicting results"):
+        driver.commit_distributed_results(plan, [replace(result, stats={})])
+    driver.finalize()
+
+
+@pytest.mark.parametrize("publish", [True, "between_swaps"])
+@pytest.mark.parametrize("append", [False, True])
+def test_restart_driver_after_interrupted_publish(tmp_path, publish, append):
+    root = tmp_path / "dataset"
+    repo_id = "test/commit-restart"
+    process = mp.get_context("spawn").Process(
+        target=_write_result_then_hard_exit_before_metadata_publish,
+        args=(str(root), repo_id, publish, append),
+    )
+    process.start()
+    process.join(timeout=60)
+    assert process.exitcode == HARD_KILL_EXIT_CODE
+    session = LeRobotDataset.resume_distributed_write_session(root)
+    driver = LeRobotDataset.resume(repo_id, root=root)
+    driver.commit_distributed_results(session.plan, session.load_results())
+    driver.finalize()
+    loaded = LeRobotDataset(repo_id, root=root)
+    assert loaded.num_frames == 2 + int(append)
+    assert [loaded[i]["task"] for i in range(len(loaded))] == (["existing"] if append else []) + ["pick"] * 2
+
+
+def test_changed_parquet_payload_is_rejected_and_retried(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/checksum-retry"
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False, episode_lengths=[1], episode_tasks=[["pick"]]
+    )
+    session = driver.create_distributed_write_session(plan)
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    worker.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(worker, ["pick"])
+    result = worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+    table = pq.read_table(result.data_path)
+    altered = table.set_column(
+        table.schema.get_field_index("action"),
+        table.schema.field("action"),
+        table.column("observation.state"),
+    )
+    pq.write_table(altered, result.data_path)
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        driver.commit_distributed_results(plan, [result])
+    retry = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    retry.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(retry, ["pick"])
+    retry.save_distributed_episode(plan.episodes[0])
+    retry.finalize()
+    driver.commit_distributed_results(plan, session.load_results())
+    driver.finalize()
+    np.testing.assert_array_equal(LeRobotDataset(repo_id, root=root)[0]["action"], [0, 2])
+
+
+def test_corrupt_video_is_rejected_and_retried(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/corrupt-video-retry"
+    features = {
+        RGB_VIDEO_KEY: {"dtype": "video", "shape": (32, 32, 3), "names": None},
+        "action": FEATURES["action"],
+    }
+    driver = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=True)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False, episode_lengths=[2], episode_tasks=[["pick", "pick"]]
+    )
+    session = driver.create_distributed_write_session(plan)
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    worker.start_distributed_episode(plan.episodes[0])
+    add_video_frames(worker, ["pick", "pick"], RGB_VIDEO_KEY)
+    worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+    video = root / f"videos/{RGB_VIDEO_KEY}/chunk-000/file-000.mp4"
+    video.write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="Invalid distributed video"):
+        session.load_results()
+    retry = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    retry.start_distributed_episode(plan.episodes[0])
+    add_video_frames(retry, ["pick", "pick"], RGB_VIDEO_KEY)
+    retry.save_distributed_episode(plan.episodes[0])
+    retry.finalize()
+    driver.commit_distributed_results(plan, session.load_results())
+    driver.finalize()
+    loaded = LeRobotDataset(repo_id, root=root, video_backend="pyav")
+    assert loaded[0][RGB_VIDEO_KEY].shape == (3, 32, 32)
+
+
 @pytest.mark.parametrize(
     ("episode_lengths", "episode_tasks", "message"),
     [
@@ -222,6 +572,7 @@ def test_write_plan_allocates_contiguous_ranges_and_unique_files():
 def test_write_plan_rejects_invalid_episode_specs(episode_lengths, episode_tasks, message):
     with pytest.raises(ValueError, match=message):
         DistributedWritePlan.from_episode_lengths(
+            pack_episodes=False,
             episode_lengths=episode_lengths,
             episode_tasks=episode_tasks,
             chunks_size=2,
@@ -238,6 +589,7 @@ def test_distributed_worker_writes_only_its_planned_artifact(tmp_path):
         use_videos=False,
     )
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[3],
         episode_tasks=[["pick"] * 3],
         chunks_size=1000,
@@ -266,7 +618,7 @@ def test_distributed_worker_removes_raw_image_staging_after_success(tmp_path):
     repo_id = "test/distributed-image"
     LeRobotDataset.create(repo_id, fps=30, features=features, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
-        episode_lengths=[2], episode_tasks=[["pick", "pick"]], chunks_size=1000
+        pack_episodes=False, episode_lengths=[2], episode_tasks=[["pick", "pick"]], chunks_size=1000
     )
     spec = plan.episodes[0]
     worker = LeRobotDataset.open_distributed_writer(repo_id, root=root)
@@ -296,7 +648,7 @@ def test_distributed_result_records_depth_input_unit(tmp_path):
     repo_id = "test/distributed-depth-result"
     LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
-        episode_lengths=[1], episode_tasks=[["pick"]], chunks_size=1000
+        pack_episodes=False, episode_lengths=[1], episode_tasks=[["pick"]], chunks_size=1000
     )
     worker = LeRobotDataset.open_distributed_writer(repo_id, root=root)
     worker.start_distributed_episode(plan.episodes[0])
@@ -329,7 +681,7 @@ def test_distributed_commit_rejects_inconsistent_depth_units(tmp_path):
     repo_id = "test/distributed-mixed-depth-units"
     driver = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
-        episode_lengths=[1, 1], episode_tasks=[["pick"], ["place"]], chunks_size=1000
+        pack_episodes=False, episode_lengths=[1, 1], episode_tasks=[["pick"], ["place"]], chunks_size=1000
     )
     results = []
     for spec, value in zip(
@@ -373,7 +725,7 @@ def test_distributed_commit_rejects_invalid_depth_unit_metadata(tmp_path, depth_
     repo_id = "test/distributed-invalid-depth-units"
     driver = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
-        episode_lengths=[1], episode_tasks=[["pick"]], chunks_size=1000
+        pack_episodes=False, episode_lengths=[1], episode_tasks=[["pick"]], chunks_size=1000
     )
     worker = LeRobotDataset.open_distributed_writer(repo_id, root=root)
     worker.start_distributed_episode(plan.episodes[0])
@@ -407,7 +759,7 @@ def test_distributed_commit_uses_declared_depth_unit_for_legacy_session_result(t
     repo_id = "test/distributed-legacy-depth-session"
     driver = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
-        episode_lengths=[1], episode_tasks=[["pick"]], chunks_size=1000
+        pack_episodes=False, episode_lengths=[1], episode_tasks=[["pick"]], chunks_size=1000
     )
     session = driver.create_distributed_write_session(plan)
     worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
@@ -439,6 +791,59 @@ def test_distributed_commit_uses_declared_depth_unit_for_legacy_session_result(t
     np.testing.assert_allclose(loaded[0][DEPTH_IMAGE_KEY].numpy(), 1_000)
 
 
+def test_distributed_append_rejects_depth_unit_that_differs_from_existing_dataset(tmp_path):
+    features = {
+        DEPTH_IMAGE_KEY: {
+            "dtype": "image",
+            "shape": (1, 24, 32),
+            "names": None,
+            "info": {"is_depth_map": True},
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    root = tmp_path / "depth-append"
+    repo_id = "test/distributed-depth-append-unit"
+    initial = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=False)
+    initial.add_frame(
+        {
+            DEPTH_IMAGE_KEY: np.full((1, 24, 32), 1_000, dtype=np.uint16),
+            "action": np.zeros(2, dtype=np.float32),
+            "task": "existing",
+        }
+    )
+    initial.save_episode()
+    initial.finalize()
+
+    driver = LeRobotDataset.resume(repo_id, root=root)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False,
+        episode_lengths=[1],
+        episode_tasks=[["appended"]],
+    )
+    session = driver.create_distributed_write_session(plan)
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    worker.start_distributed_episode(plan.episodes[0])
+    worker.add_frame(
+        {
+            DEPTH_IMAGE_KEY: np.full((1, 24, 32), 1.0, dtype=np.float32),
+            "action": np.zeros(2, dtype=np.float32),
+            "task": "appended",
+        }
+    )
+    result = worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+
+    with pytest.raises(ValueError, match="disagrees with the existing depth unit"):
+        driver.commit_distributed_results(
+            session.plan,
+            [replace(result, depth_units={DEPTH_IMAGE_KEY: DEPTH_METER_UNIT})],
+        )
+
+    loaded = LeRobotDataset(repo_id, root=root, depth_output_unit=DEPTH_MILLIMETER_UNIT)
+    assert loaded.num_episodes == 1
+    assert loaded.meta.features[DEPTH_IMAGE_KEY]["info"]["depth_unit"] == DEPTH_MILLIMETER_UNIT
+
+
 def test_distributed_spawn_workers_write_multicamera_and_complex_features(tmp_path):
     root = tmp_path / "multimodal-dataset"
     repo_id = "test/distributed-multimodal"
@@ -451,6 +856,7 @@ def test_distributed_spawn_workers_write_multicamera_and_complex_features(tmp_pa
     }
     driver = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=True)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2, 2],
         episode_tasks=[["pick", "pick"], ["place", "place"]],
         chunks_size=1000,
@@ -504,7 +910,7 @@ def test_distributed_depth_image_preserves_units_stats_and_values(tmp_path):
     }
     driver = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
-        episode_lengths=[2], episode_tasks=[["pick", "pick"]], chunks_size=1000
+        pack_episodes=False, episode_lengths=[2], episode_tasks=[["pick", "pick"]], chunks_size=1000
     )
     driver.create_distributed_write_session(plan)
     run_one_depth_worker(root, repo_id, plan.episodes[0], DEPTH_IMAGE_KEY, use_video=False)
@@ -535,6 +941,7 @@ def test_distributed_depth_video_preserves_depth_metadata_and_values(tmp_path):
     }
     driver = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=True)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[4],
         episode_tasks=[["pick"] * 4],
         chunks_size=1000,
@@ -562,7 +969,7 @@ def test_distributed_driver_rejects_result_from_different_session_mount_path(tmp
     repo_id = "test/distributed-mount-path"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
-        episode_lengths=[1], episode_tasks=[["pick"]], chunks_size=1000
+        pack_episodes=False, episode_lengths=[1], episode_tasks=[["pick"]], chunks_size=1000
     )
     driver.create_distributed_write_session(plan)
     alternate_mount.symlink_to(root, target_is_directory=True)
@@ -583,6 +990,7 @@ def test_distributed_write_session_persists_worker_result_and_resumes_pending_sp
     repo_id = "test/distributed-session"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2, 2],
         episode_tasks=[["pick"] * 2, ["place"] * 2],
         chunks_size=1000,
@@ -612,6 +1020,7 @@ def test_distributed_write_session_persists_worker_result_and_resumes_pending_sp
 def test_distributed_write_session_publishes_plan_and_results_directory_atomically(tmp_path):
     root = tmp_path / "dataset"
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2],
         episode_tasks=[["pick"] * 2],
         chunks_size=1000,
@@ -625,11 +1034,42 @@ def test_distributed_write_session_publishes_plan_and_results_directory_atomical
     assert not list(root.glob(".distributed-write-session.*.tmp"))
 
 
+def test_distributed_write_session_create_failure_removes_temporary_state_and_can_retry(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "dataset"
+    plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["pick"] * 2],
+        chunks_size=1000,
+    )
+    session_root = root / ".distributed-write-session"
+    real_replace = os.replace
+
+    def fail_session_publish(source, destination):
+        if Path(destination) == session_root:
+            raise OSError("session publish failed")
+        return real_replace(source, destination)
+
+    with monkeypatch.context() as context:
+        context.setattr("lerobot.datasets.distributed.os.replace", fail_session_publish)
+        with pytest.raises(OSError, match="session publish failed"):
+            DistributedWriteSession.create(root, plan)
+
+    assert not session_root.exists()
+    assert not list(root.glob(".distributed-write-session.*.tmp"))
+
+    session = DistributedWriteSession.create(root, plan)
+    assert session.session_root.is_dir()
+
+
 def test_distributed_write_apis_reject_non_default_storage_format(tmp_path):
     root = tmp_path / "dataset"
     repo_id = "test/distributed-storage-format"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[1],
         episode_tasks=[["pick"]],
         chunks_size=1000,
@@ -661,6 +1101,7 @@ def test_distributed_write_session_persists_result_from_spawned_worker(tmp_path)
     repo_id = "test/distributed-session"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2, 2],
         episode_tasks=[["pick"] * 2, ["place"] * 2],
         chunks_size=1000,
@@ -689,6 +1130,7 @@ def test_distributed_write_session_does_not_reuse_artifact_without_result_record
     repo_id = "test/distributed-session"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2, 2],
         episode_tasks=[["pick"] * 2, ["place"] * 2],
         chunks_size=1000,
@@ -713,6 +1155,7 @@ def test_distributed_write_session_cleans_orphan_artifacts_for_pending_specs(tmp
     repo_id = "test/distributed-session"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2],
         episode_tasks=[["pick"] * 2],
         chunks_size=1000,
@@ -731,11 +1174,182 @@ def test_distributed_write_session_cleans_orphan_artifacts_for_pending_specs(tmp
     assert not (root / "data/chunk-000/file-000.parquet").exists()
 
 
+@pytest.mark.parametrize("video_key", [None, RGB_VIDEO_KEY])
+def test_hard_killed_worker_artifacts_are_cleaned_before_retry(tmp_path, video_key):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-worker-recovery"
+    features = FEATURES
+    if video_key is not None:
+        features = {
+            video_key: {"dtype": "video", "shape": (32, 32, 3), "names": None},
+            "action": {"dtype": "float32", "shape": (2,), "names": None},
+        }
+    driver = LeRobotDataset.create(
+        repo_id,
+        fps=30,
+        features=features,
+        root=root,
+        use_videos=video_key is not None,
+    )
+    plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["pick"] * 2],
+        chunks_size=1000,
+        video_keys=[] if video_key is None else [video_key],
+    )
+    session = driver.create_distributed_write_session(plan)
+    context = mp.get_context("spawn")
+    process = context.Process(
+        target=_write_artifacts_then_hard_exit,
+        args=(str(root), repo_id, plan.episodes[0], session, video_key),
+    )
+
+    process.start()
+    process.join(timeout=60)
+
+    assert process.exitcode == HARD_KILL_EXIT_CODE
+    data_path = root / "data/chunk-000/file-000.parquet"
+    assert data_path.is_file()
+    video_path = None
+    if video_key is not None:
+        video_path = root / f"videos/{video_key}/chunk-000/file-000.mp4"
+        assert video_path.is_file()
+
+    resumed = LeRobotDataset.resume_distributed_write_session(root)
+    assert resumed.load_results() == []
+    assert resumed.pending_specs() == list(plan.episodes)
+    resumed.cleanup_orphaned_artifacts()
+    assert not data_path.exists()
+    if video_path is not None:
+        assert not video_path.exists()
+
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=resumed)
+    worker.start_distributed_episode(plan.episodes[0])
+    if video_key is None:
+        add_episode_frames(worker, plan.episodes[0].tasks)
+    else:
+        add_video_frames(worker, plan.episodes[0].tasks, video_key)
+    worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+    driver.commit_distributed_results(resumed.plan, resumed.load_results())
+    driver.finalize()
+
+    loaded = LeRobotDataset(repo_id, root=root)
+    assert loaded.num_episodes == 1
+    assert loaded.num_frames == 2
+    assert [loaded[index]["task"] for index in range(len(loaded))] == ["pick", "pick"]
+
+
+def test_driver_hard_exit_before_metadata_publish_can_resume_and_commit(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-driver-recovery"
+    context = mp.get_context("spawn")
+    process = context.Process(
+        target=_write_result_then_hard_exit_before_metadata_publish,
+        args=(str(root), repo_id),
+    )
+
+    process.start()
+    process.join(timeout=60)
+
+    assert process.exitcode == HARD_KILL_EXIT_CODE
+    resumed = LeRobotDataset.resume_distributed_write_session(root)
+    assert resumed.pending_specs() == []
+    assert [result.episode_index for result in resumed.load_results()] == [0]
+
+    recovered_driver = LeRobotDataset.open_distributed_writer(repo_id, root=root)
+    recovered_driver.commit_distributed_results(resumed.plan, resumed.load_results())
+    recovered_driver.finalize()
+
+    loaded = LeRobotDataset(repo_id, root=root)
+    assert loaded.num_episodes == 1
+    assert loaded.num_frames == 2
+    assert [loaded[index]["task"] for index in range(len(loaded))] == ["pick", "pick"]
+
+
+def test_session_cleanup_removes_temporary_result_record_after_hard_exit(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-result-record-hard-exit"
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["pick"] * 2],
+        chunks_size=1000,
+    )
+    session = driver.create_distributed_write_session(plan)
+    context = mp.get_context("spawn")
+    process = context.Process(
+        target=_write_result_record_then_hard_exit_before_replace,
+        args=(str(root), repo_id, plan.episodes[0], session),
+    )
+
+    process.start()
+    process.join(timeout=60)
+
+    assert process.exitcode == HARD_KILL_EXIT_CODE
+    data_path = root / "data/chunk-000/file-000.parquet"
+    assert data_path.is_file()
+    assert not session.result_path(0).exists()
+    temporary_result_paths = list(session.results_root.glob(".*.tmp"))
+    assert len(temporary_result_paths) == 1
+
+    resumed = LeRobotDataset.resume_distributed_write_session(root)
+    resumed.cleanup_orphaned_artifacts()
+
+    assert not data_path.exists()
+    assert not temporary_result_paths[0].exists()
+
+
+def test_session_cleanup_removes_temporary_video_after_encoder_hard_exit(tmp_path):
+    video_key = RGB_VIDEO_KEY
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-video-encoder-hard-exit"
+    features = {
+        video_key: {"dtype": "video", "shape": (32, 32, 3), "names": None},
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    driver = LeRobotDataset.create(repo_id, fps=30, features=features, root=root, use_videos=True)
+    plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["pick"] * 2],
+        chunks_size=1000,
+        video_keys=[video_key],
+    )
+    session = driver.create_distributed_write_session(plan)
+    context = mp.get_context("spawn")
+    process = context.Process(
+        target=_write_partial_video_then_hard_exit,
+        args=(str(root), repo_id, plan.episodes[0], session, video_key),
+    )
+
+    process.start()
+    process.join(timeout=60)
+
+    assert process.exitcode == HARD_KILL_EXIT_CODE
+    data_path = root / "data/chunk-000/file-000.parquet"
+    image_root = root / f"images/{video_key}/episode-000000"
+    temporary_video_roots = list((root / ".distributed-video-tmp").glob("episode-*"))
+    assert data_path.is_file()
+    assert image_root.is_dir()
+    assert len(temporary_video_roots) == 1
+
+    resumed = LeRobotDataset.resume_distributed_write_session(root)
+    resumed.cleanup_orphaned_artifacts()
+
+    assert not data_path.exists()
+    assert not image_root.exists()
+    assert not temporary_video_roots[0].exists()
+
+
 def test_distributed_write_session_cleanup_discards_invalid_result_record(tmp_path):
     root = tmp_path / "dataset"
     repo_id = "test/distributed-session"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2],
         episode_tasks=[["pick"] * 2],
         chunks_size=1000,
@@ -760,6 +1374,7 @@ def test_distributed_write_session_cleanup_discards_corrupt_artifact_record(tmp_
     repo_id = "test/distributed-session"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2],
         episode_tasks=[["pick"] * 2],
         chunks_size=1000,
@@ -780,11 +1395,57 @@ def test_distributed_write_session_cleanup_discards_corrupt_artifact_record(tmp_
     assert session.pending_specs() == list(plan.episodes)
 
 
+def test_result_record_publish_failure_leaves_spec_recoverable(tmp_path, monkeypatch):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-result-publish-failure"
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["pick"] * 2],
+        chunks_size=1000,
+    )
+    session = driver.create_distributed_write_session(plan)
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root)
+    worker.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(worker, plan.episodes[0].tasks)
+    result = worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+    result_path = session.result_path(result.episode_index)
+    real_replace = os.replace
+
+    def fail_result_publish(source, destination):
+        if Path(destination) == result_path:
+            raise OSError("result publish failed")
+        return real_replace(source, destination)
+
+    with monkeypatch.context() as context:
+        context.setattr("lerobot.datasets.distributed.os.replace", fail_result_publish)
+        with pytest.raises(OSError, match="result publish failed"):
+            session.record_result(result)
+
+    assert result.data_path.is_file()
+    assert not result_path.exists()
+    assert not list(session.results_root.glob(".*.tmp"))
+    assert session.pending_specs() == list(plan.episodes)
+
+    session.cleanup_orphaned_artifacts()
+    assert not result.data_path.exists()
+
+    retry_worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    retry_worker.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(retry_worker, plan.episodes[0].tasks)
+    retry_worker.save_distributed_episode(plan.episodes[0])
+    retry_worker.finalize()
+    assert session.pending_specs() == []
+
+
 def test_distributed_write_session_resumes_and_commits_reused_worker_results(tmp_path):
     root = tmp_path / "dataset"
     repo_id = "test/distributed-session"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2, 2],
         episode_tasks=[["pick"] * 2, ["place"] * 2],
         chunks_size=1000,
@@ -836,6 +1497,7 @@ def test_distributed_worker_rejects_length_and_task_mismatch(tmp_path, tasks, me
         use_videos=False,
     )
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2],
         episode_tasks=[["pick", "pick"]],
         chunks_size=1000,
@@ -858,6 +1520,7 @@ def test_distributed_worker_requires_explicit_episode_start(tmp_path):
         use_videos=False,
     )
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[1],
         episode_tasks=[["pick"]],
         chunks_size=1000,
@@ -878,6 +1541,7 @@ def test_distributed_worker_cleans_artifacts_when_video_encoding_fails(tmp_path)
     root = tmp_path / "video-dataset"
     LeRobotDataset.create("test/distributed-video", fps=10, features=features, root=root, use_videos=True)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[1],
         episode_tasks=[["pick"]],
         chunks_size=1000,
@@ -897,6 +1561,42 @@ def test_distributed_worker_cleans_artifacts_when_video_encoding_fails(tmp_path)
 
     assert not (root / "data/chunk-000/file-000.parquet").exists()
     assert not (root / f"videos/{video_key}/chunk-000/file-000.mp4").exists()
+
+
+def test_distributed_worker_cleans_partial_parquet_after_write_failure_and_can_retry(tmp_path, monkeypatch):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-parquet-failure"
+    LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["pick"] * 2],
+        chunks_size=1000,
+    )
+    spec = plan.episodes[0]
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root)
+    worker.start_distributed_episode(spec)
+    add_episode_frames(worker, spec.tasks)
+    data_path = root / "data/chunk-000/file-000.parquet"
+
+    def write_partial_parquet_then_fail(table, destination, **kwargs):
+        del table, kwargs
+        destination = Path(destination)
+        destination.write_bytes(b"partial parquet")
+        raise OSError("parquet write failed")
+
+    with monkeypatch.context() as context:
+        context.setattr("lerobot.datasets.dataset_writer.pq.write_table", write_partial_parquet_then_fail)
+        with pytest.raises(OSError, match="parquet write failed"):
+            worker.save_distributed_episode(spec)
+
+    assert not data_path.exists()
+
+    worker.start_distributed_episode(spec)
+    add_episode_frames(worker, spec.tasks)
+    result = worker.save_distributed_episode(spec)
+    worker.finalize()
+    assert result.data_path.is_file()
 
 
 def test_metadata_publish_restores_previous_metadata_when_swap_fails(tmp_path, monkeypatch):
@@ -922,6 +1622,66 @@ def test_metadata_publish_restores_previous_metadata_when_swap_fails(tmp_path, m
         publish_distributed_metadata(root, staging_root)
 
     assert (old_meta / "marker.txt").read_text() == "old"
+    assert (staged_meta / "marker.txt").read_text() == "new"
+    assert not list(root.glob(".meta-distributed-backup-*"))
+
+
+def test_metadata_publish_preserves_old_metadata_when_backup_rename_fails(tmp_path, monkeypatch):
+    root = tmp_path / "dataset"
+    old_meta = root / "meta"
+    old_meta.mkdir(parents=True)
+    (old_meta / "marker.txt").write_text("old")
+    staging_root = root / "staging"
+    staged_meta = staging_root / "meta"
+    staged_meta.mkdir(parents=True)
+    (staged_meta / "marker.txt").write_text("new")
+    real_replace = os.replace
+
+    def fail_backup_rename(source, destination):
+        if Path(source) == old_meta:
+            raise OSError("backup rename failed")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr("lerobot.datasets.distributed.os.replace", fail_backup_rename)
+
+    with pytest.raises(OSError, match="backup rename failed"):
+        publish_distributed_metadata(root, staging_root)
+
+    assert (old_meta / "marker.txt").read_text() == "old"
+    assert (staged_meta / "marker.txt").read_text() == "new"
+    assert not list(root.glob(".meta-distributed-backup-*"))
+
+
+def test_metadata_publish_preserves_recovery_state_when_rollback_rename_fails(tmp_path, monkeypatch):
+    root = tmp_path / "dataset"
+    old_meta = root / "meta"
+    old_meta.mkdir(parents=True)
+    (old_meta / "marker.txt").write_text("old")
+    staging_root = root / "staging"
+    staged_meta = staging_root / "meta"
+    staged_meta.mkdir(parents=True)
+    (staged_meta / "marker.txt").write_text("new")
+    real_replace = os.replace
+
+    def fail_publish_and_rollback(source, destination):
+        source = Path(source)
+        destination = Path(destination)
+        if source == staged_meta and destination == old_meta:
+            raise OSError("publish failed")
+        if source.name.startswith(".meta-distributed-backup-") and destination == old_meta:
+            raise OSError("rollback failed")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr("lerobot.datasets.distributed.os.replace", fail_publish_and_rollback)
+
+    with pytest.raises(OSError, match="rollback failed"):
+        publish_distributed_metadata(root, staging_root)
+
+    assert not old_meta.exists()
+    assert (staged_meta / "marker.txt").read_text() == "new"
+    backup_roots = list(root.glob(".meta-distributed-backup-*"))
+    assert len(backup_roots) == 1
+    assert (backup_roots[0] / "marker.txt").read_text() == "old"
 
 
 def test_metadata_publish_rejects_missing_destination_metadata(tmp_path):
@@ -938,11 +1698,87 @@ def test_metadata_publish_rejects_missing_destination_metadata(tmp_path):
     assert not list(root.glob(".meta-distributed-backup-*"))
 
 
+@pytest.mark.parametrize("crash_point", ["journal", "backup", "published"])
+def test_metadata_publish_resumes_after_hard_exit_between_swaps(tmp_path, crash_point):
+    root = tmp_path / "dataset"
+    old_meta = root / "meta"
+    old_meta.mkdir(parents=True)
+    (old_meta / "marker.txt").write_text("old")
+    staging_root = root / "staging"
+    staged_meta = staging_root / "meta"
+    staged_meta.mkdir(parents=True)
+    (staged_meta / "marker.txt").write_text("new")
+    context = mp.get_context("spawn")
+    process = context.Process(
+        target=_publish_metadata_then_hard_exit_after_backup,
+        args=(str(root), str(staging_root), crash_point),
+    )
+
+    process.start()
+    process.join(timeout=30)
+
+    assert process.exitcode == HARD_KILL_EXIT_CODE
+    assert old_meta.exists() == (crash_point != "backup")
+    assert staged_meta.exists() == (crash_point != "published")
+    assert len(list(root.glob(".meta-distributed-backup-*"))) == (crash_point != "journal")
+
+    publish_distributed_metadata(root, staging_root)
+
+    assert (old_meta / "marker.txt").read_text() == "new"
+    assert not list(root.glob(".meta-distributed-backup-*"))
+
+
+def test_metadata_recovery_does_not_report_rollback_as_success(tmp_path):
+    root = tmp_path / "dataset"
+    backup = root / ".meta-distributed-backup-test"
+    backup.mkdir(parents=True)
+    (backup / "marker.txt").write_text("old")
+    (root / ".distributed-metadata-publish.json").write_text(
+        json.dumps({"source": "staging/meta", "backup": backup.name})
+    )
+    with pytest.raises(FileNotFoundError, match="Staged distributed metadata is missing"):
+        publish_distributed_metadata(root, root / "staging")
+    assert (root / "meta" / "marker.txt").read_text() == "old"
+    assert not (root / ".distributed-metadata-publish.json").exists()
+
+
+def test_distributed_metadata_commit_recovers_after_post_publish_driver_failure(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-idempotent-commit"
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["pick"] * 2],
+        chunks_size=1000,
+    )
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root)
+    worker.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(worker, plan.episodes[0].tasks)
+    result = worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+
+    with (
+        patch.object(driver.meta, "_load_metadata", side_effect=RuntimeError("driver failed")),
+        pytest.raises(RuntimeError, match="driver failed"),
+    ):
+        driver.commit_distributed_results(plan, [result])
+
+    recovered_driver = LeRobotDataset.resume(repo_id, root=root)
+    recovered_driver.commit_distributed_results(plan, [result])
+    recovered_driver.finalize()
+
+    loaded = LeRobotDataset(repo_id, root=root)
+    assert loaded.num_episodes == 1
+    assert loaded.num_frames == 2
+
+
 def test_commit_preserves_staged_metadata_when_destination_metadata_is_missing(tmp_path):
     root = tmp_path / "dataset"
     repo_id = "test/distributed-missing-meta"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[1],
         episode_tasks=[["pick"]],
         chunks_size=1000,
@@ -963,11 +1799,55 @@ def test_commit_preserves_staged_metadata_when_destination_metadata_is_missing(t
     assert not list(root.glob(".meta-distributed-backup-*"))
 
 
+def test_commit_cleans_partial_staging_when_metadata_generation_fails_and_can_retry(tmp_path, monkeypatch):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-metadata-generation-failure"
+    driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["pick"] * 2],
+        chunks_size=1000,
+    )
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root)
+    worker.start_distributed_episode(plan.episodes[0])
+    add_episode_frames(worker, plan.episodes[0].tasks)
+    result = worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+    original_info = (root / "meta/info.json").read_bytes()
+
+    def write_partial_metadata_then_fail(staging_root, info, write_plan, results, **kwargs):
+        del info, write_plan, results, kwargs
+        partial_meta = staging_root / "meta"
+        partial_meta.mkdir(parents=True)
+        (partial_meta / "partial.json").write_text("partial")
+        raise OSError("metadata generation failed")
+
+    with monkeypatch.context() as context:
+        context.setattr(
+            "lerobot.datasets.lerobot_dataset.write_distributed_metadata",
+            write_partial_metadata_then_fail,
+        )
+        with pytest.raises(OSError, match="metadata generation failed"):
+            driver.commit_distributed_results(plan, [result])
+
+    assert (root / "meta/info.json").read_bytes() == original_info
+    assert not list(root.glob(".distributed-metadata-*"))
+    assert result.data_path.is_file()
+
+    driver.commit_distributed_results(plan, [result])
+    driver.finalize()
+    loaded = LeRobotDataset(repo_id, root=root)
+    assert loaded.num_episodes == 1
+    assert loaded.num_frames == 2
+
+
 def test_commit_reports_staged_metadata_when_atomic_publish_fails(tmp_path, monkeypatch):
     root = tmp_path / "dataset"
     repo_id = "test/distributed-publish-failure"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[1],
         episode_tasks=[["pick"]],
         chunks_size=1000,
@@ -1003,6 +1883,7 @@ def test_driver_commits_concurrent_worker_results_into_readable_dataset(tmp_path
     repo_id = "test/distributed"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[3, 2, 4, 1],
         episode_tasks=[
             ["pick"] * 3,
@@ -1042,12 +1923,171 @@ def test_driver_commits_concurrent_worker_results_into_readable_dataset(tmp_path
     ]
 
 
+def test_driver_appends_distributed_results_to_existing_dataset(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-append"
+    initial = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    add_episode_frames(initial, ["existing", "existing"])
+    initial.save_episode()
+    initial.finalize()
+    original_data_path = root / "data/chunk-000/file-000.parquet"
+    assert original_data_path.is_file()
+
+    driver = LeRobotDataset.resume(repo_id, root=root)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False,
+        episode_lengths=[2, 1],
+        episode_tasks=[["existing", "new"], ["new"]],
+    )
+
+    assert plan.episodes[0].episode_index == 1
+    assert plan.episodes[0].dataset_from_index == 2
+    assert (plan.episodes[0].data_chunk_index, plan.episodes[0].data_file_index) == (0, 1)
+    assert plan.task_to_index == {"existing": 0, "new": 1}
+
+    session = driver.create_distributed_write_session(plan)
+    for spec in plan.episodes:
+        worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+        worker.start_distributed_episode(spec)
+        add_episode_frames(worker, spec.tasks)
+        worker.save_distributed_episode(spec)
+        worker.finalize()
+
+    driver.commit_distributed_results(session.plan, session.load_results())
+    driver.finalize()
+    loaded = LeRobotDataset(repo_id, root=root)
+
+    assert original_data_path.is_file()
+    assert loaded.num_episodes == 3
+    assert loaded.num_frames == 5
+    assert [loaded[index]["index"].item() for index in range(len(loaded))] == list(range(5))
+    assert [loaded[index]["episode_index"].item() for index in range(len(loaded))] == [0, 0, 1, 1, 2]
+    assert [loaded[index]["task"] for index in range(len(loaded))] == [
+        "existing",
+        "existing",
+        "existing",
+        "new",
+        "new",
+    ]
+    assert loaded.meta.tasks["task_index"].to_dict() == {"existing": 0, "new": 1}
+    assert int(loaded.meta.stats["action"]["count"].item()) == 5
+    assert (root / "meta/episodes/chunk-000/file-000.parquet").is_file()
+    assert (root / "meta/episodes/chunk-000/file-001.parquet").is_file()
+    assert (root / "meta/episodes/chunk-000/file-002.parquet").is_file()
+
+
+def test_driver_rejects_append_plan_after_dataset_advances(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-stale-append-plan"
+    initial = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    add_episode_frames(initial, ["existing"])
+    initial.save_episode()
+    initial.finalize()
+
+    driver = LeRobotDataset.resume(repo_id, root=root)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False,
+        episode_lengths=[1],
+        episode_tasks=[["distributed"]],
+    )
+    add_episode_frames(driver, ["sequential"])
+    driver.save_episode()
+
+    with pytest.raises(ValueError, match="starts at episode 1.*currently has 2 episodes"):
+        driver.create_distributed_write_session(plan)
+
+
+def test_driver_can_commit_multiple_distributed_append_batches(tmp_path):
+    root = tmp_path / "dataset"
+    repo_id = "test/distributed-multiple-appends"
+    initial = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
+    add_episode_frames(initial, ["initial"])
+    initial.save_episode()
+    initial.finalize()
+    driver = LeRobotDataset.resume(repo_id, root=root)
+
+    for task in ("first-append", "second-append"):
+        plan = driver.create_distributed_write_plan(
+            pack_episodes=False,
+            episode_lengths=[1],
+            episode_tasks=[[task]],
+        )
+        session = driver.create_distributed_write_session(plan)
+        worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+        worker.start_distributed_episode(plan.episodes[0])
+        add_episode_frames(worker, plan.episodes[0].tasks)
+        worker.save_distributed_episode(plan.episodes[0])
+        worker.finalize()
+        driver.commit_distributed_results(session.plan, session.load_results())
+        assert not session.session_root.exists()
+
+    driver.finalize()
+    loaded = LeRobotDataset(repo_id, root=root)
+
+    assert loaded.num_episodes == 3
+    assert loaded.num_frames == 3
+    assert [loaded[index]["task"] for index in range(len(loaded))] == [
+        "initial",
+        "first-append",
+        "second-append",
+    ]
+
+
+def test_driver_appends_distributed_video_to_existing_dataset(tmp_path):
+    video_key = RGB_VIDEO_KEY
+    features = {
+        video_key: {"dtype": "video", "shape": (32, 32, 3), "names": None},
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    root = tmp_path / "video-dataset"
+    repo_id = "test/distributed-video-append"
+    initial = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=True)
+    add_video_frames(initial, ["existing", "existing"], video_key)
+    initial.save_episode()
+    initial.finalize()
+    original_video_path = root / f"videos/{video_key}/chunk-000/file-000.mp4"
+    assert original_video_path.is_file()
+
+    driver = LeRobotDataset.resume(repo_id, root=root)
+    plan = driver.create_distributed_write_plan(
+        pack_episodes=False,
+        episode_lengths=[2],
+        episode_tasks=[["appended", "appended"]],
+    )
+    assert (plan.episodes[0].data_chunk_index, plan.episodes[0].data_file_index) == (0, 1)
+    session = driver.create_distributed_write_session(plan)
+    worker = LeRobotDataset.open_distributed_writer(repo_id, root=root, session=session)
+    worker.start_distributed_episode(plan.episodes[0])
+    add_video_frames(worker, plan.episodes[0].tasks, video_key)
+    worker.save_distributed_episode(plan.episodes[0])
+    worker.finalize()
+
+    driver.commit_distributed_results(session.plan, session.load_results())
+    driver.finalize()
+    loaded = LeRobotDataset(repo_id, root=root, video_backend="pyav")
+
+    appended_video_path = root / f"videos/{video_key}/chunk-000/file-001.mp4"
+    assert original_video_path.is_file()
+    assert appended_video_path.is_file()
+    assert loaded.num_episodes == 2
+    assert loaded.num_frames == 4
+    assert loaded[0][video_key].shape == (3, 32, 32)
+    assert loaded[2][video_key].shape == (3, 32, 32)
+    assert [loaded[index]["task"] for index in range(len(loaded))] == [
+        "existing",
+        "existing",
+        "appended",
+        "appended",
+    ]
+
+
 @pytest.mark.parametrize("tamper", ["missing", "duplicate", "wrong_range", "missing_artifact"])
 def test_driver_rejects_invalid_results_without_publishing_metadata(tmp_path, tamper):
     root = tmp_path / "dataset"
     repo_id = "test/distributed"
     driver = LeRobotDataset.create(repo_id, fps=30, features=FEATURES, root=root, use_videos=False)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2, 2],
         episode_tasks=[["pick"] * 2, ["place"] * 2],
         chunks_size=2,
@@ -1084,6 +2124,7 @@ def test_distributed_video_results_have_independent_files_and_readable_frames(tm
     repo_id = "test/distributed-video"
     driver = LeRobotDataset.create(repo_id, fps=10, features=features, root=root, use_videos=True)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[2, 2],
         episode_tasks=[["pick"] * 2, ["place"] * 2],
         chunks_size=1000,
@@ -1124,6 +2165,7 @@ def test_driver_rejects_plan_with_video_keys_that_differ_from_dataset_schema(tmp
     )
     driver = LeRobotDataset.open_distributed_writer("test/distributed-video", root=root)
     plan = DistributedWritePlan.from_episode_lengths(
+        pack_episodes=False,
         episode_lengths=[1],
         episode_tasks=[["pick"]],
         chunks_size=1000,
