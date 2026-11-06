@@ -1003,3 +1003,16 @@ def test_aggregate_stats_incremental_resume():
     # Bounds should widen monotonically
     np.testing.assert_allclose(cumulative2["action"]["q01"], np.array([-25.0, -18.0]))
     np.testing.assert_allclose(cumulative2["action"]["q99"], np.array([35.0, 22.0]))
+
+
+@pytest.mark.parametrize("offset,scale", [(0.0, 1.0), (-10.0, 3.0)])
+def test_running_quantile_stats_skewed_first_bin(offset: float, scale: float) -> None:
+    # Six of eight samples occupy the first quarter of the range.
+    data = np.array([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 2.5, 4.0])
+    running = RunningQuantileStats(quantile_list=[0.25, 0.5, 0.75], num_quantile_bins=4)
+    running.update((offset + scale * data)[:, None])
+    stats = running.get_statistics()
+    # Histogram CDF reaches 0.75 at the end of the first bin, so its
+    # 25th/50th/75th percentiles lie at 1/3, 2/3, and 1 of that bin.
+    for key, expected in [("q25", 1 / 3), ("q50", 2 / 3), ("q75", 1.0)]:
+        np.testing.assert_allclose(stats[key], [offset + scale * expected], atol=1e-9)
