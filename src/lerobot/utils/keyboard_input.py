@@ -52,7 +52,8 @@ from .import_utils import _pynput_available
 
 logger = logging.getLogger(__name__)
 
-# POSIX-only terminal modules (absent on Windows, where the pynput backend is used).
+# POSIX-only terminal modules (absent on Windows, where the pynput backend is used, or
+# the msvcrt-based reader below when pynput cannot capture).
 if TYPE_CHECKING:
     import termios
     import tty
@@ -67,6 +68,17 @@ else:
     except ImportError:  # POSIX-only modules; unavailable on Windows
         termios = tty = None
         _TERMIOS_AVAILABLE = False
+
+# Windows console keyboard polling; only importable on Windows.
+if TYPE_CHECKING:
+    import msvcrt
+else:
+    try:
+        import msvcrt
+    except ImportError:
+        msvcrt = None
+
+_WINDOWS = platform.system() == "Windows"
 
 if TYPE_CHECKING:
     from pynput import keyboard
@@ -180,16 +192,22 @@ def apply_recording_control(control: str, events: dict) -> None:
 # an unknown final byte yields None (sequence ignored).
 _ARROW_FINAL_BYTES = {"A": "up", "B": "down", "C": "right", "D": "left"}
 
+# Windows console arrow keys: NUL/0xe0 prefix followed by these scan codes.
+_WINDOWS_ARROW_SCAN_CODES = {"H": "up", "P": "down", "K": "left", "M": "right"}
+
 
 class TerminalKeyListener:
     """Display-independent keyboard listener that reads keys from the controlling TTY.
 
     Used as the Wayland / headless / macOS-untrusted equivalent of the ``pynput``
-    listener for *discrete* controls. It puts the terminal into cbreak mode with
-    echo disabled and reads bytes on a daemon thread, decoding them into logical
-    key names that are passed to ``on_key``:
+    listener for *discrete* controls, and as the fallback on Windows consoles when the
+    global ``pynput`` hook is unavailable (a service session, an RDP console with hooks
+    disabled, or ``pynput`` not installed). It puts the terminal into cbreak mode with
+    echo disabled (POSIX) — or polls the console with ``msvcrt`` (Windows) — and reads
+    bytes on a daemon thread, decoding them into logical key names passed to ``on_key``:
 
-    * arrow keys (``ESC [ C`` / ``ESC O C`` …) -> ``"right"`` / ``"left"`` / ``"up"`` / ``"down"``
+    * arrow keys (``ESC [ C`` / ``ESC O C`` … on POSIX, ``\\x00``/``\\xe0`` + ``K``/``M``
+      on Windows) -> ``"right"`` / ``"left"`` / ``"up"`` / ``"down"``
     * a bare ``ESC`` -> ``"esc"``
     * Enter / Tab / Space / Backspace -> ``"enter"`` / ``"tab"`` / ``"space"`` / ``"backspace"``
     * any other printable byte -> that character (e.g. ``"n"``, ``"s"``)
@@ -198,9 +216,8 @@ class TerminalKeyListener:
     suitable for discrete commands but NOT for continuous "hold-to-move" teleop.
 
     The terminal is restored on :meth:`stop` and also via an ``atexit`` hook, so a
-    crash or Ctrl-C never leaves the shell in a no-echo cbreak state. POSIX-only
-    (``termios`` / ``tty`` / ``select``); those modules are imported lazily so this
-    file stays importable on Windows (where ``pynput`` is used instead).
+    crash or Ctrl-C never leaves the shell in a no-echo cbreak state. Both backends are
+    imported lazily so this file stays importable everywhere.
     """
 
     def __init__(self, on_key: Callable[[str], None]) -> None:
@@ -209,9 +226,12 @@ class TerminalKeyListener:
         self._thread: threading.Thread | None = None
         self._fd: int | None = None
         self._old_attrs: list[Any] | None = None
+        self._windows_console = False
 
     def _read_char(self, timeout: float) -> str | None:
-        """Return one character from stdin within ``timeout`` seconds, or ``None``."""
+        """Return one character from the terminal within ``timeout`` seconds, or ``None``."""
+        if self._windows_console:
+            return self._read_char_windows(timeout)
         if self._fd is None:
             return None
         ready, _, _ = select.select([self._fd], [], [], timeout)
@@ -225,8 +245,33 @@ class TerminalKeyListener:
             return None
         return data.decode(errors="ignore")
 
+    @staticmethod
+    def _read_char_windows(timeout: float) -> str | None:
+        """Poll the Windows console for a key press within ``timeout`` seconds.
+
+        ``msvcrt.kbhit`` does not block, so polling with a short sleep is the only way to
+        honour a timeout while staying interruptible by :meth:`stop`.
+        """
+        if msvcrt is None:  # pragma: no cover - msvcrt is always present on Windows
+            return None
+        deadline = time.perf_counter() + timeout
+        while True:
+            if msvcrt.kbhit():
+                try:
+                    return msvcrt.getwch()
+                except (OSError, ValueError):
+                    return None
+            if time.perf_counter() >= deadline:
+                return None
+            time.sleep(0.005)
+
     def _parse(self, ch: str) -> str | None:
         """Decode one (possibly multi-byte) key starting at ``ch`` into a key name."""
+        if ch in ("\x00", "\xe0"):
+            # Windows sends extended keys (arrows, F-keys, Home/End…) as a NUL/0xe0
+            # prefix followed by a scan code; only the arrows map to a canonical name.
+            code = self._read_char(timeout=0.02)
+            return _WINDOWS_ARROW_SCAN_CODES.get(code or "")
         if ch == "\x1b":
             # Possible CSI / SS3 escape sequence (arrow keys) or a bare ESC. Use
             # short follow-up reads so a lone ESC is not mistaken for a sequence.
@@ -264,28 +309,32 @@ class TerminalKeyListener:
                 logger.debug("Terminal key handler error: %s", e)
 
     def start(self) -> None:
-        """Switch the terminal to cbreak mode (echo off) and read keys on a daemon thread.
+        """Start reading keys on a daemon thread.
 
-        No-op when stdin is not a TTY (piped/redirected input) or on platforms
-        without ``termios`` (e.g. Windows), so non-interactive runs are unaffected.
+        On POSIX the terminal is switched to cbreak mode (echo off) first; on Windows the
+        console is polled with ``msvcrt`` instead, which needs no terminal state change.
+        No-op when stdin is not a TTY (piped/redirected input), so non-interactive runs
+        are unaffected.
         """
         if not sys.stdin.isatty():
             return
-        if not _TERMIOS_AVAILABLE:  # POSIX-only modules (e.g. unavailable on Windows)
-            logger.warning("Terminal keyboard input is not supported on this platform.")
-            return
-
-        self._fd = sys.stdin.fileno()
-        self._old_attrs = termios.tcgetattr(self._fd)
-        tty.setcbreak(self._fd)
-        # Explicitly disable ECHO so arrow-key escape sequences (e.g. ^[[C) are not
-        # echoed as garbage into the recording terminal. (Independent of the
-        # version-specific behavior of tty.setcbreak.)
-        new_attrs = termios.tcgetattr(self._fd)
-        new_attrs[3] &= ~termios.ECHO  # index 3 == lflags
-        termios.tcsetattr(self._fd, termios.TCSADRAIN, new_attrs)
-        # Safety net: restore the terminal even if stop() is never reached (crash).
-        atexit.register(self.stop)
+        if not _TERMIOS_AVAILABLE:
+            if not (_WINDOWS and msvcrt is not None):
+                logger.warning("Terminal keyboard input is not supported on this platform.")
+                return
+            self._windows_console = True
+        else:
+            self._fd = sys.stdin.fileno()
+            self._old_attrs = termios.tcgetattr(self._fd)
+            tty.setcbreak(self._fd)
+            # Explicitly disable ECHO so arrow-key escape sequences (e.g. ^[[C) are not
+            # echoed as garbage into the recording terminal. (Independent of the
+            # version-specific behavior of tty.setcbreak.)
+            new_attrs = termios.tcgetattr(self._fd)
+            new_attrs[3] &= ~termios.ECHO  # index 3 == lflags
+            termios.tcsetattr(self._fd, termios.TCSADRAIN, new_attrs)
+            # Safety net: restore the terminal even if stop() is never reached (crash).
+            atexit.register(self.stop)
 
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -306,6 +355,7 @@ class TerminalKeyListener:
                 termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_attrs)
             finally:
                 self._old_attrs = None
+        self._windows_console = False
         with contextlib.suppress(Exception):
             atexit.unregister(self.stop)
 
