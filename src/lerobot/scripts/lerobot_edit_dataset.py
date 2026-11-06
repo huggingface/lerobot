@@ -266,7 +266,7 @@ from lerobot.datasets import (
     remove_feature,
     split_dataset,
 )
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.utils import init_logging
 
 
@@ -395,6 +395,16 @@ def _is_in_place(input_path: Path, output_path: Path) -> bool:
         return os.path.samefile(input_path, output_path)
     except OSError:
         return False
+
+
+def _check_output_outside_hub_cache(output_path: Path) -> None:
+    """Refuse to write into the Hub cache, whose files are symlinks to blobs shared across revisions."""
+    hub_cache = HF_LEROBOT_HUB_CACHE.resolve()
+    if output_path.is_relative_to(hub_cache):
+        raise ValueError(
+            f"Refusing to write to {output_path}: it is inside the Hub cache {hub_cache}, whose files are "
+            "shared between dataset revisions. Pass a --new_root outside of it."
+        )
 
 
 def get_output_path(
@@ -706,6 +716,10 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         cfg.new_root,
         default_new_repo_id=f"{repo_id}_recomputed_stats",
     )
+    _check_output_outside_hub_cache(output_root)
+    if cfg.root is None and not input_root.exists():
+        # Not stored locally: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id.
+        input_root = LeRobotDataset(repo_id).root.resolve()
     in_place = _is_in_place(input_root, output_root)
 
     if in_place and not cfg.operation.overwrite:
@@ -767,6 +781,10 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         cfg.new_root,
         default_new_repo_id=f"{repo_id}_reencoded",
     )
+    _check_output_outside_hub_cache(output_root)
+    if cfg.root is None and not input_root.exists():
+        # Not stored locally: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id.
+        input_root = LeRobotDataset(repo_id).root.resolve()
     in_place = _is_in_place(input_root, output_root)
 
     if in_place and not cfg.operation.overwrite:
