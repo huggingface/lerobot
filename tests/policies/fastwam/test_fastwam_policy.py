@@ -19,6 +19,7 @@ import json
 import pytest
 import torch
 from safetensors import safe_open
+from safetensors.torch import load_model, save_model
 from torch import nn
 
 pytest.importorskip("transformers", reason="fastwam requires the `fastwam` extra (transformers)")
@@ -451,6 +452,44 @@ class CoreWithFrozenComponents(FakeFastWAMCore):
         self.vae._apply(fn)
         self.text_encoder._apply(fn)
         return self
+
+
+@pytest.mark.parametrize(
+    "model_device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda:0",
+            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA loading requires CUDA"),
+        ),
+    ],
+)
+@pytest.mark.parametrize("map_location", ["cpu", "cuda:0"])
+def test_checkpoint_load_stages_weights_on_cpu(monkeypatch, tmp_path, model_device, map_location):
+    reference = FakeFastWAMCore().to(dtype=torch.bfloat16)
+    checkpoint = tmp_path / "model.safetensors"
+    save_model(reference, checkpoint)
+    target = FakeFastWAMCore().to(device=model_device, dtype=torch.bfloat16)
+    original_parameters = dict(target.named_parameters())
+
+    def load_on_cpu(model, filename, *, strict, device):
+        assert device == "cpu"
+        return load_model(model, filename, strict=strict, device=device)
+
+    monkeypatch.setattr("lerobot.policies.pretrained.load_model_as_safetensor", load_on_cpu)
+    loaded = FastWAMPolicy._load_as_safetensor(target, str(checkpoint), map_location, strict=True)
+
+    assert loaded is target
+    for name, parameter in target.named_parameters():
+        assert parameter is original_parameters[name], name
+        assert parameter.device == torch.device(model_device), name
+        assert parameter.dtype == torch.bfloat16, name
+    torch.testing.assert_close(
+        {name: tensor.cpu() for name, tensor in target.state_dict().items()},
+        reference.state_dict(),
+        rtol=0,
+        atol=0,
+    )
 
 
 def test_from_pretrained_uses_base_loader_and_skips_wan_backbone(monkeypatch, tmp_path):
