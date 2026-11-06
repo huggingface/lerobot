@@ -225,11 +225,68 @@ def test_flatten_none_values_skipped():
 
 
 def test_flatten_nested_with_bools():
-    """Test that bools in nested dicts are handled correctly."""
+    """Nested dicts are one JSON arg; draccus merges it onto the loaded dataclass."""
     d = {"optimizer": {"use_warmup": True, "lr": 0.01}}
     args = _flatten_to_cli_args(d)
-    assert "--optimizer.use_warmup=true" in args
-    assert "--optimizer.lr=0.01" in args
+    assert args == [f"--optimizer={json.dumps({'use_warmup': True, 'lr': 0.01})}"]
+
+
+def test_flatten_dict_fields_as_json_not_dotted_keys():
+    """Dict fields must not be split into dotted keys (issue #4840).
+
+    ``normalization_mapping.VISUAL`` is not a dataclass attribute, and keys like
+    ``observation.state`` contain a dot, so draccus rejects the dotted form.
+    """
+    d = {
+        "n_action_steps": 10,
+        "normalization_mapping": {"VISUAL": "IDENTITY"},
+        "input_features": {"observation.state": {"shape": [6], "type": "STATE"}},
+    }
+    args = _flatten_to_cli_args(d)
+    assert "--n_action_steps=10" in args
+    assert f"--normalization_mapping={json.dumps({'VISUAL': 'IDENTITY'})}" in args
+    feature_arg = f"--input_features={json.dumps({'observation.state': {'shape': [6], 'type': 'STATE'}})}"
+    assert feature_arg in args
+    assert not any("normalization_mapping." in arg or "input_features." in arg for arg in args)
+
+
+def test_json_dict_override_merges_onto_loaded_config():
+    """The JSON form keeps keys that the YAML did not set, for dicts and dataclasses."""
+    from dataclasses import dataclass, field
+
+    import draccus
+
+    @dataclass
+    class _Opt:
+        lr: float = 0.1
+        use_warmup: bool = False
+
+    @dataclass
+    class _Cfg:
+        normalization_mapping: dict = field(
+            default_factory=lambda: {"VISUAL": "MEAN_STD", "STATE": "MEAN_STD"}
+        )
+        optimizer: _Opt = field(default_factory=_Opt)
+
+    saved = {
+        "normalization_mapping": {"VISUAL": "MEAN_STD", "STATE": "MEAN_STD"},
+        "optimizer": {"lr": 0.1, "use_warmup": False},
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(saved, f)
+        config_path = f.name
+
+    args = _flatten_to_cli_args(
+        {
+            "normalization_mapping": {"VISUAL": "IDENTITY"},
+            "optimizer": {"use_warmup": True},
+        }
+    )
+    cfg = draccus.parse(_Cfg, config_path, args=args)
+    assert cfg.normalization_mapping["VISUAL"] == "IDENTITY"
+    assert cfg.normalization_mapping["STATE"] == "MEAN_STD"
+    assert cfg.optimizer.use_warmup is True
+    assert cfg.optimizer.lr == 0.1
 
 
 def test_extract_removes_field_with_siblings_and_no_type():
