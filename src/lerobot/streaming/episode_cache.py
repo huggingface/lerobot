@@ -14,12 +14,12 @@ import io
 import logging
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, BinaryIO, TypedDict
+from typing import TYPE_CHECKING, Any, BinaryIO, TypedDict
 
 import torch
 
@@ -70,6 +70,7 @@ class EpisodeByteCache:
         video_backend: str = "torchcodec",
         tolerance_s: float = 1e-4,
         token: str | bool | None = None,
+        storage_options: Mapping[str, Any] | None = None,
     ) -> None:
         """Configure byte fetching, synthesis, decoder limits, and backend selection.
 
@@ -86,6 +87,7 @@ class EpisodeByteCache:
             native_http_retries=native_http_retries,
             native_http_subranges=native_http_subranges,
             token=token,
+            storage_options=storage_options,
         )
         self.byte_budget = byte_budget
         self.max_open_decoders = max_open_decoders

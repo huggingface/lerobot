@@ -207,6 +207,38 @@ Hub datasets use `repo_type=dataset` by default. For a complete local dataset, s
 to its directory. Training resolves metadata and payloads from the same source; no separate
 streaming payload-location flag is needed.
 
+### Amazon S3
+
+A complete dataset in S3 streams from its `s3://` URI. Install `s3fs` first
+(`pip install s3fs`). `repo_id` is required but only names the dataset:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=my-org/my-dataset \
+  --dataset.root=s3://my-bucket/path/to/dataset \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_s3_streaming
+```
+
+```python
+from lerobot.datasets import StreamingLeRobotDataset
+
+dataset = StreamingLeRobotDataset(
+    "my-org/my-dataset",
+    root="s3://my-bucket/path/to/dataset",
+    storage_options={"profile": "my-aws-profile"},  # optional
+)
+```
+
+Only `meta/` is copied, once per machine, to `$HF_LEROBOT_HOME/remote`; Parquet and video bytes
+are read in place. Pass `force_cache_sync=True` after the dataset's metadata changes.
+
+Credentials come from the environment: `AWS_PROFILE` or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
+(and `AWS_ENDPOINT_URL` for S3-compatible stores). In Python, `storage_options` passes s3fs options
+directly. `lerobot-train` has no such option on purpose: the training config is saved to
+`train_config.json` and pushed with the model, so secrets must not be part of it.
+
 ## Resume and shuffle migration
 
 The earlier streaming reader used a bounded row shuffle buffer. The episode reader instead has

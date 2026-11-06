@@ -19,7 +19,7 @@ import warnings
 from collections import deque
 from collections.abc import Callable, Generator, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import ExitStack, closing
+from contextlib import AbstractContextManager, ExitStack, closing, nullcontext
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -33,7 +33,7 @@ from lerobot.configs import DEFAULT_DEPTH_UNIT
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.episode_parquet import EpisodeParquetReader
 from lerobot.streaming.episode_pool import ExactCoveragePool, StreamingSamplingStrategy
-from lerobot.streaming.location import StorageLocation
+from lerobot.streaming.location import LocationKind, StorageLocation
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import get_safe_default_video_backend
@@ -42,7 +42,7 @@ from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
 from .language import LANGUAGE_COLUMNS
-from .storage import is_bucket_root
+from .storage import is_bucket_root, localize_lerobot_root, remote_meta_lock
 from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
     streaming_data_root,
@@ -204,6 +204,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
     # Set in __init__; class defaults keep partially built instances (tests) on the one-worker path.
     _worker_pool_size: int | None = None
     _explicit_decoder_cache_size: int | None = None
+    _storage_options: dict[str, Any] | None = None
     # Logical worker offset of DataLoader worker 0 for the current iterator (see `_worker_share`).
     _worker_rotation = 0
 
@@ -234,6 +235,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         *,
         repo_type: Literal["dataset", "bucket"] = "dataset",
         token: str | bool | None = None,
+        storage_options: dict[str, Any] | None = None,
         decode_threads: int = 2,
         decoded_queue_size: int = 8,
         video_decoder_cache_size: int | None = None,
@@ -249,7 +251,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 Hub dataset or bucket identifier.
             root (`str | Path | None`, *optional*):
                 Local dataset directory, or local metadata cache in bucket mode. An
-                ``hf://buckets/OWNER/BUCKET`` URI selects bucket mode for that bucket.
+                ``hf://buckets/OWNER/BUCKET`` URI selects bucket mode for that bucket. An
+                ``s3://bucket/path`` URI streams the dataset from S3: ``meta/`` is cached under
+                ``$HF_LEROBOT_HOME/remote`` and data stays remote. Requires ``s3fs``.
             episodes (`list[int] | None`, *optional*):
                 Episode indices to select; None selects the complete dataset.
             image_transforms (`Callable[[torch.Tensor], torch.Tensor] | None`, *optional*):
@@ -303,6 +307,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 Whether repo_id identifies a dataset repository or a Storage Bucket.
             token (`str | bool | None`, *optional*):
                 Hub authentication retained for worker I/O, never serialized into sidecars.
+            storage_options (`dict[str, Any] | None`, *optional*):
+                Fsspec options for object-store roots and ``data_root``, e.g. ``{"profile": "x"}``
+                for S3. None uses the environment's credentials. Retained for worker I/O, never
+                serialized into sidecars.
             decode_threads (`int`, *optional*, defaults to `2`):
                 Parallel sample-assembly and video-decode workers.
             decoded_queue_size (`int`, *optional*, defaults to `8`):
@@ -321,9 +329,19 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 shuffled round. Neither strategy is a global uniform shuffle.
         """
         super().__init__()
+        meta_lock: AbstractContextManager = nullcontext()
         if is_bucket_root(repo_id, root):
             # Metadata then uses the regular bucket cache, as with repo_type="bucket".
             root, repo_type = None, "bucket"
+        elif root is not None and (location := StorageLocation.parse(root)).kind is LocationKind.FSSPEC:
+            # Object-store root (e.g. s3://): payload streams from it, meta/ is cached locally.
+            if data_root is None:
+                data_root = location.uri
+            root = localize_lerobot_root(location.uri, storage_options, force_cache_sync)
+            force_cache_sync = False
+            # repo_type="bucket" takes this same lock in LeRobotDatasetMetadata; it is not reentrant.
+            if repo_type != "bucket":
+                meta_lock = remote_meta_lock(root)
         if repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
         self.repo_id = repo_id
@@ -358,6 +376,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
         self._streaming_io_token = None if self.streaming_from_local else token
+        self._storage_options = storage_options
         self._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         if self._video_backend == "video_reader":
             self._video_backend = "pyav"
@@ -387,14 +406,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
-        self.meta = LeRobotDatasetMetadata(
-            self.repo_id,
-            self._requested_root,
-            self.revision,
-            force_cache_sync=force_cache_sync,
-            repo_type=repo_type,
-            token=token,
-        )
+        with meta_lock:
+            self.meta = LeRobotDatasetMetadata(
+                self.repo_id,
+                self._requested_root,
+                self.revision,
+                force_cache_sync=force_cache_sync,
+                repo_type=repo_type,
+                token=token,
+            )
         self.root = self.meta.root
         self.revision = self.meta.revision
         self.meta.rescale_depth_stats(self._depth_output_unit)
@@ -441,6 +461,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 range_backend=sidecar_backend,
                 lock_timeout_s=sidecar_lock_timeout_s,
                 token=self._streaming_io_token,
+                storage_options=self._storage_options,
             )
         except TimeoutError as exc:
             exc.add_note(
@@ -548,6 +569,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 self._data_root,
                 columns=self._projected_columns,
                 token=self._streaming_io_token,
+                storage_options=self._storage_options,
             )
             parquet_executor = ThreadPoolExecutor(
                 max_workers=max_workers, thread_name_prefix="lerobot-parquet"
@@ -859,6 +881,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             workers=workers,
             sidecar_path=self._sidecar_path,
             token=self._streaming_io_token,
+            storage_options=self._storage_options,
         )
         return EpisodeByteCache(
             manifest,
@@ -876,6 +899,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             video_backend=self._video_backend,
             tolerance_s=self.tolerance_s,
             token=self._streaming_io_token,
+            storage_options=self._storage_options,
         )
 
     def _make_episode_item(
