@@ -1,0 +1,66 @@
+# Troubleshooting OpenCV cameras
+
+Start with one camera and a small stream. Close other camera applications and stop recording or teleoperation before running discovery. Two processes opening the same device can interfere with capture.
+
+## Verify the camera before recording
+
+Run discovery and inspect the saved images:
+
+```bash
+lerobot-find-cameras opencv
+```
+
+Use the reported ID in your camera configuration. Indices can change after reconnecting a device or rebooting. On Linux, inspect the device nodes and supported capture modes with:
+
+```bash
+v4l2-ctl --list-devices
+v4l2-ctl --device=/dev/video0 --list-formats-ext
+```
+
+`v4l2-ctl` is part of the `v4l-utils` system package. A camera may expose several `/dev/video*` nodes; select a node that supports video capture. A stable path under `/dev/v4l/by-id/` can avoid changes in numeric indices.
+
+To check a known device without launching the recording pipeline, save this as `check_camera.py` and run `uv run python check_camera.py`:
+
+```python
+from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+
+config = OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30)
+with OpenCVCamera(config) as camera:
+    frame = camera.async_read(timeout_ms=1000)
+    print(frame.shape, frame.dtype)
+```
+
+Replace `0` and the stream settings with values supported by your camera. For a Linux device path in Python, pass `Path("/dev/video0")` from `pathlib`. The context manager disconnects the camera when the block exits.
+
+## Common errors
+
+| Message                                                               | What to check                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Failed to open OpenCVCamera`                                         | Rediscover the ID, check the cable, and close applications using the device. On Linux, check read/write access to the device node. On macOS and Windows, check camera privacy permissions for the application running LeRobot. |
+| `failed to set fps`, `failed to set width`, or `failed to set height` | The requested resolution, frame rate, and pixel format must be a supported combination. Try the reported default profile, or a mode listed by the device.                                                                      |
+| `failed to set fourcc`                                                | The camera or selected backend rejected the pixel format. Use a supported format. Remove an explicit `fourcc` to let the backend choose.                                                                                       |
+| `Timed out waiting for frame` or `latest frame is too old`            | Check the earlier background-thread logs for capture failures. Try one camera, lower the stream load, and check USB connections. A larger timeout can accommodate a low frame rate, but does not restore a stalled capture.    |
+| `read thread is not running`                                          | Capture stopped or connection did not complete. Inspect the first error, then reconnect the camera after resolving it.                                                                                                         |
+
+### AttributeError during disconnect or discovery
+
+Older versions could report `AttributeError: 'NoneType' object has no attribute 'is_set'` when a capture thread outlived disconnect. This is a thread-lifecycle failure, not a camera calibration error. Update LeRobot and retry the one-camera check in a fresh process. For custom camera code, wait for the capture thread to stop before clearing resources it uses.
+
+If it still occurs, include the first traceback, LeRobot version or commit, operating system, camera model, backend, stream settings, and whether it happens during discovery, warmup, or disconnect in the issue report.
+
+## Multiple cameras and USB bandwidth
+
+When cameras work individually but fail together:
+
+1. Connect each camera alone and verify the exact stream settings you plan to use.
+2. Add cameras one at a time. Reduce resolution or FPS if capture becomes unreliable.
+3. Try `fourcc="MJPG"` if the camera supports it. Raw formats such as YUYV require more USB bandwidth. MJPG trades bandwidth for decoding work.
+4. On Linux, use `lsusb -t` to inspect the USB topology. Different sockets can share one controller. Distribute cameras across controllers where possible and check hub power and cables.
+
+For example, a camera configuration for a supported MJPG mode is:
+
+```python
+config = OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30, fourcc="MJPG")
+```
+
+Keep camera settings consistent between data collection and deployment. See [Cameras](./cameras) for the capture APIs and configuration examples.
