@@ -34,8 +34,6 @@ from lerobot.datasets import LeRobotDataset
 dataset = LeRobotDataset("RoboColosseum/so101-stack-bowls")
 ```
 
-The Franka, SO-101 and Unitree G1 datasets store `observation.state` and `action`, and work with `lerobot-train` directly:
-
 ```bash
 lerobot-train \
   --dataset.repo_id=RoboColosseum/so101-stack-bowls \
