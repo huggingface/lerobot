@@ -24,6 +24,7 @@ import torch
 pytest.importorskip("transformers")
 
 import transformers.utils  # noqa: E402
+from safetensors import SafetensorError  # noqa: E402
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.pi0 import PI0Config, PI0Policy, modeling_pi0  # noqa: E402
@@ -153,6 +154,20 @@ def test_bigger_action_space_loads_the_regular_way(config, tmp_path, monkeypatch
     expected, _ = load(PI0Policy, path, config, monkeypatch, regular=True)
     assert not used_meta
     assert_same(model, expected)
+
+
+def test_strict_refuses_a_checkpoint_that_leaves_a_weight_unfilled(config, tmp_path, monkeypatch):
+    path = save(config, tmp_path / "ckpt", drop_projector_bias)
+    with pytest.raises(RuntimeError, match="multi_modal_projector.linear.bias"):
+        load(PI0Policy, path, config, monkeypatch, strict=True)
+
+
+def test_strict_refuses_an_unreadable_checkpoint(config, tmp_path, monkeypatch):
+    path = tmp_path / "ckpt"
+    path.mkdir()
+    (path / "model.safetensors").write_bytes(b"not a safetensors file")
+    with pytest.raises(SafetensorError):
+        load(PI0Policy, path, config, monkeypatch, strict=True)
 
 
 def test_download_arguments_reach_the_weights(config, tmp_path, monkeypatch):
