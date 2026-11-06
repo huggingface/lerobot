@@ -517,9 +517,11 @@ def _frame_to_scalars(sample: dict, key: str, labels: list[str] | None = None) -
 
 def _playback_times_ns(dataset) -> list[int]:
     """Per-frame timestamps in nanoseconds, read without decoding video."""
+    if callable(getattr(dataset, "select_columns", None)) and getattr(dataset, "supports_raw_reads", True):
+        return [int(round(float(t) * 1e9)) for t in dataset.select_columns("timestamp")["timestamp"]]
     if hasattr(dataset, "hf_dataset"):
         return [int(round(float(t) * 1e9)) for t in dataset.hf_dataset["timestamp"]]
-    # Storage formats without hf_dataset (e.g. lance): timestamps lie on the fps grid.
+    # Iterable datasets without random-access columns use the fps grid.
     return [int(round(i * 1e9 / dataset.fps)) for i in range(len(dataset))]
 
 

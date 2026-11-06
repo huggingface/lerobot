@@ -171,3 +171,16 @@ def test_prediction_logs_the_first_env_on_prediction_topics(monkeypatch):
     assert logged["/prediction/subtask"] == {"text": "reach"}
     assert logged["/observation/images/top/prediction"] == ({"detections": []}, (100, 200))
     assert "/observation/images/wrist/prediction" not in logged
+
+
+def test_playback_times_reads_projected_timestamps():
+    class ProjectedDataset:
+        @property
+        def hf_dataset(self):
+            raise AssertionError("playback used the HF-specific surface")
+
+        def select_columns(self, key):
+            assert key == "timestamp"
+            return {key: [0.0, 0.11, 0.27]}
+
+    assert fv._playback_times_ns(ProjectedDataset()) == [0, 110_000_000, 270_000_000]

@@ -118,7 +118,7 @@ def collect_episode_arrays(
 
     # Numeric features: every frame, read directly from the underlying table.
     if numeric_keys:
-        numeric_cols = dataset.hf_dataset.select_columns(numeric_keys)[start_idx:end_idx]
+        numeric_cols = dataset.select_columns(numeric_keys)[start_idx:end_idx]
         for key in numeric_keys:
             collected_data[key] = [torch.as_tensor(v) for v in numeric_cols[key]]
 
