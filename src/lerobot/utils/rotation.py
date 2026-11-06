@@ -52,8 +52,8 @@ class Rotation:
         angle = np.linalg.norm(rotvec)
 
         if angle < 1e-8:
-            # For very small angles, use identity quaternion
-            quat = np.array([0.0, 0.0, 0.0, 1.0])
+            # sin(angle / 2) / angle tends to 1/2 as angle tends to zero.
+            quat = np.concatenate((0.5 * rotvec, [1.0]))
         else:
             axis = rotvec / angle
             half_angle = angle / 2.0
