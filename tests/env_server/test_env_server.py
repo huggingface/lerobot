@@ -190,6 +190,31 @@ def test_the_client_payload_limit_bounds_the_batch(sim_server):
             client.close()
 
 
+def test_a_reply_that_cannot_be_encoded_fails_the_request_and_not_the_server(sim_server, monkeypatch):
+    real_step = ToyEnv.step
+
+    def diverged_step(self, action):
+        observation, reward, terminated, truncated, info = real_step(self, action)
+        observation["agent_pos"][0] = np.nan
+        return observation, reward, terminated, truncated, info
+
+    monkeypatch.setattr(ToyEnv, "step", diverged_step)
+    client = EnvClient(sim_server[1])
+    try:
+        client.open(1)
+        with pytest.raises(ProtocolError, match="non-finite") as error:
+            client.request("step", actions=np.zeros((1, 2), np.float32))
+        assert error.value.code == ErrorCode.MALFORMED
+    finally:
+        client.close()
+    # The server is still there for the next client.
+    other = EnvClient(sim_server[1])
+    try:
+        assert other.describe()
+    finally:
+        other.close()
+
+
 def test_server_loss_fails_session(sim_server):
     running, endpoint = sim_server
     client = EnvClient(endpoint, timeout_s=0.1)
