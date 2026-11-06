@@ -20,10 +20,15 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import torch  # noqa: E402
 from torch import Tensor, nn  # noqa: E402
+from torch.distributions import MultivariateNormal  # noqa: E402
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.gaussian_actor.configuration_gaussian_actor import GaussianActorConfig  # noqa: E402
-from lerobot.policies.gaussian_actor.modeling_gaussian_actor import MLP, GaussianActorPolicy  # noqa: E402
+from lerobot.policies.gaussian_actor.modeling_gaussian_actor import (  # noqa: E402
+    MLP,
+    GaussianActorPolicy,
+    TanhMultivariateNormalDiag,
+)
 from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig  # noqa: E402
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE  # noqa: E402
 from lerobot.utils.random_utils import seeded_context, set_seed  # noqa: E402
@@ -81,6 +86,44 @@ def test_mlp_with_custom_final_activation():
     y = mlp(x)
     assert y.shape == (1, 256)
     assert (y >= -1).all() and (y <= 1).all()
+
+
+def test_actor_exports_with_validation_on_and_matches_eager(monkeypatch):
+    # Validation is on by default, but PyTorch turns it off process-wide on the first torch.compile.
+    monkeypatch.setattr(torch.distributions.Distribution, "_validate_args", True)
+    policy = GaussianActorPolicy(config=create_default_config(state_dim=10, continuous_action_dim=6)).eval()
+    observations = {OBS_STATE: torch.rand(2, 10)}
+    program = torch.export.export(policy.actor, (observations,), strict=False)
+    targets = [str(n.target) for n in program.run_decompositions().graph.nodes]
+    # No linear algebra op, and no distribution checks kept as runtime asserts, as PyTorch 2.15 would.
+    unwanted = ("cholesky", "linalg", "triangular", "_assert_async")
+    assert not [t for t in targets if any(name in t for name in unwanted)]
+    torch.manual_seed(0)
+    expected = policy.actor(observations)
+    torch.manual_seed(0)
+    for out, ref in zip(program.module()(observations), expected, strict=True):
+        assert torch.equal(out, ref)
+    # Only export skips the distribution argument checks.
+    with pytest.raises(ValueError, match="Expected parameter"):
+        policy.actor({OBS_STATE: torch.full((2, 10), float("nan"))})
+
+
+def test_actor_action_and_log_prob_stay_float32_with_finite_gradients_under_fp16_autocast():
+    # scale_diag stays the variance, as in the MultivariateNormal this replaced (trained policies depend on
+    # it), and half-precision parameters still give a float32 log_prob.
+    loc, variance, value = torch.randn(3, 6).half(), torch.rand(3, 6).half() + 0.1, torch.randn(3, 6)
+    expected = MultivariateNormal(loc.float(), torch.diag_embed(variance.float())).log_prob(value)
+    torch.testing.assert_close(TanhMultivariateNormalDiag(loc, variance).base_dist.log_prob(value), expected)
+    # Without the float32 promotion of the variance, log_prob comes out float16 here.
+    policy = GaussianActorPolicy(config=create_default_config(state_dim=10, continuous_action_dim=6))
+    nn.init.zeros_(policy.actor.std_layer.weight)
+    nn.init.constant_(policy.actor.std_layer.bias, -11.0)  # a small std, still above the default std_min
+    with torch.autocast("cpu", dtype=torch.float16):
+        actions, log_probs, _ = policy.actor({OBS_STATE: torch.rand(1, 10)}, None)
+    assert actions.dtype == log_probs.dtype == torch.float32
+    log_probs.mean().backward()
+    assert all(p.grad is None or torch.isfinite(p.grad).all() for p in policy.actor.parameters())
+    assert all(p.grad is not None for p in policy.actor.std_layer.parameters())
 
 
 def test_gaussian_actor_policy_with_default_args():

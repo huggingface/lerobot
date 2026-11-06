@@ -24,7 +24,7 @@ import os
 import re
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor, nn
@@ -157,25 +157,46 @@ class XVLAModel(nn.Module):
         self,
         input_ids: torch.LongTensor,
         pixel_values: torch.FloatTensor,
-        image_mask: torch.Tensor,
+        image_mask: torch.Tensor | None = None,
+        *,
+        num_valid_views: int | None = None,
     ) -> dict[str, torch.Tensor]:
         """
         Encode text and multi-view images via Florence2 encoder.
+
+        Pass exactly one of ``image_mask`` and ``num_valid_views``. ``image_mask`` may mark any views as
+        valid, and the number of valid views is read from it. ``num_valid_views`` says that the first that
+        many views of every sample are valid, so the vision batch has a fixed size under torch.export and
+        fixed-shape backends.
         """
         batch_size, num_views = pixel_values.shape[:2]
-        flat_mask = image_mask.view(-1).to(dtype=torch.bool)
-        flat_images = pixel_values.flatten(0, 1)
-        num_valid = int(flat_mask.sum().item())
-        if num_valid == 0:
-            raise ValueError("At least one image view must be valid per batch.")
+        if image_mask is not None and num_valid_views is None:
+            flat_mask = image_mask.view(-1).to(dtype=torch.bool)
+            flat_images = pixel_values.flatten(0, 1)
+            num_valid = int(flat_mask.sum().item())
+            if num_valid == 0:
+                raise ValueError("At least one image view must be valid per batch.")
 
-        valid_images = flat_images[flat_mask]
-        valid_feats = self.vlm.get_image_features(valid_images).pooler_output
-        tokens_per_view, hidden_dim = valid_feats.shape[1:]
+            valid_images = flat_images[flat_mask]
+            valid_feats = self.vlm.get_image_features(valid_images).pooler_output
+            tokens_per_view, hidden_dim = valid_feats.shape[1:]
 
-        image_features = valid_feats.new_zeros((batch_size * num_views, tokens_per_view, hidden_dim))
-        image_features[flat_mask] = valid_feats
-        image_features = image_features.view(batch_size, num_views, tokens_per_view, hidden_dim)
+            image_features = valid_feats.new_zeros((batch_size * num_views, tokens_per_view, hidden_dim))
+            image_features[flat_mask] = valid_feats
+            image_features = image_features.view(batch_size, num_views, tokens_per_view, hidden_dim)
+        elif image_mask is None and num_valid_views is not None:
+            if not 1 <= num_valid_views <= num_views:
+                raise ValueError(f"num_valid_views must be between 1 and {num_views}, got {num_valid_views}.")
+            valid_images = pixel_values[:, :num_valid_views].flatten(0, 1)
+            valid_feats = self.vlm.get_image_features(valid_images).pooler_output
+            tokens_per_view, hidden_dim = valid_feats.shape[1:]
+
+            valid_feats = valid_feats.view(batch_size, num_valid_views, tokens_per_view, hidden_dim)
+            num_padding = num_views - num_valid_views
+            padding = valid_feats.new_zeros((batch_size, num_padding, tokens_per_view, hidden_dim))
+            image_features = torch.cat([valid_feats, padding], dim=1)
+        else:
+            raise ValueError("Pass exactly one of image_mask and num_valid_views.")
         inputs_embeds = self.vlm.get_input_embeddings()(input_ids)
 
         # XVLA prepends the primary view's image tokens to the text embeddings and attends to everything.
@@ -194,10 +215,12 @@ class XVLAModel(nn.Module):
         self,
         input_ids: torch.LongTensor,
         image_input: torch.FloatTensor,
-        image_mask: torch.Tensor,
+        image_mask: torch.Tensor | None,
         domain_id: torch.LongTensor,
         proprio: torch.Tensor,
         action: torch.Tensor,
+        *,
+        num_valid_views: int | None = None,
     ) -> dict[str, torch.Tensor]:
         """
         Forward pass for the XVLA model.
@@ -207,7 +230,7 @@ class XVLAModel(nn.Module):
         proprio = proprio.to(dtype=target_dtype)
         action = action.to(dtype=target_dtype)
 
-        enc = self.forward_vlm(input_ids, image_input, image_mask)
+        enc = self.forward_vlm(input_ids, image_input, image_mask, num_valid_views=num_valid_views)
 
         batch_size = input_ids.shape[0]
         t = (
@@ -232,12 +255,13 @@ class XVLAModel(nn.Module):
         self,
         input_ids: torch.LongTensor,
         image_input: torch.FloatTensor,
-        image_mask: torch.Tensor,
+        image_mask: torch.Tensor | None,
         domain_id: torch.LongTensor,
         proprio: torch.Tensor,
         steps: int,
         *,
         noise: torch.Tensor | None = None,
+        num_valid_views: int | None = None,
     ) -> torch.Tensor:
         self.eval()
 
@@ -245,7 +269,7 @@ class XVLAModel(nn.Module):
         image_input = image_input.to(dtype=target_dtype)
         proprio = proprio.to(dtype=target_dtype)
 
-        enc = self.forward_vlm(input_ids, image_input, image_mask)
+        enc = self.forward_vlm(input_ids, image_input, image_mask, num_valid_views=num_valid_views)
 
         batch_size = input_ids.shape[0]
         action_dim = self.dim_action
@@ -293,7 +317,7 @@ class XVLAPolicy(PreTrainedPolicy):
         }
 
     def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
-        """Declare XVLA's existing image masks/resizing and state zero-padding.
+        """Declare XVLA's padding views for missing cameras, image resizing and state zero-padding.
 
         Deployments name the physical cameras and state coordinates explicitly.
         A different state width is accepted only with identity normalization; truncating
@@ -348,7 +372,7 @@ class XVLAPolicy(PreTrainedPolicy):
             state = state[:, -1, :]
         return pad_vector(state, self.model.dim_proprio, truncate=True)
 
-    def _prepare_images(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
+    def _prepare_images(self, batch: dict[str, Tensor]) -> tuple[Tensor, int]:
         present_img_keys = [key for key in self.config.image_features if key in batch]
         if len(present_img_keys) == 0:
             raise ValueError(
@@ -357,16 +381,13 @@ class XVLAPolicy(PreTrainedPolicy):
             )
 
         images = []
-        masks = []
         for key in present_img_keys:
             img = batch[key][:, -1] if batch[key].ndim == 5 else batch[key]
             if self.config.resize_imgs_with_padding is not None:
                 img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0.0)
             images.append(img)
-            masks.append(torch.ones(img.size(0), dtype=torch.bool, device=img.device))
 
         stacked_imgs = torch.stack(images, dim=1)
-        stacked_masks = torch.stack(masks, dim=1)
 
         total_views = self.config.num_image_views or stacked_imgs.size(1)
         total_views = max(total_views, stacked_imgs.size(1))
@@ -374,11 +395,9 @@ class XVLAPolicy(PreTrainedPolicy):
         if num_pad > 0:
             pad_shape = (stacked_imgs.size(0), num_pad, *stacked_imgs.shape[2:])
             pad_imgs = stacked_imgs.new_zeros(pad_shape)
-            pad_masks = stacked_masks.new_zeros((stacked_masks.size(0), num_pad))
             stacked_imgs = torch.cat([stacked_imgs, pad_imgs], dim=1)
-            stacked_masks = torch.cat([stacked_masks, pad_masks], dim=1)
 
-        return stacked_imgs, stacked_masks
+        return stacked_imgs, len(present_img_keys)
 
     def _get_domain_id(self, batch: dict[str, Tensor], batch_size: int, device: torch.device) -> Tensor:
         candidate = None
@@ -414,18 +433,19 @@ class XVLAPolicy(PreTrainedPolicy):
             actions = pad_vector(actions, self.model.dim_action, truncate=True)
         return actions
 
-    def _build_model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+    def _build_model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Any]:
         input_ids = batch[OBS_LANGUAGE_TOKENS]
         batch_size = input_ids.shape[0]
-        images, image_mask = self._prepare_images(batch)
+        images, num_valid_views = self._prepare_images(batch)
         domain_id = self._get_domain_id(batch, batch_size, images.device)
         proprio = self._prepare_state(batch, batch_size, images.device)
         return {
             "input_ids": input_ids,
             "image_input": images,
-            "image_mask": image_mask,
+            "image_mask": None,
             "domain_id": domain_id,
             "proprio": proprio,
+            "num_valid_views": num_valid_views,
         }
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
