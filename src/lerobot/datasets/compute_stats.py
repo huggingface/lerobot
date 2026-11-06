@@ -198,13 +198,11 @@ class RunningQuantileStats:
         cumsum = np.cumsum(hist)
         idx = np.searchsorted(cumsum, target_count)
 
-        if idx == 0:
-            return float(edges[0])
         if idx >= len(cumsum):
             return float(edges[-1])
 
-        # If not edge case, interpolate within the bin
-        count_before = cumsum[idx - 1]
+        # Interpolate within every populated bin, including the first one.
+        count_before = cumsum[idx - 1] if idx > 0 else 0
         count_in_bin = cumsum[idx] - count_before
 
         # If no samples in this bin, use the bin edge
