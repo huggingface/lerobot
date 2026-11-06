@@ -23,7 +23,7 @@ from functools import partial
 from typing import Any
 
 import gymnasium as gym
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import snapshot_download
 
 from .utils import canonical_observation
 
@@ -75,7 +75,11 @@ def _download_hub_file(
     trust_remote_code: bool,
     hub_cache_dir: str | None,
 ) -> tuple[str, str, str, str | None]:
-    """Find (downloading if needed) the `env.py` `cfg_str` points to; needs `trust_remote_code`."""
+    """Find the `env.py` `cfg_str` points to, downloading its whole repository; needs `trust_remote_code`.
+
+    The repository's other files (scenes, models, configs) sit next to `env.py`, at the same revision, as
+    they do in a local directory and in a simulator image.
+    """
     if not trust_remote_code:
         raise RuntimeError(
             f"Refusing to execute remote code from the Hub for '{cfg_str}'. "
@@ -97,17 +101,10 @@ def _download_hub_file(
 
     repo_id, revision, file_path = _parse_hub_url(cfg_str)
 
-    try:
-        local_file = hf_hub_download(
-            repo_id=repo_id, filename=file_path, revision=revision, cache_dir=hub_cache_dir
-        )
-    except Exception as e:
-        snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
-        local_file = os.path.join(snapshot_dir, file_path)
-        if not os.path.exists(local_file):
-            raise FileNotFoundError(
-                f"Could not find {file_path} in repository {repo_id}@{revision or 'main'}"
-            ) from e
+    snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
+    local_file = os.path.join(snapshot_dir, file_path)
+    if not os.path.isfile(local_file):
+        raise FileNotFoundError(f"Could not find {file_path} in repository {repo_id}@{revision or 'main'}")
 
     return repo_id, file_path, local_file, revision
 
