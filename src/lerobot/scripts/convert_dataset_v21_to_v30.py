@@ -56,8 +56,10 @@ from lerobot.utils.import_utils import require_package
 require_package("jsonlines", extra="dataset")
 
 import jsonlines
+import numpy as np
 import pandas as pd
 import pyarrow as pa
+import pyarrow.parquet as pq
 import tqdm
 from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
@@ -209,6 +211,32 @@ def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
     concatenated_df.to_parquet(path, index=False, schema=schema)
 
 
+def validate_episode_labels(ep_path: Path, ep_idx: int, first_index: int) -> None:
+    """Check that the ``episode_index`` and ``index`` columns of a v2.1 episode file match its position.
+
+    The v3.0 metadata places each episode by file order and cumulative row count, but the reader takes
+    ``episode_index`` and ``index`` from the rows. If they disagree, the converted dataset returns video
+    frames and action windows of another episode without an error.
+    """
+    table = pq.read_table(ep_path, columns=["episode_index", "index"])
+    num_rows = table.num_rows
+    expected = {
+        "episode_index": np.full(num_rows, ep_idx),
+        "index": np.arange(first_index, first_index + num_rows),
+    }
+    for key, expected_values in expected.items():
+        values = table[key].to_numpy()
+        mismatches = np.flatnonzero(values != expected_values)
+        if mismatches.size > 0:
+            row = int(mismatches[0])
+            raise ValueError(
+                f"{ep_path}: column '{key}' is {values[row]} at row {row}, expected {expected_values[row]} "
+                f"({mismatches.size} of {num_rows} rows differ). The converted metadata places this file at "
+                f"episode {ep_idx}, so the v3.0 dataset would load frames of another episode. "
+                "Fix the source data before conversion."
+            )
+
+
 def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int) -> list[dict[str, Any]]:
     data_dir = root / "data"
     ep_paths = sorted(data_dir.glob("*/*.parquet"))
@@ -227,6 +255,7 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int) -> list[
     for ep_idx, ep_path in enumerate(tqdm.tqdm(ep_paths, desc="convert data files")):
         ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
         ep_num_frames = get_parquet_num_frames(ep_path)
+        validate_episode_labels(ep_path, ep_idx, num_frames)
 
         # Check if we need to start a new file BEFORE creating metadata
         if size_in_mb + ep_size_in_mb >= data_file_size_in_mb and len(paths_to_cat) > 0:
