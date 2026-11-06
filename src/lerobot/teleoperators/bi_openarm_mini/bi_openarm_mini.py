@@ -46,7 +46,7 @@ class BiOpenArmMini(BimanualMixin, Teleoperator):
         # `side` is forced to match left/right regardless of what the user passed
         # on the per-arm base config — the bimanual wrapper owns the side semantics.
         left_arm_config = OpenArmMiniConfig(
-            id=f"{config.id}_left" if config.id else None,
+            id=f"{config.id}_left" if config.id else "left",
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
             side="left",
@@ -54,7 +54,7 @@ class BiOpenArmMini(BimanualMixin, Teleoperator):
         )
 
         right_arm_config = OpenArmMiniConfig(
-            id=f"{config.id}_right" if config.id else None,
+            id=f"{config.id}_right" if config.id else "right",
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
             side="right",

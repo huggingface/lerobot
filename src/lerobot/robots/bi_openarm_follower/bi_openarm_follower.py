@@ -53,7 +53,7 @@ class BiOpenArmFollower(BimanualMixin, Robot):
         left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
 
         left_arm_config = OpenArmFollowerConfig(
-            id=f"{config.id}_left" if config.id else None,
+            id=f"{config.id}_left" if config.id else "left",
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
             disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
@@ -72,7 +72,7 @@ class BiOpenArmFollower(BimanualMixin, Robot):
         )
 
         right_arm_config = OpenArmFollowerConfig(
-            id=f"{config.id}_right" if config.id else None,
+            id=f"{config.id}_right" if config.id else "right",
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
             disable_torque_on_disconnect=config.right_arm_config.disable_torque_on_disconnect,
