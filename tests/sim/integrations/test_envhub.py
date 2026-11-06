@@ -165,6 +165,9 @@ def test_envhub_runs_a_local_directory(tmp_path, monkeypatch):
         assert env.tasks == {"reach_suite": [0]}
     finally:
         env.close()
+    # A local directory needs the same consent as a Hub repository.
+    with pytest.raises(RuntimeError, match="Refusing to execute remote code in"):
+        LocalVectorEnv(_envhub(hub_path=str(tmp_path), trust_remote_code=False))
 
 
 def test_envhub_module_runs_once_per_server_process(hub_repo, monkeypatch):
