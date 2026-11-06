@@ -313,7 +313,12 @@ class EnvServer:
                 logger.exception("Request %s failed", pending.key)
             # An undecodable request has no envelope to reply to, so reply with an empty one.
             reply = (message or Envelope(MessageType.DESCRIBE)).error(code, str(exc))
-        self._send(pending, reply)
+        try:
+            self._send(pending, reply)
+        except ProtocolError as exc:
+            # For example, the simulator returned NaN: fail this request and keep serving.
+            logger.warning("Reply for %s could not be encoded: %s", pending.key, exc)
+            self._send(pending, reply.error(exc.code, str(exc)))
 
     def _send(self, pending: PendingQuery, reply: Envelope) -> None:
         """Send the reply, and warn if it was not sent: the client then waits for its full timeout."""
