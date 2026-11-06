@@ -221,6 +221,8 @@ uv run lerobot-rollout \
 > [!NOTE]
 > Value of `inference.queue_threshold` should not exceed 5 to ensure stable inference.
 
+To cut inference latency on CUDA, add `--policy.denoise_cuda_graph=true`. The action head's denoise loop is captured in a CUDA graph on the first chunk and replayed for later chunks, with the same actions as the eager loop. On one H200 this took a batch-1 chunk from about 100 ms to 56 ms. A new batch size or token sequence length (a different prompt length or camera count) captures once more; up to 4 captures are kept.
+
 ## License
 
 GR00T N1.7 is released under the [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/).
