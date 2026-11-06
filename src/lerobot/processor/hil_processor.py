@@ -17,7 +17,7 @@
 import math
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 import torch
@@ -29,7 +29,7 @@ from lerobot.teleoperators.utils import TeleopEvents
 if TYPE_CHECKING:
     from lerobot.teleoperators.teleoperator import Teleoperator
 
-from lerobot.lerobot_types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 
 from .pipeline import (
     ComplementaryDataProcessorStep,
@@ -70,11 +70,21 @@ class HasTeleopEvents(Protocol):
         ...
 
 
-# Type variable constrained to Teleoperator subclasses that also implement events
-TeleopWithEvents = TypeVar("TeleopWithEvents", bound="Teleoperator")
+# HIL `info` dicts carry `TeleopEvents` members as keys next to plain string keys.
+_TeleopInfo = dict[str | TeleopEvents, Any]
 
 
-def _check_teleop_with_events(teleop: "Teleoperator") -> None:
+def _get_event(info: dict[str, Any], event: TeleopEvents, default: Any = None) -> Any:
+    """Read a `TeleopEvents`-keyed entry from an `info` dict."""
+    return cast(_TeleopInfo, info).get(event, default)
+
+
+def _set_event(info: dict[str, Any], event: TeleopEvents, value: Any) -> None:
+    """Store a `TeleopEvents`-keyed entry in an `info` dict, in place."""
+    cast(_TeleopInfo, info)[event] = value
+
+
+def _check_teleop_with_events(teleop: object) -> None:
     """
     Runtime check that a teleoperator implements the `HasTeleopEvents` protocol.
 
@@ -142,7 +152,7 @@ class AddTeleopEventsAsInfoStep(InfoProcessorStep):
                        `HasTeleopEvents` protocol.
     """
 
-    teleop_device: TeleopWithEvents
+    teleop_device: HasTeleopEvents
 
     def __post_init__(self):
         """Validates that the provided teleoperator supports events after initialization."""
@@ -324,8 +334,12 @@ class GymHILAdapterProcessorStep(ProcessorStep):
     """
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        info = transition.get(TransitionKey.INFO, {})
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        info = transition.get(TransitionKey.INFO)
+        if info is None:
+            info = {}
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            complementary_data = {}
 
         if TELEOP_ACTION_KEY in info:
             complementary_data[TELEOP_ACTION_KEY] = info[TELEOP_ACTION_KEY]
@@ -334,7 +348,7 @@ class GymHILAdapterProcessorStep(ProcessorStep):
             complementary_data[DISCRETE_PENALTY_KEY] = info[DISCRETE_PENALTY_KEY]
 
         if "is_intervention" in info:
-            info[TeleopEvents.IS_INTERVENTION] = info["is_intervention"]
+            _set_event(info, TeleopEvents.IS_INTERVENTION, info["is_intervention"])
 
         transition[TransitionKey.INFO] = info
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
@@ -382,7 +396,9 @@ class GripperPenaltyProcessorStep(ProcessorStep):
         """
         new_transition = transition.copy()
         action = new_transition.get(TransitionKey.ACTION)
-        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            complementary_data = {}
 
         raw_joint_positions = complementary_data.get("raw_joint_positions")
         if raw_joint_positions is None:
@@ -395,6 +411,10 @@ class GripperPenaltyProcessorStep(ProcessorStep):
         # During reset, the transition may not carry any action yet.
         if action is None:
             return new_transition
+        if isinstance(action, dict):
+            raise ValueError(
+                f"GripperPenaltyProcessorStep expects a tensor or array action, got {type(action)}"
+            )
 
         # Gripper action is expected as the last action dimension.
         gripper_action = action[-1].item()
@@ -477,17 +497,21 @@ class InterventionActionProcessorStep(ProcessorStep):
             reward, and termination status.
         """
         action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
         # Get intervention signals from complementary data
-        info = transition.get(TransitionKey.INFO, {})
-        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        info = transition.get(TransitionKey.INFO)
+        if info is None:
+            info = {}
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            complementary_data = {}
         teleop_action = complementary_data.get(TELEOP_ACTION_KEY, {})
-        is_intervention = info.get(TeleopEvents.IS_INTERVENTION, False)
-        terminate_episode = info.get(TeleopEvents.TERMINATE_EPISODE, False)
-        success = info.get(TeleopEvents.SUCCESS, False)
-        rerecord_episode = info.get(TeleopEvents.RERECORD_EPISODE, False)
+        is_intervention = _get_event(info, TeleopEvents.IS_INTERVENTION, False)
+        terminate_episode = _get_event(info, TeleopEvents.TERMINATE_EPISODE, False)
+        success = _get_event(info, TeleopEvents.SUCCESS, False)
+        rerecord_episode = _get_event(info, TeleopEvents.RERECORD_EPISODE, False)
 
         new_transition = transition.copy()
 
@@ -517,14 +541,18 @@ class InterventionActionProcessorStep(ProcessorStep):
         new_transition[TransitionKey.REWARD] = float(success)
 
         # Update info with intervention metadata
-        info = new_transition.get(TransitionKey.INFO, {})
-        info[TeleopEvents.IS_INTERVENTION] = is_intervention
-        info[TeleopEvents.RERECORD_EPISODE] = rerecord_episode
-        info[TeleopEvents.SUCCESS] = success
+        info = new_transition.get(TransitionKey.INFO)
+        if info is None:
+            info = {}
+        _set_event(info, TeleopEvents.IS_INTERVENTION, is_intervention)
+        _set_event(info, TeleopEvents.RERECORD_EPISODE, rerecord_episode)
+        _set_event(info, TeleopEvents.SUCCESS, success)
         new_transition[TransitionKey.INFO] = info
 
         # Update complementary data with teleop action
-        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            complementary_data = {}
         complementary_data[TELEOP_ACTION_KEY] = new_transition.get(TransitionKey.ACTION)
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
 
@@ -626,7 +654,9 @@ class RewardClassifierProcessorStep(ProcessorStep):
         new_transition[TransitionKey.DONE] = terminated
 
         # Update info with classifier frequency
-        info = new_transition.get(TransitionKey.INFO, {})
+        info = new_transition.get(TransitionKey.INFO)
+        if info is None:
+            info = {}
         info["reward_classifier_frequency"] = classifier_frequency
         new_transition[TransitionKey.INFO] = info
 

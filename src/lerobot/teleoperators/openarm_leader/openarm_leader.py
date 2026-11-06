@@ -16,11 +16,11 @@
 
 import logging
 import time
-from typing import Any
 
 from lerobot.lerobot_types import RobotAction
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
+from lerobot.motors.damiao.damiao import MotorState
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -195,12 +195,12 @@ class OpenArmLeader(Teleoperator):
         """
         start = time.perf_counter()
 
-        action_dict: dict[str, Any] = {}
+        action_dict: RobotAction = {}
 
         # Use sync_read_all_states to get pos/vel/torque in one go
         states = self.bus.sync_read_all_states()
         for motor in self.bus.motors:
-            state = states.get(motor, {})
+            state: MotorState | dict[str, float] = states.get(motor, {})
             action_dict[f"{motor}.pos"] = state.get("position")
             if self.config.use_velocity_and_torque:
                 action_dict[f"{motor}.vel"] = state.get("velocity")

@@ -27,7 +27,7 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, identity_transition
-from lerobot.processor.rename_processor import rename_stats
+from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from tests.conftest import assert_contract_is_typed
 
@@ -62,6 +62,44 @@ def test_basic_renaming():
 
     # Check unchanged key is preserved
     assert processed_obs["unchanged_key"] == "keep_me"
+
+
+def test_renaming_preserves_temporal_padding_suffixes():
+    processor = RenameObservationsProcessorStep(rename_map={"image": "observation.images.camera1"})
+    transition = create_transition(
+        observation={
+            "image": torch.zeros(1),
+            "image_is_pad": torch.ones(1, dtype=torch.bool),
+            "image_padding_mask": torch.ones(1, dtype=torch.bool),
+        }
+    )
+
+    processed = processor(transition)[TransitionKey.OBSERVATION]
+
+    assert set(processed) == {
+        "observation.images.camera1",
+        "observation.images.camera1_is_pad",
+        "observation.images.camera1_padding_mask",
+    }
+
+
+def test_raw_batch_keys_are_renamed_before_transition_grouping():
+    batch = {
+        "image": torch.zeros(1),
+        "image_is_pad": torch.ones(1, dtype=torch.bool),
+        "actions": torch.zeros(1),
+    }
+
+    renamed = rename_batch_keys(
+        batch,
+        {"image": "observation.images.camera1", "actions": "action"},
+    )
+
+    assert set(renamed) == {
+        "observation.images.camera1",
+        "observation.images.camera1_is_pad",
+        "action",
+    }
 
 
 def test_empty_rename_map():

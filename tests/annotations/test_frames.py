@@ -40,6 +40,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.annotations.steerable_pipeline.frames import VideoFrameProvider  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 class _FakeMeta:
     """Minimal metadata stub exposing ``video_keys`` / ``camera_keys``."""

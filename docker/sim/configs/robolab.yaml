@@ -1,0 +1,11 @@
+# Settings left out (fps, control_mode, semantics, component names) come from the integration's conventions().
+deployment: robolab
+sim:
+  type: robolab
+  # Empty: all 120 tasks, one suite each. Clients pick theirs with --env.task.
+  task: ""
+  kwargs:
+    cameras: WRIST_LEFT
+    instruction_type: default
+    observation_height: null
+    observation_width: null

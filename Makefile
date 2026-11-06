@@ -64,7 +64,7 @@ test-act-ete-train:
 		--save_freq=2 \
 		--save_checkpoint=true \
 		--log_freq=1 \
-		--wandb.enable=false \
+		--trackio.enable=false \
 		--output_dir=tests/outputs/act/
 
 test-act-ete-train-resume:
@@ -102,7 +102,7 @@ test-diffusion-ete-train:
 		--save_checkpoint=true \
 		--save_freq=2 \
 		--log_freq=1 \
-		--wandb.enable=false \
+		--trackio.enable=false \
 		--output_dir=tests/outputs/diffusion/
 
 test-diffusion-ete-eval:
@@ -132,7 +132,7 @@ test-tdmpc-ete-train:
 		--save_checkpoint=true \
 		--save_freq=2 \
 		--log_freq=1 \
-		--wandb.enable=false \
+		--trackio.enable=false \
 		--output_dir=tests/outputs/tdmpc/
 
 test-tdmpc-ete-eval:
@@ -141,8 +141,6 @@ test-tdmpc-ete-eval:
 		--policy.device=$(DEVICE) \
 		--env.type=pusht \
 		--env.episode_length=5 \
-		--env.observation_height=96 \
-        --env.observation_width=96 \
 		--eval.n_episodes=1 \
 		--eval.batch_size=1
 
@@ -167,7 +165,7 @@ test-smolvla-ete-train:
 		--save_freq=2 \
 		--save_checkpoint=true \
 		--log_freq=1 \
-		--wandb.enable=false \
+		--trackio.enable=false \
 		--output_dir=tests/outputs/smolvla/
 
 test-smolvla-ete-eval:
@@ -184,3 +182,29 @@ test-smolvla-ete-eval:
 # backend, so it does not require a real model checkpoint or GPU.
 annotation-e2e:
 	uv run python -m tests.annotations.run_e2e_smoke
+
+# Docstring & doctest checks. See docs/source/writing_docstrings.mdx for the standard these enforce.
+
+# Run the examples in the docstrings listed in utils/documentation_tests.txt. Hardware and GPU examples are
+# skipped by content (see src/lerobot/utils/doctest_utils.py); CI sets both flags.
+doctest:
+	@files=$$(grep -v '^\s*#' utils/documentation_tests.txt | grep -v '^\s*$$'); \
+	if [ -z "$$files" ]; then \
+		echo "utils/documentation_tests.txt lists no files; nothing to run."; \
+	else \
+		SKIP_HARDWARE_DOCTEST=1 uv run pytest --doctest-modules --no-header -q $$files; \
+	fi
+
+check-doctest-list:
+	uv run python utils/check_doctest_list.py
+
+fix-doctest-list:
+	uv run python utils/check_doctest_list.py --fix_and_overwrite
+
+check-docstrings:
+	uv run python utils/check_docstrings.py
+	uv run python utils/check_config_docstrings.py
+
+fix-docstrings:
+	uv run python utils/check_docstrings.py --fix_and_overwrite
+	uv run python utils/check_doctest_list.py --fix_and_overwrite

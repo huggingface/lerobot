@@ -43,10 +43,12 @@ from lerobot.annotations.steerable_pipeline.modules import (  # noqa: E402
 )
 from lerobot.annotations.steerable_pipeline.validator import StagingValidator  # noqa: E402
 from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter  # noqa: E402
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 from lerobot.datasets.language_render import render_sample  # noqa: E402
+from lerobot.datasets.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 
 from ._helpers import make_canned_responder  # noqa: E402
+
+pytestmark = pytest.mark.dataset
 
 
 def _build_style_blend_recipe() -> TrainingRecipe:
@@ -164,7 +166,7 @@ def test_canonical_recipe_renders_nonempty_from_pipeline_output(
         )
         if result is None:
             continue
-        if result["messages"]:
+        if result["messages_rendered"]:
             rendered_any = True
             assert result["target_message_indices"]
             break

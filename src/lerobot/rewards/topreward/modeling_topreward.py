@@ -97,6 +97,7 @@ def _torch_dtype(name: str) -> torch.dtype | str:
 class TOPRewardModel(PreTrainedRewardModel):
     """TOPReward zero-shot reward model."""
 
+    config: TOPRewardConfig
     name = "topreward"
     config_class = TOPRewardConfig
 
@@ -187,8 +188,6 @@ class TOPRewardModel(PreTrainedRewardModel):
                     revision=revision,
                     cache_dir=cache_dir,
                     force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
                     token=token,
                     local_files_only=local_files_only,
                 )

@@ -17,7 +17,6 @@
 import logging
 from collections import deque
 
-import numpy as np
 import torch
 from torch import nn
 
@@ -30,6 +29,11 @@ from lerobot.utils.feature_utils import build_dataset_frame
 def populate_queues(
     queues: dict[str, deque], batch: dict[str, torch.Tensor], exclude_keys: list[str] | None = None
 ):
+    """Append the batch's values to their per-key deques (filling them on first use).
+
+    Policies using this helper hold the dict as ``self._queues``, one of the names
+    ``PreTrainedPolicy._action_queue_attrs`` knows how to clear.
+    """
     if exclude_keys is None:
         exclude_keys = []
     for key in batch:
@@ -93,9 +97,19 @@ def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) 
         logging.warning(f"Unexpected key(s) when loading model: {unexpected_keys}")
 
 
+# TODO: remove once policies load their transformers sub-models with the transformers loader, which applies
+# this rename (`transformers.core_model_loading.convert_and_load_state_dict_in_model`, an internal API).
+def rename_legacy_vision_model_keys(
+    module: nn.Module, state_dict: dict[str, torch.Tensor], prefix: str, *args
+) -> None:
+    """`load_state_dict` pre-hook for checkpoints saved before transformers 5.6 flattened SigLIP towers."""
+    for key in [key for key in state_dict if "vision_tower.vision_model." in key]:
+        state_dict[key.replace("vision_tower.vision_model.", "vision_tower.")] = state_dict.pop(key)
+
+
 # TODO(Steven): Move this function to a proper preprocessor step
 def prepare_observation_for_inference(
-    observation: dict[str, np.ndarray],
+    observation: RobotObservation,
     device: torch.device,
     task: str | None = None,
     robot_type: str | None = None,
@@ -105,10 +119,14 @@ def prepare_observation_for_inference(
     This function takes a dictionary of NumPy arrays, performs necessary
     preprocessing, and prepares it for model inference. The steps include:
     1. Converting NumPy arrays to PyTorch tensors.
-    2. Normalizing and permuting image data (if any).
-    3. Adding a batch dimension to each tensor.
-    4. Moving all tensors to the specified compute device.
+    2. Moving each tensor to the specified compute device.
+    3. Normalizing and permuting image data (if any) on that device.
+    4. Adding a batch dimension to each tensor.
     5. Adding task and robot type information to the dictionary.
+
+    Images travel to the device as compact ``uint8`` frames — a 4× smaller
+    copy than their float32 counterpart — and the ``/255`` + permute run on
+    the device, keeping the per-tick CPU cost of the control loop low.
 
     Args:
         observation: A dictionary mapping observation names (str) to NumPy
@@ -124,13 +142,12 @@ def prepare_observation_for_inference(
         to (C, H, W) and normalized to a [0, 1] range.
     """
     for name in observation:
-        observation[name] = torch.from_numpy(observation[name])
+        tensor = torch.from_numpy(observation[name]).to(device)
         if "image" in name:
-            if observation[name].dtype == torch.uint8:
-                observation[name] = observation[name].type(torch.float32) / 255
-            observation[name] = observation[name].permute(2, 0, 1).contiguous()
-        observation[name] = observation[name].unsqueeze(0)
-        observation[name] = observation[name].to(device)
+            if tensor.dtype == torch.uint8:
+                tensor = tensor.type(torch.float32) / 255
+            tensor = tensor.permute(2, 0, 1).contiguous()
+        observation[name] = tensor.unsqueeze(0)
 
     observation["task"] = task if task else ""
     observation["robot_type"] = robot_type if robot_type else ""
@@ -238,6 +255,8 @@ def validate_visual_features_consistency(
         cfg (PreTrainedConfig): The model or policy configuration containing input_features and type.
         features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects.
     """
+    if cfg.input_features is None:
+        raise ValueError("`cfg.input_features` must be resolved before validating visual features.")
     expected_visuals = {k for k, v in cfg.input_features.items() if v.type == FeatureType.VISUAL}
     provided_visuals = {k for k, v in features.items() if v.type == FeatureType.VISUAL}
 

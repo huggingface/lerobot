@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .dynamixel import DriveMode, DynamixelMotorsBus, OperatingMode, TorqueMode
-from .tables import *  # noqa: F403 — hardware constant tables
+from ..motors_bus import DriveMode
+from .dynamixel import DynamixelMotorsBus, OperatingMode, TorqueMode
 
 __all__ = ["DriveMode", "DynamixelMotorsBus", "OperatingMode", "TorqueMode"]

@@ -1,0 +1,20 @@
+# Processors
+
+Processors are the data transformation layer between a robot, a dataset and a policy. A pipeline is a chain
+of [`ProcessorStep`]s; each step declares how it transforms both the data and the feature contract.
+
+See [Introduction to Robot Processors](../introduction_processors) for the concepts,
+[Implement your own processor](../implement_your_own_processor) to write a step, and
+[Debug your processor pipeline](../debug_processor_pipeline) when a pipeline misbehaves.
+
+## ProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.ProcessorStep
+
+## DataProcessorPipeline
+
+[[autodoc]] lerobot.processor.pipeline.DataProcessorPipeline
+
+## PolicyProcessorPipeline
+
+[[autodoc]] lerobot.processor.pipeline.PolicyProcessorPipeline

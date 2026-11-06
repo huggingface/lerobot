@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Policy deployment engine with pluggable rollout strategies."""
+"""Robot rollout orchestration with pluggable strategies and inference backends.
+
+Strategies own the control loop and use ``ctx.policy.inference`` for local or remote inference.
+Remote contexts have no local policy or policy processors. Interactive sessions add text I/O over
+the lifecycle controller; strategies remain usable non-interactively. Shared contracts and local
+backends live in :mod:`lerobot.inference`; remote execution lives in :mod:`lerobot.remote_inference`.
+"""
 
 from lerobot.utils.import_utils import require_package
 
@@ -38,15 +44,13 @@ from .context import (
     RuntimeContext,
     build_rollout_context,
 )
-from .inference import (
-    InferenceEngine,
-    InferenceEngineConfig,
-    RTCInferenceConfig,
-    RTCInferenceEngine,
-    SyncInferenceConfig,
-    SyncInferenceEngine,
-    create_inference_engine,
+from .controller import (
+    AskResult,
+    LinkedEvent,
+    RolloutController,
+    RolloutEvent,
 )
+from .interactive import InteractiveSession
 from .strategies import (
     BaseStrategy,
     DAggerStrategy,
@@ -58,6 +62,7 @@ from .strategies import (
 )
 
 __all__ = [
+    "AskResult",
     "BaseStrategy",
     "BaseStrategyConfig",
     "DAggerKeyboardConfig",
@@ -65,27 +70,24 @@ __all__ = [
     "DAggerStrategy",
     "DAggerStrategyConfig",
     "DatasetContext",
+    "EpisodicStrategy",
+    "EpisodicStrategyConfig",
     "HardwareContext",
     "HighlightStrategy",
     "HighlightStrategyConfig",
-    "EpisodicStrategy",
-    "EpisodicStrategyConfig",
-    "InferenceEngine",
-    "InferenceEngineConfig",
+    "InteractiveSession",
+    "LinkedEvent",
     "PolicyContext",
     "ProcessorContext",
-    "RTCInferenceConfig",
-    "RTCInferenceEngine",
     "RolloutConfig",
     "RolloutContext",
+    "RolloutController",
+    "RolloutEvent",
     "RolloutStrategy",
     "RolloutStrategyConfig",
     "RuntimeContext",
     "SentryStrategy",
     "SentryStrategyConfig",
-    "SyncInferenceConfig",
-    "SyncInferenceEngine",
     "build_rollout_context",
-    "create_inference_engine",
     "create_strategy",
 ]

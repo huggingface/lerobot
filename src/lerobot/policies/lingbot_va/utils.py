@@ -166,10 +166,6 @@ def clean_prompt(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _torch_dtype(name: str) -> torch.dtype:
-    return {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[name]
-
-
 def _sample_timestep_id(
     batch_size: int = 1,
     min_timestep_bd: float = 0.0,
@@ -639,9 +635,10 @@ class WanAttention(nn.Module):
         )
 
         query, key, value = self.to_q(q), self.to_k(k), self.to_v(v)
-        query = self.norm_q(query)
+        # From torch 2.12, CUDA autocast runs RMSNorm in float32, which the KV cache and flash-attn reject.
+        query = self.norm_q(query).to(value.dtype)
         query = query.unflatten(2, (self.heads, -1))
-        key = self.norm_k(key)
+        key = self.norm_k(key).to(value.dtype)
         key = key.unflatten(2, (self.heads, -1))
         value = value.unflatten(2, (self.heads, -1))
         if rotary_emb is not None:

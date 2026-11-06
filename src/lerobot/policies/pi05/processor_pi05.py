@@ -48,33 +48,47 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
 
     max_state_dim: int = 32
     task_key: str = "task"
+    # MEM section III-D represents proprioception with a linear projection into the
+    # backbone instead of discretized prompt tokens, so the state is carried once.
+    # Set from `PI05Config.use_proprioceptive_memory`; stock PI0.5 keeps it in the prompt.
+    include_state_in_prompt: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
 
-        state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
+        observation = transition.get(TransitionKey.OBSERVATION)
+        state = observation.get(OBS_STATE) if observation is not None else None
         if state is None:
             raise ValueError("State is required for PI05")
-        tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            raise ValueError("Complementary data is required for PI05")
+        tasks = complementary_data.get(self.task_key)
         if tasks is None:
             raise ValueError("No task found in complementary data")
 
         # TODO: check if this necessary
         state = deepcopy(state)
 
-        # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        state_np = state.cpu().numpy()
-        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+        discretized_states = None
+        if self.include_state_in_prompt:
+            # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
+            # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+            prompt_state = state[:, -1] if state.ndim == 3 else state
+            state_np: np.ndarray = prompt_state.cpu().numpy()
+            discretized_states = np.asarray(np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1])) - 1
 
         full_prompts = []
         for i, task in enumerate(tasks):
             cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
-            state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+            if discretized_states is None:
+                full_prompt = f"Task: {cleaned_text};\nAction: "
+            else:
+                state_str = " ".join(map(str, discretized_states[i]))
+                full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
             full_prompts.append(full_prompt)
 
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
+        complementary_data[self.task_key] = full_prompts
         # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
         return transition
@@ -136,9 +150,12 @@ def make_pi05_pre_post_processors(
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
         steps.normalize,
-        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+        Pi05PrepareStateTokenizerProcessorStep(
+            max_state_dim=config.max_state_dim,
+            include_state_in_prompt=not config.use_proprioceptive_memory,
+        ),
         TokenizerProcessorStep(
-            tokenizer_name="google/paligemma-3b-pt-224",
+            tokenizer_name=config.text_tokenizer_name,
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",

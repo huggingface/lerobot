@@ -25,6 +25,8 @@ and the ``transformer/config.json`` of the released checkpoints.
 
 from dataclasses import dataclass, field
 
+import torch
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
@@ -58,7 +60,8 @@ class LingBotVAConfig(PreTrainedConfig):
     # ~20 GB of frozen weights, NOT bundled in the checkpoint; lazily pulled from this HF repo /
     # local dir (must hold diffusers-style ``vae/``, ``text_encoder/``, ``tokenizer/`` sub-folders).
     wan_pretrained_path: str = "robbyant/lingbot-va-base"
-    dtype: str = "bfloat16"  # transformer / VAE / text-encoder dtype: "bfloat16", "float16", "float32"
+    # transformer / VAE / text-encoder dtype
+    dtype: torch.dtype | None = torch.bfloat16
     # Frozen UMT5-XXL encoder device; "cpu" frees ~11 GB VRAM (it runs once per episode).
     text_encoder_device: str = "cpu"
 
@@ -94,6 +97,10 @@ class LingBotVAConfig(PreTrainedConfig):
 
     # Opt-in: VAE-decode predicted video latents to ``self.last_predicted_frames`` for saving MP4s.
     save_predicted_video: bool = False
+    # Opt-in: VAE-decode each chunk's predicted video and return, with each action, the imagined
+    # frame it belongs to (``observation.images.predicted``), shown live by ``--display_data``.
+    # Costs one VAE decode per chunk.
+    return_predicted_video: bool = False
 
     # Normalization: IDENTITY here; images are scaled + VAE-encoded and actions are
     # quantile-(un)normalized inside the policy / dedicated processor steps.
@@ -117,6 +124,10 @@ class LingBotVAConfig(PreTrainedConfig):
         super().__post_init__()
         if self.attn_mode not in ("torch", "flashattn", "flex"):
             raise ValueError(f"attn_mode must be one of 'torch', 'flashattn', 'flex'; got {self.attn_mode!r}")
+        if self.dtype not in {torch.bfloat16, torch.float16, torch.float32}:
+            raise ValueError(
+                f"Unsupported dtype={self.dtype!r}. Expected torch.bfloat16, torch.float16 or torch.float32."
+            )
 
     @property
     def chunk_size(self) -> int:
@@ -129,6 +140,10 @@ class LingBotVAConfig(PreTrainedConfig):
         return self.chunk_size
 
     def validate_features(self) -> None:
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "LingBot-VA requires `input_features` and `output_features` to be resolved before validation."
+            )
         image_features = [key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL]
         if not image_features:
             raise ValueError(

@@ -1,0 +1,24 @@
+# Cameras
+
+Cameras supply the image observations a policy sees. Every backend — OpenCV, Intel RealSense, Reachy 2 —
+implements the [`Camera`] interface, so swapping hardware does not change the code that reads frames.
+
+See the [Cameras guide](../cameras) for choosing and configuring a camera, and
+[Third-Party Cameras & Sensors](../third_party_sensors) for devices outside the core set.
+
+## Camera
+
+[[autodoc]] lerobot.cameras.Camera
+    - connect
+    - disconnect
+    - read
+    - async_read
+    - find_cameras
+
+## CameraConfig
+
+[[autodoc]] lerobot.cameras.CameraConfig
+
+## make_cameras_from_configs
+
+[[autodoc]] lerobot.cameras.make_cameras_from_configs
