@@ -121,17 +121,23 @@ class LongWAMPolicy(PreTrainedPolicy):
 
     def _context(self, batch: dict[str, Tensor], state: Tensor, *, cache: bool = False) -> Tensor:
         if not cache or self._text_context is None:
-            with torch.no_grad():
-                text = self.text_encoder(
-                    input_ids=batch[OBS_LANGUAGE_TOKENS],
-                    attention_mask=batch[OBS_LANGUAGE_ATTENTION_MASK],
-                ).last_hidden_state
-                # Released Wan conditioning keeps zero-padded tokens visible to cross-attention.
-                text = text * batch[OBS_LANGUAGE_ATTENTION_MASK][..., None]
+            text = self._text(batch)
             if cache:
                 self._text_context = text
         else:
             text = self._text_context
+        return self._with_state(text, state)
+
+    @torch.no_grad()
+    def _text(self, batch: dict[str, Tensor]) -> Tensor:
+        text = self.text_encoder(
+            input_ids=batch[OBS_LANGUAGE_TOKENS],
+            attention_mask=batch[OBS_LANGUAGE_ATTENTION_MASK],
+        ).last_hidden_state
+        # Released Wan conditioning keeps zero-padded tokens visible to cross-attention.
+        return text * batch[OBS_LANGUAGE_ATTENTION_MASK][..., None]
+
+    def _with_state(self, text: Tensor, state: Tensor) -> Tensor:
         proprio = self.proprio_encoder(state.to(text.dtype)).unsqueeze(1)
         return torch.cat((text, proprio), dim=1)
 
@@ -241,9 +247,12 @@ class LongWAMPolicy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     def _predict(self, batch: dict[str, Tensor]) -> Tensor:
-        cfg = self.config
         clean = self._encode_video(self._history())
         context = self._context(batch, batch["observation.state"], cache=True)
+        return self._denoise(clean, context, *self._initial_noise(clean))
+
+    def _initial_noise(self, clean: Tensor) -> tuple[Tensor, Tensor]:
+        cfg = self.config
 
         def noise(shape):
             # Match released inference: separate, same-seeded draws per chunk.
@@ -252,9 +261,13 @@ class LongWAMPolicy(PreTrainedPolicy):
             )
             return torch.randn(shape, generator=generator, device="cpu").to(clean)
 
-        b, z, m, h, w = clean.shape
+        b, z, _, h, w = clean.shape
         future = noise((b, z, cfg.future_video_steps // 16, h, w))
-        action = noise((b, cfg.prediction_steps, cfg.action_dim))
+        return future, noise((b, cfg.prediction_steps, cfg.action_dim))
+
+    def _denoise(self, clean: Tensor, context: Tensor, future: Tensor, action: Tensor) -> Tensor:
+        cfg = self.config
+        b, _, m, _, _ = clean.shape
         schedule = self._schedule(cfg.num_inference_steps, clean)
         if cfg.denoising == "idm":
             video_schedule = self._schedule(cfg.imagine_steps, clean, cfg.imagine_sigma)
