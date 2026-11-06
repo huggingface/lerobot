@@ -76,6 +76,7 @@ def _config(**overrides) -> WallOSS05Config:
     return WallOSS05Config(**values)
 
 
+@pytest.mark.dataset
 @pytest.mark.parametrize("query_kind", ["vqa", "next_subtask"])
 def test_runtime_query_reaches_tokenizer(query_kind, dataset_dependencies):
     config = _config(use_language_recipe=True)
@@ -90,6 +91,7 @@ def test_runtime_query_reaches_tokenizer(query_kind, dataset_dependencies):
     assert "query_kind" not in processed
 
 
+@pytest.mark.dataset
 def test_recipe_override_remains_portable_after_save(tmp_path, dataset_dependencies):
     path = tmp_path / "recipe.yaml"
     path.write_text(
@@ -252,6 +254,7 @@ def test_lerobot_processors_match_wall_quantile_normalization_and_clipping():
     torch.testing.assert_close(postprocessor(processed[ACTION]), batch[ACTION])
 
 
+@pytest.mark.dataset
 def test_recipe_processor_renders_joint_text_and_action_supervision(dataset_dependencies):
     config = _config(recipe=WallOSS05Config(device="cpu").recipe)
     preprocessor, _ = make_pre_post_processors(config, dataset_stats=_stats())
@@ -629,6 +632,7 @@ def _tiny_qwen_processor():
     return SimpleNamespace(tokenizer=tokenizer, image_processor=image_processor)
 
 
+@pytest.mark.dataset
 @pytest.mark.parametrize("saved_processors", [False, True])
 def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
     tmp_path, dataset_dependencies, saved_processors

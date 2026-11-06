@@ -82,10 +82,15 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
-from lerobot.envs.utils import NEW_ROLLOUT_OPTION
+from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoint
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
+from lerobot.processor import (
+    PolicyProcessorPipeline,
+    bind_relative_anchor,
+    policy_output_to_transition,
+    transition_to_policy_action,
+)
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.eval_stats import success_summary
@@ -180,6 +185,7 @@ def rollout(
     recording_repo_id: str | None = None,
     recording_private: bool = False,
     predicted_latents_callback: Callable[[PreTrainedPolicy], None] | None = None,
+    max_episode_steps: int | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -224,9 +230,7 @@ def rollout(
     policy.reset()
     preprocessor.reset()
     postprocessor.reset()
-    # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
-    # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
-    observation, info = env.reset(seed=seeds, options={NEW_ROLLOUT_OPTION: True})
+    observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
 
@@ -262,6 +266,8 @@ def rollout(
     all_rewards = []
     all_successes = []
     all_dones = []
+    # What the simulator reports besides success, one row per step; empty for benchmarks that report nothing.
+    all_metrics: list[dict[str, np.ndarray]] = []
 
     # A relative-action policy predicts a chunk of offsets anchored to the state at prediction
     # time, but this loop reruns the pre/post pipeline every step, which would re-anchor queued
@@ -270,8 +276,8 @@ def rollout(
     # of this public loop is covered; rebinding the same callable each rollout is a no-op.
     # The anchor is [B, state_dim] and tracks exactly what the single shared action queue tracks,
     # so it inherits the queue's batching assumptions rather than adding any: every sub-env
-    # refills on the same step, and a sub-env that finished early is frozen by
-    # FreezeAfterEpisodeEnd and its transitions discarded.
+    # refills on the same step, and a sub-env that finished early stays frozen at its final state
+    # and its transitions are discarded.
     if bind_relative_anchor(policy, preprocessor) is not None:
         logging.info("Relative actions enabled: chunk anchor held until the action queue drains")
 
@@ -279,6 +285,14 @@ def rollout(
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
     max_steps = env.call("_max_episode_steps")[0]
+    if max_episode_steps is not None:
+        max_steps = min(max_steps, max_episode_steps)
+    # Sim envs already return observations with LeRobot keys; other envs return their own format.
+    prepare_observation = (
+        prepare_canonical_observation
+        if env.metadata.get("canonical_observations", False)
+        else preprocess_observation
+    )
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
@@ -289,7 +303,7 @@ def rollout(
     try:
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-            observation = preprocess_observation(observation)
+            observation = prepare_observation(observation)
             if return_observations:
                 all_observations.append(deepcopy(observation))
 
@@ -303,12 +317,14 @@ def rollout(
                 except (AttributeError, NotImplementedError):
                     observation["task"] = [""] * env.num_envs
 
-            # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
+            # Apply environment-specific preprocessing (e.g., IsaaclabArenaProcessorStep for Isaac Lab Arena)
             observation = env_preprocessor(observation)
 
             observation = preprocessor(observation)
             with torch.inference_mode():
-                action = policy.select_action(observation)
+                action = transition_to_policy_action(
+                    policy_output_to_transition(policy.select_action(observation))
+                )
             if predicted_latents_callback is not None:
                 predicted_latents_callback(policy)
             action = postprocessor(action)
@@ -388,6 +404,14 @@ def rollout(
             all_rewards.append(torch.from_numpy(reward))
             all_dones.append(torch.from_numpy(done))
             all_successes.append(torch.tensor(successes))
+            all_metrics.append(
+                {
+                    key: np.asarray(value, dtype=np.float32)
+                    # Gymnasium's vector envs add a boolean presence mask per key of a sub-env's info.
+                    for key, value in (info.get("metrics") or {}).items()
+                    if not key.startswith("_")
+                }
+            )
 
             step += 1
             running_success_rate = (
@@ -407,7 +431,7 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        observation = preprocess_observation(observation)
+        observation = prepare_observation(observation)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
@@ -417,6 +441,13 @@ def rollout(
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
     }
+    metric_names = sorted({key for metrics in all_metrics for key in metrics})
+    if metric_names:
+        missing = np.zeros(env.num_envs, dtype=np.float32)
+        ret["metrics"] = {
+            name: torch.from_numpy(np.stack([metrics.get(name, missing) for metrics in all_metrics], axis=1))
+            for name in metric_names
+        }
     if return_observations:
         stacked_observations = {}
         for key in all_observations[0]:
@@ -446,6 +477,7 @@ def eval_policy(
     recording_repo_id: str | None = None,
     recording_private: bool = False,
     save_predicted_video: bool = False,
+    max_episode_steps: int | None = None,
 ) -> dict:
     """
     Args:
@@ -494,6 +526,7 @@ def eval_policy(
     max_rewards = []
     all_successes = []
     all_seeds: list[int | None] = []
+    episode_metrics: list[dict[str, float]] = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
 
@@ -507,7 +540,6 @@ def eval_policy(
             ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
         elif hasattr(env, "call"):
             # Here we must render all frames and discard any we don't need.
-            # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
 
     if max_episodes_rendered > 0:
@@ -522,6 +554,8 @@ def eval_policy(
     # Collect predicted-video latents across a rollout (world-model policies only). The latents are
     # concatenated and decoded once after the rollout, matching upstream LingBot-VA's visualization path.
     def collect_predicted_latents(policy: PreTrainedPolicy):
+        if _peft_available and isinstance(policy, PeftModel):
+            policy = policy.get_base_model()
         latents = getattr(policy, "last_predicted_latents", None)
         if latents is not None:
             pred_latents.append(
@@ -564,6 +598,7 @@ def eval_policy(
             recording_repo_id=recording_repo_id,
             recording_private=recording_private,
             predicted_latents_callback=collect_predicted_latents if save_predicted_video else None,
+            max_episode_steps=max_episode_steps,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -586,6 +621,13 @@ def eval_policy(
             all_seeds.extend(seeds)
         else:
             all_seeds.extend([None] * env.num_envs)
+        batch_metrics = {
+            name: values.gather(1, done_indices[:, None]).squeeze(1).tolist()
+            for name, values in rollout_data.get("metrics", {}).items()
+        }
+        episode_metrics.extend(
+            {name: values[index] for name, values in batch_metrics.items()} for index in range(env.num_envs)
+        )
 
         # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
@@ -703,6 +745,10 @@ def eval_policy(
         },
     }
 
+    for episode, metrics in zip(info["per_episode"], episode_metrics[:n_episodes], strict=True):
+        if metrics:
+            episode["metrics"] = metrics
+
     if return_episode_data:
         info["episodes"] = episode_data
 
@@ -781,7 +827,9 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     device = get_safe_torch_device(cfg.policy.device, log=True)
 
     torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
     set_seed(cfg.seed)
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
@@ -794,8 +842,24 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         trust_remote_code=cfg.trust_remote_code,
     )
 
-    logging.info("Making policy.")
+    # Environment-specific preprocessor and postprocessor (e.g. for LIBERO environments), built before
+    # admission: a checkpoint is admitted on the observation and the action they produce.
+    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
 
+    # Check the checkpoint against the sim before loading the policy. Hub-only and native-batch envs have
+    # no descriptor.
+    first_env = next(env for tasks in envs.values() for env in tasks.values())
+    descriptor = getattr(first_env, "descriptor", None)
+    if descriptor is not None:
+        validate_checkpoint(
+            descriptor,
+            cfg.policy,
+            cfg.rename_map,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
+        )
+
+    logging.info("Making policy.")
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
@@ -813,11 +877,9 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
+        pretrained_revision=cfg.policy.pretrained_revision,
         preprocessor_overrides=preprocessor_overrides,
     )
-
-    # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
-    env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
 
     recording_dir = Path(cfg.output_dir) / "recordings" if cfg.eval.recording else None
     max_episodes_rendered = 0 if cfg.eval.recording else 10
@@ -841,6 +903,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
             env_features=cfg.env.features if cfg.eval.recording else None,
             recording_repo_id=cfg.eval.recording_repo_id,
             recording_private=cfg.eval.recording_private,
+            max_episode_steps=cfg.eval.max_episode_steps,
         )
         logger.info("Overall Aggregated Metrics:")
         logger.info(info["overall"])
@@ -860,6 +923,16 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
             logger.info(task_group_info)
     # Close all vec envs
     close_envs(envs)
+
+    # Save each task's language instruction next to the metrics; the benchmark CI report reads it.
+    descriptions = {
+        f"{group}_{task_id}": env.latest.task[0]
+        for group, tasks in envs.items()
+        for task_id, env in tasks.items()
+        if getattr(env, "latest", None) is not None
+    }
+    if descriptions:
+        (Path(cfg.output_dir) / "task_descriptions.json").write_text(json.dumps(descriptions, indent=2))
 
     # Save info
     with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
@@ -897,6 +970,7 @@ def eval_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    max_episode_steps: int | None = None,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -918,6 +992,7 @@ def eval_one(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        max_episode_steps=max_episode_steps,
     )
 
     per_episode = task_result["per_episode"]
@@ -949,6 +1024,7 @@ def run_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    max_episode_steps: int | None = None,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -983,6 +1059,7 @@ def run_one(
         env_features=env_features,
         recording_repo_id=task_repo_id,
         recording_private=recording_private,
+        max_episode_steps=max_episode_steps,
     )
 
     if max_episodes_rendered > 0:
@@ -1019,6 +1096,7 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    max_episode_steps: int | None = None,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -1078,6 +1156,7 @@ def eval_policy_all(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        max_episode_steps=max_episode_steps,
     )
 
     # Set the shared policy's mode before launching any workers. Restoring it
@@ -1087,25 +1166,16 @@ def eval_policy_all(
     policy.eval()
     try:
         if max_parallel_tasks <= 1:
-            prefetch_thread: threading.Thread | None = None
-            for i, (task_group, task_id, env) in enumerate(tasks):
-                if prefetch_thread is not None:
-                    prefetch_thread.join()
-                    prefetch_thread = None
-
+            # Each task builds its simulator on its first reset, in this thread, after the previous
+            # task's env is closed: consecutive tasks never hold the GPU at once, and simulators
+            # that must run on the main thread (e.g. Isaac Sim) are built there.
+            for task_group, task_id, env in tasks:
                 try:
                     tg, tid, metrics = task_runner(task_group, task_id, env)
                     _accumulate_to(tg, metrics)
                     per_task_infos.append(_task_info(tg, tid, metrics))
                 finally:
                     env.close()
-                    # Prefetch next task's workers *after* closing current env to prevent
-                    # GPU memory overlap between consecutive tasks.
-                    if i + 1 < len(tasks):
-                        next_env = tasks[i + 1][2]
-                        if hasattr(next_env, "_ensure"):
-                            prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
-                            prefetch_thread.start()
         else:
             with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
                 fut2meta = {}

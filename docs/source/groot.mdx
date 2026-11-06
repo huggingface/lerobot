@@ -64,7 +64,7 @@ This command is using the `new_embodiment` flag, which is used for the SO-101 ro
 pip install "lerobot[training]"
 
 hf auth login
-wandb login
+# Trackio needs no login for local runs; pass --trackio.space_id=<user>/<space> to sync runs to a Hugging Face Space.
 
 export DATASET_NAME=your_data_set
 export HF_USER=your_hf_username
@@ -97,8 +97,8 @@ lerobot-train \
   --log_freq=10 \
   --output_dir=$OUTPUT_DIR \
   --job_name=$DATASET \
-  --wandb.enable=true \
-  --wandb.disable_artifact=true
+  --trackio.enable=true \
+  --trackio.disable_artifact=true
 
 ```
 
@@ -143,10 +143,9 @@ lerobot-train \
   --env_eval_freq=0 \
   --eval_steps=0 \
   --log_freq=10 \
-  --wandb.enable=true \
-  --wandb.project=lerobot \
-  --wandb.mode=online \
-  --wandb.disable_artifact=true \
+  --trackio.enable=true \
+  --trackio.project=lerobot \
+  --trackio.disable_artifact=true \
   --num_workers=4 \
   --prefetch_factor=2 \
   --persistent_workers=true \

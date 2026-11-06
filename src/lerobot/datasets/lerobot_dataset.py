@@ -15,7 +15,7 @@
 # limitations under the License.
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast, overload
 
@@ -487,7 +487,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return reader.hf_dataset
 
     @property
-    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+    def absolute_to_relative_idx(self) -> Mapping[int, int] | None:
         """Mapping from absolute frame indices to relative row positions.
 
         Non-None only for episode-filtered datasets where absolute indices
@@ -673,8 +673,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             private: If ``True``, create a private repository. If ``None``
                 (default), defer to the org default on the Hub (only affects orgs).
             allow_patterns: Glob pattern(s) restricting which files to upload.
-            upload_large_folder: If ``True``, use ``upload_large_folder`` instead
-                of ``upload_folder`` for very large datasets.
+            upload_large_folder: Kept for backward compatibility and ignored.
+                ``upload_folder`` handles datasets of all sizes.
             **card_kwargs: Additional keyword arguments forwarded to dataset card
                 creation.
         """
@@ -703,18 +703,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 exist_ok=True,
             )
 
-        upload_kwargs = {
-            "repo_id": self.repo_id,
-            "folder_path": self.root,
-            "repo_type": "dataset",
-            "revision": branch,
-            "allow_patterns": allow_patterns,
-            "ignore_patterns": ignore_patterns,
-        }
-        if upload_large_folder:
-            hub_api.upload_large_folder(**upload_kwargs)
-        else:
-            hub_api.upload_folder(**upload_kwargs)
+        hub_api.upload_folder(
+            repo_id=self.repo_id,
+            folder_path=self.root,
+            repo_type="dataset",
+            revision=branch,
+            allow_patterns=allow_patterns,
+            ignore_patterns=ignore_patterns,
+        )
 
         card = create_lerobot_dataset_card(
             tags=tags, dataset_info=self.meta.info, license=license, repo_id=self.repo_id, **card_kwargs

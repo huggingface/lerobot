@@ -33,6 +33,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     AbsoluteActionsProcessorStep,
@@ -44,6 +45,8 @@ from lerobot.utils.feature_utils import (  # noqa: E402
     combine_feature_dicts,
     hw_to_dataset_features,
 )
+
+pytestmark = pytest.mark.dataset
 
 # ---------------------------------------------------------------------------
 # The two orders under test
@@ -297,13 +300,14 @@ def _run_sync_tick(*, align_state, align_action, remap):
         data=SimpleNamespace(dataset_features=dataset_features, ordered_action_keys=ordered_action_keys),
     )
 
-    action_dict = send_next_action(
+    step = send_next_action(
         obs_processed=dict(obs_raw),
         obs_raw=obs_raw,
         ctx=ctx,
         interpolator=ActionInterpolator(multiplier=1),
     )
-    assert action_dict is not None
+    assert step is not None
+    action_dict = step[TransitionKey.ACTION]
     return action_dict, dataset_features, ordered_action_keys, policy
 
 
@@ -534,3 +538,37 @@ def test_rtc_and_sync_agree_on_the_shipped_wiring():
     assert rtc_action_dict.keys() == sync_action_dict.keys()
     for joint in sync_action_dict:
         assert rtc_action_dict[joint] == pytest.approx(sync_action_dict[joint]), joint
+
+
+def test_sync_task_change_resets_the_postprocessor():
+    """Dropping a chunk must also rewind postprocessor steps that track a position in it"""
+    from lerobot.inference import SyncInferenceEngine
+
+    dataset_features, ordered_action_keys = _build_features(align_state=True, align_action=True)
+    preprocessor, postprocessor = _make_pipelines()
+    resets = []
+    original_reset = postprocessor.reset
+    postprocessor.reset = lambda: (resets.append(1), original_reset())[1]
+
+    policy = _StubRelativePolicy()
+    bind_relative_anchor(policy, preprocessor)
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+        dataset_features=dataset_features,
+        ordered_action_keys=ordered_action_keys,
+        task="fold the t-shirt",
+        device="cpu",
+        robot_type="bi_openarm_follower",
+    )
+
+    frame = build_dataset_frame(dataset_features, _observation(), "observation")
+    for _ in range(3):
+        engine.get_action(frame)
+    before = len(resets)
+
+    engine.set_task("pick up the mug")
+    engine.get_action(frame)
+
+    assert len(resets) == before + 1, "a task change must rewind the postprocessor"

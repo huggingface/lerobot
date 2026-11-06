@@ -238,7 +238,7 @@ uv run accelerate launch --num_processes=2 -m lerobot.scripts.lerobot_train \
   --prefetch_factor=2 \
   --persistent_workers=true \
   --seed=1000 \
-  --wandb.enable=false \
+  --trackio.enable=false \
   --output_dir=./outputs/evo1-libero-stage1-g128-5k
 ```
 
@@ -289,7 +289,7 @@ uv run accelerate launch --num_processes=2 -m lerobot.scripts.lerobot_train \
   --prefetch_factor=2 \
   --persistent_workers=true \
   --seed=1000 \
-  --wandb.enable=false \
+  --trackio.enable=false \
   --output_dir=./outputs/evo1-libero-stage2-g128-80k
 ```
 

@@ -8,6 +8,8 @@ import torch  # noqa: E402
 
 from lerobot.utils.collate import lerobot_collate_fn  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 def test_lerobot_collate_preserves_messages_and_raw_language():
     batch = [

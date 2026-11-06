@@ -42,6 +42,8 @@ from lerobot.policies.factory import make_policy_config
 from lerobot.scripts.lerobot_train import train
 from lerobot.utils.device_utils import auto_select_torch_device
 
+pytestmark = pytest.mark.dataset
+
 pytest.importorskip("transformers")
 
 DUMMY_REPO_ID = "dummy/repo"

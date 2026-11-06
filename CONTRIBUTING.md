@@ -77,6 +77,14 @@ Or run a specific test file during development:
 pytest -sv tests/test_specific_feature.py
 ```
 
+The Fast Tests CI runs one tier per extra (`base`, `dataset`, `hardware`, `viz`) and selects the tests of each tier with a pytest mark. If your test needs the `dataset`, `hardware` or `viz` extra, mark it (`pytestmark = pytest.mark.dataset` for a whole file, `@pytest.mark.dataset` for one test). Unmarked tests run in the `base` tier only, where a test that needs an extra is skipped. To run one tier locally:
+
+```bash
+pytest -sv tests -m dataset
+```
+
+The GPU Tests CI only runs tests marked `gpu`. Every test under `tests/policies` and every `@require_cuda` test gets it automatically; mark any other test that uses CUDA with `@pytest.mark.gpu`.
+
 ## Submitting Issues & Pull Requests
 
 Use the templates for required fields and examples.

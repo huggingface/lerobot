@@ -101,6 +101,7 @@ class RemoteInferenceEngine(InferenceEngine):
             blend_weight=config.blend_weight,
             blend_indices=client.blend_indices,
         )
+        self.latency = self.runtime.latency
         self._lock = RLock()
         self._observation: ObservationSnapshot | None = None
         self._control: tuple[str, int] | None = None

@@ -38,6 +38,8 @@ from tests.inference.policy_helpers import observation
 from tests.remote_inference.helpers import admit
 from tests.remote_inference.network_helpers import runtime_for
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize("failure", ["oversized", "reply", "drop"])
 def test_failed_reply_immediately_releases_query_capacity(failure):

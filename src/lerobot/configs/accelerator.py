@@ -22,8 +22,11 @@ never imports accelerate.
 """
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import Enum
 from typing import TYPE_CHECKING
+
+import torch
 
 from lerobot.configs.parallelism import ParallelismConfig
 
@@ -34,7 +37,46 @@ if TYPE_CHECKING:
         FullyShardedDataParallelPlugin,
         GradientAccumulationPlugin,
         GradScalerKwargs,
+        InitProcessGroupKwargs,
     )
+    from torch.distributed.fsdp import MixedPrecisionPolicy
+
+
+@dataclass
+class MixedPrecisionPolicyConfig:
+    """Mirror of `torch.distributed.fsdp.MixedPrecisionPolicy`, applied to every FSDP2 unit.
+
+    At torch's defaults no policy is built and accelerate derives one from `mixed_precision`.
+    Otherwise the policy is built from these four fields alone.
+    """
+
+    # Dtype of the unsharded parameters: the forward, the backward and the all-gather.
+    # None keeps their dtype.
+    param_dtype: torch.dtype | None = None
+    # Dtype of the gradient reduction. None leaves it to torch: `param_dtype` before torch 2.15, the
+    # parameters' own dtype (float32 under mixed precision) from 2.15.
+    reduce_dtype: torch.dtype | None = None
+    # Dtype every FSDP unit casts its floating-point outputs to. None leaves them unchanged.
+    output_dtype: torch.dtype | None = None
+    # Cast the floating-point forward inputs of every FSDP unit to `param_dtype`.
+    cast_forward_inputs: bool = True
+
+    def build(self) -> "MixedPrecisionPolicy | None":
+        """Build the policy for `FullyShardedDataParallelPlugin(mixed_precision_policy=...)`.
+
+        Returns:
+            MixedPrecisionPolicy | None: The mirrored policy, or None at torch's defaults so
+                that accelerate derives it from `mixed_precision`.
+        """
+        from torch.distributed.fsdp import MixedPrecisionPolicy
+
+        policy = MixedPrecisionPolicy(
+            param_dtype=self.param_dtype,
+            reduce_dtype=self.reduce_dtype,
+            output_dtype=self.output_dtype,
+            cast_forward_inputs=self.cast_forward_inputs,
+        )
+        return None if policy == MixedPrecisionPolicy() else policy
 
 
 @dataclass
@@ -53,6 +95,7 @@ class FSDPConfig:
     cpu_offload: bool = False
     # Regex matched against module FQNs to exclude their parameters from sharding.
     ignored_modules: str | None = None
+    mixed_precision_policy: MixedPrecisionPolicyConfig = field(default_factory=MixedPrecisionPolicyConfig)
 
     def __post_init__(self) -> None:
         """Validate the wrap-policy fields.
@@ -88,6 +131,7 @@ class FSDPConfig:
             min_num_params=self.min_num_params,
             cpu_offload=self.cpu_offload,
             ignored_modules=self.ignored_modules,
+            mixed_precision_policy=self.mixed_precision_policy.build(),
             # state_dict_type stays at the FSDP2 default (SHARDED_STATE_DICT) and is never
             # switched: full gathers go through torch's state-dict API, which does not consult
             # the plugin. activation_checkpointing stays False: AC is LeRobot-owned.
@@ -116,6 +160,44 @@ class DDPConfig:
             find_unused_parameters=self.find_unused_parameters,
             gradient_as_bucket_view=self.gradient_as_bucket_view,
             static_graph=self.static_graph,
+        )
+
+
+@dataclass
+class InitProcessGroupConfig:
+    """Mirror of `InitProcessGroupKwargs`, the arguments of `torch.distributed.init_process_group`.
+
+    The defaults are accelerate's: accelerate picks the backend for the hardware, and a None
+    timeout keeps torch's default for the backend (10 minutes for NCCL, 30 for the others).
+    """
+
+    backend: str | None = "nccl"
+    init_method: str | None = None
+    # In seconds.
+    timeout: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the timeout.
+
+        Raises:
+            ValueError: If ``timeout`` is set and not positive.
+        """
+        if self.timeout is not None and self.timeout <= 0:
+            raise ValueError(f"init_process_group.timeout must be > 0 seconds, got {self.timeout}.")
+
+    def build_kwargs_handler(self) -> "InitProcessGroupKwargs":
+        """Build the process group kwargs handler for `Accelerator(kwargs_handlers=[...])`.
+
+        Returns:
+            InitProcessGroupKwargs: Handler carrying the mirrored fields, passed by accelerate to
+                `torch.distributed.init_process_group`.
+        """
+        from accelerate.utils import InitProcessGroupKwargs
+
+        return InitProcessGroupKwargs(
+            backend=self.backend,
+            init_method=self.init_method,
+            timeout=None if self.timeout is None else timedelta(seconds=self.timeout),
         )
 
 
@@ -182,13 +264,15 @@ class GradScalerConfig:
 class GradientAccumulationConfig:
     """Mirror of the `GradientAccumulationPlugin` subset LeRobot supports.
 
-    Only the step count is a knob. ``sync_with_dataloader`` is pinned to False by
-    :meth:`build_plugin`: the training loop cycles a finite dataloader, so accelerate's default
-    of syncing at every dataloader end would force an optimizer step at every dataset epoch
-    boundary instead of every ``steps`` micro-batches.
+    The step count and ``sync_each_batch`` are the knobs. ``sync_with_dataloader`` is pinned to
+    False by :meth:`build_plugin`: the training loop cycles a finite dataloader, so accelerate's
+    default of syncing at every dataloader end would force an optimizer step at every dataset
+    epoch boundary instead of every ``steps`` micro-batches.
     """
 
     steps: int = 1
+    # Reduce the gradients at every micro-batch instead of only at the last one.
+    sync_each_batch: bool = False
 
     def __post_init__(self) -> None:
         """Validate the accumulation step count.
@@ -207,12 +291,14 @@ class GradientAccumulationConfig:
         it `to_kwargs()`, so the consumption site, not the inheritance, decides its role.
 
         Returns:
-            GradientAccumulationPlugin: Carrying the mirrored step count, with
-                ``sync_with_dataloader=False`` pinned (see the class docstring).
+            GradientAccumulationPlugin: Carrying the mirrored step count and ``sync_each_batch``,
+                with ``sync_with_dataloader=False`` pinned (see the class docstring).
         """
         from accelerate.utils import GradientAccumulationPlugin
 
-        return GradientAccumulationPlugin(num_steps=self.steps, sync_with_dataloader=False)
+        return GradientAccumulationPlugin(
+            num_steps=self.steps, sync_with_dataloader=False, sync_each_batch=self.sync_each_batch
+        )
 
 
 @dataclass
@@ -251,7 +337,8 @@ class AcceleratorConfig:
     """Builds the `Accelerator` — the runtime counterpart of the `parallelism` topology.
 
     `mixed_precision` selects accelerate-native AMP for DDP/single-GPU runs and the FSDP2
-    `MixedPrecisionPolicy` for sharded runs (accelerate derives it). All three values work on
+    `MixedPrecisionPolicy` for sharded runs (accelerate derives it unless
+    `fsdp.mixed_precision_policy` sets one). All three values work on
     every topology; "fp16" additionally gets a `torch.amp.GradScaler`, built by accelerate and
     tuned through `grad_scaler`. Under FSDP2 the gradients it inspects are DTensors, whose
     overflow flag torch reduces across the mesh, so a single rank's overflow skips the
@@ -263,20 +350,44 @@ class AcceleratorConfig:
     grad_scaler: GradScalerConfig = field(default_factory=GradScalerConfig)
     fsdp: FSDPConfig = field(default_factory=FSDPConfig)
     ddp: DDPConfig = field(default_factory=DDPConfig)
+    init_process_group: InitProcessGroupConfig = field(default_factory=InitProcessGroupConfig)
     compile: CompileConfig = field(default_factory=CompileConfig)
     activation_checkpointing: ActivationCheckpointingConfig = field(
         default_factory=ActivationCheckpointingConfig
     )
 
     def __post_init__(self) -> None:
-        """Validate the accelerate-facing scalar fields.
+        """Validate the accelerate-facing scalar fields and the FSDP2 policy against `mixed_precision`.
 
         Raises:
-            ValueError: If ``mixed_precision`` is not one of ``"no"``, ``"fp16"``, ``"bf16"``.
+            ValueError: If ``mixed_precision`` is not one of ``"no"``, ``"fp16"``, ``"bf16"``, if
+                ``fsdp.mixed_precision_policy`` is set without ``param_dtype`` while
+                ``mixed_precision`` is not ``"no"``, or if the policy uses float16 while
+                ``mixed_precision`` is not ``"fp16"``.
         """
         if self.mixed_precision not in ("no", "fp16", "bf16"):
             raise ValueError(
                 f"mixed_precision must be one of 'no', 'fp16', 'bf16', got {self.mixed_precision!r}."
+            )
+        policy = self.fsdp.mixed_precision_policy
+        if (
+            self.mixed_precision != "no"
+            and policy != MixedPrecisionPolicyConfig()
+            and policy.param_dtype is None
+        ):
+            raise ValueError(
+                "fsdp.mixed_precision_policy replaces the policy derived from "
+                f"mixed_precision={self.mixed_precision!r}, so it needs a param_dtype "
+                "(bfloat16, or float32 to keep the FSDP units in full precision)."
+            )
+        if self.mixed_precision != "fp16" and torch.float16 in (
+            policy.param_dtype,
+            policy.reduce_dtype,
+            policy.output_dtype,
+        ):
+            raise ValueError(
+                "fsdp.mixed_precision_policy uses float16, which needs mixed_precision='fp16' "
+                "for the loss scaler."
             )
 
     def build(self, parallelism: ParallelismConfig, *, cpu: bool = False) -> "Accelerator":
@@ -287,6 +398,7 @@ class AcceleratorConfig:
         `ParallelismConfig` mesh), replicated-only -> DDP kwargs, single process -> plain.
         The scaler kwargs handler is orthogonal to that matrix: fp16 adds it on every
         topology, and accelerate picks the right `GradScaler` flavour for the one in force.
+        The process group kwargs handler is passed on every topology.
 
         Args:
             parallelism (ParallelismConfig): The resolved process topology; selects which
@@ -306,7 +418,7 @@ class AcceleratorConfig:
             "mixed_precision": self.mixed_precision,
             "cpu": cpu,
         }
-        handlers: list = []
+        handlers: list = [self.init_process_group.build_kwargs_handler()]
         if parallelism.is_sharded:
             kwargs["fsdp_plugin"] = self.fsdp.build_plugin()
             kwargs["parallelism_config"] = _accelerate_parallelism_config(parallelism)
@@ -316,8 +428,7 @@ class AcceleratorConfig:
             # Only appended for fp16: accelerate ignores this handler otherwise, and leaving
             # it out keeps the "no"/"bf16" Accelerator identical to a run without a scaler.
             handlers.append(self.grad_scaler.build_kwargs_handler())
-        if handlers:
-            kwargs["kwargs_handlers"] = handlers
+        kwargs["kwargs_handlers"] = handlers
         return Accelerator(**kwargs)
 
 

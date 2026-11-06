@@ -31,9 +31,11 @@ from uuid import uuid4
 
 import torch
 
+from lerobot.lerobot_types import PolicyPrediction
 from lerobot.policies import ActionQueue, QueueSnapshot, RTCConfig
 
 from .contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
+from .latency import LatencyWindow
 
 
 @dataclass(frozen=True)
@@ -203,11 +205,13 @@ class ChunkRuntime:
         self.generation = 0
         self.pending: ChunkRequest | None = None
         self.current: ActionProvenance | None = None
+        self.prediction: PolicyPrediction | None = None
         self.failure: str | None = None
         self.active = False
         self.held = False
         self.has_executed = False
         self.started_at = clock()
+        self.latency = LatencyWindow("turnaround")
         self.turnarounds: deque[float] = deque(maxlen=100)
         self._initial_turnaround = 0.0
         self._completed = 0
@@ -253,6 +257,7 @@ class ChunkRuntime:
             self.queue.clear()
             self.pending = None
             self.current = None
+            self.prediction = None
             self.held = held
             self.has_executed = False
             self._last_anchor = None
@@ -438,6 +443,7 @@ class ChunkRuntime:
                 return False
             now = self.clock()
             elapsed = now - request.submitted_at
+            self.latency.record(elapsed, now)
             self._completed += 1
             if self._completed > 1:  # cold start is not a steady-state action latency
                 self.turnarounds.append(elapsed)
@@ -505,6 +511,8 @@ class ChunkRuntime:
                     snapshot=request.continuation,
                 )
             self.last_accept["accepted"] = accepted
+            if accepted and chunk.prediction is not None:
+                self.prediction = chunk.prediction
             if accepted and self.starvation_deadline is not None:
                 self.wait_events.append(
                     {"event": "resumed", "wait_s": now - (self.starvation_deadline - self.starvation_grace)}
@@ -572,6 +580,12 @@ class ChunkRuntime:
             usable_actions=len(future),
         )
         return accepted
+
+    def take_prediction(self) -> PolicyPrediction | None:
+        """Hand out the latest accepted chunk's prediction once."""
+        with self.lock:
+            prediction, self.prediction = self.prediction, None
+            return prediction
 
     def dispatch_allowed(self) -> bool:
         """Check permission and the committed endpoint's age on every motor tick."""

@@ -53,6 +53,8 @@ from lerobot.rollout.interactive import InteractiveCommand, parse_command  # noq
 from lerobot.rollout.planner import PlannerConfig, VlmPlanner, training_vocabulary  # noqa: E402
 from tests.interactive_helpers import _FakeEngine, _loop_ctx, _make_ctx
 
+pytestmark = pytest.mark.dataset
+
 
 def _wait_for(predicate, timeout: float = 2.0) -> bool:
     deadline = time.monotonic() + timeout
@@ -611,10 +613,24 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     policy.config.use_amp = False
     policy.select_action.return_value = torch.zeros(1, 2)
 
+    class _Postprocessor:
+        """Matches the pipeline interface: callable, and rewindable like the real one."""
+
+        def __init__(self):
+            self.resets = 0
+
+        def __call__(self, action):
+            return action
+
+        def reset(self):
+            self.resets += 1
+
+    postprocessor = _Postprocessor()
+
     engine = SyncInferenceEngine(
         policy=policy,
         preprocessor=lambda obs: obs,
-        postprocessor=lambda action: action,
+        postprocessor=postprocessor,
         dataset_features={
             "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
         },
@@ -638,6 +654,9 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     # without the wider episode reset (which would perturb observation history).
     assert policy.drop_queued_actions.call_count == 1
     assert policy.reset.call_count == 0
+    # Dropping the chunk also rewinds postprocessor steps that track a position inside it,
+    # such as G0.5's per-timestep unnormalizer.
+    assert postprocessor.resets == 1
     assert policy.select_action.call_args[0][0]["task"] == "fold the towel"
 
     # Only the first call after a switch flushes.
@@ -726,12 +745,14 @@ def _make_sentry(monkeypatch):
     # Keep setup independent of camera features and never rotate episodes mid-test.
     monkeypatch.setattr("lerobot.rollout.strategies.sentry.estimate_max_episode_seconds", lambda *a, **k: 1e9)
 
+    from lerobot.processor import create_transition
+
     def _fake_send(obs_processed, obs_raw, ctx, interpolator, timer=None):
         # Recording is gated on ``interpolator.emitted_policy_action``, so push an action too.
         if interpolator.needs_new_action():
             interpolator.add(torch.zeros(1))
         interpolator.get()
-        return {"joint.pos": 0.5}
+        return create_transition(action={"joint.pos": 0.5})
 
     monkeypatch.setattr("lerobot.rollout.strategies.sentry.send_next_action", _fake_send)
     monkeypatch.setattr("lerobot.rollout.strategies.sentry.build_dataset_frame", lambda *a, **k: {})

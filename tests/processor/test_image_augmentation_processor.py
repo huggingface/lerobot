@@ -149,6 +149,7 @@ def _dataset(image_transforms=None):
     return SimpleNamespace(meta=meta, image_transforms=image_transforms)
 
 
+@pytest.mark.dataset
 def test_trainer_builds_the_step_for_the_gpu_backend(cpu_generator):
     pytest.importorskip("datasets")  # the trainer and the dataset factory need the [dataset] extra
     from lerobot.scripts.lerobot_train import _make_image_augmentation
@@ -160,6 +161,7 @@ def test_trainer_builds_the_step_for_the_gpu_backend(cpu_generator):
     assert step.seed == 1002  # cfg.seed + process_index, so ranks augment differently
 
 
+@pytest.mark.dataset
 def test_trainer_builds_nothing_for_the_dataloader_backend():
     pytest.importorskip("datasets")  # the trainer and the dataset factory need the [dataset] extra
     from lerobot.scripts.lerobot_train import _make_image_augmentation
@@ -170,6 +172,7 @@ def test_trainer_builds_nothing_for_the_dataloader_backend():
     assert _make_image_augmentation(cfg, _dataset(), torch.device("cuda"), 0) is None
 
 
+@pytest.mark.dataset
 def test_trainer_leaves_the_seed_unset_when_the_run_is_unseeded(cpu_generator):
     pytest.importorskip("datasets")  # the trainer and the dataset factory need the [dataset] extra
     from lerobot.scripts.lerobot_train import _make_image_augmentation
@@ -178,6 +181,7 @@ def test_trainer_leaves_the_seed_unset_when_the_run_is_unseeded(cpu_generator):
     assert step.seed is None
 
 
+@pytest.mark.dataset
 def test_trainer_refuses_a_dataset_that_already_carries_worker_transforms():
     """A hand-built dataset with its own `image_transforms` plus the gpu backend would augment twice."""
     pytest.importorskip("datasets")  # the trainer and the dataset factory need the [dataset] extra
@@ -189,6 +193,7 @@ def test_trainer_refuses_a_dataset_that_already_carries_worker_transforms():
         )
 
 
+@pytest.mark.dataset
 def test_only_training_batches_are_augmented():
     """The augmentation step runs before `_preprocess_dataset_batch` on the training path only."""
     pytest.importorskip("datasets")  # the trainer and the dataset factory need the [dataset] extra
@@ -204,6 +209,7 @@ def test_only_training_batches_are_augmented():
     torch.testing.assert_close(eval_batch[CAM_A], torch.full_like(eval_batch[CAM_A], 0.5))
 
 
+@pytest.mark.dataset
 def test_trainer_path_keeps_unprefixed_camera_keys_and_custom_columns(cpu_generator):
     """The step is applied to the batch dict directly, so nothing `batch_to_transition` would drop is lost.
 
@@ -266,6 +272,7 @@ def test_train_config_rejects_gpu_backend_on_cpu_policy(tmp_path):
     cfg.validate()  # a disabled configuration is fine on any device
 
 
+@pytest.mark.dataset
 def test_every_worker_transform_site_honours_the_backend():
     """Each place the dataset factory builds worker transforms must check `backend`, not just `enable`.
 
