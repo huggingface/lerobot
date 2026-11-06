@@ -139,6 +139,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             root=root,
             revision=cfg.dataset.revision,
             repo_type=repo_type,
+            storage_options=cfg.dataset.storage_options,
         )
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta, cfg.rename_map)
         episodes = resolve_episode_indices(
@@ -170,6 +171,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 tolerance_s=cfg.tolerance_s,
                 repo_type=repo_type,
                 video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
+                storage_options=cfg.dataset.storage_options,
             )
         else:
             dataset = StreamingLeRobotDataset(
@@ -197,6 +199,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 sidecar_lock_timeout_s=cfg.dataset.streaming_sidecar_lock_timeout_s,
                 repeat=True,
                 repo_type=repo_type,
+                storage_options=cfg.dataset.storage_options,
             )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
@@ -285,6 +288,7 @@ def make_train_eval_datasets(
         tolerance_s=cfg.tolerance_s,
         repo_type=cfg.dataset.repo_type,
         video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
+        storage_options=cfg.dataset.storage_options,
     )
 
     eval_dataset = LeRobotDataset(
@@ -300,6 +304,7 @@ def make_train_eval_datasets(
         tolerance_s=cfg.tolerance_s,
         repo_type=cfg.dataset.repo_type,
         video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
+        storage_options=cfg.dataset.storage_options,
     )
 
     if cfg.dataset.use_imagenet_stats:

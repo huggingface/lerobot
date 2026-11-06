@@ -133,6 +133,7 @@ class EpisodeVideoManifest:
         keyframe_pad_fraction: float = 0.05,
         sidecar_path: str | Path | None = None,
         token: str | bool | None = None,
+        storage_options: dict[str, str] | None = None,
     ) -> EpisodeVideoManifest:
         """Build episode spans from source MP4s or a validated file sidecar."""
         meta.ensure_readable()
@@ -150,6 +151,7 @@ class EpisodeVideoManifest:
                 header_probe_bytes=header_probe_bytes,
                 max_probe_bytes=max_probe_bytes,
                 token=token,
+                storage_options=storage_options,
             )
         else:
             records = cls.load_file_sidecar(sidecar_path, file_paths=rel_paths)
@@ -223,6 +225,7 @@ class EpisodeVideoManifest:
         header_probe_bytes: int,
         max_probe_bytes: int,
         token: str | bool | None,
+        storage_options: dict[str, str] | None = None,
     ) -> list[VideoFileRecord]:
         """Index unique source files concurrently and return records sorted by path."""
         with closing(
@@ -234,6 +237,7 @@ class EpisodeVideoManifest:
                 header_probe_bytes=header_probe_bytes,
                 max_probe_bytes=max_probe_bytes,
                 token=token,
+                storage_options=storage_options,
             )
         ) as indexed:
             return [record for _file_idx, record in sorted(indexed)]
@@ -248,6 +252,7 @@ class EpisodeVideoManifest:
         header_probe_bytes: int,
         max_probe_bytes: int,
         token: str | bool | None,
+        storage_options: dict[str, str] | None = None,
     ) -> Generator[tuple[int, VideoFileRecord]]:
         """Yield completed indices with at most workers live parse results."""
         if workers < 1:
@@ -257,6 +262,7 @@ class EpisodeVideoManifest:
             range_backend=range_backend,
             workers=workers,
             token=token,
+            storage_options=storage_options,
         )
 
         def build_file(path: str) -> VideoFileRecord:
@@ -321,6 +327,7 @@ class EpisodeVideoManifest:
         header_probe_bytes: int = DEFAULT_HEADER_PROBE_BYTES,
         max_probe_bytes: int = 64 * 1024 * 1024,
         token: str | bool | None = None,
+        storage_options: dict[str, str] | None = None,
     ) -> None:
         """Index source files and write a reusable sidecar."""
         with closing(
@@ -332,6 +339,7 @@ class EpisodeVideoManifest:
                 header_probe_bytes=header_probe_bytes,
                 max_probe_bytes=max_probe_bytes,
                 token=token,
+                storage_options=storage_options,
             )
         ) as records:
             cls._save_file_sidecar(sidecar_path, records, spec=spec)

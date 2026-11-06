@@ -108,3 +108,11 @@ def test_dataset_config_eval_split():
     DatasetConfig(repo_id="user/repo", repo_type="bucket", eval_split=0.1)
     with pytest.raises(ValueError, match="streaming"):
         DatasetConfig(repo_id="user/repo", streaming=True, eval_split=0.1)
+
+
+@pytest.mark.parametrize("revision_key", ["revision", "REVISION"])
+def test_dataset_config_storage_options_rejects_revision(revision_key):
+    with pytest.raises(ValueError, match="storage_options.*revision"):
+        DatasetConfig(repo_id="user/repo", storage_options={revision_key: "main"})
+
+    DatasetConfig(repo_id="user/repo", revision="main", storage_options={})
