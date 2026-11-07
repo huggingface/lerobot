@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
+import dataclasses
 import importlib
 import inspect
 import json
@@ -23,10 +25,9 @@ from functools import wraps
 from pathlib import Path
 from pkgutil import ModuleInfo
 from types import ModuleType
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast, get_args, get_type_hints
 
 import draccus
-import torch
 import yaml
 from draccus.help_formatter import SimpleHelpFormatter
 from draccus.utils import DecodingError
@@ -37,6 +38,9 @@ from draccus.wrappers.suppressing_argparse import SuppressingArgumentParser
 from draccus.wrappers.wrapper import AggregateWrapper, Wrapper
 
 from lerobot.utils.utils import has_method
+
+if TYPE_CHECKING:
+    import torch
 
 F = TypeVar("F", bound=Callable[..., object])
 
@@ -51,25 +55,38 @@ _config_path_args: dict[str, str] = {}
 _config_yaml_overrides: dict[str, list[str]] = {}
 
 
-# Register draccus encode/decode functions for the torch.dtype values held by dtype fields.
-@draccus.decode.register(torch.dtype)
-def _decode_dtype(value: Any, path: Sequence[str] = ()) -> torch.dtype:
+def _decode_dtype(value: Any, path: Sequence[str] = ()) -> "torch.dtype":
     """Resolve a dtype name coming from config.json or the command line.
 
     Args:
         value: The raw serialized value, e.g. "bfloat16".
         path: The field breadcrumb draccus prefixes onto error messages, e.g. ("policy", "dtype").
     """
+    import torch
+
     dtype = getattr(torch, str(value).removeprefix("torch."), None)
     if not isinstance(dtype, torch.dtype):
         raise ValueError(f"Invalid dtype {value!r}: expected a torch dtype name.")
     return dtype
 
 
-@draccus.encode.register(torch.dtype)
-def _encode_dtype(value: torch.dtype, declared_type: type | None = None) -> str:
+def _encode_dtype(value: "torch.dtype", declared_type: type | None = None) -> str:
     """Serialize a dtype to its bare name, e.g. torch.bfloat16 -> "bfloat16"."""
     return str(value).removeprefix("torch.")
+
+
+def register_torch_dtype_codecs() -> None:
+    """Register the draccus encode/decode functions for `torch.dtype` values.
+
+    The modules that define configs with a `torch.dtype` field call this, and so does `load_selected_choices`
+    once torch is loaded, so that importing the parser does not load torch. Code that decodes or encodes such
+    a config with draccus directly, before either, must call it first. Registering again replaces the
+    functions with the same ones.
+    """
+    import torch
+
+    draccus.decode.register(torch.dtype, _decode_dtype)
+    draccus.encode.register(torch.dtype, _encode_dtype)
 
 
 def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
@@ -236,6 +253,96 @@ def get_pretrained_revision(field_name: str) -> str | None:
 
 def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
     return parse_arg(f"{field_name}.{draccus.CHOICE_TYPE_KEY}", args)
+
+
+def get_type_args(field_name: str, args: Sequence[str]) -> list[str]:
+    """Every value given for `--<field_name>.type`, since argparse checks each one against the choices."""
+    option = f"{field_name}.{draccus.CHOICE_TYPE_KEY}"
+    starts = [index for index, arg in enumerate(args) if arg.partition("=")[0] == f"--{option}"]
+    return [value for index in starts if (value := parse_arg(option, args[index:])) is not None]
+
+
+def load_selected_choices(config_class: type, cli_args: Sequence[str]) -> None:
+    """Register the choices draccus needs before it builds its parser, since some registries load their
+    choices on demand: the policies, and the optimizers and schedulers that policy packages add to.
+
+    Every top-level `--<field>.type` value is looked up in its registry, which loads that choice, or
+    everything it could come from for an unknown name. Registries with a `load_all_choices()` also load
+    everything: all of them for `--help`, and a field's own for `--<field>.*` flags given without that field's
+    `.type`, since its type may then come from a config file and draccus needs that class to accept the flags.
+    The same holds for `--<field>.<sub>.*` flags, for the registries a plain dataclass `<field>`, or a
+    registered class of a choice `<field>`, holds. Apart from that nested check, a field with a path and no
+    `--<field>.type` is skipped: its config is read from that path later. The `torch.dtype` codecs are
+    registered last, once torch is loaded, since a config can only hold a `torch.dtype` field after something
+    imported torch, as a lookup here can."""
+    hints = get_type_hints(config_class)
+    # argparse reads a short option group that starts with -h, such as -help, as -h too.
+    help_flag = any(arg == "--help" or arg.startswith("-h") for arg in cli_args)
+    # In the order the config declares them, so --help lists the choices the same way every run.
+    to_load = _lazy_registries(config_class) if help_flag else {}
+    for field in dataclasses.fields(config_class):
+        candidates = get_args(hints[field.name]) or (hints[field.name],)
+        types = [t for t in candidates if draccus.utils.is_choice_type(t)]
+        lazy = [t for t in types if hasattr(t, "load_all_choices")]
+        names = get_type_args(field.name, cli_args)
+        for name in names:
+            for choice_type in types:
+                with contextlib.suppress(KeyError):  # draccus reports unknown names itself
+                    choice_type.get_choice_class(name)
+        # After the lookups, so the registries held by a choice that a lookup just registered count too.
+        nested_flags = any(
+            arg.partition("=")[0].startswith(f"--{field.name}.") and arg.partition("=")[0].count(".") >= 2
+            for arg in cli_args
+        )
+        if nested_flags:
+            for candidate in candidates:
+                to_load |= _held_lazy_registries(candidate)
+        if not names and get_path_arg(field.name, cli_args):
+            continue
+        if not names and any(arg.startswith(f"--{field.name}.") for arg in cli_args):
+            to_load |= dict.fromkeys(lazy)
+    for registry in to_load:
+        registry.load_all_choices()
+    if "torch" in sys.modules:
+        register_torch_dtype_codecs()
+
+
+def _held_lazy_registries(field_type: Any) -> dict[Any, None]:
+    """The on-demand registries in the fields of a dataclass, or of any registered class of a choice type."""
+    if draccus.utils.is_choice_type(field_type):
+        return {
+            r: None for choice in field_type.get_known_choices().values() for r in _lazy_registries(choice)
+        }
+    if isinstance(field_type, type) and dataclasses.is_dataclass(field_type):
+        return _lazy_registries(field_type)
+    return {}
+
+
+def _lazy_registries(config_class: type, seen: set[type] | None = None) -> dict[Any, None]:
+    """The on-demand registries of the config's choice fields, in the order the config declares them, including
+    those in nested dataclasses and in the registered classes of other choice fields."""
+    seen = set() if seen is None else seen
+    if config_class in seen:
+        return {}
+    seen.add(config_class)
+    try:
+        hints = get_type_hints(config_class)
+    except NameError:
+        # A registered choice can name a type it imports only for type checking, like a plugin whose extra is
+        # not installed. draccus reports it if a command selects it.
+        return {}
+    registries: dict[Any, None] = {}
+    for field_type in hints.values():
+        for candidate in get_args(field_type) or (field_type,):
+            if draccus.utils.is_choice_type(candidate):
+                if hasattr(candidate, "load_all_choices"):
+                    registries[candidate] = None
+                else:
+                    for choice in candidate.get_known_choices().values():
+                        registries |= _lazy_registries(choice, seen)
+            elif isinstance(candidate, type) and dataclasses.is_dataclass(candidate):
+                registries |= _lazy_registries(candidate, seen)
+    return registries
 
 
 def _register_scoped_actions(
@@ -413,13 +520,16 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
 
 def wrap(config_path: Path | None = None) -> Callable[[F], F]:
     """
-    HACK: Similar to draccus.wrap but does three additional things:
+    HACK: Similar to draccus.wrap but does four additional things:
         - Will remove '.path' arguments from CLI in order to process them later on.
         - If a 'config_path' is passed and the main config class has a 'from_pretrained' method, will
           initialize it from there to allow to fetch configs from the hub directly
         - Will load plugins specified in the CLI arguments. These plugins will typically register
             their own subclasses of config classes, so that draccus can find the right class to instantiate
             from the CLI '.type' arguments
+        - Will register the choices the CLI arguments select before draccus builds its parser, since
+          policies register on demand. `load_selected_choices` lists when it registers every choice instead,
+          as for '--help'
     """
 
     def wrapper_outer(fn: F) -> F:
@@ -428,9 +538,8 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
             argspec = inspect.getfullargspec(fn)
             argtype = argspec.annotations[argspec.args[0]]
             if len(args) > 0 and type(args[0]) is argtype:
-                cfg = args[0]
-                args = args[1:]
-            else:
+                return fn(*args, **kwargs)
+            try:
                 cli_args = sys.argv[1:]
                 plugin_args = parse_plugin_args(PLUGIN_DISCOVERY_SUFFIX, cli_args)
                 for plugin_cli_arg, plugin_path in plugin_args.items():
@@ -441,6 +550,7 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                         raise PluginLoadError(f"{e}\nFailed plugin CLI Arg: {plugin_cli_arg}") from e
                     cli_args = filter_arg(plugin_cli_arg, cli_args)
                 if "--help" in cli_args or "-h" in cli_args:
+                    load_selected_choices(argtype, cli_args)
                     print_scoped_help(argtype, cli_args)
                     sys.exit(0)
                 config_path_cli = parse_arg("config_path", cli_args)
@@ -453,8 +563,12 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 try:
                     if has_method(argtype, "from_pretrained") and config_path_cli:
                         cli_args = filter_arg("config_path", cli_args)
+                        # It parses with draccus, so it registers the selected choices itself.
                         cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
                     else:
+                        # After the path check, which rejects a path given with a type before that type is
+                        # imported.
+                        load_selected_choices(argtype, cli_args)
                         if config_path_cli:
                             cli_args = filter_arg("config_path", cli_args)
                         cfg = draccus.parse(
@@ -465,8 +579,12 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 except DecodingError as e:
                     print(f"error: {e}", file=sys.stderr)
                     sys.exit(1)
-            response = fn(cfg, *args, **kwargs)
-            return response
+                return fn(cfg, *args, **kwargs)
+            finally:
+                # The path fields read from a config file apply to this call only, so a later parse in this
+                # process cannot pick them up.
+                _config_path_args.clear()
+                _config_yaml_overrides.clear()
 
         return cast(F, wrapper_inner)
 

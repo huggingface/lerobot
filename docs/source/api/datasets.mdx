@@ -6,6 +6,10 @@ observations on the fly, and round-trips to the Hugging Face Hub.
 See [Using LeRobotDataset](../lerobot-dataset-v3) for the format and the common operations,
 [Porting Large Datasets](../porting_datasets_v3) for migration, and [Tools](../tools) for the CLI.
 
+`lerobot.datasets` imports each module the first time one of its names is used. Code that starts threads
+should use the dataset names, and import the dataset submodules, those threads need before starting them: a
+thread that runs a first import while another thread imports can get a partly initialized module.
+
 ## LeRobotDataset
 
 [[autodoc]] lerobot.datasets.LeRobotDataset
