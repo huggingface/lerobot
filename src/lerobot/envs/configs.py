@@ -27,7 +27,6 @@ import gymnasium as gym
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.env_server import DEFAULT_MAX_PAYLOAD_BYTES
-from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.sim import EnvDescriptor, SimConfig
 from lerobot.sim.integrations import envhub
@@ -214,6 +213,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
     def get_env_processors(self):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
+        from lerobot.processor import PolicyProcessorPipeline
+
         return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
 
 
@@ -697,6 +698,8 @@ class IsaaclabArenaEnvConfig(HubEnvConfig):
                     self.features_map[cam_key] = f"{OBS_IMAGES}.{cam_key}"
 
     def get_env_processors(self):
+        from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
+
         state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
         camera_keys = tuple(k.strip() for k in (self.camera_keys or "").split(",") if k.strip())
         if not state_keys and not camera_keys:

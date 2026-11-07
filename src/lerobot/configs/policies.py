@@ -11,31 +11,63 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import abc
 import builtins
+import importlib.util
 import json
 import os
+import pkgutil
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import draccus
-import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.import_utils import import_on_demand
 
 from .types import FeatureType, PolicyFeature
 
+if TYPE_CHECKING:
+    import torch
+
+    from lerobot.optim import LRSchedulerConfig, OptimizerConfig
+
 T = TypeVar("T", bound="PreTrainedConfig")
 logger = getLogger(__name__)
+
+# The built-in policy names that are not the name of the package that registers them, each with that package.
+# tests/configs/test_policy_registration.py keeps it in sync.
+BUILTIN_POLICY_PACKAGES = {"cosmos3_edge": "cosmos3", "cosmos3_nano": "cosmos3"}
+
+
+def _set_up_torch_dtype() -> None:
+    """Import torch into this module and register the draccus codecs for `torch.dtype`, once.
+
+    This module imports torch only for type checking, so the commands that read it without parsing a
+    policy config never load torch. Defining a policy config class calls this, because everything done
+    with that class afterwards, parsing it, decoding it or building it, needs torch: draccus resolves the
+    `torch.dtype` annotation through this module's globals, and decodes it with these codecs.
+    """
+    global torch
+    if "torch" in globals():
+        return
+    import torch as torch_module
+
+    from .parser import register_torch_dtype_codecs
+
+    register_torch_dtype_codecs()
+    # Bound last: another thread defining a policy config returns as soon as it sees this name.
+    torch = torch_module
 
 
 @dataclass
@@ -85,7 +117,17 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
     pretrained_revision: str | None = None
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _set_up_torch_dtype()
+
     def __post_init__(self) -> None:
+        from lerobot.utils.device_utils import (
+            auto_select_torch_device,
+            is_amp_available,
+            is_torch_device_available,
+        )
+
         if self.dtype is not None and not isinstance(self.dtype, torch.dtype):
             raise ValueError(f"config.dtype must be a torch.dtype or None, got {self.dtype!r}.")
 
@@ -100,6 +142,81 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                 f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
             )
             self.use_amp = False
+
+    @classmethod
+    def register_subclass(cls, name: str, choice_type: builtins.type | None = None) -> Any:
+        # The decorator form calls this first with only the name, then again with the class.
+        if (
+            choice_type is not None
+            and (package := cls._builtin_policy_package(name))
+            and choice_type.__module__ != package
+            and not choice_type.__module__.startswith(f"{package}.")
+        ):
+            raise ValueError(f"'{name}' is reserved for {package}. Use a different name.")
+        return super().register_subclass(name, choice_type)
+
+    @classmethod
+    def get_choice_class(cls, name: str) -> builtins.type[PreTrainedConfig]:
+        """Return the config registered as `name`, importing the policies it could come from.
+
+        A built-in name imports its policy package on every lookup, which costs nothing once it is imported. So
+        a lookup waits for another thread that is still importing it, and raises again if it failed to import.
+
+        Raises:
+            KeyError: If `name` is not a string, or no policy registers it once every built-in is imported.
+            ImportError: If the policy package that registers `name` fails to import.
+        """
+        if not isinstance(name, str):
+            cls.load_all_choices()  # so that the caller's error can list every policy
+            raise KeyError(name)
+        if package := cls._builtin_policy_package(name):
+            import_on_demand(package)
+        if name not in cls._choice_registry:
+            cls.load_all_choices()
+        return super().get_choice_class(name)
+
+    @classmethod
+    def get_known_choices(cls) -> dict[str, builtins.type[PreTrainedConfig]]:
+        # A copy: a lookup in another thread can register a policy while the caller walks the registry.
+        return dict(cls._choice_registry)
+
+    @classmethod
+    def get_choice_name(cls, subcls: builtins.type) -> str:
+        # As in draccus, but over that copy.
+        for name, choice in cls.get_known_choices().items():
+            if choice == subcls:
+                return name
+        raise ValueError(f"Cannot find choice name for {subcls}")
+
+    @staticmethod
+    def _builtin_policy_package(name: str) -> str | None:
+        """The built-in policy package that registers `name`, if there is one. Nothing is imported."""
+        if not (isinstance(name, str) and name.isidentifier()):
+            return None
+        # Concatenated, not formatted: a `(str, Enum)` member formats as its member name.
+        package = "lerobot.policies." + BUILTIN_POLICY_PACKAGES.get(name, name)
+        spec = importlib.util.find_spec(package)
+        # A directory without an `__init__.py` has no origin, and `load_all_choices` skips it too.
+        return package if spec and spec.origin is not None and spec.submodule_search_locations else None
+
+    @classmethod
+    def load_all_choices(cls) -> None:
+        """Import every built-in policy package, so each registers its config and whatever else it adds.
+
+        `lerobot.configs.parser` calls this when a command needs it, as for `--help`. Code that lists the
+        registry must call it first, since importing `lerobot` registers no policy. Code that calls
+        `draccus.parse` itself calls `lerobot.configs.parser.load_selected_choices` with the same arguments
+        instead, which imports only the policies they name. A package that fails to import is skipped with a
+        warning, so it does not hide the policies that load.
+        """
+        import lerobot.policies
+
+        for module in pkgutil.iter_modules(lerobot.policies.__path__, "lerobot.policies."):
+            if module.ispkg:
+                try:
+                    import_on_demand(module.name)
+                except ImportError as e:
+                    logger.warning(f"Skipping {module.name}, which failed to import: {e}")
 
     @property
     def type(self) -> str:
@@ -225,7 +342,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             raise ValueError(f"Missing 'type' field in {CONFIG_NAME} of {model_id}")
         try:
             config_cls = cls.get_choice_class(policy_type)
-        except Exception as e:
+        except KeyError as e:
             raise ValueError(
                 f"Policy type '{policy_type}' (from {CONFIG_NAME} of {model_id}) is not registered. "
                 f"Available policy types: {cls.get_known_choices()}"
@@ -236,6 +353,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             config_file = f.name
 
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
+        # draccus reads the command line when the arguments are None, so read the same ones. A list, since they
+        # are read twice.
+        cli_overrides = sys.argv[1:] if cli_overrides is None else list(cli_overrides)
+        from .parser import load_selected_choices
+
+        load_selected_choices(config_cls, cli_overrides)
         with draccus.config_type("json"):
             config = draccus.parse(config_cls, config_file, args=cli_overrides)
 

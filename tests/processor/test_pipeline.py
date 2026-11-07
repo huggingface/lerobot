@@ -15,6 +15,8 @@
 # limitations under the License.
 
 import json
+import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -38,6 +40,7 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, identity_transition
+from lerobot.processor.pipeline import BUILTIN_STEP_MODULES
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 from tests.conftest import assert_contract_is_typed
 
@@ -2495,3 +2498,28 @@ def test_artifact_download_pattern_matches_directories_and_files(
 
     assert captured["allow_patterns"] == expected_pattern
     assert loaded_config["steps"][0]["config"]["asset"] == str(tmp_path / relative_path)
+
+
+def test_builtin_step_table_matches_the_processor_steps():
+    # Importing every lerobot.processor module registers every step, so the table cannot drift unnoticed.
+    # tests/configs/test_policy_registration.py checks the policy entries.
+    code = """
+import importlib
+import json
+import pkgutil
+import lerobot.processor
+from lerobot.processor.pipeline import BUILTIN_STEP_MODULES, ProcessorStepRegistry
+
+for module in pkgutil.iter_modules(lerobot.processor.__path__):
+    importlib.import_module(f"lerobot.processor.{module.name}")
+registered = {n: c.__module__ for n, c in ProcessorStepRegistry._registry.items()}
+registered = {n: m for n, m in registered.items() if m.startswith("lerobot.processor.")}
+table = {n: "lerobot." + m for n, m in BUILTIN_STEP_MODULES.items() if m.startswith("processor.")}
+print(json.dumps([registered, table]))
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr
+    registered, table = json.loads(result.stdout.splitlines()[-1])
+    assert registered == table, "Keep BUILTIN_STEP_MODULES in src/lerobot/processor/pipeline.py in sync"
+    # The two sync tests check only these two kinds of entries.
+    assert all(m.startswith(("processor.", "policies.")) for m in BUILTIN_STEP_MODULES.values())
