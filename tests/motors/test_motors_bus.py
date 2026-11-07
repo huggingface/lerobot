@@ -548,3 +548,54 @@ def test_setup_motors_asks_for_one_motor_at_a_time(motors, order, bus, monkeypat
         f"Connect the controller board to the '{motor}' motor only and press enter." for motor in order
     ]
     assert f"'{order[0]}' motor id set to {bus.motors[order[0]].id}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "norm_mode, drive_mode",
+    [
+        (MotorNormMode.RANGE_M100_100, 0),
+        (MotorNormMode.RANGE_M100_100, 1),
+        (MotorNormMode.RANGE_0_100, 0),
+        (MotorNormMode.RANGE_0_100, 1),
+        (MotorNormMode.DEGREES, 0),
+        (MotorNormMode.DEGREES, 1),
+    ],
+)
+def test_a_position_written_back_keeps_its_encoder_step(norm_mode, drive_mode):
+    """Normalising a position and unnormalising it again must give the same raw step.
+
+    The inverse used to truncate with ``int()``. The division of a value that came from
+    ``_normalize`` rounds a hair below the integer for 17.7% of the positions of a full-turn
+    12-bit motor in RANGE_M100_100 (23.0% in RANGE_0_100), and truncating those lands one step
+    low: a position read from the motor and written back as a goal moved it.
+    """
+    motors = {"dummy": Motor(1, "model_2", norm_mode)}
+    calibration = {
+        "dummy": MotorCalibration(id=1, drive_mode=drive_mode, homing_offset=0, range_min=0, range_max=4095)
+    }
+    bus = MockMotorsBus("/dev/dummy-port", motors, calibration)
+
+    moved = {}
+    for raw in range(4096):
+        normalized = bus._normalize({1: raw})[1]
+        written = bus._unnormalize({1: normalized})[1]
+        if written != raw:
+            moved[raw] = written
+
+    assert moved == {}
+
+
+@pytest.mark.parametrize("raw", [1, 2, 3, 15, 511, 4094])
+def test_sending_a_read_position_back_does_not_move_the_motor(raw):
+    """Holding a position, as `reset_follower_position` does, must write the same raw step."""
+    motors = {"dummy": Motor(1, "model_2", MotorNormMode.RANGE_M100_100)}
+    calibration = {
+        "dummy": MotorCalibration(id=1, drive_mode=0, homing_offset=0, range_min=0, range_max=4095)
+    }
+    bus = MockMotorsBus("/dev/dummy-port", motors, calibration)
+    bus.connect(handshake=False)
+    bus._bus.seed(1, "present_position", raw)
+
+    bus.write("Goal_Position", "dummy", bus.read("Present_Position", "dummy"))
+
+    assert bus._bus.stored(1, "goal_position") == raw
