@@ -19,12 +19,16 @@ from __future__ import annotations
 import math
 from collections import deque
 from dataclasses import dataclass
+from types import EllipsisType
 from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as functional
 from torch import Tensor, nn
 
+from lerobot.policies.common.input_checks import check_input
+from lerobot.policies.common.qwen2_5_vision import Qwen2_5VisionGrid, qwen2_5_vision_forward
+from lerobot.policies.common.qwen_vision import check_visible_images, is_exporting, qwen_image_rope_index
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -110,6 +114,18 @@ class WallOSS05VisionMLP(nn.Module):
         return self.down_proj(functional.silu(gate) * up)
 
 
+def _expert_rows(token_types: Tensor | int, expert_index: int) -> Tensor | EllipsisType | None:
+    """Index of the tokens one expert owns, or None when it owns none.
+
+    An int means every token uses that expert. That keeps shapes static, which torch.export needs, where a
+    boolean mask makes them depend on the data.
+    """
+    if isinstance(token_types, int):
+        return ... if token_types == expert_index else None
+    mask = token_types == expert_index
+    return mask if mask.any() else None
+
+
 class WallOSS05SparseMLP(nn.Module):
     def __init__(self, experts: list[dict[str, Any]], dim_inputs: list[int], hidden_size: int):
         super().__init__()
@@ -125,12 +141,12 @@ class WallOSS05SparseMLP(nn.Module):
             ]
         )
 
-    def forward(self, hidden_states: Tensor, token_types: Tensor) -> Tensor:
+    def forward(self, hidden_states: Tensor, token_types: Tensor | int) -> Tensor:
         output = torch.zeros_like(hidden_states)
         for expert_index, (expert, width) in enumerate(zip(self.experts, self.dim_inputs, strict=True)):
-            mask = token_types == expert_index
-            if mask.any():
-                output[mask, :width] = expert(hidden_states[mask, :width])
+            rows = _expert_rows(token_types, expert_index)
+            if rows is not None:
+                output[rows, :width] = expert(hidden_states[rows, :width])
         return output
 
 
@@ -163,7 +179,7 @@ class WallOSS05JointAttention(nn.Module):
     def forward(
         self,
         hidden_states: Tensor,
-        token_types: Tensor,
+        token_types: Tensor | int,
         attention_mask: Tensor,
         position_embeddings: tuple[Tensor, Tensor],
         past_key_value: WallOSS05KeyValue | None = None,
@@ -176,14 +192,18 @@ class WallOSS05JointAttention(nn.Module):
         for expert_index, (projection, width) in enumerate(
             zip(self.qkv_proj_experts, self.dim_inputs, strict=True)
         ):
-            mask = token_types == expert_index
-            if not mask.any():
+            rows = _expert_rows(token_types, expert_index)
+            if rows is None:
                 continue
-            projected = projection(hidden_states[mask, :width].to(projection.weight.dtype))
-            projected = projected.view(-1, self.num_heads + 2 * self.num_key_value_heads, self.head_dim)
-            query[mask] = projected[:, : self.num_heads]
-            key[mask] = projected[:, self.num_heads : self.num_heads + self.num_key_value_heads]
-            value[mask] = projected[:, self.num_heads + self.num_key_value_heads :]
+            # Copy the column slice: this projection has a bias, and on a strided slice it gives other bits than
+            # on the contiguous rows a mask gather made. The bias-free MLP and the norms give the same bits.
+            projected = projection(hidden_states[rows, :width].contiguous().to(projection.weight.dtype))
+            projected = projected.unflatten(
+                -1, (self.num_heads + 2 * self.num_key_value_heads, self.head_dim)
+            )
+            query[rows] = projected[..., : self.num_heads, :]
+            key[rows] = projected[..., self.num_heads : self.num_heads + self.num_key_value_heads, :]
+            value[rows] = projected[..., self.num_heads + self.num_key_value_heads :, :]
 
         query = query.transpose(1, 2)
         key = key.transpose(1, 2)
@@ -214,9 +234,9 @@ class WallOSS05JointAttention(nn.Module):
         for expert_index, (projection, width) in enumerate(
             zip(self.o_proj_experts, self.dim_inputs, strict=True)
         ):
-            mask = token_types == expert_index
-            if mask.any():
-                output[mask, :width] = projection(attended[mask].to(projection.weight.dtype))
+            rows = _expert_rows(token_types, expert_index)
+            if rows is not None:
+                output[rows, :width] = projection(attended[rows].to(projection.weight.dtype))
         return output, present
 
 
@@ -235,18 +255,18 @@ class WallOSS05DecoderLayer(nn.Module):
         self.moe = WallOSS05SparseMLP(config.experts, widths, int(text_config.hidden_size))
         self.dim_inputs = widths
 
-    def _normalize(self, hidden_states: Tensor, token_types: Tensor, norms: nn.ModuleList) -> Tensor:
+    def _normalize(self, hidden_states: Tensor, token_types: Tensor | int, norms: nn.ModuleList) -> Tensor:
         output = torch.zeros_like(hidden_states)
         for expert_index, (norm, width) in enumerate(zip(norms, self.dim_inputs, strict=True)):
-            mask = token_types == expert_index
-            if mask.any():
-                output[mask, :width] = norm(hidden_states[mask, :width])
+            rows = _expert_rows(token_types, expert_index)
+            if rows is not None:
+                output[rows, :width] = norm(hidden_states[rows, :width])
         return output
 
     def forward(
         self,
         hidden_states: Tensor,
-        token_types: Tensor,
+        token_types: Tensor | int,
         attention_mask: Tensor,
         position_embeddings: tuple[Tensor, Tensor],
         past_key_value: WallOSS05KeyValue | None = None,
@@ -284,7 +304,7 @@ class WallOSS05Decoder(nn.Module):
     def forward(
         self,
         inputs_embeds: Tensor,
-        token_types: Tensor,
+        token_types: Tensor | int,
         attention_mask: Tensor,
         position_ids: Tensor,
         *,
@@ -308,9 +328,9 @@ class WallOSS05Decoder(nn.Module):
                 cache.append(present)
         output = torch.zeros_like(hidden_states)
         for expert_index, (norm, width) in enumerate(zip(self.norms, self.dim_inputs, strict=True)):
-            mask = token_types == expert_index
-            if mask.any():
-                output[mask, :width] = norm(hidden_states[mask, :width])
+            rows = _expert_rows(token_types, expert_index)
+            if rows is not None:
+                output[rows, :width] = norm(hidden_states[rows, :width])
         return output, tuple(cache) if use_cache else None
 
 
@@ -432,6 +452,7 @@ class WallOSS05Model(nn.Module):
         input_ids: Tensor,
         attention_mask: Tensor,
         image_grid_thw: Tensor | None,
+        vision_grid: Qwen2_5VisionGrid | None = None,
     ) -> Tensor:
         if image_grid_thw is None:
             positions = attention_mask.long().cumsum(-1) - 1
@@ -439,6 +460,18 @@ class WallOSS05Model(nn.Module):
             return positions[None].expand(3, -1, -1)
 
         merge_size = int(self.config.vision_config.spatial_merge_size)
+        if vision_grid is not None:
+            check_visible_images(input_ids, attention_mask, self.config)
+            position_ids = qwen_image_rope_index(
+                input_ids,
+                attention_mask,
+                vision_grid.grid_thw,
+                merge_size,
+                int(self.config.image_token_id),
+                vision_start_token_id=int(self.config.vision_start_token_id),
+            )
+            # Wall-OSS-0.5's own position loop puts padding at position 1.
+            return position_ids.masked_fill(attention_mask == 0, 1)
         position_ids = torch.ones(3, *input_ids.shape, device=input_ids.device, dtype=input_ids.dtype)
         image_index = 0
         for batch_index, ids in enumerate(input_ids):
@@ -485,18 +518,23 @@ class WallOSS05Model(nn.Module):
         input_ids: Tensor,
         pixel_values: Tensor | None,
         image_grid_thw: Tensor | None,
+        vision_grid: Qwen2_5VisionGrid | None = None,
     ) -> Tensor:
         embeddings = self.model.embed_tokens(input_ids)
         if pixel_values is None:
             return embeddings
-        vision_output = self.visual(pixel_values.to(self.visual.dtype), grid_thw=image_grid_thw)
-        image_embeddings = vision_output.pooler_output.to(embeddings)
+        pixel_values = pixel_values.to(self.visual.dtype)
+        if vision_grid is None:
+            image_embeddings = self.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
+        else:
+            image_embeddings = qwen2_5_vision_forward(self.visual, pixel_values, image_grid_thw, vision_grid)
+        image_embeddings = image_embeddings.to(embeddings)
         image_mask = (input_ids == int(self.config.image_token_id)).unsqueeze(-1)
-        expected = int(image_mask.sum())
-        if expected != image_embeddings.shape[0]:
-            raise ValueError(
-                f"Image token/features mismatch: {expected} tokens and {image_embeddings.shape[0]} features."
-            )
+        expected = image_mask.sum()
+        check_input(
+            expected == image_embeddings.shape[0],
+            lambda: f"Image token/features mismatch: {int(expected)} tokens and {image_embeddings.shape[0]} features.",
+        )
         return embeddings.masked_scatter(image_mask.expand_as(embeddings), image_embeddings)
 
     def _hidden_states(
@@ -727,10 +765,18 @@ class WallOSS05Model(nn.Module):
         action_dim: int,
         num_inference_timesteps: int,
         noise: Tensor | None = None,
+        vision_grid: Qwen2_5VisionGrid | None = None,
         **_: Any,
     ) -> dict[str, Tensor]:
         if action_dim != 26:
             raise ValueError("Wall-OSS-0.5 has a fixed 26D action space.")
+        if vision_grid is not None:
+            if pixel_values is None or image_grid_thw is None:
+                raise ValueError("vision_grid needs pixel_values and image_grid_thw.")
+        elif is_exporting() and pixel_values is not None:
+            raise ValueError(
+                "Exporting Wall-OSS-0.5 with images needs a vision_grid (see `predict_action_chunk`)."
+            )
         batch_size = input_ids.shape[0]
         if noise is None:
             noisy_actions = torch.randn(
@@ -744,21 +790,28 @@ class WallOSS05Model(nn.Module):
             noisy_actions = noise.to(input_ids.device, dtype=torch.float32).clone()
         times = self.action_preprocessor.inference_times(num_inference_timesteps, input_ids.device)
         prefix_length = input_ids.shape[1] - action_horizon
-        if (
-            prefix_length < 1
-            or (input_ids[:, :prefix_length] == self.action_token_id).any()
-            or not (input_ids[:, prefix_length:] == self.action_token_id).all()
-        ):
-            raise ValueError("Flow inputs must end with exactly action_horizon contiguous action tokens.")
+        is_action = input_ids == self.action_token_id
+        check_input(
+            prefix_length >= 1 and is_action[:, prefix_length:].all() & ~is_action[:, :prefix_length].any(),
+            "Flow inputs must end with exactly action_horizon contiguous action tokens.",
+        )
+        if moe_token_types is None:
+            raise ValueError("moe_token_types must be provided for MoE routing")
+        # The prefix then uses expert 0 and the action tokens expert 1, so each decoder call below takes one
+        # expert id instead of a per-token mask.
+        check_input(
+            (moe_token_types.long() == is_action.long()).all(),
+            "moe_token_types must mark exactly the action tokens.",
+        )
         # The causal observation/text prefix is independent of the flow timestep.
         # Keep this cache local to a chunk so the next observation always gets a fresh prefill.
-        embeddings = self._input_embeddings(input_ids, pixel_values, image_grid_thw)
-        positions = self._position_ids(input_ids, attention_mask, image_grid_thw)
+        embeddings = self._input_embeddings(input_ids, pixel_values, image_grid_thw, vision_grid)
+        positions = self._position_ids(input_ids, attention_mask, image_grid_thw, vision_grid)
         causal_mask = self._causal_mask(attention_mask)
         position_embeddings = self.model.rotary_emb(embeddings, positions)
         _, prefix_cache = self.model(
             embeddings[:, :prefix_length],
-            moe_token_types[:, :prefix_length].long(),
+            0,
             causal_mask[:, :prefix_length, :prefix_length],
             positions[:, :, :prefix_length],
             use_cache=True,
@@ -769,7 +822,7 @@ class WallOSS05Model(nn.Module):
             action_embeddings = self.action_preprocessor.embed(timestep, noisy_actions, dof_mask)
             hidden_states, _ = self.model(
                 action_embeddings.to(embeddings.dtype),
-                moe_token_types[:, prefix_length:].long(),
+                1,
                 causal_mask[:, prefix_length:],
                 positions[:, :, prefix_length:],
                 past_key_values=prefix_cache,
@@ -936,14 +989,26 @@ class WallOSS05Policy(PreTrainedPolicy):
         return loss, metrics
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        """`noise` is the optional starting sample, shape `(batch_size, chunk_size, max_action_dim)`."""
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        vision_grid: Qwen2_5VisionGrid | None = None,
+    ) -> Tensor:
+        """`noise` is the optional starting sample, shape `(batch_size, chunk_size, max_action_dim)`.
+
+        To export with `torch.export`, pass `vision_grid`, built once by
+        `Qwen2_5VisionGrid.build(self.model.visual, batch["image_grid_thw"])`, and export under
+        `torch.no_grad()`. The program accepts only the batch size and prompt length it was exported with.
+        """
         inputs = self._pretokenized_inputs(batch)
         output = self.model.generate_flow_action(
             action_horizon=self.config.chunk_size,
             action_dim=self.config.max_action_dim,
             num_inference_timesteps=self.config.num_inference_timesteps,
             noise=noise,
+            vision_grid=vision_grid,
             **inputs,
         )
         return output["predict_action"]
