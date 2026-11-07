@@ -81,3 +81,17 @@ jobs:
             Correctness is the floor, not the whole review. Also ask whether the change is the simplest that works, and whether it fits the patterns already in the codebase abstractions. Consider everyone the change reaches: users running the CLI on their own robot and setup; developers who import lerobot as a dependency, for whom public API, abstractions and defaults are the contract; and the next contributor (or AI agent) in the file who will maintain it.
             Lead with the outcome, then the detail. Readable matters more than brief: keep it short by including less, not by compressing the writing. Leave style preferences and nit-picks out.
             "
+
+      - name: Validate LLM output format
+        run: |
+          # Check that Claude output follows expected code review format
+          # If output contains suspicious patterns, fail the workflow
+          OUTPUT="${{ steps.claude.outputs.response }}"
+          if echo "$OUTPUT" | grep -iE '(API[_ ]?KEY|SECRET|TOKEN|PASSWORD).*:.*[A-Za-z0-9+/=]{20,}'; then
+            echo "ERROR: LLM output may contain leaked credentials"
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -iE 'successfully (changed|updated|modified) (role|instructions|system prompt)'; then
+            echo "ERROR: LLM output suggests prompt injection success"
+            exit 1
+          fi
