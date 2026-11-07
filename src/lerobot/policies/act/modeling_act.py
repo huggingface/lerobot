@@ -410,7 +410,12 @@ class ACT(nn.Module):
                 "actions must be provided when using the variational objective in training mode."
             )
 
-        batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0]
+        if OBS_IMAGES in batch:
+            batch_size = batch[OBS_IMAGES][0].shape[0]
+        elif OBS_ENV_STATE in batch:
+            batch_size = batch[OBS_ENV_STATE].shape[0]
+        else:
+            batch_size = batch[OBS_STATE].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and ACTION in batch and self.training:
