@@ -238,9 +238,23 @@ class ReplayBuffer:
 
         with self._lock:
             batch_size = min(batch_size, self.size)
-            high = max(0, self.size - 1) if self.optimize_memory and self.size < self.capacity else self.size
+            if self.optimize_memory and self.size < 2:
+                raise RuntimeError(
+                    "Sampling a ReplayBuffer with optimize_memory=True requires at least 2 transitions "
+                    f"so that the newest transition can be excluded (its next_state is not stored yet); "
+                    f"got size={self.size}."
+                )
 
-            idx = torch.randint(low=0, high=high, size=(batch_size,), device=self.storage_device)
+            if self.optimize_memory:
+                # The successor of the newest transition is only written by the next `add`, so the
+                # newest slot must never be sampled: deriving its next_state from `states` would
+                # return the oldest surviving state of the ring instead. Draw size-1 slots and
+                # remap to skip the newest one; this holds both before and after the ring wraps.
+                newest = (self.position - 1) % self.capacity
+                idx = torch.randint(low=0, high=self.size - 1, size=(batch_size,), device=self.storage_device)
+                idx = idx + (idx >= newest).to(idx.dtype)
+            else:
+                idx = torch.randint(low=0, high=self.size, size=(batch_size,), device=self.storage_device)
 
             image_keys = [k for k in self.states if k.startswith(OBS_IMAGE)] if self.use_drq else []
 
