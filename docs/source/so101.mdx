@@ -196,6 +196,24 @@ Repeat the operation for each motor as instructed.
 
 When you are done, the script will simply finish, at which point the motors are ready to be used. You can now plug the 3-pin cable from each motor to the next one, and the cable from the first motor (the 'shoulder pan' with id=1) to the controller board, which can now be attached to the base of the arm.
 
+<details>
+<summary>Reusing motors that already have unique IDs</summary>
+
+The reason `lerobot-setup-motors` asks you to connect motors one at a time is that brand-new motors all share the same factory-default ID, so daisy-chaining several of them together would make them collide on the bus and become impossible to tell apart.
+
+If your motors were already used in another arm and therefore already have distinct IDs, you don't need to isolate them. You can instead:
+
+1. Daisy-chain all the motors together and connect the whole chain to the controller board.
+2. Call `MotorsBus.broadcast_ping()` to list every ID currently present on the bus. If the number of IDs returned matches the number of physical motors, none of them share an ID and it's safe to proceed.
+3. Identify which physical motor corresponds to which ID. Since you can't tell IDs apart just by looking, read `Present_Position` for one ID at a time while manually rotating the corresponding motor by hand (or briefly enabling torque and nudging it) — the ID whose position changes is the one you just touched.
+4. Once identified, call `bus.setup_motor(motor_name, initial_baudrate=<current baudrate>, initial_id=<current id>)` for that motor. Passing both `initial_baudrate` and `initial_id` skips the single-motor bus scan, so it's safe to run with several motors still connected.
+
+⚠️ This only works if IDs are already unique. If any two motors currently share an ID (e.g. they are fresh out of the box), first isolate them with the standard one-motor-at-a-time procedure above to give them distinct IDs, then use this shortcut for any later remapping.
+
+⚠️ If you're swapping IDs between two motors that are both already in use (e.g. exchanging id=3 and id=5), don't write the new IDs in an order that would momentarily give two motors the same ID. Route through an unused temporary ID first, or make sure none of the target IDs overlap with any ID still in use.
+
+</details>
+
 #### Leader
 
 Do the same steps for the leader arm.
