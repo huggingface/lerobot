@@ -1139,7 +1139,9 @@ class FastWAM(torch.nn.Module):
         self.train_scheduler = self.train_video_scheduler
         self.infer_scheduler = self.infer_video_scheduler
 
-        self.device = torch.device(device)
+        # A buffer follows every move, and under FSDP2 CPU offload it stays on the GPU, unlike the weights.
+        # Bool, so casts like `.float()` skip it; non-persistent, so checkpoints do not change.
+        self.register_buffer("_device_marker", torch.empty(0, dtype=torch.bool), persistent=False)
         # When pinned (e.g. "cpu") the frozen text encoder stays here instead of following the
         # model onto the GPU: `_apply` skips it and `encode_prompt` runs it on this device, moving
         # the embeddings back to `self.device`. `None` = follow `self.device`.
@@ -1150,11 +1152,16 @@ class FastWAM(torch.nn.Module):
         self.loss_lambda_video = float(loss_lambda_video)
         self.loss_lambda_action = float(loss_lambda_action)
 
-        self.to(self.device)
+        self.to(device)
         # `self.to` above (via `_apply`) skips a pinned text encoder; make sure it really sits on
         # the pinned device (it was loaded there, but this is a cheap safety net).
         if self.text_encoder is not None and self._text_encoder_device is not None:
             self.text_encoder._apply(lambda t: t.to(self._text_encoder_device))
+
+    @property
+    def device(self) -> torch.device:
+        """The device FastWAM computes on, where it puts the inputs it builds itself."""
+        return self._device_marker.device
 
     @classmethod
     def from_wan22_pretrained(
