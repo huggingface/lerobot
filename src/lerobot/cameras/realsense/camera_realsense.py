@@ -426,6 +426,55 @@ class RealSenseCamera(Camera):
                 self.width, self.height = actual_width, actual_height
                 self.capture_width, self.capture_height = actual_width, actual_height
 
+    def get_intrinsics(self) -> dict[str, float] | None:
+        """Pinhole intrinsics of the stream this camera reads, or None.
+
+        The device knows these and hands them over for free, but nothing was
+        asking, so they were being discarded at capture time. Without them a
+        recorded depth map cannot be unprojected -- the depth is stored, and is
+        then unusable for anything geometric.
+
+        Returned in pixels for the frames this camera actually emits, which is
+        not always the sensor's native resolution: a rotated or resized capture
+        moves the principal point and scales the focal lengths, and applying the
+        raw profile numbers to a rotated frame silently transposes the camera.
+
+        Returns:
+            ``{"fx", "fy", "cx", "cy", "width", "height"}``, or None if the
+            camera is not connected.
+        """
+        if self.rs_profile is None:
+            return None
+        rs_stream = rs.stream.color if self.use_rgb else rs.stream.depth
+        profile = self.rs_profile.get_stream(rs_stream).as_video_stream_profile()
+        native = profile.get_intrinsics()
+        fx, fy, cx, cy = native.fx, native.fy, native.ppx, native.ppy
+        width, height = native.width, native.height
+
+        if self.rotation in (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE):
+            # a quarter turn swaps the axes, and the principal point with them
+            fx, fy = fy, fx
+            width, height = height, width
+            cx, cy = (
+                (height - 1 - cy, cx) if self.rotation == cv2.ROTATE_90_CLOCKWISE else (cy, width - 1 - cx)
+            )
+        elif self.rotation == cv2.ROTATE_180:
+            cx, cy = width - 1 - cx, height - 1 - cy
+
+        if self.width and self.height and (self.width != width or self.height != height):
+            sx, sy = self.width / width, self.height / height
+            fx, fy, cx, cy = fx * sx, fy * sy, cx * sx, cy * sy
+            width, height = self.width, self.height
+
+        return {
+            "fx": float(fx),
+            "fy": float(fy),
+            "cx": float(cx),
+            "cy": float(cy),
+            "width": int(width),
+            "height": int(height),
+        }
+
     def _read(self, read_depth: bool = False) -> NDArray[Any]:
         """Shared helper for :meth:`read`/:meth:`read_depth`: wait for a fresh color or depth frame."""
         if self.thread is None or not self.thread.is_alive():
