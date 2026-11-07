@@ -144,6 +144,60 @@ Language training uses `policy.text_loss_weight` (default `0.01`),
 `policy.flow_loss_weight` (default `1.0`), and `policy.tokenizer_max_length`
 (default `768`). `policy.recipe_path` optionally replaces the built-in recipe.
 
+## Export with torch.export
+
+`torch.export` cannot trace the stock vision tower, because it reads the image grid (`image_grid_thw`) into
+Python numbers. Build the grid data once from a preprocessed batch with the camera layout you deploy, and
+pass it to `predict_action_chunk`:
+
+```python
+import torch
+
+from lerobot.policies.common.qwen2_5_vision import Qwen2_5VisionGrid
+
+grid = Qwen2_5VisionGrid.build(policy.model.visual, batch["image_grid_thw"])
+tensors = {key: value for key, value in batch.items() if isinstance(value, torch.Tensor)}
+
+
+class Predict(torch.nn.Module):
+    def forward(self, tensors):
+        return policy.predict_action_chunk({**batch, **tensors}, vision_grid=grid)
+
+
+with torch.no_grad():
+    program = torch.export.export(Predict(), (tensors,), strict=False)
+```
+
+The program refuses inputs whose image grid differs from the one `grid` was built for, and attention masks
+that hide more than padding. An eager call with `vision_grid=grid` runs the same code as the program, so
+comparing it with a call without `vision_grid` checks the export path. That eager call also says which check
+refused an input; the program's `RuntimeError` does not. Pass both calls copies of one `noise` tensor, of
+shape `(batch_size, chunk_size, max_action_dim)`: without it, each call draws its own noise and the actions
+differ even when the export is right. Only the diffusion prediction mode exports, on PyTorch 2.9 or later.
+
+Save the program after `program.run_decompositions()`. On a GPU in bfloat16, PyTorch 2.10 and 2.11 cannot
+save it even then: the flash attention kernel that SDPA picks there, and the packed varlen vision attention
+(`vision_attn_implementation="varlen"`, or `"auto"` from PyTorch 2.10 on an Ampere or newer GPU in half
+precision), return a uint64 tensor that the serializer does not support. A float32 program saves.
+
+The program also keeps the batch size and prompt length (in tokens) it was exported with, and refuses
+other shapes. The processor pads a batch only to its longest prompt, so to serve prompts of different
+lengths, left-pad every prompt to one fixed length, for the export and for each call: `input_ids` with the
+pad token, and `attention_mask` and `moe_token_types` with zeros. Extra left padding changes the actions
+only by rounding.
+
+```python
+def left_pad(batch, length, pad_token_id):
+    padding = length - batch["input_ids"].shape[1]
+    if padding < 0:
+        raise ValueError(f"The prompt has {batch['input_ids'].shape[1]} tokens, more than length={length}.")
+    values = {"input_ids": pad_token_id, "attention_mask": 0, "moe_token_types": 0}
+    return {
+        **batch,
+        **{key: torch.nn.functional.pad(batch[key], (padding, 0), value=v) for key, v in values.items()},
+    }
+```
+
 ## License
 
 This model follows the **Apache 2.0 License**, consistent with the original [WallX repository](https://github.com/X-Square-Robot/wall-x).

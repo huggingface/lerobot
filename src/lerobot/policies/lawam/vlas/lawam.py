@@ -20,7 +20,11 @@ from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as functional
+from transformers.utils.generic import is_flash_attention_requested
 
+from lerobot.policies.common.input_checks import check_input
+from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid, qwen3_vl_forward
+from lerobot.policies.common.qwen_vision import is_exporting
 from lerobot.policies.lawam.lam_core.core.lam_model import build_latent_action_model
 from lerobot.policies.lawam.latent_world.processor_utils import (
     build_latent_world_processor_spec,
@@ -332,32 +336,19 @@ class LatentWorldPolicyBackend(nn.Module):
         num_queries: int,
         name: str,
     ) -> None:
-        device = inputs_embeds.device
-        placeholder_mask = placeholder_mask.to(device=device, dtype=torch.bool)
+        placeholder_mask = placeholder_mask.to(device=inputs_embeds.device, dtype=torch.bool)
 
-        bsz, seq_len = int(inputs_embeds.shape[0]), int(inputs_embeds.shape[1])
-        expected = int(bsz * num_queries)
-        got = int(placeholder_mask.sum().item())
-        if got != expected:
-            raise ValueError(
-                f"[LatentWorldPolicyBackend] {name} placeholder count mismatch: got={got}, expected={expected}"
-            )
-
+        bsz = int(inputs_embeds.shape[0])
         per_sample = placeholder_mask.sum(dim=1)
-        if not torch.all(per_sample == int(num_queries)):
-            bad = torch.nonzero(per_sample != int(num_queries), as_tuple=False).flatten()
-            b = int(bad[0].item()) if bad.numel() > 0 else -1
-            got_b = int(per_sample[b].item()) if b >= 0 else -1
-            raise ValueError(
-                f"[LatentWorldPolicyBackend] {name} placeholder count mismatch for sample {b}: got={got_b}, expected={num_queries}"
-            )
 
-        idx = placeholder_mask.nonzero(as_tuple=False)
-        flat = idx[:, 0] * seq_len + idx[:, 1]
-        idx = idx[flat.argsort()]
-        b_idx, p_idx = idx[:, 0], idx[:, 1]
-        q_idx = torch.arange(int(num_queries), device=device).repeat(bsz)
-        inputs_embeds[b_idx, p_idx, :] = queries[q_idx]
+        def per_sample_mismatch() -> str:
+            b = int(torch.nonzero(per_sample != int(num_queries))[0])
+            return f"[LatentWorldPolicyBackend] {name} placeholder count mismatch for sample {b}: got={int(per_sample[b])}, expected={num_queries}"
+
+        check_input(per_sample == int(num_queries), per_sample_mismatch)
+
+        # Fills the placeholders in row-major order, which repeats the queries once per sample.
+        inputs_embeds.masked_scatter_(placeholder_mask.unsqueeze(-1), queries.repeat(bsz, 1))
 
     def _run_vlm_stage(
         self,
@@ -370,7 +361,22 @@ class LatentWorldPolicyBackend(nn.Module):
         flow_placeholder_mask: torch.BoolTensor,
         act_query: torch.Tensor,
         flow_query: torch.Tensor,
+        vision_grid: Qwen3VisionGrid | None = None,
     ) -> dict[str, Any]:
+        """`vision_grid`, `Qwen3VisionGrid.build(self.vlm.model.visual, image_grid_thw)`, runs the Qwen3-VL model
+        without reading `image_grid_thw` on the host, as `torch.export` needs."""
+        q = int(self.num_action_queries)
+        if q == 0:
+            raise ValueError(
+                "[LatentWorldPolicyBackend] num_action_queries is 0; the action latent needs at least one "
+                "action query."
+            )
+        if is_exporting() and is_flash_attention_requested(self.vlm.model.language_model.config):
+            raise ValueError(
+                "Exporting the LaWAM VLM stage needs SDPA attention (`set_attn_implementation('sdpa')` on "
+                "the Qwen3-VL model): transformers' flash attention unpads the rows by the attention mask "
+                "values, which torch.export cannot trace."
+            )
         embed = self.vlm.get_input_embeddings()
         if embed is None:
             raise RuntimeError("[LatentWorldPolicyBackend] VLM does not expose input embeddings.")
@@ -380,7 +386,7 @@ class LatentWorldPolicyBackend(nn.Module):
             inputs_embeds=inputs_embeds,
             placeholder_mask=act_placeholder_mask,
             queries=act_query,
-            num_queries=int(self.num_action_queries),
+            num_queries=q,
             name="act_query",
         )
         self._inject_queries(
@@ -391,44 +397,56 @@ class LatentWorldPolicyBackend(nn.Module):
             name="flow_query",
         )
 
-        # HF transformers 4.57 Qwen3VL causal wrapper drops `hidden_states`
-        # from the returned output; use the underlying multimodal model output.
-        vlm_out = self.vlm.model(
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-            pixel_values=pixel_values,
-            image_grid_thw=image_grid_thw,
-        )
-        if vlm_out is None:
-            raise RuntimeError(
-                "[LatentWorldPolicyBackend] Qwen3VL base model forward returned None; "
-                "expected `last_hidden_state`."
+        if vision_grid is not None:
+            if pixel_values is None or image_grid_thw is None:
+                raise ValueError("vision_grid needs pixel_values and image_grid_thw.")
+            hidden = qwen3_vl_forward(
+                self.vlm.model,
+                inputs_embeds,
+                attention_mask,
+                pixel_values,
+                image_grid_thw,
+                vision_grid,
+                image_mask=input_ids == self.vlm.config.image_token_id,
             )
-        hidden = getattr(vlm_out, "last_hidden_state", None)
-        if hidden is None:
-            output_keys = list(vlm_out.keys()) if hasattr(vlm_out, "keys") else None
-            raise RuntimeError(
-                "[LatentWorldPolicyBackend] Qwen3VL base model output does not expose "
-                "`last_hidden_state`. "
-                f"output_type={type(vlm_out).__name__}, output_keys={output_keys}."
-            )
-        bsz = int(hidden.shape[0])
-        q = int(self.num_action_queries)
-        h_act = hidden[act_placeholder_mask]
-        if h_act.numel() == 0:
+        elif is_exporting() and pixel_values is not None:
             raise ValueError(
-                "[LatentWorldPolicyBackend] empty action hidden selection; check act_placeholder_mask."
+                "Exporting LaWAM with images needs a vision_grid, which only the VLM stage takes so far; the "
+                "full prediction passes no grid yet."
             )
-        if h_act.shape[0] != bsz * q:
-            raise ValueError(
-                f"[LatentWorldPolicyBackend] action hidden count mismatch: got={h_act.shape[0]}, expected={bsz * q}"
+        else:
+            # HF transformers 4.57 Qwen3VL causal wrapper drops `hidden_states`
+            # from the returned output; use the underlying multimodal model output.
+            vlm_out = self.vlm.model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                pixel_values=pixel_values,
+                image_grid_thw=image_grid_thw,
             )
+            if vlm_out is None:
+                raise RuntimeError(
+                    "[LatentWorldPolicyBackend] Qwen3VL base model forward returned None; "
+                    "expected `last_hidden_state`."
+                )
+            hidden = getattr(vlm_out, "last_hidden_state", None)
+            if hidden is None:
+                output_keys = list(vlm_out.keys()) if hasattr(vlm_out, "keys") else None
+                raise RuntimeError(
+                    "[LatentWorldPolicyBackend] Qwen3VL base model output does not expose "
+                    "`last_hidden_state`. "
+                    f"output_type={type(vlm_out).__name__}, output_keys={output_keys}."
+                )
+        # `_inject_queries` checked that every sample has exactly q action placeholders. The j-th one
+        # sits after every token whose running placeholder count is still at most j.
+        query_ids = torch.arange(q, device=hidden.device).view(1, q, 1)
+        counts = act_placeholder_mask.to(hidden.device).cumsum(dim=1)
+        positions = (counts.unsqueeze(1) <= query_ids).sum(dim=-1)
+        h_act = hidden.gather(1, positions.unsqueeze(-1).expand(-1, -1, hidden.shape[-1]))
 
-        pred_latent = self.vlm_to_lam(h_act.view(bsz, q, -1))
+        pred_latent = self.vlm_to_lam(h_act)
         return {
             "h_vlm": hidden,
             "pred_latent": pred_latent,
-            "vlm_out": vlm_out,
         }
 
     def _build_lam_teacher_inputs_for_distill(self, primary_video: torch.Tensor) -> torch.Tensor:
