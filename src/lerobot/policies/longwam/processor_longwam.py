@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, reduce
 from typing import Any
 
 import torch
@@ -58,8 +58,10 @@ def _pil_resample_axis(image: torch.Tensor, out_size: int, dim: int) -> torch.Te
     weight = torch.tensor([row + [0] * (taps - len(row)) for row in weights], device=image.device)
     image = image.movedim(dim, -1)
     gathered = image[..., index.flatten()].unflatten(-1, index.shape)
-    total = (gathered * weight).sum(-1) + (1 << (_PIL_PRECISION_BITS - 1))
-    return (total >> _PIL_PRECISION_BITS).clamp(0, 255).movedim(-1, dim)
+    # Tap by tap: ExecuTorch 1.6's optimized `sum` adds in float32; 1.7 fixes it (pytorch/executorch#24596).
+    total = reduce(torch.add, (gathered * weight).unbind(-1)) + (1 << (_PIL_PRECISION_BITS - 1))
+    # A floor division, since PyTorch's Core ATen operators, which ExecuTorch takes, have no right shift.
+    return total.div(1 << _PIL_PRECISION_BITS, rounding_mode="floor").clamp(0, 255).movedim(-1, dim)
 
 
 def _pil_bilinear_resize(image: torch.Tensor, height: int, width: int) -> torch.Tensor:

@@ -20,7 +20,7 @@ from transformers import PreTrainedTokenizerFast
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.longwam.configuration_longwam import LongWAMConfig
 from lerobot.policies.longwam.modeling_longwam import LongWAMPolicy
-from lerobot.policies.longwam.processor_longwam import LongWAMObservations
+from lerobot.policies.longwam.processor_longwam import LongWAMObservations, _pil_bilinear_resize
 from lerobot.processor import NormalizerProcessorStep, TokenizerProcessorStep
 from lerobot.utils.constants import OBS_LANGUAGE_TOKENS
 
@@ -442,3 +442,23 @@ def test_restore_shared_text_weights_after_loading_boundary(config, boundary):
     policy.tie_weights()
     assert policy.text_encoder.shared.weight is policy.text_encoder.encoder.embed_tokens.weight
     assert not policy.text_encoder.shared.weight.requires_grad
+
+
+def test_frame_resize_uses_only_operations_executorch_computes_exactly():
+    """No right shift (not Core ATen) and no integer `sum` (ExecuTorch 1.6 adds it in float32) in the resize."""
+
+    class Resize(torch.nn.Module):
+        def forward(self, image):
+            return _pil_bilinear_resize(image, 16, 16)
+
+    image = torch.randint(
+        0, 256, (2, 3, 20, 28), dtype=torch.uint8, generator=torch.Generator().manual_seed(0)
+    )
+    graph = torch.export.export(Resize(), (image,)).run_decompositions().graph
+    calls = [node for node in graph.nodes if node.op == "call_function"]
+    names = {str(node.target) for node in calls}
+    assert not {name for name in names if "shift" in name}
+    integer_sums = [
+        node for node in calls if "sum" in str(node.target) and not node.meta["val"].dtype.is_floating_point
+    ]
+    assert not integer_sums
