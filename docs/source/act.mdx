@@ -69,6 +69,7 @@ lerobot-train \
 1. **Start with defaults**: ACT's default hyperparameters work well for most tasks
 2. **Training duration**: Expect a few hours for 100k training steps on a single GPU
 3. **Batch size**: Start with batch size 8 and adjust based on your GPU memory
+4. **Memory-constrained GPUs**: Add `--policy.gradient_checkpointing=true` to trade some training speed for a significantly larger batch size that fits in memory
 
 ### Train using Google Colab
 
