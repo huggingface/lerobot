@@ -160,6 +160,7 @@ from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.keyboard_input import init_keyboard_listener
+from lerobot.utils.motor_temperature import MotorTemperatureMonitor, make_temperature_monitor
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -188,6 +189,8 @@ class RecordConfig:
     display_port: int | None = None
     # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
+    # Read temperatures once a second and warn/plot at 50, 55 and 65 Celsius.
+    monitor_motor_temperature: bool = False
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Resume recording on an existing dataset.
@@ -250,6 +253,7 @@ def record_loop(
     display_mode: str = "rerun",
     display_compressed_images: bool = False,
     timer: CycleTimer | None = None,
+    temperature_monitor: MotorTemperatureMonitor | None = None,
 ) -> None:
     """Drive the robot from the teleoperator at *fps*, optionally recording each frame.
 
@@ -259,6 +263,8 @@ def record_loop(
     statistics span the whole session and are reported per episode.  Without it each
     call gets a private timer: identical pacing and identical slow-loop warnings, just
     no end-of-run summary, since a single phase has no run to summarise.
+
+    ``temperature_monitor`` shares the open bus and keeps alerts across episodes and resets.
     """
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -311,6 +317,8 @@ def record_loop(
             # Get robot observation
             obs = robot.get_observation()
 
+        temperatures = temperature_monitor.poll() if temperature_monitor else {}
+
         with timer.section("process_obs"):
             # Applies a pipeline to the raw robot observation, default is IdentityProcessor
             obs_processed = robot_observation_processor(obs)
@@ -354,6 +362,8 @@ def record_loop(
         # still has to end: `continue`ing straight past the tail of the loop body used to
         # spin at full CPU speed on a `control_time_s` that never advanced.
         if robot_action_to_send is None:
+            if temperatures:
+                log_visualization_data(display_mode, observation=temperatures)
             timer.wait()
             timestamp = time.perf_counter() - start_episode_t
             continue
@@ -376,10 +386,12 @@ def record_loop(
             with timer.section("telemetry"):
                 log_visualization_data(
                     display_mode,
-                    observation=obs_processed,
+                    observation={**obs_processed, **temperatures} if temperatures else obs_processed,
                     action=action_values,
                     compress_images=display_compressed_images,
                 )
+        elif temperatures:
+            log_visualization_data(display_mode, observation=temperatures)
 
         # End the recorded episode when the sim robot's episode ends (success, failure or step limit).
         if dataset is not None and episode_ended(robot):
@@ -399,7 +411,7 @@ def record(
 ) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
-    if cfg.display_data:
+    if cfg.display_data or cfg.monitor_motor_temperature:
         init_visualization(
             cfg.display_mode, session_name="recording", ip=cfg.display_ip, port=cfg.display_port
         )
@@ -441,6 +453,7 @@ def record(
 
     dataset = None
     listener = None
+    temperature_monitor = None
     # One timer for the whole session, so its statistics describe the recording rather
     # than one episode's slice of it.  The reset phases below deliberately run on their
     # own private timers: they write no frames, so folding their ticks in would dilute
@@ -497,6 +510,8 @@ def record(
         if teleop is not None:
             teleop.connect()
         robot.connect()
+        if cfg.monitor_motor_temperature:
+            temperature_monitor = make_temperature_monitor(robot)
 
         listener, events = init_keyboard_listener()
 
@@ -526,6 +541,7 @@ def record(
                     display_mode=cfg.display_mode,
                     display_compressed_images=display_compressed_images,
                     timer=timer,
+                    temperature_monitor=temperature_monitor,
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
@@ -548,6 +564,7 @@ def record(
                         display_data=cfg.display_data,
                         display_mode=cfg.display_mode,
                         display_compressed_images=display_compressed_images,
+                        temperature_monitor=temperature_monitor,
                     )
 
                 if events["rerecord_episode"]:
@@ -569,6 +586,8 @@ def record(
                 timer.log_episode_summary(f"episode {episode_index}")
                 timer.restart()
     finally:
+        if temperature_monitor:
+            temperature_monitor.close()
         # First, and in `finally`: ^C is how most recording sessions end, and the summary
         # is most useful before the video encoding and the hub upload scroll it away.
         timer.log_run_summary()
@@ -586,7 +605,7 @@ def record(
         if listener is not None:
             listener.stop()
 
-        if cfg.display_data:
+        if cfg.display_data or cfg.monitor_motor_temperature:
             shutdown_visualization(cfg.display_mode)
 
         if cfg.dataset.push_to_hub:
