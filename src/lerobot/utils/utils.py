@@ -89,7 +89,7 @@ def init_logging(
     else:
         # Suppress console output for non-main processes
         logger.addHandler(logging.NullHandler())
-        logger.setLevel(logging.ERROR)
+        # Keep the root level open so the file handler can apply file_level.
 
     if log_file is not None:
         file_handler = logging.FileHandler(log_file)
