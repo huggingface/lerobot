@@ -30,7 +30,6 @@ from lerobot.inference import InferenceEngineConfig, RemoteInferenceConfig, Sync
 from lerobot.robots.config import RobotConfig
 from lerobot.robots.sim_robot import SimRobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
-from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
 from .planner import PlannerConfig
 
@@ -458,6 +457,9 @@ class RolloutConfig:
         # device string instead of inconsistent fallbacks.
         if remote:
             return
+        # Imported after the checks above, since it loads torch.
+        from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
+
         if self.device is None or not is_torch_device_available(self.device):
             resolved = self.policy.device
             if resolved:

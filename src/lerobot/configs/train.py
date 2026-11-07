@@ -17,6 +17,7 @@ import json
 import logging
 import multiprocessing
 import os
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
@@ -37,7 +38,8 @@ from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
+from .default import DatasetConfig, EvalConfig, PeftConfig, TrackioConfig
+from .job import JobConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
@@ -511,5 +513,10 @@ class TrainPipelineConfig(HubMixin):
                     json.dump(config, f)
                     config_file = f.name
 
+        # draccus reads the command line when the arguments are None, so read the same ones. A list, since they
+        # are read twice.
+        cli_args = sys.argv[1:] if cli_args is None else list(cli_args)
+        # Policies load on demand, so register the ones these overrides need before draccus builds its parser.
+        parser.load_selected_choices(cls, cli_args)
         with draccus.config_type("json"):
             return draccus.parse(cls, config_file, args=cli_args)

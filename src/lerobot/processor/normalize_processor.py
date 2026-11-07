@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 
 from lerobot.utils.constants import ACTION
 
-from .converters import from_tensor_to_numpy, to_tensor
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
+from .tensor_converters import from_tensor_to_numpy, to_tensor
 
 
 @dataclass

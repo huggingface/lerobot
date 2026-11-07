@@ -56,4 +56,6 @@ class MyEnvConfig(EnvConfig):
         return PolicyProcessorPipeline(steps=[MyEnvProcessorStep()]), PolicyProcessorPipeline(steps=[])
 ```
 
+If the step lives in a `lerobot.processor` module, also add the step name to `BUILTIN_STEP_MODULES` in `src/lerobot/processor/pipeline.py`, so a saved pipeline can find the step without importing every processor module. `tests/processor/test_pipeline.py` checks that table.
+
 Keep it environment-specific (key layouts, coordinate frames) and leave normalization and model-specific transforms to the policy's processors.
