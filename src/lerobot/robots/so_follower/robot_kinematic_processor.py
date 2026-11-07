@@ -88,16 +88,7 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
         if self.use_ik_solution and complementary_data is not None and "IK_solution" in complementary_data:
             q_raw = complementary_data["IK_solution"]
         else:
-            q_raw = np.array(
-                [
-                    float(v)
-                    for k, v in observation.items()
-                    if isinstance(k, str)
-                    and k.endswith(".pos")
-                    and k.removesuffix(".pos") in self.motor_names
-                ],
-                dtype=float,
-            )
+            q_raw = np.array([float(observation[f"{n}.pos"]) for n in self.motor_names], dtype=float)
 
         if q_raw is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
@@ -320,10 +311,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
 
         observation = raw_observation.copy()
 
-        q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
-            dtype=float,
-        )
+        q_raw = np.array([float(observation[f"{n}.pos"]) for n in self.motor_names], dtype=float)
         if q_raw is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
@@ -405,10 +393,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
         observation = raw_observation.copy()
 
-        q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
-            dtype=float,
-        )
+        q_raw = np.array([float(observation["gripper.pos"])], dtype=float)
         if q_raw is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
@@ -420,7 +405,6 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 
         # Compute desired gripper position
         delta = gripper_vel * float(self.speed_factor)
-        # TODO: This assumes gripper is the last specified joint in the robot
         gripper_pos = float(np.clip(q_raw[-1] + delta, self.clip_min, self.clip_max))
         action["ee.gripper_pos"] = gripper_pos
 
@@ -596,10 +580,7 @@ class InverseKinematicsRLStep(ProcessorStep):
 
         observation = raw_observation.copy()
 
-        q_raw = np.array(
-            [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
-            dtype=float,
-        )
+        q_raw = np.array([float(observation[f"{n}.pos"]) for n in self.motor_names], dtype=float)
         if q_raw is None:
             raise ValueError("Joints observation is require for computing robot kinematics")
 
