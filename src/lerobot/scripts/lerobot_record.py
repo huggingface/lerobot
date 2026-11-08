@@ -502,7 +502,14 @@ def record(
         # Record each connected device's calibration and servo gains (session-constant)
         # so the dataset captures which arm produced it and how its controller was tuned.
         if dataset is not None:
-            dataset.meta.calibration = build_calibration_metadata(robot, teleop)
+            calibration = build_calibration_metadata(robot, teleop)
+            existing = dataset.meta.calibration
+            if existing is not None and existing != calibration:
+                logging.warning(
+                    "The resumed dataset's stored calibration or servo gains differ from the "
+                    "current connection; meta/info.json now reflects this session."
+                )
+            dataset.meta.calibration = calibration
 
         listener, events = init_keyboard_listener()
 

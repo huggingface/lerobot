@@ -324,9 +324,15 @@ class DatasetInfo:
 # controller gains and motion settings that produced a dataset's trajectories.
 # Best-effort: a register a given motor model does not expose is simply skipped.
 CONTROL_REGISTERS = (
+    # Feetech STS/SCS PID gains.
     "P_Coefficient",
     "I_Coefficient",
     "D_Coefficient",
+    # Dynamixel PID gains.
+    "Position_P_Gain",
+    "Position_I_Gain",
+    "Position_D_Gain",
+    # Motion settings (Feetech names; a motor model without one is skipped).
     "Operating_Mode",
     "Acceleration",
     "Maximum_Acceleration",
@@ -339,32 +345,34 @@ CONTROL_REGISTERS = (
 
 def _motor_calib_dict(calibration: Any) -> dict[str, Any]:
     """Serialise one motor calibration (a ``MotorCalibration`` or plain dict) to JSON."""
-    if isinstance(calibration, dict):
-        return dict(calibration)
-    return dataclasses.asdict(calibration)
+    raw = dict(calibration) if isinstance(calibration, dict) else dataclasses.asdict(calibration)
+    # json.dump cannot serialise numpy scalars, which custom robots or tests may store.
+    return {k: int(v) if isinstance(v, int | np.integer) else v for k, v in raw.items()}
 
 
 def _read_control_registers(device: Any) -> dict[str, dict[str, int]]:
     """Read back :data:`CONTROL_REGISTERS` from each of a device's motors.
 
-    Returns ``{motor_name: {register: value}}``. A device without a connected,
-    readable motor bus yields an empty dict. Individual read failures (an
-    unsupported register, a comm error) are skipped so that recording never
-    fails on this best-effort metadata.
+    Returns ``{motor_name: {register: value}}``. Only registers a motor model
+    actually exposes are read, one ``sync_read`` per register. A device without a
+    connected, readable motor bus yields an empty dict. Individual read failures
+    (an unsupported register, a comm error) are skipped so recording never fails
+    on this best-effort metadata.
     """
     bus = getattr(device, "bus", None)
     if bus is None or not getattr(bus, "is_connected", False):
         return {}
-    if not (hasattr(bus, "motors") and hasattr(bus, "read")):
+    if not (hasattr(bus, "motors") and hasattr(bus, "sync_read") and hasattr(bus, "_has_register")):
         return {}
     registers: dict[str, dict[str, int]] = {}
-    for motor in bus.motors:
-        values: dict[str, int] = {}
-        for name in CONTROL_REGISTERS:
-            with contextlib.suppress(KeyError, ConnectionError, RuntimeError, ValueError):
-                values[name] = int(bus.read(name, motor, normalize=False))
-        if values:
-            registers[motor] = values
+    for name in CONTROL_REGISTERS:
+        with contextlib.suppress(
+            KeyError, ConnectionError, RuntimeError, ValueError, TypeError, AttributeError
+        ):
+            motors = [m for m in bus.motors if bus._has_register(m, name)]
+            if motors:
+                for motor, value in bus.sync_read(name, motors).items():
+                    registers.setdefault(motor, {})[name] = int(value)
     return registers
 
 
@@ -380,8 +388,10 @@ def _device_calibration_record(device: Any) -> dict[str, Any]:
     right = getattr(device, "right_arm", None)
     arms = [("left_", left), ("right_", right)] if left is not None and right is not None else [("", device)]
     for prefix, arm in arms:
-        for motor, cal in getattr(arm, "calibration", {}).items():
-            motors[prefix + motor] = _motor_calib_dict(cal)
+        cal = getattr(arm, "calibration", None)
+        if isinstance(cal, dict):
+            for motor, c in cal.items():
+                motors[prefix + motor] = _motor_calib_dict(c)
         for motor, regs in _read_control_registers(arm).items():
             registers[prefix + motor] = regs
     return {"name": device.name, "id": device.id, "motors": motors, "registers": registers}

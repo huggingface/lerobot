@@ -588,13 +588,18 @@ CALIB = {
 
 
 class _FakeBus:
+    """Minimal stand-in for a ``MotorsBus``: register table + one sync_read per call."""
+
     def __init__(self, motors, registers):
         self.motors = motors
         self.is_connected = True
-        self._registers = registers
+        self._registers = registers  # {motor_name: {register: value}}
 
-    def read(self, name, motor, normalize=False):
-        return self._registers[motor][name]
+    def _has_register(self, motor, name):
+        return name in self._registers.get(motor, {})
+
+    def sync_read(self, name, motors):
+        return {m: self._registers[m][name] for m in motors}
 
 
 class _FakeDevice:
@@ -723,7 +728,7 @@ def test_build_calibration_metadata_bimanual():
 
 
 def test_build_calibration_metadata_skips_unsupported_registers():
-    # _FakeBus.read raises KeyError for registers it doesn't hold -> skipped.
+    # Motor "m" only exposes P_Coefficient; the rest are filtered out by _has_register.
     bus = _FakeBus({"m": object()}, {"m": {"P_Coefficient": 16}})
     robot = _FakeDevice(
         "r",
@@ -759,3 +764,59 @@ def test_build_calibration_metadata_motor_calib_dataclass():
         "range_min": 100,
         "range_max": 4000,
     }
+
+
+def test_build_calibration_metadata_records_dynamixel_gains():
+    bus = _FakeBus(
+        {"joint": object()},
+        {"joint": {"Position_P_Gain": 800, "Position_I_Gain": 0, "Position_D_Gain": 100}},
+    )
+    robot = _FakeDevice(
+        "omx_follower",
+        "black",
+        {"joint": {"id": 1, "drive_mode": 0, "homing_offset": 0, "range_min": 0, "range_max": 1}},
+        bus=bus,
+    )
+    record = build_calibration_metadata(robot)
+    regs = record["follower"]["registers"]["joint"]
+    assert regs["Position_P_Gain"] == 800
+    assert regs["Position_I_Gain"] == 0
+    assert regs["Position_D_Gain"] == 100
+
+
+def test_build_calibration_metadata_skips_non_dict_calibration():
+    class _ExoskeletonCalib:  # not a dict, e.g. the Unitree G1's ExoskeletonCalibration
+        pass
+
+    robot = _FakeDevice("unitree_g1", "bimanual", _ExoskeletonCalib())
+    record = build_calibration_metadata(robot)
+    assert record["follower"]["motors"] == {}
+    assert record["follower"]["registers"] == {}
+
+
+def test_build_calibration_metadata_casts_numpy_ints():
+    bus = _FakeBus({"m": object()}, {"m": {"P_Coefficient": np.int64(16)}})
+    robot = _FakeDevice(
+        "r",
+        "i",
+        {"m": {"id": np.int64(1), "homing_offset": np.int64(12), "range_min": 0, "range_max": 1}},
+        bus=bus,
+    )
+    record = build_calibration_metadata(robot)
+    assert record["follower"]["motors"]["m"]["id"] == 1
+    assert record["follower"]["motors"]["m"]["homing_offset"] == 12
+    assert record["follower"]["registers"]["m"]["P_Coefficient"] == 16
+    json.dumps(record)  # must be JSON-serialisable
+
+
+def test_build_calibration_metadata_bus_without_sync_read_is_safe():
+    class _ReadonlyBus:  # a bus exposing only read(data_name, motor), no sync_read
+        is_connected = True
+        motors = {"m": object()}
+
+        def read(self, data_name, motor):
+            return 0
+
+    robot = _FakeDevice("openarm_follower", "black", {}, bus=_ReadonlyBus())
+    record = build_calibration_metadata(robot)
+    assert record["follower"]["registers"] == {}
