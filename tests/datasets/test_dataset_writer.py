@@ -136,7 +136,8 @@ def test_add_frame_rejects_missing_feature(tmp_path):
         # missing 'action'
 
 
-def test_image_writer_queue_limit_forwarded_on_create_and_resume(tmp_path):
+@pytest.mark.parametrize(("create_limit", "resume_limit"), [(None, None), (0, 0), (2, 3)])
+def test_image_writer_queue_limit_forwarded_on_create_and_resume(tmp_path, create_limit, resume_limit):
     image_features = {"image": {"dtype": "image", "shape": (8, 8, 3), "names": None}}
     root = tmp_path / "ds"
     dataset = LeRobotDataset.create(
@@ -146,10 +147,10 @@ def test_image_writer_queue_limit_forwarded_on_create_and_resume(tmp_path):
         root=root,
         use_videos=False,
         image_writer_threads=1,
-        image_writer_queue_maxsize=2,
+        **({} if create_limit is None else {"image_writer_queue_maxsize": create_limit}),
     )
     try:
-        assert dataset.writer.image_writer.queue.maxsize == 2
+        assert dataset.writer.image_writer.queue.maxsize == (create_limit or 0)
     finally:
         dataset.finalize()
 
@@ -157,10 +158,10 @@ def test_image_writer_queue_limit_forwarded_on_create_and_resume(tmp_path):
         repo_id=DUMMY_REPO_ID,
         root=root,
         image_writer_threads=1,
-        image_writer_queue_maxsize=3,
+        **({} if resume_limit is None else {"image_writer_queue_maxsize": resume_limit}),
     )
     try:
-        assert resumed.writer.image_writer.queue.maxsize == 3
+        assert resumed.writer.image_writer.queue.maxsize == (resume_limit or 0)
     finally:
         resumed.finalize()
 

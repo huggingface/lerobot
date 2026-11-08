@@ -81,20 +81,76 @@ def test_invalid_worker_counts(num_processes, num_threads):
         AsyncImageWriter(num_processes=num_processes, num_threads=num_threads)
 
 
-@pytest.mark.parametrize("queue_maxsize", [0, -1])
+@pytest.mark.parametrize("queue_maxsize", [-1, -30])
 def test_invalid_queue_maxsize(queue_maxsize):
     with pytest.raises(ValueError, match="queue_maxsize"):
         AsyncImageWriter(queue_maxsize=queue_maxsize)
 
 
 @pytest.mark.parametrize("num_processes", [0, 1])
-def test_image_writer_queue_has_finite_default(num_processes):
+def test_image_writer_queue_is_unbounded_by_default(num_processes):
     writer = AsyncImageWriter(num_processes=num_processes, num_threads=1)
     try:
-        maxsize = writer.queue.maxsize if num_processes == 0 else writer.queue._maxsize
-        assert maxsize == 30
+        assert writer.queue_maxsize == 0
+        if num_processes == 0:
+            assert writer.queue.maxsize == 0
     finally:
         writer.stop()
+
+
+def test_default_image_writer_absorbs_a_disk_stall(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+
+    def stalled_write(image, fpath, compress_level):
+        started.set()
+        assert release.wait(timeout=10)
+        write_image(image, fpath, compress_level)
+
+    image = np.full((8, 9, 3), 127, dtype=np.uint8)
+    paths = [tmp_path / f"frame-{i}.png" for i in range(120)]
+    with patch("lerobot.datasets.image_writer.write_image", side_effect=stalled_write):
+        writer = AsyncImageWriter()
+        try:
+            writer.save_image(image, paths[0])
+            assert started.wait(timeout=5), "writer did not reach the simulated disk stall"
+            for path in paths[1:]:
+                writer.save_image(image, path)
+            assert writer.queue.qsize() == len(paths) - 1
+        finally:
+            release.set()
+            writer.stop()
+
+    for path in paths:
+        with Image.open(path) as saved:
+            np.testing.assert_array_equal(np.asarray(saved), image)
+
+
+@pytest.mark.parametrize("queue_kwargs", [{}, {"queue_maxsize": 0}], ids=["default", "explicit-zero"])
+def test_unbounded_spawn_image_writer_absorbs_a_disk_stall(tmp_path, monkeypatch, queue_kwargs):
+    ctx = multiprocessing.get_context("spawn")
+    ready, release = ctx.Event(), ctx.Event()
+
+    def process(*, target, args):
+        return ctx.Process(target=_gated_process_worker, args=(ready, release, target, args))
+
+    monkeypatch.setattr(image_writer.multiprocessing, "Process", process)
+    monkeypatch.setattr(image_writer.multiprocessing, "JoinableQueue", ctx.JoinableQueue)
+    writer = AsyncImageWriter(num_processes=1, **queue_kwargs)
+    image = np.full((8, 9, 3), 127, dtype=np.uint8)
+    paths = [tmp_path / f"frame-{i}.png" for i in range(120)]
+    try:
+        assert ready.wait(timeout=30), "spawned worker did not start"
+        for path in paths:
+            writer.save_image(image, path)
+    finally:
+        release.set()
+        writer.stop()
+
+    assert all(p.exitcode == 0 for p in writer.processes)
+    for path in paths:
+        with Image.open(path) as saved:
+            np.testing.assert_array_equal(np.asarray(saved), image)
 
 
 def test_full_image_writer_queue_rejects_frame_without_waiting_for_worker(tmp_path):

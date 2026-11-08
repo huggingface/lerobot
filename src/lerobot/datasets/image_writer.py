@@ -200,16 +200,17 @@ class AsyncImageWriter:
     When `num_processes=0`, it creates a threads pool of size `num_threads`.
     When `num_processes>0`, it creates processes pool of size `num_processes`, where each subprocess starts
     their own threads pool of size `num_threads`. `num_processes` must be non-negative and
-    `num_threads` must be positive in both modes. The shared queue holds at most
-    `queue_maxsize` pending images (30 by default). When it remains full for 0.1 seconds,
-    `save_image` raises `queue.Full` instead of retaining images without a bound.
+    `num_threads` must be positive in both modes. The shared queue is unbounded by default
+    (`queue_maxsize=0`) to absorb temporary disk stalls. A positive `queue_maxsize` limits
+    pending images across all workers. If that bounded queue remains full for 0.1 seconds,
+    `save_image` raises `queue.Full` instead of dropping frames.
 
     The optimal number of processes and threads depends on your computer capabilities.
     We advise to use 4 threads per camera with 0 processes. If the fps is not stable, try to increase or lower
     the number of threads. If it is still not stable, try to use 1 subprocess, or more.
     """
 
-    def __init__(self, num_processes: int = 0, num_threads: int = 1, queue_maxsize: int = 30) -> None:
+    def __init__(self, num_processes: int = 0, num_threads: int = 1, queue_maxsize: int = 0) -> None:
         self.num_processes = num_processes
         self.num_threads = num_threads
         self.queue_maxsize = queue_maxsize
@@ -222,8 +223,8 @@ class AsyncImageWriter:
             raise ValueError("Number of threads must be greater than zero.")
         if num_processes < 0:
             raise ValueError("Number of processes must be non-negative.")
-        if queue_maxsize <= 0:
-            raise ValueError("Image writer queue_maxsize must be greater than zero.")
+        if queue_maxsize < 0:
+            raise ValueError("Image writer queue_maxsize must be non-negative.")
 
         if self.num_processes == 0:
             # Use threading

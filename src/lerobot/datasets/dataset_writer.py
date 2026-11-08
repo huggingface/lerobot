@@ -608,14 +608,14 @@ class DatasetWriter:
         self.episode_buffer = self._create_episode_buffer()
 
     def start_image_writer(
-        self, num_processes: int = 0, num_threads: int = 4, queue_maxsize: int = 30
+        self, num_processes: int = 0, num_threads: int = 4, queue_maxsize: int = 0
     ) -> None:
         """Start an :class:`AsyncImageWriter` for background image persistence.
 
         Args:
             num_processes: Number of subprocesses. ``0`` means threads only.
             num_threads: Number of threads per process.
-            queue_maxsize: Maximum number of pending image writes.
+            queue_maxsize: Maximum number of pending image writes. ``0`` (default) is unbounded.
         """
         if isinstance(self.image_writer, AsyncImageWriter):
             logger.warning(
