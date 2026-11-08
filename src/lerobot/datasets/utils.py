@@ -222,9 +222,8 @@ class DatasetInfo:
     # OpenAI-style tool schemas declared by the dataset. ``None`` means the
     # dataset doesn't declare any — readers fall back to ``DEFAULT_TOOLS``.
     tools: list[dict] | None = None
-    # Per-session robot calibration and servo control registers, built by
-    # ``build_calibration_metadata``. ``None`` means the dataset was recorded
-    # without one, which is the case for every dataset predating this field.
+    # Per-session robot calibration and servo gains; ``None`` for datasets recorded
+    # without one (before this field existed). Built by build_calibration_metadata.
     calibration: dict | None = None
 
     def __post_init__(self) -> None:
@@ -320,19 +319,15 @@ class DatasetInfo:
             return default
 
 
-# Servo control registers read back from each motor at connect. They record the
-# controller gains and motion settings that produced a dataset's trajectories.
-# Best-effort: a register a given motor model does not expose is simply skipped.
+# Servo control registers read back at connect: Feetech P/I/D, Dynamixel P/I/D,
+# then shared motion settings. Best-effort: a motor model without one skips it.
 CONTROL_REGISTERS = (
-    # Feetech STS/SCS PID gains.
     "P_Coefficient",
     "I_Coefficient",
     "D_Coefficient",
-    # Dynamixel PID gains.
     "Position_P_Gain",
     "Position_I_Gain",
     "Position_D_Gain",
-    # Motion settings (Feetech names; a motor model without one is skipped).
     "Operating_Mode",
     "Acceleration",
     "Maximum_Acceleration",
@@ -344,21 +339,13 @@ CONTROL_REGISTERS = (
 
 
 def _motor_calib_dict(calibration: Any) -> dict[str, Any]:
-    """Serialise one motor calibration (a ``MotorCalibration`` or plain dict) to JSON."""
+    """One motor calibration (a ``MotorCalibration`` or dict) as JSON-safe scalars (numpy int -> int)."""
     raw = dict(calibration) if isinstance(calibration, dict) else dataclasses.asdict(calibration)
-    # json.dump cannot serialise numpy scalars, which custom robots or tests may store.
     return {k: int(v) if isinstance(v, int | np.integer) else v for k, v in raw.items()}
 
 
 def _read_control_registers(device: Any) -> dict[str, dict[str, int]]:
-    """Read back :data:`CONTROL_REGISTERS` from each of a device's motors.
-
-    Returns ``{motor_name: {register: value}}``. Only registers a motor model
-    actually exposes are read, one ``sync_read`` per register. A device without a
-    connected, readable motor bus yields an empty dict. Individual read failures
-    (an unsupported register, a comm error) are skipped so recording never fails
-    on this best-effort metadata.
-    """
+    """Read back the control registers per motor as ``{motor: {register: value}}`` (best-effort)."""
     bus = getattr(device, "bus", None)
     if bus is None or not getattr(bus, "is_connected", False):
         return {}
@@ -377,11 +364,7 @@ def _read_control_registers(device: Any) -> dict[str, dict[str, int]]:
 
 
 def _device_calibration_record(device: Any) -> dict[str, Any]:
-    """Build one device's record: its motor calibration and servo control registers.
-
-    For a bimanual device (with ``left_arm`` / ``right_arm``), motor keys are
-    prefixed with ``left_`` / ``right_`` to match the dataset's feature names.
-    """
+    """One device's record: motor calibration and registers, prefixed ``left_``/``right_`` if bimanual."""
     motors: dict[str, dict[str, Any]] = {}
     registers: dict[str, dict[str, int]] = {}
     left = getattr(device, "left_arm", None)
@@ -398,18 +381,10 @@ def _device_calibration_record(device: Any) -> dict[str, Any]:
 
 
 def build_calibration_metadata(robot: Any = None, teleop: Any = None) -> dict[str, Any]:
-    """Build a dataset's ``calibration`` record from the connected devices.
+    """Build the ``calibration`` record from a connected ``robot`` and optional ``teleop``.
 
-    Args:
-        robot: The follower :class:`~lerobot.robots.Robot`, or ``None``.
-        teleop: The leader :class:`~lerobot.teleoperators.Teleoperator`, or ``None``.
-
-    Returns:
-        A JSON-serialisable record ``{role: {name, id, motors, registers}}`` with one
-        entry per device (``"follower"`` for the robot, ``"leader"`` for the teleoperator
-        when present). Each entry holds the motor calibration (the hand-set joint zeros)
-        and the servo control registers read back at connect (the P/I/D gains and motion
-        settings).
+    Returns ``{role: {name, id, motors, registers}}``, one entry per device (roles
+    ``"follower"`` and ``"leader"``), holding each motor's calibration and servo registers.
     """
     record: dict[str, dict[str, Any]] = {}
     if robot is not None:

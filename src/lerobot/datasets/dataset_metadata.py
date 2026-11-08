@@ -492,25 +492,15 @@ class LeRobotDatasetMetadata:
 
     @property
     def calibration(self) -> dict | None:
-        """Per-session robot calibration and servo control registers.
+        """Per-session robot calibration and servo gains from ``meta/info.json``, or ``None``.
 
-        Read from ``meta/info.json["calibration"]``. Returns the record built by
-        :func:`lerobot.datasets.utils.build_calibration_metadata`, or ``None`` when
-        the dataset was recorded without one (every dataset predating this field).
-        The record maps each device role (``"follower"``, ``"leader"``) to its motor
-        calibration (the hand-set joint zeros) and the servo control registers read
-        back at connect (the P/I/D gains and motion settings).
+        ``None`` for datasets recorded before this field existed.
         """
         return self.info.calibration
 
     @calibration.setter
     def calibration(self, value: dict | None) -> None:
-        """Persist the calibration record to ``meta/info.json`` and reload metadata.
-
-        Writes ``value`` into the on-disk ``info.json`` (or clears the ``calibration``
-        key when ``value`` is ``None`` or empty), then reloads ``self.info`` so the
-        in-memory metadata matches what's on disk.
-        """
+        """Persist ``value`` to ``meta/info.json`` (clearing the key when falsy) and reload."""
         self.info.calibration = dict(value) if value else None
         write_info(self.info, self.root)
         self.info = load_info(self.root)
