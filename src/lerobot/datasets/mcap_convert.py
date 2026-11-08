@@ -54,8 +54,10 @@ from .mcap_utils import (
     MCAP_CHUNK_INDEX_COLUMN,
     MCAP_FILE_INDEX_COLUMN,
     build_channel_time_index,
+    build_gop_time_and_keyframe_index,
     channel_schema_json,
     episode_mcap_path,
+    keyframe_index_column,
     log_time_column,
     pack_tensor,
     topic_for_key,
@@ -226,6 +228,13 @@ class ChannelSpec:
     :func:`convert_lerobot_dataset_to_mcap`, which already has ``meta.features`` to read
     from, ingestion needs the caller to supply it (except for ``video`` channels, whose
     shape is inferred by decoding the first message).
+
+    ``codec`` marks a ``video`` channel as a continuous GOP-compressed bitstream (e.g.
+    ``foxglove.CompressedVideo``-style messages, each one a raw H.264/HEVC/AV1 packet
+    that depends on prior packets) rather than the default: independently-decodable
+    image bytes per message (PNG/JPEG). It names the codec for
+    ``av.CodecContext.create(codec, "r")`` (e.g. ``"h264"``) and is only valid for
+    ``kind="video"``.
     """
 
     key: str
@@ -233,6 +242,11 @@ class ChannelSpec:
     kind: Literal["tabular", "video"]
     dtype: str | None = None
     shape: tuple[int, ...] | None = None
+    codec: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.codec is not None and self.kind != "video":
+            raise ValueError(f"channel '{self.key}': codec is only valid for kind='video'.")
 
 
 def _peek_first_message(mcap_path: Path, topic: str) -> bytes | None:
@@ -285,25 +299,58 @@ def ingest_mcap_episodes(
     features: dict[str, dict] = {}
     for c in channels:
         if c.kind == "video":
-            first = next((m for p in mcap_paths if (m := _peek_first_message(p, c.topic)) is not None), None)
-            if first is None:
-                raise ValueError(f"No messages found on topic '{c.topic}' for channel '{c.key}'.")
-            shape = c.shape or load_image_as_numpy(first, dtype=np.uint8, is_depth=False).shape
-            features[c.key] = {
-                "dtype": "video",
-                "shape": tuple(shape),
-                "names": ["channels", "height", "width"],
-            }
+            if c.codec is None:
+                first = next(
+                    (m for p in mcap_paths if (m := _peek_first_message(p, c.topic)) is not None), None
+                )
+                if first is None:
+                    raise ValueError(f"No messages found on topic '{c.topic}' for channel '{c.key}'.")
+                shape = c.shape or load_image_as_numpy(first, dtype=np.uint8, is_depth=False).shape
+                features[c.key] = {
+                    "dtype": "video",
+                    "shape": tuple(shape),
+                    "names": ["channels", "height", "width"],
+                }
+            # GOP (codec is not None) channels get their features entry filled in after
+            # the per-episode loop below: its first call to build_gop_time_and_keyframe_index
+            # already decodes the whole channel, including its frame shape, so a separate
+            # shape-peeking pass over the same messages would be redundant work -- and, for
+            # a B-frame stream, strictly less reliable (see that function's docstring).
         else:
             if c.dtype is None or c.shape is None:
                 raise ValueError(f"Tabular channel '{c.key}' needs an explicit dtype and shape.")
             features[c.key] = {"dtype": c.dtype, "shape": tuple(c.shape), "names": None}
 
     task_to_index: dict[str, int] = {}
+    # Whether any episode's GOP channel ever decoded a B-frame -- determines, per
+    # channel, which of the reader's two decode strategies applies (see
+    # McapDatasetReader._gop_has_bframes); OR'd across episodes since a channel's codec
+    # configuration is a property of the whole recording, not of one episode.
+    gop_has_bframes: dict[str, bool] = {}
     episode_records = []
     abs_idx = 0
     for ep_idx, (src_path, task) in enumerate(zip(mcap_paths, tasks, strict=True)):
         time_index = build_channel_time_index(src_path, topics)
+        # GOP-encoded video channels get their log_time_ns index rebuilt from a decode
+        # pass instead: build_channel_time_index records every message regardless of
+        # whether it carries a picture, but a parameter-set-only packet (see
+        # build_gop_time_and_keyframe_index) has no frame to serve a grid match, so it
+        # must never appear in the index used for matching or episode-boundary intersection.
+        gop_kf_positions: dict[str, np.ndarray] = {}
+        for c in channels:
+            if c.codec is not None:
+                time_index[c.topic], gop_kf_positions[c.key], ep_has_bframes, ep_shape = (
+                    build_gop_time_and_keyframe_index(src_path, c.topic, c.codec)
+                )
+                gop_has_bframes[c.key] = gop_has_bframes.get(c.key, False) or ep_has_bframes
+                if c.key not in features:
+                    features[c.key] = {
+                        "dtype": "video",
+                        "shape": tuple(c.shape or ep_shape),
+                        "names": ["channels", "height", "width"],
+                        "video_codec": c.codec,
+                    }
+
         missing = [c.key for c in channels if len(time_index[c.topic]) == 0]
         if missing:
             raise ValueError(f"Episode {ep_idx} ({src_path}) has no messages for channel(s) {missing}.")
@@ -335,8 +382,13 @@ def ingest_mcap_episodes(
         }
         for c in channels:
             record[log_time_column(c.key)] = time_index[c.topic].tolist()
+            if c.codec is not None:
+                record[keyframe_index_column(c.key)] = gop_kf_positions[c.key].tolist()
         episode_records.append(record)
         abs_idx += n_frames
+
+    for key, has_bframes in gop_has_bframes.items():
+        features[key]["video_has_bframes"] = has_bframes
 
     info = DatasetInfo(
         codebase_version="v3.0",

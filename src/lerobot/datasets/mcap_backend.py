@@ -44,8 +44,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import av
 import numpy as np
 import torch
+from numpy.typing import DTypeLike
 
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT
 from lerobot.utils.import_utils import _mcap_available, require_package
@@ -61,9 +63,11 @@ from .mcap_utils import (  # noqa: F401
     MCAP_CHUNK_INDEX_COLUMN,
     MCAP_FILE_INDEX_COLUMN,
     episode_mcap_path,
+    keyframe_index_column,
     load_topic_map,
     localize_root,
     log_time_column,
+    mux_and_decode_by_position,
     topic_for_key,
     unpack_tensor,
 )
@@ -87,6 +91,16 @@ _REQUIRED_EPISODE_COLUMNS = (
     MCAP_CHUNK_INDEX_COLUMN,
     MCAP_FILE_INDEX_COLUMN,
 )
+
+
+def _frame_to_numpy(frame: av.VideoFrame, dtype: DTypeLike) -> np.ndarray:
+    """``av.VideoFrame`` -> channel-first numpy array, matching ``load_image_as_numpy``'s
+    RGB layout/scaling so a GOP-decoded frame is indistinguishable from an
+    independently-decoded one downstream."""
+    array = frame.to_ndarray(format="rgb24").astype(dtype)
+    if np.issubdtype(dtype, np.floating):
+        array /= 255.0
+    return np.transpose(array, (2, 0, 1))
 
 
 class McapDatasetReader(BaseDatasetReader):
@@ -246,13 +260,42 @@ class McapDatasetReader(BaseDatasetReader):
         self._topics = {key: topic_map.get(key, topic_for_key(key)) for key in self._stored_keys}
         self._key_for_topic = {topic: key for key, topic in self._topics.items()}
 
+        # A video key whose feature dict carries "video_codec" stores a continuous
+        # GOP-compressed bitstream (e.g. foxglove.CompressedVideo-style messages) rather
+        # than the default independently-decodable image bytes per message (PNG/JPEG) --
+        # see mcap_convert.ChannelSpec.codec. Decoding one such frame means replaying
+        # every packet back to its preceding keyframe (see _decode_gop_episode below).
+        self._gop_codec: dict[str, str] = {
+            key: codec
+            for key in self.meta.video_keys
+            if (codec := self.meta.features[key].get("video_codec")) is not None
+        }
+        # A GOP channel known to contain B-frames (set once by the converter, see
+        # mcap_convert.build_gop_time_and_keyframe_index) needs decoder-side reordering,
+        # which the fast bare-Packet-per-message path can't provide -- it feeds packets
+        # to the decoder one at a time assuming output order matches input order, which
+        # is false for B-frames (confirmed empirically: it both drops frames and
+        # misorders the rest). Such a channel is instead decoded through a real
+        # container (see _decode_gop_window_muxed), mirroring how the lance backend
+        # always decodes through a real mp4 container rather than bare packets. Channels
+        # without B-frames keep the cheaper bare-Packet path unchanged.
+        self._gop_has_bframes: dict[str, bool] = {
+            key: bool(self.meta.features[key].get("video_has_bframes", False)) for key in self._gop_codec
+        }
+
         # Mirrors the lance backend's "videos table is missing byte-index columns... Re-convert
         # the dataset with a converter that writes {VIDEO_INDEX_COLUMNS}" check: the sync-index
-        # column is this format's equivalent load-bearing, converter-computed data.
+        # column is this format's equivalent load-bearing, converter-computed data. GOP-encoded
+        # video keys additionally need their keyframe-position column (this format's analogue of
+        # the lance backend's kf_indices/kf_positions).
         missing_log_time_columns = [
             col
             for key in self._stored_keys
             if (col := log_time_column(key)) not in self.meta.episodes.column_names
+        ] + [
+            col
+            for key in self._gop_codec
+            if (col := keyframe_index_column(key)) not in self.meta.episodes.column_names
         ]
         if missing_log_time_columns:
             raise ValueError(
@@ -270,6 +313,12 @@ class McapDatasetReader(BaseDatasetReader):
                 np.asarray(ep_times, dtype=np.int64) for ep_times in self.meta.episodes[log_time_column(key)]
             ]
             for key in self._stored_keys
+        }
+        self._kf_positions: dict[str, list[np.ndarray]] = {
+            key: [
+                np.asarray(ep_kf, dtype=np.int64) for ep_kf in self.meta.episodes[keyframe_index_column(key)]
+            ]
+            for key in self._gop_codec
         }
 
         self._decode_pool: ThreadPoolExecutor | None = None
@@ -336,21 +385,45 @@ class McapDatasetReader(BaseDatasetReader):
                 matched_ns[ep_idx][key] = self._match_targets(ep_idx, key, grid_arr)
 
         # 3. Fetch messages, one open file per episode touched (parallel across episodes).
+        # GOP-encoded video keys are handled in a separate pass: decoding one target
+        # message needs every packet back to its preceding keyframe replayed through a
+        # single stateful CodecContext, not just that message's own bytes, so they're
+        # fetched *and* decoded together in _decode_gop_episode rather than handed raw
+        # bytes to _decode_message below.
         def _fetch(ep_idx: int) -> tuple[int, dict[str, dict[int, bytes]]]:
-            keys_needed = {key: set(m.values()) for key, m in matched_ns[ep_idx].items()}
-            return ep_idx, self._fetch_episode_messages(ep_idx, keys_needed)
+            keys_needed = {
+                key: set(m.values()) for key, m in matched_ns[ep_idx].items() if key not in self._gop_codec
+            }
+            return ep_idx, self._fetch_episode_messages(ep_idx, keys_needed) if keys_needed else {}
 
         futures = [decode_pool.submit(_fetch, ep_idx) for ep_idx in grid_needs]
         raw_by_ep = dict(future.result() for future in futures)
+
+        gop_decoded_by_ep: dict[int, dict[str, dict[int, np.ndarray]]] = {}
+        if self._gop_codec:
+
+            def _fetch_gop(ep_idx: int) -> tuple[int, dict[str, dict[int, np.ndarray]]]:
+                keys_needed = {
+                    key: ns_map for key, ns_map in matched_ns[ep_idx].items() if key in self._gop_codec
+                }
+                return ep_idx, self._decode_gop_episode(ep_idx, keys_needed) if keys_needed else {}
+
+            gop_futures = [decode_pool.submit(_fetch_gop, ep_idx) for ep_idx in grid_needs]
+            gop_decoded_by_ep = dict(future.result() for future in gop_futures)
 
         # 4. Decode each (grid position, key) exactly once, even if requested by several samples.
         decoded: dict[tuple[int, str], np.ndarray] = {}
         for ep_idx, per_key in grid_needs.items():
             for key, grid_idxs in per_key.items():
-                raw = raw_by_ep[ep_idx][key]
                 grid_to_ns = matched_ns[ep_idx][key]
-                for grid_idx in grid_idxs:
-                    decoded[(grid_idx, key)] = self._decode_message(key, raw[grid_to_ns[grid_idx]])
+                if key in self._gop_codec:
+                    frames_by_ns = gop_decoded_by_ep[ep_idx][key]
+                    for grid_idx in grid_idxs:
+                        decoded[(grid_idx, key)] = frames_by_ns[grid_to_ns[grid_idx]]
+                else:
+                    raw = raw_by_ep[ep_idx][key]
+                    for grid_idx in grid_idxs:
+                        decoded[(grid_idx, key)] = self._decode_message(key, raw[grid_to_ns[grid_idx]])
 
         items = [self._build_item(plan, decoded) for plan in plans]
         if self._image_transforms is not None:
@@ -530,6 +603,108 @@ class McapDatasetReader(BaseDatasetReader):
                 data, dtype=np.uint8 if self.return_uint8 else np.float32, is_depth=False
             )
         return unpack_tensor(data, self._np_dtypes[key], self._feature_shapes[key])
+
+    def _decode_gop_episode(
+        self, ep_idx: int, keys_needed: dict[str, dict[int, int]]
+    ) -> dict[str, dict[int, np.ndarray]]:
+        """GOP-stream counterpart of ``_fetch_episode_messages``: for each GOP-encoded
+        video key, expands every requested grid position's matched message into a
+        message-index range, merges overlapping ranges, and decodes each merged run
+        through :meth:`_decode_gop_window_muxed`.
+
+        A channel without B-frames needs only [preceding keyframe, target] -- the
+        message-index analogue of the lance backend's ``_window_byte_range`` -- since a
+        P-frame/I-frame-only GOP never references anything after the target. A channel
+        with B-frames needs [preceding keyframe, NEXT keyframe) instead, exactly
+        mirroring ``_window_byte_range``'s own "preceding keyframe to next keyframe": a
+        B-frame can reference a later frame within the same closed GOP, which a range
+        that stops at the target could cut off. That's the only difference between the
+        two cases -- the decode mechanism itself is the same either way (see
+        ``_decode_gop_window_muxed``'s docstring for why a bare, one-packet-at-a-time
+        decode was tried and rejected even for the no-B-frame case).
+
+        ``keys_needed`` maps key -> {grid position: matched message log_time_ns}, the
+        same per-key mapping ``matched_ns`` already holds (unlike ``_fetch_episode_messages``,
+        which only needs the target *set*, here the grid position is unused -- only the
+        distinct target timestamps matter).
+        """
+        path = episode_mcap_path(self.root, int(self._mcap_chunk[ep_idx]), int(self._mcap_file[ep_idx]))
+        out_dtype = np.uint8 if self.return_uint8 else np.float32
+        decoded: dict[str, dict[int, np.ndarray]] = {key: {} for key in keys_needed}
+        with open(path, "rb") as f:
+            reader = make_reader(f)
+            for key, grid_to_ns in keys_needed.items():
+                arr = self._log_time_ns[key][ep_idx]
+                kf_positions = self._kf_positions[key][ep_idx]
+                has_bframes = self._gop_has_bframes[key]
+                target_ns = sorted(set(grid_to_ns.values()))
+                ranges = []
+                for ns in target_ns:
+                    target_idx = int(np.searchsorted(arr, ns))
+                    kf_pos = max(int(np.searchsorted(kf_positions, target_idx, side="right")) - 1, 0)
+                    lo_idx = int(kf_positions[kf_pos])
+                    if has_bframes:
+                        next_kf_pos = kf_pos + 1
+                        hi_idx = (
+                            int(kf_positions[next_kf_pos]) - 1
+                            if next_kf_pos < len(kf_positions)
+                            else len(arr) - 1
+                        )
+                    else:
+                        hi_idx = target_idx
+                    ranges.append((lo_idx, hi_idx))
+                topic = self._topics[key]
+                codec_name = self._gop_codec[key]
+                for lo_idx, hi_idx in self._merge_index_ranges(ranges):
+                    lo_ns, hi_ns = int(arr[lo_idx]), int(arr[hi_idx])
+                    decoded[key].update(
+                        self._decode_gop_window_muxed(reader, topic, codec_name, lo_ns, hi_ns, out_dtype)
+                    )
+        return decoded
+
+    @staticmethod
+    def _decode_gop_window_muxed(
+        reader: Any, topic: str, codec_name: str, lo_ns: int, hi_ns: int, out_dtype: DTypeLike
+    ) -> dict[int, np.ndarray]:
+        """Fetch every raw message in ``[lo_ns, hi_ns]`` and decode them together through
+        :func:`~lerobot.datasets.mcap_utils.mux_and_decode_by_position` -- the same
+        real-container mux/demux technique ``build_gop_time_and_keyframe_index`` uses at
+        ingest time (see its docstring for the full mechanism) -- then maps each decoded
+        frame's recovered position back to the message, and so the exact ``log_time_ns``,
+        it came from. Used for every GOP-encoded channel, B-frame or not: a bare,
+        one-packet-at-a-time ``CodecContext.decode()`` was tried first and rejected even
+        for the no-B-frame case, since it can raise outright on packets a real container
+        decodes without issue (e.g. a standalone leading parameter-set packet -- see
+        ``mux_and_decode_by_position``'s docstring) -- not just mis-handle B-frame
+        reordering. The no-B-frame case still gets its performance win from the narrower
+        [preceding keyframe, target] range ``_decode_gop_episode`` computes for it, not
+        from a different decode mechanism.
+        """
+        message_log_times: list[int] = []
+        raw_messages: list[bytes] = []
+        for _schema, _channel, message in reader.iter_messages(
+            topics=[topic], start_time=lo_ns, end_time=hi_ns + 1, log_time_order=True
+        ):
+            raw_messages.append(message.data)
+            message_log_times.append(message.log_time)
+
+        frames_by_position = mux_and_decode_by_position(raw_messages, codec_name)
+        return {
+            message_log_times[position]: _frame_to_numpy(frame, out_dtype)
+            for position, frame in frames_by_position.items()
+        }
+
+    @staticmethod
+    def _merge_index_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """Merge overlapping/adjacent [lo, hi] message-index ranges, sorted by lo, so
+        each contiguous run is replayed through the codec context exactly once."""
+        merged: list[tuple[int, int]] = []
+        for lo, hi in sorted(ranges):
+            if merged and lo <= merged[-1][1] + 1:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+            else:
+                merged.append((lo, hi))
+        return merged
 
     def _build_item(self, plan: dict, decoded: dict[tuple[int, str], np.ndarray]) -> dict:
         abs_idx, ep_idx, start = plan["abs_idx"], plan["ep_idx"], plan["start"]
