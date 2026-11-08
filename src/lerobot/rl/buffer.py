@@ -692,7 +692,8 @@ class ReplayBuffer:
 
             # ----- 4) Next state -----
             # If not done and the next sample is in the same episode, we pull the next sample's state.
-            # Otherwise (done=True or next sample crosses to a new episode), next_state = current_state.
+            # A truncated episode may have no recorded final observation. Use its last recorded state
+            # as a fallback instead of taking the first observation from another episode.
             next_state = current_state  # default
             if not done and (i < num_frames - 1):
                 next_sample = dataset[i + 1]
