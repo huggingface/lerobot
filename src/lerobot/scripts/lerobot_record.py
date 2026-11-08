@@ -109,6 +109,7 @@ from lerobot.datasets import (
     create_initial_features,
     safe_stop_image_writer,
 )
+from lerobot.datasets.utils import build_calibration_metadata
 from lerobot.processor import (
     RobotAction,
     RobotObservation,
@@ -497,6 +498,11 @@ def record(
         if teleop is not None:
             teleop.connect()
         robot.connect()
+
+        # Record each connected device's calibration and servo gains (session-constant)
+        # so the dataset captures which arm produced it and how its controller was tuned.
+        if dataset is not None:
+            dataset.meta.calibration = build_calibration_metadata(robot, teleop)
 
         listener, events = init_keyboard_listener()
 

@@ -23,7 +23,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.utils import INFO_PATH
+from lerobot.datasets.utils import INFO_PATH, build_calibration_metadata
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE
 
 pytestmark = pytest.mark.dataset
@@ -565,3 +565,197 @@ def test_tools_setter_clears_key_when_set_to_none(tmp_path):
     with open(root / INFO_PATH) as f:
         info_on_disk = json.load(f)
     assert "tools" not in info_on_disk
+
+
+# ── Calibration metadata ───────────────────────────────────────────
+
+CALIB = {
+    "follower": {
+        "name": "so100_follower",
+        "id": "black",
+        "motors": {
+            "shoulder_pan": {
+                "id": 1,
+                "drive_mode": 0,
+                "homing_offset": 12,
+                "range_min": 100,
+                "range_max": 4000,
+            }
+        },
+        "registers": {"shoulder_pan": {"P_Coefficient": 16, "I_Coefficient": 0, "D_Coefficient": 32}},
+    }
+}
+
+
+class _FakeBus:
+    def __init__(self, motors, registers):
+        self.motors = motors
+        self.is_connected = True
+        self._registers = registers
+
+    def read(self, name, motor, normalize=False):
+        return self._registers[motor][name]
+
+
+class _FakeDevice:
+    def __init__(self, name, id, calibration, bus=None, left_arm=None, right_arm=None):
+        self.name = name
+        self.id = id
+        self.calibration = calibration
+        if bus is not None:
+            self.bus = bus
+        if left_arm is not None:
+            self.left_arm = left_arm
+        if right_arm is not None:
+            self.right_arm = right_arm
+
+
+def test_calibration_write_read_round_trip(tmp_path):
+    """Setting .calibration persists to info.json and reads back through the loader."""
+    from lerobot.datasets.io_utils import load_info
+
+    root = tmp_path / "calib"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/calib", fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root, use_videos=False
+    )
+    meta.calibration = CALIB
+
+    with open(root / INFO_PATH) as f:
+        info_on_disk = json.load(f)
+    assert info_on_disk["calibration"] == CALIB
+    assert meta.calibration == CALIB
+    assert load_info(root).calibration == CALIB
+
+
+def test_dataset_without_calibration_is_unchanged(tmp_path):
+    """A dataset recorded without calibration loads exactly as before (None)."""
+    from lerobot.datasets.io_utils import load_info
+
+    root = tmp_path / "no_calib"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/nocalib", fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root, use_videos=False
+    )
+    assert meta.calibration is None
+
+    with open(root / INFO_PATH) as f:
+        info_on_disk = json.load(f)
+    assert "calibration" not in info_on_disk
+    assert load_info(root).calibration is None
+
+
+def test_calibration_setter_clears_key_when_set_to_none(tmp_path):
+    root = tmp_path / "clear_calib"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/clear_calib", fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root, use_videos=False
+    )
+    meta.calibration = CALIB
+    assert meta.calibration == CALIB
+    meta.calibration = None
+    assert meta.calibration is None
+    with open(root / INFO_PATH) as f:
+        info_on_disk = json.load(f)
+    assert "calibration" not in info_on_disk
+
+
+def test_build_calibration_metadata_simple_device():
+    bus = _FakeBus(
+        {"shoulder_pan": object()},
+        {"shoulder_pan": {"P_Coefficient": 16, "I_Coefficient": 0, "D_Coefficient": 32}},
+    )
+    robot = _FakeDevice(
+        "so100_follower",
+        "black",
+        {
+            "shoulder_pan": {
+                "id": 1,
+                "drive_mode": 0,
+                "homing_offset": 12,
+                "range_min": 100,
+                "range_max": 4000,
+            }
+        },
+        bus=bus,
+    )
+    record = build_calibration_metadata(robot)
+    assert record["follower"]["name"] == "so100_follower"
+    assert record["follower"]["id"] == "black"
+    assert record["follower"]["motors"]["shoulder_pan"]["homing_offset"] == 12
+    assert record["follower"]["registers"]["shoulder_pan"]["P_Coefficient"] == 16
+    assert "leader" not in record
+
+
+def test_build_calibration_metadata_with_leader():
+    robot = _FakeDevice(
+        "so100_follower",
+        "black",
+        {"m": {"id": 1, "drive_mode": 0, "homing_offset": 1, "range_min": 0, "range_max": 1}},
+    )
+    teleop = _FakeDevice(
+        "so100_leader",
+        "blue",
+        {"m": {"id": 1, "drive_mode": 0, "homing_offset": 2, "range_min": 0, "range_max": 1}},
+    )
+    record = build_calibration_metadata(robot, teleop)
+    assert record["follower"]["id"] == "black"
+    assert record["leader"]["id"] == "blue"
+    assert record["leader"]["motors"]["m"]["homing_offset"] == 2
+
+
+def test_build_calibration_metadata_bimanual():
+    left = _FakeDevice(
+        "so_follower",
+        "left",
+        {"shoulder_pan": {"id": 1, "drive_mode": 0, "homing_offset": 10, "range_min": 0, "range_max": 4095}},
+        bus=_FakeBus({"shoulder_pan": object()}, {"shoulder_pan": {"P_Coefficient": 16}}),
+    )
+    right = _FakeDevice(
+        "so_follower",
+        "right",
+        {"shoulder_pan": {"id": 1, "drive_mode": 0, "homing_offset": 20, "range_min": 0, "range_max": 4095}},
+        bus=_FakeBus({"shoulder_pan": object()}, {"shoulder_pan": {"P_Coefficient": 16}}),
+    )
+    robot = _FakeDevice("bi_so_follower", "bimanual", {}, left_arm=left, right_arm=right)
+    record = build_calibration_metadata(robot)
+    assert record["follower"]["motors"]["left_shoulder_pan"]["homing_offset"] == 10
+    assert record["follower"]["motors"]["right_shoulder_pan"]["homing_offset"] == 20
+    assert record["follower"]["registers"]["left_shoulder_pan"]["P_Coefficient"] == 16
+    assert record["follower"]["registers"]["right_shoulder_pan"]["P_Coefficient"] == 16
+
+
+def test_build_calibration_metadata_skips_unsupported_registers():
+    # _FakeBus.read raises KeyError for registers it doesn't hold -> skipped.
+    bus = _FakeBus({"m": object()}, {"m": {"P_Coefficient": 16}})
+    robot = _FakeDevice(
+        "r",
+        "i",
+        {"m": {"id": 1, "drive_mode": 0, "homing_offset": 1, "range_min": 0, "range_max": 1}},
+        bus=bus,
+    )
+    record = build_calibration_metadata(robot)
+    assert record["follower"]["registers"]["m"] == {"P_Coefficient": 16}
+
+
+def test_build_calibration_metadata_no_bus():
+    robot = _FakeDevice(
+        "r", "i", {"m": {"id": 1, "drive_mode": 0, "homing_offset": 1, "range_min": 0, "range_max": 1}}
+    )
+    record = build_calibration_metadata(robot)
+    assert record["follower"]["registers"] == {}
+    assert record["follower"]["motors"]["m"]["homing_offset"] == 1
+
+
+def test_build_calibration_metadata_motor_calib_dataclass():
+    from lerobot.motors import MotorCalibration
+
+    calib = {
+        "shoulder_pan": MotorCalibration(id=1, drive_mode=0, homing_offset=12, range_min=100, range_max=4000)
+    }
+    robot = _FakeDevice("so100_follower", "black", calib)
+    record = build_calibration_metadata(robot)
+    assert record["follower"]["motors"]["shoulder_pan"] == {
+        "id": 1,
+        "drive_mode": 0,
+        "homing_offset": 12,
+        "range_min": 100,
+        "range_max": 4000,
+    }
