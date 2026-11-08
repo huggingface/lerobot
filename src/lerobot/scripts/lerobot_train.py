@@ -335,7 +335,11 @@ def _find_sampler(dataloader):
 def _recycle_dataloader_iterator(
     dl_iter: Iterator, dataloader, step: int, cfg: TrainPipelineConfig, parallel_dims: ParallelDims
 ) -> Iterator:
-    """Replace workers, preserving sample indices but reseeding worker-side random transforms."""
+    """Replace workers, preserving sample indices but reseeding worker-side random transforms.
+
+    With multiple data-parallel ranks, Accelerate's even_batches padding may repeat different
+    samples in the short final batch after a mid-epoch recycle.
+    """
     if hasattr(dl_iter, "close"):  # accelerate's DataLoaderShard iterator is a generator
         dl_iter.close()
     if hasattr(dl_iter, "_shutdown_workers"):
@@ -420,7 +424,9 @@ def make_dataloaders(
                 ckpt_dp_world != parallel_dims.dp_world_size or ckpt_batch_size != cfg.batch_size
             ):
                 raise ValueError(
-                    "Worker recycling requires the checkpoint's batch_size and dp_world_size. "
+                    "Worker recycling requires the checkpoint's batch_size and dp_world_size: "
+                    f"current batch_size={cfg.batch_size}, dp_world_size={parallel_dims.dp_world_size}; "
+                    f"checkpoint batch_size={ckpt_batch_size}, dp_world_size={ckpt_dp_world}. "
                     "Restore those settings or set worker_recycle_every=0."
                 )
             if is_main_process() and saved_dp_world not in (None, parallel_dims.dp_world_size):

@@ -19,6 +19,8 @@
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -156,9 +158,81 @@ def test_resume_changed_topology(
     dims = SimpleNamespace(dp_world_size=1, device_type="cpu")
     mismatch = saved_batch_size not in (None, 2) or saved_dp_world not in (None, 1)
     if recycle_every and mismatch:
-        with pytest.raises(ValueError, match="Worker recycling requires"):
+        with pytest.raises(ValueError, match="Worker recycling requires") as error:
             lerobot_train.make_dataloaders(cfg, dataset, None, 4, dims)
+        assert "current batch_size=2, dp_world_size=1" in str(error.value)
+        assert f"checkpoint batch_size={saved_batch_size}, dp_world_size={saved_dp_world}" in str(error.value)
     else:
         loader, _ = lerobot_train.make_dataloaders(cfg, dataset, None, 4, dims)
         expected = lerobot_train.compute_sampler_state(4, 16, saved_batch_size or 2, saved_dp_world or 1)
         assert loader.sampler.state_dict() == expected
+
+
+def test_train_resume_preserves_sampler_epoch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Exercise train's real prepare/resume path with recycling disabled, stopping before updates."""
+    loader = _make_dataloader(0)
+    state = {"epoch": 2, "start_index": 8}
+    loader.sampler.load_state_dict(state)
+    reference = _make_dataloader(0)
+    reference.sampler.load_state_dict(state)
+    expected = next(iter(reference))
+    accelerator = Accelerator(cpu=True)
+    prepare = accelerator.prepare
+    prepared: dict[str, Any] = {}
+
+    def capture_prepare(*args: Any) -> tuple[Any, ...]:
+        result = prepare(*args)
+        prepared["loader"] = result[2]
+        return result
+
+    class ResumeCheckedError(Exception):
+        pass
+
+    def check_resume(*args: Any) -> None:
+        torch.testing.assert_close(next(iter(prepared["loader"])), expected)
+        raise ResumeCheckedError
+
+    policy = torch.nn.Linear(1, 1)
+    policy.config = SimpleNamespace(input_features={}, output_features={}, normalization_mapping={})
+    optimizer = torch.optim.SGD(policy.parameters(), lr=0.1)
+    cfg = SimpleNamespace(
+        job=SimpleNamespace(is_remote=False),
+        validate=lambda: None,
+        parallelism=SimpleNamespace(),
+        trackio=SimpleNamespace(enable=False),
+        seed=None,
+        cudnn_deterministic=False,
+        tf32=None,
+        resume=True,
+        checkpoint_format=lerobot_train.CheckpointFormat.SAFETENSORS,
+        checkpoint_path=tmp_path,
+        trainable_config=SimpleNamespace(pretrained_path=None, pretrained_revision=None),
+        rename_map={},
+        peft=None,
+        is_reward_model_training=False,
+        optimizer=object(),
+        output_dir=tmp_path,
+        dataset=SimpleNamespace(streaming=False),
+        ema=None,
+        worker_recycle_every=0,
+    )
+    monkeypatch.setattr(torch.backends.cudnn, "benchmark", torch.backends.cudnn.benchmark)
+    monkeypatch.setattr(torch.backends.cudnn, "deterministic", torch.backends.cudnn.deterministic)
+    monkeypatch.setattr(lerobot_train, "make_accelerator", lambda _: accelerator)
+    monkeypatch.setattr(accelerator, "prepare", capture_prepare)
+    monkeypatch.setattr(lerobot_train.ParallelDims, "from_config", Mock(return_value=SimpleNamespace()))
+    monkeypatch.setattr(lerobot_train, "is_main_process", lambda: False)
+    monkeypatch.setattr(lerobot_train, "init_logging", Mock())
+    monkeypatch.setattr(lerobot_train, "make_train_eval_datasets", Mock(return_value=(Mock(), None)))
+    monkeypatch.setattr(lerobot_train, "make_policy", Mock(return_value=policy))
+    monkeypatch.setattr(lerobot_train, "rename_stats", Mock(return_value={}))
+    monkeypatch.setattr(lerobot_train, "make_pre_post_processors", Mock(return_value=(None, None)))
+    monkeypatch.setattr(lerobot_train, "_make_image_augmentation", Mock(return_value=None))
+    monkeypatch.setattr(lerobot_train, "make_optimizer_and_scheduler", Mock(return_value=(optimizer, None)))
+    monkeypatch.setattr(lerobot_train, "resume_before_prepare", Mock(return_value=14))
+    monkeypatch.setattr(lerobot_train, "make_dataloaders", Mock(return_value=(loader, None)))
+    monkeypatch.setattr(lerobot_train, "set_fsdp_wrap_modules", Mock())
+    monkeypatch.setattr(lerobot_train, "finalize_sharded_policy", Mock())
+    monkeypatch.setattr(lerobot_train, "resume_after_prepare", check_resume)
+    with pytest.raises(ResumeCheckedError):
+        lerobot_train.train.__wrapped__(cfg)
