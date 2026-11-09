@@ -34,7 +34,7 @@ from mcap.writer import Writer
 from PIL import Image as PILImage
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.mcap_backend import McapDatasetReader
+from lerobot.datasets.mcap_backend import McapDatasetReader, _default_gop_frame_cache_bytes
 from lerobot.datasets.mcap_convert import ChannelSpec, convert_lerobot_dataset_to_mcap, ingest_mcap_episodes
 from lerobot.datasets.mcap_utils import (
     EPISODE_START_TIME_COLUMN,
@@ -659,6 +659,33 @@ def test_ingest_gop_video_decode_caches_across_reads(gop_ingest_root):
         neighbor = ds[start + target_local_idx - 1]
         assert counted_packet.call_count == expected_messages_decoded
         assert neighbor[GOP_VIDEO_KEY].shape == first[GOP_VIDEO_KEY].shape
+
+
+def test_default_gop_frame_cache_bytes_sizes_to_largest_episode():
+    """The computed default must equal the LARGEST episode's total decoded-frame bytes
+    across every GOP key, times the documented margin -- not the sum across all
+    episodes (that would multiply badly across DataLoader workers for no correctness
+    benefit, see the function's docstring) and not any single key alone (a multi-camera
+    episode needs every camera's frames live at once, not just one)."""
+    # 2 keys (cameras), 2 episodes; episode 1 is the larger one for cam_a, episode 0 for
+    # cam_b -- the combined per-episode total must still pick whichever episode's SUM
+    # across both keys is largest, not whichever key's own largest episode is largest.
+    log_time_ns = {
+        "cam_a": [np.zeros(10, dtype=np.int64), np.zeros(20, dtype=np.int64)],
+        "cam_b": [np.zeros(15, dtype=np.int64), np.zeros(5, dtype=np.int64)],
+    }
+    frame_bytes = {"cam_a": 100, "cam_b": 1000}
+    # episode 0: 10*100 + 15*1000 = 16000; episode 1: 20*100 + 5*1000 = 7000 -> max=16000
+    result = _default_gop_frame_cache_bytes(log_time_ns, frame_bytes, episode_indices=[0, 1])
+    assert result == 16000 * 2  # _GOP_FRAME_CACHE_MARGIN
+
+    # A caller-restricted episode subset (e.g. LeRobotDataset(episodes=[1])) must only
+    # size against episode 1, not the whole dataset's largest.
+    restricted = _default_gop_frame_cache_bytes(log_time_ns, frame_bytes, episode_indices=[1])
+    assert restricted == 7000 * 2
+
+    # No GOP-encoded keys at all -> nothing to size for.
+    assert _default_gop_frame_cache_bytes({}, {}, episode_indices=[0, 1]) == 0
 
 
 # ── Leading parameter-set-only packets (real encoders routinely emit these) ───────────

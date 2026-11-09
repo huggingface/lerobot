@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import contextlib
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -138,6 +138,56 @@ class _GopFrameLRU:
             self._total_bytes -= evicted_bytes
 
 
+# Floor for _default_gop_frame_cache_bytes -- keeps _GopFrameLRU's eviction loop sane
+# (and gives a tiny bit of headroom for numpy/dict overhead beyond raw pixel bytes) on
+# a dataset with trivially small episodes; irrelevant once real per-episode sizes dominate.
+_MIN_GOP_FRAME_CACHE_BYTES = 64 << 20  # 64MB
+
+# How far above exactly one episode's own working set to size the cache: a pure 1.0x
+# bound is already sufficient to avoid the catastrophic within-episode re-decode this
+# cache exists to prevent (see _GopFrameLRU's docstring), but leaves zero room for
+# numpy/dict bookkeeping overhead or any cross-episode locality at all -- an eviction
+# the instant a second episode is touched. 2x is cheap insurance for either, without
+# reintroducing the old failure mode of guessing an absolute size unrelated to the
+# dataset's own shape (confirmed to go wrong in both directions: too small defeats the
+# cache outright, too large multiplies badly across DataLoader workers).
+_GOP_FRAME_CACHE_MARGIN = 2.0
+
+
+def _default_gop_frame_cache_bytes(
+    log_time_ns: dict[str, list[np.ndarray]], frame_bytes: dict[str, int], episode_indices: Iterable[int]
+) -> int:
+    """The per-worker cache budget needed to hold one full episode's decoded frames
+    across every GOP-encoded video key at once, with headroom (see
+    ``_GOP_FRAME_CACHE_MARGIN``) -- computed from the dataset's own per-episode frame
+    counts (``log_time_ns``) and per-key frame byte sizes (``frame_bytes``), not
+    guessed. Holding one whole episode live is the only property that actually matters:
+    it's exactly what prevents the catastrophic case this cache exists for (a B-frame
+    channel whose episode is shorter than the keyframe interval, forcing every query to
+    decode the entire remaining episode -- see ``_GopFrameLRU``'s docstring). Sizing
+    for more than one episode would only buy soft cross-episode locality, not
+    correctness, while costing more per DataLoader worker (each gets its own budget) --
+    not worth guessing a dataset-specific multiple of episodes to hold concurrently.
+
+    Scales correctly for whatever a given dataset's shape actually is (more cameras,
+    higher resolution, more or fewer frames per episode) instead of a constant tuned to
+    one benchmark, which was confirmed to go wrong in both directions when datasets
+    differ: too small defeats the cache outright (back to re-decoding whole episodes
+    repeatedly); too large multiplies badly once several DataLoader workers each get
+    their own copy, risking OOM on constrained instances.
+    """
+    if not frame_bytes:
+        return 0
+    largest_episode_bytes = max(
+        (
+            sum(len(log_time_ns[key][ep_idx]) * nbytes for key, nbytes in frame_bytes.items())
+            for ep_idx in episode_indices
+        ),
+        default=0,
+    )
+    return int(largest_episode_bytes * _GOP_FRAME_CACHE_MARGIN)
+
+
 def _frame_to_uint8_chw(frame: av.VideoFrame) -> np.ndarray:
     """``av.VideoFrame`` -> channel-first uint8 numpy array (the compact, cacheable
     form -- see ``_GopFrameLRU``: a training reader's ``return_uint8=False`` would
@@ -180,15 +230,16 @@ class McapDatasetReader(BaseDatasetReader):
         token: Accepted for constructor-contract uniformity; unused (local-disk only, v1).
         decode_pool_size: Max threads used to fetch/decode messages per batch.
         gop_frame_cache_bytes: Byte budget for the per-worker decoded-GOP-frame LRU
-            (see ``_GopFrameLRU``); default 16GB, each DataLoader worker gets its own.
-            Frames are cached as compact uint8, so this holds roughly
-            ``gop_frame_cache_bytes / (3 * height * width)`` frames regardless of
-            ``return_uint8``. Size it to your dataset/hardware: raise it for more
-            cameras, longer single-keyframe clips, or more parallel workers (each gets
-            its own budget, so total memory scales with worker count), mindful of
-            whatever else shares the instance's RAM (e.g. a GOP encoder's own
-            thread-pool buffers at ingest time). Irrelevant for datasets with no
-            GOP-encoded video channels.
+            (see ``_GopFrameLRU``), each DataLoader worker gets its own. Left as
+            ``None`` (the default), it's computed from the dataset itself (see
+            ``_default_gop_frame_cache_bytes``): enough to hold one full episode's
+            decoded frames across every GOP-encoded video key at once, with headroom,
+            not a size guessed independently of the dataset's own shape. Frames are
+            cached as compact uint8 regardless of ``return_uint8``. Pass an explicit
+            value to override -- e.g. to trade some cross-episode locality for a
+            smaller footprint under many parallel workers (each gets its own budget,
+            so total memory scales with worker count) on a memory-constrained
+            instance. Irrelevant for datasets with no GOP-encoded video channels.
     """
 
     def __init__(
@@ -213,18 +264,8 @@ class McapDatasetReader(BaseDatasetReader):
         self.return_uint8 = return_uint8
         self.set_image_transforms(image_transforms)
         self._decode_pool_size = decode_pool_size or 16
-        self._gop_frame_cache = _GopFrameLRU(gop_frame_cache_bytes or (16 << 30))  # 16GB/worker default
-        # -- sized from a real measurement, not guessed: a 3-episode, 4-camera, single-
-        # keyframe-per-episode benchmark (real Labelbox/robotics-datasets content) needs
-        # ~10.5GB of simultaneously-live uint8 frames to avoid inter-episode eviction
-        # thrashing (confirmed: an 8GB budget -- comfortably safe memory-wise on its own
-        # -- still thrashed, non-deterministically, whenever the random access order
-        # needed more than 8GB live at once; a too-small budget like 2GB, matching the
-        # lance backend's own _VideoDecoderLRU, defeats this cache outright). This is a
-        # starting point to tune from, not a size fit to every workload: more episodes
-        # or cameras need more; also mind each DataLoader worker getting its own budget
-        # (see close()'s docstring on why that memory is now reliably released, and the
-        # constructor docstring below on sizing this against total system memory).
+        # gop_frame_cache_bytes itself is resolved further down, once per-episode frame
+        # counts and per-key frame shapes are loaded (see _default_gop_frame_cache_bytes).
 
         if self.meta.image_keys:
             raise NotImplementedError(
@@ -398,6 +439,15 @@ class McapDatasetReader(BaseDatasetReader):
             ]
             for key in self._gop_codec
         }
+
+        if gop_frame_cache_bytes is None:
+            frame_bytes = {key: int(np.prod(self.meta.features[key]["shape"])) for key in self._gop_codec}
+            episode_indices = self.episodes if self.episodes is not None else range(self.meta.total_episodes)
+            gop_frame_cache_bytes = max(
+                _default_gop_frame_cache_bytes(self._log_time_ns, frame_bytes, episode_indices),
+                _MIN_GOP_FRAME_CACHE_BYTES,
+            )
+        self._gop_frame_cache = _GopFrameLRU(gop_frame_cache_bytes)
 
         self._decode_pool: ThreadPoolExecutor | None = None
 
