@@ -628,6 +628,39 @@ def test_ingest_gop_video_decode_uses_keyframe_index(gop_ingest_root):
         assert counted_packet.call_count < n_frames
 
 
+def test_ingest_gop_video_decode_caches_across_reads(gop_ingest_root):
+    """A repeat read of the same frame -- or of a DIFFERENT frame already covered by a
+    previously-decoded window -- must not touch the codec again at all: confirmed on
+    real Labelbox/robotics-datasets content that without this cache, a shuffled
+    batch_size=1 DataLoader re-decodes the entire remaining episode on every single
+    query (a ~390x slowdown against the default format), since a real recording's
+    episode is routinely shorter than the encoder's keyframe interval."""
+    dst_root, _ = gop_ingest_root
+    ds = LeRobotDataset("gop/mcap", root=dst_root, return_uint8=True)
+
+    ep_idx = 0
+    n_frames = GOP_EPISODE_FRAMES[ep_idx]
+    start = int(ds.meta.episodes[ep_idx]["dataset_from_index"])
+    target_local_idx = n_frames - 2  # deep into the last GOP, far from episode start
+    expected_kf = (target_local_idx // GOP_SIZE) * GOP_SIZE
+    expected_messages_decoded = target_local_idx - expected_kf + 1
+
+    with patch("lerobot.datasets.mcap_backend.av.Packet", wraps=av.Packet) as counted_packet:
+        first = ds[start + target_local_idx]
+        assert counted_packet.call_count == expected_messages_decoded
+
+        # Exact same frame again: must be a pure cache hit, zero new decode work.
+        again = ds[start + target_local_idx]
+        assert counted_packet.call_count == expected_messages_decoded
+        np.testing.assert_array_equal(first[GOP_VIDEO_KEY].numpy(), again[GOP_VIDEO_KEY].numpy())
+
+        # A DIFFERENT frame, but one already decoded as a byproduct of that same
+        # [preceding keyframe, target] window -- also a pure cache hit.
+        neighbor = ds[start + target_local_idx - 1]
+        assert counted_packet.call_count == expected_messages_decoded
+        assert neighbor[GOP_VIDEO_KEY].shape == first[GOP_VIDEO_KEY].shape
+
+
 # ── Leading parameter-set-only packets (real encoders routinely emit these) ───────────
 #
 # Real streams (e.g. Labelbox/robotics-datasets' HEVC channels) commonly front-load one

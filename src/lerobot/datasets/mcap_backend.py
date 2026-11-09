@@ -38,7 +38,7 @@ public entry point is ``LeRobotDataset`` (see :mod:`lerobot.datasets.storage`).
 from __future__ import annotations
 
 import contextlib
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -93,14 +93,69 @@ _REQUIRED_EPISODE_COLUMNS = (
 )
 
 
-def _frame_to_numpy(frame: av.VideoFrame, dtype: DTypeLike) -> np.ndarray:
-    """``av.VideoFrame`` -> channel-first numpy array, matching ``load_image_as_numpy``'s
-    RGB layout/scaling so a GOP-decoded frame is indistinguishable from an
-    independently-decoded one downstream."""
-    array = frame.to_ndarray(format="rgb24").astype(dtype)
+class _GopFrameLRU:
+    """Per-worker LRU of decoded GOP video frames, keyed by ``(episode_index, key,
+    message log_time_ns)`` and bounded by total byte size (mirrors the lance backend's
+    ``_VideoDecoderLRU``, adapted to cache decoded frames directly rather than open
+    decoder handles: ``_decode_gop_window_muxed`` already decodes every frame in a
+    window in one pass, so the only thing missing was persisting that output across
+    calls instead of discarding it).
+
+    This matters most for real recordings shorter than the encoder's keyframe interval
+    (confirmed empirically on Labelbox/robotics-datasets: a 5s episode has exactly ONE
+    keyframe for its ~140 frames, well under x265's observed 250-frame max interval).
+    For a B-frame channel that forces every query's decode range to
+    ``[preceding keyframe, next keyframe)`` -- with no second keyframe in the episode,
+    that range is the ENTIRE remaining episode. Without this cache, a shuffled
+    single-item DataLoader (batch_size=1, the realistic worst case) would re-decode
+    that whole episode from scratch for every sample, confirmed to cost ~78s/item on
+    real 1920x1080 content -- a ~390x slowdown against the default format's ~0.2s/item.
+    With it, only the first sample touching a given (episode, key) pays that cost;
+    every later sample into the same episode is a pure dict lookup.
+    """
+
+    def __init__(self, byte_budget: int):
+        self.byte_budget = byte_budget
+        self._items: OrderedDict[tuple[int, str, int], tuple[np.ndarray, int]] = OrderedDict()
+        self._total_bytes = 0
+
+    def __contains__(self, key: tuple[int, str, int]) -> bool:
+        return key in self._items
+
+    def get(self, key: tuple[int, str, int]) -> np.ndarray:
+        self._items.move_to_end(key)
+        return self._items[key][0]
+
+    def put(self, key: tuple[int, str, int], frame: np.ndarray) -> None:
+        nbytes = frame.nbytes
+        if key in self._items:
+            self._total_bytes -= self._items[key][1]
+        self._items[key] = (frame, nbytes)
+        self._items.move_to_end(key)
+        self._total_bytes += nbytes
+        while len(self._items) > 1 and self._total_bytes > self.byte_budget:
+            _, (_, evicted_bytes) = self._items.popitem(last=False)
+            self._total_bytes -= evicted_bytes
+
+
+def _frame_to_uint8_chw(frame: av.VideoFrame) -> np.ndarray:
+    """``av.VideoFrame`` -> channel-first uint8 numpy array (the compact, cacheable
+    form -- see ``_GopFrameLRU``: a training reader's ``return_uint8=False`` would
+    otherwise cache 4-byte-per-channel float32 frames, quartering how much decoded
+    video fits in the same byte budget for no benefit, since the dtype/normalization
+    conversion below is cheap and exact either way)."""
+    return np.transpose(frame.to_ndarray(format="rgb24"), (2, 0, 1))
+
+
+def _convert_frame_dtype(array_uint8_chw: np.ndarray, dtype: DTypeLike) -> np.ndarray:
+    """Apply the reader's output dtype/scaling to an already-decoded uint8 frame,
+    matching ``load_image_as_numpy``'s RGB layout/scaling exactly -- bit-identical to
+    converting straight from the decoded frame, just deferred so the cache can hold the
+    compact uint8 form regardless of what dtype callers ultimately want."""
+    array: np.ndarray = array_uint8_chw.astype(dtype)
     if np.issubdtype(dtype, np.floating):
         array /= 255.0
-    return np.transpose(array, (2, 0, 1))
+    return array
 
 
 class McapDatasetReader(BaseDatasetReader):
@@ -124,6 +179,13 @@ class McapDatasetReader(BaseDatasetReader):
             (depth features are not supported in v1).
         token: Accepted for constructor-contract uniformity; unused (local-disk only, v1).
         decode_pool_size: Max threads used to fetch/decode messages per batch.
+        gop_frame_cache_bytes: Byte budget for the per-worker decoded-GOP-frame LRU
+            (see ``_GopFrameLRU``); default 8GB, each DataLoader worker gets its own.
+            Frames are cached as compact uint8, so this holds roughly
+            ``gop_frame_cache_bytes / (3 * height * width)`` frames regardless of
+            ``return_uint8``. Raise it for more cameras, longer single-keyframe clips,
+            or more parallel workers; irrelevant for datasets with no GOP-encoded video
+            channels.
     """
 
     def __init__(
@@ -139,6 +201,7 @@ class McapDatasetReader(BaseDatasetReader):
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
         token: str | bool | None = None,
         decode_pool_size: int | None = None,
+        gop_frame_cache_bytes: int | None = None,
     ):
         require_package("mcap", extra="mcap")
         self.meta = meta
@@ -147,6 +210,7 @@ class McapDatasetReader(BaseDatasetReader):
         self.return_uint8 = return_uint8
         self.set_image_transforms(image_transforms)
         self._decode_pool_size = decode_pool_size or 16
+        self._gop_frame_cache = _GopFrameLRU(gop_frame_cache_bytes or (8 << 30))  # 8GB/worker default
 
         if self.meta.image_keys:
             raise NotImplementedError(
@@ -334,6 +398,10 @@ class McapDatasetReader(BaseDatasetReader):
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
         state["_decode_pool"] = None
+        # Mirrors the lance backend's own __getstate__: each DataLoader worker gets a
+        # fresh, empty cache (same budget) rather than inheriting -- and having to
+        # pickle -- whatever the main process happened to have decoded so far.
+        state["_gop_frame_cache"] = _GopFrameLRU(self._gop_frame_cache.byte_budget)
         return state
 
     def close(self) -> None:
@@ -627,6 +695,20 @@ class McapDatasetReader(BaseDatasetReader):
         same per-key mapping ``matched_ns`` already holds (unlike ``_fetch_episode_messages``,
         which only needs the target *set*, here the grid position is unused -- only the
         distinct target timestamps matter).
+
+        Every target already present in ``self._gop_frame_cache`` is served without
+        touching the file at all, and every frame a decode call produces (not just the
+        ones this call needed) is cached before returning -- see ``_GopFrameLRU``'s
+        docstring for why this is load-bearing, not an optional optimization: without
+        it, a B-frame channel whose episode is shorter than the keyframe interval (a
+        single keyframe for the whole episode, confirmed common on real recordings)
+        would re-decode the entire remaining episode on every single-item query. The
+        cache always holds the compact uint8 form regardless of ``self.return_uint8``
+        (see ``_frame_to_uint8_chw``/``_convert_frame_dtype``) -- with a single keyframe
+        spanning a whole multi-camera episode, caching float32 frames instead would
+        quarter how many fit in the same byte budget (confirmed empirically: at 4
+        cameras x ~140 full-HD frames, float32 caching blew well past a 4GB budget,
+        causing eviction thrashing that silently defeated this cache entirely).
         """
         path = episode_mcap_path(self.root, int(self._mcap_chunk[ep_idx]), int(self._mcap_file[ep_idx]))
         out_dtype = np.uint8 if self.return_uint8 else np.float32
@@ -638,8 +720,23 @@ class McapDatasetReader(BaseDatasetReader):
                 kf_positions = self._kf_positions[key][ep_idx]
                 has_bframes = self._gop_has_bframes[key]
                 target_ns = sorted(set(grid_to_ns.values()))
-                ranges = []
+
+                # Serve whatever's already in the cache first (see _GopFrameLRU's
+                # docstring) -- only genuine misses need a range computed and decoded.
+                remaining_ns = []
                 for ns in target_ns:
+                    cache_key = (ep_idx, key, ns)
+                    if cache_key in self._gop_frame_cache:
+                        decoded[key][ns] = _convert_frame_dtype(
+                            self._gop_frame_cache.get(cache_key), out_dtype
+                        )
+                    else:
+                        remaining_ns.append(ns)
+                if not remaining_ns:
+                    continue
+
+                ranges = []
+                for ns in remaining_ns:
                     target_idx = int(np.searchsorted(arr, ns))
                     kf_pos = max(int(np.searchsorted(kf_positions, target_idx, side="right")) - 1, 0)
                     lo_idx = int(kf_positions[kf_pos])
@@ -657,14 +754,19 @@ class McapDatasetReader(BaseDatasetReader):
                 codec_name = self._gop_codec[key]
                 for lo_idx, hi_idx in self._merge_index_ranges(ranges):
                     lo_ns, hi_ns = int(arr[lo_idx]), int(arr[hi_idx])
-                    decoded[key].update(
-                        self._decode_gop_window_muxed(reader, topic, codec_name, lo_ns, hi_ns, out_dtype)
-                    )
+                    window = self._decode_gop_window_muxed(reader, topic, codec_name, lo_ns, hi_ns)
+                    # Cache EVERY frame the window decode produced, not just the ones
+                    # this call needed: it was decoded either way, and a later sample
+                    # landing elsewhere in the same window (very likely -- see
+                    # _GopFrameLRU's docstring) gets it for free instead of re-decoding.
+                    for ns, frame_uint8 in window.items():
+                        self._gop_frame_cache.put((ep_idx, key, ns), frame_uint8)
+                        decoded[key][ns] = _convert_frame_dtype(frame_uint8, out_dtype)
         return decoded
 
     @staticmethod
     def _decode_gop_window_muxed(
-        reader: Any, topic: str, codec_name: str, lo_ns: int, hi_ns: int, out_dtype: DTypeLike
+        reader: Any, topic: str, codec_name: str, lo_ns: int, hi_ns: int
     ) -> dict[int, np.ndarray]:
         """Fetch every raw message in ``[lo_ns, hi_ns]`` and decode them together through
         :func:`~lerobot.datasets.mcap_utils.mux_and_decode_by_position` -- the same
@@ -679,6 +781,10 @@ class McapDatasetReader(BaseDatasetReader):
         reordering. The no-B-frame case still gets its performance win from the narrower
         [preceding keyframe, target] range ``_decode_gop_episode`` computes for it, not
         from a different decode mechanism.
+
+        Always returns the compact uint8 form (see ``_frame_to_uint8_chw``) -- the caller
+        caches this result directly, and converts to the reader's actual output dtype
+        afterward (``_convert_frame_dtype``), whether served fresh or from the cache.
         """
         message_log_times: list[int] = []
         raw_messages: list[bytes] = []
@@ -690,7 +796,7 @@ class McapDatasetReader(BaseDatasetReader):
 
         frames_by_position = mux_and_decode_by_position(raw_messages, codec_name)
         return {
-            message_log_times[position]: _frame_to_numpy(frame, out_dtype)
+            message_log_times[position]: _frame_to_uint8_chw(frame)
             for position, frame in frames_by_position.items()
         }
 
