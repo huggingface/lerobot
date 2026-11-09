@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.utils import ActionInterpolator as ActionInterpolator
+from lerobot.utils.action_interpolator import ActionInterpolator as ActionInterpolator
+from lerobot.utils.feature_spec import FeatureSpec
 
 from .act.configuration_act import ACTConfig as ACTConfig
-from .chunk import (
-    ChunkPolicySpec,
-    ExecutionMode,
-    FeatureSpec,
-)
+from .chunk import ChunkPolicySpec, ExecutionMode
 from .cosmos3.configuration_cosmos3 import (
     Cosmos3EdgeConfig as Cosmos3EdgeConfig,
     Cosmos3NanoConfig as Cosmos3NanoConfig,

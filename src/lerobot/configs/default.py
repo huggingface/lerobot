@@ -181,10 +181,15 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
+    # Cap each episode at this many steps (the env's own limit still applies when lower).
+    # For quick end-to-end checks such as CI; success rates from capped episodes are not meaningful.
+    max_episode_steps: int | None = None
 
     def __post_init__(self) -> None:
         if self.recording_repo_id is not None and not self.recording:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
+        if self.max_episode_steps is not None and self.max_episode_steps < 1:
+            raise ValueError(f"eval.max_episode_steps must be at least 1, got {self.max_episode_steps}.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:

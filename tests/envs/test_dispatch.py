@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 
 import gymnasium as gym
@@ -11,10 +12,12 @@ import torch
 from gymnasium.envs.registration import register, registry as gym_registry
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.envs.configs import EnvConfig, LiberoEnv
+from lerobot.envs.configs import EnvConfig, LiberoEnvConfig
 from lerobot.envs.factory import make_env, make_env_config, make_env_pre_post_processors
+from lerobot.policies.cosmos3.processor_cosmos3 import make_cosmos3_libero_pre_post_processors
 from lerobot.processor import LiberoProcessorStep
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_PREFIX, OBS_STATE
+from tests.fixtures.toy_env import DictObservationEnv
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +39,14 @@ def test_unknown_type():
 
 
 def test_libero_fps_controls_simulator_frequency():
-    cfg = LiberoEnv(fps=17)
+    cfg = LiberoEnvConfig(fps=17)
 
     assert cfg.gym_kwargs["control_freq"] == 17
 
 
 def test_libero_rejects_nonpositive_fps():
     with pytest.raises(ValueError, match="fps must be positive"):
-        LiberoEnv(fps=0)
+        LiberoEnvConfig(fps=0)
 
 
 def test_identity_processors():
@@ -75,12 +78,14 @@ def test_processors_delegation():
     assert len(pre.steps) == 0
 
 
-def test_libero_processors_are_policy_agnostic():
-    cfg = LiberoEnv()
-    pre, post = make_env_pre_post_processors(cfg, policy_cfg=object())
+def test_libero_processors_are_identity():
+    # LIBERO observations are canonical (flipped images, flat state) before they reach any processor.
+    pre, post = make_env_pre_post_processors(LiberoEnvConfig(), policy_cfg=object())
 
-    assert isinstance(pre.steps[0], LiberoProcessorStep)
-    assert len(post.steps) == 0
+    assert len(pre.steps) == 0 and len(post.steps) == 0
+    # A Cosmos3 policy only decodes its action there.
+    pre, post = make_cosmos3_libero_pre_post_processors()
+    assert len(pre.steps) == 0 and len(post.steps) == 1
 
 
 def test_libero_processor_transform_features_replaces_state_components():
@@ -124,10 +129,10 @@ def test_libero_processor_flattens_state_to_raw_8_dim():
 
 
 def test_base_create_envs():
-    """Base class create_envs() should build a single-task VectorEnv via gym.make()."""
+    """Base class create_envs() should build a single-task LocalVectorEnv via gym.make()."""
     gym_id = "_dispatch_test/CartPole-v99"
     if gym_id not in gym_registry:
-        register(id=gym_id, entry_point="gymnasium.envs.classic_control:CartPoleEnv")
+        register(id=gym_id, entry_point=DictObservationEnv)
 
     @EnvConfig.register_subclass("_dispatch_base_test")
     @dataclass
@@ -150,8 +155,9 @@ def test_base_create_envs():
 
     try:
         envs = _Env().create_envs(n_envs=2)
-        assert "_dispatch_base_test" in envs
-        env = envs["_dispatch_base_test"][0]
+        # One suite, named by the gym task.
+        assert list(envs) == ["CartPole-v99"]
+        env = envs["CartPole-v99"][0]
         assert isinstance(env, gym.vector.VectorEnv)
         assert env.num_envs == 2
         env.close()
@@ -203,3 +209,23 @@ def test_custom_get_env_processors_override():
 
     pre, post = _Env().get_env_processors()
     assert isinstance(pre, DataProcessorPipeline)
+
+
+def test_xvla_libero_processors_build_its_input():
+    from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+
+    pre, _ = make_env_pre_post_processors(LiberoEnvConfig(), XVLAConfig())
+    step = pre.steps[0]
+    rotated = torch.rand(1, 3, 4, 4)
+    state = torch.tensor([[0.1, 0.2, 0.3, 0.0, 0.0, math.pi / 2, 0.04, -0.04]])
+
+    out = step.observation(
+        {f"{OBS_IMAGES}.image": rotated, f"{OBS_IMAGES}.image2": rotated, OBS_STATE: state}
+    )
+
+    assert torch.equal(out[f"{OBS_IMAGES}.image"], rotated)
+    assert torch.equal(out[f"{OBS_IMAGES}.image2"], torch.flip(rotated, dims=[2, 3]))
+    # A quarter turn about z in the frame of the quaternion is the identity in the controller frame.
+    torch.testing.assert_close(out[OBS_STATE], torch.tensor([[0.1, 0.2, 0.3, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]]))
+    with pytest.raises(ValueError, match="8 wide"):
+        step.observation({OBS_STATE: torch.zeros(1, 20)})
