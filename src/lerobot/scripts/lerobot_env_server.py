@@ -57,8 +57,9 @@ class EnvServerLaunchConfig(EnvServerConfig):
             from its `LEROBOT_SIM`, else from the EnvHub defaults. Serving it runs its code, so it needs
             `trust_remote_code`.
         trust_remote_code (`bool`, *optional*, defaults to `False`):
-            Consent to run the `envhub` repository's code: its `env.py` and, with `docker`, the installation
-            of its `requirements.txt` and `packages.txt`.
+            Consent to run an EnvHub repository's code, from `envhub` or a YAML's `sim`: its `env.py` and, with
+            `docker`, the installation of its `requirements.txt` and `packages.txt`. A YAML can also give it as
+            `trust_remote_code: true` in `sim.kwargs`.
         docker (`bool`, *optional*, defaults to `False`):
             Run the server in its Docker image, built from this LeRobot checkout, on `localhost:7448`.
         build (`bool`, *optional*, defaults to `False`):
@@ -80,26 +81,26 @@ class EnvServerLaunchConfig(EnvServerConfig):
         if (self.build or self.stop) and not self.docker:
             raise ValueError("--build and --stop apply to --docker=true")
         if self.envhub:
-            if not (self.trust_remote_code or self.stop):
-                pin = (
-                    ""
-                    if Path(self.envhub.split(":")[0]).is_dir()
-                    else ", pin the commit you read (user/repo@<commit>)"
-                )
-                raise ValueError(
-                    f"--envhub={self.envhub} runs the repository's code. Read its env.py, requirements.txt and "
-                    f"packages.txt{pin}, then pass --trust_remote_code=true"
-                )
             if self.sim.type not in ("", "envhub"):
                 raise ValueError(f"--envhub serves an EnvHub repository, not sim.type={self.sim.type!r}")
             self.sim.type = "envhub"
-            self.sim.kwargs = {
-                "make_env_kwargs": {},
-                **self.sim.kwargs,
-                "hub_path": self.envhub,
-                "trust_remote_code": self.trust_remote_code,
-            }
+            self.sim.kwargs = {"make_env_kwargs": {}, **self.sim.kwargs, "hub_path": self.envhub}
             self.deployment = self.deployment or "envhub"
+        if self.sim.type == "envhub":
+            # Checked before anything is downloaded or built: a Docker build installs the repository's packages.
+            trusted = self.trust_remote_code or bool(self.sim.kwargs.get("trust_remote_code"))
+            if not (trusted or self.stop):
+                hub_path = str(self.sim.kwargs.get("hub_path", ""))
+                pin = (
+                    ""
+                    if Path(hub_path.split(":")[0]).is_dir()
+                    else ", pin the commit you read (user/repo@<commit>)"
+                )
+                raise ValueError(
+                    f"Serving the EnvHub repository {hub_path} runs its code. Read its env.py, requirements.txt "
+                    f"and packages.txt{pin}, then pass --trust_remote_code=true"
+                )
+            self.sim.kwargs = {**self.sim.kwargs, "trust_remote_code": trusted}
         super().__post_init__()
 
 

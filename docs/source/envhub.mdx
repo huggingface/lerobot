@@ -310,17 +310,17 @@ An environment's versions are its Hub commits. A revision after `@` (a commit, a
 
 ### Options
 
-| Option                                        | Meaning                                                                                           |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `--env.type=envhub`                           | An EnvHub environment (`--robot.env.type=envhub` for a sim robot)                                 |
-| `--env.hub_path`                              | The repository, see [Hub paths](#hub-paths)                                                       |
-| `--env.trust_remote_code`                     | Consent to run the repository's code in your process; not needed when served                      |
-| `lerobot-env-server --trust_remote_code=true` | Consent to run the repository's code on the server, required with `--envhub`                      |
-| `--env.make_env_kwargs`                       | Keyword arguments for `make_env`; when served, set them on the server instead                     |
-| `--env.server.endpoint`                       | Run the environment on an env server; see [Simulation](./simulation) for the other server options |
-| `lerobot-env-server --envhub=<path>`          | Serve a repository; with `--docker=true`, in an image built from it                               |
-| `lerobot-env-server --sim.kwargs=...`         | The server's `make_env` options, e.g. `'{make_env_kwargs: {episode_length: 900}}'`                |
-| `lerobot-env-server --sim.<key>=...`          | Override a `LEROBOT_SIM` value, e.g. `--sim.fps=15`                                               |
+| Option                                        | Meaning                                                                                             |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `--env.type=envhub`                           | An EnvHub environment (`--robot.env.type=envhub` for a sim robot)                                   |
+| `--env.hub_path`                              | The repository, see [Hub paths](#hub-paths)                                                         |
+| `--env.trust_remote_code`                     | Consent to run the repository's code in your process; not needed when served                        |
+| `lerobot-env-server --trust_remote_code=true` | Consent to run the repository's code on the server, required to serve it, from `--envhub` or a YAML |
+| `--env.make_env_kwargs`                       | Keyword arguments for `make_env`; when served, set them on the server instead                       |
+| `--env.server.endpoint`                       | Run the environment on an env server; see [Simulation](./simulation) for the other server options   |
+| `lerobot-env-server --envhub=<path>`          | Serve a repository; with `--docker=true`, in an image built from it                                 |
+| `lerobot-env-server --sim.kwargs=...`         | The server's `make_env` options, e.g. `'{make_env_kwargs: {episode_length: 900}}'`                  |
+| `lerobot-env-server --sim.<key>=...`          | Override a `LEROBOT_SIM` value, e.g. `--sim.fps=15`                                                 |
 
 In Python, `make_env("user/repo", trust_remote_code=True)` from `lerobot.envs` returns the repository's vector envs as `make_env` built them, without LeRobot's conventions. Prefer `HubEnvConfig`, as in [Test before publishing](#test-before-publishing): it builds them as `lerobot-eval` and the server do.
 

@@ -180,6 +180,29 @@ def test_serving_an_envhub_repository_needs_explicit_consent(tmp_path):
     EnvServerLaunchConfig(envhub="user/repo", docker=True, stop=True)
 
 
+def test_an_envhub_yaml_needs_consent_before_anything_is_built(tmp_path, monkeypatch):
+    # A Docker build installs the repository's packages, so consent is checked before it starts.
+    calls = []
+    monkeypatch.setattr(lerobot_env_server.subprocess, "run", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(lerobot_env_server, "snapshot_download", lambda *args, **kwargs: calls.append(args))
+    config = tmp_path / "envhub.yaml"
+    sim = {"type": "envhub", "kwargs": {"hub_path": "user/repo"}}
+    config.write_text(yaml.safe_dump({"deployment": "envhub", "sim": sim}))
+    monkeypatch.setattr(sys, "argv", ["lerobot-env-server", f"--config_path={config}", "--docker=true"])
+    with pytest.raises(Exception) as error:
+        lerobot_env_server.main()
+    assert "--trust_remote_code=true" in f"{error.value} {error.value.__cause__}"
+    assert calls == []
+    # Consent from the command line, or from the YAML.
+    cfg = draccus.parse(EnvServerLaunchConfig, config_path=str(config), args=["--trust_remote_code=true"])
+    assert cfg.sim.kwargs["trust_remote_code"] is True
+    sim["kwargs"]["trust_remote_code"] = True
+    config.write_text(yaml.safe_dump({"deployment": "envhub", "sim": sim}))
+    assert draccus.parse(EnvServerLaunchConfig, config_path=str(config), args=[]).sim.kwargs[
+        "trust_remote_code"
+    ]
+
+
 def test_build_and_stop_require_docker():
     for options in ({"build": True}, {"stop": True}):
         with pytest.raises(ValueError, match="--docker"):
