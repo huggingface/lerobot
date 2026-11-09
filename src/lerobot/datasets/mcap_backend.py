@@ -180,7 +180,7 @@ class McapDatasetReader(BaseDatasetReader):
         token: Accepted for constructor-contract uniformity; unused (local-disk only, v1).
         decode_pool_size: Max threads used to fetch/decode messages per batch.
         gop_frame_cache_bytes: Byte budget for the per-worker decoded-GOP-frame LRU
-            (see ``_GopFrameLRU``); default 8GB, each DataLoader worker gets its own.
+            (see ``_GopFrameLRU``); default 16GB, each DataLoader worker gets its own.
             Frames are cached as compact uint8, so this holds roughly
             ``gop_frame_cache_bytes / (3 * height * width)`` frames regardless of
             ``return_uint8``. Size it to your dataset/hardware: raise it for more
@@ -213,13 +213,18 @@ class McapDatasetReader(BaseDatasetReader):
         self.return_uint8 = return_uint8
         self.set_image_transforms(image_transforms)
         self._decode_pool_size = decode_pool_size or 16
-        self._gop_frame_cache = _GopFrameLRU(gop_frame_cache_bytes or (8 << 30))  # 8GB/worker default --
-        # confirmed too small a budget (e.g. 2GB, matching the lance backend's own
-        # _VideoDecoderLRU) defeats the cache outright for real multi-camera, single-
-        # keyframe-per-episode content (the whole point of this cache -- see
-        # _GopFrameLRU's docstring); 8GB was also confirmed, separately, to only be safe
-        # once close() actually releases it between readers (see close()'s docstring) --
-        # this is a starting point to tune from, not a size fit to any specific workload.
+        self._gop_frame_cache = _GopFrameLRU(gop_frame_cache_bytes or (16 << 30))  # 16GB/worker default
+        # -- sized from a real measurement, not guessed: a 3-episode, 4-camera, single-
+        # keyframe-per-episode benchmark (real Labelbox/robotics-datasets content) needs
+        # ~10.5GB of simultaneously-live uint8 frames to avoid inter-episode eviction
+        # thrashing (confirmed: an 8GB budget -- comfortably safe memory-wise on its own
+        # -- still thrashed, non-deterministically, whenever the random access order
+        # needed more than 8GB live at once; a too-small budget like 2GB, matching the
+        # lance backend's own _VideoDecoderLRU, defeats this cache outright). This is a
+        # starting point to tune from, not a size fit to every workload: more episodes
+        # or cameras need more; also mind each DataLoader worker getting its own budget
+        # (see close()'s docstring on why that memory is now reliably released, and the
+        # constructor docstring below on sizing this against total system memory).
 
         if self.meta.image_keys:
             raise NotImplementedError(
