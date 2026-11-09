@@ -137,7 +137,7 @@ hardware = [
     "lerobot[deepdiff-dep]",
 ]
 viz = [
-    "rerun-sdk>=0.24.0,<0.34.0",
+    "rerun-sdk>=0.38.1,<0.43.0",
     "foxglove-sdk>=0.25.1,<0.26.0",
 ]
 # ── User-facing composite extras (map to CLI scripts) ─────
