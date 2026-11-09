@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from lerobot.utils.device_utils import get_safe_torch_device, is_torch_device_available
+from lerobot.utils.device_utils import get_safe_torch_device, is_amp_available, is_torch_device_available
 
 
 def test_cpu_always_available():
@@ -34,3 +34,18 @@ def test_missing_cuda_raises_valueerror():
 def test_missing_mps_raises_valueerror():
     with patch("torch.backends.mps.is_available", return_value=False), pytest.raises(ValueError, match="MPS"):
         get_safe_torch_device("mps")
+
+
+def test_indexed_devices_are_available():
+    with patch("torch.cuda.is_available", return_value=True):
+        assert is_torch_device_available("cuda:1")
+    with patch("torch.backends.mps.is_available", return_value=True):
+        assert is_torch_device_available("mps:0")
+    with patch("torch.xpu.is_available", return_value=True):
+        assert is_torch_device_available("xpu:0")
+
+
+def test_amp_availability_ignores_device_index():
+    assert is_amp_available("cuda:1")
+    assert is_amp_available("xpu:0")
+    assert not is_amp_available("mps:0")

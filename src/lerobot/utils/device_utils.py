@@ -114,9 +114,9 @@ def is_torch_device_available(try_device: str) -> bool:
     try_device = str(try_device)  # Ensure try_device is a string
     if try_device.startswith("cuda"):
         return torch.cuda.is_available()
-    elif try_device == "mps":
+    elif try_device.startswith("mps"):
         return torch.backends.mps.is_available()
-    elif try_device == "xpu":
+    elif try_device.startswith("xpu"):
         return torch.xpu.is_available()
     elif try_device == "cpu":
         return True
@@ -125,9 +125,9 @@ def is_torch_device_available(try_device: str) -> bool:
 
 
 def is_amp_available(device: str):
-    if device in ["cuda", "xpu", "cpu"]:
+    if device.startswith(("cuda", "xpu")) or device == "cpu":
         return True
-    elif device == "mps":
+    elif device.startswith("mps"):
         return False
     else:
         raise ValueError(f"Unknown device '{device}.")
