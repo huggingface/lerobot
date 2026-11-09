@@ -183,9 +183,12 @@ class McapDatasetReader(BaseDatasetReader):
             (see ``_GopFrameLRU``); default 8GB, each DataLoader worker gets its own.
             Frames are cached as compact uint8, so this holds roughly
             ``gop_frame_cache_bytes / (3 * height * width)`` frames regardless of
-            ``return_uint8``. Raise it for more cameras, longer single-keyframe clips,
-            or more parallel workers; irrelevant for datasets with no GOP-encoded video
-            channels.
+            ``return_uint8``. Size it to your dataset/hardware: raise it for more
+            cameras, longer single-keyframe clips, or more parallel workers (each gets
+            its own budget, so total memory scales with worker count), mindful of
+            whatever else shares the instance's RAM (e.g. a GOP encoder's own
+            thread-pool buffers at ingest time). Irrelevant for datasets with no
+            GOP-encoded video channels.
     """
 
     def __init__(
@@ -210,7 +213,13 @@ class McapDatasetReader(BaseDatasetReader):
         self.return_uint8 = return_uint8
         self.set_image_transforms(image_transforms)
         self._decode_pool_size = decode_pool_size or 16
-        self._gop_frame_cache = _GopFrameLRU(gop_frame_cache_bytes or (8 << 30))  # 8GB/worker default
+        self._gop_frame_cache = _GopFrameLRU(gop_frame_cache_bytes or (8 << 30))  # 8GB/worker default --
+        # confirmed too small a budget (e.g. 2GB, matching the lance backend's own
+        # _VideoDecoderLRU) defeats the cache outright for real multi-camera, single-
+        # keyframe-per-episode content (the whole point of this cache -- see
+        # _GopFrameLRU's docstring); 8GB was also confirmed, separately, to only be safe
+        # once close() actually releases it between readers (see close()'s docstring) --
+        # this is a starting point to tune from, not a size fit to any specific workload.
 
         if self.meta.image_keys:
             raise NotImplementedError(
@@ -405,10 +414,18 @@ class McapDatasetReader(BaseDatasetReader):
         return state
 
     def close(self) -> None:
-        """Shut down worker threads; reads reopen lazily."""
+        """Shut down worker threads and drop the decoded-GOP-frame cache; reads reopen
+        lazily. Dropping the cache here (not just in __getstate__) matters because the
+        thread pool's own submitted closures reference ``self`` -- a reference cycle the
+        refcounting collector can't break on its own -- so without an explicit close(),
+        a reader holding gigabytes of cached frames can outlive its last external
+        reference until the next cyclic-GC pass, confirmed to matter when several mcap
+        datasets are opened in sequence within one process (e.g. a benchmark comparing
+        multiple dataset variants)."""
         if self._decode_pool is not None:
             self._decode_pool.shutdown(wait=False, cancel_futures=True)
             self._decode_pool = None
+        self._gop_frame_cache = _GopFrameLRU(self._gop_frame_cache.byte_budget)
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
