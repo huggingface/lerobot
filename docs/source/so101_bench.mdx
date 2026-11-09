@@ -1,0 +1,150 @@
+# SO-101 Bench
+
+[SO-101 Bench](https://so101-bench.github.io) is a simulated benchmark for language-conditioned spatial manipulation with the low-cost [SO-101](https://github.com/TheRobotStudio/SO-ARM100) arm, built on an Isaac Lab digital twin of a real SO-101 setup. Policies see the same two cameras as the real robot (overhead and wrist) and act in LeRobot SO-101 follower units, so a policy trained on SO-101 Bench data, or on your own LeRobot SO-101 data with the same views, runs without adapters. The policy rankings it produces hold on the real robot.
+
+- **4 tasks**: put objects in a bin (one or four objects), place an object next to another, place it between two others, and move it in a direction
+- **138 objects** in three generalization splits: seen objects, unseen objects of seen classes, and unseen classes
+- **Public validation set**: 135 fixed episodes over the 15 task-family × object-split cells
+- **Simulator**: Isaac Sim 5.1 / Isaac Lab 2.3, SO-101 arm, Linux with an NVIDIA RTX GPU
+- **Links**: [project page](https://so101-bench.github.io), [GitHub](https://github.com/5hadytru/so101_bench), [leaderboard](https://so101-bench.github.io/leaderboard/), [sim demos](https://huggingface.co/datasets/5hadytru/so101_bench_sim), [checkpoints](https://huggingface.co/5hadytru)
+
+![SO-101 Bench overview](https://raw.githubusercontent.com/5hadytru/so101_bench/main/media/so101_bench_summary.png)
+
+## Tasks
+
+Every evaluation task is one fixed episode: a set of objects, their layout, an instruction and the scene's appearance. Tasks are grouped into suites, one per task family × object split:
+
+| Task family | Example instruction                                    | Success                                         | Time limit |
+| ----------- | ------------------------------------------------------ | ----------------------------------------------- | ---------- |
+| `bin_1`     | "Place each object in the plastic bin"                 | the object rests in the bin                     | 30 s       |
+| `bin_4`     | "Place each object in the plastic bin" (4 objects)     | all four objects rest in the bin                | 75 s       |
+| `next_to`   | "Place the pen next to the juice box"                  | the target rests beside the referent            | 30 s       |
+| `between`   | "Place the trimmer between the mouthguard and the pen" | the target rests between the two referents      | 30 s       |
+| `move`      | "Move the kazoo right"                                 | the target moves far enough, straight, that way | 30 s       |
+
+| Object split          | Objects                                     |
+| --------------------- | ------------------------------------------- |
+| `seen`                | objects in the training data                |
+| `unseen_seen_class`   | new objects of classes in the training data |
+| `unseen_unseen_class` | objects of classes not in the training data |
+
+Suites are named `<split>/<family>` (for example `unseen_unseen_class/between`) and task ids are the episodes' trial ids. An episode can also fail early, for example when the robot disturbs a non-target object. The public validation set (`--env.episode_set=val_set`, the default) has 10 episodes per suite (5 per `bin_4` suite), half in the canonical scene and half with a training background and robot colour, and uses only public objects. The leaderboard's primary evaluation uses the same tasks with held-out objects, backgrounds and robot colours.
+
+## Installation
+
+Isaac Sim 5.1 needs Python 3.11 while LeRobot needs Python >= 3.12, so SO-101 Bench runs the simulator in a separate process: `lerobot-eval` starts it from your SO-101 Bench checkout and talks to it over a local socket. You need two environments.
+
+**1. The simulator (Python 3.11).** Install [Isaac Sim 5.1 and Isaac Lab 2.3](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html), then SO-101 Bench and its assets (~2 GB):
+
+```bash
+git clone https://github.com/5hadytru/so101_bench && cd so101_bench
+~/IsaacLab/isaaclab.sh -p -m pip install -e source/so101_bench
+~/IsaacLab/isaaclab.sh -p scripts/download_assets.py
+```
+
+**2. LeRobot (Python >= 3.12)**, with the extras of the policy you evaluate:
+
+```bash
+pip install -e ".[so101_bench]"
+```
+
+Then point LeRobot at the simulator:
+
+```bash
+export SO101_BENCH_ROOT=/path/to/so101_bench
+export ISAACLAB_SH=/path/to/IsaacLab/isaaclab.sh
+export SO101_BENCH_ISAAC_VENV=/path/to/isaac/venv   # only if Isaac Lab runs from a venv
+```
+
+## Running Evaluation
+
+Each task is one fixed scene, so use `--eval.n_episodes=1`. Episodes run one at a time in one simulator (about 1 minute to start), so use `--eval.batch_size=1`.
+
+```bash
+lerobot-eval \
+    --policy.path=<your_policy> \
+    --env.type=so101_bench \
+    --eval.n_episodes=1
+```
+
+Evaluate some suites with `--env.task`, or some episodes with `--env.episodes`, for example the first two suites:
+
+```bash
+lerobot-eval \
+    --policy.path=<your_policy> \
+    --env.type=so101_bench \
+    --env.episodes=0-19 \
+    --eval.n_episodes=1
+```
+
+### Key CLI options for `env.type=so101_bench`
+
+| Option                    | Default             | Description                                                                              |
+| ------------------------- | ------------------- | ---------------------------------------------------------------------------------------- |
+| `env.episode_set`         | `val_set`           | Episode set: `val_set`, `mmrv_eval` (the 45 sim-to-real episodes), or a tasks JSONL path |
+| `env.task`                | `null` (all)        | Suites, e.g. `seen/bin_1,seen/move`                                                      |
+| `env.layouts`             | `null`              | Layouts JSONL, needed with a custom tasks JSONL                                          |
+| `env.episodes`            | `null` (all)        | Trial-id subset, e.g. `0-9,20`                                                           |
+| `env.cameras`             | `overhead,wrist`    | Policy cameras; add `overhead_init,wrist_init` for the frames at robot start             |
+| `env.so101_bench_root`    | `$SO101_BENCH_ROOT` | SO-101 Bench checkout                                                                    |
+| `env.isaaclab_sh`         | `$ISAACLAB_SH`      | Isaac Lab launcher                                                                       |
+| `env.max_joint_step_deg`  | `15`                | Per-step joint-target clamp (leaderboard setting)                                        |
+| `env.initial_hold_time_s` | `1.5`               | Initial-pose hold before the first observation (leaderboard setting)                     |
+| `env.sim_log`             | `null`              | Simulator log file (default `<so101_bench_root>/outputs/lerobot_sim_server.log`)         |
+
+### Scoring
+
+`lerobot-eval`'s overall `pc_success` averages episodes. The SO-101 Bench score is the mean of the 15 suite success rates (the `bin_4` suites have half as many episodes), reported with a 95% bootstrap CI. To compute it from a run:
+
+```bash
+python $SO101_BENCH_ROOT/integrations/lerobot/lerobot_env_so101_bench/score.py outputs/eval/<run>/eval_info.json
+```
+
+## Policy inputs and outputs
+
+| Key                                | Shape         | Description                                                       |
+| ---------------------------------- | ------------- | ----------------------------------------------------------------- |
+| `observation.images.overhead`      | (480, 640, 3) | Overhead camera RGB                                               |
+| `observation.images.wrist`         | (480, 640, 3) | Wrist camera RGB                                                  |
+| `observation.images.overhead_init` | (480, 640, 3) | Optional: the overhead frame at robot start, held for the episode |
+| `observation.images.wrist_init`    | (480, 640, 3) | Optional: the wrist frame at robot start, held for the episode    |
+| `observation.state`                | (6,)          | Joint positions in LeRobot SO-101 follower units                  |
+| `action`                           | (6,)          | Joint-position targets in the same units                          |
+
+Joint order is shoulder pan, shoulder lift, elbow flex, wrist flex, wrist roll, gripper: body joints in [-100, 100] and the gripper in [0, 100], as recorded by a LeRobot SO-101 follower. The simulator runs at 30 Hz, and each action is clamped to at most 15° of joint motion from the current position, as on the leaderboard.
+
+## Training
+
+The [`5hadytru/so101_bench_sim`](https://huggingface.co/datasets/5hadytru/so101_bench_sim) dataset (LeRobot v3.0, 3,629 episodes) has demonstrations of all four tasks on the training objects, with the same cameras, state and action as the environment, so `lerobot-train` needs no `--rename_map`. [`5hadytru/so101_bench_sim_WM`](https://huggingface.co/datasets/5hadytru/so101_bench_sim_WM) adds the `overhead_init` / `wrist_init` frames. For example, π0.5 (the full recipe used for the published checkpoint is in the SO-101 Bench repo's `scripts/pi05_fine_tuning/`):
+
+```bash
+lerobot-train \
+    --policy.path=lerobot/pi05_base \
+    --dataset.repo_id=5hadytru/so101_bench_sim_WM \
+    --policy.dtype=bfloat16 \
+    --policy.chunk_size=30 \
+    --policy.n_action_steps=15 \
+    --steps=18000 \
+    --output_dir=outputs/train/pi05_so101_bench
+```
+
+## Reproducing published results
+
+The fine-tuned [π0.5 checkpoint](https://huggingface.co/5hadytru/so101_bench_pi05) uses the start-of-episode frames:
+
+```bash
+lerobot-eval \
+    --policy.path=5hadytru/so101_bench_pi05 \
+    --env.type=so101_bench \
+    --env.cameras=overhead,wrist,overhead_init,wrist_init \
+    --eval.n_episodes=1 \
+    --seed=0
+```
+
+With LeRobot `main` on one RTX 3090 this command takes about 6.5 hours. Validation-set results with `lerobot-eval` (score = mean of the 15 suite success rates, 95% bootstrap CI):
+
+| Policy                                                   | Score [95% CI]    | Episode success |
+| -------------------------------------------------------- | ----------------- | --------------- |
+| [π0.5](https://huggingface.co/5hadytru/so101_bench_pi05) | 40.0 [32.7, 47.3] | 40% (54/135)    |
+
+Policies with sampled actions vary by several points between runs on 135 episodes. The leaderboard on the [project page](https://so101-bench.github.io/leaderboard/) reports the primary evaluation.
