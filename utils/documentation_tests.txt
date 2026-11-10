@@ -10,4 +10,7 @@
 # `utils/check_doctest_list.py` does not care which way round it is.
 #
 # Keep alphabetically sorted: `make check-doctest-list` enforces it, `make fix-docstrings` sorts it.
+src/lerobot/microphones/microphone.py
+src/lerobot/microphones/portaudio/configuration_portaudio.py
+src/lerobot/microphones/portaudio/microphone_portaudio.py
 src/lerobot/utils/eval_stats.py
