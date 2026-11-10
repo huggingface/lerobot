@@ -711,29 +711,22 @@ def test_default_gop_frame_cache_bytes_respects_ceiling():
 # zero frames for those, not an error. build_gop_time_and_keyframe_index must drop such
 # messages from its index instead of counting them against "must start with a keyframe".
 #
-# The two isolated tests below script mux_and_decode_by_position directly -- the single
-# seam both build_gop_time_and_keyframe_index and the reader's own GOP decode path call
-# through -- to pin down this exact index-building logic deterministically. The
-# end-to-end test uses genuinely valid Annex-B parameter-set bytes (SPS/PPS sliced off a
-# real encoded keyframe, no slice data) with no mocking at all, since a real container
-# decode (confirmed empirically) tolerates a standalone parameter-set packet correctly as
-# long as it's well-formed -- unlike a bare one-packet-at-a-time CodecContext.decode(),
-# which can raise even on genuinely valid input (see mux_and_decode_by_position's
-# docstring).
-
-
-class _FakeFrame:
-    def __init__(self, key_frame: bool, pict_type: object = None, height: int = 48, width: int = 48) -> None:
-        self.key_frame = key_frame
-        self.pict_type = pict_type if pict_type is not None else av.video.frame.PictureType.I
-        self.height = height
-        self.width = width
+# The two isolated tests below script demux_keyframe_by_position directly -- the seam
+# build_gop_time_and_keyframe_index uses to build its index without a pixel decode --
+# to pin down this exact index-building logic deterministically. decode_has_bframes_and_shape
+# is scripted too, since it would otherwise try to really decode these tests'
+# placeholder (non-decodable) message bytes. The end-to-end test uses genuinely valid
+# Annex-B parameter-set bytes (SPS/PPS sliced off a real encoded keyframe, no slice
+# data) with no mocking at all, since a real container decode (confirmed empirically)
+# tolerates a standalone parameter-set packet correctly as long as it's well-formed --
+# unlike a bare one-packet-at-a-time CodecContext.decode(), which can raise even on
+# genuinely valid input (see mux_and_decode_by_position's docstring).
 
 
 def _write_scripted_messages(path: Path, topic: str, n_messages: int) -> None:
-    """Raw message bytes are irrelevant here -- mux_and_decode_by_position is mocked
-    out entirely -- so each message is a single placeholder byte, just enough for mcap
-    to store it."""
+    """Raw message bytes are irrelevant here -- demux_keyframe_by_position and
+    decode_has_bframes_and_shape are mocked out entirely -- so each message is a single
+    placeholder byte, just enough for mcap to store it."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "wb") as f:
         writer = Writer(f)
@@ -755,8 +748,14 @@ def test_build_gop_index_tolerates_leading_parameter_set_only_messages(tmp_path)
     _write_scripted_messages(path, topic, n_messages=6)
 
     # Positions 0-2 are absent entirely (zero-output messages); 3, 4, 5 decoded.
-    scripted = {3: _FakeFrame(True), 4: _FakeFrame(False), 5: _FakeFrame(False)}
-    with patch("lerobot.datasets.mcap_utils.mux_and_decode_by_position", return_value=scripted):
+    scripted = {3: True, 4: False, 5: False}
+    with (
+        patch("lerobot.datasets.mcap_utils.demux_keyframe_by_position", return_value=scripted),
+        patch(
+            "lerobot.datasets.mcap_utils.decode_has_bframes_and_shape",
+            return_value=(False, (3, 48, 48)),
+        ),
+    ):
         times, kf_positions, has_bframes, _shape = build_gop_time_and_keyframe_index(path, topic, "h264")
 
     # The three zero-output messages (indices 0-2) never make it into the index at all.
@@ -772,9 +771,9 @@ def test_build_gop_index_rejects_real_open_gop(tmp_path):
     topic = "/cam/scripted"
     _write_scripted_messages(path, topic, n_messages=3)
 
-    scripted = {1: _FakeFrame(False), 2: _FakeFrame(True)}  # position 0 absent (zero-output)
+    scripted = {1: False, 2: True}  # position 0 absent (zero-output)
     with (
-        patch("lerobot.datasets.mcap_utils.mux_and_decode_by_position", return_value=scripted),
+        patch("lerobot.datasets.mcap_utils.demux_keyframe_by_position", return_value=scripted),
         pytest.raises(ValueError, match="must start with a keyframe"),
     ):
         build_gop_time_and_keyframe_index(path, topic, "h264")
