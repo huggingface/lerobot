@@ -411,8 +411,19 @@ def start_episode_audio(microphones: dict[str, Microphone]) -> tuple[Path, dict[
         The temporary directory, and the capture time of the first sample of each microphone.
     """
     audio_dir = Path(tempfile.mkdtemp(prefix="lerobot_audio_"))
-    async_microphones_start_recording(microphones, [audio_dir / f"{key}.wav" for key in microphones])
-    first_sample_times = {key: wait_for_first_sample_time(mic) for key, mic in microphones.items()}
+    try:
+        async_microphones_start_recording(microphones, [audio_dir / f"{key}.wav" for key in microphones])
+        first_sample_times = {key: wait_for_first_sample_time(mic) for key, mic in microphones.items()}
+    except BaseException:
+        # The caller never gets `audio_dir`, so release what was started here before re-raising.
+        for key, mic in microphones.items():
+            try:
+                if mic.is_recording:
+                    mic.stop_recording()
+            except Exception:
+                logging.exception(f"Failed to stop microphone '{key}' after a failed start.")
+        shutil.rmtree(audio_dir, ignore_errors=True)
+        raise
     return audio_dir, first_sample_times
 
 

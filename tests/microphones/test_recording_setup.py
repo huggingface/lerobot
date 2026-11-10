@@ -14,12 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 import pytest
 
 from lerobot.microphones.portaudio import PortAudioMicrophoneConfig
 from lerobot.robots.koch_follower import KochFollowerConfig
 from lerobot.robots.so_follower import SOFollowerRobotConfig
 from lerobot.utils.feature_utils import combine_feature_dicts, microphones_to_dataset_features
+
+pytestmark = pytest.mark.hardware
 
 
 def test_microphones_to_dataset_features():
@@ -78,3 +82,39 @@ def test_robot_config_accepts_microphones(robot_config_class):
     microphone = PortAudioMicrophoneConfig(microphone_index=0, sample_rate=48000, channels=[1, 2])
     config = robot_config_class(port="/dev/null", microphones={"wrist": microphone})
     assert config.microphones == {"wrist": microphone}
+
+
+class _FakeMicrophone:
+    def __init__(self):
+        self.is_recording = False
+
+    def start_recording(self, output_file, multiprocessing=False, overwrite=True, barrier=None):
+        if barrier is not None:
+            barrier.wait()
+        self.is_recording = True
+        Path(output_file).write_bytes(b"audio")
+
+    def stop_recording(self):
+        self.is_recording = False
+
+
+@pytest.mark.parametrize("error", [TimeoutError, KeyboardInterrupt])
+def test_start_episode_audio_cleans_up_on_failure(monkeypatch, tmp_path, error):
+    pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+    from lerobot.scripts import lerobot_record
+
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    monkeypatch.setattr(lerobot_record.tempfile, "mkdtemp", lambda **kwargs: str(audio_dir))
+
+    def fail(microphone):
+        raise error("no audio")
+
+    monkeypatch.setattr(lerobot_record, "wait_for_first_sample_time", fail)
+    microphones = {"wrist": _FakeMicrophone(), "base": _FakeMicrophone()}
+
+    with pytest.raises(error, match="no audio"):
+        lerobot_record.start_episode_audio(microphones)
+
+    assert not any(mic.is_recording for mic in microphones.values())
+    assert not audio_dir.exists()
