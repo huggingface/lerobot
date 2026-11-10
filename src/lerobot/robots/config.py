@@ -34,6 +34,14 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
                         raise ValueError(
                             f"Specifying '{attr}' is required for the camera to be used in a robot"
                         )
+        # The sample rate and channels define the dataset features, which are created before connecting.
+        if hasattr(self, "microphones") and self.microphones:
+            for _, config in self.microphones.items():
+                for attr in ["sample_rate", "channels"]:
+                    if getattr(config, attr) is None:
+                        raise ValueError(
+                            f"Specifying '{attr}' is required for the microphone to be used in a robot"
+                        )
 
     @property
     def type(self) -> str:

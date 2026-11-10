@@ -20,6 +20,7 @@ from functools import cached_property
 
 from lerobot.cameras import CameraConfig, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.microphones import MicrophoneConfig, make_microphones_from_configs
 from lerobot.motors.motors_bus import Motor, MotorNormMode
 from lerobot.robots import Robot, RobotConfig
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -31,6 +32,7 @@ from tests.mocks.mock_motors_bus import MockMotorsBus
 class MockRobotConfig(RobotConfig):
     n_motors: int = 3
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+    microphones: dict[str, MicrophoneConfig] = field(default_factory=dict)
     random_values: bool = True
     static_values: list[float] | None = None
     calibrated: bool = True
@@ -61,6 +63,7 @@ class MockRobot(Robot):
         self._is_connected = False
         self._is_calibrated = config.calibrated
         self.cameras = make_cameras_from_configs(config.cameras)
+        self.microphones = make_microphones_from_configs(config.microphones)
 
         mock_motors = {}
         for i in range(config.n_motors):
@@ -101,6 +104,8 @@ class MockRobot(Robot):
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self._is_connected = True
+        for mic in self.microphones.values():
+            mic.connect()
         if calibrate:
             self.calibrate()
 
@@ -130,4 +135,6 @@ class MockRobot(Robot):
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        for mic in self.microphones.values():
+            mic.disconnect()
         self._is_connected = False

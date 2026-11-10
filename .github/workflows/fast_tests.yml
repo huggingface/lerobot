@@ -109,16 +109,18 @@ jobs:
         run: uv run pytest tests -vv --maxfail=10 -m base
 
       # ── Tier 2: Dataset ──────────────────────────────────
+      # The audio extra holds the dependencies of audio features.
       - name: "Tier 2 — Install: dataset"
-        run: uv sync --locked --extra test --extra dataset
+        run: uv sync --locked --extra test --extra dataset --extra audio
 
       - name: "Tier 2 — Test: dataset"
         run: uv run pytest tests -vv --maxfail=10 -m dataset
 
       # ── Tier 3: Hardware ─────────────────────────────────
       # Installed with dataset, as for lerobot-record, since hardware tests also need datasets.
+      # The audio extra holds the microphone dependencies.
       - name: "Tier 3 — Install: hardware"
-        run: uv sync --locked --extra test --extra dataset --extra hardware
+        run: uv sync --locked --extra test --extra dataset --extra hardware --extra audio
 
       - name: "Tier 3 — Test: hardware"
         run: uv run pytest tests -vv --maxfail=10 -m hardware

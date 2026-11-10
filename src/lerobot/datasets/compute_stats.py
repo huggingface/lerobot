@@ -569,6 +569,26 @@ def compute_episode_stats(
     return ep_stats
 
 
+def compute_audio_stats(
+    samples: np.ndarray, quantile_list: list[float] | None = None
+) -> dict[str, np.ndarray]:
+    """Compute per-channel statistics over a subsample of an episode's audio.
+
+    Args:
+        samples: Audio samples of shape ``(num_samples, num_channels)``.
+        quantile_list: Quantiles to estimate. Defaults to ``DEFAULT_QUANTILES``.
+
+    Returns:
+        Statistics of shape ``(num_channels, 1)``, which broadcast over the ``(num_channels, window_size)``
+        windows returned by the dataset. Like for images, ``count`` is the number of samples in the episode,
+        not in the subsample, so that episodes are weighted by their length when aggregated.
+    """
+    sampled = samples[sample_indices(len(samples))]
+    stats = get_feature_stats(sampled, axis=0, keepdims=False, quantile_list=quantile_list)
+    stats["count"] = np.array([len(samples)])
+    return {k: v if k == "count" else v.reshape(-1, 1) for k, v in stats.items()}
+
+
 def _validate_stat_value(value: np.ndarray, key: str, feature_key: str) -> None:
     """Validate a single statistic value."""
     if not isinstance(value, np.ndarray):
