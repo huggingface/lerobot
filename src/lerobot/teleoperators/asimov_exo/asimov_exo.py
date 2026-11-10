@@ -26,7 +26,6 @@ from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from ..unitree_g1.exo_serial import ExoskeletonArm
-from ..unitree_g1.unitree_g1 import RemoteController
 from .config_asimov_exo import AsimovExoTeleoperatorConfig
 from .exo_ik import AsimovExoIKHelper
 
@@ -77,8 +76,6 @@ class AsimovExoTeleoperator(Teleoperator):
         self.ik_helper: AsimovExoIKHelper | None = None
         self.ema_alpha = 2 / (config.ema_window + 1)
         self._ema: dict[str, dict[str, float]] = {"left": {}, "right": {}}
-        # side -> raw ADC (x, y) of the centered stick, read at connect.
-        self._stick_center: dict[str, tuple[int, int]] = {}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -114,24 +111,12 @@ class AsimovExoTeleoperator(Teleoperator):
         if self.config.control_mode == "velocity":
             time.sleep(0.1)  # Give serial time to populate buffer
             # Sticks must be untouched here: their current position becomes the center.
-            self._stick_center = {}
             for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
-                raw = arm.read_raw()
-                # The button channel idles high; a missing joystick reads low.
-                if (
-                    raw is None
-                    or len(raw) < 16
-                    or raw[RemoteController.JOYSTICK_BTN_IDX] <= RemoteController.ADC_HALF
-                ):
+                if not arm.detect_joystick():
                     self.disconnect()
                     raise RuntimeError(
                         f"Velocity mode needs a joystick on the {side} exo arm; none detected."
                     )
-                self._stick_center[side] = (
-                    raw[RemoteController.JOYSTICK_X_IDX],
-                    raw[RemoteController.JOYSTICK_Y_IDX],
-                )
-                logger.info(f"{side} exo joystick center: {self._stick_center[side]}")
             return
         self.ik_helper = self._make_ik_helper()
         logger.info("IK helper initialized")
@@ -167,18 +152,12 @@ class AsimovExoTeleoperator(Teleoperator):
         """Left stick: forward/strafe; right stick x: turn. A missed read stops the robot."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        left_raw, right_raw = self.left_arm.read_raw(), self.right_arm.read_raw()
-        if left_raw is None or right_raw is None or len(left_raw) < 16 or len(right_raw) < 16:
+        left = self.left_arm.joystick_from_raw(self.left_arm.read_raw())
+        right = self.right_arm.joystick_from_raw(self.right_arm.read_raw())
+        if left is None or right is None:
             return dict.fromkeys(BASE_ACTIONS, 0.0)
 
-        def stick(side: str, raw: list[int]) -> tuple[float, float]:
-            cx, cy = self._stick_center[side]
-            return (raw[RemoteController.JOYSTICK_X_IDX] - cx) / RemoteController.ADC_HALF, (
-                raw[RemoteController.JOYSTICK_Y_IDX] - cy
-            ) / RemoteController.ADC_HALF
-
-        lx, ly = stick("left", left_raw)
-        rx, _ = stick("right", right_raw)
+        lx, ly, rx = left.x, left.y, right.x
 
         def axis(value: float) -> float:
             dz = self.config.joystick_deadzone
