@@ -429,6 +429,35 @@ def test_inference_seed_across_chunks_and_reset(config, mode, seed):
         assert not torch.equal(before, torch.get_rng_state())
 
 
+@pytest.mark.parametrize("mode", ["idm", "cod"])
+def test_explicit_noise_is_reusable_without_random_draws(config, mode):
+    config.denoising, config.inference_seed = mode, None
+    policy = LongWAMPolicy(config).eval()
+    pre, _ = make_pre_post_processors(config, dataset_stats=stats(config))
+    observation = pre(batch(config))
+    with torch.no_grad():
+        policy._observe(observation)
+        clean = policy._encode_video(policy._history())
+    b, z, _, h, w = clean.shape
+    noise = torch.randn(b, config.prediction_steps, config.action_dim)
+    video_noise = torch.randn(b, z, config.future_video_steps // 16, h, w)
+    original_noise, original_video = noise.clone(), video_noise.clone()
+    policy.reset()
+    before = torch.get_rng_state().clone()
+    first = policy.predict_action_chunk(observation, noise=noise, video_noise=video_noise)
+    assert torch.equal(before, torch.get_rng_state())
+    torch.testing.assert_close(noise, original_noise, atol=0, rtol=0)
+    torch.testing.assert_close(video_noise, original_video, atol=0, rtol=0)
+    policy.reset()
+    second = policy.predict_action_chunk(observation, noise=noise, video_noise=video_noise)
+    torch.testing.assert_close(first, second, atol=0, rtol=0)
+    # select_action must forward the same pair when filling its action queue.
+    policy.reset()
+    selected = policy.select_action(observation, noise=noise, video_noise=video_noise)
+    torch.testing.assert_close(selected, first[:, 0], atol=0, rtol=0)
+    assert torch.equal(before, torch.get_rng_state())
+
+
 @pytest.mark.parametrize("boundary", ["meta", "assigned_state"])
 def test_restore_shared_text_weights_after_loading_boundary(config, boundary):
     policy = LongWAMPolicy(config)
