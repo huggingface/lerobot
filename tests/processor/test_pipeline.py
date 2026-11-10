@@ -433,6 +433,20 @@ def test_step_lookup_by_name():
     assert pipeline.get_steps("does_not_exist") == []
 
 
+def test_step_index():
+    """index returns the position of the first matching step, and raises like list.index."""
+    step1 = MockStep("step1")
+    step2 = MockStep("step2")
+    registered = RegisteredMockStep()
+    pipeline = DataProcessorPipeline([step1, registered, step2])
+
+    assert pipeline.index(MockStep) == 0
+    assert pipeline.index(RegisteredMockStep) == 1
+    assert pipeline.index("registered_mock_step") == 1
+    with pytest.raises(ValueError, match="IdentityProcessorStep"):
+        pipeline.index(IdentityProcessorStep)
+
+
 def test_hooks():
     """Test before/after step hooks."""
     step = MockStep("test_step")

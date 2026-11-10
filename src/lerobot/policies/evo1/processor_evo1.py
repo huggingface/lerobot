@@ -353,19 +353,12 @@ def reconcile_evo1_processors(
         gripper_below_threshold_value=config.gripper_below_threshold_value,
         gripper_above_threshold_value=config.gripper_above_threshold_value,
     )
-    steps = list(postprocessor.steps)
-    action_step_idx = next(
-        (idx for idx, step in enumerate(steps) if isinstance(step, Evo1ActionProcessorStep)), None
-    )
-    if action_step_idx is None:
-        insert_idx = next(
-            (idx + 1 for idx, step in enumerate(steps) if isinstance(step, UnnormalizerProcessorStep)),
-            0,
-        )
-        steps.insert(insert_idx, action_step)
+    if postprocessor.has_step(Evo1ActionProcessorStep):
+        postprocessor.steps[postprocessor.index(Evo1ActionProcessorStep)] = action_step
+    elif postprocessor.has_step(UnnormalizerProcessorStep):
+        postprocessor.steps.insert(postprocessor.index(UnnormalizerProcessorStep) + 1, action_step)
     else:
-        steps[action_step_idx] = action_step
-    postprocessor.steps = steps
+        postprocessor.steps.insert(0, action_step)
 
     return preprocessor, postprocessor
 

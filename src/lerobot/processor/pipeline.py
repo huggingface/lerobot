@@ -34,7 +34,7 @@ import importlib
 import json
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -280,7 +280,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
     which are handled by the `to_transition` and `to_output` converters.
 
     Attributes:
-        steps: A sequence of `ProcessorStep` objects that make up the pipeline.
+        steps: The list of `ProcessorStep` objects that make up the pipeline.
         name: A descriptive name for the pipeline.
         to_transition: A function to convert raw input data into the standardized `EnvTransition` format.
         to_output: A function to convert the final `EnvTransition` into the desired output format.
@@ -288,7 +288,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         after_step_hooks: A list of functions to be called after each step is executed.
     """
 
-    steps: Sequence[ProcessorStep] = field(default_factory=list)
+    steps: list[ProcessorStep] = field(default_factory=list)
     name: str = "DataProcessorPipeline"
 
     to_transition: Callable[[TInput], EnvTransition] = field(
@@ -1713,6 +1713,19 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         See `get_steps` for how ``step_type`` is matched.
         """
         return self.get_step(step_type) is not None
+
+    def index(self, step_type: type[ProcessorStep] | str) -> int:
+        """Returns the position of the first step matching ``step_type``, like `list.index`.
+
+        See `get_steps` for how ``step_type`` is matched.
+
+        Raises:
+            ValueError: If no step matches.
+        """
+        for position, step in enumerate(self.steps):
+            if self._step_matches(step, step_type):
+                return position
+        raise ValueError(f"No step matching {step_type!r} in the pipeline")
 
     def register_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):
         """Registers a function to be called before each step.
