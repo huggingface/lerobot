@@ -222,12 +222,18 @@ class DatasetReader(BaseDatasetReader):
     def _load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self._meta.features)
-        self._validate_language_columns_declared(features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
+        self._validate_language_columns_declared()
+        # Only a projected set of Parquet columns restricts the read: dropping cameras alone, like
+        # no projection at all, keeps the Arrow cache key of the unprojected load.
+        parquet_columns = get_hf_features_from_features(self._meta.full_features).keys()
+        columns = list(features) if features.keys() != parquet_columns else None
+        hf_dataset = load_nested_dataset(
+            self.root / "data", features=features, episodes=self.episodes, columns=columns
+        )
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
-    def _validate_language_columns_declared(self, features: datasets.Features) -> None:
+    def _validate_language_columns_declared(self) -> None:
         """Require language columns stored in Parquet to be declared in metadata."""
         # Leave empty datasets to fail through the normal loading path.
         try:
@@ -241,7 +247,8 @@ class DatasetReader(BaseDatasetReader):
         schema_names = set(_pq.read_schema(sample).names)
         from .language import LANGUAGE_COLUMNS  # noqa: PLC0415
 
-        missing = sorted(set(LANGUAGE_COLUMNS) & schema_names - set(features))
+        # Declared means declared in info.json, even when `features=` dropped the column.
+        missing = sorted(set(LANGUAGE_COLUMNS) & schema_names - self._meta.full_features.keys())
         if missing:
             raise ValueError(
                 f"Dataset Parquet files contain language feature(s) missing from metadata: {missing}. "

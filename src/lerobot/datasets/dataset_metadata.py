@@ -15,8 +15,8 @@
 # limitations under the License.
 import contextlib
 import logging
-from collections.abc import Callable, Iterable
-from copy import deepcopy
+from collections.abc import Callable, Iterable, Sequence
+from copy import copy, deepcopy
 from pathlib import Path
 from typing import Literal
 
@@ -71,6 +71,9 @@ class LeRobotDatasetMetadata:
     ``episodes/`` parquet files that describe a dataset's structure, content,
     and statistics.
     """
+
+    # Feature subset served by this instance; ``None`` serves every declared feature. See ``select``.
+    _selected_features: dict[str, dict] | None = None
 
     def __init__(
         self,
@@ -221,6 +224,8 @@ class LeRobotDatasetMetadata:
         self.tasks = load_tasks(self.root) if self.total_tasks > 0 else None
         self.episodes = load_episodes(self.root) if self.total_episodes > 0 else None
         self.stats = load_stats(self.root)
+        if self._selected_features is not None:
+            self._apply_selection(set(self._selected_features))
 
     def ensure_readable(self) -> None:
         """Guarantee metadata is fully loaded for read operations.
@@ -231,6 +236,47 @@ class LeRobotDatasetMetadata:
         """
         if self.episodes is None:
             self._load_metadata()
+
+    def select(self, features: Sequence[str]) -> "LeRobotDatasetMetadata":
+        """Return a read-only copy that serves only ``features`` plus the bookkeeping columns.
+
+        On the copy, ``features``, ``stats`` and every key list derived from them
+        (``video_keys``, ``camera_keys``, ...) are restricted to the selection, while
+        ``info.features`` / ``full_features`` keep the complete declaration. Only complete
+        metadata can be projected (a projection no longer holds the stats of dropped
+        features), and not while it is recording. The copy never writes to disk: every
+        persisting method raises ``ValueError``.
+        """
+        self.require_full_features("select")
+        if getattr(self, "_pq_writer", None) is not None or getattr(self, "_metadata_buffer", None):
+            raise ValueError("Cannot project metadata that is recording; call finalize() first.")
+        # A copy taken before the lazy load would be refilled with the complete stats.
+        self.ensure_readable()
+        unknown = sorted(set(features) - self.info.features.keys())
+        if unknown:
+            raise ValueError(
+                f"Unknown feature(s) {unknown} for dataset '{self.repo_id}'. "
+                f"Available features: {sorted(self.info.features)}."
+            )
+        projected = copy(self)  # shallow: shares the read-only info/tasks/episodes
+        projected._pq_writer, projected._metadata_buffer = None, []
+        projected._finalized = True  # __del__ must never touch the original's writer
+        projected._apply_selection(set(features) | DEFAULT_FEATURES.keys())
+        return projected
+
+    def _apply_selection(self, selected: set[str]) -> None:
+        """Derive the served ``features``/``stats`` from the complete declaration."""
+        self._selected_features = {key: ft for key, ft in self.info.features.items() if key in selected}
+        if self.stats is not None:
+            self.stats = {key: value for key, value in self.stats.items() if key in selected}
+
+    def require_full_features(self, action: str) -> None:
+        """Raise unless this metadata serves every declared feature (see :meth:`select`)."""
+        if self._selected_features is not None:
+            raise ValueError(
+                f"{action} needs the complete dataset, but it was loaded with "
+                f"features={sorted(self._selected_features)}. Reload it without `features=`."
+            )
 
     def filter_episodes(
         self,
@@ -390,7 +436,12 @@ class LeRobotDatasetMetadata:
 
     @property
     def features(self) -> dict[str, dict]:
-        """All features contained in the dataset."""
+        """Features served by this metadata: all of them, or the subset chosen with :meth:`select`."""
+        return self._selected_features if self._selected_features is not None else self.info.features
+
+    @property
+    def full_features(self) -> dict[str, dict]:
+        """Every feature declared in ``info.json``, regardless of :meth:`select`."""
         return self.info.features
 
     @property
@@ -486,6 +537,7 @@ class LeRobotDatasetMetadata:
         Saves callers from hand-editing ``info.json`` and re-instantiating
         the metadata object.
         """
+        self.require_full_features("Setting tools")
         self.info.tools = [dict(t) for t in value] if value else None
         write_info(self.info, self.root)
         self.info = load_info(self.root)
@@ -552,6 +604,7 @@ class LeRobotDatasetMetadata:
         Raises:
             ValueError: If ``tasks`` contains duplicates.
         """
+        self.require_full_features("save_episode_tasks")
         if len(set(tasks)) != len(tasks):
             raise ValueError(f"Tasks are not unique: {tasks}")
 
@@ -662,6 +715,7 @@ class LeRobotDatasetMetadata:
             episode_metadata: Additional metadata (chunk/file indices, frame
                 ranges, video timestamps, etc.).
         """
+        self.require_full_features("save_episode")
         episode_dict = {
             "episode_index": episode_index,
             "tasks": episode_tasks,
@@ -708,6 +762,7 @@ class LeRobotDatasetMetadata:
             preserve_keys: Keys whose existing values are kept instead of being
                 recomputed. ``None`` (default) recomputes every key.
         """
+        self.require_full_features("update_video_info")
         if video_key is not None and video_key not in self.video_keys:
             raise ValueError(f"Video key {video_key} not found in dataset")
 
@@ -753,6 +808,7 @@ class LeRobotDatasetMetadata:
             data_files_size_in_mb: Maximum size for data parquet files in MB. If None, keeps current value.
             video_files_size_in_mb: Maximum size for video files in MB. If None, keeps current value.
         """
+        self.require_full_features("update_chunk_settings")
         if chunks_size is not None:
             if chunks_size <= 0:
                 raise ValueError(f"chunks_size must be positive, got {chunks_size}")

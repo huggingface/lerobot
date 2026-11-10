@@ -1732,3 +1732,14 @@ def test_reencode_dataset_multi_key_multiprocessing(
     for vk in dataset.meta.video_keys:
         persisted_encoder = RGBEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg
+
+
+def test_dataset_tools_reject_projected_dataset(sample_dataset, tmp_path):
+    """Editing or publishing a dataset loaded with features= fails before anything is written."""
+    projected = LeRobotDataset(DUMMY_REPO_ID, root=sample_dataset.root, features=["action"])
+
+    with pytest.raises(ValueError, match="features="):
+        delete_episodes(projected, [0], output_dir=tmp_path / "out")
+    with patch("lerobot.datasets.lerobot_dataset.HfApi"), pytest.raises(ValueError, match="features="):
+        projected.push_to_hub()
+    assert not (tmp_path / "out").exists()

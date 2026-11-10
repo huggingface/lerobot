@@ -128,6 +128,7 @@ def delete_episodes(
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
         repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
     """
+    dataset.meta.require_full_features("delete_episodes")
     if not episode_indices:
         raise ValueError("No episodes to delete")
 
@@ -204,6 +205,7 @@ def split_dataset(
         splits = {"train": 0.8, "val": 0.2}
         datasets = split_dataset(dataset, splits)
     """
+    dataset.meta.require_full_features("split_dataset")
     if not splits:
         raise ValueError("No splits provided")
 
@@ -301,6 +303,8 @@ def merge_datasets(
     """
     if not datasets:
         raise ValueError("No datasets to merge")
+    for ds in datasets:
+        ds.meta.require_full_features("merge_datasets")
 
     output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / output_repo_id
 
@@ -359,6 +363,7 @@ def modify_features(
             output_dir="./output",
         )
     """
+    dataset.meta.require_full_features("modify_features")
     if add_features is None and remove_features is None:
         raise ValueError("Must specify at least one of add_features or remove_features")
 
@@ -459,6 +464,7 @@ def add_features(
         }
         new_dataset = add_features(dataset, features, output_dir="./output", repo_id="my_dataset")
     """
+    dataset.meta.require_full_features("add_features")
     if not features:
         raise ValueError("No features provided")
 
@@ -488,6 +494,7 @@ def remove_feature(
     Returns:
         New dataset with features removed.
     """
+    dataset.meta.require_full_features("remove_feature")
     return modify_features(
         dataset=dataset,
         add_features=None,
@@ -1630,6 +1637,7 @@ def modify_tasks(
                 task_replacements={"Pick up the cube": "Lift the cube"}
             )
     """
+    dataset.meta.require_full_features("modify_tasks")
     if not new_task and not episode_tasks and not task_replacements:
         raise ValueError("Must specify at least one of new_task, episode_tasks, or task_replacements")
 
@@ -1754,6 +1762,7 @@ def recompute_stats(
     Returns:
         The same dataset with updated stats.
     """
+    dataset.meta.require_full_features("recompute_stats")
     features = dataset.meta.features
     meta_keys = {"index", "episode_index", "task_index", "frame_index", "timestamp"}
     numeric_features = {
@@ -1874,6 +1883,7 @@ def convert_image_to_video_dataset(
     Returns:
         A new :class:`LeRobotDataset` with images encoded as videos.
     """
+    dataset.meta.require_full_features("convert_image_to_video_dataset")
     if rgb_encoder is None:
         rgb_encoder = rgb_encoder_defaults()
     if depth_encoder is None:
@@ -2129,6 +2139,7 @@ def reencode_dataset(
         The same :class:`LeRobotDataset` instance with its metadata updated
         on disk.
     """
+    dataset.meta.require_full_features("reencode_dataset")
     meta = dataset.meta
     video_keys_encoders_dict = {}
     video_keys_paths_dict = {}

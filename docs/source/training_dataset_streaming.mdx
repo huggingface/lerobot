@@ -152,6 +152,13 @@ The production defaults are:
 All options except `max_num_shards` are `--dataset.*` flags. `max_num_shards` is a
 `StreamingLeRobotDataset` argument; `lerobot-train` sets it from `--num_workers` (at least 1).
 
+`--dataset.features='["observation.state", "action", "observation.images.front"]'` streams only
+those features (names as in `meta/info.json`, before any `rename_map`) plus the bookkeeping
+columns: dropped Parquet columns are never decoded and dropped cameras are never fetched or
+indexed. A full-dataset MP4 sidecar, local or published, serves every camera selection. Image
+policies pad a declared camera that the selection dropped; `lerobot-train` warns about it, and
+refuses a selection that drops language-recipe columns or `next.reward` while they are needed.
+
 For more even episode mixing, opt in with `--dataset.streaming_sampling_strategy=round_robin`.
 Each round shuffles the currently resident episodes and samples one shuffled frame from each;
 episodes admitted during a round join the next one. Both strategies retain exactly-once epoch

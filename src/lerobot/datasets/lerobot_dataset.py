@@ -15,7 +15,8 @@
 # limitations under the License.
 import contextlib
 import logging
-from collections.abc import Callable, Mapping
+import re
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast, overload
 
@@ -40,6 +41,7 @@ from .storage import (
     make_dataset_reader,
 )
 from .utils import (
+    DEFAULT_VIDEO_PATH,
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
@@ -76,6 +78,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         token: str | bool | None = None,
         video_decoder_cache_size: int | None = None,
         storage_options: dict[str, str] | None = None,
+        features: Sequence[str] | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -226,6 +229,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
             storage_options (dict[str, str] | None, optional): Storage connection options used for
                 both remote metadata and data reads. Currently supported by the Lance backend,
                 which forwards them to ``lancedb.connect``. Defaults to None.
+            features (Sequence[str], optional): Dataset feature keys to load, named as in
+                ``meta/info.json`` (before any ``rename_map``). The bookkeeping columns (timestamp,
+                frame_index, episode_index, index, task_index) are always kept. Dropped Parquet
+                columns are never read and dropped cameras are never downloaded or decoded. Such a
+                dataset is read-only: it cannot record, be edited by the dataset tools or
+                ``push_to_hub``. ``None`` (default) loads every feature.
 
         Note:
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
@@ -275,6 +284,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.root = self.meta.root
         self.revision = self.meta.revision
         self.meta.rescale_depth_stats(self._depth_output_unit)
+        if features is not None:
+            self.meta = self.meta.select(features)
 
         if episodes is not None and any(
             episode >= self.meta.total_episodes or episode < 0 for episode in episodes
@@ -694,6 +705,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             **card_kwargs: Additional keyword arguments forwarded to dataset card
                 creation.
         """
+        self.meta.require_full_features("push_to_hub")
         if self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
             raise NotImplementedError(
                 f"push_to_hub is not supported for storage_format={self.meta.storage_format!r}: "
@@ -740,7 +752,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def _download(self, download_videos: bool = True, *, token: str | bool | None = None) -> None:
         """Downloads the dataset from the given 'repo_id' at the provided version."""
-        ignore_patterns = None if download_videos else "videos/"
+        ignore_patterns: str | list[str] | None = "videos/"
+        if download_videos:
+            # Cameras dropped with ``features=`` are never downloaded: the dataset's own
+            # ``video_path`` template becomes a glob with only the camera filled in.
+            dropped = [
+                key
+                for key, ft in self.meta.full_features.items()
+                if ft["dtype"] == "video" and key not in self.meta.features
+            ]
+            ignore_patterns = None
+            if dropped:
+                template = self.meta.video_path or DEFAULT_VIDEO_PATH
+                video_glob = re.sub(r"\{(?!video_key\})[^{}]*\}", "*", template)
+                ignore_patterns = [video_glob.format(video_key=key) for key in dropped]
         files = None
         token_kwargs = {} if token is None else {"token": token}
         # Only the default format downloads data; __init__ builds its DatasetReader before _download.

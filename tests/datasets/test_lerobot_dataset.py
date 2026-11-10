@@ -227,7 +227,7 @@ def test_data_download_forwards_token(tmp_path, monkeypatch, token):
     dataset.revision = "main"
     dataset.episodes = None
     dataset._requested_root = None
-    dataset.meta = SimpleNamespace(root=None)
+    dataset.meta = SimpleNamespace(root=None, features={}, full_features={})
     dataset.reader = SimpleNamespace(root=None)
 
     dataset._download(token=token)

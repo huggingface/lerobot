@@ -27,6 +27,7 @@ from lerobot.transforms import ImageTransforms
 from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFIX, OBS_STATE, REWARD
 
 from .dataset_metadata import LeRobotDatasetMetadata
+from .language import LANGUAGE_COLUMNS
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .storage import DEFAULT_STORAGE_FORMAT, is_bucket_root, load_dataset_metadata
@@ -105,6 +106,54 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
+def check_dataset_features_contract(
+    cfg: PreTrainedConfig | RewardModelConfig,
+    ds_meta: LeRobotDatasetMetadata,
+    rename_map: dict[str, str] | None = None,
+) -> None:
+    """Report features this run depends on that ``--dataset.features`` dropped.
+
+    Policy inputs are only warned about: image policies pad a missing camera silently, and
+    training on fewer cameras is a supported use. The columns a rendered language recipe, a reward
+    model or ``reward_delta_indices`` read change the training target without any other signal, so
+    dropping them is an error.
+    """
+    dropped = ds_meta.full_features.keys() - ds_meta.features.keys()
+    if not dropped:
+        return
+    inverse = {policy_key: dataset_key for dataset_key, policy_key in (rename_map or {}).items()}
+    declared = {inverse.get(key, key) for key in {*(cfg.input_features or {}), *(cfg.output_features or {})}}
+    missing = sorted(declared & dropped)
+    if missing:
+        logger.warning(
+            f"The policy declares features that --dataset.features dropped: {missing}. "
+            "Image policies pad missing cameras silently; add them back if that is not intended."
+        )
+    # G0.5 and WALL-OSS keep their default recipe while `use_language_recipe=False`; only a
+    # rendered recipe reads language columns (a `recipe_path` turns rendering on).
+    recipe = getattr(cfg, "recipe", None)
+    renders_language = getattr(cfg, "use_language_recipe", True) or getattr(cfg, "recipe_path", None)
+    if recipe is not None and renders_language:
+        # A sample whose language columns are all empty is rendered from its task instead of the
+        # recipe. Every declared column takes part in that test, so dropping any of them can turn
+        # recipe supervision into task supervision, whichever columns the bindings read.
+        dropped_language = sorted(set(LANGUAGE_COLUMNS) & dropped)
+        if dropped_language:
+            raise ValueError(
+                f"The language recipe needs {dropped_language}, but --dataset.features dropped them."
+            )
+    # Every reward model is supervised by the reward column; a policy reads it through
+    # `reward_delta_indices`. `rename_map` may give the column another name in the dataset.
+    needs_reward = (
+        isinstance(cfg, RewardModelConfig) or getattr(cfg, "reward_delta_indices", None) is not None
+    )
+    reward_key = inverse.get(REWARD, REWARD)
+    if needs_reward and reward_key in dropped:
+        raise ValueError(
+            f"Training needs the reward column '{reward_key}', but --dataset.features dropped it."
+        )
+
+
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
@@ -141,6 +190,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             repo_type=repo_type,
             storage_options=cfg.dataset.storage_options,
         )
+        if cfg.dataset.features is not None:
+            ds_meta = ds_meta.select(cfg.dataset.features)
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta, cfg.rename_map)
         episodes = resolve_episode_indices(
             cfg.dataset.episodes, ds_meta.total_episodes, cfg.dataset.exclude_episodes
@@ -172,6 +223,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 repo_type=repo_type,
                 video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
                 storage_options=cfg.dataset.storage_options,
+                features=cfg.dataset.features,
             )
         else:
             dataset = StreamingLeRobotDataset(
@@ -199,6 +251,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 sidecar_lock_timeout_s=cfg.dataset.streaming_sidecar_lock_timeout_s,
                 repeat=True,
                 repo_type=repo_type,
+                features=cfg.dataset.features,
             )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
@@ -288,6 +341,7 @@ def make_train_eval_datasets(
         repo_type=cfg.dataset.repo_type,
         video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
         storage_options=cfg.dataset.storage_options,
+        features=cfg.dataset.features,
     )
 
     eval_dataset = LeRobotDataset(
@@ -304,6 +358,7 @@ def make_train_eval_datasets(
         repo_type=cfg.dataset.repo_type,
         video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
         storage_options=cfg.dataset.storage_options,
+        features=cfg.dataset.features,
     )
 
     if cfg.dataset.use_imagenet_stats:

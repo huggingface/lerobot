@@ -120,7 +120,14 @@ dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps)
 sample = dataset[100]
 print(sample["observation.images.front_left"].shape)  # [T, C, H, W], where T=3
 
-# 4) Wrap with a DataLoader for training
+# 4) Load only the features a run needs (names as in meta/info.json, before any rename_map).
+# Bookkeeping columns are always kept; dropped Parquet columns are never read and dropped
+# cameras are never downloaded or decoded. Such a dataset is read-only: it cannot record,
+# be edited by the dataset tools or push_to_hub. The lerobot-train equivalent is
+#   --dataset.features='["observation.state", "action", "observation.images.front_left"]'
+dataset = LeRobotDataset(repo_id, features=["observation.state", "action", "observation.images.front_left"])
+
+# 5) Wrap with a DataLoader for training
 batch_size = 16
 data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
 

@@ -16,8 +16,10 @@
 """Contract tests for DatasetReader."""
 
 import json
+import shutil
 import sys
 import types
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -26,9 +28,9 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.datasets import LeRobotDataset, register_dataset_reader
 from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.io_utils import hf_transform_to_torch
+from lerobot.datasets.io_utils import hf_transform_to_torch, load_nested_dataset
 from lerobot.datasets.storage import _DATASET_READER_MODULES, DEFAULT_STORAGE_FORMAT, localize_remote_root
-from lerobot.utils.constants import LANGUAGE_EVENTS
+from lerobot.utils.constants import DEFAULT_FEATURES, LANGUAGE_EVENTS
 from lerobot.utils.import_utils import get_safe_default_video_backend
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
@@ -343,3 +345,24 @@ def test_column_views_are_rebuilt_after_set_transform(tmp_path, lerobot_dataset_
 
     result = reader._query_hf_dataset([query_indices])[0]
     assert torch.equal(result["action"], 2 * baseline["action"])
+
+
+def test_features_projection_reads_only_the_selected_features(tmp_path, lerobot_dataset_factory):
+    """Dropped columns are not read; a dropped camera is neither required on disk nor downloaded."""
+    root = tmp_path / "ds"
+    reference = lerobot_dataset_factory(root=root, total_episodes=1, total_frames=10)
+    shutil.rmtree(root / "videos" / "phone")  # what a projected download leaves behind
+
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=root, features=["action", "laptop"], video_backend="pyav")
+
+    assert set(dataset.hf_dataset.column_names) == {"action", *DEFAULT_FEATURES}
+    item = dataset[0]
+    assert "phone" not in item and "laptop" in item
+    assert torch.equal(item["action"], reference.hf_dataset[0]["action"])
+    with patch("lerobot.datasets.lerobot_dataset.snapshot_download") as snapshot_download:
+        dataset._download()
+    assert snapshot_download.call_args.kwargs["ignore_patterns"] == ["videos/phone/chunk-*/file-*.mp4"]
+    # Dropping cameras alone reads the same Parquet columns as a full load, so its Arrow cache key.
+    with patch("lerobot.datasets.dataset_reader.load_nested_dataset", wraps=load_nested_dataset) as load:
+        LeRobotDataset(DUMMY_REPO_ID, root=root, features=["state", "action", "laptop"]).hf_dataset  # noqa: B018
+    assert load.call_args.kwargs["columns"] is None
