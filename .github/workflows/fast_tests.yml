@@ -109,8 +109,9 @@ jobs:
         run: uv run pytest tests -vv --maxfail=10 -m base
 
       # ── Tier 2: Dataset ──────────────────────────────────
+      # The audio extra holds the dependencies of audio features.
       - name: "Tier 2 — Install: dataset"
-        run: uv sync --locked --extra test --extra dataset
+        run: uv sync --locked --extra test --extra dataset --extra audio
 
       - name: "Tier 2 — Test: dataset"
         run: uv run pytest tests -vv --maxfail=10 -m dataset

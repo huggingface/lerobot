@@ -32,6 +32,8 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 AUDIO_KEY = "observation.audio.mic"
 SAMPLE_RATE = 16_000
 FPS = 10
