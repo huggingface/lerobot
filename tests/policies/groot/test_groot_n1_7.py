@@ -50,6 +50,7 @@ from lerobot.policies.groot.processor_groot import (
     _transform_n1_7_image_for_vlm_torch,
     make_groot_pre_post_processors,
 )
+from lerobot.policies.groot.utils import relative_eef_to_absolute
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
@@ -1144,6 +1145,100 @@ def test_groot_n1_7_pack_inputs_trains_native_relative_groups_with_absolute_grip
         ]
     )
     torch.testing.assert_close(output[TransitionKey.ACTION], expected_actions)
+
+
+def _rotation_matrix(axis_angle: np.ndarray) -> np.ndarray:
+    angle = np.linalg.norm(axis_angle)
+    axis = axis_angle / angle
+    k = np.array([[0.0, -axis[2], axis[1]], [axis[2], 0.0, -axis[0]], [-axis[1], axis[0], 0.0]])
+    return np.eye(3) + np.sin(angle) * k + (1.0 - np.cos(angle)) * (k @ k)
+
+
+def _xyz_rot6d(position: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+    return np.concatenate([position, rotation[:2].reshape(-1)])
+
+
+def _eef_relative_pack_step(action_format: str) -> GrootN17PackInputsStep:
+    return GrootN17PackInputsStep(
+        action_horizon=2,
+        valid_action_horizon=2,
+        max_state_dim=10,
+        max_action_dim=10,
+        normalize_min_max=False,
+        raw_stats={
+            "state": {
+                "eef_9d": {"min": [-1.0] * 9, "max": [1.0] * 9},
+                "gripper_position": {"min": [0.0], "max": [1.0]},
+            },
+            "action": {
+                "eef_9d": {"min": [-1.0] * 9, "max": [1.0] * 9},
+                "gripper_position": {"min": [0.0], "max": [1.0]},
+            },
+        },
+        modality_config={
+            "state": {"modality_keys": ["eef_9d", "gripper_position"]},
+            "action": {
+                "modality_keys": ["eef_9d", "gripper_position"],
+                "action_configs": [
+                    {"rep": "RELATIVE", "type": "EEF", "format": action_format, "state_key": "eef_9d"},
+                    {"rep": "ABSOLUTE", "type": "NON_EEF", "format": "DEFAULT", "state_key": None},
+                ],
+                "delta_indices": [0, 1],
+            },
+        },
+    )
+
+
+def test_groot_n1_7_pack_inputs_trains_relative_eef_groups_in_the_reference_frame():
+    # Isaac-GR00T's relative EEF actions are poses in the current end-effector frame,
+    # inv(T_state) @ T_action -- the inverse of what GrootN17ActionDecodeStep applies.
+    step = _eef_relative_pack_step("XYZ_ROT6D")
+    state_rotation = _rotation_matrix(np.array([0.3, -0.5, 1.2]))
+    state_position = np.array([0.4, -0.1, 0.3])
+    state = np.concatenate([_xyz_rot6d(state_position, state_rotation), [0.2]])
+    action_poses = [
+        (np.array([0.45, -0.05, 0.25]), _rotation_matrix(np.array([0.2, -0.4, 1.0]))),
+        (np.array([0.50, 0.00, 0.20]), _rotation_matrix(np.array([0.1, -0.6, 0.9]))),
+    ]
+    action = np.stack(
+        [np.concatenate([_xyz_rot6d(p, r), [g]]) for (p, r), g in zip(action_poses, [0.0, 1.0], strict=True)]
+    )
+    transition = {
+        TransitionKey.OBSERVATION: {OBS_STATE: torch.tensor(state[None], dtype=torch.float32)},
+        TransitionKey.ACTION: torch.tensor(action[None], dtype=torch.float32),
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move"]},
+    }
+
+    output = step(transition)[TransitionKey.ACTION][0, :, :10].numpy()
+
+    expected = np.stack(
+        [
+            np.concatenate(
+                [
+                    _xyz_rot6d(state_rotation.T @ (p - state_position), state_rotation.T @ r),
+                    [g],
+                ]
+            )
+            for (p, r), g in zip(action_poses, [0.0, 1.0], strict=True)
+        ]
+    )
+    np.testing.assert_allclose(output, expected, atol=1e-5)
+    # Decoding the training target recovers the absolute poses.
+    np.testing.assert_allclose(
+        relative_eef_to_absolute(output[None, :, :9], state[None, :9])[0], action[:, :9], atol=1e-5
+    )
+
+
+def test_groot_n1_7_pack_inputs_rejects_unsupported_relative_eef_format():
+    step = _eef_relative_pack_step("XYZ_ROTVEC")
+    transition = {
+        TransitionKey.OBSERVATION: {OBS_STATE: torch.zeros(1, 10)},
+        TransitionKey.ACTION: torch.zeros(1, 2, 10),
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move"]},
+    }
+
+    with pytest.raises(ValueError, match="Unsupported relative N1.7 action config"):
+        step(transition)
 
 
 def test_groot_policy_ignores_rtc_leftovers_for_relative_actions():
