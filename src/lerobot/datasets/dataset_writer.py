@@ -370,8 +370,16 @@ class DatasetWriter:
                         self._save_episode_video(video_key, episode_index, temp_path=temp_path)
                     )
             else:
+                # Finish every encode before appending to any shared camera file.
+                # An interruption in a later camera must not leave an unrecorded video tail.
+                results = {
+                    video_key: self._encode_temporary_episode_video(video_key, episode_index)
+                    for video_key in self._meta.video_keys
+                }
                 for video_key in self._meta.video_keys:
-                    video_metadata.update(self._save_episode_video(video_key, episode_index))
+                    video_metadata.update(
+                        self._save_episode_video(video_key, episode_index, temp_path=results[video_key])
+                    )
 
         # Write the data rows only after encoding, so a Ctrl-C while encoding leaves no rows of an episode
         # that `meta.save_episode` never records; they would shift every later frame once recording resumes.
