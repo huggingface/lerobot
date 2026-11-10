@@ -151,6 +151,8 @@
     title: NVIDIA IsaacLab Arena Environments
   - local: vlabench
     title: VLABench
+  - local: robocolosseum
+    title: RoboColosseum
   title: "Benchmarks"
 - sections:
   - local: introduction_processors
