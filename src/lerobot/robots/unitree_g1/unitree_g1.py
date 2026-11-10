@@ -213,6 +213,10 @@ class UnitreeG1(Robot):
         self._controller_action_lock = threading.Lock()
         self.controller_input = default_remote_input()
         self.controller_output: RobotAction = {}
+        # Ease-in after connect()/reset(): start pose per joint key, and when blending began.
+        # The clock starts on the first send_action(), so time spent homing doesn't count.
+        self._ease_in_from: dict[str, float] | None = None
+        self._ease_in_start: float | None = None
         # PD gains, resolved in connect() from the controller when it provides them, else from the config.
         self.kp: np.ndarray
         self.kd: np.ndarray
@@ -448,6 +452,8 @@ class UnitreeG1(Robot):
         # don't snap from the connect-time pose. reset() picks that pose up on its own.
         if self.controller is not None and hasattr(self.controller, "default_angles"):
             self.reset()
+        else:
+            self._arm_ease_in()
 
         # Start controller thread if enabled
         if self.controller is not None:
@@ -594,6 +600,8 @@ class UnitreeG1(Robot):
                 # controller's. Token-only actions (a SONIC policy) hit this on every step.
                 return action
 
+        action_to_publish = self._ease_in(action_to_publish)
+
         tau: np.ndarray | None = None
         if self.config.gravity_compensation and self.arm_ik is not None:
             tau = np.zeros(NUM_MOTORS, dtype=np.float32)
@@ -609,7 +617,7 @@ class UnitreeG1(Robot):
                 tau[joint.value] = arm_tau[local_idx]
 
         self.publish_lowcmd(action_to_publish, tau=tau)
-        return action
+        return {**action, **action_to_publish}
 
     def _update_controller_action(self, action: RobotAction) -> None:
         """Forward incoming teleop action values into ``controller_input``; each controller
@@ -695,4 +703,32 @@ class UnitreeG1(Robot):
             if self.controller is not None and hasattr(self.controller, "reset"):
                 self.controller.reset()
 
+            self._arm_ease_in()
+
         logger.info("Reached default position")
+
+    def _arm_ease_in(self) -> None:
+        if self.config.ease_in_s > 0:
+            self._ease_in_from = {}
+            self._ease_in_start = None
+
+    def _ease_in(self, action: RobotAction) -> RobotAction:
+        """Blend joint targets from the last commanded pose toward ``action`` while easing in."""
+        if self._ease_in_from is None:
+            return action
+
+        now = time.monotonic()
+        if self._ease_in_start is None:
+            self._ease_in_start = now
+        alpha = (now - self._ease_in_start) / self.config.ease_in_s
+        if alpha >= 1.0:
+            self._ease_in_from = None
+            return action
+
+        eased = dict(action)
+        for motor in self.joint_index:
+            key = f"{motor.name}.q"
+            if key in eased:
+                start = self._ease_in_from.setdefault(key, float(self.msg.motor_cmd[motor.value].q))
+                eased[key] = (1.0 - alpha) * start + alpha * float(eased[key])
+        return eased

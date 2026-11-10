@@ -642,6 +642,38 @@ class TestReset:
 
         assert controller.reset_calls == 1
 
+    def test_eases_into_first_targets(self, make_robot):
+        """After homing, teleop targets blend in from the home pose instead of snapping."""
+        factory, mocks = make_robot
+        controller = TokenController()
+        controller.default_angles = np.full(NUM_MOTORS, 0.25, np.float32)
+        robot = sim_ready(arm_for_publish(factory(controller=controller, ease_in_s=2.0), mocks))
+        shoulder = G1_29_JointArmIndex.kLeftShoulderPitch
+        target = {f"{shoulder.name}.q": 1.25}
+        clock = MagicMock(return_value=100.0)
+
+        robot.reset()
+        with patch("lerobot.robots.unitree_g1.unitree_g1.time.monotonic", clock):
+            sent = [robot.send_action(target)[f"{shoulder.name}.q"]]
+            for now in (101.0, 102.0, 103.0):
+                clock.return_value = now
+                sent.append(robot.send_action(target)[f"{shoulder.name}.q"])
+
+        assert sent == pytest.approx([0.25, 0.75, 1.25, 1.25])
+        assert robot.msg.motor_cmd[shoulder.value].q == pytest.approx(1.25)
+
+    def test_zero_ease_in_publishes_targets_directly(self, make_robot):
+        factory, mocks = make_robot
+        controller = TokenController()
+        controller.default_angles = np.full(NUM_MOTORS, 0.25, np.float32)
+        robot = sim_ready(arm_for_publish(factory(controller=controller, ease_in_s=0.0), mocks))
+        shoulder = G1_29_JointArmIndex.kLeftShoulderPitch
+
+        robot.reset()
+        robot.send_action({f"{shoulder.name}.q": 1.25})
+
+        assert robot.msg.motor_cmd[shoulder.value].q == pytest.approx(1.25)
+
     def test_holds_control_authority(self, make_robot):
         """A controller tick starting mid-reset must wait instead of fighting the sweep.
 
