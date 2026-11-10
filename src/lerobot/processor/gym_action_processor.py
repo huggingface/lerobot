@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvAction, PolicyAction
+from lerobot.lerobot_types import EnvAction, PolicyAction, RobotAction
 
 from .converters import to_tensor
 from .hil_processor import TELEOP_ACTION_KEY
@@ -78,7 +78,7 @@ class Numpy2TorchActionProcessorStep(ActionProcessorStep):
 
     skip_if_missing = True
 
-    def action(self, action: EnvAction) -> PolicyAction:
+    def action(self, action: PolicyAction | RobotAction | EnvAction) -> PolicyAction:
         if not isinstance(action, np.ndarray):
             raise TypeError(
                 f"Expected np.ndarray or None, got {type(action).__name__}. "
