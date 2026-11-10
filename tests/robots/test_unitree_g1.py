@@ -643,7 +643,6 @@ class TestReset:
         assert controller.reset_calls == 1
 
     def test_eases_into_first_targets(self, make_robot):
-        """After homing, teleop targets blend in from the home pose instead of snapping."""
         factory, mocks = make_robot
         controller = TokenController()
         controller.default_angles = np.full(NUM_MOTORS, 0.25, np.float32)

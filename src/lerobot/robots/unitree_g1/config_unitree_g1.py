@@ -37,8 +37,7 @@ class UnitreeG1Config(RobotConfig):
     # Control loop timestep
     control_dt: float = 1.0 / 250.0  # 250Hz
 
-    # After connect() or reset(), blend send_action() joint targets in from the last commanded
-    # pose over this many seconds, so the first teleop/policy targets don't snap. 0 disables.
+    # Joint target blend duration after connect/reset, in seconds. 0 disables.
     ease_in_s: float = 2.0
 
     # Launch mujoco simulation

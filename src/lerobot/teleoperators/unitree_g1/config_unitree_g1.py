@@ -36,6 +36,12 @@ class UnitreeG1TeleoperatorConfig(TeleoperatorConfig):
     # Frozen joints (comma-separated joint names that won't be moved by IK)
     frozen_joints: str = ""
 
-    # Max speed of each arm joint target in rad/s, so a dropped or jerked exo can't whip the
-    # robot's arms. 0 disables.
+    # Arm joint target velocity limit in rad/s. 0 disables.
     max_joint_velocity: float = 2.0
+
+    # Cap elapsed time in seconds to prevent large target steps after stalls.
+    max_joint_velocity_dt: float = 0.1
+
+    def __post_init__(self) -> None:
+        if self.max_joint_velocity_dt <= 0:
+            raise ValueError("max_joint_velocity_dt must be positive")

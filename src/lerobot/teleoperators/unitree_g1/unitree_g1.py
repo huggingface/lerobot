@@ -68,10 +68,6 @@ _WIRELESS_BUTTONS = (
 _LEFT_EXO_BUTTON = 4  # RT
 _RIGHT_EXO_BUTTON = 0  # RB
 
-# Longest gap between reads that the velocity cap credits, so a stalled loop can't release a
-# large jump on its next read.
-_MAX_VELOCITY_DT = 0.1
-
 
 @dataclass
 class JoystickState:
@@ -170,7 +166,6 @@ class UnitreeG1Teleoperator(Teleoperator):
         # Latest reading of each source, kept apart so one never masks the other.
         self._wireless_state = JoystickState()
         self._exo_state = JoystickState()
-        # Last velocity-limited joint targets and when they were produced.
         self._last_joint_action: dict[str, float] = {}
         self._last_joint_time: float | None = None
 
@@ -256,13 +251,13 @@ class UnitreeG1Teleoperator(Teleoperator):
         return {**joint_action, **remote.to_action()}
 
     def _limit_joint_velocity(self, joint_action: dict[str, float]) -> dict[str, float]:
-        """Clamp how far each joint target moves from the previous one since the last read."""
+        """Limit joint target changes by elapsed time."""
         now = time.monotonic()
         limit = self.config.max_joint_velocity
         if limit <= 0 or self._last_joint_time is None:
             limited = dict(joint_action)
         else:
-            max_step = limit * min(now - self._last_joint_time, _MAX_VELOCITY_DT)
+            max_step = limit * min(now - self._last_joint_time, self.config.max_joint_velocity_dt)
             limited = {}
             for key, target in joint_action.items():
                 previous = self._last_joint_action.get(key)

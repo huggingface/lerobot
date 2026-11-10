@@ -213,8 +213,6 @@ class UnitreeG1(Robot):
         self._controller_action_lock = threading.Lock()
         self.controller_input = default_remote_input()
         self.controller_output: RobotAction = {}
-        # Ease-in after connect()/reset(): start pose per joint key, and when blending began.
-        # The clock starts on the first send_action(), so time spent homing doesn't count.
         self._ease_in_from: dict[str, float] | None = None
         self._ease_in_start: float | None = None
         # PD gains, resolved in connect() from the controller when it provides them, else from the config.
@@ -713,12 +711,13 @@ class UnitreeG1(Robot):
             self._ease_in_start = None
 
     def _ease_in(self, action: RobotAction) -> RobotAction:
-        """Blend joint targets from the last commanded pose toward ``action`` while easing in."""
+        """Blend joint targets from the last commanded pose."""
         if self._ease_in_from is None:
             return action
 
         now = time.monotonic()
         if self._ease_in_start is None:
+            # Start on the first action to exclude homing time.
             self._ease_in_start = now
         alpha = (now - self._ease_in_start) / self.config.ease_in_s
         if alpha >= 1.0:
