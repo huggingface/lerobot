@@ -38,7 +38,7 @@ import onnx
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from ..g1_utils import (
+from lerobot.robots.unitree_g1.g1_utils import (
     ISAACLAB_TO_MUJOCO,
     MUJOCO_TO_ISAACLAB,
     NUM_MOTORS,
@@ -46,7 +46,7 @@ from ..g1_utils import (
     get_gravity_orientation,
     make_ort_session_options,
 )
-from ..unitree_g1 import RobotController
+from lerobot.robots.unitree_g1.unitree_g1 import RobotController
 
 logger = logging.getLogger(__name__)
 
