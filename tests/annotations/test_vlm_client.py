@@ -29,6 +29,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.annotations.steerable_pipeline.config import VlmConfig  # noqa: E402
 from lerobot.annotations.steerable_pipeline.vlm_client import _bind_serve_port, make_vlm_client  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 def test_bind_serve_port_substitutes_placeholder() -> None:
     # The {port} placeholder is replaced everywhere it appears, regardless of

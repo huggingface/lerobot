@@ -67,8 +67,8 @@ class DeviceProcessorStep(ProcessorStep):
         `float_dtype` string, converting it to a `torch.dtype` object.
         """
         self.tensor_device: torch.device = get_safe_torch_device(self.device)
-        # Update device string in case a specific GPU was selected (e.g., "cuda" -> "cuda:0")
-        self.device = self.tensor_device.type
+        # Preserve the resolved device index when serializing the processor configuration.
+        self.device = str(self.tensor_device)
         self.non_blocking = "cuda" in str(self.device)
 
         # Validate and convert float_dtype string to torch dtype

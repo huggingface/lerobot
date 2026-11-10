@@ -195,7 +195,7 @@ training_postprocessor = PolicyProcessorPipeline[torch.Tensor, torch.Tensor](
     steps=[
         DeviceProcessorStep(device="cpu"),                  # Move to CPU
         UnnormalizerProcessorStep(features=..., stats=...), # Denormalize
-    ]
+    ],
     to_transition=policy_action_to_transition,
     to_output=transition_to_policy_action,
 )

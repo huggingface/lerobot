@@ -27,6 +27,8 @@ from lerobot.policies.act.configuration_act import (
 )
 from lerobot.scripts.lerobot_train import _remote_target_in_argv, train  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 def _set_argv(monkeypatch, *args):
     monkeypatch.setattr(sys, "argv", ["lerobot-train", *args])

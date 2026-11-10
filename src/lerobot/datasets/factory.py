@@ -194,6 +194,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
                 native_http_connections=cfg.dataset.streaming_native_http_connections,
                 native_http_subranges=cfg.dataset.streaming_native_http_subranges,
+                sidecar_lock_timeout_s=cfg.dataset.streaming_sidecar_lock_timeout_s,
                 repeat=True,
                 repo_type=repo_type,
             )

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import ClassVar
 
@@ -27,6 +28,7 @@ from lerobot.configs import PreTrainedConfig, parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.inference import InferenceEngineConfig, RemoteInferenceConfig, SyncInferenceConfig
 from lerobot.robots.config import RobotConfig
+from lerobot.robots.sim_robot import SimRobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
@@ -61,6 +63,8 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     dataset_mode: ClassVar[str] = "none"
     # Whether --teleop.type is mandatory (human-in-the-loop strategies).
     requires_teleop: ClassVar[bool] = False
+    # Whether the strategy can drive a sim robot: it must start a new episode when one ends.
+    supports_sim_robot: ClassVar[bool] = False
 
     @property
     def type(self) -> str:
@@ -89,6 +93,7 @@ class BaseStrategyConfig(RolloutStrategyConfig):
     """Autonomous rollout with no data recording."""
 
     supports_interactive: ClassVar[bool] = True
+    supports_sim_robot: ClassVar[bool] = True
 
 
 @RolloutStrategyConfig.register_subclass("sentry")
@@ -184,6 +189,7 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
     """
 
     dataset_mode: ClassVar[str] = "required"
+    supports_sim_robot: ClassVar[bool] = True
 
     # This only applies if there are no teleop leaders specified.
     # When True (default), moves the robot back to the joint positions captured at startup.
@@ -301,6 +307,8 @@ class RolloutConfig:
     # Run time in seconds; 0 = infinite (24/7 mode).  In interactive mode this
     # bounds each /start segment, not the whole session.
     duration: float = 0.0
+    # Periodic health logs in seconds; 0 disables them. Inactive in interactive mode.
+    status_interval_s: float = 5.0
     # Control the rollout from stdin with chat-style commands (/start, /subtask,
     # /vqa, /autosteer, /reset, /stop) while hardware and policy stay warm.  The
     # robot does not move until /start, and logs below ERROR are muted for the
@@ -316,6 +324,8 @@ class RolloutConfig:
     # recording stay at ``fps`` Hz.
     interpolation_multiplier: int = 1
     device: str | None = None
+    # TF32 in float32 matmuls and cuDNN convolutions on Ampere and newer GPUs.
+    tf32: bool | None = True
     task: str = ""
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
@@ -347,6 +357,8 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        if not math.isfinite(self.status_interval_s) or self.status_interval_s < 0:
+            raise ValueError("status_interval_s must be finite and >= 0")
         if self.interpolation_multiplier < 1:
             raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
 
@@ -354,6 +366,11 @@ class RolloutConfig:
         # Read off the strategy's declarations, never its concrete type, so a
         # third-party strategy is validated exactly like a built-in one.
         strategy = self.strategy
+        if isinstance(self.robot, SimRobotConfig) and not strategy.supports_sim_robot:
+            raise ValueError(
+                f"{strategy.type} strategy does not support a sim robot yet: use --strategy.type=episodic "
+                "to record, or --strategy.type=base to run without recording"
+            )
         if strategy.requires_teleop and self.teleop is None:
             raise ValueError(f"{strategy.type} strategy requires --teleop.type to be set")
         if strategy.dataset_mode == "required" and self.dataset is None:
@@ -365,6 +382,13 @@ class RolloutConfig:
             )
         if self.dataset is not None and not self.dataset.repo_id:
             raise ValueError("--dataset.repo_id must be set when passing --dataset.* flags")
+        # One frame is recorded per control cycle: a dataset at another rate would replay at the wrong speed.
+        # A resumed dataset keeps its own rate, checked when it is opened.
+        if self.dataset is not None and not self.resume and not math.isclose(self.dataset.fps, self.fps):
+            raise ValueError(
+                f"--dataset.fps ({self.dataset.fps}) must equal --fps ({self.fps:g}): "
+                f"pass --dataset.fps={self.fps:g}"
+            )
 
         # Interactive mode calls strategy.run() once per segment, so only strategies
         # declaring ``supports_interactive`` may be driven by it.
@@ -408,14 +432,10 @@ class RolloutConfig:
         if policy_path:
             yaml_overrides = parser.get_yaml_overrides("policy")
             cli_overrides = parser.get_cli_overrides("policy") or []
-            policy_overrides = yaml_overrides + cli_overrides
-            pretrained_revision = parser.parse_arg("pretrained_revision", cli_overrides)
-            if pretrained_revision is None:
-                pretrained_revision = parser.parse_arg("pretrained_revision", yaml_overrides)
             self.policy = PreTrainedConfig.from_pretrained(
                 policy_path,
-                revision=pretrained_revision,
-                cli_overrides=policy_overrides,
+                revision=parser.get_pretrained_revision("policy"),
+                cli_overrides=yaml_overrides + cli_overrides,
             )
             self.policy.pretrained_path = policy_path
         if self.policy is None and not remote:

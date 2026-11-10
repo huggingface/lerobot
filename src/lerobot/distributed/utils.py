@@ -38,6 +38,20 @@ def is_main_process() -> bool:
     return not dist.is_initialized() or dist.get_rank() == 0
 
 
+def unwrap_peft_model(model: nn.Module) -> nn.Module:
+    """Return the policy a PEFT `PeftModel` wraps, or `model` itself.
+
+    Args:
+        model (nn.Module): The trainable, possibly wrapped by PEFT.
+
+    Returns:
+        nn.Module: The wrapped policy under PEFT, otherwise `model` unchanged.
+    """
+    from accelerate.utils import is_peft_model
+
+    return model.get_base_model() if is_peft_model(model) else model
+
+
 def strip_accelerate_cp_hooks(model: nn.Module) -> int:
     """Remove accelerate's context-parallel forward-pre-hooks from every module.
 
@@ -46,7 +60,7 @@ def strip_accelerate_cp_hooks(model: nn.Module) -> int:
     (`accelerate.big_modeling._attach_context_parallel_hooks`) — mask corruption for policies
     with non-causal attention. LeRobot implements CP itself and never enters accelerate's CP
     context, so these hooks are pure hazard. Deterministically identified by their defining
-    module; a version canary pins that identity.
+    module.
 
     Args:
         model (nn.Module): The prepared model to strip the hooks from (all submodules are
@@ -76,7 +90,7 @@ def finalize_sharded_policy(policy: nn.Module, parallel_dims: "ParallelDims") ->
     No-op for DDP/single-process runs.
 
     Args:
-        policy (nn.Module): The policy as returned by `accelerator.prepare()`.
+        policy (nn.Module): The policy (or its PEFT wrapper) as returned by `accelerator.prepare()`.
         parallel_dims (ParallelDims): The run's resolved topology; decides whether the protocol
             applies.
     """
@@ -89,6 +103,6 @@ def finalize_sharded_policy(policy: nn.Module, parallel_dims: "ParallelDims") ->
     from torch.distributed.fsdp import FSDPModule, register_fsdp_forward_method
 
     if isinstance(policy, FSDPModule):
-        for method_name in getattr(type(policy), "_fsdp_forward_methods", ()):
+        for method_name in getattr(type(unwrap_peft_model(policy)), "_fsdp_forward_methods", ()):
             if callable(getattr(policy, method_name, None)):
                 register_fsdp_forward_method(policy, method_name)

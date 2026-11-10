@@ -38,6 +38,11 @@ from lerobot.policies import (  # noqa: E402
     make_pre_post_processors,
 )
 from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy  # noqa: E402
+from lerobot.policies.fineart_vla.processor_fineart_vla import (  # noqa: E402
+    _loc_token,
+    _messages_vqa_to_loc,
+    _vqa_answer_to_loc,
+)
 from lerobot.policies.pi05.configuration_pi05 import PI05Config  # noqa: E402
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy  # noqa: E402
 from lerobot.utils.constants import (  # noqa: E402
@@ -77,6 +82,7 @@ def test_config_save_load_roundtrip(tmp_path):
     assert restored.text_loss_weight == 0.5
 
 
+@pytest.mark.dataset
 def test_recipe_path_is_resolved_once_into_the_config(tmp_path):
     pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
     config = FineARTVLAConfig(device="cpu", recipe_path="recipes/subtask.yaml")
@@ -125,6 +131,37 @@ class _PaligemmaTokenizer:
         return [10, 11] if text == "Action: " else [12]
 
 
+@pytest.mark.dataset
+@pytest.mark.parametrize(
+    "coord,expected", [(0, "<loc0000>"), (0.25, "<loc0256>"), (0.5, "<loc0512>"), (1, "<loc1023>")]
+)
+def test_location_tokens_read_unit_coordinates(coord, expected):
+    assert _loc_token(coord) == expected
+
+
+@pytest.mark.dataset
+def test_point_target_reads_unit_coordinates_in_yx_order():
+    answer = {"label": "cup", "point_format": "xy", "point": [0.5, 0.25]}
+    assert _vqa_answer_to_loc(answer) == "cup <loc0256><loc0512>"
+
+
+@pytest.mark.dataset
+def test_box_target_reads_unit_coordinates_in_yxyx_order():
+    answer = {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [0, 0.25, 0.5, 1]}]}
+    assert _vqa_answer_to_loc(answer) == "cup <loc0256><loc0000><loc1023><loc0512>"
+
+
+@pytest.mark.dataset
+def test_message_conversion_only_changes_supervised_target():
+    content = json.dumps({"label": "cup", "point_format": "xy", "point": [0.5, 0.5]})
+    messages = [{"role": "user", "content": content}, {"role": "assistant", "content": content}]
+    result = _messages_vqa_to_loc(messages, [1])
+    assert result[0] == messages[0]
+    assert result[1]["content"] == "cup <loc0512><loc0512>"
+    assert messages[1]["content"] == content
+
+
+@pytest.mark.dataset
 def test_processor_save_load_roundtrip_embeds_action_tokenizer(tmp_path, monkeypatch):
     pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
     pytest.importorskip("av", reason="recipes require lerobot[dataset]")
@@ -211,9 +248,11 @@ def test_forward_matches_pi05_when_language_losses_are_off():
 
     # Two fp32 3B policies do not fit a 24 GB GPU together: run PI0.5 first, keep its weights
     # on the CPU, and free the GPU before building FineART-VLA from the same weights.
+    # Both are built on the GPU: initializing 3B weights on the CPU takes over a minute each.
     pi05 = fineart = None
     try:
-        pi05 = PI05Policy(PI05Config(**common, **_parity_features())).cuda().eval()
+        with torch.device("cuda"):
+            pi05 = PI05Policy(PI05Config(**common, **_parity_features())).eval()
         with torch.no_grad():
             torch.manual_seed(1)
             pi05_loss, _ = pi05.forward(batch)
@@ -224,19 +263,20 @@ def test_forward_matches_pi05_when_language_losses_are_off():
         pi05 = None
         torch.cuda.empty_cache()
 
-        fineart = FineARTVLAPolicy(
-            FineARTVLAConfig(
-                **common,
-                **_parity_features(),
-                text_loss_weight=0.0,
-                enable_fast_action_loss=False,
-                knowledge_insulation=False,
-                use_liger_kernels=False,
+        with torch.device("cuda"):
+            fineart = FineARTVLAPolicy(
+                FineARTVLAConfig(
+                    **common,
+                    **_parity_features(),
+                    text_loss_weight=0.0,
+                    enable_fast_action_loss=False,
+                    knowledge_insulation=False,
+                    use_liger_kernels=False,
+                )
             )
-        )
         fineart.load_state_dict(weights, strict=True)
         del weights
-        fineart = fineart.cuda().eval()
+        fineart = fineart.eval()
         with torch.no_grad():
             torch.manual_seed(1)
             fineart_loss, _ = fineart.forward(batch)

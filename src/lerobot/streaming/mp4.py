@@ -23,6 +23,38 @@ from numpy.typing import NDArray
 # larger boxes cost one more exact read.
 DEFAULT_HEADER_PROBE_BYTES = 512 * 1024
 
+type IntegerArray = NDArray[np.integer[Any]]
+
+
+def _constant_integer_value(values: IntegerArray) -> int | None:
+    """Return the value of a nonempty one-dimensional zero-stride integer array."""
+    if values.ndim == 1 and values.size and values.strides == (0,):
+        return int(values[0])
+    return None
+
+
+def _has_nonzero(values: IntegerArray) -> bool:
+    """Check one value for constant views and use NumPy for dense arrays."""
+    constant = _constant_integer_value(values)
+    return constant != 0 if constant is not None else bool(np.any(values))
+
+
+def compact_integer_array(values: IntegerArray) -> IntegerArray:
+    """Store integer values in the smallest exact dtype without widening them."""
+    if not values.size:
+        return values
+    lower, upper = int(values.min()), int(values.max())
+    candidates = (
+        (np.uint8, np.uint16, np.uint32, np.uint64) if lower >= 0 else (np.int8, np.int16, np.int32, np.int64)
+    )
+    for candidate in candidates:
+        bounds = np.iinfo(candidate)
+        if bounds.min <= lower and upper <= bounds.max:
+            if np.dtype(candidate).itemsize < values.dtype.itemsize:
+                return values.astype(candidate)
+            break
+    return values
+
 
 @dataclass(frozen=True)
 class Box:
@@ -57,7 +89,11 @@ class Mp4SampleSlice:
 
 @dataclass(frozen=True)
 class Mp4Index:
-    """Serializable video-track sample table for one MP4 source file."""
+    """Serializable video-track sample table for one MP4 source file.
+
+    Integer arrays can use narrow unsigned dtypes or read-only zero-stride views.
+    Widen them explicitly before arithmetic, and do not mutate them in place.
+    """
 
     file_path: str
     file_size: int
@@ -75,16 +111,16 @@ class Mp4Index:
     height: int
     stsd_body: bytes
     sample_pts: NDArray[np.float64]
-    sample_durations: NDArray[np.int64]
-    sample_composition_offsets: NDArray[np.int64]
-    sample_sizes: NDArray[np.int64]
-    sample_offsets: NDArray[np.int64]
-    sync_samples: NDArray[np.int64]
+    sample_durations: IntegerArray
+    sample_composition_offsets: IntegerArray
+    sample_sizes: IntegerArray
+    sample_offsets: IntegerArray
+    sync_samples: IntegerArray
 
     @cached_property
     def _has_composition_offsets(self) -> bool:
         """Cache whether presentation order differs from decode order."""
-        return bool(np.any(self.sample_composition_offsets))
+        return _has_nonzero(self.sample_composition_offsets)
 
     def sample_slice(
         self,
@@ -144,7 +180,7 @@ class Mp4Index:
         offsets = self.sample_offsets[lo : hi + 1]
         sizes = self.sample_sizes[lo : hi + 1]
         slice_lo = int(offsets.min())
-        slice_hi = int((offsets + sizes).max())
+        slice_hi = int(np.add(offsets, sizes, dtype=np.int64).max())
         if file_size is not None:
             slice_hi = min(slice_hi, int(file_size))
         return Mp4SampleSlice(
@@ -372,11 +408,11 @@ def _parse_mp4_index_from_layout(
         height=tkhd["height"],
         stsd_body=stsd_body,
         sample_pts=sample_pts,
-        sample_durations=sample_durations,
-        sample_composition_offsets=composition_offsets,
-        sample_sizes=sample_sizes,
-        sample_offsets=sample_offsets,
-        sync_samples=sync_samples,
+        sample_durations=compact_integer_array(sample_durations),
+        sample_composition_offsets=compact_integer_array(composition_offsets),
+        sample_sizes=compact_integer_array(sample_sizes),
+        sample_offsets=compact_integer_array(sample_offsets),
+        sync_samples=compact_integer_array(sync_samples),
     )
 
 
@@ -389,14 +425,15 @@ def synthesize_mp4(index: Mp4Index, sample_slice: Mp4SampleSlice, mdat_payload: 
 
     offsets = index.sample_offsets[lo:hi]
     sizes = index.sample_sizes[lo:hi]
-    rel_offsets: NDArray[np.int64] = offsets - sample_slice.byte_offset
+    rel_offsets = np.subtract(offsets, sample_slice.byte_offset, dtype=np.int64)
     if int(rel_offsets.min()) != 0:
         raise ValueError("Sample slice must start at the minimum referenced sample offset")
     if int((rel_offsets + sizes).max()) > len(mdat_payload):
         raise ValueError("Sample slice does not cover all referenced samples")
 
     durations = index.sample_durations[lo:hi]
-    sync = index.sync_samples[(index.sync_samples >= lo) & (index.sync_samples < hi)] - lo + 1
+    selected_sync = index.sync_samples[(index.sync_samples >= lo) & (index.sync_samples < hi)]
+    sync = np.subtract(selected_sync, lo, dtype=np.int64) + 1
     composition_offsets = index.sample_composition_offsets[lo:hi]
     moov = _make_moov(index, durations, sizes, rel_offsets, sync, composition_offsets, mdat_data_offset=0)
     header_size = len(index.ftyp) + len(moov)
@@ -422,24 +459,30 @@ def synthesized_mp4_size(index: Mp4Index, sample_slice: Mp4SampleSlice) -> int:
 
     offsets = index.sample_offsets[lo:hi]
     sizes = index.sample_sizes[lo:hi]
-    rel_offsets: NDArray[np.int64] = offsets - sample_slice.byte_offset
+    rel_offsets = np.subtract(offsets, sample_slice.byte_offset, dtype=np.int64)
     if int(rel_offsets.min()) != 0:
         raise ValueError("Sample slice must start at the minimum referenced sample offset")
     if int((rel_offsets + sizes).max()) > sample_slice.byte_length:
         raise ValueError("Sample slice does not cover all referenced samples")
 
     durations = index.sample_durations[lo:hi]
-    sync = index.sync_samples[(index.sync_samples >= lo) & (index.sync_samples < hi)] - lo + 1
+    selected_sync = index.sync_samples[(index.sync_samples >= lo) & (index.sync_samples < hi)]
+    sync = np.subtract(selected_sync, lo, dtype=np.int64) + 1
     composition_offsets = index.sample_composition_offsets[lo:hi]
     sync = _safe_sync_samples(durations, sync, composition_offsets)
-    duration = int(durations.sum())
+    duration = int(durations.sum(dtype=np.int64))
     sample_count = len(sizes)
 
     def box_size(payload_size: int) -> int:
         return payload_size + (8 if payload_size + 8 <= 0xFFFFFFFF else 16)
 
-    def timing_size(values: NDArray[np.int64]) -> int:
-        runs = 1 + int(np.count_nonzero(values[1:] != values[:-1]))
+    def timing_size(values: IntegerArray) -> int:
+        # Keep this run count in sync with _timing_runs, which serializes the same tables.
+        runs = (
+            1
+            if _constant_integer_value(values) is not None
+            else 1 + int(np.count_nonzero(values[1:] != values[:-1]))
+        )
         return box_size(8 + 8 * runs)
 
     # Count the same boxes as _make_moov without packing a Python object per
@@ -447,7 +490,7 @@ def synthesized_mp4_size(index: Mp4Index, sample_slice: Mp4SampleSlice) -> int:
     tables = (
         box_size(len(index.stsd_body))
         + timing_size(durations)
-        + (timing_size(composition_offsets) if np.any(composition_offsets) else 0)
+        + (timing_size(composition_offsets) if _has_nonzero(composition_offsets) else 0)
         + len(_stsc_one_sample_per_chunk(sample_count))
         + box_size(12 + 4 * sample_count)
         + (box_size(8 + 4 * len(sync)) if len(sync) else 0)
@@ -744,16 +787,17 @@ def _sample_offsets(
 
 
 def _safe_sync_samples(
-    durations: NDArray[np.int64],
-    sync_samples: NDArray[np.int64],
-    composition_offsets: NDArray[np.int64],
-) -> NDArray[np.int64]:
+    durations: IntegerArray,
+    sync_samples: IntegerArray,
+    composition_offsets: IntegerArray,
+) -> IntegerArray:
     """Exclude internal open-GOP keyframes that would skip preceding pictures."""
-    if np.any(composition_offsets) and len(sync_samples) > 1:
+    if _has_nonzero(composition_offsets) and len(sync_samples) > 1:
         # Approximate decoders seek using sync samples without scanning packets.
         # An internal open-GOP keyframe is later than its leading B-frames: do
         # not seek there and accidentally skip a requested preceding picture.
-        presentation_times = np.cumsum(durations) - durations + composition_offsets
+        presentation_times = np.cumsum(durations, dtype=np.int64) - durations
+        presentation_times = np.add(presentation_times, composition_offsets, dtype=np.int64)
         safe_sync_samples = [int(sync_samples[0])]
         for position, sample in enumerate(sync_samples[1:], start=1):
             next_sample = (
@@ -767,18 +811,18 @@ def _safe_sync_samples(
 
 def _make_moov(
     index: Mp4Index,
-    durations: NDArray[np.int64],
-    sizes: NDArray[np.int64],
+    durations: IntegerArray,
+    sizes: IntegerArray,
     rel_offsets: NDArray[np.int64],
-    sync_samples: NDArray[np.int64],
-    composition_offsets: NDArray[np.int64],
+    sync_samples: IntegerArray,
+    composition_offsets: IntegerArray,
     *,
     mdat_data_offset: int,
 ) -> bytes:
     """Build movie metadata for the slice, rebasing offsets and preserving presentation timing."""
-    duration = int(durations.sum())
+    duration = int(durations.sum(dtype=np.int64))
     sync_samples = _safe_sync_samples(durations, sync_samples, composition_offsets)
-    stco_values = [int(mdat_data_offset + value) for value in rel_offsets]
+    stco_values = [mdat_data_offset + int(value) for value in rel_offsets]
     if any(value > 0xFFFFFFFF for value in stco_values):
         offset_box = _co64(stco_values)
     else:
@@ -787,7 +831,7 @@ def _make_moov(
         b"stbl",
         _box(b"stsd", index.stsd_body)
         + _stts(durations)
-        + (_ctts(composition_offsets) if np.any(composition_offsets) else b"")
+        + (_ctts(composition_offsets) if _has_nonzero(composition_offsets) else b"")
         + _stsc_one_sample_per_chunk(len(sizes))
         + _stsz(sizes)
         + offset_box
@@ -869,29 +913,34 @@ def _dinf() -> bytes:
     return _box(b"dinf", dref)
 
 
-def _stts(durations: NDArray[np.int64]) -> bytes:
-    """Run-length encode sample durations into a decode-time table."""
+def _timing_runs(values: IntegerArray) -> list[list[int]]:
+    """Encode repeated timing values without expanding constant views."""
+    constant = _constant_integer_value(values)
+    if constant is not None:
+        return [[len(values), constant]]
     runs: list[list[int]] = []
-    for duration in durations.tolist():
-        if runs and runs[-1][1] == int(duration):
+    for value in values.tolist():
+        if runs and runs[-1][1] == value:
             runs[-1][0] += 1
         else:
-            runs.append([1, int(duration)])
+            runs.append([1, value])
+    return runs
+
+
+def _stts(durations: IntegerArray) -> bytes:
+    """Run-length encode sample durations into a decode-time table."""
+    runs = _timing_runs(durations)
     payload = struct.pack(">I", len(runs)) + b"".join(
         struct.pack(">II", count, delta) for count, delta in runs
     )
     return _full_box(b"stts", 0, 0, payload)
 
 
-def _ctts(offsets: NDArray[np.int64]) -> bytes:
+def _ctts(offsets: IntegerArray) -> bytes:
     """Run-length encode composition offsets, using signed entries when needed."""
-    runs: list[list[int]] = []
-    for offset in offsets.tolist():
-        if runs and runs[-1][1] == offset:
-            runs[-1][0] += 1
-        else:
-            runs.append([1, offset])
-    signed = bool(np.any(offsets < 0))
+    constant = _constant_integer_value(offsets)
+    signed = constant < 0 if constant is not None else bool(np.any(offsets < 0))
+    runs = _timing_runs(offsets)
     payload = struct.pack(">I", len(runs)) + b"".join(
         struct.pack(">Ii" if signed else ">II", count, offset) for count, offset in runs
     )
@@ -903,7 +952,7 @@ def _stsc_one_sample_per_chunk(sample_count: int) -> bytes:
     return _full_box(b"stsc", 0, 0, struct.pack(">IIII", 1, 1, 1, 1))
 
 
-def _stsz(sizes: NDArray[np.int64]) -> bytes:
+def _stsz(sizes: IntegerArray) -> bytes:
     """Encode variable compressed sample sizes."""
     return _full_box(
         b"stsz",
@@ -927,7 +976,7 @@ def _co64(values: list[int]) -> bytes:
     )
 
 
-def _stss(values: NDArray[np.int64]) -> bytes:
+def _stss(values: IntegerArray) -> bytes:
     """Encode one-based keyframe indices in a sync-sample table."""
     return _full_box(
         b"stss",

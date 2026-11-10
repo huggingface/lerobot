@@ -32,6 +32,8 @@ from lerobot.utils.constants import LANGUAGE_EVENTS
 from lerobot.utils.import_utils import get_safe_default_video_backend
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 # ── Loading ──────────────────────────────────────────────────────────
 
 

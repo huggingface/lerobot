@@ -28,6 +28,8 @@ from lerobot.inference import RemoteInferenceConfig
 from lerobot.rollout import context
 from tests.remote_inference.helpers import ControlledClient
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.fixture
 def setup(monkeypatch, tmp_path):
@@ -36,7 +38,9 @@ def setup(monkeypatch, tmp_path):
     client.descriptor.update(capabilities=asdict(client.capabilities), instance_id=client.instance_id)
     robot = SimpleNamespace(
         name="test_position_robot",
+        robot_type="test_position_robot",
         supports_position_hold=True,
+        supports_command_hold=False,
         action_features={"a.pos": float, "b.pos": float},
         observation_features={"a.pos": float, "b.pos": float},
         connect=Mock(),
@@ -63,6 +67,7 @@ def setup(monkeypatch, tmp_path):
         dataset=SimpleNamespace(single_task="recorded instruction", video=False),
         rename_map={},
         fps=10,
+        interpolation_multiplier=1,
     )
     return cfg, client, robot, make_robot
 

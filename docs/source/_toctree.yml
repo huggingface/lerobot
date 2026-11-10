@@ -77,8 +77,14 @@
     title: EO-1
   - local: lingbot_va
     title: LingBot-VA
+  - local: lingbot_vla_v2
+    title: LingBot-VLA 2.0
+  - local: g05
+    title: OpenGalaxea G0.5
   - local: fastwam
     title: FastWAM
+  - local: longwam
+    title: Long-WAM
   - local: flux3
     title: FLUX 3 Action (flux3)
   - local: evo1
@@ -91,8 +97,12 @@
     title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
+  - local: wall_oss_05
+    title: Wall-OSS-0.5
   - local: dm05
     title: DM05
+  - local: cosmos3
+    title: Cosmos3
   title: "Policies"
 - sections:
   - local: sarm
@@ -111,6 +121,8 @@
     title: Real-Time Chunking (RTC)
   title: "Inference"
 - sections:
+  - local: simulation
+    title: "Simulation: Local or Served"
   - local: envhub
     title: Environments from the Hub
   - local: envhub_leisaac
@@ -118,7 +130,7 @@
   title: "Simulation"
 - sections:
   - local: adding_benchmarks
-    title: Adding a New Benchmark
+    title: Adding a Benchmark
   - local: libero
     title: LIBERO
   - local: libero_plus
@@ -131,6 +143,8 @@
     title: RoboCasa365
   - local: robocerebra
     title: RoboCerebra
+  - local: robolab
+    title: NVIDIA RoboLab
   - local: robomme
     title: RoboMME
   - local: envhub_isaaclab_arena
@@ -175,6 +189,8 @@
     title: OpenArm
   - local: rebot_b601
     title: reBot B601
+  - local: yam
+    title: YAM
   - local: third_party_robots
     title: Third-Party Robots & Teleoperators
   title: "Robots"

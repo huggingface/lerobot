@@ -32,6 +32,7 @@ pytest.importorskip("lancedb")
 pytest.importorskip("lerobot_lancedb", reason="lerobot-lancedb converts the test fixtures")
 
 import lancedb
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from lerobot_lancedb.convert import convert
@@ -42,7 +43,7 @@ from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.lance_backend import LanceDatasetReader, lance_mp_context
+from lerobot.datasets.lance_backend import LanceDatasetReader, _EpisodeSubsetIndexMapping, lance_mp_context
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
     language_events_arrow_type,
@@ -58,6 +59,8 @@ from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     DUMMY_REPO_ID,
 )
+
+pytestmark = pytest.mark.dataset
 
 
 def _storage_type(dtype: pa.DataType) -> pa.DataType:
@@ -107,6 +110,22 @@ class _FakeRGBDecoder:
             data=torch.stack([torch.full((3, 2, 2), index, dtype=torch.uint8) for index in indices]),
             pts_seconds=torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps,
         )
+
+
+def _depth_decode_reader(
+    file_key: tuple[str, int, int], shape: tuple[int, int, int] = (2, 2, 1)
+) -> tuple[LanceDatasetReader, list[list[float]]]:
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(fps=10, features={file_key[0]: {"shape": shape}})
+    reader.tolerance_s = 1e-4
+    calls: list[list[float]] = []
+
+    def decode_depth_frames(source, timestamps: list[float], key: tuple) -> torch.Tensor:
+        calls.append(timestamps)
+        return torch.tensor(timestamps, dtype=torch.float32).reshape(-1, 1, 1, 1)
+
+    reader._decode_depth_frames = decode_depth_frames
+    return reader, calls
 
 
 def test_tabular_parity(dataset_roots):
@@ -159,7 +178,8 @@ def test_tabular_parity(dataset_roots):
     lance_s = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[1])
     assert len(lance_s) == len(upstream_s)
     assert lance_s.num_episodes == upstream_s.num_episodes
-    assert lance_s.absolute_to_relative_idx == upstream_s.reader._absolute_to_relative_idx
+    assert isinstance(lance_s.absolute_to_relative_idx, _EpisodeSubsetIndexMapping)
+    assert lance_s.absolute_to_relative_idx == upstream_s.absolute_to_relative_idx
     for idx in [0, len(upstream_s) - 1]:
         assert_items_equal(lance_s[idx], upstream_s[idx])
 
@@ -169,6 +189,14 @@ def test_tabular_parity(dataset_roots):
     assert lance_u.episodes == upstream_u.episodes == [1, 0]
     for idx in [0, len(upstream_u) // 2, len(upstream_u) - 1]:
         assert_items_equal(lance_u[idx], upstream_u[idx])
+
+    # duplicate episodes: each served once, mirroring upstream's parquet isin() filter
+    upstream_dup = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[1, 1])
+    lance_dup = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[1, 1])
+    assert len(lance_dup) == len(upstream_dup) == len(upstream_s)
+    assert lance_dup.absolute_to_relative_idx == upstream_dup.absolute_to_relative_idx
+    for idx in [0, len(upstream_dup) - 1]:
+        assert_items_equal(lance_dup[idx], upstream_dup[idx])
 
     # close() releases pools/handles; the next read reopens
     lance_ds.reader.close()
@@ -220,6 +248,12 @@ def test_video_parity(video_dataset_roots):
         assert actual[f"{video_key}_is_pad"].tolist() == expected[f"{video_key}_is_pad"].tolist()
         assert_items_equal(actual, expected)
 
+    # Batched depth windows share a PyAV open/seek but must remain identical to
+    # individual reads, including duplicate and adjacent sample indices.
+    indices = [3, 4, 4, 5]
+    for idx, item in zip(indices, lance_d.__getitems__(indices), strict=True):
+        assert_items_equal(item, lance_d[idx])
+
     # one-element window: squeeze semantics must match upstream's shape
     single = {video_key: [0.0]}
     upstream_1 = LeRobotDataset(
@@ -239,6 +273,28 @@ def test_video_parity(video_dataset_roots):
     indices = [3, 3, 17, 18]
     for idx, item in zip(indices, lance_u8.__getitems__(indices), strict=True):
         assert_items_equal(item, lance_u8[idx])
+
+
+@pytest.mark.parametrize(
+    ("shape", "bytes_per_value", "expected_frames"),
+    [
+        pytest.param((1024, 1024, 3), 1, 21, id="rgb-uint8"),
+        pytest.param((1024, 1024, 3), 5, 4, id="rgb-float32"),
+        pytest.param((720, 1280, 1), 8, 9, id="depth"),
+        pytest.param((2, 2, 1), 8, 64, id="frame-cap"),
+        pytest.param((4096, 4096, 3), 5, 1, id="oversized-frame"),
+        pytest.param(None, 8, 64, id="unknown-shape"),
+    ],
+)
+def test_decode_frame_limit(
+    shape: tuple[int, ...] | None, bytes_per_value: int, expected_frames: int
+) -> None:
+    assert (
+        lance_backend._decode_frame_limit(
+            shape, max_frames=64, max_bytes=64 << 20, bytes_per_value=bytes_per_value
+        )
+        == expected_frames
+    )
 
 
 def test_rgb_batch_decode_deduplicates_overlapping_frames():
@@ -386,6 +442,45 @@ def test_rgb_single_request_keeps_direct_decode_result():
     assert decoded[0][file_key[0]].data_ptr() == batch_data.data_ptr()
 
 
+def test_depth_batch_decode_merges_nearby_windows() -> None:
+    file_key = ("observation.images.depth", 0, 0)
+    file_requests = [
+        (0, [0.2, 0.1, 0.2, 0.0]),
+        (1, [0.1, 0.2, 0.3]),
+        (2, [5.0]),
+    ]
+    reader, calls = _depth_decode_reader(file_key)
+    decoded = dict(reader._decode_depth_file_requests(None, file_requests, file_key))
+
+    assert calls == [[0.0, 0.1, 0.2, 0.3], [5.0]]
+    # The shared decode must preserve each window's original order and duplicates.
+    torch.testing.assert_close(decoded[0][:, 0, 0, 0], torch.tensor([0.2, 0.1, 0.2, 0.0]))
+    torch.testing.assert_close(decoded[1][:, 0, 0, 0], torch.tensor([0.1, 0.2, 0.3]))
+    torch.testing.assert_close(decoded[2], torch.full((1, 1, 1), 5.0))
+
+
+@pytest.mark.parametrize(
+    ("shape", "max_frames"),
+    [
+        pytest.param((720, 1280, 1), 9, id="byte-cap"),
+        pytest.param((2, 2, 1), 64, id="frame-cap"),
+    ],
+)
+def test_depth_batch_decode_limits_merged_span(shape: tuple[int, int, int], max_frames: int) -> None:
+    file_key = ("observation.images.depth", 0, 0)
+    file_requests = [(index, [index / 10]) for index in range(max_frames + 6)]
+    reader, calls = _depth_decode_reader(file_key, shape)
+    decoded = dict(reader._decode_depth_file_requests(None, file_requests, file_key))
+
+    assert len(calls) == 2  # Nearby requests still merge while respecting the limit.
+    # Requests lie on the 10 FPS grid, so rounding measures span without testing
+    # the implementation's floating-point ceiling or exact partition boundary.
+    assert all(round((max(timestamps) - min(timestamps)) * 10) + 1 <= max_frames for timestamps in calls)
+    assert set(decoded) == set(range(max_frames + 6))
+    for sample_idx, timestamps in file_requests:
+        torch.testing.assert_close(decoded[sample_idx], torch.tensor(timestamps).reshape(1, 1, 1))
+
+
 def test_reader_reopens_after_failed_open(video_dataset_roots, monkeypatch):
     _, lance_root = video_dataset_roots
     lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
@@ -493,6 +588,42 @@ def test_sparse_source_fetches_handle_once():
     assert Handle.opened == 1  # one handle for every miss
 
 
+@pytest.mark.parametrize("selected", [[0, 2], [1], [0, 1, 2], []])
+def test_episode_subset_index_matches_dense_mapping(selected: list[int]) -> None:
+    episode_starts = np.array([0, 5, 10])
+    episode_ends = np.array([5, 10, 14])
+    mapping = _EpisodeSubsetIndexMapping(episode_starts[selected], episode_ends[selected])
+    absolute_indices = [
+        absolute_idx
+        for episode in selected
+        for absolute_idx in range(episode_starts[episode], episode_ends[episode])
+    ]
+    dense = dict(zip(absolute_indices, range(len(absolute_indices)), strict=True))
+
+    assert len(mapping) == len(dense)
+    assert [mapping.rel_to_abs(relative_idx) for relative_idx in range(len(mapping))] == absolute_indices
+    assert {absolute_idx: mapping[absolute_idx] for absolute_idx in mapping} == dense
+    assert mapping == dense and dense == mapping
+    assert mapping != {0: -1}
+    for absolute_idx in range(-1, 16):
+        assert (absolute_idx in mapping) == (absolute_idx in dense)
+        if absolute_idx not in dense:
+            with pytest.raises(KeyError):
+                mapping[absolute_idx]
+    with pytest.raises(TypeError):
+        hash(mapping)
+
+
+def test_episode_subset_index_survives_pickle() -> None:
+    mapping = _EpisodeSubsetIndexMapping(np.array([0, 10]), np.array([5, 14]))
+    restored = pickle.loads(pickle.dumps(mapping))
+    assert len(restored) == len(mapping)
+    assert dict(restored) == dict(mapping)
+    assert [restored.rel_to_abs(relative_idx) for relative_idx in range(len(restored))] == [
+        mapping.rel_to_abs(relative_idx) for relative_idx in range(len(mapping))
+    ]
+
+
 def test_storage_format_routing(video_dataset_roots):
     src_root, lance_root = video_dataset_roots
 
@@ -588,7 +719,7 @@ def test_force_cache_sync_refreshes_remote_meta(video_dataset_roots):
 
 def test_pickle_and_dataloader(dataset_roots):
     _, lance_root = dataset_roots
-    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[2, 0, 2])
     restored = pickle.loads(pickle.dumps(lance_ds))
     assert_items_equal(restored[7], lance_ds[7])
 

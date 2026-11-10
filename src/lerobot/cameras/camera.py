@@ -34,7 +34,7 @@ class Camera(abc.ABC):
     - Frame capture (sync/async/latest)
 
     Attributes:
-        fps (int | None): Configured frames per second
+        fps (float | None): Configured or measured frames per second
         width (int | None): Frame width in pixels
         height (int | None): Frame height in pixels
     """
@@ -45,7 +45,7 @@ class Camera(abc.ABC):
         Args:
             config: Camera configuration containing FPS and resolution.
         """
-        self.fps: int | None = config.fps
+        self.fps: float | None = config.fps
         self.width: int | None = config.width
         self.height: int | None = config.height
 

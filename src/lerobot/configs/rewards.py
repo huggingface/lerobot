@@ -137,8 +137,6 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                     revision=revision,
                     cache_dir=cache_dir,
                     force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
                     token=token,
                     local_files_only=local_files_only,
                 )
@@ -165,4 +163,12 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
         cli_overrides = reward_kwargs.pop("cli_overrides", [])
         with draccus.config_type("json"):
-            return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+            config = draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+
+        # Same backfill as PreTrainedConfig.from_pretrained: config.json does not
+        # carry the source path, and direct callers (PreTrainedRewardModel,
+        # make_reward_model) branch on pretrained_path — e.g. RobometerRewardModel
+        # would take its "fresh model" branch instead of loading the checkpoint.
+        config.pretrained_path = model_id
+        config.pretrained_revision = revision
+        return config

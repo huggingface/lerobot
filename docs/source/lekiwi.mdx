@@ -11,7 +11,7 @@ In the steps below, we explain how to assemble the LeKiwi mobile robot.
 ## Source the parts
 
 Follow this [README](https://github.com/SIGRobotics-UIUC/LeKiwi). It contains the bill of materials, with a link to source the parts, as well as the instructions to 3D print the parts.
-And advise if it's your first time printing or if you don't own a 3D printer.
+It also includes advice if it's your first time printing or if you don't own a 3D printer.
 
 ### Wired version
 
@@ -131,7 +131,7 @@ lerobot-setup-motors \
 
 ### Troubleshoot communication
 
-If you are having trouble connecting to the Mobile SO100, follow these steps to diagnose and resolve the issue.
+If you are having trouble connecting to LeKiwi, follow these steps to diagnose and resolve the issue.
 
 #### 1. Verify IP Address Configuration
 
@@ -145,7 +145,7 @@ hostname -I
 
 Try pinging the Raspberry Pi from your laptop:
 
-```bach
+```bash
 ping <your_pi_ip_address>
 ```
 
@@ -185,7 +185,7 @@ lerobot-calibrate \
     --robot.id=my_awesome_kiwi # <- Give the robot a unique name
 ```
 
-We unified the calibration method for most robots, thus, the calibration steps for this SO100 arm are the same as the steps for the Koch and SO101. First, we have to move the robot to the position where each joint is in the middle of its range, then we press `Enter`. Secondly, we move all joints through their full range of motion. A video of this same process for the SO101 as reference can be found [here](https://huggingface.co/docs/lerobot/en/so101#calibration-video).
+We unified the calibration method for most robots, thus, the calibration steps for the LeKiwi arm are the same as the steps for the Koch and SO101. First, we have to move the robot to the position where each joint is in the middle of its range, then we press `Enter`. Secondly, we move all joints through their full range of motion. A video of this same process for the SO101 as reference can be found [here](https://huggingface.co/docs/lerobot/en/so101#calibration-video).
 
 ### Wired version
 
@@ -199,10 +199,11 @@ Then, to calibrate the leader arm (which is attached to the laptop/pc). Run the 
 <hfoption id="Command">
 
 ```bash
+# Use the port of your leader arm, and give the arm a unique name with --teleop.id
 lerobot-calibrate \
     --teleop.type=so100_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
-    --teleop.id=my_awesome_leader_arm # <- Give the robot a unique name
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=my_awesome_leader_arm
 ```
 
 </hfoption>
@@ -238,18 +239,20 @@ To teleoperate, SSH into your Raspberry Pi, and run `conda activate lerobot` and
 python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
 ```
 
+The host stops after `--host.connection_time_s` seconds (30 by default). For longer sessions, such as recording a dataset, increase it, e.g. `--host.connection_time_s=600`.
+
 Then on your laptop, also run `conda activate lerobot` and run the API example, make sure you set the correct `remote_ip` and `port` in `examples/lekiwi/teleoperate.py`.
 
 ```bash
 python examples/lekiwi/teleoperate.py
 ```
 
-You should see on your laptop something like this: `[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
+Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
 | ---------- | ------------------ | ---------------------- |
-| Fast       | 0.4                | 90                     |
-| Medium     | 0.25               | 60                     |
+| Fast       | 0.3                | 90                     |
+| Medium     | 0.2                | 60                     |
 | Slow       | 0.1                | 30                     |
 
 | Key | Action         |
@@ -285,11 +288,11 @@ hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 Then store your Hugging Face repository name in a variable:
 
 ```bash
-HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
+HF_USER=$(hf auth whoami --quiet)
 echo $HF_USER
 ```
 
-Now you can record a dataset. To record episodes and upload your dataset to the hub, execute this API example tailored for LeKiwi. Make sure to first adapt the `remote_ip`, `repo_id`, `port` and `task` in the script. If you would like to run the script for longer you can increase `NB_CYCLES_CLIENT_CONNECTION`.
+Now you can record a dataset. To record episodes and upload your dataset to the hub, execute this API example tailored for LeKiwi. Make sure to first adapt the `remote_ip`, `HF_REPO_ID`, the leader arm `port` and `TASK_DESCRIPTION` in the script. To record more or longer episodes, change `NUM_EPISODES`, `EPISODE_TIME_SEC` and `RESET_TIME_SEC`, and start the host with a `--host.connection_time_s` that covers the whole session.
 
 ```bash
 python examples/lekiwi/record.py
@@ -297,10 +300,10 @@ python examples/lekiwi/record.py
 
 #### Dataset upload
 
-Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/so101_test) that you can obtain by running:
+Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page under the `HF_REPO_ID` you set in the script (e.g. `https://huggingface.co/datasets/${HF_USER}/lekiwi_test`), that you can obtain by running:
 
 ```bash
-echo https://huggingface.co/datasets/${HF_USER}/so101_test
+echo https://huggingface.co/datasets/${HF_USER}/lekiwi_test
 ```
 
 Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
@@ -309,7 +312,7 @@ You can look for other LeRobot datasets on the hub by searching for `LeRobot` [t
 
 #### Tips for gathering data
 
-Once you're comfortable with data recording, you can create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings. Also make sure the object you are manipulating is visible on the camera's. A good rule of thumb is you should be able to do the task yourself by only looking at the camera images.
+Once you're comfortable with data recording, you can create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings. Also make sure the object you are manipulating is visible on the cameras. A good rule of thumb is you should be able to do the task yourself by only looking at the camera images.
 
 In the following sections, you’ll train your neural network. After achieving reliable grasping performance, you can start introducing more variations during data collection, such as additional grasp locations, different grasping techniques, and altering camera positions.
 

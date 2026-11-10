@@ -20,6 +20,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.jobs.dataset import ensure_dataset_available
 
+pytestmark = pytest.mark.dataset
+
 
 def _api_with_dataset(exists: bool):
     api = MagicMock()
