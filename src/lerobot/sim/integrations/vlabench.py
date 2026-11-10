@@ -529,7 +529,8 @@ class VLABenchEnv(gym.Env):
 def env_fns(
     task: str,
     n_envs: int,
-    gym_kwargs: dict[str, Any] | None = None,
+    episode_length: int = DEFAULT_MAX_EPISODE_STEPS,
+    **env_kwargs: Any,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
     """Return `n_envs` env factories per VLABench task, as `{suite: {task_id: [factory, ...]}}`.
 
@@ -537,11 +538,11 @@ def env_fns(
         - n_envs is the number of rollouts *per task*.
         - `task` can be a suite name ("primitive", "composite"), a comma-separated list of
           suite names, or individual task names (e.g. "select_fruit,heat_food").
+        - Other keyword arguments (`obs_type`, `render_resolution`, `robot`, `action_mode`...) go to `VLABenchEnv`.
     """
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
-    gym_kwargs = dict(gym_kwargs or {})
     task_groups = [t.strip() for t in task.split(",") if t.strip()]
     if not task_groups:
         raise ValueError("`task` must contain at least one VLABench task or suite name.")
@@ -559,7 +560,9 @@ def env_fns(
         tasks = SUITE_TASKS.get(group, [group])
 
         for tid, task_name in enumerate(tasks):
-            out[group][tid] = [partial(VLABenchEnv, task=task_name, **gym_kwargs)] * n_envs
+            out[group][tid] = [
+                partial(VLABenchEnv, task=task_name, max_episode_steps=episode_length, **env_kwargs)
+            ] * n_envs
 
     return {group: dict(task_map) for group, task_map in out.items()}
 
@@ -572,5 +575,5 @@ def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
         "control_mode": "eef_pose",
         "state_names": names,
         "action_names": names,
-        "robot_type": (kwargs.get("gym_kwargs") or {}).get("robot", "franka"),
+        "robot_type": kwargs.get("robot", "franka"),
     }

@@ -82,6 +82,7 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
+from lerobot.envs.factory import descriptor_features
 from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoint
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -851,6 +852,8 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     first_env = next(env for tasks in envs.values() for env in tasks.values())
     descriptor = getattr(first_env, "descriptor", None)
     if descriptor is not None:
+        # The policy and the recording datasets take the env's features; envs without a descriptor declare them.
+        cfg.env.features = descriptor_features(descriptor)
         validate_checkpoint(
             descriptor,
             cfg.policy,

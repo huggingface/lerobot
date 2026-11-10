@@ -356,10 +356,16 @@ def _make_env_fns(
 def env_fns(
     task: str,
     n_envs: int,
-    gym_kwargs: dict[str, Any] | None = None,
     camera_name: str | Sequence[str] = ",".join(DEFAULT_CAMERAS),
     episode_length: int | None = None,
     obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
+    obs_type: str = "pixels_agent_pos",
+    render_mode: str = "rgb_array",
+    observation_width: int = 256,
+    observation_height: int = 256,
+    visualization_width: int = 512,
+    visualization_height: int = 512,
+    split: str | None = None,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
     """Return `n_envs` env factories per RoboCasa365 task, as `{task_name: {0: [factory, ...]}}`.
 
@@ -373,15 +379,6 @@ def env_fns(
     """
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
-
-    gym_kwargs = dict(gym_kwargs or {})
-    obs_type = gym_kwargs.pop("obs_type", "pixels_agent_pos")
-    render_mode = gym_kwargs.pop("render_mode", "rgb_array")
-    observation_width = gym_kwargs.pop("observation_width", 256)
-    observation_height = gym_kwargs.pop("observation_height", 256)
-    visualization_width = gym_kwargs.pop("visualization_width", 512)
-    visualization_height = gym_kwargs.pop("visualization_height", 512)
-    split = gym_kwargs.pop("split", None)
 
     camera_names = parse_camera_names(camera_name)
     task_names, group_split = _resolve_tasks(str(task))

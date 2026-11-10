@@ -16,16 +16,29 @@
 
 import importlib
 import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from lerobot.sim.integrations import simulator_required
 from lerobot.sim.types import CONTROL_MODES
 
+# What a simulator runs with when neither the config nor its integration's `conventions` set a value.
+_DEFAULTS: dict[str, Any] = {
+    "fps": 30,
+    "control_mode": "position",
+    "semantics": "",
+    "state_names": (),
+    "action_names": (),
+    "robot_type": "",
+}
+
 
 @dataclass
 class SimConfig:
     """The simulator an env runs: integration, task, options and control settings.
+
+    A server YAML's `sim` section is one, usually with only `type`, `task` and `kwargs`. Settings left unset
+    (`None`) come from the integration's `conventions` when `resolve` fills them in; the env runs a resolved one.
 
     Args:
         type (`str`):
@@ -33,58 +46,20 @@ class SimConfig:
         task (`str`):
             Task to run, as the integration names it, e.g. `libero_spatial`. Some integrations take a
             comma-separated list.
-        fps (`float`, *optional*, defaults to `30`):
-            Control rate.
-        control_mode (`str`, *optional*, defaults to `"position"`):
-            What an action commands: `position`, `delta` or `eef_pose`.
+        fps (`float`, *optional*):
+            Control rate. Resolves to `30` when the integration doesn't declare one.
+        control_mode (`str`, *optional*):
+            What an action commands: `position`, `delta` or `eef_pose`. Resolves to `position`.
         semantics (`str`, *optional*):
-            Name of the observation and action conventions. Defaults to `<type>-<control_mode>-v1`.
+            Name of the observation and action conventions. Resolves to `<type>-<control_mode>-v1`.
         kwargs (`dict[str, Any]`, *optional*):
             Options passed to the integration's `env_fns`.
         state_names (`tuple[str, ...]`, *optional*):
             Component names of `observation.state`. Left empty, they are `state_<i>`.
         action_names (`tuple[str, ...]`, *optional*):
             Component names of the action. Left empty, they are `command_<i>`.
-        robot_type (`str`, *optional*, defaults to `""`):
+        robot_type (`str`, *optional*):
             Body a sim robot records in its dataset. Left empty, it records `sim_robot`.
-    """
-
-    type: str
-    task: str
-    fps: float = 30
-    control_mode: str = "position"
-    semantics: str = ""
-    kwargs: dict[str, Any] = field(default_factory=dict)
-    state_names: tuple[str, ...] = ()
-    action_names: tuple[str, ...] = ()
-    robot_type: str = ""
-
-    def __post_init__(self) -> None:
-        """Check `control_mode` and `fps`, and fill in the default `semantics`."""
-        self.state_names = tuple(self.state_names)
-        self.action_names = tuple(self.action_names)
-        if self.control_mode not in CONTROL_MODES:
-            raise ValueError(f"Unknown control_mode {self.control_mode!r}; expected one of {CONTROL_MODES}")
-        if not math.isfinite(self.fps) or self.fps <= 0:
-            raise ValueError(f"A simulator needs a positive fps, got {self.fps}")
-        if not self.semantics:
-            self.semantics = f"{self.type}-{self.control_mode.replace('_', '-')}-v1"
-
-    @classmethod
-    def resolve(cls, settings: dict[str, Any]) -> "SimConfig":
-        """Build a config from `settings`, taking missing values from the integration's `conventions`."""
-        with simulator_required(settings["type"]):
-            integration = importlib.import_module(f"lerobot.sim.integrations.{settings['type']}")
-            conventions = getattr(integration, "conventions", None)
-            declared = conventions(settings.get("kwargs") or {}) if conventions else {}
-        return cls(**{**declared, **{key: value for key, value in settings.items() if value is not None}})
-
-
-@dataclass
-class SimSettings:
-    """`SimConfig`'s fields as a config file gives them; `SimConfig.resolve` fills in the unset (`None`) ones.
-
-    They come from the integration's conventions, so a file only names the simulator, its task and its options.
     """
 
     type: str = ""
@@ -93,6 +68,37 @@ class SimSettings:
     control_mode: str | None = None
     semantics: str | None = None
     kwargs: dict[str, Any] = field(default_factory=dict)
-    state_names: list[str] | None = None
-    action_names: list[str] | None = None
+    state_names: tuple[str, ...] | None = None
+    action_names: tuple[str, ...] | None = None
     robot_type: str | None = None
+
+    def __post_init__(self) -> None:
+        """Check the `control_mode` and `fps` that are set."""
+        if self.state_names is not None:
+            self.state_names = tuple(self.state_names)
+        if self.action_names is not None:
+            self.action_names = tuple(self.action_names)
+        if self.control_mode is not None and self.control_mode not in CONTROL_MODES:
+            raise ValueError(f"Unknown control_mode {self.control_mode!r}; expected one of {CONTROL_MODES}")
+        if self.fps is not None and (not math.isfinite(self.fps) or self.fps <= 0):
+            raise ValueError(f"A simulator needs a positive fps, got {self.fps}")
+
+    @property
+    def resolved(self) -> bool:
+        """Whether every setting is filled in."""
+        return all(getattr(self, key) is not None for key in _DEFAULTS)
+
+    @classmethod
+    def resolve(cls, settings: "dict[str, Any] | SimConfig") -> "SimConfig":
+        """Build a config from `settings`, taking unset values from the integration's `conventions`."""
+        if isinstance(settings, SimConfig):
+            settings = asdict(settings)
+        with simulator_required(settings["type"]):
+            integration = importlib.import_module(f"lerobot.sim.integrations.{settings['type']}")
+            conventions = getattr(integration, "conventions", None)
+            declared = conventions(settings.get("kwargs") or {}) if conventions else {}
+        given = {key: value for key, value in settings.items() if value is not None}
+        values = {**_DEFAULTS, **declared, **given}
+        if not values["semantics"]:
+            values["semantics"] = f"{values['type']}-{values['control_mode'].replace('_', '-')}-v1"
+        return cls(**values)

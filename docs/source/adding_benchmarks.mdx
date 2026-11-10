@@ -7,7 +7,7 @@ A benchmark is a simulator that LeRobot drives in one place, `lerobot.sim`, so t
 | Component            | Location                                      | What to add                                                                                                                                                             |
 | -------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Integration          | `src/lerobot/sim/integrations/<benchmark>.py` | The `gym.Env`, `env_fns()` factories, `canonical_observation()` adapter and `conventions()` for that simulator                                                          |
-| Config               | `src/lerobot/envs/configs.py`                 | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                                                                                 |
+| Config               | `src/lerobot/envs/configs.py`                 | An `EnvConfig` subclass whose fields are the factory's kwargs                                                                                                           |
 | Server configuration | `docker/sim/configs/<benchmark>.yaml`         | The task and factory kwargs the server and CI use                                                                                                                       |
 | Simulator image      | `docker/Dockerfile.sim`                       | A `<benchmark>_native` stage: pinned native dependencies (including any CUDA toolkit, as the base is plain Ubuntu) and asset revisions; the final stage adds the server |
 | CI manifest          | `benchmarks/benchmarks.yaml`                  | Name, tasks, checkpoint revision, camera `rename_map` and optional `parity`; the rest defaults from the name                                                            |
@@ -45,7 +45,7 @@ Success comes from `info["is_success"]`, which your environment reports on every
 def env_fns(
     task: str,
     n_envs: int,
-    gym_kwargs: dict | None = None,
+    obs_type: str = "pixels_agent_pos",
 ) -> dict[str, dict[int, list[Callable[[], gym.Env]]]]:
     """{suite: {task_id: [make_single_env] * n_envs}} for MyBenchmark."""
 ```
@@ -94,7 +94,7 @@ Return the simulator's control rate, controller and ordered component names from
 
 ### The config (`src/lerobot/envs/configs.py`)
 
-Register a config so users can select your benchmark with `--env.type=<name>` (and `--robot.env.type=<name>`). Its `sim_settings()` describes the simulator as a server YAML's `sim` section; `LocalVectorEnv` does the rest:
+Register a config so users can select your benchmark with `--env.type=<name>` (and `--robot.env.type=<name>`), under the name of its integration module. The fields it adds are passed to that module's `env_fns()` as keyword arguments, under the same names, and a server YAML's `sim.kwargs` uses them too:
 
 ```python
 @EnvConfig.register_subclass("<benchmark_name>")
@@ -103,16 +103,9 @@ class MyBenchmarkEnvConfig(EnvConfig):
     task: str = "<default_task>"
     fps: int = <fps>
     obs_type: str = "pixels_agent_pos"
-
-    @property
-    def gym_kwargs(self) -> dict:
-        return {"obs_type": self.obs_type}
-
-    def sim_settings(self) -> dict:
-        return {"type": "<benchmark_name>", "task": self.task, "kwargs": {"gym_kwargs": self.gym_kwargs}}
 ```
 
-Keep its defaults and the server YAML's in agreement: a served evaluation refuses a server that runs another environment than the command describes. Features come from the environment's description when it is created, so the config declares none.
+Override `sim_settings()` only when an option is not a keyword argument of `env_fns()` (LIBERO passes `fps` as its controller frequency). Keep its defaults and the server YAML's in agreement: a served evaluation refuses a server that runs another environment than the command describes. Features come from the environment's description when it is created, so the config declares none.
 
 ## Checkpoint admission
 

@@ -28,10 +28,11 @@ import pytest
 import yaml
 
 from lerobot.env_server import EnvClient, EnvServerConfig
-from lerobot.envs.configs import EnvConfig, check_served
+from lerobot.envs.configs import EnvConfig
+from lerobot.envs.factory import check_served
 from lerobot.scripts import lerobot_env_server
 from lerobot.scripts.lerobot_env_server import EnvServerLaunchConfig
-from lerobot.sim import SimSettings
+from lerobot.sim import SimConfig
 from tests.fixtures.sim_server import free_port
 from tests.fixtures.toy_env import ToyEnvConfig
 from tests.utils import resolve_without_simulator
@@ -59,7 +60,7 @@ def test_overrides_merge_into_the_config_and_leave_the_file_alone(tmp_path):
 
 
 def test_a_config_needs_a_simulator_and_a_deployment():
-    for options in ({"sim": SimSettings(type="libero", task="libero_spatial")}, {"deployment": "libero"}):
+    for options in ({"sim": SimConfig(type="libero", task="libero_spatial")}, {"deployment": "libero"}):
         with pytest.raises(ValueError, match="required"):
             EnvServerConfig(**options)
     # The command names its own flags.

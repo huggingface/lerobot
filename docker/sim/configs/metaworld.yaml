@@ -4,6 +4,5 @@ sim:
   type: metaworld
   task: metaworld-push-v3
   kwargs:
-    gym_kwargs:
-      obs_type: pixels_agent_pos
-      render_mode: rgb_array
+    obs_type: pixels_agent_pos
+    render_mode: rgb_array

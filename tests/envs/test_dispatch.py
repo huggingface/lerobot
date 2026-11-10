@@ -1,4 +1,4 @@
-"""Tests for the benchmark dispatch refactor (create_envs / get_env_processors on EnvConfig)."""
+"""Tests for env dispatch: make_env builds every env from its config; get_env_processors stays on EnvConfig."""
 
 from __future__ import annotations
 
@@ -39,9 +39,18 @@ def test_unknown_type():
 
 
 def test_libero_fps_controls_simulator_frequency():
-    cfg = LiberoEnvConfig(fps=17)
+    settings = LiberoEnvConfig(fps=17).sim_settings()
 
-    assert cfg.gym_kwargs["control_freq"] == 17
+    assert settings["fps"] == 17 and settings["kwargs"]["fps"] == 17
+
+
+def test_benchmark_options_are_its_integration_kwargs():
+    settings = LiberoEnvConfig(observation_height=128).sim_settings()
+
+    assert settings["type"] == "libero" and settings["task"] == "libero_10"
+    assert settings["kwargs"]["observation_height"] == 128
+    # Options every env shares stay out of the integration's kwargs.
+    assert not {"task", "features", "server", "max_parallel_tasks"} & set(settings["kwargs"])
 
 
 def test_libero_rejects_nonpositive_fps():
@@ -56,8 +65,8 @@ def test_identity_processors():
     assert len(pre.steps) == 0 and len(post.steps) == 0
 
 
-def test_delegation():
-    """make_env() should call cfg.create_envs(), not use if/elif dispatch."""
+def test_deprecated_create_envs_override_is_still_called():
+    """A config that still overrides create_envs() is called, with a deprecation warning."""
     sentinel = {"delegated": {0: "marker"}}
     fake = type(
         "Fake",
@@ -67,7 +76,8 @@ def test_delegation():
             "create_envs": lambda self, n_envs, use_async_envs=False: sentinel,
         },
     )()
-    result = make_env(fake, n_envs=1)
+    with pytest.warns(DeprecationWarning, match="create_envs"):
+        result = make_env(fake, n_envs=1)
     assert result is sentinel
 
 
@@ -128,8 +138,8 @@ def test_libero_processor_flattens_state_to_raw_8_dim():
     assert torch.allclose(state, torch.tensor([[1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 4.0, 5.0]]))
 
 
-def test_base_create_envs():
-    """Base class create_envs() should build a single-task LocalVectorEnv via gym.make()."""
+def test_config_without_integration_is_a_gym_env():
+    """A config whose type names no simulator integration is built with gym.make(gym_id)."""
     gym_id = "_dispatch_test/CartPole-v99"
     if gym_id not in gym_registry:
         register(id=gym_id, entry_point=DictObservationEnv)
@@ -154,7 +164,7 @@ def test_base_create_envs():
             return {}
 
     try:
-        envs = _Env().create_envs(n_envs=2)
+        envs = make_env(_Env(), n_envs=2)
         # One suite, named by the gym task.
         assert list(envs) == ["CartPole-v99"]
         env = envs["CartPole-v99"][0]
@@ -167,7 +177,7 @@ def test_base_create_envs():
 
 
 def test_custom_create_envs_override():
-    """A custom EnvConfig subclass can override create_envs()."""
+    """A custom EnvConfig subclass that overrides create_envs() still builds its envs, with a warning."""
     mock_vec = gym.vector.SyncVectorEnv([lambda: gym.make("CartPole-v1")])
 
     @EnvConfig.register_subclass("_dispatch_custom_test")
@@ -184,7 +194,8 @@ def test_custom_create_envs_override():
             return {"custom_suite": {0: mock_vec}}
 
     try:
-        result = make_env(_Env(), n_envs=1)
+        with pytest.warns(DeprecationWarning, match="create_envs"):
+            result = make_env(_Env(), n_envs=1)
         assert "custom_suite" in result
     finally:
         mock_vec.close()

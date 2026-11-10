@@ -15,11 +15,10 @@
 from __future__ import annotations
 
 import abc
-import logging
-from collections.abc import Callable
+import importlib.util
+import warnings
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
-from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
 import draccus
@@ -29,19 +28,13 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.env_server import DEFAULT_MAX_PAYLOAD_BYTES
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sim import EnvDescriptor, SimConfig
-from lerobot.sim.integrations import envhub
+from lerobot.sim import SimConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 if TYPE_CHECKING:
     from lerobot.env_server import RemoteVectorEnv
     from lerobot.sim import LocalVectorEnv
-
-logger = logging.getLogger(__name__)
-
-# Timeout of each request to a served env.
-SERVED_TIMEOUT_S = 120.0
 
 
 @dataclass
@@ -69,9 +62,16 @@ class EnvClientConfig:
 
 @dataclass
 class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
+    """An environment's options. `make_env` builds the environment.
+
+    A config whose type names a simulator integration (`lerobot.sim.integrations.<type>`) passes the options it adds
+    to this class to the integration's `env_fns` as keyword arguments. Any other config is a Gymnasium env that its
+    package registers, built with `gym.make(gym_id, **gym_kwargs)`.
+    """
+
     task: str | None = None
     fps: int = 30
-    # Filled from the env's descriptor when the env is created.
+    # The policy-side features. `lerobot-eval` fills them from the env's descriptor; envs without one declare them.
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
     max_parallel_tasks: int = 1
@@ -95,15 +95,22 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @property
     def gym_kwargs(self) -> dict:
-        """Keyword arguments used to build the sim's envs; empty by default."""
+        """Keyword arguments for ``gym.make``; empty by default."""
         return {}
 
     def sim_settings(self) -> dict[str, Any]:
         """Return the sim settings, as in a server YAML's ``sim`` section; missing ones use sim defaults.
 
-        The default is the Gymnasium env ``gym_id`` with ``gym_kwargs`` and delta actions; override otherwise.
+        For a simulator integration, its kwargs are this config's own options. Otherwise, the Gymnasium env ``gym_id``
+        with ``gym_kwargs`` and delta actions.
         """
-        return _gym_settings(self, "delta")
+        if importlib.util.find_spec(f"lerobot.sim.integrations.{self.type}") is None:
+            return _gym_settings(self, "delta")
+        shared = {option.name for option in fields(EnvConfig)}
+        options = {
+            option.name: getattr(self, option.name) for option in fields(self) if option.name not in shared
+        }
+        return {"type": self.type, "task": self.task or "", "kwargs": options}
 
     def sim_config(self) -> SimConfig:
         """Return ``sim_settings()`` with the sim's defaults, as local envs and the env server run it."""
@@ -114,15 +121,16 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         n_envs: int,
         use_async_envs: bool = False,
     ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        """Create local or served vector envs, as ``{suite: {task_id: env}}``."""
-        descriptor, make = self._environment_factory(n_envs, use_async_envs)
-        groups = [task.strip() for task in self.task.split(",")] if self.task else list(descriptor.tasks)
-        result = {}
-        for group in groups:
-            if group not in descriptor.tasks:
-                raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
-            result[group] = {task_id: make(group, task_id) for task_id in descriptor.tasks[group]}
-        return result
+        """Deprecated: use ``lerobot.envs.make_env(config, n_envs, use_async_envs)``."""
+        warnings.warn(
+            "EnvConfig.create_envs is deprecated; use lerobot.envs.make_env(config, ...)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # Imported here: the factory imports this module.
+        from .factory import make_env
+
+        return make_env(self, n_envs=n_envs, use_async_envs=use_async_envs)
 
     def create_env(
         self,
@@ -131,124 +139,20 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         n_envs: int = 1,
         use_async_envs: bool = False,
     ) -> LocalVectorEnv | RemoteVectorEnv:
-        """Create one local or served vector env for one task; no `task_id` means the suite's first task."""
-        descriptor, make = self._environment_factory(n_envs, use_async_envs, task_group, task_id)
-        group = task_group or next(iter(descriptor.tasks))
-        if group not in descriptor.tasks:
-            raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
-        task_ids = descriptor.tasks[group]
-        if task_id is None:
-            task_id = task_ids[0]
-        if task_id not in task_ids:
-            raise ValueError(f"Unknown task ID {task_id} for {group!r}; this suite has {sorted(task_ids)}")
-        return make(group, task_id)
+        """Deprecated: use ``lerobot.envs.make_task_env(config, task_group, task_id, n_envs, use_async_envs)``."""
+        warnings.warn(
+            "EnvConfig.create_env is deprecated; use lerobot.envs.make_task_env(config, ...)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # Imported here: the factory imports this module.
+        from .factory import make_task_env
 
-    def _environment_factory(
-        self,
-        n_envs: int,
-        use_async_envs: bool,
-        task_group: str | None = None,
-        task_id: int | None = None,
-    ) -> tuple[EnvDescriptor, Callable[[str, int], LocalVectorEnv | RemoteVectorEnv]]:
-        from lerobot.sim import LocalVectorEnv
-
-        settings = self.sim_settings()
-        server = self.server
-        if server is not None:
-            from lerobot.env_server import EnvClient, RemoteVectorEnv
-
-            if self.max_parallel_tasks != 1:
-                raise ValueError("A served environment runs one task at a time")
-            connect = partial(
-                EnvClient,
-                server.endpoint,
-                server.deployment or self.type,
-                SERVED_TIMEOUT_S,
-                handshake_timeout_s=server.handshake_timeout_s,
-                zenoh_config_path=server.zenoh_config_path,
-                max_payload_bytes=server.max_payload_bytes,
-            )
-            probe = connect()
-            try:
-                descriptor = probe.describe()
-            finally:
-                probe.close()
-            check_served(descriptor.config, settings, server.endpoint)
-
-            def make(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
-                return RemoteVectorEnv(
-                    connect(encoding=server.encoding, jpeg_quality=server.jpeg_quality),
-                    n_envs,
-                    group,
-                    task_id,
-                    use_async_envs and n_envs > 1,
-                    descriptor,
-                )
-        else:
-            sim = self.sim_config()
-            parallel = use_async_envs and n_envs > 1
-            # Reuse the env built to read the descriptor for its own task instead of building it twice.
-            first = [LocalVectorEnv(sim, n_envs, task_group, task_id, parallel)]
-            descriptor = first[0].descriptor
-
-            def make(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
-                if first:
-                    env = first.pop()
-                    if (group, task_id) == (env.task_group, env.task_id):
-                        return env
-                    env.close()
-                # With the descriptor given, the other tasks build their sims on first use.
-                return LocalVectorEnv(sim, n_envs, group, task_id, parallel, descriptor)
-
-        self.fps = int(descriptor.fps)
-        self.features = {
-            f.name: PolicyFeature(
-                type=FeatureType.VISUAL if f.kind == "rgb" else FeatureType.STATE, shape=f.shape
-            )
-            for f in descriptor.features
-        }
-        self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=descriptor.action_feature.shape)
-        # Sim keys reach the policy unchanged; --rename_map renames them, as for any env.
-        self.features_map = {name: name for name in self.features}
-        return descriptor, make
+        return make_task_env(self, task_group, task_id, n_envs=n_envs, use_async_envs=use_async_envs)
 
     def get_env_processors(self):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
         return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
-
-
-def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str) -> None:
-    """Raise if the server runs a different env than ``expected``; warn if only its kwargs differ."""
-
-    def plain(value: Any) -> Any:
-        # Make YAML, wire and dataclass values comparable: tuples become lists, recursively.
-        if isinstance(value, dict):
-            return {key: plain(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [plain(item) for item in value]
-        return value
-
-    # A server opens any of the tasks it configures (all of them for an empty list), so the requested tasks
-    # are checked against the descriptor's task list instead.
-    errors = [
-        f"{key}: server {served.get(key)!r}, expected {value!r}"
-        for key, value in expected.items()
-        if key not in ("kwargs", "task") and value is not None and plain(value) != plain(served.get(key))
-    ]
-    served_kwargs = served.get("kwargs") or {}
-    # hub_path and trust_remote_code may differ: the env server loads EnvHub repos from its own image.
-    warnings = [
-        f"kwargs.{key}: server {served_kwargs.get(key)!r}, expected {value!r}"
-        for key, value in (expected.get("kwargs") or {}).items()
-        if key not in ("hub_path", "trust_remote_code") and plain(value) != plain(served_kwargs.get(key))
-    ]
-    if errors:
-        raise ValueError(
-            f"The env server at {endpoint} runs another environment than this command describes "
-            f"({'; '.join(errors)}). Pass the same --env options as the server's configuration."
-        )
-    for warning in warnings:
-        logger.warning("The env server at %s differs in %s", endpoint, warning)
 
 
 @EnvConfig.register_subclass("envhub")
@@ -260,29 +164,8 @@ class HubEnvConfig(EnvConfig):
     trust_remote_code: bool = False
     # Keyword arguments for the repo's make_env, e.g. '{"episode_length": 9000}'.
     make_env_kwargs: dict[str, Any] = field(default_factory=dict)
+    # Return the repo's own vector envs (e.g. GPU batches) unchanged, in this process.
     use_native_batch: bool = False
-
-    def create_envs(
-        self, n_envs: int, use_async_envs: bool = False
-    ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        """With ``use_native_batch``, return the repo's own vector envs (e.g. GPU batches) unchanged."""
-        if not self.use_native_batch:
-            return super().create_envs(n_envs, use_async_envs)
-        if self.server is not None:
-            raise ValueError("use_native_batch runs locally; it cannot use an env server")
-        if not self.hub_path:
-            raise ValueError("--env.hub_path is required for an EnvHub environment")
-        # Provider configs (Isaac Lab Arena, Unitree G1) subclass this one and also pass themselves as `cfg`,
-        # since their options are config fields.
-        provider = None if type(self) is HubEnvConfig else self
-        return envhub.make_envs(
-            self.hub_path,
-            n_envs,
-            use_async_envs,
-            self.trust_remote_code,
-            cfg=provider,
-            **self.make_env_kwargs,
-        )
 
     def sim_settings(self) -> dict[str, Any]:
         if self.use_native_batch:
@@ -450,9 +333,6 @@ class HILSerlRobotEnvConfig(EnvConfig):
     name: str = "real_robot"
 
     def sim_settings(self) -> dict[str, Any]:
-        raise NotImplementedError("gym_manipulator wraps a robot for RL; it does not describe a simulator")
-
-    def create_envs(self, n_envs: int, use_async_envs: bool = False):
         """Raise: this config drives a real robot, which `make_env` and `lerobot-eval` cannot build."""
         raise NotImplementedError(
             "'gym_manipulator' is a real-robot environment: make_env and lerobot-eval cannot build it. "
@@ -490,35 +370,10 @@ class LiberoEnvConfig(EnvConfig):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
-    @property
-    def gym_kwargs(self) -> dict:
-        kwargs: dict[str, Any] = {
-            "obs_type": self.obs_type,
-            "render_mode": self.render_mode,
-            "observation_height": self.observation_height,
-            "observation_width": self.observation_width,
-            "control_freq": self.fps,
-            "hard_reset": self.hard_reset,
-        }
-        if self.task_ids is not None:
-            kwargs["task_ids"] = self.task_ids
-        return kwargs
-
     def sim_settings(self) -> dict[str, Any]:
-        return {
-            "type": self.type,
-            "task": self.task,
-            "fps": self.fps,
-            "kwargs": {
-                "gym_kwargs": self.gym_kwargs,
-                "camera_name": self.camera_name,
-                "init_states": self.init_states,
-                "control_mode": self.control_mode,
-                "episode_length": self.episode_length,
-                "camera_name_mapping": self.camera_name_mapping,
-                "is_libero_plus": self.is_libero_plus,
-            },
-        }
+        # --env.fps is LIBERO's controller frequency, so the simulator runs at it.
+        settings = super().sim_settings()
+        return {**settings, "fps": self.fps, "kwargs": {**settings["kwargs"], "fps": self.fps}}
 
 
 @EnvConfig.register_subclass("metaworld")
@@ -532,16 +387,6 @@ class MetaworldEnvConfig(EnvConfig):
     def __post_init__(self):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
-
-    @property
-    def gym_kwargs(self) -> dict:
-        return {
-            "obs_type": self.obs_type,
-            "render_mode": self.render_mode,
-        }
-
-    def sim_settings(self) -> dict[str, Any]:
-        return {"type": "metaworld", "task": self.task, "kwargs": {"gym_kwargs": self.gym_kwargs}}
 
 
 @EnvConfig.register_subclass("robocasa")
@@ -571,32 +416,6 @@ class RoboCasaEnvConfig(EnvConfig):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
-    @property
-    def gym_kwargs(self) -> dict:
-        kwargs: dict[str, Any] = {
-            "obs_type": self.obs_type,
-            "render_mode": self.render_mode,
-            "observation_height": self.observation_height,
-            "observation_width": self.observation_width,
-            "visualization_height": self.visualization_height,
-            "visualization_width": self.visualization_width,
-        }
-        if self.split is not None:
-            kwargs["split"] = self.split
-        return kwargs
-
-    def sim_settings(self) -> dict[str, Any]:
-        return {
-            "type": "robocasa",
-            "task": self.task,
-            "kwargs": {
-                "gym_kwargs": self.gym_kwargs,
-                "camera_name": self.camera_name,
-                "episode_length": self.episode_length,
-                "obj_registries": list(self.obj_registries),
-            },
-        }
-
 
 @EnvConfig.register_subclass("vlabench")
 @dataclass
@@ -613,20 +432,6 @@ class VLABenchEnvConfig(EnvConfig):
     def __post_init__(self):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
-
-    @property
-    def gym_kwargs(self) -> dict:
-        return {
-            "obs_type": self.obs_type,
-            "render_mode": self.render_mode,
-            "render_resolution": list(self.render_resolution),
-            "robot": self.robot,
-            "max_episode_steps": self.episode_length,
-            "action_mode": self.action_mode,
-        }
-
-    def sim_settings(self) -> dict[str, Any]:
-        return {"type": "vlabench", "task": self.task, "kwargs": {"gym_kwargs": self.gym_kwargs}}
 
 
 @EnvConfig.register_subclass("isaaclab_arena")
@@ -824,19 +629,6 @@ class RoboTwinEnvConfig(EnvConfig):
     # (for world-model policies like LingBot-VA that predict per-arm xyz+quaternion+gripper poses).
     action_mode: str = "joint"
 
-    def sim_settings(self) -> dict[str, Any]:
-        return {
-            "type": "robotwin",
-            "task": self.task,
-            "kwargs": {
-                "camera_names": [c.strip() for c in self.camera_names.split(",") if c.strip()],
-                "observation_height": self.observation_height,
-                "observation_width": self.observation_width,
-                "episode_length": self.episode_length,
-                "action_mode": self.action_mode,
-            },
-        }
-
 
 @EnvConfig.register_subclass("robomme")
 @dataclass
@@ -864,20 +656,6 @@ class RoboMMEEnvConfig(EnvConfig):
         if self.front_camera_name == self.wrist_camera_name:
             raise ValueError("RoboMME front and wrist camera names must be distinct.")
 
-    def sim_settings(self) -> dict[str, Any]:
-        return {
-            "type": "robomme",
-            "task": self.task,
-            "kwargs": {
-                "action_space_type": self.action_space,
-                "dataset": self.dataset_split,
-                "episode_length": self.episode_length,
-                "task_ids": self.task_ids,
-                "front_camera_name": self.front_camera_name,
-                "wrist_camera_name": self.wrist_camera_name,
-            },
-        }
-
 
 @EnvConfig.register_subclass("robolab")
 @dataclass
@@ -901,15 +679,3 @@ class RoboLabEnvConfig(EnvConfig):
     # Resize camera frames on the GPU before sending them; RoboLab renders 1280x720.
     observation_height: int | None = None
     observation_width: int | None = None
-
-    def sim_settings(self) -> dict[str, Any]:
-        return {
-            "type": "robolab",
-            "task": self.task or "",
-            "kwargs": {
-                "cameras": self.cameras,
-                "instruction_type": self.instruction_type,
-                "observation_height": self.observation_height,
-                "observation_width": self.observation_width,
-            },
-        }

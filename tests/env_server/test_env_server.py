@@ -25,7 +25,8 @@ import pytest
 from lerobot.env_server import EnvClient, EnvServer, EnvServerConfig, RemoteVectorEnv
 from lerobot.env_server.protocol import decode_descriptor, encode_descriptor, instance_prefix
 from lerobot.envs import EnvClientConfig
-from lerobot.sim import SimSettings
+from lerobot.envs.factory import make_env, make_task_env
+from lerobot.sim import SimConfig
 from lerobot.transport.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig
 from tests.fixtures.sim_server import free_port
@@ -64,7 +65,7 @@ for prefix in ('torch', 'lerobot.policies', 'lerobot.remote_inference'):
 
 def test_a_client_ignores_descriptor_fields_it_does_not_know():
     # A newer server may describe more than this client knows.
-    env = ToyEnvConfig().create_env()
+    env = make_task_env(ToyEnvConfig())
     env.close()
     wire = {**encode_descriptor(env.descriptor), "joint_units": ["rad", "rad"]}
     assert decode_descriptor(wire) == env.descriptor
@@ -316,7 +317,7 @@ def test_first_vector_reset_does_not_skip_initial_state(sim_server, monkeypatch)
 
 
 def _episode(config: ToyEnvConfig) -> list[tuple]:
-    env = config.create_env("reach", 0, n_envs=2)
+    env = make_task_env(config, "reach", 0, n_envs=2)
     try:
         obs, info = env.reset(seed=[10, 20])
         results = [(obs, np.zeros(2, np.float32), np.zeros(2, bool), np.zeros(2, bool), info)]
@@ -346,13 +347,13 @@ def test_local_environment_matches_the_server(sim_server):
 def test_served_env_must_be_the_env_the_command_describes(sim_server):
     config = ToyEnvConfig(server=EnvClientConfig(sim_server[1]), fps=30)  # the server's toy runs at 20 fps
     with pytest.raises(ValueError, match="fps: server 20"):
-        config.create_envs(n_envs=1)
+        make_env(config, n_envs=1)
 
 
 def test_served_env_refuses_a_task_its_server_does_not_run(sim_server):
     config = ToyEnvConfig(task="other", server=EnvClientConfig(sim_server[1]))
     with pytest.raises(ValueError, match=r"Unknown task 'other'; this environment has \['reach'\]"):
-        config.create_envs(n_envs=1)
+        make_env(config, n_envs=1)
 
 
 @pytest.mark.parametrize("task_id", [None, 0])
@@ -385,7 +386,7 @@ def test_a_bad_first_result_fails_the_session(sim_server, monkeypatch):
 def test_a_wrong_deployment_names_the_one_served(sim_server):
     config = ToyEnvConfig(server=EnvClientConfig(sim_server[1], deployment="other", handshake_timeout_s=0.5))
     with pytest.raises(ProtocolError, match="serves deployment 'toy', not 'other'") as error:
-        config.create_envs(n_envs=1)
+        make_env(config, n_envs=1)
     assert "--env.server.deployment=toy" in str(error.value)
     assert "start a server for 'other'" in str(error.value)
 
@@ -404,7 +405,7 @@ def test_a_server_that_finishes_starting_during_the_handshake_is_described(monke
     endpoint = f"tcp/127.0.0.1:{free_port()}"
     server = EnvServer(
         EnvServerConfig(
-            sim=SimSettings(**ToyEnvConfig().sim_settings()),
+            sim=SimConfig(**ToyEnvConfig().sim_settings()),
             deployment="toy",
             zenoh=ZenohConfig(listen_endpoints=[endpoint]),
         )

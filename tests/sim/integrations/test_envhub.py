@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from lerobot.envs import EnvClientConfig, HubEnvConfig
+from lerobot.envs.factory import make_env, make_task_env
 from lerobot.sim import LocalVectorEnv, SimConfig
 from lerobot.sim.integrations import envhub
 
@@ -225,7 +226,7 @@ def test_envhub_native_batch_preserves_provider_and_options(hub_repo, monkeypatc
         hub_path="user/repo", trust_remote_code=True, use_native_batch=True, make_env_kwargs={"bonus": 50}
     )
     for _ in range(2):
-        env = next(iter(config.create_envs(2).values()))[0]
+        env = next(iter(make_env(config, 2).values()))[0]
         try:
             env.reset(seed=2)
             assert env.step(np.zeros(2, dtype=np.int64))[1].tolist() == [51, 51]
@@ -237,10 +238,10 @@ def test_envhub_native_batch_preserves_provider_and_options(hub_repo, monkeypatc
     assert builtins.envhub_imports == 1
     config.server = EnvClientConfig("tcp/127.0.0.1:7448")
     with pytest.raises(ValueError, match="env server"):
-        config.create_envs(1)
+        make_env(config, 1)
     config.server = None
     with pytest.raises(ValueError, match="SimRobot"):
-        config.create_env()
+        make_task_env(config)
 
 
 _BATCHED_ENV = """
@@ -299,7 +300,7 @@ def test_envhub_runs_a_batched_repository_one_task_at_a_time(hub_repo, monkeypat
     hub_repo(_BATCHED_ENV)
     monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
     config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"spacing": 2.0})
-    envs = config.create_envs(2)["reach_batch"]
+    envs = make_env(config, 2)["reach_batch"]
     try:
         assert sorted(envs) == [0, 1, 2]
         # One simulator for the batch of 2, and only the first task's: the others build when they run.

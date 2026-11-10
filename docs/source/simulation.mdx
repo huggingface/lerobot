@@ -106,7 +106,7 @@ As for `lerobot-policy-server`, every YAML field accepts a nested command-line o
 ```bash
 lerobot-env-server --config_path=docker/sim/configs/libero.yaml --docker=true \
   --sim.task=libero_goal \
-  --sim.kwargs='{gym_kwargs: {observation_height: 256, observation_width: 256}}'
+  --sim.kwargs='{observation_height: 256, observation_width: 256}'
 ```
 
 The effective configuration is kept under `$HF_LEROBOT_HOME/sim`, so a restarted container finds it. Switching configuration recreates the server and ends active sessions. The image is built when missing; add `--build=true` to rebuild it after changing the simulator or LeRobot source, or `--stop=true` to shut down the server. The container requires Docker GPU access for EGL rendering. [EnvHub](./envhub) repositories are served with `--envhub=<user/repo>`; see [EnvHub and the simulator server](./envhub#envhub-and-the-simulator-server).

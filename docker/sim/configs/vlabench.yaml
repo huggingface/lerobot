@@ -4,12 +4,11 @@ sim:
   type: vlabench
   task: select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment
   kwargs:
-    gym_kwargs:
-      obs_type: pixels_agent_pos
-      render_mode: rgb_array
-      render_resolution:
-      - 480
-      - 480
-      robot: franka
-      max_episode_steps: 50
-      action_mode: eef
+    episode_length: 50
+    obs_type: pixels_agent_pos
+    render_mode: rgb_array
+    render_resolution:
+    - 480
+    - 480
+    robot: franka
+    action_mode: eef

@@ -26,7 +26,7 @@ from gymnasium.utils.env_checker import check_env
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
-from lerobot.envs.factory import make_env, make_env_config
+from lerobot.envs.factory import make_env, make_env_config, make_task_env
 from lerobot.envs.utils import prepare_canonical_observation, preprocess_observation
 from lerobot.sim.integrations.envhub import _normalize_hub_result, _parse_hub_url
 from tests.fixtures.toy_env import DictObservationEnv, ToyEnvConfig
@@ -301,5 +301,5 @@ def test_env_server_options_are_one_optional_group():
 def test_env_config_saves_only_its_settings():
     # Saved with a training config after its env is built; the env's description is runtime state.
     config = ToyEnvConfig()
-    config.create_env().close()
+    make_task_env(config).close()
     assert "descriptor" not in draccus.encode(config)
