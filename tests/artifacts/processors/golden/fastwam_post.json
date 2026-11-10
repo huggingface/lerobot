@@ -23,6 +23,12 @@
     },
     {
       "config": {
+        "enabled": false
+      },
+      "registry_name": "absolute_actions_processor"
+    },
+    {
+      "config": {
         "device": "cpu",
         "float_dtype": null
       },

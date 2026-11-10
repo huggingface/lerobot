@@ -20,7 +20,7 @@
         "tokenizer_name": "openai/clip-vit-base-patch16",
         "truncation": true
       },
-      "registry_name": "tokenizer_processor"
+      "registry_name": "multi_task_dit_task_tokenizer"
     },
     {
       "config": {

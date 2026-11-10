@@ -36,8 +36,8 @@ here, not a skip: the fixture set is only meaningful if it covers every policy, 
 silently narrows coverage to whatever the runner happened to have installed. Building a pipeline is
 also not hermetic — `MolmoAct2PackInputsProcessorStep.__post_init__` calls `require_package("scipy")`,
 and `ActionTokenizerProcessorStep.__post_init__` reaches the Hub for a `trust_remote_code` processor —
-so these need `--extra all` plus network, which is `full_tests.yml`. `fast_tests.yml` deselects the
-marker.
+so these need `--extra all` plus network, which is `full_tests.yml`. `all_extras` tests are never
+marked `base`, so no Fast Tests tier selects them.
 
 Fixtures live in `tests/artifacts/processors/golden/` and are regenerated deliberately:
 

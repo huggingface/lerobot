@@ -61,12 +61,31 @@
       "state_file": "policy_preprocessor_step_3_molmoact2_masked_normalizer.safetensors"
     },
     {
-      "config": {},
+      "config": {
+        "normalization_masks": {
+          "action": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ],
+          "observation.state": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        }
+      },
       "registry_name": "molmoact2_clamp_normalized"
     },
     {
       "config": {
-        "action_mode": "both",
+        "action_mode": "continuous",
         "add_control_tokens": true,
         "add_setup_tokens": true,
         "allow_image_key_fallback": true,

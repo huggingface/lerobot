@@ -32,6 +32,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import torch
@@ -50,6 +51,29 @@ STATE_DIM = 6
 ACTION_DIM = 6
 IMAGE_SHAPE = (3, 96, 96)
 CAMERA_NAME = "cam"
+JOINT_NAMES = [*(f"joint_{i}" for i in range(ACTION_DIM - 1)), "gripper"]
+
+# Policies whose factory cannot run on defaults plus the synthetic features, with the least extra
+# config that lets it. Passed to the config constructor, so the config's own validation still runs.
+POLICY_CONFIG_OVERRIDES: dict[str, dict[str, Any]] = {
+    # History conditioning cannot initialize its command-delta normalization from dataset stats.
+    "flux3": {
+        "normalization_stats": {
+            stream: {"q01": [-1.0] * ACTION_DIM, "q99": [1.0] * ACTION_DIM} for stream in ("action", "state")
+        }
+    },
+    # The default LIBERO embodiment is 7 wide; SO-100 matches the synthetic state and action.
+    "g05": {"embodiment": "so100", "raw_state_dim": STATE_DIM, "raw_action_dim": ACTION_DIM},
+    # More than one visual feature needs explicit camera roles.
+    "lawam": {"wrist_image_features": []},
+    # Leaving the gripper unnormalized needs the dataset's joint names to find it.
+    "molmoact2": {"dataset_feature_names": {OBS_STATE: JOINT_NAMES, ACTION: JOINT_NAMES}},
+}
+# Extra `make_pre_post_processors` arguments, for factories that read the dataset metadata.
+POLICY_PROCESSOR_KWARGS: dict[str, dict[str, Any]] = {
+    # The action rate comes from the dataset fps.
+    "lawam": {"dataset_meta": SimpleNamespace(fps=30)},
+}
 
 
 def _synthetic_features() -> tuple[dict[str, PolicyFeature], dict[str, PolicyFeature]]:
@@ -91,14 +115,18 @@ def _build_pipelines(policy_type: str):
     Raises whatever the policy's factory raises; the caller records it as a skip.
     """
     input_features, output_features = _synthetic_features()
-    config = make_policy_config(policy_type, push_to_hub=False)
+    config = make_policy_config(
+        policy_type, push_to_hub=False, **POLICY_CONFIG_OVERRIDES.get(policy_type, {})
+    )
     config.input_features = dict(input_features)
     config.output_features = dict(output_features)
     # cpu keeps `device_processor` output identical regardless of the generating machine.
     config.device = "cpu"
 
     stats = _synthetic_stats({**input_features, **output_features})
-    return make_pre_post_processors(config, dataset_stats=stats)
+    return make_pre_post_processors(
+        config, dataset_stats=stats, **POLICY_PROCESSOR_KWARGS.get(policy_type, {})
+    )
 
 
 def _build_configs(policy_type: str) -> dict[str, Any]:
