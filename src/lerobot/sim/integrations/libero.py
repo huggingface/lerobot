@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import sys
+import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import partial
@@ -37,12 +38,28 @@ def _apply_robosuite_windows_compat() -> None:
     ``robosuite/utils/mujoco.dll`` that the wheel never ships, forces ``MUJOCO_GL=egl`` (an
     X11/Linux rendering backend), and writes to a hard-coded ``/tmp/robosuite.log``. robosuite
     1.5 fixes these upstream but LIBERO has not upgraded. This shim replicates the 1.5 behavior
-    at import time and is a no-op on non-Windows or if ``robosuite`` is already imported.
+    and is a no-op on non-Windows.
+
+    The ``ctypes.WinDLL`` redirect is installed for the lifetime of the process (not only the
+    initial ``import robosuite``), because robosuite 1.4.0 can also load its private
+    ``mujoco.dll`` lazily during first env construction, first render, or a later submodule
+    import. The redirect rewrites only one exact canonicalized path and is a no-op for any
+    other DLL load, so the process-global side effect is scoped as narrowly as possible.
     """
     import ctypes
     import importlib.util
 
-    if sys.platform != "win32" or "robosuite" in sys.modules:
+    if sys.platform != "win32":
+        return
+    if "robosuite" in sys.modules:
+        warnings.warn(
+            "robosuite was already imported before the LIBERO Windows compatibility shim "
+            "ran; the DLL redirect and robosuite.macros patches have NOT been applied. "
+            "Import 'lerobot.sim.integrations.libero' before any 'robosuite' import on "
+            "Windows, or robosuite 1.4.0 may fail at env construction or rendering.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return
 
     import mujoco
@@ -73,11 +90,12 @@ def _apply_robosuite_windows_compat() -> None:
                 name = real_dll
             super().__init__(name, *a, **k)
 
+    # Install the redirect for the process lifetime. robosuite 1.4.0 can lazily load the
+    # private mujoco.dll after import time (env construction, rendering, lazy submodule
+    # loads); a transient redirect would miss those paths and crash. The subclass only
+    # rewrites the one canonicalized robosuite path; all other WinDLL loads are unaffected.
     ctypes.WinDLL = _RedirectedWinDLL  # type: ignore[misc]
-    try:
-        import robosuite  # noqa: F401
-    finally:
-        ctypes.WinDLL = orig_windll  # type: ignore[misc]
+    import robosuite  # noqa: F401
 
 
 _apply_robosuite_windows_compat()
