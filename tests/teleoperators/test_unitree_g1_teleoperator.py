@@ -17,7 +17,7 @@
 """Tests for Unitree G1 teleoperator. Meant to be run in an environment where the Unitree SDK is installed."""
 
 import struct
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -343,6 +343,46 @@ def test_missing_exo_sample_keeps_last_joystick_reading(teleop_with_exo):
 
     teleop.left_arm.joystick_from_raw.return_value = None
     assert teleop.get_action()["remote.lx"] == pytest.approx(0.4)
+
+
+def _joint_targets_over_time(teleop, samples: list[tuple[float, float]]) -> list[float]:
+    """Feed ``(time, IK target)`` pairs through get_action and return the emitted targets."""
+    clock = MagicMock()
+    emitted = []
+    with patch("lerobot.teleoperators.unitree_g1.unitree_g1.time.monotonic", clock):
+        for now, target in samples:
+            clock.return_value = now
+            teleop.ik_helper.compute_g1_joints_from_exo.return_value = {"left_shoulder.q": target}
+            emitted.append(teleop.get_action()["left_shoulder.q"])
+    return emitted
+
+
+def test_joint_velocity_is_capped(teleop_with_exo):
+    """A dropped exo jumps the IK target; the emitted target may only move at the cap."""
+    teleop = teleop_with_exo
+    teleop.config.max_joint_velocity = 2.0
+
+    emitted = _joint_targets_over_time(teleop, [(10.0, 0.0), (10.05, 1.0), (10.10, 1.0), (10.15, -1.0)])
+
+    assert emitted == pytest.approx([0.0, 0.1, 0.2, 0.1])
+
+
+def test_stalled_loop_does_not_release_a_jump(teleop_with_exo):
+    teleop = teleop_with_exo
+    teleop.config.max_joint_velocity = 2.0
+
+    emitted = _joint_targets_over_time(teleop, [(10.0, 0.0), (15.0, 1.0)])
+
+    assert emitted == pytest.approx([0.0, 0.2])
+
+
+def test_zero_velocity_cap_passes_targets_through(teleop_with_exo):
+    teleop = teleop_with_exo
+    teleop.config.max_joint_velocity = 0.0
+
+    emitted = _joint_targets_over_time(teleop, [(10.0, 0.0), (10.05, 1.0)])
+
+    assert emitted == pytest.approx([0.0, 1.0])
 
 
 # ---------------------------------------------------------------------------

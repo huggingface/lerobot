@@ -35,3 +35,7 @@ class UnitreeG1TeleoperatorConfig(TeleoperatorConfig):
 
     # Frozen joints (comma-separated joint names that won't be moved by IK)
     frozen_joints: str = ""
+
+    # Max speed of each arm joint target in rad/s, so a dropped or jerked exo can't whip the
+    # robot's arms. 0 disables.
+    max_joint_velocity: float = 2.0

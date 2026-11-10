@@ -68,6 +68,10 @@ _WIRELESS_BUTTONS = (
 _LEFT_EXO_BUTTON = 4  # RT
 _RIGHT_EXO_BUTTON = 0  # RB
 
+# Longest gap between reads that the velocity cap credits, so a stalled loop can't release a
+# large jump on its next read.
+_MAX_VELOCITY_DT = 0.1
+
 
 @dataclass
 class JoystickState:
@@ -166,6 +170,9 @@ class UnitreeG1Teleoperator(Teleoperator):
         # Latest reading of each source, kept apart so one never masks the other.
         self._wireless_state = JoystickState()
         self._exo_state = JoystickState()
+        # Last velocity-limited joint targets and when they were produced.
+        self._last_joint_action: dict[str, float] = {}
+        self._last_joint_time: float | None = None
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -202,6 +209,8 @@ class UnitreeG1Teleoperator(Teleoperator):
         frozen_joints = [j.strip() for j in self.config.frozen_joints.split(",") if j.strip()]
         self.ik_helper = ExoskeletonIKHelper(frozen_joints=frozen_joints)
         logger.info("IK helper initialized")
+        self._last_joint_action = {}
+        self._last_joint_time = None
 
         time.sleep(0.1)  # Give serial time to populate buffer
 
@@ -239,11 +248,31 @@ class UnitreeG1Teleoperator(Teleoperator):
         joint_action = self.ik_helper.compute_g1_joints_from_exo(
             self.left_arm.angles_from_raw(left_raw), self.right_arm.angles_from_raw(right_raw)
         )
+        joint_action = self._limit_joint_velocity(joint_action)
         self._update_exo_state(left_raw, right_raw)
 
         # Wireless remote has priority when touched; otherwise, use exo joystick.
         remote = self._wireless_state if self._wireless_state.is_active else self._exo_state
         return {**joint_action, **remote.to_action()}
+
+    def _limit_joint_velocity(self, joint_action: dict[str, float]) -> dict[str, float]:
+        """Clamp how far each joint target moves from the previous one since the last read."""
+        now = time.monotonic()
+        limit = self.config.max_joint_velocity
+        if limit <= 0 or self._last_joint_time is None:
+            limited = dict(joint_action)
+        else:
+            max_step = limit * min(now - self._last_joint_time, _MAX_VELOCITY_DT)
+            limited = {}
+            for key, target in joint_action.items():
+                previous = self._last_joint_action.get(key)
+                if previous is None:
+                    limited[key] = target
+                else:
+                    limited[key] = previous + min(max(target - previous, -max_step), max_step)
+        self._last_joint_action = limited
+        self._last_joint_time = now
+        return limited
 
     def _update_exo_state(self, left_raw: list[int] | None, right_raw: list[int] | None) -> None:
         # A missing sample keeps the previous reading.
