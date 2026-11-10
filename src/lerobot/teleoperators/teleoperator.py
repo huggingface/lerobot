@@ -14,16 +14,19 @@
 
 import abc
 import builtins
+import logging
 from pathlib import Path
 from typing import Any
 
 import draccus
 
 from lerobot.lerobot_types import RobotAction
-from lerobot.motors.motors_bus import MotorCalibration
+from lerobot.motors.motors_bus import MotorCalibration, MotorsBusBase
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from .config import TeleoperatorConfig
+
+logger = logging.getLogger(__name__)
 
 
 class Teleoperator(abc.ABC):
@@ -167,6 +170,22 @@ class Teleoperator(abc.ABC):
         fpath = self.calibration_fpath if fpath is None else fpath
         with open(fpath, "w") as f, draccus.config_type("json"):
             draccus.dump(self.calibration, f, indent=4)
+
+    def _keep_calibration_file(self, bus: MotorsBusBase) -> bool:
+        """Offer the calibration file of this id instead of a new calibration. When the user keeps it, write
+        it to `bus` with the torque off, so that the motors store it, and return True."""
+        if self.calibration:
+            user_input = input(
+                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
+            )
+            if user_input.strip().lower() != "c":
+                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
+                bus.disable_torque()
+                bus.write_calibration(self.calibration)
+                return True
+
+        logger.info(f"\nRunning calibration of {self}")
+        return False
 
     @abc.abstractmethod
     def configure(self) -> None:

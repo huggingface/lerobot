@@ -14,20 +14,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from lerobot.policies.pi0 import PI0Policy
 
 
-def test_pi0_state_dict_accepts_direct_embed_tokens_key():
+@pytest.mark.parametrize(
+    "state_dict_key",
+    [
+        "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight",
+        "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight",
+    ],
+)
+def test_pi0_state_dict_accepts_direct_embed_tokens_key(state_dict_key):
     weight = torch.ones(2, 3)
     policy = object.__new__(PI0Policy)
 
     fixed = PI0Policy._fix_pytorch_state_dict_keys(
         policy,
-        {
-            "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight": weight,
-        },
+        {state_dict_key: weight},
         model_config=None,
     )
 

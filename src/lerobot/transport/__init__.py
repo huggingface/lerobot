@@ -13,17 +13,33 @@
 # limitations under the License.
 
 """
-gRPC transport layer for async inference.
+Transport backends with independently optional dependencies.
 
-Requires: ``pip install 'lerobot[grpcio-dep]'``
-
-Available modules (import directly)::
-
-    from lerobot.transport.utils import ...
+Zenoh requires ``lerobot[remote]`` only when used. The RL gRPC helpers are
+imported separately from ``lerobot.transport.utils`` and require
+``lerobot[grpcio-dep]``. Importing this namespace requires neither backend.
 """
 
-from lerobot.utils.import_utils import require_package
+from .zenoh import (
+    BoundedQueryable,
+    BoundedSubscriber,
+    PendingQuery,
+    PresenceEvent,
+    PresenceToken,
+    QueryCancelled,
+    TransportError,
+    ZenohConfig,
+    ZenohTransport,
+)
 
-require_package("grpcio", extra="grpcio-dep", import_name="grpc")
-
-__all__: list[str] = []
+__all__ = [
+    "BoundedQueryable",
+    "BoundedSubscriber",
+    "PendingQuery",
+    "PresenceEvent",
+    "PresenceToken",
+    "QueryCancelled",
+    "TransportError",
+    "ZenohConfig",
+    "ZenohTransport",
+]

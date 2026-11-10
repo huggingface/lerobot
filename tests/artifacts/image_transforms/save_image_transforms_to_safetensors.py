@@ -23,7 +23,6 @@ from lerobot.transforms import (
     ImageTransformConfig,
     ImageTransforms,
     ImageTransformsConfig,
-    make_transform_from_config,
 )
 from lerobot.utils.random_utils import seeded_context
 
@@ -31,9 +30,14 @@ ARTIFACT_DIR = Path("tests/artifacts/image_transforms")
 DATASET_REPO_ID = "lerobot/aloha_static_cups_open"
 
 
+def default_config_without_affine() -> ImageTransformsConfig:
+    """The configuration `test_backward_compatibility_default_config` pins: the default `tfs` minus affine."""
+    tfs = {name: tf for name, tf in ImageTransformsConfig().tfs.items() if name != "affine"}
+    return ImageTransformsConfig(enable=True, tfs=tfs)
+
+
 def save_default_config_transform(original_frame: torch.Tensor, output_dir: Path):
-    cfg = ImageTransformsConfig(enable=True)
-    default_tf = ImageTransforms(cfg)
+    default_tf = ImageTransforms(default_config_without_affine())
 
     with seeded_context(1337):
         img_tf = default_tf(original_frame)
@@ -54,7 +58,9 @@ def save_single_transforms(original_frame: torch.Tensor, output_dir: Path):
     for tf_type, tf_name, min_max_values in transforms.items():
         for min_max in min_max_values:
             tf_cfg = ImageTransformConfig(type=tf_type, kwargs={tf_name: min_max})
-            tf = make_transform_from_config(tf_cfg)
+            tf = ImageTransforms(
+                ImageTransformsConfig(enable=True, max_num_transforms=1, tfs={tf_name: tf_cfg})
+            )
             key = f"{tf_name}_{min_max[0]}_{min_max[1]}"
             frames[key] = tf(original_frame)
 

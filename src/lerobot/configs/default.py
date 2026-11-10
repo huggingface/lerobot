@@ -17,6 +17,7 @@
 import logging
 from dataclasses import dataclass, field
 
+from lerobot.streaming.episode_pool import StreamingSamplingStrategy
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
@@ -32,11 +33,13 @@ class DatasetConfig:
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datasets are provided.
     repo_id: str
-    # Hub repository type: "dataset" (default) or "bucket" for an HF Storage Bucket streamed over
-    # hf://buckets/. Buckets are streaming-only, so "bucket" requires streaming=true.
+    # Hub repository type: "dataset" (default) or "bucket" for an HF Storage Bucket
+    # (hf://buckets/). Whether a bucket needs streaming=true depends on the dataset's
+    # storage format, so that is checked at load time in the dataset factory.
     repo_type: str = "dataset"
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
+    # With streaming=true, an 'hf://buckets/OWNER/BUCKET' URI is also accepted and implies repo_type="bucket".
     root: str | None = None
     episodes: list[int] | None = None
     # Episode indices to drop (e.g. corrupt or heterogeneous ones). Applied on top of `episodes`.
@@ -52,19 +55,36 @@ class DatasetConfig:
     # Has no effect on datasets without depth cameras.
     depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
+    # Complete episodes mixed by the exact-coverage sampler of each DataLoader worker. None mixes
+    # 32 episodes for the rank and gives each of the N workers 32/N; a larger pool mixes more
+    # episodes in each batch, but uses more memory and fetches more data before the first sample.
+    streaming_episode_pool_size: int | None = None
+    # Round-robin trades frame-weighted sampling for more even resident-episode mixing.
+    streaming_sampling_strategy: StreamingSamplingStrategy = StreamingSamplingStrategy.REMAINING
+    # Complete episodes fetched ahead of the current admission frontier.
+    streaming_prefetch_episodes: int = 8
+    # Hard per-rank cap for synthesized episode-video bytes.
+    streaming_byte_budget_gb: float = 8.0
+    # Parallel sample assembly/decode workers and their bounded in-order result queue.
+    streaming_decode_threads: int = 2
+    streaming_decoded_queue_size: int = 8
+    # Per-rank native HTTP limits. None preserves the fetcher's worker-derived default.
+    streaming_native_http_connections: int | None = None
+    streaming_native_http_subranges: int = 1
+    # Seconds to wait for another process that builds the same MP4 sidecar.
+    streaming_sidecar_lock_timeout_s: float = 30 * 60
+    # Maximum open video decoders. Streaming: per rank, None covers every camera in the episode pool.
+    # Map-style: only for non-default storage formats (e.g. lance), per DataLoader worker.
+    video_decoder_cache_size: int | None = None
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
 
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
-        if self.repo_type == "bucket" and not self.streaming:
+        if self.eval_split != 0.0 and self.streaming:
             raise ValueError(
-                "repo_type='bucket' is streaming-only: set streaming=true to train from an HF Storage Bucket."
-            )
-        if self.repo_type == "bucket" and self.eval_split != 0.0:
-            raise ValueError(
-                "eval_split requires map-style datasets and is not supported with repo_type='bucket'."
+                "eval_split requires map-style datasets and is not supported with dataset.streaming=true."
             )
         if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
             raise ValueError(
@@ -72,6 +92,25 @@ class DatasetConfig:
             )
         if not (0.0 <= self.eval_split < 1.0):
             raise ValueError(f"eval_split must be in [0.0, 1.0), got {self.eval_split}")
+        self.streaming_sampling_strategy = StreamingSamplingStrategy(self.streaming_sampling_strategy)
+        if self.streaming_episode_pool_size is not None and self.streaming_episode_pool_size <= 0:
+            raise ValueError("streaming_episode_pool_size must be positive")
+        if self.streaming_prefetch_episodes < 0:
+            raise ValueError("streaming_prefetch_episodes must be non-negative")
+        if self.streaming_byte_budget_gb <= 0:
+            raise ValueError("streaming_byte_budget_gb must be positive")
+        if self.streaming_decode_threads <= 0:
+            raise ValueError("streaming_decode_threads must be positive")
+        if self.streaming_decoded_queue_size <= 0:
+            raise ValueError("streaming_decoded_queue_size must be positive")
+        if self.video_decoder_cache_size is not None and self.video_decoder_cache_size <= 0:
+            raise ValueError("video_decoder_cache_size must be positive")
+        if self.streaming_native_http_connections is not None and self.streaming_native_http_connections <= 0:
+            raise ValueError("streaming_native_http_connections must be positive")
+        if self.streaming_native_http_subranges <= 0:
+            raise ValueError("streaming_native_http_subranges must be positive")
+        if self.streaming_sidecar_lock_timeout_s <= 0:
+            raise ValueError("streaming_sidecar_lock_timeout_s must be positive")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(
@@ -90,17 +129,40 @@ class DatasetConfig:
                 self.exclude_episodes = [episode for episode in self.exclude_episodes if episode >= 0]
 
 
+TRACKIO_RESUME_MODES = frozenset({"allow", "must", "never"})
+
+
 @dataclass
-class WandBConfig:
+class TrackioConfig:
+    """Training run tracking with Trackio (https://huggingface.co/docs/trackio).
+
+    Runs are stored in a local SQLite database under `~/.cache/huggingface/trackio` and viewed with
+    `trackio show --project <project>`. Set `space_id` to sync the run to a Hugging Face Space instead.
+    """
+
     enable: bool = False
-    # Set to true to disable saving an artifact despite training.save_checkpoint=True
-    disable_artifact: bool = False
+    # Opt in with False to duplicate checkpoint weights in Trackio; Hub uploads are configured separately.
+    disable_artifact: bool = True
     project: str = "lerobot"
-    entity: str | None = None
-    notes: str | None = None
-    run_id: str | None = None
-    mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
-    add_tags: bool = True  # If True, save configuration as tags in the WandB run.
+    # Hugging Face Space (`user/space`) to log to instead of the local database; created if missing.
+    # Required for remote jobs (--job.target), whose local database vanishes with the pod.
+    space_id: str | None = None
+    # Whether a newly created Space is private. Ignored if the Space already exists.
+    private: bool | None = None
+    # Run name. Defaults to "<job_name>-<short id>", persisted in the checkpoint so resuming reattaches to it.
+    run_name: str | None = None
+    # Allowed values: 'allow', 'must', 'never'. Defaults to 'allow' when resuming a checkpoint that stored a
+    # run_name (reattach if the run exists, else start a new run under that name) and to 'never' otherwise.
+    resume: str | None = None
+    # Store the run's console output (stdout and stderr, so prints, logs and tracebacks) with the run,
+    # viewable and downloadable from its dashboard page. The launch command is recorded either way.
+    capture_console: bool = True
+
+    def __post_init__(self) -> None:
+        if self.resume is not None and self.resume not in TRACKIO_RESUME_MODES:
+            raise ValueError(
+                f"trackio.resume must be one of {sorted(TRACKIO_RESUME_MODES)}, got {self.resume!r}."
+            )
 
 
 @dataclass
@@ -119,10 +181,15 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
+    # Cap each episode at this many steps (the env's own limit still applies when lower).
+    # For quick end-to-end checks such as CI; success rates from capped episodes are not meaningful.
+    max_episode_steps: int | None = None
 
     def __post_init__(self) -> None:
         if self.recording_repo_id is not None and not self.recording:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
+        if self.max_episode_steps is not None and self.max_episode_steps < 1:
+            raise ValueError(f"eval.max_episode_steps must be at least 1, got {self.max_episode_steps}.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:
@@ -137,59 +204,6 @@ class EvalConfig:
         # Each async env worker needs ~1 core; leave headroom for main process + inference.
         by_cpu = max(1, math.floor(cpu_cores * 0.7))
         return min(by_cpu, self.n_episodes, 64)
-
-
-@dataclass
-class EMAConfig:
-    """Exponential moving average (EMA) of the policy weights.
-
-    Standard practice for diffusion-style policies (Chi et al. 2023, "Diffusion Policy", section V.D):
-    the reference implementation enables it in every config and evaluates the EMA weights. Off by
-    default here because it keeps a second full copy of the parameters in memory.
-
-    The decay follows the warmup schedule from diffusers' `EMAModel`:
-    `decay_t = 1 - (1 + t / inv_gamma) ** -power`, clamped to `[min_decay, max_decay]`.
-    The defaults mirror the reference implementation. Alternatively, set `decay` for a constant
-    decay at every step, as used by openpi for pi0/pi05 (`ema_decay=0.99`).
-    """
-
-    enable: bool = False
-    # Constant decay coefficient (openpi-style, e.g. 0.99 for pi0/pi05). When set, the warmup
-    # schedule below is bypassed and the shadow uses this decay at every step.
-    decay: float | None = None
-    # Number of optimizer steps during which the shadow stays a hard copy of the live weights.
-    update_after_step: int = 0
-    # Warmup schedule parameters (see class docstring).
-    inv_gamma: float = 1.0
-    power: float = 0.75
-    min_decay: float = 0.0
-    max_decay: float = 0.9999
-    # Evaluate the EMA weights (instead of the live ones) during periodic env eval.
-    # Offline eval-loss (--eval_steps) always uses the live weights: it runs on every rank
-    # while the EMA shadow only lives on the main process.
-    use_for_eval: bool = True
-
-    def __post_init__(self) -> None:
-        if not (0.0 <= self.min_decay <= self.max_decay <= 1.0):
-            raise ValueError(
-                "Expected 0 <= ema.min_decay <= ema.max_decay <= 1, got "
-                f"min_decay={self.min_decay} and max_decay={self.max_decay}."
-            )
-        if self.inv_gamma <= 0:
-            raise ValueError(f"ema.inv_gamma must be positive, got {self.inv_gamma}.")
-        if self.power <= 0:
-            raise ValueError(f"ema.power must be positive, got {self.power}.")
-        if self.update_after_step < 0:
-            raise ValueError(f"ema.update_after_step must be >= 0, got {self.update_after_step}.")
-        if self.decay is not None:
-            if not 0.0 <= self.decay <= 1.0:
-                raise ValueError(f"ema.decay must be in [0, 1], got {self.decay}.")
-            # Keep the literals in sync with the field defaults above.
-            if self.min_decay != 0.0 or self.max_decay != 0.9999:
-                raise ValueError(
-                    "ema.decay (constant decay) and ema.min_decay/ema.max_decay (schedule clamp) are "
-                    "mutually exclusive: set one or the other."
-                )
 
 
 @dataclass

@@ -20,6 +20,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.scripts.lerobot_train import _preprocess_dataset_batch  # noqa: E402
 from lerobot.utils.constants import ACTION, OBS_IMAGES  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 def test_preprocess_dataset_batch_normalizes_and_renames_before_processor():
     seen_batch = None

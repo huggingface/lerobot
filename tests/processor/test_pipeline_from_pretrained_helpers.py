@@ -21,12 +21,14 @@ These tests focus on the individual private methods that were extracted from
 the main from_pretrained method to improve modularity and testability.
 """
 
+import inspect
 import json
 import tempfile
 from pathlib import Path
 
 import pytest
 import torch
+from huggingface_hub import hf_hub_download
 from safetensors.torch import save_file
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
@@ -262,13 +264,19 @@ def test_from_pretrained_hub_source_missing_local_state_still_calls_hub(monkeypa
             return loaded_config, tmp_path / "hub_cache"
 
         def fake_hub_download(**kwargs):
+            inspect.signature(hf_hub_download).bind(**kwargs)
             calls.append(kwargs)
             return str(state_path)
 
         monkeypatch.setattr(DataProcessorPipeline, "_load_config", classmethod(fake_load_config))
         monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", fake_hub_download)
 
-        pipeline = DataProcessorPipeline.from_pretrained("user/repo", config_filename="processor.json")
+        pipeline = DataProcessorPipeline.from_pretrained(
+            "user/repo",
+            config_filename="processor.json",
+            resume_download=True,
+            proxies={"https": "http://localhost:3128"},
+        )
 
         assert calls == [
             {
@@ -276,8 +284,6 @@ def test_from_pretrained_hub_source_missing_local_state_still_calls_hub(monkeypa
                 "filename": "hub_state.safetensors",
                 "repo_type": "model",
                 "force_download": False,
-                "resume_download": None,
-                "proxies": None,
                 "token": None,
                 "cache_dir": None,
                 "local_files_only": False,

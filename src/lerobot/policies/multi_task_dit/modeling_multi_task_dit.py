@@ -27,7 +27,7 @@ References:
 
 import math
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import einops
 import torch
@@ -39,6 +39,7 @@ from torch import Tensor
 from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 from .configuration_multi_task_dit import MultiTaskDiTConfig
+from .processor_multi_task_dit import OBS_LANGUAGE_ROW_INDEX
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
@@ -78,13 +79,16 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self._queues = None
+        self._queues: dict[str, deque[Tensor]] = {}
 
         self.observation_encoder = ObservationEncoder(config)
         conditioning_dim = self.observation_encoder.conditioning_dim
         self.noise_predictor = DiffusionTransformer(config, conditioning_dim=conditioning_dim)
 
-        action_dim = config.action_feature.shape[0]
+        action_feature = config.action_feature
+        if action_feature is None:
+            raise ValueError("MultiTaskDiT requires an action output feature.")
+        action_dim = action_feature.shape[0]
         horizon = config.horizon
 
         if config.is_diffusion:
@@ -106,7 +110,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> list:
+    def get_optim_params(self) -> list[dict[str, Any]]:
         """Returns parameter groups with different learning rates for vision vs non-vision parameters"""
         non_vision_params = []
         vision_encoder_params = []
@@ -128,12 +132,14 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
             },
         ]
 
-    def _generate_actions(self, batch: dict[str, Tensor]) -> Tensor:
+    def _generate_actions(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
         assert n_obs_steps == self.config.n_obs_steps
 
         conditioning_vec = self.observation_encoder.encode(batch)
-        actions = self.objective.conditional_sample(self.noise_predictor, batch_size, conditioning_vec)
+        actions = self.objective.conditional_sample(
+            self.noise_predictor, batch_size, conditioning_vec, noise=noise
+        )
 
         start = n_obs_steps - 1
         end = start + self.config.n_action_steps
@@ -151,15 +157,19 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
             self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations"""
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+        """Predict a chunk of actions given environment observations.
+
+        `noise` is the optional starting sample of shape `(B, horizon, action_dim)`. The DDPM scheduler still
+        adds fresh noise at every step, so only DDIM and flow matching are fully driven by `noise`.
+        """
         self.eval()
 
         for k in batch:
             if k in self._queues:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
 
-        actions = self._generate_actions(batch)
+        actions = self._generate_actions(batch, noise=noise)
         return actions
 
     def _prepare_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -171,7 +181,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations"""
         if ACTION in batch:
             batch = dict(batch)  # shallow copy to avoid modifying original
@@ -182,7 +192,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         self._queues = populate_queues(self._queues, batch)
 
         if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch)
+            actions = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1))
 
         action = self._queues[ACTION].popleft()
@@ -204,12 +214,18 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 class CLIPVisionEncoder(nn.Module):
     """CLIP vision encoder using the CLS token for global image representation."""
 
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, compile_model: bool = False, compile_mode: str | None = None):
         super().__init__()
         self.model_name = model_name
         self.model = CLIPVisionModel.from_pretrained(self.model_name)
         self.num_non_spatial_tokens = 1
         self.embed_dim = self.model.config.hidden_size
+        if compile_model:
+            # Compile only forward: `self.model(...)` still goes through `nn.Module.__call__`, so hooks
+            # (e.g. FSDP2's unshard/reshard) keep firing, and parameters and state_dict keys are unchanged.
+            # dynamic=False: a second batch shape (the partial last batch, or inference) compiles its own
+            # static graph once instead of moving every shape to slower dynamic-shape kernels.
+            self.forward = torch.compile(self.forward, dynamic=False, mode=compile_mode)  # type: ignore[method-assign]
 
     def forward(self, x: Tensor) -> Tensor:
         """Encode RGB image to CLS token."""
@@ -269,11 +285,18 @@ class ObservationEncoder(nn.Module):
 
             if config.use_separate_rgb_encoder_per_camera:
                 self.vision_encoders = nn.ModuleList(
-                    [CLIPVisionEncoder(model_name=config.vision_encoder_name) for _ in self.camera_names]
+                    [
+                        CLIPVisionEncoder(
+                            config.vision_encoder_name, config.compile_model, config.compile_mode
+                        )
+                        for _ in self.camera_names
+                    ]
                 )
                 self.vision_encoder = None
             else:
-                self.vision_encoder = CLIPVisionEncoder(model_name=config.vision_encoder_name)
+                self.vision_encoder = CLIPVisionEncoder(
+                    config.vision_encoder_name, config.compile_model, config.compile_mode
+                )
                 self.vision_encoders = None
         else:
             self.vision_encoder = None
@@ -375,6 +398,10 @@ class ObservationEncoder(nn.Module):
             attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK]  # [batch_size, seq_length]
 
             text_features = self.text_encoder(input_ids, attention_mask)
+            # The processor tokenizes distinct task strings only; map them back to samples.
+            row_index = batch.get(OBS_LANGUAGE_ROW_INDEX)
+            if row_index is not None:
+                text_features = text_features[row_index]
 
             text_features = text_features.unsqueeze(1).expand(-1, n_obs_steps, -1)
             conditioning_feats.append(text_features)
@@ -606,6 +633,9 @@ class DiffusionTransformer(nn.Module):
 
         self.output_proj = nn.Linear(self.hidden_size, self.action_dim)
         self._initialize_weights()
+        if config.compile_model:
+            # Compiled the same way as CLIPVisionEncoder, for the same reasons.
+            self.forward = torch.compile(self.forward, dynamic=False, mode=config.compile_mode)  # type: ignore[method-assign]
 
     def _initialize_weights(self):
         for block in self.transformer_blocks:
@@ -694,15 +724,19 @@ class DiffusionObjective(nn.Module):
 
         return loss.mean()
 
-    def conditional_sample(self, model: nn.Module, batch_size: int, conditioning_vec: Tensor) -> Tensor:
+    def conditional_sample(
+        self, model: nn.Module, batch_size: int, conditioning_vec: Tensor, *, noise: Tensor | None = None
+    ) -> Tensor:
         device = next(model.parameters()).device
         dtype = next(model.parameters()).dtype
 
-        sample = torch.randn(
-            size=(batch_size, self.horizon, self.action_dim),
-            dtype=dtype,
-            device=device,
-        )
+        if noise is None:
+            noise = torch.randn(
+                size=(batch_size, self.horizon, self.action_dim),
+                dtype=dtype,
+                device=device,
+            )
+        sample = noise.to(device=device, dtype=dtype)
 
         self.noise_scheduler.set_timesteps(self.num_inference_steps)
         for t in self.noise_scheduler.timesteps:
@@ -759,11 +793,15 @@ class FlowMatchingObjective(nn.Module):
 
         return loss.mean()
 
-    def conditional_sample(self, model: nn.Module, batch_size: int, conditioning_vec: Tensor) -> Tensor:
+    def conditional_sample(
+        self, model: nn.Module, batch_size: int, conditioning_vec: Tensor, *, noise: Tensor | None = None
+    ) -> Tensor:
         device = next(model.parameters()).device
         dtype = next(model.parameters()).dtype
 
-        x = torch.randn((batch_size, self.horizon, self.action_dim), dtype=dtype, device=device)
+        if noise is None:
+            noise = torch.randn((batch_size, self.horizon, self.action_dim), dtype=dtype, device=device)
+        x = noise.to(device=device, dtype=dtype)
 
         num_steps = self.config.num_integration_steps
         time_grid = torch.linspace(0, 1, num_steps + 1, device=device)

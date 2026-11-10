@@ -43,7 +43,7 @@ class Evo1Model(nn.Module):
             image_size=int(config.image_resolution[0]),
             device=self._device,
             num_language_layers=config.vlm_num_layers,
-            model_dtype=config.vlm_dtype,
+            model_dtype=config.dtype,
             use_flash_attn=config.use_flash_attn,
             max_text_length=config.max_text_length,
             enable_gradient_checkpointing=enable_gradient_checkpointing,
@@ -135,6 +135,8 @@ class Evo1Model(nn.Module):
         inference_delay: int | None = None,
         prev_chunk_left_over: torch.Tensor | None = None,
         execution_horizon: int | None = None,
+        *,
+        noise: torch.Tensor | None = None,
     ):
         if actions_gt is None:
             return self.action_head.get_action(
@@ -147,6 +149,7 @@ class Evo1Model(nn.Module):
                 prev_chunk_left_over=prev_chunk_left_over,
                 execution_horizon=execution_horizon,
                 rtc_processor=self.rtc_processor,
+                noise=noise,
             )
         return self.action_head(
             fused_tokens,
@@ -168,6 +171,8 @@ class Evo1Model(nn.Module):
         inference_delay: int | None = None,
         prev_chunk_left_over: torch.Tensor | None = None,
         execution_horizon: int | None = None,
+        *,
+        noise: torch.Tensor | None = None,
     ):
         return self.predict_action(
             fused_tokens,
@@ -179,6 +184,7 @@ class Evo1Model(nn.Module):
             inference_delay,
             prev_chunk_left_over,
             execution_horizon,
+            noise=noise,
         )
 
     def _set_module_trainable(self, module: nn.Module, trainable: bool):

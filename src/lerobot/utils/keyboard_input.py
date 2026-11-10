@@ -46,7 +46,7 @@ import threading
 import time
 from collections.abc import Callable
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .import_utils import _pynput_available
 
@@ -68,12 +68,15 @@ else:
         termios = tty = None
         _TERMIOS_AVAILABLE = False
 
-keyboard = None
-if _pynput_available:
-    try:
-        from pynput import keyboard
-    except Exception as e:  # e.g. no reachable X display on a headless Linux box
-        logger.info("Could not import pynput keyboard backend: %s", e)
+if TYPE_CHECKING:
+    from pynput import keyboard
+else:
+    keyboard = None
+    if _pynput_available:
+        try:
+            from pynput import keyboard
+        except Exception as e:  # e.g. no reachable X display on a headless Linux box
+            logger.info("Could not import pynput keyboard backend: %s", e)
 
 
 @cache
@@ -200,12 +203,12 @@ class TerminalKeyListener:
     file stays importable on Windows (where ``pynput`` is used instead).
     """
 
-    def __init__(self, on_key: Callable[[str], None]):
+    def __init__(self, on_key: Callable[[str], None]) -> None:
         self._on_key = on_key
         self._running = False
         self._thread: threading.Thread | None = None
         self._fd: int | None = None
-        self._old_attrs = None
+        self._old_attrs: list[Any] | None = None
 
     def _read_char(self, timeout: float) -> str | None:
         """Return one character from stdin within ``timeout`` seconds, or ``None``."""
@@ -310,7 +313,7 @@ class TerminalKeyListener:
 # Map pynput key objects to the same canonical names TerminalKeyListener emits, so a
 # single dispatch works across both backends. Empty when pynput is unavailable.
 if keyboard is not None:
-    _PYNPUT_KEY_NAMES = {
+    _PYNPUT_KEY_NAMES: dict[keyboard.Key, str] = {
         keyboard.Key.right: "right",
         keyboard.Key.left: "left",
         keyboard.Key.up: "up",

@@ -28,6 +28,8 @@ from lerobot.utils.constants import OBS_STR
 from lerobot.utils.transition import Transition
 from tests.utils import skip_if_package_missing
 
+pytestmark = pytest.mark.dataset
+
 
 def create_learner_service_stub():
     import grpc
