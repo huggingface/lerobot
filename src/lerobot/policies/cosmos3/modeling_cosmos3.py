@@ -262,10 +262,15 @@ class Cosmos3Policy(PreTrainedPolicy):
         return loss, {name: value.item() for name, value in losses.items()}
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, video_noise: Tensor | None = None
+    ) -> Tensor:
         """
         Sample the action chunk `[batch, chunk_size, original_action_dim]` with the sampling settings of the
         config. With `save_predicted_video` the video latents of the clip go to `last_predicted_latents`.
+
+        `noise` is the starting action sample `[batch, chunk_size, max_action_dim]` and `video_noise` the
+        starting video latents, shaped like `last_predicted_latents`. Each one left as None is drawn as before.
         """
         self.eval()
         actions, video_latents = self.model.generate(
@@ -283,18 +288,23 @@ class Cosmos3Policy(PreTrainedPolicy):
             negative_input_ids=batch.get("negative_input_ids"),
             negative_attention_mask=batch.get("negative_attention_mask"),
             negative_mm_token_type_ids=batch.get("negative_mm_token_type_ids"),
+            noise=noise,
+            video_noise=video_noise,
         )
         if self.config.save_predicted_video:
             self.last_predicted_latents = video_latents.cpu()
         return actions[:, :, : self.config.original_action_dim]
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, video_noise: Tensor | None = None
+    ) -> Tensor:
         """Select a single action given environment observations."""
         self.eval()
 
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
+            chunk = self.predict_action_chunk(batch, noise=noise, video_noise=video_noise)
+            actions = chunk[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
 
         return self._action_queue.popleft()
@@ -517,7 +527,8 @@ class OmniMoTModel(nn.Module):
         negative_input_ids: Tensor | None = None,
         negative_attention_mask: Tensor | None = None,
         negative_mm_token_type_ids: Tensor | None = None,
-        noise: FlowState | None = None,
+        noise: Tensor | None = None,
+        video_noise: Tensor | None = None,
         generator: torch.Generator | None = None,
     ) -> tuple[Tensor, Tensor]:
         """
@@ -533,8 +544,10 @@ class OmniMoTModel(nn.Module):
                 guidance `[batch, negative_text_len]`, right padded. Needed unless `guidance_scale` is 1.
             negative_attention_mask: Padding mask of the negative prompt.
             negative_mm_token_type_ids: Token types of the negative prompt, all text when None.
-            noise: Initial noise of the trajectory `FlowState(video_latents, actions)`, the actions in the packed
-                layout of `pack_actions`. Standard normal from `generator` when None.
+            noise: Initial noise of the actions `[batch, chunk_size, max_action_dim]`, the layout of the sampled
+                chunk. Standard normal from `generator` when None.
+            video_noise: Initial noise of the video latents, the shape of the returned latents. Standard normal
+                from `generator` when None, drawn before the actions.
             generator: Random generator of the initial noise.
 
         Returns:
@@ -583,13 +596,17 @@ class OmniMoTModel(nn.Module):
             )
 
         clean = self.encode_clean(pixel_values_videos_gen, video_grid_thw_gen, packed_actions, plan)
-        if noise is None:
+        if video_noise is None:
             video_noise = torch.randn(clean.video_latents.shape, generator=generator, device=device)
+        if noise is None:
             action_noise = torch.randn(clean.actions.shape, generator=generator, device=device)
-            noise = FlowState(video_noise, action_noise)
+        else:
+            # The state action is a clean condition, its noise is never used.
+            action_noise = self.pack_actions(noise.to(clean.actions), state)
+        initial = FlowState(video_noise.to(clean.video_latents), action_noise)
         # Noise level 1 outside the conditions, the conditions keep their clean values.
         ones = clean.actions.new_ones(batch_size)
-        noisy = self.add_noise(clean, noise, ones, ones, plan)
+        noisy = self.add_noise(clean, initial, ones, ones, plan)
 
         def velocity_fn(x_t: FlowState, timestep: Tensor) -> FlowState:
             """The guided velocity at `timestep`, zero on the conditions and on the padded action channels."""

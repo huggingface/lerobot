@@ -222,6 +222,34 @@ def test_cosmos3_inference(case):
 
 
 @pytest.mark.parametrize("case", CASES)
+def test_cosmos3_explicit_noise(case):
+    set_seed(0)
+    policy, preprocessor, _ = make_policy_and_processors(case)
+    policy.config.save_predicted_video = True
+    observation = preprocessor(make_batch(case, training=False))
+    torch.manual_seed(1)
+    chunk = policy.predict_action_chunk(observation)
+
+    # The default draw: the video latents, then the actions with the state action in front with `use_state`.
+    use_state = int(policy.config.use_state)
+    torch.manual_seed(1)
+    video_noise = torch.randn(policy.last_predicted_latents.shape, device=DEVICE)
+    actions_shape = (BATCH_SIZE, use_state + CHUNK_SIZE, policy.config.max_action_dim)
+    noise = torch.randn(actions_shape, device=DEVICE)[:, use_state:]
+    originals = noise.clone(), video_noise.clone()
+    before = torch.get_rng_state()
+
+    explicit = policy.predict_action_chunk(observation, noise=noise, video_noise=video_noise)
+    torch.testing.assert_close(explicit, chunk, rtol=0, atol=0)
+    assert torch.equal(before, torch.get_rng_state())
+    torch.testing.assert_close((noise, video_noise), originals, rtol=0, atol=0)
+
+    policy.reset()
+    selected = policy.select_action(observation, noise=noise, video_noise=video_noise)
+    torch.testing.assert_close(selected, chunk[:, 0], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("case", CASES)
 def test_cosmos3_save_and_load(case, tmp_path):
     set_seed(0)
     policy, preprocessor, postprocessor = make_policy_and_processors(case)
