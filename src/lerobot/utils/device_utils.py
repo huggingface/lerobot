@@ -50,14 +50,14 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
         if not torch.cuda.is_available():
             raise ValueError(f"Requested device {try_device!r} but CUDA is not available.")
         device = torch.device(try_device)
-    elif try_device == "mps":
+    elif try_device.startswith("mps"):
         if not torch.backends.mps.is_available():
-            raise ValueError("Requested device 'mps' but MPS is not available.")
-        device = torch.device("mps")
-    elif try_device == "xpu":
+            raise ValueError(f"Requested device {try_device!r} but MPS is not available.")
+        device = torch.device(try_device)
+    elif try_device.startswith("xpu"):
         if not torch.xpu.is_available():
-            raise ValueError("Requested device 'xpu' but XPU is not available.")
-        device = torch.device("xpu")
+            raise ValueError(f"Requested device {try_device!r} but XPU is not available.")
+        device = torch.device(try_device)
     elif try_device == "cpu":
         device = torch.device("cpu")
         if log:
@@ -87,8 +87,7 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
     """
     mps is currently not compatible with float64
     """
-    if isinstance(device, torch.device):
-        device = device.type
+    device = str(device).split(":")[0]
     if device == "mps" and dtype == torch.float64:
         return torch.float32
     if device == "xpu" and dtype == torch.float64:
@@ -125,6 +124,7 @@ def is_torch_device_available(try_device: str) -> bool:
 
 
 def is_amp_available(device: str):
+    device = str(device)
     if device.startswith(("cuda", "xpu")) or device == "cpu":
         return True
     elif device.startswith("mps"):
