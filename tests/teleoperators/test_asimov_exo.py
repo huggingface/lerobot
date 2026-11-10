@@ -15,14 +15,16 @@
 """Exoskeleton-to-Asimov retargeting. Needs pinocchio and downloads the robot URDFs once."""
 
 from dataclasses import dataclass
+from unittest.mock import MagicMock
 
 import draccus
 import numpy as np
 import pytest
 
-from lerobot.robots.asimov.asimov import ARM_ACTIONS
+from lerobot.robots.asimov.asimov import ARM_ACTIONS, BASE_ACTIONS
 from lerobot.teleoperators import TeleoperatorConfig
 from lerobot.teleoperators.asimov_exo import AsimovExoTeleoperatorConfig
+from lerobot.teleoperators.unitree_g1.exo_serial import ExoJoystickState
 
 EXO_ZERO = dict.fromkeys(("shoulder_pitch", "shoulder_yaw", "shoulder_roll", "elbow_flex", "wrist_roll"), 0.0)
 
@@ -57,6 +59,56 @@ def test_cli_config():
         ],
     )
     assert isinstance(config.teleop, AsimovExoTeleoperatorConfig)
+
+
+@pytest.fixture
+def velocity_teleop(tmp_path):
+    """A velocity-mode AsimovExoTeleoperator whose exo arms are mocked."""
+    from lerobot.teleoperators.asimov_exo import AsimovExoTeleoperator
+    from lerobot.teleoperators.unitree_g1.config_unitree_g1 import ExoskeletonArmPortConfig
+
+    config = AsimovExoTeleoperatorConfig(
+        left_arm_config=ExoskeletonArmPortConfig(port="/dev/ttyACM0"),
+        right_arm_config=ExoskeletonArmPortConfig(port="/dev/ttyACM1"),
+        calibration_dir=tmp_path,
+        control_mode="velocity",
+        joystick_deadzone=0.0,
+    )
+    teleop = AsimovExoTeleoperator(config)
+    teleop.left_arm, teleop.right_arm = MagicMock(), MagicMock()
+    return teleop
+
+
+def test_velocity_mode_requires_both_joysticks(velocity_teleop):
+    velocity_teleop.right_arm.detect_joystick.return_value = False
+
+    with pytest.raises(RuntimeError, match="right exo arm"):
+        velocity_teleop.connect()
+
+    velocity_teleop.left_arm.disconnect.assert_called_once()
+
+
+def test_velocity_mode_maps_sticks_to_base_velocity(velocity_teleop):
+    teleop = velocity_teleop
+    teleop.left_arm.joystick_from_raw.return_value = ExoJoystickState(x=0.0, y=1.0, pressed=False)
+    teleop.right_arm.joystick_from_raw.return_value = ExoJoystickState(x=1.0, y=0.0, pressed=False)
+
+    action = teleop.get_action()
+
+    assert action == pytest.approx(
+        {
+            "x.vel": teleop.config.max_linear_velocity,
+            "y.vel": 0.0,
+            "theta.vel": -teleop.config.max_angular_velocity,
+        }
+    )
+
+
+def test_velocity_mode_stops_on_missed_sample(velocity_teleop):
+    velocity_teleop.left_arm.joystick_from_raw.return_value = None
+    velocity_teleop.right_arm.joystick_from_raw.return_value = ExoJoystickState(x=1.0, y=0.0, pressed=False)
+
+    assert velocity_teleop.get_action() == dict.fromkeys(BASE_ACTIONS, 0.0)
 
 
 def test_ik_tracks_reachable_arm_motion(ik):
