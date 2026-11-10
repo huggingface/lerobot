@@ -491,21 +491,6 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
 
     @property
-    def calibration(self) -> dict | None:
-        """Per-session robot calibration and servo gains from ``meta/info.json``, or ``None``.
-
-        ``None`` for datasets recorded before this field existed.
-        """
-        return self.info.calibration
-
-    @calibration.setter
-    def calibration(self, value: dict | None) -> None:
-        """Persist ``value`` to ``meta/info.json`` (clearing the key when falsy) and reload."""
-        self.info.calibration = dict(value) if value else None
-        write_info(self.info, self.root)
-        self.info = load_info(self.root)
-
-    @property
     def names(self) -> dict[str, list | dict]:
         """Names of the various dimensions of vector modalities."""
         return {key: ft["names"] for key, ft in self.features.items()}

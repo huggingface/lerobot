@@ -23,8 +23,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.io_utils import load_info
-from lerobot.datasets.utils import INFO_PATH, build_calibration_metadata
+from lerobot.datasets.utils import INFO_PATH, follower_calibration
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE
 
 pytestmark = pytest.mark.dataset
@@ -568,102 +567,43 @@ def test_tools_setter_clears_key_when_set_to_none(tmp_path):
     assert "tools" not in info_on_disk
 
 
-# ── Calibration metadata ───────────────────────────────────────────
+def test_calibration_is_optional_and_roundtrips(tmp_path):
+    from lerobot.datasets.io_utils import load_info, write_info
 
-CALIB = {
-    "follower": {
-        "name": "so100_follower",
-        "id": "black",
-        "motors": {"m": {"id": 1, "homing_offset": 12}},
-        "registers": {"m": {"P_Coefficient": 16}},
-    }
-}
-
-
-class _FakeBus:
-    """Minimal ``MotorsBus``: register table plus one ``sync_read`` per register."""
-
-    def __init__(self, motors, registers):
-        self.motors, self.is_connected, self._registers = motors, True, registers
-
-    def _has_register(self, motor, name):
-        return name in self._registers.get(motor, {})
-
-    def sync_read(self, name, motors):
-        return {m: self._registers[m][name] for m in motors}
-
-
-class _FakeDevice:
-    def __init__(self, name, id, calibration, bus=None, left_arm=None, right_arm=None):
-        self.name, self.id, self.calibration = name, id, calibration
-        self.bus, self.left_arm, self.right_arm = bus, left_arm, right_arm
-
-
-def test_calibration_write_read_and_clear(tmp_path):
-    """Setting .calibration persists to info.json and reads back; setting None clears the key."""
     root = tmp_path / "calib"
     meta = LeRobotDatasetMetadata.create(
         repo_id="test/calib", fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root, use_videos=False
     )
-    meta.calibration = CALIB
-    with open(root / INFO_PATH) as f:
-        assert json.load(f)["calibration"] == CALIB
-    assert meta.calibration == CALIB and load_info(root).calibration == CALIB
-
-    meta.calibration = None
-    with open(root / INFO_PATH) as f:
-        assert meta.calibration is None and "calibration" not in json.load(f)
-
-
-def test_dataset_without_calibration_is_unchanged(tmp_path):
-    """A dataset recorded without calibration loads exactly as before (None)."""
-    root = tmp_path / "no_calib"
-    meta = LeRobotDatasetMetadata.create(
-        repo_id="test/nocalib", fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root, use_videos=False
-    )
-    with open(root / INFO_PATH) as f:
-        assert meta.calibration is None and "calibration" not in json.load(f)
     assert load_info(root).calibration is None
+    assert "calibration" not in json.loads((root / INFO_PATH).read_text())
+    meta.info.calibration = {"motors": {"m": {"id": 1, "homing_offset": 12}}}
+    write_info(meta.info, root)
+    assert load_info(root).calibration == {"motors": {"m": {"id": 1, "homing_offset": 12}}}
+    meta.info.calibration = None
+    write_info(meta.info, root)
+    assert "calibration" not in json.loads((root / INFO_PATH).read_text())
 
 
-def test_build_calibration_metadata_bimanual():
-    """A bimanual robot prefixes motors left_/right_ and reads back gains (Feetech or Dynamixel)."""
+def test_follower_calibration_reads_pid_or_omits_gains():
+    motor = type(
+        "M", (), {"id": 1, "drive_mode": 0, "homing_offset": np.int64(12), "range_min": 0, "range_max": 1}
+    )
+    values = {"P_Coefficient": 16, "I_Coefficient": 0, "D_Coefficient": 32}
 
-    def arm(offset):
-        # np.int64 covers the numpy-to-int cast; mixed names cover Feetech + Dynamixel readback.
-        cal = {"m": {"id": np.int64(1), "homing_offset": np.int64(offset)}}
-        bus = _FakeBus({"m": object()}, {"m": {"P_Coefficient": 16, "Position_P_Gain": 800}})
-        return _FakeDevice("so_follower", "arm", cal, bus=bus)
+    class Bus:
+        def sync_read(self, name):
+            if name not in values:
+                raise RuntimeError(name)
+            return {"m": np.int64(values[name])}
 
-    robot = _FakeDevice("bi_so_follower", "bimanual", {}, left_arm=arm(10), right_arm=arm(20))
-    record = build_calibration_metadata(robot)
-    assert record["follower"]["motors"]["left_m"]["homing_offset"] == 10
-    assert record["follower"]["motors"]["right_m"]["homing_offset"] == 20
-    # Exactly the two registers the motor exposes are read; the other names are skipped.
-    assert record["follower"]["registers"]["right_m"] == {"P_Coefficient": 16, "Position_P_Gain": 800}
-    json.dumps(record)  # numpy ints were cast to int, so the record is JSON-serialisable
-
-
-def test_build_calibration_metadata_bus_without_register_support():
-    """A bus without sync_read (only read) yields empty registers and does not crash."""
-
-    class _ReadonlyBus:
-        is_connected = True
-        motors = {"m": object()}
-
-        def read(self, data_name, motor):  # would raise TypeError if called with normalize=
-            return 0
-
-    robot = _FakeDevice("openarm_follower", "black", {}, bus=_ReadonlyBus())
-    assert build_calibration_metadata(robot)["follower"]["registers"] == {}
-
-
-def test_build_calibration_metadata_skips_non_dict_calibration():
-    """A device whose .calibration is not a dict (e.g. G1 ExoskeletonCalibration) is skipped."""
-
-    class _ExoskeletonCalib:
-        pass
-
-    robot = _FakeDevice("unitree_g1", "bimanual", _ExoskeletonCalib())
-    record = build_calibration_metadata(robot)
-    assert record["follower"]["motors"] == {} and record["follower"]["registers"] == {}
+    robot = type("R", (), {"calibration": {"m": motor()}, "bus": Bus()})()
+    record = follower_calibration(robot)
+    assert record["motors"]["m"]["homing_offset"] == 12
+    assert record["gains"] == {name: {"m": value} for name, value in values.items()}
+    json.dumps(record)
+    values.clear()
+    assert "gains" not in follower_calibration(robot)
+    robot.bus = None
+    assert "gains" not in follower_calibration(robot)
+    assert follower_calibration(type("R", (), {"calibration": {}})()) is None
+    assert follower_calibration(type("R", (), {"calibration": object()})()) is None

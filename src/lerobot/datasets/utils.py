@@ -222,8 +222,7 @@ class DatasetInfo:
     # OpenAI-style tool schemas declared by the dataset. ``None`` means the
     # dataset doesn't declare any — readers fall back to ``DEFAULT_TOOLS``.
     tools: list[dict] | None = None
-    # Per-session robot calibration and servo gains; ``None`` for datasets recorded
-    # without one (before this field existed). Built by build_calibration_metadata.
+    # Follower calibration and P/I/D gains. None when the dataset has none.
     calibration: dict | None = None
 
     def __post_init__(self) -> None:
@@ -246,8 +245,8 @@ class DatasetInfo:
         """Return a JSON-serialisable dict.
 
         Converts tuple shapes back to lists so ``json.dump`` can handle them.
-        Drops ``tools`` and ``storage_format`` when unset so existing datasets
-        keep a clean ``info.json``.
+        Drops ``tools``, ``storage_format`` and ``calibration`` when unset so
+        existing datasets keep a clean ``info.json``.
         """
         d = dataclasses.asdict(self)
         for ft in d["features"].values():
@@ -319,78 +318,21 @@ class DatasetInfo:
             return default
 
 
-# Servo control registers read back at connect: Feetech P/I/D, Dynamixel P/I/D,
-# then shared motion settings. Best-effort: a motor model without one skips it.
-CONTROL_REGISTERS = (
-    "P_Coefficient",
-    "I_Coefficient",
-    "D_Coefficient",
-    "Position_P_Gain",
-    "Position_I_Gain",
-    "Position_D_Gain",
-    "Operating_Mode",
-    "Acceleration",
-    "Maximum_Acceleration",
-    "Max_Torque_Limit",
-    "Torque_Limit",
-    "Protection_Current",
-    "Overload_Torque",
-)
-
-
-def _motor_calib_dict(calibration: Any) -> dict[str, Any]:
-    """One motor calibration (a ``MotorCalibration`` or dict) as JSON-safe scalars (numpy int -> int)."""
-    raw = dict(calibration) if isinstance(calibration, dict) else dataclasses.asdict(calibration)
-    return {k: int(v) if isinstance(v, int | np.integer) else v for k, v in raw.items()}
-
-
-def _read_control_registers(device: Any) -> dict[str, dict[str, int]]:
-    """Read back the control registers per motor as ``{motor: {register: value}}`` (best-effort)."""
-    bus = getattr(device, "bus", None)
-    if bus is None or not getattr(bus, "is_connected", False):
-        return {}
-    if not (hasattr(bus, "motors") and hasattr(bus, "sync_read") and hasattr(bus, "_has_register")):
-        return {}
-    registers: dict[str, dict[str, int]] = {}
-    for name in CONTROL_REGISTERS:
-        with contextlib.suppress(
-            KeyError, ConnectionError, RuntimeError, ValueError, TypeError, AttributeError
-        ):
-            motors = [m for m in bus.motors if bus._has_register(m, name)]
-            if motors:
-                for motor, value in bus.sync_read(name, motors).items():
-                    registers.setdefault(motor, {})[name] = int(value)
-    return registers
-
-
-def _device_calibration_record(device: Any) -> dict[str, Any]:
-    """One device's record: motor calibration and registers, prefixed ``left_``/``right_`` if bimanual."""
-    motors: dict[str, dict[str, Any]] = {}
-    registers: dict[str, dict[str, int]] = {}
-    left = getattr(device, "left_arm", None)
-    right = getattr(device, "right_arm", None)
-    arms = [("left_", left), ("right_", right)] if left is not None and right is not None else [("", device)]
-    for prefix, arm in arms:
-        cal = getattr(arm, "calibration", None)
-        if isinstance(cal, dict):
-            for motor, c in cal.items():
-                motors[prefix + motor] = _motor_calib_dict(c)
-        for motor, regs in _read_control_registers(arm).items():
-            registers[prefix + motor] = regs
-    return {"name": device.name, "id": device.id, "motors": motors, "registers": registers}
-
-
-def build_calibration_metadata(robot: Any = None, teleop: Any = None) -> dict[str, Any]:
-    """Build the ``calibration`` record from a connected ``robot`` and optional ``teleop``.
-
-    Returns ``{role: {name, id, motors, registers}}``, one entry per device (roles
-    ``"follower"`` and ``"leader"``), holding each motor's calibration and servo registers.
-    """
-    record: dict[str, dict[str, Any]] = {}
-    if robot is not None:
-        record["follower"] = _device_calibration_record(robot)
-    if teleop is not None:
-        record["leader"] = _device_calibration_record(teleop)
+def follower_calibration(robot: Any) -> dict[str, Any] | None:
+    """Follower calibration and P/I/D gains, or None when the robot has no calibration dict."""
+    cal = getattr(robot, "calibration", None)
+    if not isinstance(cal, dict) or len(cal) == 0:
+        return None
+    keys = ("id", "drive_mode", "homing_offset", "range_min", "range_max")
+    record: dict[str, Any] = {"motors": {}}
+    for motor, c in cal.items():
+        record["motors"][motor] = {k: int(c[k] if isinstance(c, dict) else getattr(c, k)) for k in keys}
+    # A missing bus or a failed read keeps the calibration and omits the gains.
+    with contextlib.suppress(Exception):
+        record["gains"] = {
+            n: {m: int(v) for m, v in robot.bus.sync_read(n).items()}
+            for n in ("P_Coefficient", "I_Coefficient", "D_Coefficient")
+        }
     return record
 
 

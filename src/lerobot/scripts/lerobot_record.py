@@ -109,7 +109,8 @@ from lerobot.datasets import (
     create_initial_features,
     safe_stop_image_writer,
 )
-from lerobot.datasets.utils import build_calibration_metadata
+from lerobot.datasets.io_utils import write_info
+from lerobot.datasets.utils import follower_calibration
 from lerobot.processor import (
     RobotAction,
     RobotObservation,
@@ -499,17 +500,11 @@ def record(
             teleop.connect()
         robot.connect()
 
-        # Record each connected device's calibration and servo gains (session-constant)
-        # so the dataset captures which arm produced it and how its controller was tuned.
-        if dataset is not None:
-            calibration = build_calibration_metadata(robot, teleop)
-            existing = dataset.meta.calibration
-            if existing is not None and existing != calibration:
-                logging.warning(
-                    "The resumed dataset's stored calibration or servo gains differ from the "
-                    "current connection; meta/info.json now reflects this session."
-                )
-            dataset.meta.calibration = calibration
+        # Optional: the follower's joint zeros and the P/I/D gains read back from its motors.
+        calibration = follower_calibration(robot)
+        if dataset is not None and calibration is not None:
+            dataset.meta.info.calibration = calibration
+            write_info(dataset.meta.info, dataset.meta.root)
 
         listener, events = init_keyboard_listener()
 
