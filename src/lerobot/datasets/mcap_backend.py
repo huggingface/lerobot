@@ -143,49 +143,57 @@ class _GopFrameLRU:
 # a dataset with trivially small episodes; irrelevant once real per-episode sizes dominate.
 _MIN_GOP_FRAME_CACHE_BYTES = 64 << 20  # 64MB
 
-# How far above exactly one episode's own working set to size the cache: a pure 1.0x
-# bound is already sufficient to avoid the catastrophic within-episode re-decode this
-# cache exists to prevent (see _GopFrameLRU's docstring), but leaves zero room for
-# numpy/dict bookkeeping overhead or any cross-episode locality at all -- an eviction
-# the instant a second episode is touched. 2x is cheap insurance for either, without
-# reintroducing the old failure mode of guessing an absolute size unrelated to the
-# dataset's own shape (confirmed to go wrong in both directions: too small defeats the
-# cache outright, too large multiplies badly across DataLoader workers).
-_GOP_FRAME_CACHE_MARGIN = 2.0
+# How far above the served episodes' own combined working set to size the cache: a
+# pure 1.0x bound of the SUM (not just one episode) is already sufficient to avoid any
+# inter-episode eviction at all, but leaves zero room for numpy/dict bookkeeping
+# overhead. 1.3x is cheap insurance for that, without reintroducing the old failure
+# mode of guessing an absolute size unrelated to the dataset's own shape.
+_GOP_FRAME_CACHE_MARGIN = 1.3
+
+# Upper bound regardless of how large the dataset's combined working set computes to --
+# without this, a dataset with many episodes would compute an unbounded, unusable cache
+# size. Datasets whose served episodes exceed this will still see SOME cross-episode
+# eviction (not a correctness issue, just reduced locality) -- an explicit
+# gop_frame_cache_bytes override is the way to raise this for a specific workload.
+_GOP_FRAME_CACHE_CEILING_BYTES = 24 << 30  # 24GB/worker
 
 
 def _default_gop_frame_cache_bytes(
     log_time_ns: dict[str, list[np.ndarray]], frame_bytes: dict[str, int], episode_indices: Iterable[int]
 ) -> int:
-    """The per-worker cache budget needed to hold one full episode's decoded frames
+    """The per-worker cache budget needed to hold EVERY served episode's decoded frames
     across every GOP-encoded video key at once, with headroom (see
-    ``_GOP_FRAME_CACHE_MARGIN``) -- computed from the dataset's own per-episode frame
-    counts (``log_time_ns``) and per-key frame byte sizes (``frame_bytes``), not
-    guessed. Holding one whole episode live is the only property that actually matters:
-    it's exactly what prevents the catastrophic case this cache exists for (a B-frame
-    channel whose episode is shorter than the keyframe interval, forcing every query to
-    decode the entire remaining episode -- see ``_GopFrameLRU``'s docstring). Sizing
-    for more than one episode would only buy soft cross-episode locality, not
-    correctness, while costing more per DataLoader worker (each gets its own budget) --
-    not worth guessing a dataset-specific multiple of episodes to hold concurrently.
+    ``_GOP_FRAME_CACHE_MARGIN``), capped at ``_GOP_FRAME_CACHE_CEILING_BYTES`` --
+    computed from the dataset's own per-episode frame counts (``log_time_ns``) and
+    per-key frame byte sizes (``frame_bytes``), not guessed.
+
+    Sizing for only the LARGEST single episode (an earlier version of this function)
+    is NOT enough: a batch_size greater than 1 can need frames from several episodes
+    live within the SAME ``get_items()`` call whenever batch_size is large relative to
+    the dataset's total frame count (confirmed empirically: batch_size=32 against a
+    3-episode, ~430-frame dataset touches most of the dataset within a handful of
+    batches), causing real inter-episode eviction even though no single query ever asks
+    for more than it needs. Summing every served episode's working set is what actually
+    guarantees zero eviction, for datasets small enough that this sum stays under the
+    ceiling -- which is also why this is capped: for a dataset with many episodes,
+    summing all of them would be an unbounded, unusable cache size, so eviction becomes
+    an accepted tradeoff there rather than something this default tries to eliminate.
 
     Scales correctly for whatever a given dataset's shape actually is (more cameras,
-    higher resolution, more or fewer frames per episode) instead of a constant tuned to
-    one benchmark, which was confirmed to go wrong in both directions when datasets
-    differ: too small defeats the cache outright (back to re-decoding whole episodes
-    repeatedly); too large multiplies badly once several DataLoader workers each get
-    their own copy, risking OOM on constrained instances.
+    higher resolution, more or fewer frames per episode, more or fewer episodes)
+    instead of a constant tuned to one benchmark, which was confirmed to go wrong in
+    multiple directions when datasets differ: too small defeats the cache outright
+    (back to re-decoding whole episodes repeatedly, or thrashing between episodes);
+    too large multiplies badly once several DataLoader workers each get their own copy,
+    risking OOM on constrained instances.
     """
     if not frame_bytes:
         return 0
-    largest_episode_bytes = max(
-        (
-            sum(len(log_time_ns[key][ep_idx]) * nbytes for key, nbytes in frame_bytes.items())
-            for ep_idx in episode_indices
-        ),
-        default=0,
+    total_bytes = sum(
+        sum(len(log_time_ns[key][ep_idx]) * nbytes for key, nbytes in frame_bytes.items())
+        for ep_idx in episode_indices
     )
-    return int(largest_episode_bytes * _GOP_FRAME_CACHE_MARGIN)
+    return min(int(total_bytes * _GOP_FRAME_CACHE_MARGIN), _GOP_FRAME_CACHE_CEILING_BYTES)
 
 
 def _frame_to_uint8_chw(frame: av.VideoFrame) -> np.ndarray:
