@@ -24,6 +24,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.utils import INFO_PATH
+from lerobot.utils.constants import DEFAULT_FEATURES
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE
 
 pytestmark = pytest.mark.dataset
@@ -565,3 +566,20 @@ def test_tools_setter_clears_key_when_set_to_none(tmp_path):
     with open(root / INFO_PATH) as f:
         info_on_disk = json.load(f)
     assert "tools" not in info_on_disk
+
+
+def test_select_returns_read_only_projection(tmp_path, lerobot_dataset_metadata_factory, info_factory):
+    """select() serves a feature subset with its stats on a copy; the original stays complete."""
+    info = info_factory(total_episodes=1, total_frames=10, total_tasks=1)
+    meta = lerobot_dataset_metadata_factory(root=tmp_path / "meta", info=info)
+    kept = {"laptop", "action", *DEFAULT_FEATURES}
+
+    projected = meta.select(["laptop", "action"])
+
+    assert set(projected.features) == kept and set(projected.stats) == kept & set(meta.stats)
+    assert projected.video_keys == ["laptop"] and "phone" in projected.full_features
+    assert "phone" in meta.features and "phone" in meta.stats
+    with pytest.raises(ValueError, match="Unknown feature"):
+        meta.select(["nope"])
+    with pytest.raises(ValueError, match="features="):
+        projected.tools = []
