@@ -15,13 +15,17 @@ import time
 from itertools import islice
 from pathlib import Path
 
+import filelock
 import fsspec
+import fsspec.implementations.memory
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset, _balanced_episode_shards
+from lerobot.datasets.streaming_sidecar import make_sidecar_spec
 from lerobot.utils.utils import cycle
 from tests.fixtures.constants import DUMMY_REPO_ID
 
@@ -374,6 +378,119 @@ def test_streaming_reads_video_bytes_from_configured_fsspec_root(
     reference = map_dataset[int(sample["index"])]
     for camera_key in map_dataset.meta.camera_keys:
         assert torch.equal(sample[camera_key], reference[camera_key])
+
+
+def _upload_dataset(root: Path, namespace: str) -> str:
+    """Copy a local dataset's meta/, data/ and videos/ to memory:// and return its URI."""
+    filesystem = fsspec.filesystem("memory")
+    for path in root.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        if path.is_file() and relative.split("/", 1)[0] in ("meta", "data", "videos"):
+            filesystem.put(str(path), f"{namespace}/{relative}")
+    return f"memory://{namespace}"
+
+
+def _spy_url_to_fs(monkeypatch: pytest.MonkeyPatch, prefix: str) -> list[dict]:
+    """Record the fsspec options of every filesystem opened under ``prefix``."""
+    calls: list[dict] = []
+    original = fsspec.core.url_to_fs
+
+    def spy(url, **kwargs):
+        if str(url).startswith(prefix):
+            calls.append(kwargs)
+        return original(url, **kwargs)
+
+    monkeypatch.setattr(fsspec.core, "url_to_fs", spy)
+    return calls
+
+
+def test_streaming_reads_complete_dataset_from_fsspec_root(
+    tmp_path: Path, lerobot_dataset_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "source"
+    map_dataset = lerobot_dataset_factory(
+        root=root, repo_id=DUMMY_REPO_ID, total_episodes=2, total_frames=10, video_backend="pyav"
+    )
+    remote_root = _upload_dataset(root, f"streaming-root-{tmp_path.parent.name}-{tmp_path.name}")
+    monkeypatch.setattr("lerobot.datasets.storage.HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.chdir(tmp_path)
+    calls = _spy_url_to_fs(monkeypatch, remote_root)
+    load_metadata = LeRobotDatasetMetadata._load_metadata
+
+    def load_metadata_under_refresh_lock(self) -> None:
+        # A meta/ refresh by another rank must wait until this read is done.
+        with pytest.raises(filelock.Timeout):
+            filelock.FileLock(self.root.parent / f".{self.root.name}.lock", timeout=0).acquire()
+        load_metadata(self)
+
+    monkeypatch.setattr(LeRobotDatasetMetadata, "_load_metadata", load_metadata_under_refresh_lock)
+
+    streaming = StreamingLeRobotDataset(
+        DUMMY_REPO_ID,
+        root=remote_root,
+        storage_options={"marker": "s3-creds"},
+        shuffle=False,
+        buffer_size=2,
+        video_backend="pyav",
+        decode_threads=1,
+    )
+    sample = next(iter(streaming))
+
+    reference = map_dataset[int(sample["index"])]
+    for camera_key in map_dataset.meta.camera_keys:
+        assert torch.equal(sample[camera_key], reference[camera_key])
+    assert streaming.meta.root.parent == tmp_path / "cache" / "remote"
+    assert not (tmp_path / "memory:").exists()
+    # meta/ copy, sidecar spec and build, parquet reads and training-time video reads.
+    assert len(calls) >= 4
+    assert all(call.get("marker") == "s3-creds" for call in calls)
+
+
+def test_sidecar_spec_uses_listing_not_per_file_info(
+    tmp_path: Path, lerobot_dataset_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "source"
+    map_dataset = lerobot_dataset_factory(
+        root=root, repo_id=DUMMY_REPO_ID, total_episodes=3, total_frames=15, video_backend="pyav"
+    )
+    remote_root = _upload_dataset(root, f"sidecar-spec-{tmp_path.parent.name}-{tmp_path.name}")
+
+    def no_head(self, path, **kwargs):
+        raise AssertionError(f"per-file info() call for {path}")
+
+    monkeypatch.setattr(fsspec.implementations.memory.MemoryFileSystem, "info", no_head)
+    spec = make_sidecar_spec(map_dataset.meta, remote_root)
+
+    assert spec.source_files == tuple(
+        (path, (root / path).stat().st_size) for path, _size in spec.source_files
+    )
+    assert spec.source_files
+
+
+def test_storage_options_reach_data_root_override_but_not_local_roots(
+    tmp_path: Path, lerobot_dataset_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "metadata"
+    lerobot_dataset_factory(
+        root=root, repo_id=DUMMY_REPO_ID, total_episodes=2, total_frames=10, video_backend="pyav"
+    )
+    remote_root = _upload_dataset(root, f"streaming-override-{tmp_path.parent.name}-{tmp_path.name}")
+    local_calls = _spy_url_to_fs(monkeypatch, "")
+    options = {"marker": "s3-creds"}
+    kwargs = {"shuffle": False, "buffer_size": 2, "video_backend": "pyav", "decode_threads": 1}
+
+    next(iter(StreamingLeRobotDataset(DUMMY_REPO_ID, root=root, storage_options=options, **kwargs)))
+    assert local_calls and all("marker" not in call for call in local_calls)
+
+    calls = _spy_url_to_fs(monkeypatch, remote_root)
+    next(
+        iter(
+            StreamingLeRobotDataset(
+                DUMMY_REPO_ID, root=root, data_root=remote_root, storage_options=options, **kwargs
+            )
+        )
+    )
+    assert calls and all(call.get("marker") == "s3-creds" for call in calls)
 
 
 def test_streaming_rejects_episode_larger_than_rank_byte_budget(

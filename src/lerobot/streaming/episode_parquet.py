@@ -13,9 +13,9 @@ from __future__ import annotations
 import posixpath
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 import fsspec
 import pyarrow as pa
@@ -34,6 +34,7 @@ class EpisodeParquetReader:
         *,
         columns: Sequence[str],
         token: str | bool | None = None,
+        storage_options: Mapping[str, Any] | None = None,
         max_retries: int = 4,
         retry_backoff_s: float = 0.05,
     ) -> None:
@@ -54,7 +55,7 @@ class EpisodeParquetReader:
         location = StorageLocation.parse(data_root_str)
         self._open_lock = threading.Lock() if location.is_hf else None
         self._filesystem, self._root_path = fsspec.core.url_to_fs(
-            data_root_str, **location.storage_options(token)
+            data_root_str, **location.storage_options(token, storage_options)
         )
 
     def read_episode(
