@@ -36,7 +36,7 @@ from lerobot.streaming.episode_pool import ExactCoveragePool, StreamingSamplingS
 from lerobot.streaming.location import StorageLocation
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.utils.constants import HF_LEROBOT_HOME
-from lerobot.utils.import_utils import get_safe_default_video_backend
+from lerobot.utils.import_utils import get_safe_default_video_backend, is_video_backend_available
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
@@ -363,6 +363,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             self._video_backend = "pyav"
         if self._video_backend not in {"torchcodec", "pyav"}:
             raise ValueError(f"Unsupported video backend: {self._video_backend}")
+        # An explicitly requested backend must actually load; a broken one
+        # otherwise surfaces only at the first decode, after Hub traffic.
+        if video_backend is not None and not is_video_backend_available(self._video_backend):
+            raise ValueError(
+                f"video_backend='{video_backend}' was requested but cannot be loaded in this "
+                "environment. Either fix the backend's dependencies or use the other supported backend."
+            )
         self.sampling_strategy = StreamingSamplingStrategy(sampling_strategy)
         self.episode_pool_size = episode_pool_size or min(buffer_size, 32)
         # An explicit pool size is the pool of each DataLoader worker; the default is split between them.
