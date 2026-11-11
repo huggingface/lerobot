@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType
@@ -27,7 +28,7 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, identity_transition
-from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
+from lerobot.processor.rename_processor import rename_batch_keys, rename_keys, rename_stats
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from tests.conftest import assert_contract_is_typed
 
@@ -534,3 +535,28 @@ def test_rename_stats_basic():
     # Ensure deep copy: mutate original and verify renamed unaffected
     orig[OBS_STATE]["mean"][0] = 42.0
     assert renamed["observation.robot_state"]["mean"][0] != 42.0
+
+
+@pytest.mark.parametrize(
+    "rename",
+    [
+        rename_keys,
+        rename_batch_keys,
+        rename_stats,
+        lambda data, rename_map: RenameObservationsProcessorStep(rename_map).observation(data),
+        lambda data, rename_map: RenameObservationsProcessorStep(rename_map).transform_features(
+            {PipelineFeatureType.OBSERVATION: data}
+        )[PipelineFeatureType.OBSERVATION],
+    ],
+)
+def test_rename_onto_an_existing_key(rename):
+    data = {ACTION: {"dim": 8}, "action.cartesian": {"dim": 7}}
+    with pytest.raises(ValueError, match=r"Both 'action' and 'action.cartesian' are named 'action'"):
+        rename(data, {"action.cartesian": ACTION})
+    with pytest.raises(ValueError, match=r"'action_is_pad'"):
+        rename({"action_is_pad": {}, "action.cartesian_is_pad": {}}, {"action.cartesian": ACTION})
+    # Renaming the existing key out of the way resolves the collision.
+    assert rename(data, {"action.cartesian": ACTION, ACTION: "action.joint"}) == {
+        "action.joint": {"dim": 8},
+        ACTION: {"dim": 7},
+    }
