@@ -771,14 +771,31 @@ class SerialMotorsBus(MotorsBusBase):
         motors = [motor for motor in self.motors if self._has_register(motor, data_name)]
         return self.sync_read(data_name, motors, normalize=False) if motors else {}
 
+    def _calibration_register_values(self, motor: str, calibration: MotorCalibration) -> dict[str, int]:
+        """The raw calibration registers written for one motor."""
+        values = {}
+        if self._has_register(motor, "Homing_Offset"):
+            values["Homing_Offset"] = calibration.homing_offset
+        values["Min_Position_Limit"] = calibration.range_min
+        values["Max_Position_Limit"] = calibration.range_max
+        return values
+
+    def _calibration_mismatches(self, motor: str, expected: dict[str, int]) -> dict[str, tuple[int, int]]:
+        """Read one motor's calibration registers and return (expected, actual) mismatches."""
+        actual = {register: int(self.read(register, motor, normalize=False)) for register in expected}
+        return {
+            register: (expected_value, actual[register])
+            for register, expected_value in expected.items()
+            if actual[register] != expected_value
+        }
+
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
-        """Write a calibration to the motors, and by default cache it.
+        """Write a calibration to the motors, verify each motor, and by default cache it.
 
         The position limits are written to every motor, and the homing offset to the motors
         that have one. Neither the id nor the drive mode is written: a Feetech's drive mode is
         applied in software when normalising, and a Dynamixel's `Drive_Mode` register is set on
-        its own.
-
+        its own. Each motor is read back before the next one is written.
         Args:
             calibration_dict (`dict[str, MotorCalibration]`):
                 Calibration of each motor, by name, as [`~SerialMotorsBus.read_calibration`]
@@ -788,10 +805,41 @@ class SerialMotorsBus(MotorsBusBase):
                 positions.
         """
         for motor, calibration in calibration_dict.items():
-            if self._has_register(motor, "Homing_Offset"):
-                self.write("Homing_Offset", motor, calibration.homing_offset)
-            self.write("Min_Position_Limit", motor, calibration.range_min)
-            self.write("Max_Position_Limit", motor, calibration.range_max)
+            expected = self._calibration_register_values(motor, calibration)
+            try:
+                for register, value in expected.items():
+                    self.write(register, motor, value, normalize=False)
+            except (ConnectionError, RuntimeError, ValueError) as exc:
+                try:
+                    mismatches = self._calibration_mismatches(motor, expected)
+                except (ConnectionError, RuntimeError, ValueError) as verification_exc:
+                    exc.add_note(
+                        f"Calibration state of motor '{motor}' could not be verified "
+                        f"after the write failed: {verification_exc}"
+                    )
+                else:
+                    if mismatches:
+                        exc.add_note(
+                            f"Calibration of motor '{motor}' may be partially applied. "
+                            f"Read-back mismatches: {mismatches}"
+                        )
+                    else:
+                        exc.add_note(
+                            f"Calibration registers of motor '{motor}' match the requested "
+                            "values despite the write error."
+                        )
+                raise
+
+            try:
+                mismatches = self._calibration_mismatches(motor, expected)
+            except (ConnectionError, RuntimeError, ValueError) as exc:
+                exc.add_note(
+                    f"Calibration writes for motor '{motor}' completed, but read-back verification failed."
+                )
+                raise
+
+            if mismatches:
+                raise RuntimeError(f"Calibration verification failed for motor '{motor}': {mismatches}")
 
         if cache:
             self.calibration = calibration_dict

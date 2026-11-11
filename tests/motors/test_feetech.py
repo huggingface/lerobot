@@ -218,6 +218,142 @@ def test_is_calibrated(dummy_motors, dummy_calibration):
     assert bus.is_calibrated
 
 
+def test_write_calibration_verifies_each_motor_before_writing_next_one(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors)
+    events = []
+    write = bus.write
+    read = bus.read
+
+    def record_write(register, motor, value, **kwargs):
+        events.append(("write", motor, register))
+        write(register, motor, value, **kwargs)
+
+    def record_read(register, motor, **kwargs):
+        events.append(("read", motor, register))
+        return read(register, motor, **kwargs)
+
+    with (
+        patch.object(bus, "write", side_effect=record_write),
+        patch.object(bus, "read", side_effect=record_read),
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    expected_events = []
+    for motor in dummy_motors:
+        for register in ("Homing_Offset", "Min_Position_Limit", "Max_Position_Limit"):
+            expected_events.append(("write", motor, register))
+        for register in ("Homing_Offset", "Min_Position_Limit", "Max_Position_Limit"):
+            expected_events.append(("read", motor, register))
+
+    assert events == expected_events
+    assert bus.calibration == dummy_calibration
+    for calibration in dummy_calibration.values():
+        assert written(bus, "Homing_Offset", calibration.id) == calibration.homing_offset
+        assert written(bus, "Min_Position_Limit", calibration.id) == calibration.range_min
+        assert written(bus, "Max_Position_Limit", calibration.id) == calibration.range_max
+
+
+def test_write_calibration_stops_at_read_back_mismatch(dummy_motors, dummy_calibration):
+    previous_calibration = dummy_calibration.copy()
+    bus = make_bus(dummy_motors, previous_calibration)
+    read_register = bus._bus.read_register_with_error
+
+    def mismatched_read(motor_id, register, retries=0):
+        value, status = read_register(motor_id, register, retries)
+        if motor_id == 1 and register == "max_position_limit":
+            return 4095, status
+        return value, status
+
+    with (
+        patch.object(bus._bus, "read_register_with_error", side_effect=mismatched_read),
+        pytest.raises(RuntimeError, match=r"dummy_1.*Max_Position_Limit.*1335.*4095"),
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    assert [motor_id for motor_id, _, _ in bus._bus.writes] == [1, 1, 1]
+    assert bus.calibration is previous_calibration
+
+
+def test_write_calibration_reports_partial_write_without_replacing_error(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors)
+    seed(bus, "Homing_Offset", 1, 0)
+    seed(bus, "Min_Position_Limit", 1, 10)
+    seed(bus, "Max_Position_Limit", 1, 4000)
+    write_register = bus._bus.write_register_with_error
+
+    def fail_on_minimum(motor_id, register, value, retries=0):
+        if motor_id == 1 and register == "min_position_limit":
+            raise RuntimeError("Timeout error")
+        return write_register(motor_id, register, value, retries)
+
+    with (
+        patch.object(bus._bus, "write_register_with_error", side_effect=fail_on_minimum),
+        pytest.raises(ConnectionError, match="Timeout error") as exc_info,
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    assert bus._bus.stored(1, "homing_offset") == dummy_calibration["dummy_1"].homing_offset
+    assert bus._bus.stored(1, "min_position_limit") == 10
+    assert bus._bus.stored(1, "max_position_limit") == 4000
+    assert bus._bus.reads == [
+        (1, "homing_offset"),
+        (1, "min_position_limit"),
+        (1, "max_position_limit"),
+    ]
+    assert len(bus._bus.writes) == 1
+    assert "may be partially applied" in " ".join(exc_info.value.__notes__)
+    assert "Min_Position_Limit" in " ".join(exc_info.value.__notes__)
+    assert bus.calibration == {}
+
+
+def test_write_calibration_reports_ack_loss_when_read_back_matches(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors)
+    write_register = bus._bus.write_register_with_error
+
+    def lose_max_ack(motor_id, register, value, retries=0):
+        result = write_register(motor_id, register, value, retries)
+        if motor_id == 1 and register == "max_position_limit":
+            raise RuntimeError("Timeout error")
+        return result
+
+    with (
+        patch.object(bus._bus, "write_register_with_error", side_effect=lose_max_ack),
+        pytest.raises(ConnectionError, match="Timeout error") as exc_info,
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    assert bus._bus.stored(1, "max_position_limit") == dummy_calibration["dummy_1"].range_max
+    assert all(motor_id == 1 for motor_id, _, _ in bus._bus.writes)
+    assert "match the requested values despite the write error" in " ".join(exc_info.value.__notes__)
+    assert bus.calibration == {}
+
+
+def test_write_calibration_notes_when_read_back_after_write_failure_fails(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors)
+    write_register = bus._bus.write_register_with_error
+    read_register = bus._bus.read_register_with_error
+
+    def fail_write(motor_id, register, value, retries=0):
+        if motor_id == 1 and register == "min_position_limit":
+            raise RuntimeError("write timeout")
+        return write_register(motor_id, register, value, retries)
+
+    def fail_read(motor_id, register, retries=0):
+        if motor_id == 1 and register == "homing_offset":
+            raise RuntimeError("read timeout")
+        return read_register(motor_id, register, retries)
+
+    with (
+        patch.object(bus._bus, "write_register_with_error", side_effect=fail_write),
+        patch.object(bus._bus, "read_register_with_error", side_effect=fail_read),
+        pytest.raises(ConnectionError, match="write timeout") as exc_info,
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    assert "could not be verified" in " ".join(exc_info.value.__notes__)
+    assert bus.calibration == {}
+
+
 def test_a_drive_mode_kept_in_software_does_not_count(dummy_motors, dummy_calibration):
     """A Feetech has no Drive_Mode register: the drive mode lives in the calibration alone."""
     calibration = {**dummy_calibration}
