@@ -92,6 +92,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
 DEFAULT_VIDEO_FILE_SIZE_IN_MB = 200  # Max size per file
+DEFAULT_AUDIO_FILE_SIZE_IN_MB = 100  # Max size per file
 
 INFO_PATH = "meta/info.json"
 STATS_PATH = "meta/stats.json"
@@ -99,6 +100,7 @@ STATS_PATH = "meta/stats.json"
 EPISODES_DIR = "meta/episodes"
 DATA_DIR = "data"
 VIDEO_DIR = "videos"
+AUDIO_DIR = "audio"
 
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
 IMAGE_FILE_PATTERN = "frame-{frame_index:06d}.png"
@@ -175,6 +177,7 @@ DEFAULT_TASKS_PATH = "meta/tasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_DATA_PATH = DATA_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_VIDEO_PATH = VIDEO_DIR + "/{video_key}/" + CHUNK_FILE_PATTERN + ".mp4"
+DEFAULT_AUDIO_PATH = AUDIO_DIR + "/{audio_key}/" + CHUNK_FILE_PATTERN + ".flac"
 DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/" + IMAGE_FILE_PATTERN
 DEFAULT_DEPTH_PATH = "images/{image_key}/episode-{episode_index:06d}/" + DEPTH_FILE_PATTERN
 
@@ -211,6 +214,10 @@ class DatasetInfo:
     data_path: str = field(default=DEFAULT_DATA_PATH)
     video_path: str | None = field(default=DEFAULT_VIDEO_PATH)
 
+    # Audio storage, only set for datasets with audio features
+    audio_path: str | None = None
+    audio_files_size_in_mb: int | None = None
+
     # Format holding the underlying data files. ``None`` means the built-in
     # parquet/mp4 layout; any other value (e.g. "lance") routes LeRobotDataset's
     # data access through the storage backend registered for that format.
@@ -238,13 +245,15 @@ class DatasetInfo:
             raise ValueError(f"data_files_size_in_mb must be positive, got {self.data_files_size_in_mb}")
         if self.video_files_size_in_mb <= 0:
             raise ValueError(f"video_files_size_in_mb must be positive, got {self.video_files_size_in_mb}")
+        if self.audio_files_size_in_mb is not None and self.audio_files_size_in_mb <= 0:
+            raise ValueError(f"audio_files_size_in_mb must be positive, got {self.audio_files_size_in_mb}")
 
     def to_dict(self) -> dict:
         """Return a JSON-serialisable dict.
 
         Converts tuple shapes back to lists so ``json.dump`` can handle them.
-        Drops ``tools`` and ``storage_format`` when unset so existing datasets
-        keep a clean ``info.json``.
+        Drops ``tools``, ``storage_format`` and the audio settings when unset so
+        existing datasets keep a clean ``info.json``.
         """
         d = dataclasses.asdict(self)
         for ft in d["features"].values():
@@ -252,8 +261,9 @@ class DatasetInfo:
                 ft["shape"] = list(ft["shape"])
         if d.get("tools") is None:
             d.pop("tools", None)
-        if d.get("storage_format") is None:
-            d.pop("storage_format", None)
+        for key in ("storage_format", "audio_path", "audio_files_size_in_mb"):
+            if d.get(key) is None:
+                d.pop(key, None)
         return d
 
     @classmethod

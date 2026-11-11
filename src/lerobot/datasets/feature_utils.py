@@ -27,6 +27,8 @@ from lerobot.utils.utils import is_valid_numpy_dtype_string
 
 from .language import is_language_column, language_events_column_feature, language_persistent_column_feature
 from .utils import (
+    DEFAULT_AUDIO_FILE_SIZE_IN_MB,
+    DEFAULT_AUDIO_PATH,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -58,7 +60,7 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
                 if key == LANGUAGE_PERSISTENT
                 else language_events_column_feature()
             )
-        elif ft["dtype"] == "video":
+        elif ft["dtype"] in ("video", "audio"):
             continue
         elif ft["dtype"] == "image":
             hf_features[key] = datasets.Image()
@@ -91,6 +93,7 @@ def create_empty_dataset_info(
     chunks_size: int | None = None,
     data_files_size_in_mb: int | None = None,
     video_files_size_in_mb: int | None = None,
+    audio_files_size_in_mb: int | None = None,
 ) -> DatasetInfo:
     """Create a template ``DatasetInfo`` object for a new dataset's ``meta/info.json``.
 
@@ -103,10 +106,13 @@ def create_empty_dataset_info(
         chunks_size (int | None): Max files per chunk directory. Defaults to ``DEFAULT_CHUNK_SIZE``.
         data_files_size_in_mb (int | None): Max parquet file size in MB. Defaults to ``DEFAULT_DATA_FILE_SIZE_IN_MB``.
         video_files_size_in_mb (int | None): Max video file size in MB. Defaults to ``DEFAULT_VIDEO_FILE_SIZE_IN_MB``.
+        audio_files_size_in_mb (int | None): Max audio file size in MB. Defaults to ``DEFAULT_AUDIO_FILE_SIZE_IN_MB``.
+            Only used when ``features`` contains audio features.
 
     Returns:
         DatasetInfo: A typed dataset information object with initial metadata.
     """
+    has_audio = any(ft["dtype"] == "audio" for ft in features.values())
     return DatasetInfo(
         codebase_version=codebase_version,
         fps=fps,
@@ -117,6 +123,10 @@ def create_empty_dataset_info(
         video_files_size_in_mb=video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
         data_path=DEFAULT_DATA_PATH,
         video_path=DEFAULT_VIDEO_PATH if use_videos else None,
+        audio_path=DEFAULT_AUDIO_PATH if has_audio else None,
+        audio_files_size_in_mb=(audio_files_size_in_mb or DEFAULT_AUDIO_FILE_SIZE_IN_MB)
+        if has_audio
+        else None,
     )
 
 

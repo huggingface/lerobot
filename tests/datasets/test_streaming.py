@@ -45,6 +45,7 @@ def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
         video_keys=[],
         depth_keys=[],
         image_keys=[],
+        audio_keys=[],
         rescale_depth_stats=Mock(),
     )
     metadata_cls = Mock(return_value=metadata)
@@ -80,6 +81,7 @@ def test_streaming_dataset_sidecar_lock_timeout(tmp_path, monkeypatch):
         video_keys=[],
         depth_keys=[],
         image_keys=[],
+        audio_keys=[],
         rescale_depth_stats=Mock(),
     )
     ensure_sidecar = Mock(side_effect=TimeoutError("Timed out waiting 5s for MP4 sidecar lock"))

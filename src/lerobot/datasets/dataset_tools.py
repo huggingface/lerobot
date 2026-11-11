@@ -109,6 +109,14 @@ def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> d
     return episode_row.to_dict()
 
 
+def _raise_if_audio(dataset: LeRobotDataset, operation: str) -> None:
+    """Fail early for the operations that would drop the audio files of a dataset."""
+    if dataset.meta.audio_keys:
+        raise NotImplementedError(
+            f"{operation} does not support datasets with audio features yet: {dataset.meta.audio_keys}."
+        )
+
+
 def delete_episodes(
     dataset: LeRobotDataset,
     episode_indices: list[int],
@@ -128,6 +136,7 @@ def delete_episodes(
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
         repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
     """
+    _raise_if_audio(dataset, "delete_episodes")
     if not episode_indices:
         raise ValueError("No episodes to delete")
 
@@ -204,6 +213,7 @@ def split_dataset(
         splits = {"train": 0.8, "val": 0.2}
         datasets = split_dataset(dataset, splits)
     """
+    _raise_if_audio(dataset, "split_dataset")
     if not splits:
         raise ValueError("No splits provided")
 
@@ -359,6 +369,7 @@ def modify_features(
             output_dir="./output",
         )
     """
+    _raise_if_audio(dataset, "modify_features")
     if add_features is None and remove_features is None:
         raise ValueError("Must specify at least one of add_features or remove_features")
 
@@ -1874,6 +1885,7 @@ def convert_image_to_video_dataset(
     Returns:
         A new :class:`LeRobotDataset` with images encoded as videos.
     """
+    _raise_if_audio(dataset, "convert_image_to_video_dataset")
     if rgb_encoder is None:
         rgb_encoder = rgb_encoder_defaults()
     if depth_encoder is None:

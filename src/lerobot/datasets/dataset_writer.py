@@ -20,6 +20,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextlib
 import logging
+import math
 import shutil
 import tempfile
 from pathlib import Path
@@ -40,7 +41,14 @@ from lerobot.configs import (
     rgb_encoder_defaults,
 )
 
-from .compute_stats import compute_episode_stats
+from .audio_utils import (
+    concatenate_audio_files,
+    get_audio_num_samples,
+    get_audio_sample_rate,
+    load_audio,
+    write_audio_file,
+)
+from .compute_stats import compute_audio_stats, compute_episode_stats
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import (
     get_hf_features_from_features,
@@ -102,7 +110,8 @@ class DatasetWriter:
     """Encapsulates write-side state and methods for LeRobotDataset.
 
     Owns: episode_buffer, image_writer, _pq_writer (ParquetWriter), _latest_episode,
-    _current_file_start_frame, _streaming_encoder, _episodes_since_last_encoding, _recorded_frames.
+    _current_file_start_frame, _streaming_encoder, _episodes_since_last_encoding, _recorded_frames,
+    _episode_audio.
     """
 
     def __init__(
@@ -151,14 +160,21 @@ class DatasetWriter:
         self._current_file_start_frame: int | None = None
         self._episodes_since_last_encoding: int = 0
         self._recorded_frames: int = initial_frames
+        # Audio of the current episode, keyed by audio feature: (samples, start_time_s)
+        self._episode_audio: dict[str, tuple[np.ndarray, float]] = {}
         self._finalized = False
+
+    @property
+    def _frame_features(self) -> dict[str, dict]:
+        """Features stored per frame, i.e. all features but audio, which is added per episode."""
+        return {key: ft for key, ft in self._meta.features.items() if ft["dtype"] != "audio"}
 
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self._meta.total_episodes if episode_index is None else episode_index
         ep_buffer: dict = {}
         ep_buffer["size"] = 0
         ep_buffer["task"] = []
-        for key in self._meta.features:
+        for key in self._frame_features:
             ep_buffer[key] = current_ep_idx if key == "episode_index" else []
         return ep_buffer
 
@@ -215,7 +231,7 @@ class DatasetWriter:
             if isinstance(frame[name], torch.Tensor):
                 frame[name] = frame[name].numpy()
 
-        validate_frame(frame, self._meta.features)
+        validate_frame(frame, self._frame_features)
 
         if self.episode_buffer is None:
             self.episode_buffer = self._create_episode_buffer()
@@ -268,6 +284,52 @@ class DatasetWriter:
 
         self.episode_buffer["size"] += 1
 
+    def add_episode_audio(
+        self, audio_key: str, audio: np.ndarray | str | Path, start_time_s: float = 0.0
+    ) -> None:
+        """Set the audio of the current episode for one audio feature.
+
+        Audio is not added frame by frame: the whole recording of each audio feature is passed once per
+        episode, before ``save_episode()``, which stores it. Calling this again for the same feature
+        replaces the previous audio.
+
+        Args:
+            audio_key: The audio feature, e.g. ``"observation.audio.wrist"``.
+            audio: Float samples in ``[-1, 1]`` of shape ``(num_samples, num_channels)``, or the path of an
+                audio file (e.g. the WAV file written by a microphone). Its sample rate and number of
+                channels must match the feature. The file is read here and is not deleted.
+            start_time_s: Time of the episode's first frame on the audio's timeline, in seconds from the
+                first sample: the frame at timestamp ``t`` lines up with the audio at ``t + start_time_s``.
+                Positive when the recording started before the first frame.
+
+        Raises:
+            ValueError: If ``audio_key`` is not an audio feature, or the audio does not match it.
+        """
+        if audio_key not in self._meta.audio_keys:
+            raise ValueError(
+                f"'{audio_key}' is not an audio feature. Audio features: {self._meta.audio_keys}."
+            )
+        if not math.isfinite(start_time_s):
+            raise ValueError(f"start_time_s must be finite, got {start_time_s}.")
+
+        feature = self._meta.features[audio_key]
+        samples, file_sample_rate = load_audio(audio)
+        sample_rate = get_audio_sample_rate(feature)
+        if file_sample_rate is not None and file_sample_rate != sample_rate:
+            raise ValueError(
+                f"The audio for '{audio_key}' is sampled at {file_sample_rate} Hz, but the feature expects "
+                f"{sample_rate} Hz."
+            )
+        if samples.shape[1] != feature["shape"][0]:
+            raise ValueError(
+                f"The audio for '{audio_key}' has {samples.shape[1]} channel(s), but the feature expects "
+                f"{feature['shape'][0]}."
+            )
+        if len(samples) == 0:
+            raise ValueError(f"The audio for '{audio_key}' is empty.")
+
+        self._episode_audio[audio_key] = (samples, start_time_s)
+
     def save_episode(
         self,
         episode_data: dict | None = None,
@@ -276,7 +338,13 @@ class DatasetWriter:
         """Save the current episode in self.episode_buffer to disk."""
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
 
-        validate_episode_buffer(episode_buffer, self._meta.total_episodes, self._meta.features)
+        validate_episode_buffer(episode_buffer, self._meta.total_episodes, self._frame_features)
+        missing_audio = set(self._meta.audio_keys) - set(self._episode_audio)
+        if missing_audio:
+            raise ValueError(
+                f"Missing audio for {sorted(missing_audio)}. Call `add_episode_audio` for each audio "
+                "feature before `save_episode`."
+            )
 
         # size and task are special cases that won't be added to hf_dataset
         episode_length = episode_buffer.pop("size")
@@ -294,7 +362,7 @@ class DatasetWriter:
         episode_buffer["task_index"] = np.array([self._meta.get_task_index(task) for task in tasks])
 
         for key, ft in self._meta.features.items():
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
+            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video", "audio"]:
                 continue
             stacked_values = np.stack(episode_buffer[key])
 
@@ -324,6 +392,11 @@ class DatasetWriter:
             ep_stats = compute_episode_stats(episode_buffer, self._meta.features)
 
         ep_metadata = self._save_episode_data(episode_buffer)
+
+        for audio_key, (samples, start_time_s) in self._episode_audio.items():
+            ep_stats[audio_key] = compute_audio_stats(samples)
+            ep_metadata.update(self._save_episode_audio(audio_key, episode_index, samples, start_time_s))
+        self._episode_audio = {}
 
         if streaming_encoder is not None:
             streaming_results = streaming_encoder.finish_episode()
@@ -590,6 +663,76 @@ class DatasetWriter:
         }
         return metadata
 
+    def _save_episode_audio(
+        self, audio_key: str, episode_index: int, samples: np.ndarray, start_time_s: float
+    ) -> dict:
+        """Append an episode's audio to the current FLAC file of ``audio_key``, or start a new one.
+
+        Like videos, the audio of consecutive episodes is concatenated into files of up to
+        ``audio_files_size_in_mb``. Episode boundaries are stored as timestamps that are exact multiples of
+        the sample period, so the reader recovers exact sample indices.
+        """
+        audio_path_template = self._meta.audio_path
+        audio_files_size_in_mb = self._meta.audio_files_size_in_mb
+        if audio_path_template is None or audio_files_size_in_mb is None:
+            raise ValueError(
+                f"Dataset '{self._meta.repo_id}' has no audio_path template: it stores no audio."
+            )
+        sample_rate = get_audio_sample_rate(self._meta.features[audio_key])
+
+        temp_dir = Path(tempfile.mkdtemp(dir=self._root))
+        try:
+            ep_path = temp_dir / f"{episode_index:06d}.flac"
+            write_audio_file(ep_path, samples, sample_rate)
+            ep_size_in_mb = get_file_size_in_mb(ep_path)
+
+            if (
+                episode_index == 0
+                or self._meta.latest_episode is None
+                or f"audio/{audio_key}/chunk_index" not in self._meta.latest_episode
+            ):
+                chunk_idx, file_idx = 0, 0
+                if self._meta.episodes is not None and len(self._meta.episodes) > 0:
+                    chunk_idx, file_idx = update_chunk_file_indices(
+                        self._meta.episodes[-1][f"audio/{audio_key}/chunk_index"],
+                        self._meta.episodes[-1][f"audio/{audio_key}/file_index"],
+                        self._meta.chunks_size,
+                    )
+                new_file = True
+            else:
+                latest_ep = self._meta.latest_episode
+                chunk_idx = latest_ep[f"audio/{audio_key}/chunk_index"][0]
+                file_idx = latest_ep[f"audio/{audio_key}/file_index"][0]
+                latest_path = self._root / audio_path_template.format(
+                    audio_key=audio_key, chunk_index=chunk_idx, file_index=file_idx
+                )
+                new_file = get_file_size_in_mb(latest_path) + ep_size_in_mb >= audio_files_size_in_mb
+                if new_file:
+                    chunk_idx, file_idx = update_chunk_file_indices(
+                        chunk_idx, file_idx, self._meta.chunks_size
+                    )
+                else:
+                    start_sample = get_audio_num_samples(latest_path)
+                    concatenate_audio_files([latest_path, ep_path], latest_path)
+
+            if new_file:
+                start_sample = 0
+                new_path = self._root / audio_path_template.format(
+                    audio_key=audio_key, chunk_index=chunk_idx, file_index=file_idx
+                )
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(ep_path), str(new_path))
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        return {
+            f"audio/{audio_key}/chunk_index": chunk_idx,
+            f"audio/{audio_key}/file_index": file_idx,
+            f"audio/{audio_key}/from_timestamp": start_sample / sample_rate,
+            f"audio/{audio_key}/to_timestamp": (start_sample + len(samples)) / sample_rate,
+            f"audio/{audio_key}/start_time_s": float(start_time_s),
+        }
+
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
         """Discard the current episode buffer and optionally delete temp camera frames.
 
@@ -604,6 +747,7 @@ class DatasetWriter:
         if delete_images:
             self._delete_camera_frame_dirs(self._meta.camera_keys)
 
+        self._episode_audio = {}
         self.episode_buffer = self._create_episode_buffer()
 
     def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
