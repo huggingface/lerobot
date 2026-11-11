@@ -135,6 +135,8 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
 
     Automatically scales warmup and decay steps if num_training_steps < num_decay_steps.
     This ensures the learning rate schedule completes properly even with shorter training runs.
+    num_decay_steps includes warmup: the LR multiplier is 1 when warmup ends
+    and reaches decay_lr / peak_lr at num_decay_steps.
     """
 
     num_warmup_steps: int
@@ -161,16 +163,20 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
                 f"(scale factor: {scale_factor:.3f})"
             )
 
-        def lr_lambda(current_step):
-            def linear_warmup_schedule(current_step):
+        decay_duration = actual_decay_steps - actual_warmup_steps
+        if decay_duration <= 0:
+            raise ValueError("Cosine decay requires at least one step after warmup.")
+
+        def lr_lambda(current_step: int) -> float:
+            def linear_warmup_schedule(current_step: int) -> float:
                 if current_step <= 0:
                     return 1 / (actual_warmup_steps + 1)
                 frac = 1 - current_step / actual_warmup_steps
                 return (1 / (actual_warmup_steps + 1) - 1) * frac + 1
 
-            def cosine_decay_schedule(current_step):
-                step = min(current_step, actual_decay_steps)
-                cosine_decay = 0.5 * (1 + math.cos(math.pi * step / actual_decay_steps))
+            def cosine_decay_schedule(current_step: int) -> float:
+                step = min(current_step - actual_warmup_steps, decay_duration)
+                cosine_decay = 0.5 * (1 + math.cos(math.pi * step / decay_duration))
                 alpha = self.decay_lr / self.peak_lr
                 decayed = (1 - alpha) * cosine_decay + alpha
                 return decayed
