@@ -323,7 +323,13 @@ class _TinyBackbone(nn.Module):
     def forward(self, *, inputs_embeds, past_key_values=None, attention_mask=None, **kwargs):
         prefix, suffix = inputs_embeds
         if suffix is None:
-            return [prefix, None], SimpleNamespace(prefix=prefix, crop=lambda length: None)
+            # This backbone keeps only the prefix, so cache cropping is a no-op.
+            layer = SimpleNamespace(get_seq_length=lambda: prefix.shape[1], crop=lambda length: None)
+            return [prefix, None], SimpleNamespace(
+                prefix=prefix,
+                crop=lambda length: None,
+                layers=[layer],
+            )
         self.suffix_calls += 1
         condition = kwargs.get("adarms_cond", [None, None])[1]
         if condition is not None:
