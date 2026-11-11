@@ -1,25 +1,30 @@
 # Third-party reliability reporters
 
-After `lerobot-eval` finishes, it writes evaluation artifacts (commonly including `eval_info.json`) under the chosen output directory. Those artifacts are enough for **external postprocessors** to compare a baseline checkpoint run against a candidate run without changing LeRobot internals.
-
-> EnvHub environments and `lerobot-eval` produce the rollouts. Reliability reporters only consume eval outputs.
+LeRobot evaluation outputs can be analyzed by independent tools without changing LeRobot itself.
+Run `lerobot-eval` for each checkpoint and retain its `eval_info.json` artifacts.
+External reporters read those outputs; they do not generate rollouts or replace EnvHub environments.
 
 ## Example: Arisole `arisole-eval`
 
-[`arisole-eval`](https://pypi.org/project/arisole-eval/) is an independent Apache-2.0 CLI that post-processes LeRobot evaluation directories into a paired reliability comparison. It is **built by [Arisole](https://www.arisole.com/developers/lerobot)** and is **not** an official LeRobot / Hugging Face partnership or endorsement.
+[`arisole-eval`](https://pypi.org/project/arisole-eval/) is an independently maintained,
+Apache-2.0-licensed command-line reporter developed by
+[Arisole](https://www.arisole.com/developers/lerobot).
+This example is **not an official LeRobot or Hugging Face integration, partnership, or endorsement**.
+
+Install the published package and compare two completed evaluation runs:
 
 ```bash
-pip install arisole-eval
+pip install "arisole-eval>=0.1.4"
 
-# Point at two lerobot-eval output directories that each contain eval_info.json
+# Both directories must contain LeRobot evaluation artifacts.
 arisole evaluate --baseline ./runs/policy-v1 --candidate ./runs/policy-v2 --out result.json
 arisole report result.json
 ```
 
-Notes:
+The reporter runs locally without an Arisole API key; optional cloud upload is separate.
+It supports common `eval_info.json` layouts, including per-episode and multi-task results.
+For paired regression analysis, shared seeds alone do not establish comparable labeled episodes.
+Missing labels or insufficient comparable evidence must not be interpreted as a pass.
 
-- Works locally without an Arisole API key; cloud upload is optional.
-- Does not invent success labels — it reports limited evidence as insufficient when episode counts are too small.
-- Compatible with common `eval_info.json` shapes (`per_episode` / `aggregated` and multi-task layouts LeRobot already emits).
-
-Developer docs: [https://www.arisole.com/developers/lerobot](https://www.arisole.com/developers/lerobot)
+See the [Arisole developer documentation](https://www.arisole.com/developers/lerobot)
+for reporter-specific behavior and configuration.
