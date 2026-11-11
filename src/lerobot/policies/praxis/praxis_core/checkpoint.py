@@ -1,4 +1,4 @@
-# Vendored from runwayml/praxis-1 (main, with the base-checkpoint additions of PR #41).
+# Vendored from the praxis repository (main, with its base-checkpoint additions).
 # Import paths are rewritten to the LeRobot package; the class PraxisPolicy of praxis.model
 # is PraxisModel here. Keep the file in sync with the praxis repository.
 """Load praxis weights from a directory of safetensors shards.

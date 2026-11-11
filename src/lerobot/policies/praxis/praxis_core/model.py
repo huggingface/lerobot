@@ -1,4 +1,4 @@
-# Vendored from runwayml/praxis-1-oss at commit 8dad1a4 plus runwayml/praxis-1 PR #27 (def5cb04),
+# Vendored from runwayml/praxis-1-oss at commit 8dad1a4 plus the canvas rule of the released DROID checkpoint,
 # original path praxis/model.py.
 # Import paths are rewritten to the LeRobot package; the class PraxisPolicy of praxis.model
 # is renamed PraxisModel here. Keep this file in sync with the upstream file.

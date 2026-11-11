@@ -67,7 +67,7 @@ class PraxisConfig(PreTrainedConfig):
 
     Observations: ``observation.images.<exterior>`` and ``observation.images.<wrist>``
     (RGB, any size; the processor makes the tile of the checkpoint: 224 x 416 with an
-    antialiased resize for M2@50k, 256 x 416 for K@50k),
+    antialiased resize for the released checkpoint `praxis-1-droid`, 256 x 416 for the earlier DROID checkpoint),
     ``observation.state`` as ``[x, y, z, roll, pitch, yaw, gripper]`` in metres and
     radians (extrinsic x-y-z Euler angles, the DROID convention, Franka flange frame)
     and ``task`` (the instruction). Actions: the same seven values, absolute targets.
@@ -126,7 +126,7 @@ class PraxisConfig(PreTrainedConfig):
     n_action_steps: int = 24
     max_context_chunks: int = 1
 
-    # The recommended sampler settings of M2@50k (praxis-1 `configs/inference_droid.yaml`).
+    # The recommended sampler settings of `praxis-1-droid` (the praxis repository's `configs/inference_droid.yaml`).
     num_steps: int = 2
     t_shift: float = 12.5
     cfg_scale: float = 1.0

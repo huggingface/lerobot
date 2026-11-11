@@ -139,7 +139,7 @@ def test_factory_registers_praxis() -> None:
     config = make_policy_config("praxis")
     assert isinstance(config, PraxisConfig)
     assert config.chunk_size == 24 and config.num_steps == 2 and config.max_context_chunks == 1
-    # the recommended settings of M2@50k
+    # the recommended settings of `praxis-1-droid`
     assert (config.t_shift, config.cfg_scale, config.cfg_video_scale) == (12.5, 1.0, 4.0)
 
 
@@ -201,7 +201,7 @@ def test_processors_are_identity(tmp_path: Path) -> None:
 
 
 def test_tile_step_follows_the_checkpoint_antialias() -> None:
-    """With `video.antialias` the tile step applies the fit rule of M2@50k, bit for bit."""
+    """With `video.antialias` the tile step applies the fit rule of `praxis-1-droid`, bit for bit."""
     from lerobot.policies.praxis.praxis_core.single_arm import _tile_view
 
     model_config = tiny_praxis_config()
@@ -265,7 +265,7 @@ def test_pose_round_trips() -> None:
 def test_select_action_matches_the_praxis_session_bitwise(antialias: bool) -> None:
     """The LeRobot glue (images, poses, history, seeds) gives the praxis commands, bit for bit.
 
-    With `video.antialias` (M2@50k) the preprocessor makes the tiles with the fit rule and the policy
+    With `video.antialias` (`praxis-1-droid`) the preprocessor makes the tiles with the fit rule and the policy
     feeds them to the session as they are; the praxis session gets the raw frames.
     """
     model_config = tiny_praxis_config()

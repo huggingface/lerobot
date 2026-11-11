@@ -1,4 +1,4 @@
-# Vendored from runwayml/praxis-1 (main, praxis/bimanual.py) with the LeRobot reductions noted
+# Vendored from the praxis repository (main, praxis/bimanual.py) with the LeRobot reductions noted
 # in the module docstring; import paths rewritten to the LeRobot package.
 """Robot input and output glue for the bimanual (YAM) rig. No neural networks.
 

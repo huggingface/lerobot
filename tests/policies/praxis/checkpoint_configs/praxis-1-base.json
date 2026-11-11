@@ -219,9 +219,9 @@
     "blank_caption": " "
   },
   "source": {
-    "checkpoint": "gs://runway-research-checkpoints-no-public-access/cratetrain/bantam/logs/bantam-cc-p2mix-768p-r13/checkpoints/global_step=00526120/",
+    "checkpoint": "runwayml/praxis-1-base-lerobot",
     "global_step": 526120,
-    "contents": "P-base: video backbone + shared action-expert trunk. No per-embodiment heads (head, embed_proprio, action_encoder.w1), no optimizer state. Add embodiment heads before fine-tuning."
+    "contents": "The base checkpoint: video backbone + shared action-expert trunk. No per-embodiment heads (head, embed_proprio, action_encoder.w1), no optimizer state. Add embodiment heads before fine-tuning."
   },
   "heads": {
     "status": "absent: make a checkpoint of your rig with scripts/init_heads.py (praxis/train/README.md, Fine-tune the base checkpoint)",

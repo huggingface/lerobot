@@ -15,11 +15,11 @@
 # limitations under the License.
 """The camera canvas of the two single-arm checkpoints (CPU, no weights).
 
-M2@50k (`praxis-1-droid-m2-step50000`, the released checkpoint) has 224 x 416 tiles with an
+`praxis-1-droid` (the released checkpoint) has 224 x 416 tiles with an
 antialiased resize (`video.antialias: true`): a centre crop to the native 720 x 1280 aspect, one
-antialiased bilinear resize to 234 x 416 and a centre trim to 224 x 416. K@50k has 256 x 416 tiles
+antialiased bilinear resize to 234 x 416 and a centre trim to 224 x 416. The earlier DROID checkpoint has 256 x 416 tiles
 with a plain resize. The pinned hashes come from the praxis-1 repository's tests (`tests/test_data_path.py`
-and `tests/test_single_arm.py` at PR #27), computed with the original serve and training code.
+and `tests/test_single_arm.py`), computed with the original serve and training code.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def _views(seed: int, h: int = 288, w: int = 512) -> tuple[np.ndarray, np.ndarra
     return ext, wrist
 
 
-# SHA-256 of the uint8 K@50k canvas (1, 3, 2, 256, 832) and a few pixels (channel, frame, row,
+# SHA-256 of the uint8 canvas of the earlier DROID checkpoint (1, 3, 2, 256, 832) and a few pixels (channel, frame, row,
 # column) of the canvas of the original implementation.
 K_CANVAS_REF = {
     (720, 1280): (
@@ -83,7 +83,7 @@ K_CANVAS_REF = {
         },
     ),
 }
-# SHA-256 of the uint8 M2@50k canvas (1, 3, 2, 224, 832) of the training data path and the serve
+# SHA-256 of the uint8 `praxis-1-droid` canvas (1, 3, 2, 224, 832) of the training data path and the serve
 # code, on the same frames. A 416 x 234 frame, the size the client sends, is trimmed with no resize.
 M2_CANVAS_REF = {
     (720, 1280): "e9a050a35e7c8d6fff1940109412f0375d5772b33293327c5cbf3c14dc47db48",
@@ -234,7 +234,7 @@ def test_tile_views_on_cuda_frames_gives_the_cpu_bytes() -> None:
 
 
 def test_sampler_defaults_are_the_recommended_settings() -> None:
-    """The defaults of the policy config and of the vendored sampler are M2@50k's recommended settings."""
+    """The defaults of the policy config and of the vendored sampler are the recommended settings of `praxis-1-droid`."""
     s, c = SamplerSettings(), PraxisConfig()
     assert (s.num_steps, s.t_shift, s.cfg_scale, s.cfg_video_scale) == (2, 12.5, 1.0, 4.0)
     assert (c.num_steps, c.t_shift, c.cfg_scale, c.cfg_video_scale, c.max_context_chunks) == (

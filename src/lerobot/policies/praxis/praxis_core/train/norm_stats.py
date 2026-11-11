@@ -1,4 +1,4 @@
-# Vendored from runwayml/praxis-1 PR #41 (praxis/train/norm_stats.py): the statistics only. The
+# Vendored from the praxis repository (praxis/train/norm_stats.py, the base-checkpoint tooling): the statistics only. The
 # window sampler of the LeRobot port is `examples/praxis/compute_norm_stats.py`.
 
 """The normalization statistics of a dataset for a new single-arm rig.

@@ -164,9 +164,9 @@ def tile_views(
     praxis canvas (``single_arm.tile_clip``), so the policy's canvas of a tile is the tile itself,
     bit for bit. ``antialias`` is the ``video.antialias`` of the checkpoint config:
 
-    * off (K@50k): a centre crop to the tile aspect (none when the aspects agree within
+    * off (the earlier DROID checkpoint): a centre crop to the tile aspect (none when the aspects agree within
       ``aspect_tol``), one bilinear resize without antialias in float32 and a round to uint8 levels.
-    * on (M2@50k, the fit rule): a centre crop to the native 720 x 1280 aspect, one antialiased
+    * on (`praxis-1-droid`, the fit rule): a centre crop to the native 720 x 1280 aspect, one antialiased
       bilinear resize to 234 x 416 (none for a view already at that size) and a centre trim to the
       tile, 224 x 416.
 
@@ -252,11 +252,11 @@ class PraxisTileViewsProcessorStep(ObservationProcessorStep):
 
     Attributes:
         camera_keys: Observation keys of the views (exterior, wrist).
-        tile_height: Tile height of the checkpoint (224 for M2@50k, 256 for K@50k).
+        tile_height: Tile height of the checkpoint (224 for `praxis-1-droid`, 256 for the earlier DROID checkpoint).
         tile_width: Tile width of the checkpoint (416).
         aspect_tol: Aspect tolerance of the centre crop.
         antialias: The ``video.antialias`` of the checkpoint: the fit rule with an antialiased
-            resize (M2@50k) instead of the plain resize to the tile (K@50k).
+            resize (`praxis-1-droid`) instead of the plain resize to the tile (the earlier DROID checkpoint).
         fit_rule: ``single_arm`` (the DROID fit rule of `tile_views`) or ``bimanual`` (the YAM
             rule of `tile_views_bimanual`: the views fit a 416 px box together).
     """
