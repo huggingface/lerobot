@@ -1305,7 +1305,7 @@ def _copy_videos(
 
         dst_key = rename_keys.get(src_key, src_key)
 
-        video_files: set[tuple[str, str]] = set()
+        video_files: set[tuple[Path, Path]] = set()
         for ep_idx in range(len(src_dataset.meta.episodes)):
             try:
                 video_files.add(

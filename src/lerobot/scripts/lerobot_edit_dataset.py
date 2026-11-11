@@ -604,9 +604,10 @@ def handle_rename_feature(cfg: EditDatasetConfig) -> None:
     if not cfg.operation.feature_mapping:
         raise ValueError("feature_mapping must be specified for rename_feature operation")
 
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    repo_id = _require_repo_id(cfg)
+    dataset = LeRobotDataset(repo_id, root=cfg.root)
     output_repo_id, output_dir, backup_path = get_output_path(
-        cfg.repo_id,
+        repo_id,
         new_repo_id=cfg.new_repo_id,
         root=cfg.root,
         new_root=cfg.new_root,
