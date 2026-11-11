@@ -60,6 +60,8 @@ All flags below are prefixed with `--dataset.rgb_encoder.` on the CLI.
 | `video_backend` | `str`            | `"pyav"`      | Only `"pyav"` is currently implemented for video encoding.                                                                                                                                                              |
 | `extra_options` | `dict`           | `{}`          | Extra FFmpeg or codec specific options merged after the structured fields above. Cannot override keys already set by those fields.                                                                                      |
 
+On Apple Silicon, VideoToolbox maps `crf` to a constant-quality level by rounding and clamping `100 - crf` to the range 1–100. The default `crf=30` selects quality 70. LeRobot skips this mapping on Intel Macs, when `crf=None`, or when `extra_options` enables software encoding (`allow_sw` or `require_sw`) or specifies `b`, `ab`, `constant_bit_rate`, `flags`, or `global_quality`.
+
 ---
 
 ## Depth streams
