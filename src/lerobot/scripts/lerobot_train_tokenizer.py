@@ -207,13 +207,15 @@ def process_episode(args):
         states = []
         actions = []
 
+        absolute_to_relative_idx = dataset.absolute_to_relative_idx
+
         for abs_idx in range(from_idx, to_idx):
             # map absolute index to relative index if needed
-            if dataset.reader._absolute_to_relative_idx is not None:
-                if abs_idx not in dataset.reader._absolute_to_relative_idx:
+            if absolute_to_relative_idx is not None:
+                if abs_idx not in absolute_to_relative_idx:
                     # this episode's frames aren't in the filtered dataset
                     return None
-                rel_idx = dataset.reader._absolute_to_relative_idx[abs_idx]
+                rel_idx = absolute_to_relative_idx[abs_idx]
             else:
                 rel_idx = abs_idx
 
@@ -378,7 +380,7 @@ def compute_compression_stats(tokenizer, action_chunks: np.ndarray):
 
 
 @parser.wrap()
-def train_tokenizer(cfg: TokenizerTrainingConfig):
+def train_tokenizer(cfg: TokenizerTrainingConfig) -> None:
     """
     Train FAST tokenizer for action encoding.
 
@@ -459,10 +461,9 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
     logger.info(f"Collected {len(all_chunks)} action chunks")
 
     # extract only encoded dimensions FIRST (before normalization)
-    encoded_chunks = []
-    for start, end in encoded_dim_ranges:
-        encoded_chunks.append(all_chunks[:, :, start:end])
-    encoded_chunks = np.concatenate(encoded_chunks, axis=-1)  # [N, H, D_encoded]
+    encoded_chunks = np.concatenate(
+        [all_chunks[:, :, start:end] for start, end in encoded_dim_ranges], axis=-1
+    )  # [N, H, D_encoded]
     logger.info(f"Extracted {encoded_chunks.shape[-1]} encoded dimensions")
 
     # apply normalization to encoded dimensions
@@ -476,10 +477,7 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
         action_stats = norm_stats[ACTION]
 
         # build encoded dimension indices
-        encoded_dim_indices = []
-        for start, end in encoded_dim_ranges:
-            encoded_dim_indices.extend(range(start, end))
-        encoded_dim_indices = np.array(encoded_dim_indices)
+        encoded_dim_indices = np.array([i for start, end in encoded_dim_ranges for i in range(start, end)])
 
         # extract stats for encoded dimensions only
         encoded_stats = {}
@@ -597,7 +595,7 @@ def train_tokenizer(cfg: TokenizerTrainingConfig):
             logger.info(f"Successfully pushed tokenizer to: https://huggingface.co/{hub_repo_id}")
         except Exception as e:
             logger.error(f"Error pushing to hub: {e}")
-            logger.error("   Make sure you're logged in with `huggingface-cli login`")
+            logger.error("   Make sure you're logged in with `hf auth login`")
 
 
 def main():

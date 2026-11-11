@@ -100,14 +100,22 @@ class ImagePrepProcessorStep(ObservationProcessorStep):
         return features
 
 
+def _tensor_action(transition: EnvTransition) -> torch.Tensor | None:
+    """The transition's action, checked to be a tensor (None when absent)."""
+    action = transition.get(TransitionKey.ACTION)
+    if action is not None and not isinstance(action, torch.Tensor):
+        raise ValueError(f"Expected a tensor action, got {type(action).__name__}.")
+    return action
+
+
 @ProcessorStepRegistry.register(name="vla_jepa_clip_actions")
 class ClipActionsProcessorStep(ProcessorStep):
     """Clips action tensor to [-1, 1] before unnormalization."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
+        action = _tensor_action(transition)
         if action is not None:
-            transition = dict(transition)
+            transition = transition.copy()
             transition[TransitionKey.ACTION] = action.clamp(-1.0, 1.0)
         return transition
 
@@ -131,9 +139,9 @@ class PreSnapGripperProcessorStep(ProcessorStep):
         self.threshold = threshold
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
+        action = _tensor_action(transition)
         if action is not None and action.shape[-1] > self.gripper_dim:
-            transition = dict(transition)
+            transition = transition.copy()
             a = action.clone()
             a[..., self.gripper_dim] = (a[..., self.gripper_dim] >= self.threshold).float()
             transition[TransitionKey.ACTION] = a
@@ -166,9 +174,9 @@ class BinarizeGripperProcessorStep(ProcessorStep):
         self.threshold = threshold
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
+        action = _tensor_action(transition)
         if action is not None and action.shape[-1] > self.gripper_dim:
-            transition = dict(transition)
+            transition = transition.copy()
             a = action.clone()
             a[..., self.gripper_dim] = 1.0 - 2.0 * (a[..., self.gripper_dim] > self.threshold).float()
             transition[TransitionKey.ACTION] = a
@@ -230,6 +238,10 @@ def make_vla_jepa_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
+    if config.input_features is None or config.output_features is None:
+        raise ValueError(
+            "`input_features` and `output_features` must be resolved before building the processors."
+        )
     features = {**config.input_features, **config.output_features}
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
@@ -246,9 +258,7 @@ def make_vla_jepa_pre_post_processors(
         steps.rename_observations,
         steps.add_batch_dim,
         steps.to_device,
-        ImagePrepProcessorStep(
-            resize_to=tuple(config.resize_images_to) if config.resize_images_to else None,
-        ),
+        ImagePrepProcessorStep(resize_to=config.resize_images_to or None),
         relative_step,
         steps.normalize,
     ]

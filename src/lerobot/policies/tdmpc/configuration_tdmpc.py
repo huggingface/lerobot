@@ -203,5 +203,5 @@ class TDMPCConfig(PreTrainedConfig):
         return list(range(self.horizon))
 
     @property
-    def reward_delta_indices(self) -> None:
+    def reward_delta_indices(self) -> list[int]:
         return list(range(self.horizon))

@@ -1,0 +1,100 @@
+{
+  mode: "router",
+  listen: { endpoints: ["tls/localhost:7447"] },
+  scouting: { multicast: { enabled: false }, gossip: { enabled: false } },
+  transport: {
+    link: {
+      protocols: ["tls"],
+      tls: {
+        root_ca_certificate: "./certs/ca.pem",
+        listen_certificate: "./certs/router.pem",
+        listen_private_key: "./certs/router-key.pem",
+        enable_mtls: true,
+        close_link_on_expiration: true,
+      },
+    },
+  },
+  access_control: {
+    enabled: true,
+    default_permission: "deny",
+    rules: [
+      {
+        id: "server-control", permission: "allow", flows: ["ingress"],
+        messages: ["declare_queryable", "reply"],
+        key_exprs: [
+          "lerobot/inference/v1/deployments/manipulation/describe",
+          "lerobot/inference/v1/deployments/manipulation/instances/*/open",
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/control",
+        ],
+      },
+      {
+        id: "server-output", permission: "allow", flows: ["ingress"], messages: ["put"],
+        key_exprs: [
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/act",
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/language/result",
+        ],
+      },
+      {
+        id: "server-input", permission: "allow", flows: ["ingress"], messages: ["declare_subscriber"],
+        key_exprs: [
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/obs",
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/language/request",
+        ],
+      },
+      {
+        id: "server-alive", permission: "allow", flows: ["ingress"], messages: ["liveliness_token"],
+        key_exprs: ["lerobot/inference/v1/deployments/manipulation/instances/*/alive"],
+      },
+      {
+        id: "server-presence", permission: "allow", flows: ["ingress"],
+        messages: ["declare_liveliness_subscriber", "liveliness_query"],
+        key_exprs: ["lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/alive"],
+      },
+      {
+        id: "robot-control", permission: "allow", flows: ["ingress"], messages: ["query"],
+        key_exprs: [
+          "lerobot/inference/v1/deployments/manipulation/describe",
+          "lerobot/inference/v1/deployments/manipulation/instances/*/open",
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/control",
+        ],
+      },
+      {
+        id: "robot-output", permission: "allow", flows: ["ingress"], messages: ["put"],
+        key_exprs: [
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/obs",
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/language/request",
+        ],
+      },
+      {
+        id: "robot-input", permission: "allow", flows: ["ingress"], messages: ["declare_subscriber"],
+        key_exprs: [
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/act",
+          "lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/language/result",
+        ],
+      },
+      {
+        id: "robot-alive", permission: "allow", flows: ["ingress"], messages: ["liveliness_token"],
+        key_exprs: ["lerobot/inference/v1/deployments/manipulation/instances/*/sessions/*/alive"],
+      },
+      {
+        id: "robot-presence", permission: "allow", flows: ["ingress"],
+        messages: ["declare_liveliness_subscriber", "liveliness_query"],
+        key_exprs: ["lerobot/inference/v1/deployments/manipulation/instances/*/alive"],
+      },
+      {
+        id: "authenticated-egress", permission: "allow", flows: ["egress"],
+        messages: ["declare_queryable", "query", "reply", "declare_subscriber", "put", "delete",
+                   "liveliness_token", "declare_liveliness_subscriber", "liveliness_query"],
+        key_exprs: ["lerobot/inference/v1/deployments/manipulation/**"],
+      },
+    ],
+    subjects: [
+      { id: "server", cert_common_names: ["policy-server"] },
+      { id: "robot", cert_common_names: ["robot-client"] },
+    ],
+    policies: [
+      { subjects: ["server"], rules: ["server-control", "server-output", "server-input", "server-alive", "server-presence", "authenticated-egress"] },
+      { subjects: ["robot"], rules: ["robot-control", "robot-output", "robot-input", "robot-alive", "robot-presence", "authenticated-egress"] },
+    ],
+  },
+}

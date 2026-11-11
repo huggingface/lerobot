@@ -33,6 +33,8 @@ from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.transition import Transition
 from tests.utils import skip_if_package_missing
 
+pytestmark = pytest.mark.dataset
+
 
 def create_test_transitions(count: int = 3) -> list[Transition]:
     """Create test transitions for integration testing."""

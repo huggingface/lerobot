@@ -211,7 +211,7 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
 
 
 def main() -> None:
-    annotate()
+    annotate()  # type: ignore[call-arg]
 
 
 if __name__ == "__main__":

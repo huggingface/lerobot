@@ -14,15 +14,18 @@
 
 import abc
 import builtins
+import logging
 from pathlib import Path
 
 import draccus
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import MotorCalibration
+from lerobot.motors.motors_bus import MotorCalibration, MotorsBusBase
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
+
+logger = logging.getLogger(__name__)
 
 
 # TODO(aliberts): action/obs typing such as Generic[ObsType, ActType] similar to gym.Env ?
@@ -42,6 +45,16 @@ class Robot(abc.ABC):
     # Set these in ALL subclasses
     config_class: builtins.type[RobotConfig]
     name: str
+    # Opt-in for a robot-specific hold(), used instead of position hold.
+    supports_command_hold: bool = False
+    # Opt-in for retaining the last applied position targets (including gripper).
+    # Before the first command, a finite measured pose establishes the targets.
+    # Mixed velocity/torque robots require their own stop implementation.
+    supports_position_hold: bool = False
+
+    def hold(self) -> None:
+        """Retain a safe controller command when command hold is explicitly supported."""
+        raise NotImplementedError(f"{self.name} does not implement command hold")
 
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name
@@ -49,7 +62,6 @@ class Robot(abc.ABC):
         self.calibration_dir = (
             config.calibration_dir if config.calibration_dir else HF_LEROBOT_CALIBRATION / ROBOTS / self.name
         )
-        self.calibration_dir.mkdir(parents=True, exist_ok=True)
         self.calibration_fpath = self.calibration_dir / f"{self.id}.json"
         self.calibration: dict[str, MotorCalibration] = {}
         if self.calibration_fpath.is_file():
@@ -167,8 +179,25 @@ class Robot(abc.ABC):
             fpath (Path | None): Optional path to save the calibration file. Defaults to `self.calibration_fpath`.
         """
         fpath = self.calibration_fpath if fpath is None else fpath
+        fpath.parent.mkdir(parents=True, exist_ok=True)
         with open(fpath, "w") as f, draccus.config_type("json"):
             draccus.dump(self.calibration, f, indent=4)
+
+    def _keep_calibration_file(self, bus: MotorsBusBase) -> bool:
+        """Offer the calibration file of this id instead of a new calibration. When the user keeps it, write
+        it to `bus` with the torque off, so that the motors store it, and return True."""
+        if self.calibration:
+            user_input = input(
+                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
+            )
+            if user_input.strip().lower() != "c":
+                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
+                bus.disable_torque()
+                bus.write_calibration(self.calibration)
+                return True
+
+        logger.info(f"\nRunning calibration of {self}")
+        return False
 
     @abc.abstractmethod
     def configure(self) -> None:

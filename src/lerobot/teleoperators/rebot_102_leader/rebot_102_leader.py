@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from lerobot.lerobot_types import RobotAction
 from lerobot.motors import MotorCalibration
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _motorbridge_smart_servo_available, require_package
 
 from ..teleoperator import Teleoperator
@@ -107,6 +108,9 @@ class RebotArm102Leader(Teleoperator):
                 logger.info(f"Using calibration file associated with the id {self.id}")
                 return
 
+        if self.bus is None:
+            raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
+
         logger.info(f"\nRunning calibration of {self}")
         input(
             "\nCalibration: set zero position.\n"
@@ -114,7 +118,7 @@ class RebotArm102Leader(Teleoperator):
             "Press ENTER when ready..."
         )
 
-        self.calibration = {}
+        self.calibration: dict[str, MotorCalibration] = {}
         for motor_name, motor_id in self.config.joint_ids.items():
             self.bus.unlock(motor_id)
             time.sleep(_SETTLE_SEC)
@@ -132,6 +136,8 @@ class RebotArm102Leader(Teleoperator):
         logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        if self.bus is None:
+            raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
         for motor_id in self.config.joint_ids.values():
             self.bus.unlock(motor_id)
             time.sleep(_SETTLE_SEC)
@@ -140,6 +146,8 @@ class RebotArm102Leader(Teleoperator):
             self.bus.reset_multi_turn(motor_id)
 
     def _read_raw_positions(self) -> dict[str, float]:
+        if self.bus is None:
+            raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
         result: dict[int, ServoMonitor | None] = self.bus.sync_monitor(list(self.config.joint_ids.values()))
         id_to_name = {v: k for k, v in self.config.joint_ids.items()}
         raw_positions: dict[str, float] = {}
@@ -202,6 +210,8 @@ class RebotArm102Leader(Teleoperator):
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        if self.bus is None:
+            raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
         self.bus.close()
         self.bus = None
         logger.info(f"{self} disconnected.")

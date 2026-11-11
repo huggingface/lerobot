@@ -19,91 +19,106 @@ from dataclasses import dataclass, field
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
+from .motor_family import MOTOR_PROFILES, ArmControlMode, GripperControlMode, MotorFamily
 
 
 @dataclass
 class RebotB601FollowerConfig:
-    """Base configuration class for the Seeed Studio reBot B601-DM follower arm.
+    """Configuration shared by the Damiao and RobStride B601 follower arms."""
 
-    The B601-DM is a 6-DOF arm plus gripper driven by Damiao CAN motors. Motor
-    communication goes through the ``motorbridge`` package.
-    """
-
-    # Communication port. For ``can_adapter="damiao"`` this is the Damiao serial
-    # bridge device (e.g. "/dev/ttyACM0"); for ``can_adapter="socketcan"`` it is
-    # the CAN channel name (e.g. "can0").
+    # Serial device or native CAN channel.
     port: str
 
-    # CAN adapter type:
-    #   "damiao"    - Damiao dedicated serial bridge (default)
-    #   "socketcan" - SocketCAN based adapters (PCAN, slcan, embedded controllers, ...)
-    can_adapter: str = "damiao"
+    # Motor family: "dm" or "rs".
+    motor_family: MotorFamily = MotorFamily.DM
 
-    # Baud rate for the Damiao serial bridge (only used when can_adapter="damiao").
+    # CAN transport: "damiao" (serial bridge) or "socketcan" (native CAN).
+    can_adapter: str | None = None
+
+    # Damiao serial bridge baud rate.
     dm_serial_baud: int = 921600
 
+    # Disable motor torque before disconnecting.
     disable_torque_on_disconnect: bool = True
 
-    # `max_relative_target` limits the magnitude of the relative positional target
-    # vector for safety purposes (in degrees). Set to a positive scalar to apply the
-    # same value to all motors, or to a dict mapping motor names to per-motor values.
+    # Maximum position change per command in degrees. None disables the limit.
     max_relative_target: float | dict[str, float] | None = None
 
-    # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
-    # Maps motor names to their (send_can_id, recv_can_id) pair.
-    motor_can_ids: dict[str, tuple[int, int]] = field(
-        default_factory=lambda: {
-            "shoulder_pan": (0x01, 0x11),
-            "shoulder_lift": (0x02, 0x12),
-            "elbow_flex": (0x03, 0x13),
-            "wrist_flex": (0x04, 0x14),
-            "wrist_yaw": (0x05, 0x15),
-            "wrist_roll": (0x06, 0x16),
-            "gripper": (0x07, 0x17),
-        }
-    )
+    # Joint name to (send ID, receive ID).
+    motor_can_ids: dict[str, tuple[int, int]] | None = None
 
-    # Max speed (deg/s) per joint for POS_VEL arms and FORCE_POS gripper (motor order).
-    pos_vel_velocity: float | list[float] = field(
-        default_factory=lambda: [150.0, 150.0, 150.0, 150.0, 150.0, 150.0, 900.0]
-    )
+    # Arm mode: "mit" or "pos_vel".
+    control_mode: ArmControlMode = ArmControlMode.MIT
 
-    # Arm control: "mit" or "pos_vel".
-    control_mode: str = "mit"
+    # Gripper mode: "mit", "force_pos", or "mit_impedance".
+    gripper_control_mode: GripperControlMode | None = None
 
-    # MIT kp/kd per arm joint (motor order). Unused when control_mode="pos_vel".
-    mit_kp: float | list[float] = field(default_factory=lambda: [45.0, 45.0, 45.0, 8.0, 9.0, 8.0, 8.0])
-    mit_kd: float | list[float] = field(default_factory=lambda: [12.0, 12.0, 12.0, 1.0, 1.0, 1.0, 1.0])
+    # MIT gains shared by all joints or keyed by joint name.
+    mit_kp: float | dict[str, float] | None = None
+    mit_kd: float | dict[str, float] | None = None
 
-    # Gripper control: "force_pos" or "mit".
-    gripper_control_mode: str = "force_pos"
+    # POS_VEL and FORCE_POS speed limit in degrees per second.
+    pos_vel_velocity: float | dict[str, float] | None = None
 
-    # FORCE_POS only: max grip force, in [0, 1].
-    gripper_torque_ratio: float = 0.07
+    # FORCE_POS gripper force as a fraction of peak torque.
+    gripper_torque_ratio: float | None = None
 
-    # MIT only.
-    gripper_mit_kp: float = 8.0
-    gripper_mit_kd: float = 0.3
+    # Impedance gripper moving and holding torque limits in N.m.
+    gripper_torque_limit: float | None = None
+    gripper_hold_torque_limit: float | None = None
 
-    # Soft joint limits (degrees). These are clipped against on every action.
-    joint_limits: dict[str, tuple[float, float]] = field(
-        default_factory=lambda: {
-            "shoulder_pan": (-150.0, 150.0),
-            "shoulder_lift": (-200.0, 1.0),
-            "elbow_flex": (-200.0, 1.0),
-            "wrist_flex": (-80.0, 90.0),
-            "wrist_yaw": (-90.0, 90.0),
-            "wrist_roll": (-90.0, 90.0),
-            "gripper": (-270.0, 0.0),
-        }
-    )
+    # Soft limits in public joint degrees.
+    joint_limits: dict[str, tuple[float, float]] | None = None
+
+    def __post_init__(self) -> None:
+        self.motor_family = MotorFamily(self.motor_family)
+        self.control_mode = ArmControlMode(self.control_mode)
+        profile = MOTOR_PROFILES[self.motor_family]
+        joints = tuple(profile.motor_models)
+
+        if self.can_adapter is None:
+            self.can_adapter = profile.can_adapter
+
+        if self.motor_can_ids is None:
+            self.motor_can_ids = dict(profile.motor_can_ids)
+
+        if self.gripper_control_mode is None:
+            self.gripper_control_mode = profile.gripper_control_mode
+        else:
+            self.gripper_control_mode = GripperControlMode(self.gripper_control_mode)
+
+        for name in ("mit_kp", "mit_kd", "pos_vel_velocity"):
+            value = getattr(self, name)
+            default = getattr(profile, name)
+            if value is None:
+                value = default
+            if value is not None:
+                if isinstance(value, (int, float)):
+                    value = dict.fromkeys(joints, float(value))
+                else:
+                    value = {**(default or {}), **value}
+                setattr(self, name, value)
+
+        if self.joint_limits is None:
+            self.joint_limits = dict(profile.joint_limits)
+        else:
+            self.joint_limits = {**profile.joint_limits, **self.joint_limits}
+
+        if self.gripper_torque_ratio is None:
+            self.gripper_torque_ratio = profile.gripper_torque_ratio
+
+        for name in ("gripper_torque_limit", "gripper_hold_torque_limit"):
+            if getattr(self, name) is None:
+                setattr(self, name, getattr(profile, name))
 
 
 @RobotConfig.register_subclass("rebot_b601_follower")
 @dataclass
 class RebotB601FollowerRobotConfig(RobotConfig, RebotB601FollowerConfig):
-    """Registered configuration for the reBot B601-DM follower robot."""
+    """Registered configuration for the reBot B601 follower robot."""
 
-    pass
+    def __post_init__(self) -> None:
+        RobotConfig.__post_init__(self)
+        RebotB601FollowerConfig.__post_init__(self)

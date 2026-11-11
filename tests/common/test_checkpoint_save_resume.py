@@ -20,6 +20,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 from safetensors.torch import load_file
+from torch.amp import GradScaler
 
 from lerobot.common.train_utils import (
     load_training_metadata,
@@ -29,7 +30,12 @@ from lerobot.common.train_utils import (
 )
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
-from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR, TRAINING_STEP
+from lerobot.utils.constants import (
+    PRETRAINED_MODEL_DIR,
+    SCALER_STATE,
+    TRAINING_STATE_DIR,
+    TRAINING_STEP,
+)
 from lerobot.utils.io_utils import load_json, write_json
 from tests.fixtures.dummy_checkpoint_policy import make_dummy_policy
 
@@ -42,9 +48,12 @@ def make_cfg(**overrides) -> TrainPipelineConfig:
     return cfg
 
 
-def passthrough_accelerator() -> SimpleNamespace:
-    """The accelerator surface save/resume touches on non-sharded runs."""
-    return SimpleNamespace(unwrap_model=lambda m: m, wait_for_everyone=lambda: None)
+def passthrough_accelerator(scaler=None) -> SimpleNamespace:
+    """The accelerator surface save/resume touches on non-sharded runs.
+
+    `scaler` is None on every precision but fp16, which is what a real `Accelerator` exposes.
+    """
+    return SimpleNamespace(unwrap_model=lambda m: m, wait_for_everyone=lambda: None, scaler=scaler)
 
 
 class TestSaveCheckpoint:
@@ -89,6 +98,18 @@ class TestSaveCheckpoint:
         assert metadata["batch_size"] == 3
         assert metadata["grad_accum_steps"] == 4
 
+    def test_scaler_state_written_only_for_fp16(self, tmp_path):
+        policy = make_dummy_policy()
+        save_checkpoint(
+            tmp_path,
+            step=3,
+            cfg=make_cfg(),
+            policy=policy,
+            optimizer=torch.optim.Adam(policy.parameters()),
+            accelerator=passthrough_accelerator(),  # no scaler: "no"/bf16
+        )
+        assert not (tmp_path / TRAINING_STATE_DIR / SCALER_STATE).exists()
+
     def test_dp_world_size_legacy_fallback(self, tmp_path):
         """Pre-v0.7 checkpoints recorded num_processes; the reader falls back to it."""
         state_dir = tmp_path / TRAINING_STATE_DIR
@@ -130,6 +151,60 @@ class TestResume:
         assert restored["param_groups"][0]["lr"] == original["param_groups"][0]["lr"]
         for key, tensor in original["state"][0].items():
             assert torch.equal(restored["state"][0][key], tensor), key
+
+    def test_fp16_scaler_survives_the_round_trip(self, tmp_path):
+        """The non-sharded fp16 contract: a resume keeps the calibrated loss scale.
+
+        Without this the resumed run restarts at `init_scale` and burns the first handful of
+        updates recalibrating — invisible except as a sudden run of skipped steps.
+        """
+        policy = make_dummy_policy()
+        optimizer = torch.optim.Adam(policy.parameters())
+        scaler = GradScaler("cpu", init_scale=128.0, growth_factor=4.0)
+        state = scaler.state_dict()
+        state["_growth_tracker"] = 5  # a calibrated scaler, not a freshly constructed one
+        scaler.load_state_dict(state)
+
+        cfg = make_cfg()
+        cfg.accelerator.mixed_precision = "fp16"
+        save_checkpoint(
+            tmp_path,
+            step=9,
+            cfg=cfg,
+            policy=policy,
+            optimizer=optimizer,
+            accelerator=passthrough_accelerator(scaler=scaler),
+        )
+        assert (tmp_path / TRAINING_STATE_DIR / SCALER_STATE).is_file()
+        assert load_training_metadata(tmp_path / TRAINING_STATE_DIR)["mixed_precision"] == "fp16"
+
+        cfg.checkpoint_path = tmp_path
+        fresh_scaler = GradScaler("cpu")
+        resume_after_prepare(
+            cfg,
+            passthrough_accelerator(scaler=fresh_scaler),
+            make_dummy_policy(),
+            torch.optim.Adam(make_dummy_policy().parameters()),
+            None,
+        )
+        assert fresh_scaler.state_dict() == scaler.state_dict()
+
+    def test_resume_without_scaler_state_is_tolerated(self, tmp_path, caplog):
+        """A checkpoint from before fp16 support, or from a bf16 run, must not block a resume."""
+        cfg, _, _ = self._checkpointed_run(tmp_path)  # written with no scaler
+        cfg.accelerator.mixed_precision = "fp16"
+        scaler = GradScaler("cpu", init_scale=64.0)
+
+        with caplog.at_level("WARNING"):
+            resume_after_prepare(
+                cfg,
+                passthrough_accelerator(scaler=scaler),
+                make_dummy_policy(),
+                torch.optim.Adam(make_dummy_policy().parameters()),
+                None,
+            )
+        assert SCALER_STATE in caplog.text
+        assert scaler.get_scale() == 64.0
 
     def test_resume_warns_on_changed_cadence_and_topology(self, tmp_path, caplog):
         """The recorded grad-accum factor and parallelism snapshot must be compared on

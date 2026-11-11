@@ -38,8 +38,9 @@ import torch.nn.functional as F  # noqa: N812
 from einops import rearrange
 from torch import Tensor
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, PREDICTION
 from lerobot.utils.import_utils import require_package
 
 from .configuration_lingbot_va import LingBotVAConfig
@@ -48,7 +49,6 @@ from .utils import (
     WanTransformer3DModel,
     WanVAEStreamingWrapper,
     _sample_timestep_id,
-    _torch_dtype,
     clean_prompt,
     data_seq_to_patch,
     denormalize_latents,
@@ -72,7 +72,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.dtype = _torch_dtype(config.dtype)
+        self.dtype = config.dtype
 
         # Trainable dual-stream transformer (the only sub-module saved in the LeRobot checkpoint).
         self.transformer = WanTransformer3DModel(
@@ -145,7 +145,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return self._frozen["streaming_vae"]
 
     # PreTrainedPolicy API
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> list[torch.nn.Parameter]:
         # Only the transformer is trainable; the VAE / text encoder stay frozen (kept outside the
         # nn.Module registry). With PEFT/LoRA this naturally returns just the adapter params.
         return [p for p in self.transformer.parameters() if p.requires_grad]
@@ -172,6 +172,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._negative_prompt_embeds = None
         self.last_predicted_frames = None
         self.last_predicted_latents = None
+        # With ``return_predicted_video``: the current chunk's decoded clip, how many actions it
+        # spans, and the frame last returned (see ``_with_predicted_frame``).
+        self._chunk_frames: Tensor | None = None
+        self._chunk_len = 0
+        self._shown_frame = -1
         self._use_cfg = (cfg.guidance_scale > 1) or (cfg.action_guidance_scale > 1)
         # Two independent flow-matching schedulers (video latent + action streams).
         self._scheduler = FlowMatchScheduler(shift=cfg.snr_shift, sigma_min=0.0, extra_one_step=True)
@@ -400,13 +405,18 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return torch.cat(per_cam, dim=-1).to(self.config.device)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, video_noise: Tensor | None = None
+    ) -> Tensor | PolicyOutput:
         """Return one action, refilling the chunk (and feeding back observed keyframes) as needed.
 
         Mirrors the upstream LIBERO client loop (``evaluation/libero/client.py``): the first obs is
         the conditioning frame; every observation produced afterwards is buffered as a keyframe and,
         once the chunk's actions are exhausted, the buffered frames + executed actions are fed back
         into the KV cache before the next chunk is predicted.
+
+        With ``config.return_predicted_video``, returns a `PolicyOutput` whose prediction holds the
+        imagined camera frames matching the action being served (see ``_with_predicted_frame``).
         """
         self.eval()
         self._ensure_frozen_modules()
@@ -415,7 +425,8 @@ class LingBotVAPolicy(PreTrainedPolicy):
         if not self._started:
             # First call: this observation conditions the first chunk (it is *not* a keyframe).
             self._started = True
-            actions = self.predict_action_chunk(batch)  # [B, chunk_size, n_used]
+            # [B, chunk_size, n_used]
+            actions = self._predict_and_decode(batch, noise=noise, video_noise=video_noise)
             self._action_queue.extend(actions.transpose(0, 1))  # [chunk_size, B, n_used]
             self._obs_buffer = []
             self._exec_step = 0
@@ -427,17 +438,71 @@ class LingBotVAPolicy(PreTrainedPolicy):
             if len(self._action_queue) == 0:
                 # All actions for the current chunk have been executed; feed the observed
                 # keyframes + executed actions back and predict the next chunk.
-                actions = self.predict_action_chunk(None)
+                actions = self._predict_and_decode(None, noise=noise, video_noise=video_noise)
                 self._action_queue.extend(actions.transpose(0, 1))
                 self._exec_step = 0
 
         self._prev_j = self._exec_step % self.config.action_per_frame
         self._exec_step += 1
-        return self._action_queue.popleft()
+        return self._with_predicted_frame(self._action_queue.popleft())
+
+    def _predict_and_decode(
+        self, batch: dict[str, Tensor] | None, *, noise: Tensor | None, video_noise: Tensor | None
+    ) -> Tensor:
+        """Predict the next chunk; with ``return_predicted_video``, also decode its imagined clip."""
+        actions, latents = self._predict_chunk(batch, noise=noise, video_noise=video_noise)
+        if self.config.return_predicted_video:
+            self._chunk_frames = self._decode_video_batch(latents)  # [B, T, H, W, 3] uint8
+            self._chunk_len = actions.shape[1]
+            self._shown_frame = -1
+        return actions
+
+    def _with_predicted_frame(self, action: Tensor) -> Tensor | PolicyOutput:
+        """Pair ``action`` with the imagined frame it belongs to, when that frame changes.
+
+        The clip's frames are spread evenly over the chunk's actions, so the imagined video plays
+        as the chunk executes. Returns the bare action when there is no new frame to show.
+        """
+        if self._chunk_frames is None:
+            return action
+        n_frames = self._chunk_frames.shape[1]
+        served = self._chunk_len - len(self._action_queue) - 1  # index of ``action`` in its chunk
+        index = min(served * n_frames // self._chunk_len, n_frames - 1)
+        if index == self._shown_frame:
+            return action
+        self._shown_frame = index
+        frames = self._chunk_frames[:, index].permute(0, 3, 1, 2)  # [B, 3, H, W], like camera frames
+        return {ACTION: action, PREDICTION: {"observation": self._split_cameras(frames)}}
+
+    def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
+        """Split decoded ``[B, 3, H, W]`` frames back into the cameras they tile (inverse of the layout)."""
+        keys, h, w = self.config.obs_cam_keys, self.config.height, self.config.width
+        if self.config.camera_layout == "robotwin_tshape":
+            wrists, head = frames.split([h // 2, h], dim=2)
+            left, right = wrists.split(w // 2, dim=3)
+            return {keys[0]: head, keys[1]: left, keys[2]: right}
+        return dict(zip(keys, frames.split(w, dim=3), strict=True))
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Run one autoregressive chunk and return actions ``[B, chunk_size, n_used]`` (normalized)."""
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        video_noise: Tensor | None = None,
+    ) -> Tensor:
+        """Run one autoregressive chunk and return actions ``[B, chunk_size, n_used]`` (normalized).
+
+        ``noise`` is the starting action sample ``[1, action_dim, frame_chunk_size, action_per_frame, 1]``
+        and ``video_noise`` the starting video latent ``[1, 48, frame_chunk_size, latent_h, latent_w]``. When
+        None, each is drawn with ``torch.randn``.
+        """
+        return self._predict_chunk(batch, noise=noise, video_noise=video_noise)[0]
+
+    def _predict_chunk(
+        self, batch: dict[str, Tensor] | None, *, noise: Tensor | None, video_noise: Tensor | None
+    ) -> tuple[Tensor, Tensor]:
+        """Run one autoregressive chunk; return its actions and predicted video latents."""
         self.eval()
         self._ensure_frozen_modules()
         self._maybe_init_prompt(batch)
@@ -448,13 +513,15 @@ class LingBotVAPolicy(PreTrainedPolicy):
             self._init_latent = init_latent
             self._init_streaming_cache(init_latent)
             self._obs_buffer = []  # frame 0 (the init obs) conditions the chunk; it is not fed back
-            actions, latents = self._infer(init_latent, frame_st_id=0)
+            actions, latents = self._infer(init_latent, frame_st_id=0, noise=noise, video_noise=video_noise)
             self._first_chunk = False
         else:
             # Feed the real observed keyframes + the executed actions back into the KV cache.
             self._compute_kv_cache(self._obs_buffer, self._executed_actions)
             self._obs_buffer = []
-            actions, latents = self._infer(None, frame_st_id=self._frame_st_id)
+            actions, latents = self._infer(
+                None, frame_st_id=self._frame_st_id, noise=noise, video_noise=video_noise
+            )
 
         # actions: [B, action_dim, F, action_per_frame, 1] (model-normalized). Keep for KV feedback.
         self._executed_actions = actions
@@ -473,7 +540,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             a = a[:, :, 1:]  # drop frame 0 -> (F-1) frames of actions
         a = a.squeeze(-1).flatten(2)  # [B, n_used, n_steps]
         a = a.transpose(1, 2).contiguous()  # [B, n_steps, n_used]
-        return a.to(torch.float32)
+        return a.to(torch.float32), latents
 
     # Prompt / text encoding
     def _maybe_init_prompt(self, batch):
@@ -747,16 +814,27 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
     # The core dual-stream denoising loop (one chunk)
     @torch.no_grad()
-    def _infer(self, init_latent, frame_st_id=0):
+    def _infer(
+        self, init_latent, frame_st_id=0, *, noise: Tensor | None = None, video_noise: Tensor | None = None
+    ):
         cfg = self.config
         device = self.config.device
         latent_h, latent_w = self._latent_hw
         frame_chunk_size = cfg.frame_chunk_size
 
-        latents = torch.randn(1, 48, frame_chunk_size, latent_h, latent_w, device=device, dtype=self.dtype)
-        actions = torch.randn(
-            1, cfg.action_dim, frame_chunk_size, cfg.action_per_frame, 1, device=device, dtype=self.dtype
-        )
+        # The denoising loops below write into both samples in place, so keep the caller's tensors intact.
+        if video_noise is None:
+            latents = torch.randn(
+                1, 48, frame_chunk_size, latent_h, latent_w, device=device, dtype=self.dtype
+            )
+        else:
+            latents = video_noise.to(device=device, dtype=self.dtype).clone()
+        if noise is None:
+            actions = torch.randn(
+                1, cfg.action_dim, frame_chunk_size, cfg.action_per_frame, 1, device=device, dtype=self.dtype
+            )
+        else:
+            actions = noise.to(device=device, dtype=self.dtype).clone()
 
         self._scheduler.set_timesteps(cfg.num_inference_steps)
         self._action_scheduler.set_timesteps(cfg.action_num_inference_steps)
@@ -841,7 +919,12 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def _decode_predicted_video(self, latents) -> Tensor:
-        """VAE-decode predicted latents into a uint8 frame stack ``[T, H, W, 3]`` on CPU."""
+        """VAE-decode predicted latents into the first env's uint8 frame stack ``[T, H, W, 3]`` on CPU."""
+        return self._decode_video_batch(latents)[0]
+
+    @torch.no_grad()
+    def _decode_video_batch(self, latents) -> Tensor:
+        """VAE-decode predicted latents into uint8 frame stacks ``[B, T, H, W, 3]`` on CPU."""
         vae = self._vae
         z_dim = vae.config.z_dim
         vae_device = next(vae.parameters()).device
@@ -849,5 +932,5 @@ class LingBotVAPolicy(PreTrainedPolicy):
         latents = denormalize_latents(latents, vae.config.latents_mean, vae.config.latents_std, z_dim)
         video = vae.decode(latents, return_dict=False)[0]  # [B, C, F, H, W] in [-1, 1]
         video = (video.float().clamp(-1, 1) + 1.0) / 2.0
-        video = (video[0].permute(1, 2, 3, 0) * 255.0).round().to(torch.uint8)  # [F, H, W, C]
+        video = (video.permute(0, 2, 3, 4, 1) * 255.0).round().to(torch.uint8)  # [B, F, H, W, C]
         return video.cpu()
