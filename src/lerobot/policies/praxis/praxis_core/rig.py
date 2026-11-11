@@ -1,4 +1,4 @@
-# Vendored from runwayml/praxis-1 PR #41 (praxis/rig.py); import paths rewritten to the LeRobot package.
+# Vendored from the praxis repository (praxis/rig.py, the base-checkpoint tooling); import paths rewritten to the LeRobot package.
 # Not vendored: `init_heads`, which writes a praxis checkpoint; the LeRobot form is
 # `examples/praxis/init_heads.py`, which links the base shards and writes the heads next to them.
 """Make a single-arm checkpoint of your rig from the base checkpoint.

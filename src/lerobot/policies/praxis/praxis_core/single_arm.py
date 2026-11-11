@@ -1,4 +1,4 @@
-# Vendored from runwayml/praxis-1-oss at commit 8dad1a4 plus runwayml/praxis-1 PR #27 (def5cb04),
+# Vendored from runwayml/praxis-1-oss at commit 8dad1a4 plus the canvas rule of the released DROID checkpoint,
 # original path praxis/single_arm.py, reduced to what the LeRobot policy uses: the flange-frame
 # client (no client frame table, forward-kinematics check or control modes; the frame conversion
 # stays as the identity with its operations, for bit equality), poses and grippers as arrays
@@ -248,7 +248,7 @@ def _tile_view(
       no crop when the aspects agree within ``tol``) and one resize to the tile.
     * on (the fit rule): a centre crop to the native view aspect, one
       antialiased resize to :func:`fit_resize_size` and a centre trim to the
-      tile (234x416 -> 224x416 for M2@50k). An input already at the fit size
+      tile (234x416 -> 224x416 for `praxis-1-droid`). An input already at the fit size
       is not resized.
     """
     if isinstance(frames, torch.Tensor):

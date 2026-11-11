@@ -493,7 +493,7 @@ class PraxisPolicy(PreTrainedPolicy):
         self._stack_rows = config.chunk_size + 1
         self._envs: list[_EnvState] = []
         # The canvas rule of the checkpoint applies to raw frames only. The preprocessor's tiles must
-        # not go through it again: the fit rule of an antialiased canvas (M2@50k) is not idempotent.
+        # not go through it again: the fit rule of an antialiased canvas (`praxis-1-droid`) is not idempotent.
         self._tile_hw: tuple[int, int] = (int(self.variant.tile_size[0]), int(self.variant.tile_size[1]))
         self._antialias = bool(self.variant.antialias)
         self._camera_keys: list[str] = list(config.image_keys)

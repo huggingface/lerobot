@@ -97,7 +97,7 @@ def write_checksums(dst: Path, known: Mapping[str, str] | None = None) -> Path:
 
 
 DEFAULT_IMAGE_SHAPE = (3, 288, 512)  # the DROID rig cameras of the praxis sim; any size works
-# The serve settings of each rig's checkpoint (praxis-1 `configs/sim_droid.yaml`, `configs/serve_yam.yaml`);
+# The serve settings of each rig's checkpoint (the praxis repository's `configs/sim_droid.yaml`, `configs/serve_yam.yaml`);
 # the single-arm values are the PraxisConfig defaults.
 RIG_SAMPLER_DEFAULTS: dict[str, dict[str, float | int]] = {
     "single_arm": {},

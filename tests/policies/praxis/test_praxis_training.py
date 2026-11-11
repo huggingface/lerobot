@@ -298,7 +298,7 @@ def _antialias_model_config() -> dict:
 
 
 def test_training_windows_follow_the_checkpoint_antialias() -> None:
-    """`video.antialias` sets the tile resize of the training windows like inference (the M2@50k fit rule)."""
+    """`video.antialias` sets the tile resize of the training windows like inference (the fit rule of `praxis-1-droid`)."""
     policy = make_tiny_policy(seed=16, model_config=_antialias_model_config())
     batch = training_batch(policy, seed=17, image=(3, 72, 128))
     window = policy._training_windows(batch)[0]
