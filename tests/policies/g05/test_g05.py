@@ -1484,9 +1484,13 @@ def test_gated_delta_cached_suffix_matches_tokenwise_decode():
     torch.testing.assert_close(bulk, tokenwise, atol=2e-7, rtol=2e-6)
 
 
-def test_from_pretrained_constructs_on_meta_and_assigns_directly(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("sharded", [False, True])
+def test_from_pretrained_constructs_on_meta_and_assigns_directly(tmp_path: Path, monkeypatch, sharded):
+    if sharded:
+        monkeypatch.setattr(G05Policy, "_max_shard_size", 1)
     reference = G05Policy(_config(), backend=TinyG05Backend())
     reference.save_pretrained(tmp_path)
+    assert (tmp_path / "model.safetensors.index.json").exists() is sharded
     constructed_on_meta = False
 
     def make_tiny_backend(config, checkpoint_dir):

@@ -23,9 +23,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
 from huggingface_hub import hf_hub_download, save_torch_state_dict
-from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from huggingface_hub.errors import HfHubHTTPError
-from safetensors.torch import load_model as load_model_as_safetensor
+from huggingface_hub.constants import SAFETENSORS_INDEX_FILE, SAFETENSORS_SINGLE_FILE
+from huggingface_hub.errors import EntryNotFoundError
+from safetensors.torch import load_file, load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, PreTrainedConfig
@@ -37,6 +37,7 @@ from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
 
+from .checkpoint import SafetensorsCheckpoint, safetensors_shard_names
 from .chunk import ChunkPolicySpec, ExecutionMode
 from .utils import log_model_loading_keys, rename_legacy_vision_model_keys
 
@@ -56,6 +57,28 @@ T = TypeVar("T", bound="PreTrainedPolicy")
 # Pinned far above any policy's total size so save_torch_state_dict always emits exactly one
 # `model.safetensors` (no shards, no index) — a constant, not a computed byte count.
 _SINGLE_FILE_SHARD_SIZE = "1TB"
+
+
+def _missing_keys(model: nn.Module, loaded_keys: set[str]) -> list[str]:
+    """Return the state-dict keys of `model` that no shard filled.
+
+    Tied tensors share storage: a key whose storage another loaded key filled is not missing.
+    """
+    storage_to_keys: dict[tuple, set[str]] = {}
+
+    def storage_key(tensor: Tensor) -> tuple:
+        return (tensor.device, tensor.dtype, tensor.data_ptr(), tensor.shape, tensor.stride())
+
+    state_dict = model.state_dict()
+    for key, tensor in state_dict.items():
+        if tensor.device.type != "meta" and tensor.numel() > 0:
+            storage_to_keys.setdefault(storage_key(tensor), set()).add(key)
+    filled = set(loaded_keys)
+    for key in loaded_keys:
+        tensor = state_dict.get(key)
+        if tensor is not None and tensor.device.type != "meta" and tensor.numel() > 0:
+            filled |= storage_to_keys.get(storage_key(tensor), set())
+    return [key for key in state_dict if key not in filled]
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -128,6 +151,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 "checkpoint-conditional value), otherwise the text head is never used."
             )
 
+    # Largest weights file that `save_pretrained` writes. The default keeps every policy one
+    # `model.safetensors`. A policy whose weights exceed the Hub's 50 GB file limit sets a smaller
+    # value (transformers shards at 50 GB since v5.5, 5 GB before) and is written as
+    # `model-XXXXX-of-NNNNN.safetensors` shards
+    # plus `model.safetensors.index.json`. Only enable this for policies whose loader reaches
+    # `_resolve_weight_files`; independent loaders (PI0/PI05/PI0-FAST, XVLA, WALL-X, GR00T)
+    # still require their own sharded-checkpoint support. `dcp_to_safetensors` always writes a
+    # single `model.safetensors`.
+    _max_shard_size: ClassVar[int | str] = _SINGLE_FILE_SHARD_SIZE
+
     def _save_pretrained(self, save_directory: Path) -> None:
         """Serialize this policy's parameters (and config) into `save_directory`.
 
@@ -135,6 +168,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         COLLECTIVE, so when the policy is sharded this method (via `save_pretrained`) must be
         called on EVERY rank — a rank-0-gated call deadlocks. File writes happen on the main
         process only, in all layouts (single, DDP, sharded).
+
+        The weights go to one `model.safetensors`, or, when they exceed `_max_shard_size`, to
+        `model-XXXXX-of-NNNNN.safetensors` shards with a `model.safetensors.index.json` (the
+        transformers layout).
 
         Args:
             save_directory (Path): Target directory for the policy config (`config.json`) and the
@@ -154,7 +191,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             # gate prevents N ranks racing on the same files. Single process: never taken.
             return
         self.config._save_pretrained(save_directory)
-        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=_SINGLE_FILE_SHARD_SIZE)
+        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=self._max_shard_size)
 
     @classmethod
     def from_pretrained(
@@ -175,6 +212,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         The policy is set in evaluation mode by default using `policy.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `policy.train()`.
+
+        The weights are read from `model.safetensors`, or from the shards of
+        `model.safetensors.index.json` when the checkpoint is sharded, in a local directory or a
+        Hub repo.
         """
         if config is None:
             config = PreTrainedConfig.from_pretrained(
@@ -194,38 +235,125 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if device is None:
             # PreTrainedConfig.__post_init__ always resolves a device; None here is a programming error.
             raise ValueError(f"{type(config).__name__}.device is unset; cannot load the weights")
-        if os.path.isdir(model_id):
-            print("Loading weights from local directory")
-            model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
-            policy = cls._load_as_safetensor(instance, model_file, device, strict)
-        else:
-            try:
-                model_file = hf_hub_download(
-                    repo_id=model_id,
-                    filename=SAFETENSORS_SINGLE_FILE,
-                    revision=revision,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    token=token,
-                    local_files_only=local_files_only,
-                )
-                policy = cls._load_as_safetensor(instance, model_file, device, strict)
-            except HfHubHTTPError as e:
-                raise FileNotFoundError(
-                    f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
-                ) from e
+        weight_files = cls._resolve_weight_files(
+            model_id,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            token=token,
+            local_files_only=local_files_only,
+        )
+        policy = cls._load_weight_files(instance, weight_files, device, strict)
 
         policy.to(device)
         policy.eval()
         return policy
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        missing_keys, unexpected_keys = load_model_as_safetensor(
-            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
+    def _resolve_weight_files(cls, model_id: str, **hub_kwargs: Any) -> list[Path]:
+        """Return the safetensors file(s) of a checkpoint, downloading them from the Hub if needed.
+
+        Args:
+            model_id (str): A local directory or a Hub repo id.
+            **hub_kwargs: Download options of `hf_hub_download` (`revision`, `cache_dir`, `token`, ...).
+
+        Returns:
+            list[Path]: One `model.safetensors`, or the shards that `model.safetensors.index.json`
+            lists, in sorted order.
+
+        Raises:
+            FileNotFoundError: Neither file is present.
+            HfHubHTTPError: A Hub request failed for a reason other than a missing file.
+        """
+        if os.path.isdir(model_id):
+            root = Path(model_id)
+            if (root / SAFETENSORS_SINGLE_FILE).is_file():
+                logging.info("Loading weights from local directory")
+                return [root / SAFETENSORS_SINGLE_FILE]
+            if (root / SAFETENSORS_INDEX_FILE).is_file():
+                logging.info("Loading sharded weights from local directory")
+                return [root / name for name in safetensors_shard_names(root / SAFETENSORS_INDEX_FILE)]
+            raise FileNotFoundError(
+                f"{root} holds neither {SAFETENSORS_SINGLE_FILE} nor {SAFETENSORS_INDEX_FILE}"
+            )
+        try:
+            return [Path(hf_hub_download(repo_id=model_id, filename=SAFETENSORS_SINGLE_FILE, **hub_kwargs))]
+        except EntryNotFoundError:
+            pass
+        try:
+            index = Path(hf_hub_download(repo_id=model_id, filename=SAFETENSORS_INDEX_FILE, **hub_kwargs))
+        except EntryNotFoundError as e:
+            raise FileNotFoundError(
+                f"Neither {SAFETENSORS_SINGLE_FILE} nor {SAFETENSORS_INDEX_FILE} found on the "
+                f"HuggingFace Hub in {model_id}"
+            ) from e
+        return [
+            Path(hf_hub_download(repo_id=model_id, filename=name, **hub_kwargs))
+            for name in safetensors_shard_names(index)
+        ]
+
+    @classmethod
+    def _load_weight_files(cls, model: T, files: list[Path], map_location: str, strict: bool) -> T:
+        """Dispatch a checkpoint to the policy's loader without writing a merged copy.
+
+        Override `_load_checkpoint` to filter, rename or assign tensors across all shards.
+        Legacy single-file hooks still work for single-file checkpoints; they must adopt the
+        checkpoint hook before loading shards.
+        """
+        if not files:
+            raise ValueError("A checkpoint must contain at least one weights file")
+        if len(files) == 1:
+            return cls._load_as_safetensor(model, str(files[0]), map_location, strict)
+        # A legacy single-file hook can stay. Shards are refused only when `_load_checkpoint`
+        # is still the base implementation.
+        legacy_hook = cls._load_as_safetensor.__func__ is not PreTrainedPolicy._load_as_safetensor.__func__  # type: ignore[attr-defined]
+        base_checkpoint_hook = (
+            cls._load_checkpoint.__func__ is PreTrainedPolicy._load_checkpoint.__func__  # type: ignore[attr-defined]
         )
+        if legacy_hook and base_checkpoint_hook:
+            raise NotImplementedError(
+                f"{cls.__name__} must implement _load_checkpoint to load sharded weights"
+            )
+        return cls._load_checkpoint(model, SafetensorsCheckpoint(files), map_location, strict)
+
+    @classmethod
+    def _load_checkpoint(
+        cls, model: T, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> T:
+        """Load a checkpoint, checking keys after all shards and load-state hooks have run.
+
+        The default streams one shard at a time. Custom loaders can inspect the whole
+        checkpoint through its keys, shapes and tensors without creating a temporary file.
+        """
+        device = resolve_safetensors_device(map_location)
+        if len(checkpoint.files) == 1:
+            missing_keys, unexpected_keys = load_model_as_safetensor(
+                model, str(checkpoint.files[0]), strict=strict, device=device
+            )
+        else:
+            expected = set(model.state_dict())
+            missing = set(expected)
+            unexpected: set[str] = set()
+            for file in checkpoint.files:
+                state = load_file(str(file), device=device)
+                result = model.load_state_dict(state, strict=False)
+                missing.intersection_update(result.missing_keys)
+                unexpected.update(result.unexpected_keys)
+                del state
+            missing_keys = _missing_keys(model, expected - missing)
+            unexpected_keys = sorted(unexpected)
+            if strict and (missing_keys or unexpected_keys):
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {type(model).__name__}: "
+                    f"missing keys {missing_keys}, unexpected keys {unexpected_keys}"
+                )
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model
+
+    @classmethod
+    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+        """Compatibility entry point for a single weights file."""
+        return cls._load_checkpoint(model, SafetensorsCheckpoint([Path(model_file)]), map_location, strict)
 
     @abc.abstractmethod
     def get_optim_params(self) -> OptimizerParams:
