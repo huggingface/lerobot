@@ -285,6 +285,11 @@ lawam = [
     "lerobot[diffusers-dep]",
 ]
 cosmos3 = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
+# praxis (Runway Praxis-1): Qwen3.5 text encoder via transformers; the Wan2.2 VAE and the
+# model are in-tree.
+# The optional kernels of the checkpoint's validation setup (flash-attn-4, causal-conv1d,
+# flash-linear-attention) are documented in docs/source/praxis.mdx; they are not an extra.
+praxis = ["lerobot[transformers-dep]"]
 
 # Features
 # Remote inference transport and serialization.
@@ -379,6 +384,7 @@ all = [
     "lerobot[g05]",
     "lerobot[lawam]",
     "lerobot[cosmos3]",
+    "lerobot[praxis]",
     "lerobot[remote]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -469,6 +475,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403", "E402", "D104"]
+# N803: Triton kernels name their constexpr arguments in upper case by convention
+"src/lerobot/policies/praxis/praxis_core/kernels/*.py" = ["N803"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 
@@ -538,7 +546,7 @@ exclude_dirs = [
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
 [tool.typos]
-default.extend-words = { trak = "trak", nd = "nd" }
+default.extend-words = { trak = "trak", nd = "nd", dout = "dout" }
 default.extend-ignore-re = [
     "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",                      # spellchecker:disable-line
     "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on", # spellchecker:<on|off>
