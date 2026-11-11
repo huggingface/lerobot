@@ -31,7 +31,7 @@ from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipelin
 from lerobot.robots import RobotConfig
 from lerobot.sim import EnvDescriptor, SimConfig
 from lerobot.sim.integrations import envhub
-from lerobot.teleoperators.config import TeleoperatorConfig
+from lerobot.teleoperators import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 if TYPE_CHECKING:

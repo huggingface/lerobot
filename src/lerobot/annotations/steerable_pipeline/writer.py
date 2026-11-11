@@ -54,12 +54,12 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from lerobot.datasets.io_utils import write_table_one_row_group_per_episode
-from lerobot.datasets.language import (
+from lerobot.datasets import (
     EVENT_ONLY_STYLES,
     PERSISTENT_STYLES,
     column_for_style,
     validate_camera_field,
+    write_table_one_row_group_per_episode,
 )
 from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 
@@ -73,7 +73,7 @@ logger = logging.getLogger(__name__)
 # source of truth. Re-exported here so existing imports
 # (``from lerobot.annotations.steerable_pipeline.writer import SAY_TOOL_SCHEMA``)
 # keep working.
-from lerobot.datasets.language import DEFAULT_TOOLS, SAY_TOOL_SCHEMA  # noqa: F401, E402
+from lerobot.datasets import DEFAULT_TOOLS, SAY_TOOL_SCHEMA  # noqa: F401, E402
 
 
 def _row_persistent_sort_key(row: dict[str, Any]) -> tuple:

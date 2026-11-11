@@ -23,7 +23,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.types import FeatureType, NormalizationMode
+from lerobot.configs import FeatureType, NormalizationMode
 from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,

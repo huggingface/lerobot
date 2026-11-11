@@ -21,14 +21,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as functional
 
-from lerobot.policies.lawam.lam_core.core.lam_model import build_latent_action_model
-from lerobot.policies.lawam.latent_world.processor_utils import (
+from ..lam_core.core.lam_model import build_latent_action_model
+from ..latent_world.processor_utils import (
     build_latent_world_processor_spec,
     configure_latent_world_processor,
 )
-from lerobot.policies.lawam.latent_world.types import LatentWorldPolicyInferBatch, LatentWorldPolicyTrainBatch
-from lerobot.policies.lawam.utils import sync_managed_modules_training_mode
-
+from ..latent_world.types import LatentWorldPolicyInferBatch, LatentWorldPolicyTrainBatch
+from ..utils import sync_managed_modules_training_mode
 from .flowmatching_expert import ConditionalFlowMatchingConfig, ConditionalFlowMatchingHead
 from .qwen3vl import (
     load_qwen3vl,

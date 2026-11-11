@@ -26,23 +26,21 @@ from typing import Any, cast
 import numpy as np
 
 from lerobot.sim import EnvDescriptor, LocalVectorEnv, SimConfig, SimSettings
-from lerobot.transport.protocol import (
+from lerobot.transport import (
+    BoundedSubscriber,
     Envelope,
     ErrorCode,
     MessageType,
-    ProtocolError,
-    RGBImage,
-    decode_message,
-    encode_message,
-    validate_segment,
-)
-from lerobot.transport.zenoh import (
-    BoundedSubscriber,
     PendingQuery,
     PresenceEvent,
     PresenceToken,
+    ProtocolError,
+    RGBImage,
     ZenohConfig,
     ZenohTransport,
+    decode_message,
+    encode_message,
+    validate_segment,
 )
 from lerobot.utils.feature_spec import validate_array
 

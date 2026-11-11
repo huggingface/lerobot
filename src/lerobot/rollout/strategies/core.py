@@ -24,15 +24,14 @@ from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
 from lerobot.configs import DatasetRecordConfig
-from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.datasets import DEFAULT_VIDEO_FILE_SIZE_IN_MB, LeRobotDataset
 from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
 from lerobot.lerobot_types import EnvTransition, PolicyPrediction, RobotObservation
 from lerobot.processor import create_transition, transition_to_robot_action
-from lerobot.robots.utils import start_episode
+from lerobot.robots import start_episode
 from lerobot.teleoperators import Teleoperator
-from lerobot.utils import OBS_STR
 from lerobot.utils.action_interpolator import ActionInterpolator
+from lerobot.utils.constants import OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.robot_utils import precise_sleep

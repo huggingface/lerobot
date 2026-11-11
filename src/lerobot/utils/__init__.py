@@ -16,8 +16,7 @@
 Public API for lightweight, base-dependency-only utilities.
 
 Heavy cross-cutting modules (train_utils, control_utils) have been moved
-to ``lerobot.common``. ``visualization_utils`` remains here but is
-intentionally NOT re-exported to avoid pulling in optional dependencies.
+to ``lerobot.common``.
 """
 
 from .constants import (
@@ -36,9 +35,12 @@ from .constants import (
 )
 from .decorators import check_if_already_connected, check_if_not_connected
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from .hub import ensure_bucket_file
 from .import_utils import is_package_available, register_third_party_plugins, require_package
 from .utils import init_logging
+
+# NOTE: The modules here are intentionally NOT re-exported so callers load only what they need.
+# The re-exports below are legacy, kept for backward compatibility.
+# Import from submodules: ``from lerobot.utils.constants import ACTION``
 
 __all__ = [
     # Constants
@@ -66,6 +68,4 @@ __all__ = [
     # Errors
     "DeviceAlreadyConnectedError",
     "DeviceNotConnectedError",
-    # Hub utilities
-    "ensure_bucket_file",
 ]

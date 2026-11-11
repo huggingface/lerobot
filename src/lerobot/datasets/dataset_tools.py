@@ -40,6 +40,7 @@ import torch
 from tqdm import tqdm
 
 from lerobot.configs import (
+    DEPTH_ENCODER_INFO_FIELD_NAMES,
     DepthEncoderConfig,
     RGBEncoderConfig,
     VideoEncoderConfig,
@@ -47,7 +48,6 @@ from lerobot.configs import (
     encoder_config_from_video_info,
     rgb_encoder_defaults,
 )
-from lerobot.configs.video import DEPTH_ENCODER_INFO_FIELD_NAMES
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 from lerobot.utils.utils import flatten_dict
 

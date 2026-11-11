@@ -52,10 +52,11 @@ from lerobot.datasets import (
     CODEBASE_VERSION,
     DEFAULT_QUANTILES,
     LeRobotDataset,
+    RunningQuantileStats,
     get_feature_stats,
+    sample_indices,
     write_stats,
 )
-from lerobot.datasets.compute_stats import RunningQuantileStats, sample_indices
 from lerobot.utils.utils import init_logging
 
 

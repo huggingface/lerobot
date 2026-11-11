@@ -24,6 +24,7 @@ import datasets
 import torch
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT
+from lerobot.utils.constants import LANGUAGE_COLUMNS
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import (
@@ -239,8 +240,6 @@ class DatasetReader(BaseDatasetReader):
 
         # LeRobot shards are schema-uniform, so one schema represents the dataset.
         schema_names = set(_pq.read_schema(sample).names)
-        from .language import LANGUAGE_COLUMNS  # noqa: PLC0415
-
         missing = sorted(set(LANGUAGE_COLUMNS) & schema_names - set(features))
         if missing:
             raise ValueError(

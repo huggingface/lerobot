@@ -96,7 +96,7 @@ def make_wall_x_pre_post_processors(
 
     recipe = None
     if config.recipe is not None:
-        from lerobot.datasets.recipe import TrainingRecipe  # recipes need the dataset extras
+        from lerobot.datasets import TrainingRecipe  # recipes need the dataset extras
 
         recipe = TrainingRecipe.from_dict(config.recipe)
 

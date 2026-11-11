@@ -19,7 +19,11 @@ import pytest
 from huggingface_hub.errors import HfHubHTTPError
 from huggingface_hub.utils import httpx
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.streaming.range_fetch import NativeHTTPRangeFetcher
+
+pytestmark = pytest.mark.dataset
 
 
 @pytest.fixture

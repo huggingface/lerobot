@@ -11,7 +11,11 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.streaming.location import LocationKind, StorageLocation, hf_bucket_uri, hf_dataset_uri
+
+pytestmark = pytest.mark.dataset
 
 SHA = "a" * 40
 

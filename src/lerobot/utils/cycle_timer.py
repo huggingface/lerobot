@@ -29,7 +29,7 @@ import logging
 import time
 from collections.abc import Callable, Iterator
 
-from lerobot.utils.robot_utils import precise_sleep
+from .robot_utils import precise_sleep
 
 logger = logging.getLogger(__name__)
 

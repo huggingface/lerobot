@@ -25,9 +25,9 @@ import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import CosineDecayWithWarmupSchedulerConfig, XVLAAdamWConfig
-from lerobot.utils.constants import OBS_IMAGES
 
 # Conditional import for type checking and lazy loading
+from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:

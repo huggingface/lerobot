@@ -38,8 +38,7 @@ from lerobot.datasets import (
     aggregate_pipeline_dataset_features,
     create_initial_features,
 )
-from lerobot.envs.factory import make_env_pre_post_processors
-from lerobot.envs.utils import validate_checkpoint
+from lerobot.envs import make_env_pre_post_processors, validate_checkpoint
 from lerobot.inference import (
     FeatureSpec,
     InferenceEngine,
@@ -52,10 +51,10 @@ from lerobot.inference import (
 from lerobot.policies import (
     PreTrainedPolicy,
     get_policy_class,
+    has_peft_adapter_config,
     make_pre_post_processors,
     validate_trained_rtc_horizon,
 )
-from lerobot.policies.factory import has_peft_adapter_config
 from lerobot.processor import (
     PolicyProcessorPipeline,
     RenderRuntimeMessagesStep,
@@ -67,9 +66,8 @@ from lerobot.processor import (
     rename_stats,
 )
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
-from lerobot.robots import Robot, make_robot_from_config
+from lerobot.robots import Robot, check_control_rate, make_robot_from_config
 from lerobot.robots.sim_robot import SimRobot
-from lerobot.robots.utils import check_control_rate
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features

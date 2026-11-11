@@ -74,15 +74,16 @@ from tqdm import trange
 
 from lerobot.configs import FeatureType, PolicyFeature, parser
 from lerobot.configs.eval import EvalPipelineConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.envs import (
     check_env_attributes_and_types,
     close_envs,
     make_env,
     make_env_pre_post_processors,
+    prepare_canonical_observation,
     preprocess_observation,
+    validate_checkpoint,
 )
-from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoint
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import (
@@ -97,10 +98,7 @@ from lerobot.utils.eval_stats import success_summary
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.utils import (
-    init_logging,
-    inside_slurm,
-)
+from lerobot.utils.utils import init_logging, inside_slurm
 
 if TYPE_CHECKING or _peft_available:
     from peft import PeftModel

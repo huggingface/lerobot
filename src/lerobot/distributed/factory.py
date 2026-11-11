@@ -24,7 +24,7 @@ env vars in that mode); the yaml flow is superseded.
 import os
 from typing import TYPE_CHECKING
 
-from lerobot.configs.parallelism import world_size_from_env
+from lerobot.configs import world_size_from_env
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 
 from .utils import unwrap_peft_model
@@ -32,7 +32,7 @@ from .utils import unwrap_peft_model
 if TYPE_CHECKING:
     from accelerate import Accelerator
 
-    from lerobot.policies.pretrained import PreTrainedPolicy
+    from lerobot.policies import PreTrainedPolicy
 
 # Env vars through which `accelerate launch --config_file` (or a stray shell) would configure
 # accelerate behind the config system's back, making train_config.json lie about what ran.

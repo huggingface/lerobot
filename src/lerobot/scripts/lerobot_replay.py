@@ -58,7 +58,9 @@ from lerobot.robots import (  # noqa: F401
     bi_rebot_b601_follower,
     bi_so_follower,
     bi_yam_follower,
+    check_control_rate,
     earthrover_mini_plus,
+    episode_ended,
     hope_jr,
     koch_follower,
     lekiwi,
@@ -72,14 +74,10 @@ from lerobot.robots import (  # noqa: F401
     unitree_g1,
     yam_follower,
 )
-from lerobot.robots.utils import check_control_rate, episode_ended
 from lerobot.utils.constants import ACTION
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.utils import (
-    init_logging,
-    log_say,
-)
+from lerobot.utils.utils import init_logging, log_say
 
 
 @dataclass

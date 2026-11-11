@@ -31,7 +31,7 @@ are gated behind optional extras::
     pip install 'lerobot[all]'           # everything
 """
 
-from lerobot.__version__ import __version__
+from .__version__ import __version__
 
 # Maps optional extras to the CLI entry-points they unlock.
 available_extras: dict[str, list[str]] = {

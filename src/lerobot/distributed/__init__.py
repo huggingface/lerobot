@@ -28,16 +28,38 @@ Only the last two steps are active today; CP/AC/compile are configured
 placeholders wired in later rounds.
 """
 
+from .checkpoint import (
+    dcp_to_safetensors,
+    full_model_state_dict,
+    is_sharded_module,
+    load_sharded_ema,
+    load_sharded_model,
+    load_sharded_optimizer,
+    save_peft_adapter,
+    save_sharded_ema,
+    save_sharded_model,
+    save_sharded_optimizer,
+)
 from .factory import guard_against_env_interference, make_accelerator, set_fsdp_wrap_modules
 from .parallel_dims import ParallelDims
 from .utils import finalize_sharded_policy, is_main_process, strip_accelerate_cp_hooks
 
 __all__ = [
     "ParallelDims",
+    "dcp_to_safetensors",
     "finalize_sharded_policy",
+    "full_model_state_dict",
     "guard_against_env_interference",
     "is_main_process",
+    "is_sharded_module",
+    "load_sharded_ema",
+    "load_sharded_model",
+    "load_sharded_optimizer",
     "make_accelerator",
+    "save_peft_adapter",
+    "save_sharded_ema",
+    "save_sharded_model",
+    "save_sharded_optimizer",
     "set_fsdp_wrap_modules",
     "strip_accelerate_cp_hooks",
 ]

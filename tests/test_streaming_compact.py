@@ -15,6 +15,8 @@ from typing import Any
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.streaming import sidecar_utils
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import (
@@ -25,6 +27,8 @@ from lerobot.streaming.mp4 import (
 )
 from lerobot.streaming.sidecar import SidecarSpec
 from tests.datasets.test_episode_video_streaming import _minimal_mp4
+
+pytestmark = pytest.mark.dataset
 
 
 @pytest.fixture(autouse=True)

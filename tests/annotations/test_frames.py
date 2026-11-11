@@ -68,9 +68,7 @@ def test_default_camera_key_skips_image_only_cameras(tmp_path: Path, monkeypatch
         video_keys=["observation.images.robot0_agentview_right"],
         image_keys=["observation.images.wrist"],
     )
-    import lerobot.datasets.dataset_metadata as meta_mod
-
-    monkeypatch.setattr(meta_mod, "LeRobotDatasetMetadata", lambda *a, **k: fake, raising=True)
+    monkeypatch.setattr("lerobot.datasets.LeRobotDatasetMetadata", lambda *a, **k: fake)
     provider = VideoFrameProvider(root=tmp_path)
     assert provider.camera_key == "observation.images.robot0_agentview_right"
     assert "observation.images.wrist" not in provider.camera_keys
@@ -131,9 +129,7 @@ def sample_video(tmp_path: Path) -> Path:
 def _provider_for_video(tmp_path: Path, video: Path, monkeypatch) -> VideoFrameProvider:
     """A provider whose single camera resolves to ``video`` via fake metadata."""
     fake = _FakeMeta(video_keys=["observation.images.cam"], image_keys=[], video_path=video)
-    import lerobot.datasets.dataset_metadata as meta_mod
-
-    monkeypatch.setattr(meta_mod, "LeRobotDatasetMetadata", lambda *a, **k: fake, raising=True)
+    monkeypatch.setattr("lerobot.datasets.LeRobotDatasetMetadata", lambda *a, **k: fake)
     return VideoFrameProvider(root=tmp_path, tolerance_s=0.2)
 
 
@@ -168,9 +164,7 @@ def test_frames_at_snaps_mid_frame_grid_to_real_frames(
     from types import SimpleNamespace
 
     fake = _FakeMeta(video_keys=["observation.images.cam"], image_keys=[], video_path=sample_video)
-    import lerobot.datasets.dataset_metadata as meta_mod
-
-    monkeypatch.setattr(meta_mod, "LeRobotDatasetMetadata", lambda *a, **k: fake, raising=True)
+    monkeypatch.setattr("lerobot.datasets.LeRobotDatasetMetadata", lambda *a, **k: fake)
     provider = VideoFrameProvider(root=tmp_path)  # default 10 ms tolerance
     # 10 fps fixture -> frames at 0.0, 0.1, ...; queries sit mid-frame.
     record = SimpleNamespace(episode_index=0, frame_timestamps=[i / 10 for i in range(30)])
@@ -202,9 +196,7 @@ def test_episode_clip_path_trims_via_reencode_video(tmp_path: Path, monkeypatch)
     fake = _FakeMeta(video_keys=["observation.images.cam"], image_keys=[], video_path=src)
     fake.episodes[0]["videos/observation.images.cam/from_timestamp"] = 1.5
     fake.episodes[0]["videos/observation.images.cam/to_timestamp"] = 4.0
-    import lerobot.datasets.dataset_metadata as meta_mod
-
-    monkeypatch.setattr(meta_mod, "LeRobotDatasetMetadata", lambda *a, **k: fake, raising=True)
+    monkeypatch.setattr("lerobot.datasets.LeRobotDatasetMetadata", lambda *a, **k: fake)
 
     captured = {}
 

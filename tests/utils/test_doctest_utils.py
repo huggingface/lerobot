@@ -14,7 +14,7 @@
 
 import doctest
 
-from lerobot.utils.doctest_utils import LeRobotDocTestParser, preprocess_string
+from tests.doctest_utils import LeRobotDocTestParser, preprocess_string
 
 # An example with expected output, formatted the way ruff's `docstring-code-format` leaves it: no blank
 # line between the last output line and the closing fence. This is the exact shape that breaks stdlib.

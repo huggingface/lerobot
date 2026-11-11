@@ -12,11 +12,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.streaming import sidecar_utils
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import parse_mp4_index
 from lerobot.streaming.sidecar import SidecarSpec
 from tests.datasets.test_episode_video_streaming import _minimal_mp4
+
+pytestmark = pytest.mark.dataset
 
 
 def test_big_endian_timestamps_survive_cache_reuse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

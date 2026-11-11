@@ -18,4 +18,8 @@ from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
 from .utils import TeleopEvents, make_teleoperator_from_config
 
+# NOTE: Teleoperator implementations (KeyboardTeleop, etc.) are intentionally NOT re-exported here
+# to avoid pulling device-specific dependencies.
+# Import from submodules: ``from lerobot.teleoperators.keyboard import KeyboardTeleop``
+
 __all__ = ["Teleoperator", "TeleoperatorConfig", "TeleopEvents", "make_teleoperator_from_config"]

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
-from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
@@ -389,7 +389,7 @@ def make_eo1_pre_post_processors(
 
     recipe = None
     if config.recipe is not None:
-        from lerobot.datasets.recipe import TrainingRecipe  # recipes need the dataset extras
+        from lerobot.datasets import TrainingRecipe  # recipes need the dataset extras
 
         recipe = TrainingRecipe.from_dict(config.recipe)
 

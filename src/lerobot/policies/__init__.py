@@ -12,25 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.utils.action_interpolator import ActionInterpolator as ActionInterpolator
-from lerobot.utils.feature_spec import FeatureSpec
-
 from .act.configuration_act import ACTConfig as ACTConfig
 from .chunk import ChunkPolicySpec, ExecutionMode
 from .cosmos3.configuration_cosmos3 import (
+    Cosmos3Config,
     Cosmos3EdgeConfig as Cosmos3EdgeConfig,
     Cosmos3NanoConfig as Cosmos3NanoConfig,
 )
+from .cosmos3.processor_cosmos3 import make_cosmos3_libero_pre_post_processors
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .dm05.configuration_dm05 import DM05Config as DM05Config
 from .eo1.configuration_eo1 import EO1Config as EO1Config
 from .evo1.configuration_evo1 import Evo1Config as Evo1Config
-from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
+from .factory import (
+    ProcessorConfigKwargs,
+    get_policy_class,
+    has_peft_adapter_config,
+    make_policy,
+    make_policy_config,
+    make_pre_post_processors,
+)
 from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
 from .fineart_vla.configuration_fineart_vla import FineARTVLAConfig as FineARTVLAConfig
 from .flux3.configuration_flux3 import Flux3Config as Flux3Config
 from .g05.configuration_g05 import G05Config as G05Config
-from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
+from .gaussian_actor.configuration_gaussian_actor import (
+    CriticNetworkConfig,
+    GaussianActorConfig,
+)
+from .gaussian_actor.modeling_gaussian_actor import (
+    DISCRETE_DIMENSION_INDEX,
+    MLP,
+    DiscreteCritic,
+    GaussianActorObservationEncoder,
+    GaussianActorPolicy,
+    orthogonal_init,
+)
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .lawam.configuration_lawam import LaWAMConfig as LaWAMConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig as LingBotVAConfig
@@ -51,20 +68,26 @@ from .rtc import (
 )
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
-from .utils import make_robot_action, prepare_observation_for_inference
+from .utils import get_device_from_parameters, make_robot_action, prepare_observation_for_inference
 from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig as VLAJEPAConfig
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
 from .wall_oss_05.configuration_wall_oss_05 import WallOSS05Config as WallOSS05Config
 from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
 from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
+from .xvla.processor_xvla import make_xvla_libero_pre_post_processors
 
-# NOTE: Policy modeling classes (e.g., GaussianActorPolicy) are intentionally NOT re-exported here.
-# They have heavy optional dependencies and are loaded lazily via get_policy_class().
-# Import directly: ``from lerobot.policies.gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy``
+# NOTE: Policy modeling classes and policy-specific helpers not used by other lerobot packages are intentionally
+# NOT re-exported here to avoid pulling heavy optional dependencies. get_policy_class() loads the modeling
+# classes lazily.
+# Import from submodules: ``from lerobot.policies.act.modeling_act import ACTPolicy``
+
+# TODO: rename the homonymic MLP classes so the exported name is unambiguous:
+# gaussian_actor.modeling_gaussian_actor.MLP (exported), vqbet.modeling_vqbet.MLP, vla_jepa.world_model.MLP.
 
 __all__ = [
     # Configuration classes
     "ACTConfig",
+    "Cosmos3Config",
     "Cosmos3EdgeConfig",
     "Cosmos3NanoConfig",
     "DiffusionConfig",
@@ -75,6 +98,7 @@ __all__ = [
     "Flux3Config",
     "GaussianActorConfig",
     "G05Config",
+    "CriticNetworkConfig",
     "Evo1Config",
     "GrootConfig",
     "LaWAMConfig",
@@ -96,22 +120,32 @@ __all__ = [
     # Chunk execution contracts
     "ChunkPolicySpec",
     "ExecutionMode",
-    "FeatureSpec",
     # Base class
     "PreTrainedPolicy",
     # RTC utilities
-    "ActionInterpolator",
     "ActionQueue",
     "QueueSnapshot",
     "RTCConfig",
     "reanchor_relative_rtc_prefix",
     "validate_trained_rtc_horizon",
+    # Gaussian actor components
+    "DISCRETE_DIMENSION_INDEX",
+    "DiscreteCritic",
+    "GaussianActorObservationEncoder",
+    "GaussianActorPolicy",
+    "MLP",
+    "orthogonal_init",
     # Utility functions
+    "get_device_from_parameters",
     "make_robot_action",
     "prepare_observation_for_inference",
     # Factory functions
+    "ProcessorConfigKwargs",
     "get_policy_class",
+    "has_peft_adapter_config",
     "make_policy",
     "make_policy_config",
+    "make_cosmos3_libero_pre_post_processors",
     "make_pre_post_processors",
+    "make_xvla_libero_pre_post_processors",
 ]

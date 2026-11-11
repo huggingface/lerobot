@@ -24,12 +24,11 @@ from typing import ClassVar
 
 import draccus
 
-from lerobot.configs import PreTrainedConfig, parser
-from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.configs import DatasetRecordConfig, PreTrainedConfig, parser
 from lerobot.inference import InferenceEngineConfig, RemoteInferenceConfig, SyncInferenceConfig
-from lerobot.robots.config import RobotConfig
+from lerobot.robots import RobotConfig
 from lerobot.robots.sim_robot import SimRobotConfig
-from lerobot.teleoperators.config import TeleoperatorConfig
+from lerobot.teleoperators import TeleoperatorConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
 from .planner import PlannerConfig

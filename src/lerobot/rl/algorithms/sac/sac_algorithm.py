@@ -27,15 +27,15 @@ from torch import Tensor
 from torch.optim import Optimizer
 
 from lerobot.lerobot_types import BatchType
-from lerobot.policies.gaussian_actor.modeling_gaussian_actor import (
+from lerobot.policies import (
     DISCRETE_DIMENSION_INDEX,
     MLP,
     DiscreteCritic,
     GaussianActorObservationEncoder,
     GaussianActorPolicy,
+    get_device_from_parameters,
     orthogonal_init,
 )
-from lerobot.policies.utils import get_device_from_parameters
 from lerobot.utils.constants import ACTION
 from lerobot.utils.transition import move_state_dict_to_device
 

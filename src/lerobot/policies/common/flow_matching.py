@@ -40,7 +40,7 @@ import torch
 from torch import Tensor
 
 if TYPE_CHECKING:
-    from lerobot.policies.rtc.modeling_rtc import RTCProcessor
+    from ..rtc.modeling_rtc import RTCProcessor
 
 BetaSampler = Callable[[float, float, int], Tensor]
 """Draws ``bsize`` raw ``Beta(alpha, beta)`` samples as ``(alpha, beta, bsize) -> (bsize,)``."""

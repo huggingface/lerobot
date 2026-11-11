@@ -30,7 +30,7 @@ from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.lerobot_types import PolicyOutput
-from lerobot.optim.optimizers import OptimizerParams
+from lerobot.optim import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.feature_spec import FeatureSpec
@@ -49,7 +49,7 @@ else:
 
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
-    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+    from lerobot.datasets import LeRobotDatasetMetadata
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
@@ -141,8 +141,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 safetensors weight file(s).
         """
         # Lazy imports: the persistence layer pulls in lerobot.distributed only when saving.
-        from lerobot.distributed.checkpoint import full_model_state_dict, is_sharded_module
-        from lerobot.distributed.utils import is_main_process
+        from lerobot.distributed import full_model_state_dict, is_main_process, is_sharded_module
 
         model_to_save = self.module if hasattr(self, "module") else self
         if is_sharded_module(model_to_save):

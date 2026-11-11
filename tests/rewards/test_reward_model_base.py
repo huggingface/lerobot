@@ -466,7 +466,7 @@ def test_publish_trained_model_uploads_expected_reward_files(monkeypatch, _offli
 def test_save_pretrained_writes_nothing_off_main_rank(tmp_path, monkeypatch):
     """save_checkpoint calls save_pretrained on every rank; the
     reward serializer must gate its writes so DDP replicas do not race on the same files."""
-    import lerobot.distributed.utils as dist_utils
+    import lerobot.distributed as dist_utils
 
     model, _ = _make_dummy_reward_model()
     monkeypatch.setattr(dist_utils, "is_main_process", lambda: False)

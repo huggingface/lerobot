@@ -21,7 +21,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import RewardModelConfig
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 
 from .classifier.configuration_classifier import RewardClassifierConfig
@@ -49,19 +49,19 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
         ValueError: If the reward model name is not recognized.
     """
     if name == "reward_classifier":
-        from lerobot.rewards.classifier.modeling_classifier import Classifier
+        from .classifier.modeling_classifier import Classifier
 
         return Classifier
     elif name == "sarm":
-        from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
+        from .sarm.modeling_sarm import SARMRewardModel
 
         return SARMRewardModel
     elif name == "robometer":
-        from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
+        from .robometer.modeling_robometer import RobometerRewardModel
 
         return RobometerRewardModel
     elif name == "topreward":
-        from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
+        from .topreward.modeling_topreward import TOPRewardModel
 
         return TOPRewardModel
     else:
@@ -173,7 +173,7 @@ def make_reward_pre_post_processors(
     """
     # Create a new processor based on reward model type
     if isinstance(reward_cfg, RewardClassifierConfig):
-        from lerobot.rewards.classifier.processor_classifier import make_classifier_processor
+        from .classifier.processor_classifier import make_classifier_processor
 
         return make_classifier_processor(
             config=reward_cfg,
@@ -181,7 +181,7 @@ def make_reward_pre_post_processors(
         )
 
     elif isinstance(reward_cfg, SARMConfig):
-        from lerobot.rewards.sarm.processor_sarm import make_sarm_pre_post_processors
+        from .sarm.processor_sarm import make_sarm_pre_post_processors
 
         return make_sarm_pre_post_processors(
             config=reward_cfg,
@@ -189,7 +189,7 @@ def make_reward_pre_post_processors(
             dataset_meta=kwargs.get("dataset_meta"),
         )
     elif isinstance(reward_cfg, RobometerConfig):
-        from lerobot.rewards.robometer.processor_robometer import make_robometer_pre_post_processors
+        from .robometer.processor_robometer import make_robometer_pre_post_processors
 
         return make_robometer_pre_post_processors(
             config=reward_cfg,
@@ -197,7 +197,7 @@ def make_reward_pre_post_processors(
         )
 
     elif isinstance(reward_cfg, TOPRewardConfig):
-        from lerobot.rewards.topreward.processor_topreward import make_topreward_pre_post_processors
+        from .topreward.processor_topreward import make_topreward_pre_post_processors
 
         return make_topreward_pre_post_processors(
             config=reward_cfg,

@@ -26,7 +26,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
 from torch import Tensor, nn
 
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import RewardModelConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 
@@ -69,7 +69,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
             save_directory (Path): Target directory for the reward model config (`config.json`)
                 and `model.safetensors`.
         """
-        from lerobot.distributed.utils import is_main_process
+        from lerobot.distributed import is_main_process
 
         # save_checkpoint calls this on every rank; replicas carry identical
         # weights, so the main process is the only writer. Sharded reward models are rejected

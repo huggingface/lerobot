@@ -70,8 +70,7 @@ class OpenCVCamera(Camera):
 
     Example:
         ```python
-        from lerobot.cameras.opencv import OpenCVCamera
-        from lerobot.cameras.configuration_opencv import OpenCVCameraConfig
+        from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 
         # Basic usage with camera index 0
         config = OpenCVCameraConfig(index_or_path=0)

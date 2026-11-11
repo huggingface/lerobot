@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 import torch.distributed as dist
 
-from lerobot.configs.parallelism import ParallelismConfig
+from lerobot.configs import ParallelismConfig
 
 
 @dataclass(frozen=True)

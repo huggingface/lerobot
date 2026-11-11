@@ -168,7 +168,7 @@ class FineARTVLAConfig(PI05Config):
         if not math.isfinite(self.conditioning_lr_scale) or self.conditioning_lr_scale < 0:
             raise ValueError("conditioning_lr_scale must be finite and nonnegative")
         if self.recipe_path is not None:
-            from lerobot.datasets.recipe import resolve_recipe_override
+            from lerobot.datasets import resolve_recipe_override
 
             path = self.recipe_path
             if path is not None and not Path(path).exists():

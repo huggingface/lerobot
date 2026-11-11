@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from lerobot.configs.parallelism import ParallelismConfig
+from .parallelism import ParallelismConfig
 
 if TYPE_CHECKING:
     from accelerate import Accelerator

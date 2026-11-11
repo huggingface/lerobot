@@ -20,18 +20,17 @@ from typing import TYPE_CHECKING
 import fsspec
 from huggingface_hub import HfApi
 
-from lerobot.streaming.location import LocationKind, StorageLocation
-from lerobot.streaming.sidecar import SidecarSpec
-from lerobot.utils.import_utils import _datasets_available, require_package
+from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
-if TYPE_CHECKING or _datasets_available:
-    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-    from lerobot.datasets.streaming_sidecar import (
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import (
         SIDECAR_REPO_BRANCH,
+        LeRobotDatasetMetadata,
         build_mp4_sidecar,
         make_sidecar_spec,
         published_sidecar_url,
     )
+    from lerobot.streaming import LocationKind, SidecarSpec, StorageLocation
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,6 +56,7 @@ def parse_args() -> argparse.Namespace:
 def push_sidecar(local_path: str, spec: SidecarSpec) -> list[str]:
     """Explicitly publish an index without advancing the pinned dataset's source branch."""
     require_package("datasets", "dataset")
+    require_package("av", "dataset")
     location = StorageLocation.parse(spec.data_root)
     if not location.is_hf:
         raise ValueError("--push currently supports only hf:// data roots")
@@ -81,6 +81,7 @@ def main() -> None:
     """Build a local index and publish only a full-dataset sidecar when requested."""
     args = parse_args()
     require_package("datasets", "dataset")
+    require_package("av", "dataset")
 
     meta = LeRobotDatasetMetadata(args.repo_id, revision=args.revision, repo_type=args.repo_type)
     meta.ensure_readable()

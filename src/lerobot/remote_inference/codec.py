@@ -18,9 +18,11 @@ from typing import Any
 
 import torch
 
-from lerobot.transport.protocol import Envelope, ErrorCode, ProtocolError
-from lerobot.transport.protocol.codec import (
+from lerobot.transport import (
     CodecLimits,
+    Envelope,
+    ErrorCode,
+    ProtocolError,
     RGBImage,
     decode_message,
     encode_message as _encode_message,

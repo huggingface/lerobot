@@ -22,9 +22,10 @@ from lerobot.optim import (
     AdamWConfig,
     CosineDecayWithWarmupSchedulerConfig,
 )
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
+
+from ..rtc.configuration_rtc import RTCConfig
 
 
 @dataclass

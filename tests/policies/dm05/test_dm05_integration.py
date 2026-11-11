@@ -677,14 +677,14 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
         return state_dict
 
     with monkeypatch.context() as save_monkeypatch:
-        save_monkeypatch.setattr("lerobot.distributed.checkpoint.full_model_state_dict", gather_with_sentinel)
+        save_monkeypatch.setattr("lerobot.distributed.full_model_state_dict", gather_with_sentinel)
 
         non_main_checkpoint = tmp_path / "non_main"
-        save_monkeypatch.setattr("lerobot.distributed.utils.is_main_process", lambda: False)
+        save_monkeypatch.setattr("lerobot.distributed.is_main_process", lambda: False)
         policy.save_pretrained(non_main_checkpoint)
         assert not any(non_main_checkpoint.iterdir())
 
-        save_monkeypatch.setattr("lerobot.distributed.utils.is_main_process", lambda: True)
+        save_monkeypatch.setattr("lerobot.distributed.is_main_process", lambda: True)
         policy.save_pretrained(checkpoint)
 
     stats = {

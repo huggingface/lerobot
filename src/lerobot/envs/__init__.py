@@ -22,25 +22,41 @@ from .configs import (
     AlohaEnvConfig,
     EnvClientConfig,
     EnvConfig,
+    G1EndEffector,
     HILSerlRobotEnvConfig,
     HubEnvConfig,
     PushtEnvConfig,
+    UnitreeG1MujocoEnvConfig,
 )
 from .factory import make_env, make_env_config, make_env_pre_post_processors
-from .utils import check_env_attributes_and_types, close_envs, env_to_policy_features, preprocess_observation
+from .utils import (
+    check_env_attributes_and_types,
+    close_envs,
+    env_to_policy_features,
+    prepare_canonical_observation,
+    preprocess_observation,
+    validate_checkpoint,
+)
+
+# TODO: rename the homonymic classes so their names are unambiguous:
+# configs.RewardClassifierConfig and rewards.classifier.configuration_classifier.RewardClassifierConfig.
 
 __all__ = [
     "AlohaEnvConfig",
     "EnvClientConfig",
     "EnvConfig",
+    "G1EndEffector",
     "HILSerlRobotEnvConfig",
     "HubEnvConfig",
     "PushtEnvConfig",
+    "UnitreeG1MujocoEnvConfig",
     "check_env_attributes_and_types",
     "close_envs",
     "env_to_policy_features",
     "make_env",
     "make_env_config",
     "make_env_pre_post_processors",
+    "prepare_canonical_observation",
     "preprocess_observation",
+    "validate_checkpoint",
 ]

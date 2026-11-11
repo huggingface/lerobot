@@ -17,7 +17,11 @@
 import logging
 import time
 
-from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
+from lerobot.motors import (
+    Motor,
+    MotorNormMode,
+    SerialMotorsBus,
+)
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator

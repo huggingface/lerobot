@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.utils import require_package
+from lerobot.utils.import_utils import require_package
 
 _placo_runtime_error: ImportError | None = None
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from lerobot.configs.default import DatasetConfig
+from lerobot.configs import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 
 from .algorithms.configs import RLAlgorithmConfig

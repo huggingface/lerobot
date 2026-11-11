@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lerobot.datasets.language import column_for_style, is_view_dependent_style, validate_camera_field
+from lerobot.datasets import column_for_style, is_view_dependent_style, validate_camera_field
 from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 
 from .reader import EpisodeRecord

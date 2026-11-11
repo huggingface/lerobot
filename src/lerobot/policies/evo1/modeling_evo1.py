@@ -23,10 +23,10 @@ from typing import Any, Unpack
 import torch
 from torch import Tensor
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
+from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
+from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_evo1 import Evo1Config
 from .evo1_model import Evo1Model
