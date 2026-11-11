@@ -225,11 +225,11 @@ class LeRobotDatasetMetadata:
     def ensure_readable(self) -> None:
         """Guarantee metadata is fully loaded for read operations.
 
-        Idempotent — when metadata is already in memory this is a single
-        ``is None`` check.  Call this before transitioning from write to
-        read mode on the same instance.
+        Reload when episodes are missing or new episodes have been saved since
+        the in-memory view was loaded. Call this before transitioning from write
+        to read mode on the same instance.
         """
-        if self.episodes is None:
+        if self.episodes is None or len(self.episodes) != self.total_episodes:
             self._load_metadata()
 
     def filter_episodes(
