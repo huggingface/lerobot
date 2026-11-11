@@ -194,6 +194,37 @@ def set_seed(seed, accelerator: Callable | None = None) -> None:
 
 
 @contextmanager
+def preserve_rng_state(device: torch.device) -> Generator[None, None, None]:
+    """Restore global Python, NumPy and Torch RNG states without reseeding.
+
+    Torch CPU and only the selected device's default generator are preserved. An
+    unindexed CUDA/XPU device is resolved at entry; CPU never probes accelerators.
+    Capturing an accelerator's state may initialize it. Private generators, workers
+    and additional devices used inside the context are outside this guarantee.
+
+    Args:
+        device (torch.device): The training device whose RNG state should be preserved.
+
+    Yields:
+        None: Runs the caller's block with its existing random streams.
+    """
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    try:
+        devices = []
+        if device.type != "cpu":
+            index = device.index
+            if index is None:
+                index = 0 if device.type == "mps" else getattr(torch, device.type).current_device()
+            devices = [index]
+        with torch.random.fork_rng(devices=devices, device_type=device.type):
+            yield
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+
+
+@contextmanager
 def seeded_context(seed: int) -> Generator[None, None, None]:
     """Set the seed when entering a context, and restore the prior random state at exit.
 
