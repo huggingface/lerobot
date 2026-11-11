@@ -59,7 +59,47 @@ inside `torch.inference_mode()`, call `prepare_gaussian_readout_teacher(policy)`
 `lerobot.policies.common.gaussian_readout` once before creating optimizers or other
 tensor references. It makes tracked copies of inference tensors.
 
+## Original pi0.5 comparison
+
+Offline, the [original L4 proof](https://huggingface.co/jobs/hadriencornier/6ae5343e0e0338d1bb7cfb64)
+compared `lerobot/pi05_libero_finetuned_v044` with its ten-step teacher and a
+one-step Euler baseline. Both cheap paths took about the same time:
+
+| Path                   | Median chunk latency |    p95 | Speed versus ten-step teacher |
+| ---------------------- | -------------------: | -----: | ----------------------------: |
+| Ten-step pi0.5 teacher |               0.31 s | 0.32 s |                          1.0x |
+| One-step Euler         |               0.15 s | 0.15 s |                          2.1x |
+| Gaussian readout       |               0.15 s | 0.15 s |                          2.1x |
+
+Offline, the saved targets also permit a conditional-motion-mean comparison over
+the same eight contexts from one held-out demonstration. The target is the empirical
+mean of 32 ten-step teacher draws per context. Error averages squared differences
+over the normalized motion channels and the full chunk:
+
+| Prediction                        | Mean squared error versus teacher mean |
+| --------------------------------- | -------------------------------------: |
+| Fixed-probe one-step Euler output |                                 0.0020 |
+| Fitted Gaussian readout mean      |                                  0.014 |
+
+The one-step baseline has 6.7x lower error on this diagnostic. The saved readout
+does not provide a closer motion-mean match here. Recomputing the readout error
+from the saved features and affine weights reproduces the original logged error.
+The calculation uses `raw_motion` for the one-step prediction and
+`raw_motion + features @ affine_weight.T + affine_bias` for the readout mean, with
+rows selected by `split == "hold"` in the original context index.
+
+Simulation, on one LIBERO-Long basket task, the ten-step teacher and readout each
+succeeded in eight paired episodes. Both used the soup-then-sauce order.
+
 ## Limits
+
+The comparison uses one checkpoint, one L4 and one simulated task. One-step Euler
+was not evaluated in simulation. Fixed-probe mean error does not measure the task
+quality of a one-step sampler with fresh noise, gripper quality or distribution
+matching. The original timing used the
+[pinned proof implementation](https://github.com/Hadrien-Cornier/lerobot/blob/973b159ad2c20aaddba9983abef59dc3d845361f/experiments/gar/proof.py)
+and a `lerobot-gar-v1` artifact. Full-model/GPU overhead of the current cache guard
+has not been measured; the saved artifact was not refitted for this comparison.
 
 The fitting command supports single observations, standard affine action
 postprocessing, and a continuous action prefix followed by one binary gripper.
