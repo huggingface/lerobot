@@ -125,7 +125,6 @@ def test_rtc_reanchors_absolute_prefix_against_selected_frame():
 
 @pytest.mark.parametrize("memory", [False, True])
 def test_pi05_factory_anchors_relative_actions_on_delta_zero(monkeypatch, memory):
-    pytest.importorskip("transformers")
     from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
     from lerobot.policies.pi05.configuration_pi05 import PI05Config
     from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
@@ -134,7 +133,9 @@ def test_pi05_factory_anchors_relative_actions_on_delta_zero(monkeypatch, memory
     # Only tokenization is substituted; config, factory, preprocessing and postprocessing are real.
     tokenizer = MagicMock(return_value={"input_ids": torch.zeros(1, 1), "attention_mask": torch.ones(1, 1)})
     monkeypatch.setattr(
-        tokenizer_processor.AutoTokenizer, "from_pretrained", lambda *args, **kwargs: tokenizer
+        tokenizer_processor.TokenizerProcessorStep,
+        "__post_init__",
+        lambda step: setattr(step, "input_tokenizer", tokenizer),
     )
     config = PI05Config(
         device="cpu",
