@@ -47,8 +47,13 @@ class Rotation:
 
         Returns:
             Rotation instance
+
+        Raises:
+            ValueError: If the rotation vector does not have shape (3,).
         """
         rotvec = np.asarray(rotvec, dtype=float)
+        if rotvec.shape != (3,):
+            raise ValueError(f"Rotation vector must have shape (3,), got {rotvec.shape}")
         angle = np.linalg.norm(rotvec)
 
         if angle < 1e-8:
@@ -75,8 +80,13 @@ class Rotation:
 
         Returns:
             Rotation instance
+
+        Raises:
+            ValueError: If the rotation matrix does not have shape (3, 3).
         """
         matrix = np.asarray(matrix, dtype=float)
+        if matrix.shape != (3, 3):
+            raise ValueError(f"Rotation matrix must have shape (3, 3), got {matrix.shape}")
 
         # Shepherd's method for converting rotation matrix to quaternion
         trace = np.trace(matrix)
