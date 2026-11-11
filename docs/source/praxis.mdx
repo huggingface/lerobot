@@ -118,8 +118,10 @@ of that tick. The first call of a context window returns 21 commands, every late
 context, since the model conditions on the whole previous chunk having been executed. A caller
 that executes whole chunks (`predict_action_chunk`) hands over the frames executed since its
 previous call as a stack, `(B, T, 3, H, W)` cameras with `(B, T, 7)` states, oldest first; the
-next chunk is then the one of a call-per-tick rollout. A chunk call with one frame starts the
-context again.
+next chunk is then the one of a call-per-tick rollout. The first chunk of a context window has 21
+real commands and is padded to 24 with the last one; the frames observed during its padded rows are
+dropped, so the context is the one of a caller that executed the 21 real commands. A chunk call
+with one frame starts the context again.
 
 ### Processors
 
@@ -350,11 +352,11 @@ checkpoint differs in the expert head widths (20 action values: `[xyz, rot6d, gr
 the three-tile canvas and the normalization. The LeRobot adapter follows the praxis repository's
 `praxis/bimanual.py` (vendored as `praxis_core/bimanual.py`):
 
-| Key                                                                                              | Shape | Meaning                                                                                                                                                                                  |
-| ------------------------------------------------------------------------------------------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `observation.images.top_left`, `observation.images.wrist_left`, `observation.images.wrist_right` | RGB   | The three views in canvas order (`camera_keys`). Any 16:10 size; the processor makes the 256 x 416 tiles with the YAM fit rule (the views fit a 416 px box together, then a 32 px trim). |
-| `observation.state`                                                                              | (14,) | `[x, y, z, roll, pitch, yaw, gripper]` of the left arm, then of the right arm, in the rig's world frame (`pose_frame: rig`, no flange turn). 16 values (pose8 per arm) pass through too. |
-| `action`                                                                                         | (14,) | The same 14 values: the absolute target of each arm for the next 15 Hz tick. `select_action` emits 26 values (the wire pose and gripper of each arm); the command step converts them.    |
+| Key                                                                                              | Shape | Meaning                                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `observation.images.top_left`, `observation.images.wrist_left`, `observation.images.wrist_right` | RGB   | The three views in canvas order (`camera_keys`). Any 16:10 size; the processor makes the 256 x 416 tiles with the YAM fit rule (the views fit a 416 px box together, then a 32 px trim).                                                     |
+| `observation.state`                                                                              | (14,) | `[x, y, z, roll, pitch, yaw, gripper]` of the left arm, then of the right arm, in the rig's world frame (`pose_frame: rig`, no flange turn); the grippers as the rig reports them (not clipped). 16 values (pose8 per arm) pass through too. |
+| `action`                                                                                         | (14,) | The same 14 values: the absolute target of each arm for the next 15 Hz tick. `select_action` emits 26 values (the wire pose and gripper of each arm); the command step converts them.                                                        |
 
 The checkpoint's serve settings (the praxis repository's `configs/serve_yam.yaml`: 2 Euler steps, flow shift 1.0, no
 text guidance, 1 context chunk, the bimanual rig has no control mode) are what the converter writes
@@ -382,8 +384,9 @@ with the observed and the commanded flange pose of every frame and the instructi
 declares it through `observation_delta_indices` / `action_delta_indices` (93 frames) and keeps the
 windows inside the episodes with `drop_n_last_frames` (93, so the sampler draws the recipe's window
 starts). The camera tiles follow the canvas rule of the checkpoint (`video.antialias`), as in the
-praxis data module. `forward` runs under the praxis numerics whatever the launcher sets: no autocast
-(the MoE router scores stay float32), no TF32 in float32 matmuls. The number of training windows
+praxis data module. `forward` and the backward of its loss (the activation-checkpoint recompute
+included) run under the praxis numerics whatever the launcher sets, `lerobot-train --tf32` too: no
+autocast (the MoE router scores stay float32), no TF32 in float32 matmuls. The number of training windows
 seen is a buffer of the policy (`train_counter`): it seeds the draws, travels with the checkpoint
 and the adapter, and a resumed run continues the sequence; a held-out evaluation does not advance
 it.

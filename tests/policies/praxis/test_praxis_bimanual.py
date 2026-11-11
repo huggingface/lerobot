@@ -158,6 +158,54 @@ def test_select_action_matches_the_praxis_bimanual_session_bitwise() -> None:
     assert policy.sessions()[0].state.stream.depth == 1
 
 
+def _out_of_range_grips(obs: dict, left: float, right: float) -> dict:
+    """The observation with gripper readings outside [0, 1], as a YAM arm can report them."""
+    state = obs[OBS_STATE].clone()
+    state[:, 6], state[:, 13] = left, right
+    return {**obs, OBS_STATE: state}
+
+
+def test_bimanual_proprio_keeps_the_raw_gripper() -> None:
+    """The bimanual rig's proprio keeps the gripper value of the rig (no clip, as in its training
+    data and in the praxis session); the single-arm rig clips it, as the DROID data code does."""
+    policy = make_tiny_bimanual_policy(seed=2)
+    pre, _post = make_pre_post_processors(policy.config, None)
+    obs = _out_of_range_grips(fake_bimanual_observation(0), 1.03, -0.02)
+    state = pre(obs)[OBS_STATE][0]
+    assert (
+        state.shape == (16,)
+        and float(state[7]) == pytest.approx(1.03)
+        and float(state[15]) == pytest.approx(-0.02)
+    )
+    single = droid7_to_pose8(np.array([0.5, 0.0, 0.4, 3.0, 0.1, 0.2, 1.03], dtype=np.float32))
+    assert float(single[7]) == 1.0
+
+
+def test_bimanual_out_of_range_grippers_match_the_praxis_session_bitwise() -> None:
+    """With gripper readings outside [0, 1] the commands are still the praxis session's."""
+    pipeline = pytest.importorskip("praxis.pipeline", reason="the praxis package gives the reference Session")
+    policy = make_tiny_bimanual_policy(seed=1, n_action_steps=24, max_context_chunks=1)
+    reference_pipe = _ReferencePipeline(policy)
+    reference_pipe.embodiment = "bimanual"
+    reference = pipeline.Session(
+        reference_pipe,
+        prompt="",
+        seed=policy.config.seed,
+        max_context_chunks=1,
+        control_mode="none",
+        exec_horizon=24,
+    )  # type: ignore[arg-type]
+    pre, post = make_pre_post_processors(policy.config, None)
+    obs = _out_of_range_grips(fake_bimanual_observation(0), 1.03, -0.02)
+    policy.reset()
+    got = post(policy.select_action(pre(obs)))[0]
+    ref_obs = _reference_obs([obs])
+    for i, side in enumerate(bimanual.SIDES):  # the rig reports the raw gripper value
+        ref_obs[bimanual.grip_keys(side)[0]] = obs[OBS_STATE][:, 7 * i + 6].numpy()
+    want = _commands_to_droid14(reference.step(ref_obs).commands)[0]
+    np.testing.assert_array_equal(got.numpy(), want)
+
+
 def test_bimanual_raw_frames_match_the_pipeline_path() -> None:
     """Without the pipelines the policy makes the canvas itself and reads the 14-value state."""
     policy = make_tiny_bimanual_policy(seed=2)

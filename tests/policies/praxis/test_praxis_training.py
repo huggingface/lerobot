@@ -199,6 +199,32 @@ def test_forward_is_deterministic_per_call_and_changes_between_calls() -> None:
     assert torch.equal(loss_a.detach(), loss_b.detach()) and not torch.equal(loss_b.detach(), loss_c.detach())
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="TF32 exists on CUDA only")
+def test_backward_runs_under_the_praxis_numerics_whatever_the_host_tf32() -> None:
+    """`lerobot-train` turns TF32 on by default (`--tf32`). The backward, including the activation
+    checkpoint recompute of the float32 router, runs with the praxis numerics anyway, so the
+    gradients do not depend on the host flag, and the host flag is back after the backward."""
+    matmul, cudnn = torch.backends.cuda.matmul, torch.backends.cudnn
+    saved = (matmul.allow_tf32, cudnn.allow_tf32)
+    grads: dict[bool, dict[str, torch.Tensor]] = {}
+    try:
+        for host_tf32 in (False, True):
+            matmul.allow_tf32 = cudnn.allow_tf32 = host_tf32
+            policy = make_tiny_policy(
+                seed=7, text_dropout=0.0, proprio_dropout=0.0, activation_checkpointing=True, device="cuda"
+            ).to("cuda")
+            policy.train()
+            loss, _ = policy.forward(training_batch(policy, seed=8))
+            loss.backward()
+            assert matmul.allow_tf32 is host_tf32 and cudnn.allow_tf32 is host_tf32
+            grads[host_tf32] = {n: p.grad for n, p in policy.named_parameters() if p.grad is not None}
+    finally:
+        matmul.allow_tf32, cudnn.allow_tf32 = saved
+    assert grads[False] and grads[False].keys() == grads[True].keys()
+    for name, grad in grads[False].items():
+        assert torch.equal(grad, grads[True][name]), name
+
+
 def test_backward_trains_the_weights_and_update_moves_the_router_biases() -> None:
     policy = make_tiny_policy(seed=7, moe_balance_speed=0.01, activation_checkpointing=False)
     params = policy.get_optim_params()
