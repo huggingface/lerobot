@@ -37,7 +37,7 @@ from lerobot.policies.praxis.configuration_praxis import PraxisConfig
 from lerobot.policies.praxis.praxis_core import single_arm as sa
 from lerobot.policies.praxis.praxis_core.checkpoint import CheckpointError, model_variant
 from lerobot.policies.praxis.praxis_core.model import SamplerSettings
-from lerobot.policies.praxis.processor_praxis import PraxisTileViewsProcessorStep, tile_views
+from lerobot.policies.praxis.processor_praxis import PraxisTileViewsProcessorStep, tile_frames, tile_views
 
 from .tiny_model import tiny_lerobot_config
 
@@ -187,6 +187,18 @@ def test_tile_views_equals_the_praxis_tile(size: tuple[int, int], antialias: boo
     as_tensor = torch.from_numpy(frames).permute(0, 1, 4, 2, 3)
     assert torch.equal(tile_views(as_tensor.float() / 255, th, 416, 0.03, antialias), want)
     assert torch.equal(tile_views(as_tensor, th, 416, 0.03, antialias), want)
+
+
+@pytest.mark.parametrize("antialias", [False, True])
+@pytest.mark.parametrize("size", [(720, 1280), (288, 512), (234, 416)])
+def test_tile_frames_gives_the_praxis_tile_as_uint8(size: tuple[int, int], antialias: bool) -> None:
+    """A caller tiles uint8 frames itself and gets the bytes of the praxis tile, as uint8."""
+    th = 224 if antialias else 256
+    frames = np.random.default_rng(3).integers(0, 256, (3, *size, 3), dtype=np.uint8)  # (N, H, W, 3)
+    want = sa._tile_view(frames, th, 416, 0.03, antialias)
+    tiles = tile_frames(torch.from_numpy(frames).permute(0, 3, 1, 2), th, 416, 0.03, antialias)
+    assert tiles.dtype == torch.uint8
+    assert torch.equal(tiles.float(), want.float())
 
 
 @pytest.mark.parametrize(
