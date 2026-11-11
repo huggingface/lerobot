@@ -157,7 +157,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     # `model-XXXXX-of-NNNNN.safetensors` shards
     # plus `model.safetensors.index.json`. Only enable this for policies whose loader reaches
     # `_resolve_weight_files`; independent loaders (PI0/PI05/PI0-FAST, XVLA, WALL-X, GR00T)
-    # still require their own sharded-checkpoint support.
+    # still require their own sharded-checkpoint support. `dcp_to_safetensors` always writes a
+    # single `model.safetensors`.
     _max_shard_size: ClassVar[int | str] = _SINGLE_FILE_SHARD_SIZE
 
     def _save_pretrained(self, save_directory: Path) -> None:
@@ -303,7 +304,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             raise ValueError("A checkpoint must contain at least one weights file")
         if len(files) == 1:
             return cls._load_as_safetensor(model, str(files[0]), map_location, strict)
-        if cls._load_as_safetensor.__func__ is not PreTrainedPolicy._load_as_safetensor.__func__:  # type: ignore[attr-defined]
+        # A legacy single-file hook can stay. Shards are refused only when `_load_checkpoint`
+        # is still the base implementation.
+        legacy_hook = cls._load_as_safetensor.__func__ is not PreTrainedPolicy._load_as_safetensor.__func__  # type: ignore[attr-defined]
+        base_checkpoint_hook = (
+            cls._load_checkpoint.__func__ is PreTrainedPolicy._load_checkpoint.__func__  # type: ignore[attr-defined]
+        )
+        if legacy_hook and base_checkpoint_hook:
             raise NotImplementedError(
                 f"{cls.__name__} must implement _load_checkpoint to load sharded weights"
             )

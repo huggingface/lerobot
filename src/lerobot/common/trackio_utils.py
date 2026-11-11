@@ -135,6 +135,9 @@ class TrackioLogger:
                 artifact.add_file(config_file)
         elif standard_model_file.exists():
             artifact.add_file(standard_model_file)
+            config_file = pretrained_model_dir / "config.json"
+            if config_file.exists():
+                artifact.add_file(config_file)
         elif (pretrained_model_dir / SAFETENSORS_INDEX_FILE).is_file():
             artifact.add_file(pretrained_model_dir / SAFETENSORS_INDEX_FILE)
             for name in safetensors_shard_names(pretrained_model_dir / SAFETENSORS_INDEX_FILE):

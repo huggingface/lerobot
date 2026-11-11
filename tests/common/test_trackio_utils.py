@@ -301,7 +301,8 @@ def test_log_policy_standard_checkpoint(trackio, tmp_path):
             trackio=TrackioConfig(disable_artifact=False),
         )
     )
-    checkpoint_dir = make_checkpoint(tmp_path, "model.safetensors")
+    checkpoint_dir = make_checkpoint(tmp_path, "model.safetensors", "config.json")
+    pretrained_model_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
 
     logger.log_policy(checkpoint_dir)
 
@@ -310,7 +311,10 @@ def test_log_policy_standard_checkpoint(trackio, tmp_path):
     )
 
     artifact = trackio.Artifact.return_value
-    artifact.add_file.assert_called_once_with(checkpoint_dir / PRETRAINED_MODEL_DIR / "model.safetensors")
+    assert artifact.add_file.call_args_list == [
+        call(pretrained_model_dir / "model.safetensors"),
+        call(pretrained_model_dir / "config.json"),
+    ]
     trackio.log_artifact.assert_called_once_with(artifact)
 
 

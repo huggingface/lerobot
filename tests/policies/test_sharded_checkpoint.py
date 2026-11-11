@@ -124,3 +124,31 @@ def test_legacy_single_file_hook_requires_migration_for_shards(tmp_path):
     with pytest.raises(NotImplementedError, match="_load_checkpoint"):
         LegacyPolicy._load_weight_files(model, files, "cpu", True)
     assert len(calls) == 1
+
+
+def test_overriding_both_hooks_loads_shards(tmp_path):
+    from lerobot.configs import PreTrainedConfig
+
+    seen = []
+
+    class BothHooksPolicy(PreTrainedPolicy):
+        config_class = PreTrainedConfig
+        name = "both-hooks"
+
+        @classmethod
+        def _load_as_safetensor(cls, model, model_file, map_location, strict):
+            seen.append("file")
+            return super()._load_as_safetensor(model, model_file, map_location, strict)
+
+        @classmethod
+        def _load_checkpoint(cls, model, checkpoint, map_location, strict):
+            seen.append(len(checkpoint.files))
+            return super()._load_checkpoint(model, checkpoint, map_location, strict)
+
+    model = nn.Linear(2, 2)
+    weight, bias = torch.ones(2, 2), torch.ones(2)
+    files = write_shards(tmp_path, {"weight": weight}, {"bias": bias})
+    loaded = BothHooksPolicy._load_weight_files(model, files, "cpu", True)
+    assert seen == [2]
+    torch.testing.assert_close(loaded.weight, weight)
+    torch.testing.assert_close(loaded.bias, bias)
