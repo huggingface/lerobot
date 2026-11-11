@@ -322,3 +322,69 @@ class TestDepthUnitMetadata:
         reference_depth = read_dataset[int(stream_item["index"])][DEPTH_KEY]
         assert torch.allclose(stream_depth, reference_depth)
         assert torch.allclose(stream_depth, torch.full_like(stream_depth, expected), rtol=0.05)
+
+    @pytest.mark.parametrize("resume", [False, True])
+    @pytest.mark.parametrize("depth_dtype", [np.float32, np.uint16])
+    def test_same_instance_read_rescales_stats_after_finalize(
+        self, tmp_path: Path, resume: bool, depth_dtype: type
+    ) -> None:
+        """Finalized writers expose the same physical frames and stats as reopened readers."""
+        features = {
+            DEPTH_KEY: {
+                "dtype": "image",
+                "shape": (8, 10, 1),
+                "names": ["height", "width", "channels"],
+                "info": {"is_depth_map": True},
+            },
+            "action": {"dtype": "float32", "shape": (1,), "names": ["position"]},
+        }
+        root = tmp_path / "ds"
+        dataset = LeRobotDataset.create(
+            DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=root, use_videos=False
+        )
+        values = [1000, 3000]
+
+        def record_episode(ds: LeRobotDataset, episode_values: list[int]) -> None:
+            for value in episode_values:
+                native_value = value / 1000 if depth_dtype == np.float32 else value
+                ds.add_frame(
+                    {
+                        DEPTH_KEY: np.full((8, 10, 1), native_value, dtype=depth_dtype),
+                        "action": np.array([value], dtype=np.float32),
+                        "task": "test",
+                    }
+                )
+            ds.save_episode()
+            ds.finalize()
+
+        record_episode(dataset, values)
+        if resume:
+            dataset = LeRobotDataset.resume(DUMMY_REPO_ID, root=root)
+            record_episode(dataset, [2000, 4000])
+            values += [2000, 4000]
+
+        persisted_stats = (root / "meta/stats.json").read_bytes()
+        reloaded = LeRobotDataset(DUMMY_REPO_ID, root=root)
+        # Stats are in the read unit before the first read (a normalizer built here caches them),
+        # and repeated finalize calls and reads must not convert them again.
+        for _ in range(2):
+            stats = dataset.meta.stats[DEPTH_KEY]
+            for name, expected in {
+                "min": min(values),
+                "max": max(values),
+                "mean": np.mean(values),
+                "std": np.std(values),
+                "count": len(values),
+            }.items():
+                np.testing.assert_allclose(stats[name], expected)
+            for key in [DEPTH_KEY, "action"]:
+                for name, expected in reloaded.meta.stats[key].items():
+                    np.testing.assert_allclose(dataset.meta.stats[key][name], expected)
+            assert (root / "meta/stats.json").read_bytes() == persisted_stats
+            dataset.finalize()
+            dataset[0]
+
+        for index, value in enumerate(values):
+            item = dataset[index]
+            torch.testing.assert_close(item[DEPTH_KEY], torch.full((1, 8, 10), float(value)))
+            torch.testing.assert_close(item[DEPTH_KEY], reloaded[index][DEPTH_KEY])

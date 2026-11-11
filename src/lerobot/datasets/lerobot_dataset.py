@@ -564,6 +564,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return
         if self.writer is not None:
             self.writer.finalize()
+            if self.meta.depth_keys:
+                # Read mode starts here: convert depth stats before anything (e.g. a normalizer)
+                # reads them. Load first, so a later metadata reload cannot undo the conversion.
+                self.meta.ensure_readable()
+                self.meta.rescale_depth_stats(self._depth_output_unit)
         self._is_finalized = True
 
     # ── Core Dataset methods ──────────────────────────────────────────
