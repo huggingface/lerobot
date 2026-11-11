@@ -26,7 +26,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature, PreTrainedConfig
-from lerobot.processor import PolicyAction, PolicyProcessorPipeline
+from lerobot.processor import PolicyAction, PolicyProcessorPipeline, rename_keys
 from lerobot.sim import EnvDescriptor
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
@@ -198,7 +198,7 @@ def validate_checkpoint(
     if env_preprocessor is not None:
         features = {PipelineFeatureType.OBSERVATION: observed, PipelineFeatureType.ACTION: {}}
         observed = env_preprocessor.transform_features(features)[PipelineFeatureType.OBSERVATION]
-    available = {rename_map.get(name, name): feature for name, feature in observed.items()}
+    available = rename_keys(observed, rename_map)
     placeholders = {f"{OBS_IMAGES}.empty_camera_{i}" for i in range(getattr(config, "empty_cameras", 0))}
     for name, expected in (config.input_features or {}).items():
         if name in placeholders:
