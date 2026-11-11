@@ -199,7 +199,6 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 sidecar_lock_timeout_s=cfg.dataset.streaming_sidecar_lock_timeout_s,
                 repeat=True,
                 repo_type=repo_type,
-                storage_options=cfg.dataset.storage_options,
             )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")

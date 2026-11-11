@@ -332,7 +332,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if storage_options:
             raise ValueError(
                 "storage_options is not supported by LeRobotDataset for the default 'lerobot' storage format. "
-                "Use StreamingLeRobotDataset, or set dataset.streaming=true when training."
+                "It is currently supported only by non-default storage formats such as Lance."
             )
         # The default format is always served by DatasetReader.
         reader = DatasetReader(
