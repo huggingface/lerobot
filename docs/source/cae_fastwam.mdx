@@ -1,0 +1,121 @@
+# CAE-FastWAM
+
+CAE-FastWAM (Compact Action Expert for FastWAM) is a [FastWAM](./fastwam) world action model whose action expert has about 25M parameters instead of about 1B. The LeRobot integration exposes it as `policy.type=cae_fastwam`, with the converted LIBERO checkpoint [`amd/CAE-FastWAM-lerobot`](https://huggingface.co/amd/CAE-FastWAM-lerobot) (from [`amd/CAE-FastWAM`](https://huggingface.co/amd/CAE-FastWAM), Apache-2.0).
+
+## Model Overview
+
+CAE-FastWAM is FastWAM with two changes:
+
+- **Compact action expert.** The action expert has hidden size 32 and FFN size 256, and it denoises 8 latent tokens of width 16 instead of 32 raw 7-D actions.
+- **Suite-conditioned action VAE.** A frozen decoder turns the 8 latent tokens into the `32 x 7` action chunk. In training, the matching frozen encoder turns the ground-truth chunk into the latent targets. Both are conditioned on the LIBERO task suite, and each suite has its own state and action statistics.
+
+`CAEFastWAMPolicy` subclasses `FastWAMPolicy` and reuses its video expert, mixture-of-transformers, Wan2.2 VAE, UMT5 text encoder, training loss and processors. Only the action VAE and the per-suite statistics are new.
+
+## Installation Requirements
+
+```bash
+pip install -e ".[fastwam]"          # policy
+pip install -e ".[fastwam,libero]"   # LIBERO evaluation
+```
+
+Like FastWAM, the policy loads the Wan2.2 VAE and UMT5-XXL text encoder from `Wan-AI/Wan2.2-TI2V-5B-Diffusers` and the tokenizer from `google/umt5-xxl`.
+
+## Usage
+
+The task suite selects the decoder's suite embedding and the normalization statistics, so `--policy.task_suite` is required. Evaluate one suite per run, with `--policy.task_suite` equal to `--env.task`:
+
+```bash
+lerobot-eval \
+  --policy.path=amd/CAE-FastWAM-lerobot \
+  --policy.task_suite=libero_spatial \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.episode_length=400 \
+  --eval.batch_size=5 \
+  --eval.n_episodes=50 \
+  --seed=42
+```
+
+For `libero_10`, use `--env.episode_length=700`. The checkpoint's defaults are the ones it was evaluated with: bfloat16, 10 denoising steps, inference seed 42 and `n_action_steps=10`.
+
+> [!WARNING]
+> A multi-suite run (`--env.task=libero_spatial,libero_object,...`) applies one suite's statistics and decoder embedding to every suite and reports a wrong success rate without raising an error. FastWAM has no such restriction: it has no suite input and normalizes every suite with one set of statistics, while CAE-FastWAM uses the decoder embedding and the `policy.task_suite_stats` entry of `policy.task_suite`.
+
+## Configuration Notes
+
+### Task Suite
+
+`policy.task_suites` lists the checkpoint's suites in the order of the decoder's suite embedding (`libero_spatial`, `libero_object`, `libero_goal`, `libero_10`). `policy.task_suite` picks one of them for the model and for the processors. `policy.task_suite_stats` holds the min/max statistics of `observation.state` and `action` for each suite, and the processors use the selected suite's.
+
+### Observation and Action Processing
+
+The processors are FastWAM's: LeRobot's min/max normalizer for the state (and, in training, the action) with the selected suite's statistics, and on the output the unnormalizer and FastWAM's gripper toggle to the LIBERO convention (`policy.toggle_action_dimensions=[-1]`). As in FastWAM, the model resizes each camera frame to `224 x 224` and places `observation.images.image` (third person) and `observation.images.image2` (wrist) side by side.
+
+### Numerics
+
+The checkpoint sets FastWAM's `policy.fp32_attention=false` (attention in the model dtype, as in the original implementation).
+
+## Training
+
+`lerobot-train` fine-tunes with FastWAM's joint flow-matching loss. The action targets are the frozen action-VAE encoder's latents of the normalized ground-truth chunk, and a latent token is padding if any of its 4 steps is. The mixture-of-transformers and the proprio encoder are trained; the Wan2.2 VAE, UMT5 and the action VAE stay frozen. `--policy.type=cae_fastwam` initializes from `amd/CAE-FastWAM-lerobot` (`policy.base_model_id`), as FastWAM does from `lerobot/fastwam_base`.
+
+```bash
+lerobot-train \
+  --policy.path=amd/CAE-FastWAM-lerobot \
+  --policy.task_suite=libero_spatial \
+  --policy.device=cuda \
+  --accelerator.mixed_precision=bf16 \
+  --dataset.repo_id=your-org/your-libero-spatial-dataset \
+  --batch_size=8 \
+  --steps=20000
+```
+
+Training uses one suite per run and normalizes with the selected suite's statistics from the checkpoint, not the dataset's (the action VAE was trained with them). The dataset therefore needs the checkpoint's conventions: cameras `observation.images.image` and `observation.images.image2` (use `--rename_map` otherwise), an 8-D state, and 7-D actions with the gripper at `0` closed and `1` open.
+
+Multi-GPU training works as for FastWAM, through LeRobot's standard path (see the [multi GPU training guide](./multi_gpu_training)): a multi-process launch (`accelerate launch --num_processes=N $(which lerobot-train) ...`) runs DDP, and `--parallelism.dp_shard=N` shards with FSDP2 over the wrap units CAE-FastWAM inherits from FastWAM. `--batch_size` is per GPU. Checked on 2 MI355X GPUs with DDP and with FSDP2 (40 steps each): the frozen action VAE stays bitwise unchanged and the saved checkpoint reloads for inference.
+
+Precision is handled as for FastWAM. On one GPU or with DDP, the weights and the optimizer states are stored in `policy.dtype` (bfloat16 by default) and `lerobot-train` updates them directly, so updates below bfloat16 resolution are lost; the original trained with DeepSpeed ZeRO-1, which keeps float32 master weights. FastWAM's `--policy.dtype=float32` together with `--accelerator.mixed_precision=bf16` keeps float32 weights and optimizer states while the matrix multiplications run under bfloat16 autocast; it needs about twice the GPU memory (118 GB instead of 59 GB on one MI355X at batch size 2) and saves float32 checkpoints. With FSDP2, `--policy.dtype=float32 --parallelism.dp_shard=N --accelerator.mixed_precision=bf16` gives float32 master weights with bfloat16 compute (see the [multi GPU training guide](./multi_gpu_training)); this combination has not been tested for CAE-FastWAM.
+
+## Results
+
+Evaluated on LIBERO with [`amd/CAE-FastWAM-lerobot`](https://huggingface.co/amd/CAE-FastWAM-lerobot) (bfloat16, 10 denoising steps), 50 episodes per task:
+
+| Suite          | Success rate | n_episodes |
+| -------------- | -----------: | ---------: |
+| libero_spatial |        96.0% |        500 |
+| libero_object  |        99.4% |        500 |
+| libero_goal    |        94.4% |        500 |
+| libero_10      |        95.8% |        500 |
+| **average**    |    **96.4%** |       2000 |
+
+Reproduce with the `lerobot-eval` command above, once per suite (`--env.episode_length=700` for `libero_10`), on 1x AMD Instinct MI355X. The LIBERO stack was the one pinned in `docker/Dockerfile.sim` (MuJoCo 3.3.1). The model card reports 97.28% for a different evaluation setup.
+
+## References
+
+- [CAE-FastWAM checkpoint](https://huggingface.co/amd/CAE-FastWAM)
+- [CAE-FastWAM code](https://github.com/AMD-AGI/faster-action-models)
+- [Fast-WAM paper](https://arxiv.org/abs/2603.16666)
+- [Wan2.2 TI2V 5B](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B)
+
+## Citation
+
+```bibtex
+@misc{CAE-FastWAM,
+  title = {CAE-FastWAM: Compact Action Expert for FastWAM},
+  url = {https://huggingface.co/amd/CAE-FastWAM},
+  author = {Hitesh Kandala and Raghav Goyal and Pratik Prabhanjan Brahma and Emad Barsoum},
+  month = {October},
+  year = {2026}
+}
+
+@article{yuan2026fastwam,
+  title = {Fast-WAM: Do World Action Models Need Test-time Future Imagination?},
+  author = {Tianyuan Yuan and Zibin Dong and Yicheng Liu and Hang Zhao},
+  journal = {arXiv preprint arXiv:2603.16666},
+  year = {2026},
+  url = {https://arxiv.org/abs/2603.16666}
+}
+```
