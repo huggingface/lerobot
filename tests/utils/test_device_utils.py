@@ -71,3 +71,18 @@ def test_amp_availability_accepts_torch_device():
 def test_safe_dtype_ignores_device_index():
     assert get_safe_dtype(torch.float64, "mps:0") == torch.float32
     assert get_safe_dtype(torch.float64, torch.device("mps:0")) == torch.float32
+
+
+@pytest.mark.parametrize("as_device", [False, True])
+@pytest.mark.parametrize("target_has_fp64", [False, True])
+def test_safe_dtype_uses_requested_xpu_capability(as_device, target_has_fp64):
+    target = torch.device("xpu:1") if as_device else "xpu:1"
+
+    def capability(device=None):
+        # Current device and requested device deliberately differ.
+        is_target = device is not None and torch.device(device) == torch.device("xpu:1")
+        return {"has_fp64": target_has_fp64 if is_target else not target_has_fp64}
+
+    with patch("torch.xpu.get_device_capability", side_effect=capability):
+        expected = torch.float64 if target_has_fp64 else torch.float32
+        assert get_safe_dtype(torch.float64, target) == expected
