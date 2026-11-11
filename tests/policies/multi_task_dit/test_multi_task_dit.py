@@ -95,6 +95,7 @@ def create_config(
     with_visual: bool = True,
     height: int = 224,
     width: int = 224,
+    compile_model: bool = False,
 ) -> MultiTaskDiTConfig:
     """Create a MultiTaskDiT config for testing.
 
@@ -107,6 +108,7 @@ def create_config(
         with_visual: Whether to include visual input (default: True)
         height: Image height (only used if with_visual=True)
         width: Image width (only used if with_visual=True)
+        compile_model: Whether to torch.compile the vision encoder and noise predictor
     """
     input_features = {OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))}
 
@@ -125,10 +127,22 @@ def create_config(
         hidden_dim=128,
         num_layers=2,
         num_heads=4,
+        compile_model=compile_model,
     )
 
     config.validate_features()
     return config
+
+
+def create_processed_train_batch(config: MultiTaskDiTConfig) -> dict[str, Tensor]:
+    """Create a training batch and tokenize its task text with the policy's preprocessor."""
+    config.normalization_mapping = {
+        "VISUAL": NormalizationMode.IDENTITY,
+        "STATE": NormalizationMode.IDENTITY,
+        "ACTION": NormalizationMode.IDENTITY,
+    }
+    preprocessor, _ = make_multi_task_dit_pre_post_processors(config=config, dataset_stats=None)
+    return preprocessor(create_train_batch())
 
 
 @pytest.mark.parametrize("batch_size,state_dim,action_dim", [(2, 10, 10), (1, 6, 6)])
@@ -619,3 +633,51 @@ def test_multi_task_dit_policy_get_optim_params():
     assert "lr" in param_groups[1]
     expected_lr = config.optimizer_lr * config.vision_encoder_lr_multiplier
     assert param_groups[1]["lr"] == expected_lr
+
+
+@pytest.mark.parametrize("compile_model", [False, True])
+def test_multi_task_dit_vision_encoder_hooks_fire(compile_model: bool):
+    """Hooks on the CLIP model (e.g. FSDP2's unshard/reshard) must fire, compiled or not."""
+    config = create_config(compile_model=compile_model)
+    policy = MultiTaskDiTPolicy(config=config)
+    policy.to(config.device)
+
+    calls = []
+    policy.observation_encoder.vision_encoder.model.register_forward_hook(lambda *_: calls.append(1))
+    policy.forward(create_processed_train_batch(config))
+
+    assert calls
+
+
+def test_multi_task_dit_compile_keeps_state_dict_keys():
+    """Compiling must not rename or wrap any module, so checkpoints stay interchangeable."""
+    eager_policy = MultiTaskDiTPolicy(config=create_config())
+    compiled_policy = MultiTaskDiTPolicy(config=create_config(compile_model=True))
+
+    assert eager_policy.state_dict().keys() == compiled_policy.state_dict().keys()
+
+
+def test_multi_task_dit_compiled_policy_save_and_load(tmp_path):
+    """A compiled policy saves and reloads, compiled or eager, and all three compute the same loss."""
+    config = create_config(compile_model=True)
+    policy = MultiTaskDiTPolicy(config=config)
+    policy.to(config.device)
+    policy.eval()
+    policy.save_pretrained(tmp_path)
+
+    compiled_reload = MultiTaskDiTPolicy.from_pretrained(tmp_path)
+    eager_reload = MultiTaskDiTPolicy.from_pretrained(tmp_path, config=create_config())
+    assert compiled_reload.config.compile_model and not eager_reload.config.compile_model
+
+    batch = create_processed_train_batch(config)
+    losses = []
+    with torch.no_grad():
+        for candidate in (policy, compiled_reload, eager_reload):
+            candidate.to(config.device)
+            candidate.eval()
+            with seeded_context(12):
+                losses.append(candidate.forward(batch)[0])
+
+    # The eager reload is the reference: the compiled policy and the compiled reload must match it.
+    torch.testing.assert_close(losses[0], losses[2], rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(losses[1], losses[2], rtol=1e-5, atol=1e-5)

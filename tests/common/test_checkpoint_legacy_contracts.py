@@ -136,6 +136,7 @@ def sharded_passthrough_accelerator() -> SimpleNamespace:
         unwrap_model=lambda m: m,
         wait_for_everyone=lambda: None,
         state=SimpleNamespace(fsdp_plugin=FSDPConfig().build_plugin()),
+        scaler=None,  # these contracts are fp32; a real Accelerator exposes the attribute
     )
 
 
@@ -148,6 +149,7 @@ class TestV060HardBreak:
     torch DCP's own missing-artifact error, never a bespoke v0.6.0 message.
     """
 
+    @pytest.mark.gpu
     def test_sharded_resume_fails_with_ordinary_missing_artifact_error(self, tmp_path, accelerate_state):
         make_v060_fsdp_checkpoint(tmp_path)
 

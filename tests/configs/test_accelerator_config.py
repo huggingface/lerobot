@@ -15,9 +15,11 @@
 # limitations under the License.
 
 import json
+from datetime import timedelta
 
 import draccus
 import pytest
+import torch
 
 from lerobot.configs.accelerator import (
     AcceleratorConfig,
@@ -27,6 +29,9 @@ from lerobot.configs.accelerator import (
     DDPConfig,
     FSDPConfig,
     GradientAccumulationConfig,
+    GradScalerConfig,
+    InitProcessGroupConfig,
+    MixedPrecisionPolicyConfig,
 )
 from lerobot.configs.parallelism import ParallelismConfig
 
@@ -48,6 +53,36 @@ class TestFieldValidation:
         with pytest.raises(ValueError, match="gradient_accumulation.steps"):
             GradientAccumulationConfig(steps=0)
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("init_scale", 0.0),
+            ("growth_factor", 1.0),  # a scale that can never recover after a backoff
+            ("backoff_factor", 1.0),  # an overflow that can never be escaped
+            ("backoff_factor", 0.0),
+            ("growth_interval", 0),
+        ],
+    )
+    def test_grad_scaler_invariants(self, field, value):
+        with pytest.raises(ValueError, match=f"grad_scaler.{field}"):
+            GradScalerConfig(**{field: value})
+
+    @pytest.mark.parametrize("timeout", [0, -1])
+    def test_init_process_group_timeout_positive(self, timeout):
+        with pytest.raises(ValueError, match="init_process_group.timeout"):
+            InitProcessGroupConfig(timeout=timeout)
+
+    @pytest.mark.parametrize(
+        "mixed_precision, policy, match",
+        [
+            ("bf16", MixedPrecisionPolicyConfig(cast_forward_inputs=False), "param_dtype"),
+            ("no", MixedPrecisionPolicyConfig(param_dtype=torch.float16), "float16"),
+        ],
+    )
+    def test_mixed_precision_policy_matches_mixed_precision(self, mixed_precision, policy, match):
+        with pytest.raises(ValueError, match=match):
+            AcceleratorConfig(mixed_precision=mixed_precision, fsdp=FSDPConfig(mixed_precision_policy=policy))
+
 
 class TestDraccusRoundTrip:
     @pytest.mark.parametrize(
@@ -56,14 +91,19 @@ class TestDraccusRoundTrip:
             AcceleratorConfig(),
             AcceleratorConfig(
                 mixed_precision="bf16",
-                gradient_accumulation=GradientAccumulationConfig(steps=4),
+                gradient_accumulation=GradientAccumulationConfig(steps=4, sync_each_batch=True),
                 fsdp=FSDPConfig(
                     reshard_after_forward=False,
                     wrap_modules=["ACTEncoderLayer", "ACTDecoderLayer"],
                     cpu_offload=True,
                     ignored_modules=r".*pos_embed.*",
+                    mixed_precision_policy=MixedPrecisionPolicyConfig(
+                        param_dtype=torch.bfloat16, cast_forward_inputs=False
+                    ),
                 ),
                 ddp=DDPConfig(find_unused_parameters=False, static_graph=True),
+                init_process_group=InitProcessGroupConfig(backend="gloo", timeout=3600),
+                grad_scaler=GradScalerConfig(init_scale=1024.0, growth_interval=500),
                 compile=CompileConfig(enabled=True, mode="max-autotune", regional=False),
                 activation_checkpointing=ActivationCheckpointingConfig(mode=ActivationCheckpointingMode.FULL),
             ),
@@ -97,6 +137,8 @@ class TestRuntimeBuilders:
         # LeRobot never switches state_dict_type: FSDP2's SHARDED default must hold
         assert plugin.state_dict_type.name == "SHARDED_STATE_DICT"
         assert not plugin.activation_checkpointing
+        # torch's defaults leave the policy to accelerate, which derives it from mixed_precision
+        assert plugin.mixed_precision_policy is None
 
     def test_fsdp_plugin_size_based_policy(self):
         plugin = FSDPConfig(min_num_params=1024).build_plugin()
@@ -108,10 +150,70 @@ class TestRuntimeBuilders:
         assert handler.find_unused_parameters is False
         assert handler.gradient_as_bucket_view is True
 
+    def test_init_process_group_kwargs_translation(self):
+        handler = InitProcessGroupConfig(
+            backend="gloo", init_method="env://", timeout=3600
+        ).build_kwargs_handler()
+        assert handler.backend == "gloo"
+        assert handler.init_method == "env://"
+        assert handler.timeout == timedelta(seconds=3600)
+        # accelerate passes only the fields that differ from its defaults
+        assert InitProcessGroupConfig().build_kwargs_handler().to_kwargs() == {}
+
     def test_gradient_accumulation_plugin_translation(self):
-        plugin = GradientAccumulationConfig(steps=4).build_plugin()
+        plugin = GradientAccumulationConfig(steps=4, sync_each_batch=True).build_plugin()
         assert plugin.num_steps == 4
         assert plugin.sync_with_dataloader is False
+        assert plugin.sync_each_batch is True
+
+    def test_grad_scaler_kwargs_translation(self):
+        handler = GradScalerConfig(
+            init_scale=1024.0, growth_factor=4.0, backoff_factor=0.25, growth_interval=500
+        ).build_kwargs_handler()
+        assert handler.init_scale == 1024.0
+        assert handler.growth_factor == 4.0
+        assert handler.backoff_factor == 0.25
+        assert handler.growth_interval == 500
+        # `enabled` is not mirrored: fp16 without loss scaling is never a valid configuration.
+        assert handler.enabled is True
+
+    @pytest.mark.parametrize(
+        ("topology", "world_size", "expects_ddp_handler"),
+        [
+            ({}, 1, False),  # single process
+            ({"dp_replicate": 4}, 4, True),  # DDP
+            ({"dp_shard": 4}, 4, False),  # FSDP2
+            ({"dp_replicate": 2, "dp_shard": 2}, 4, False),  # HSDP
+        ],
+    )
+    @pytest.mark.parametrize("mixed_precision", ["no", "bf16", "fp16"])
+    def test_scaler_handler_is_passed_for_fp16_on_every_topology(
+        self, monkeypatch, topology, world_size, expects_ddp_handler, mixed_precision
+    ):
+        """The scaler handler is orthogonal to the topology matrix.
+
+        accelerate reads it only on the branch that builds the fp16 `GradScaler`, so appending
+        it anywhere else would be inert — but it is still left out, to keep a "no"/bf16
+        `Accelerator` byte-identical to one built without any scaler support.
+        """
+        from accelerate.utils import DistributedDataParallelKwargs, GradScalerKwargs
+
+        captured = {}
+
+        class FakeAccelerator:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr("accelerate.Accelerator", FakeAccelerator)
+        parallelism = ParallelismConfig(**topology)
+        parallelism.resolve(world_size)
+        AcceleratorConfig(mixed_precision=mixed_precision).build(parallelism, cpu=True)
+
+        handlers = captured.get("kwargs_handlers", [])
+        scalers = [h for h in handlers if isinstance(h, GradScalerKwargs)]
+        ddps = [h for h in handlers if isinstance(h, DistributedDataParallelKwargs)]
+        assert len(scalers) == (1 if mixed_precision == "fp16" else 0)
+        assert len(ddps) == (1 if expects_ddp_handler else 0)
 
     def test_gradient_accumulation_never_syncs_with_dataloader(self, monkeypatch):
         """The loop cycles a finite dataloader, so accelerate's default

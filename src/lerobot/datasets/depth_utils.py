@@ -18,7 +18,6 @@ Depth encoding/decoding helpers for :class:`DepthEncoderConfig`.
 """
 
 import math
-from typing import Literal
 
 import av
 import numpy as np
@@ -55,9 +54,12 @@ def _validate_log_quant_params(depth_min: float, shift: float) -> None:
 
 def _depth_input_to_float32_and_unit(
     depth: NDArray[np.integer] | NDArray[np.floating],
-    input_unit: Literal["auto", DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT],
-) -> tuple[NDArray[np.float32], Literal[DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT]]:
-    """Convert depth to float32 in the chosen unit, and return the resolved unit."""
+    input_unit: str,
+) -> tuple[NDArray[np.float32], str]:
+    """Convert depth to float32 in the chosen unit, and return the resolved unit.
+
+    ``input_unit`` is ``"auto"``, :data:`DEPTH_METER_UNIT` or :data:`DEPTH_MILLIMETER_UNIT`.
+    """
     resolved_unit = infer_depth_unit(depth.dtype) if input_unit == "auto" else input_unit
     return depth.astype(np.float32, order="K"), resolved_unit
 
@@ -70,7 +72,7 @@ def quantize_depth(
     use_log: bool = DEFAULT_DEPTH_USE_LOG,
     pix_fmt: str = DEFAULT_DEPTH_PIX_FMT,
     video_backend: str | None = "pyav",
-    input_unit: Literal["auto", DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT] = "auto",
+    input_unit: str = "auto",
 ) -> NDArray[np.uint16] | av.VideoFrame:
     """Quantize depth to 12-bit codes (``uint16``, values ``0…DEPTH_QMAX``).
 
@@ -156,7 +158,7 @@ def dequantize_depth(
     shift: float = DEFAULT_DEPTH_SHIFT,
     use_log: bool = DEFAULT_DEPTH_USE_LOG,
     pix_fmt: str = DEFAULT_DEPTH_PIX_FMT,
-    output_unit: Literal[DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT] = DEPTH_MILLIMETER_UNIT,
+    output_unit: str = DEPTH_MILLIMETER_UNIT,
     output_tensor: bool = True,
     output_channel_last: bool = False,
 ) -> NDArray[np.uint16] | NDArray[np.float32] | torch.Tensor:

@@ -23,6 +23,8 @@ from lerobot.rl.buffer import ReplayBuffer  # noqa: E402
 from lerobot.rl.data_sources import OnlineOfflineMixer  # noqa: E402
 from lerobot.utils.constants import OBS_STATE  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 def _make_buffer(capacity: int = 100, state_dim: int = 4) -> ReplayBuffer:
     buf = ReplayBuffer(

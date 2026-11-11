@@ -61,10 +61,9 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
-    batch_to_transition,
+    load_pretrained_policy_processors,
     policy_action_to_transition,
     to_relative_actions,
-    transition_to_batch,
     transition_to_policy_action,
 )
 from lerobot.utils.constants import (
@@ -166,10 +165,11 @@ def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17Chec
     can keep using caller-provided dataset stats and config values.
     """
 
-    if not is_raw_groot_n1_7_checkpoint(config.base_model_path):
+    base_model_path = config.base_model_path
+    if base_model_path is None or not is_raw_groot_n1_7_checkpoint(base_model_path):
         return None
 
-    checkpoint_path = Path(config.base_model_path).expanduser()
+    checkpoint_path = Path(base_model_path).expanduser()
     processor_config = read_json(checkpoint_path / "processor_config.json")
     processor_kwargs = processor_config.get("processor_kwargs", {})
     if not isinstance(processor_kwargs, dict):
@@ -510,7 +510,10 @@ def make_groot_pre_post_processors_from_pretrained(
         _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
         return preprocessor, postprocessor
 
-    preprocessor, postprocessor = _load_groot_processor_pipelines(
+    # Register the GR00T N1.5 rejection stubs before deserializing, so a saved N1.5 pipeline
+    # referencing their registry names fails with the canonical removal guidance.
+    _register_removed_n1_5_step_stubs()
+    preprocessor, postprocessor = load_pretrained_policy_processors(
         pretrained_path,
         revision=revision,
         preprocessor_overrides=preprocessor_overrides,
@@ -518,61 +521,10 @@ def make_groot_pre_post_processors_from_pretrained(
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
     )
-    _reconnect_groot_relative_absolute_steps(preprocessor, postprocessor)
     _reconnect_groot_n1_7_pack_decode_steps(preprocessor, postprocessor)
     _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
     _set_groot_preprocessor_training(preprocessor, training=dataset_meta is not None)
     return preprocessor, postprocessor
-
-
-def _load_groot_processor_pipelines(
-    pretrained_path: str,
-    *,
-    revision: str | None,
-    preprocessor_overrides: dict[str, Any],
-    postprocessor_overrides: dict[str, Any],
-    preprocessor_config_filename: str,
-    postprocessor_config_filename: str,
-) -> tuple[
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
-]:
-    # Register the GR00T N1.5 rejection stubs before deserializing, so a saved N1.5 pipeline
-    # referencing their registry names fails with the canonical removal guidance.
-    _register_removed_n1_5_step_stubs()
-    preprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=preprocessor_config_filename,
-        revision=revision,
-        overrides=preprocessor_overrides,
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
-    )
-    postprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=postprocessor_config_filename,
-        revision=revision,
-        overrides=postprocessor_overrides,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
-    )
-    return preprocessor, postprocessor
-
-
-def _reconnect_groot_relative_absolute_steps(
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> None:
-    relative_step = next(
-        (step for step in preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)),
-        None,
-    )
-    if relative_step is None:
-        return
-
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
 
 
 def _reconnect_groot_n1_7_pack_decode_steps(
@@ -738,8 +690,9 @@ def _compute_horizon_relative_action_stats(
 
 def _iter_action_state_training_samples(dataset: Any):
     ensure_reader = getattr(dataset, "_ensure_reader", None)
-    if callable(ensure_reader):
-        reader = ensure_reader()
+    # Only the default parquet reader exposes hf_dataset; other readers
+    # (e.g. lance) fall through to the generic per-item loop below.
+    if callable(ensure_reader) and hasattr(reader := ensure_reader(), "hf_dataset"):
         if reader.hf_dataset is None:
             reader.load_and_activate()
         delta_indices = getattr(reader, "delta_indices", None)
@@ -752,7 +705,7 @@ def _iter_action_state_training_samples(dataset: Any):
                 ep_idx = _as_int(item["episode_index"])
                 abs_idx = _as_int(item["index"])
                 query_indices, padding = reader._get_query_indices(abs_idx, ep_idx)
-                action = reader._query_hf_dataset({ACTION: query_indices[ACTION]})[ACTION]
+                action = reader._query_hf_dataset([{ACTION: query_indices[ACTION]}])[0][ACTION]
                 pad_mask = padding.get(f"{ACTION}_is_pad")
             yield action, state, pad_mask
         return
@@ -1006,8 +959,11 @@ def _build_n1_7_relative_action_processor_assets(
     if not config.use_relative_actions or not dataset_stats:
         return None
 
+    output_features = config.output_features
+    if output_features is None:
+        return None
     try:
-        action_dim = int(config.output_features[ACTION].shape[0])
+        action_dim = int(output_features[ACTION].shape[0])
     except Exception:
         return None
 
@@ -1206,8 +1162,9 @@ def make_groot_pre_post_processors(
     formalize_language = checkpoint_assets.formalize_language if checkpoint_assets is not None else True
     clip_outliers = checkpoint_assets.clip_outliers if checkpoint_assets is not None else True
     video_modality_keys = checkpoint_assets.video_modality_keys if checkpoint_assets is not None else None
+    output_features = config.output_features
     try:
-        env_action_dim = int(config.output_features[ACTION].shape[0])
+        env_action_dim = int(output_features[ACTION].shape[0]) if output_features is not None else 0
     except Exception:
         env_action_dim = 0
     pack_step = GrootN17PackInputsStep(
@@ -1250,6 +1207,10 @@ def make_groot_pre_post_processors(
         crop_fraction = None
     use_albumentations = checkpoint_assets.use_albumentations if checkpoint_assets is not None else False
     letter_box_transform = checkpoint_assets.letter_box_transform if checkpoint_assets is not None else False
+    if config.device is None:
+        raise ValueError(
+            "GR00T processors require `config.device`; `PreTrainedConfig.__post_init__` resolves it."
+        )
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
@@ -1341,18 +1302,18 @@ def make_groot_pre_post_processors(
 # GR00T specific processor steps
 
 
-def _to_uint8_np_bthwc(img_t: torch.Tensor) -> np.ndarray:
+def _to_uint8_bthwc(img_t: torch.Tensor) -> torch.Tensor:
     # img_t: (B, C, H, W) or (B, T, C, H, W), float in [0,1] or uint8
     if img_t.dtype.is_floating_point:
         img_t = (img_t.clamp(0, 1) * 255.0).to(torch.uint8)
     if img_t.dim() == 4:
-        return rearrange(img_t.cpu().numpy(), "b c h w -> b 1 h w c")
+        return rearrange(img_t, "b c h w -> b 1 h w c")
     if img_t.dim() == 5:
-        return rearrange(img_t.cpu().numpy(), "b t c h w -> b t h w c")
+        return rearrange(img_t, "b t c h w -> b t h w c")
     raise ValueError(f"Expected image tensor shape (B, C, H, W) or (B, T, C, H, W), got {tuple(img_t.shape)}")
 
 
-def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
+def _align_video_horizon(video: torch.Tensor, horizon: int | None) -> torch.Tensor:
     """Match the checkpoint video horizon by truncating or left-padding frames."""
 
     if horizon is None or horizon <= 0:
@@ -1362,8 +1323,8 @@ def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
         return video
     if current > horizon:
         return video[:, -horizon:]
-    pad = np.repeat(video[:, :1], horizon - current, axis=1)
-    return np.concatenate([pad, video], axis=1)
+    pad = video[:, :1].repeat_interleave(horizon - current, dim=1)
+    return torch.cat([pad, video], dim=1)
 
 
 def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> ProcessorMixin:
@@ -1851,9 +1812,12 @@ class GrootN17PackInputsStep(ProcessorStep):
 
         img_keys = self._ordered_image_keys(obs)
         if img_keys:
-            cams = [_align_video_horizon(_to_uint8_np_bthwc(obs[k]), self.video_horizon) for k in img_keys]
-            video = np.stack(cams, axis=2)  # (B, T, V, H, W, C)
-            obs["video"] = video
+            cams = [_align_video_horizon(_to_uint8_bthwc(obs[k]), self.video_horizon) for k in img_keys]
+            if cams[0].device.type != "cpu" and len({(cam.shape, cam.device) for cam in cams}) == 1:
+                obs["video"] = torch.stack(cams, dim=2)  # (B, T, V, H, W, C)
+            else:
+                # CPU frames, and cameras with different resolutions or devices, keep the numpy path.
+                obs["video"] = np.stack([cam.cpu().numpy() for cam in cams], axis=2)
             image_keys_to_remove = [key for key in obs if key.startswith(OBS_IMAGES)]
             if OBS_IMAGE in obs:
                 image_keys_to_remove.append(OBS_IMAGE)
@@ -2095,7 +2059,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
         ``target_device`` when set) for the torchvision-backed Qwen processor.
         """
         if self.use_albumentations:
-            video_np = np.asarray(video)
+            video_np = video.cpu().numpy() if torch.is_tensor(video) else np.asarray(video)
             train_crop = self.training and torch.is_grad_enabled()
             sample_images: list[list[Any]] = []
             for batch_idx in range(batch_size):
@@ -2121,10 +2085,10 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             return sample_images
 
         video_t = video if torch.is_tensor(video) else torch.from_numpy(np.ascontiguousarray(video))
-        # (B, T, V, H, W, C) uint8 -> (B, T, V, C, H, W)
-        video_t = video_t.permute(0, 1, 2, 5, 3, 4).contiguous()
         if target_device is not None and video_t.device != target_device:
             video_t = video_t.to(target_device, non_blocking=(target_device.type == "cuda"))
+        # (B, T, V, H, W, C) uint8 -> (B, T, V, C, H, W)
+        video_t = video_t.permute(0, 1, 2, 5, 3, 4).contiguous()
 
         frames_per_sample: list[list[Any]] = []
         for batch_idx in range(batch_size):

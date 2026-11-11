@@ -14,16 +14,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.utils.import_utils import require_package
+from lerobot.utils import require_package
 
 _placo_runtime_error: ImportError | None = None
 
 if TYPE_CHECKING:
-    import placo  # type: ignore[import-not-found]
+    import placo
 else:
     try:
         import placo  # type: ignore[import-not-found]
@@ -101,6 +103,7 @@ class RobotKinematics:
         desired_ee_pose: np.ndarray,
         position_weight: float = 1.0,
         orientation_weight: float = 0.01,
+        max_iters: int = 8,
     ) -> np.ndarray:
         """
         Compute inverse kinematics using placo solver.
@@ -110,6 +113,7 @@ class RobotKinematics:
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
             position_weight: Weight for position constraint in IK
             orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
+            max_iters: Number of placo Newton steps to run.
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
@@ -128,9 +132,10 @@ class RobotKinematics:
         # Configure the task based on position_only flag
         self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
 
-        # Solve IK
-        self.solver.solve(True)
-        self.robot.update_kinematics()
+        # Solve IK.
+        for _ in range(max_iters):
+            self.solver.solve(True)
+            self.robot.update_kinematics()
 
         # Extract joint positions
         joint_pos_rad = []
@@ -149,3 +154,55 @@ class RobotKinematics:
             return result
         else:
             return joint_pos_deg
+
+
+class GravityCompensation:
+    """Joint torques that hold a fixed-base URDF model against gravity, computed with Placo."""
+
+    def __init__(
+        self,
+        urdf_path: str | Path,
+        joint_names: Sequence[str],
+        base_frame: str,
+    ) -> None:
+        """
+        Load a robot model for gravity compensation.
+
+        Args:
+            urdf_path (`str | Path`):
+                Path to the URDF model.
+            joint_names (`Sequence[str]`):
+                Model joints to compensate, in the order torques are returned.
+            base_frame (`str`):
+                Name of the fixed base frame in the model.
+        """
+        require_package("placo", extra="placo-dep")
+        _raise_if_placo_unusable()
+
+        self.robot = placo.RobotWrapper(str(urdf_path))
+        self.joint_names = list(joint_names)
+        self.base_frame = base_frame
+
+    def torques(
+        self, joint_pos_rad: np.ndarray, extra_joint_pos: dict[str, float] | None = None
+    ) -> np.ndarray:
+        """
+        Compute the torques that hold a configuration against gravity.
+
+        Args:
+            joint_pos_rad (`np.ndarray`):
+                Positions of `joint_names` in radians.
+            extra_joint_pos (`dict[str, float]`, *optional*):
+                Positions of other model joints whose mass still loads the compensated joints (e.g. gripper
+                fingers), in model units.
+
+        Returns:
+            `np.ndarray`: Torques in Nm for each joint in `joint_names`.
+        """
+        for joint_name, position in zip(self.joint_names, joint_pos_rad, strict=True):
+            self.robot.set_joint(joint_name, float(position))
+        for joint_name, position in (extra_joint_pos or {}).items():
+            self.robot.set_joint(joint_name, float(position))
+        self.robot.update_kinematics()
+        torques = self.robot.static_gravity_compensation_torques_dict(self.base_frame)
+        return np.asarray([torques[joint_name] for joint_name in self.joint_names])

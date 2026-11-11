@@ -26,6 +26,34 @@ from dataclasses import dataclass
 from lerobot.configs import RTCAttentionSchedule
 
 
+def validate_trained_rtc_horizon(
+    execution_horizon: int, prediction_steps: int, training_max_delay: int
+) -> None:
+    """Apply the shared conservative admission bounds for trained RTC.
+
+    The supplied prefix must cover the checkpoint's maximum conditioned delay.
+    Keep at least that many prediction steps outside the configured prefix, as
+    required by the existing local rollout contract. ``execution_horizon`` is
+    prefix capacity, not measured playback or the number of committed actions;
+    these configuration bounds do not guarantee timely successor inference.
+    """
+    if training_max_delay <= 0:
+        raise ValueError("Trained RTC requires a checkpoint with rtc_training_max_delay > 0.")
+    if prediction_steps <= training_max_delay:
+        raise ValueError("Trained RTC prediction_steps must exceed rtc_training_max_delay.")
+    if execution_horizon < training_max_delay:
+        raise ValueError(
+            f"Trained RTC execution_horizon ({execution_horizon}) must be at least the checkpoint's "
+            f"maximum conditioned delay rtc_training_max_delay ({training_max_delay})."
+        )
+    if execution_horizon > prediction_steps - training_max_delay:
+        raise ValueError(
+            f"Trained RTC execution_horizon ({execution_horizon}) must be at most "
+            f"prediction_steps - rtc_training_max_delay ({prediction_steps} - {training_max_delay} = "
+            f"{prediction_steps - training_max_delay}) under the conservative admission contract."
+        )
+
+
 @dataclass
 class RTCConfig:
     """Configuration for Real Time Chunking (RTC) inference.
