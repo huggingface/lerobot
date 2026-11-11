@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -19,6 +20,9 @@ from pathlib import Path
 from safetensors import safe_open
 from safetensors.torch import load_file
 from torch import Tensor
+
+# `backend` arrived on `safe_open` after `load_file`. Older builds still load the whole shard.
+_SAFE_OPEN_TAKES_BACKEND = "backend" in inspect.signature(safe_open).parameters
 
 
 def safetensors_shard_names(index_file: Path) -> list[str]:
@@ -37,7 +41,7 @@ def safetensors_shard_names(index_file: Path) -> list[str]:
 class SafetensorsCheckpoint:
     """Read one logical checkpoint from one or more files, without merging files on disk.
 
-    Metadata inspection does not materialize tensors. `tensors` reads one shard at a time;
+    Metadata inspection does not materialize tensors. `tensors` reads one key at a time;
     `load_state_dict` retains the whole checkpoint for loaders that need all weights together.
     CPU tensors use safetensors' memory mapping unless another backend is requested.
     """
@@ -65,16 +69,15 @@ class SafetensorsCheckpoint:
         return shapes
 
     def tensors(self, device: str = "cpu", *, backend: str | None = None) -> Iterator[tuple[str, Tensor]]:
-        """Yield each shard's tensors; callers decide which tensors to retain."""
+        """Yield one tensor at a time; callers decide which tensors to retain."""
         for file in self.files:
-            # Older safetensors versions do not accept backend; preserve the default call.
-            state = (
-                load_file(str(file), device=device)
-                if backend is None
-                else load_file(str(file), device=device, backend=backend)
-            )
-            yield from state.items()
-            del state
+            if backend is not None and not _SAFE_OPEN_TAKES_BACKEND:
+                yield from load_file(str(file), device=device, backend=backend).items()
+                continue
+            kwargs = {"backend": backend} if backend is not None else {}
+            with safe_open(str(file), framework="pt", device=device, **kwargs) as handle:
+                for key in handle.keys():  # noqa: SIM118
+                    yield key, handle.get_tensor(key)
 
     def load_state_dict(self, device: str = "cpu", *, backend: str | None = None) -> dict[str, Tensor]:
         """Read all weights for conversion or assignment without a temporary checkpoint file."""

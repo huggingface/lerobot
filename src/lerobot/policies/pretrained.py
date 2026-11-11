@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
 from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_INDEX_FILE, SAFETENSORS_SINGLE_FILE
-from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
+from huggingface_hub.errors import EntryNotFoundError
 from safetensors.torch import load_file, load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
@@ -262,6 +262,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         Raises:
             FileNotFoundError: Neither file is present.
+            HfHubHTTPError: A Hub request failed for a reason other than a missing file.
         """
         if os.path.isdir(model_id):
             root = Path(model_id)
@@ -276,11 +277,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             )
         try:
             return [Path(hf_hub_download(repo_id=model_id, filename=SAFETENSORS_SINGLE_FILE, **hub_kwargs))]
-        except (EntryNotFoundError, HfHubHTTPError):
+        except EntryNotFoundError:
             pass
         try:
             index = Path(hf_hub_download(repo_id=model_id, filename=SAFETENSORS_INDEX_FILE, **hub_kwargs))
-        except (EntryNotFoundError, HfHubHTTPError) as e:
+        except EntryNotFoundError as e:
             raise FileNotFoundError(
                 f"Neither {SAFETENSORS_SINGLE_FILE} nor {SAFETENSORS_INDEX_FILE} found on the "
                 f"HuggingFace Hub in {model_id}"

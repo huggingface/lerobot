@@ -402,6 +402,22 @@ def test_resolve_weight_files_from_hub_falls_back_to_shards(tmp_path, monkeypatc
         PreTrainedPolicy._resolve_weight_files("org/repo", revision=None)
 
 
+def test_resolve_weight_files_propagates_hub_http_errors(monkeypatch):
+    """A 401, a gated repo, or another Hub failure propagates as that error."""
+    import httpx
+    from huggingface_hub.errors import HfHubHTTPError
+
+    import lerobot.policies.pretrained as pretrained_module
+
+    def fake_hf_hub_download(repo_id, filename, **kwargs):
+        request = httpx.Request("GET", "https://huggingface.co")
+        raise HfHubHTTPError("unauthorized", response=httpx.Response(401, request=request))
+
+    monkeypatch.setattr(pretrained_module, "hf_hub_download", fake_hf_hub_download)
+    with pytest.raises(HfHubHTTPError):
+        PreTrainedPolicy._resolve_weight_files("org/repo", revision=None)
+
+
 def _sharded_act(dummy_dataset_metadata, tmp_path, monkeypatch, name="hooked_shards"):
     """Save a small ACT policy as several shards; return (policy class, config, policy, save dir, shard names)."""
     policy_cls = get_policy_class("act")
