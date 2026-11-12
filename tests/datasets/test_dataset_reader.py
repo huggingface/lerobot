@@ -343,3 +343,73 @@ def test_column_views_are_rebuilt_after_set_transform(tmp_path, lerobot_dataset_
 
     result = reader._query_hf_dataset([query_indices])[0]
     assert torch.equal(result["action"], 2 * baseline["action"])
+
+
+# ── get_frames ───────────────────────────────────────────────────────
+
+
+def _record_camera_dataset(root, dtype: str, episode_lengths: list[int]) -> LeRobotDataset:
+    features = {
+        "observation.images.cam": {
+            "dtype": dtype,
+            "shape": (64, 64, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=root, use_videos=dtype == "video"
+    )
+    generator = torch.Generator().manual_seed(0)
+    for length in episode_lengths:
+        for _ in range(length):
+            dataset.add_frame(
+                {
+                    "observation.images.cam": torch.randint(
+                        0, 256, (64, 64, 3), generator=generator, dtype=torch.uint8
+                    ).numpy(),
+                    "observation.state": torch.randn(2, generator=generator).numpy(),
+                    "task": "pick",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+    return dataset
+
+
+@pytest.mark.parametrize("dtype", ["video", "image"])
+@pytest.mark.parametrize("episodes", [None, [1]])
+def test_get_frames_matches_getitem(tmp_path, dtype, episodes):
+    """get_frames returns what stacking dataset[i] returns, for unordered, repeated and single frames."""
+    recorded = _record_camera_dataset(tmp_path / "ds", dtype, [4, 6])
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=recorded.root, episodes=episodes)
+    assert dataset.meta.video_keys == (["observation.images.cam"] if dtype == "video" else [])
+    keys = ["observation.images.cam", "observation.state"]
+    episode_start = 4
+
+    for frame_indices in ([0, 1, 2, 3, 4, 5], [5, 0, 3, 3], [2]):
+        frames = dataset.get_frames(1, keys, frame_indices)
+        positions = [
+            episode_start + i
+            if dataset.absolute_to_relative_idx is None
+            else dataset.absolute_to_relative_idx[episode_start + i]
+            for i in frame_indices
+        ]
+        for key in keys:
+            expected = torch.stack([dataset[position][key] for position in positions])
+            assert frames[key].shape == expected.shape
+            assert torch.equal(frames[key], expected)
+
+
+def test_get_frames_rejects_invalid_requests(tmp_path):
+    recorded = _record_camera_dataset(tmp_path / "ds", "image", [2, 2])
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=recorded.root, episodes=[0])
+
+    with pytest.raises(ValueError, match="not in the selected episodes"):
+        dataset.get_frames(1, ["observation.state"], [0])
+    with pytest.raises(ValueError, match="outside episode 0"):
+        dataset.get_frames(0, ["observation.state"], [2])
+    with pytest.raises(ValueError, match="Unknown feature keys"):
+        dataset.get_frames(0, ["missing"], [0])
+    with pytest.raises(ValueError, match="must not be empty"):
+        dataset.get_frames(0, ["observation.state"], [])

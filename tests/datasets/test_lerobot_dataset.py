@@ -237,7 +237,7 @@ def test_data_download_forwards_token(tmp_path, monkeypatch, token):
     assert snapshot_download.call_args.kwargs["token"] is token
 
 
-def test_episode_download_includes_dataset_scores(tmp_path, monkeypatch):
+def test_episode_download_includes_annotations(tmp_path, monkeypatch):
     snapshot_root = tmp_path / "snapshot"
     snapshot_download = Mock(return_value=str(snapshot_root))
     monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", snapshot_download)
@@ -256,6 +256,33 @@ def test_episode_download_includes_dataset_scores(tmp_path, monkeypatch):
     dataset._download()
 
     assert "reward_signals/" in snapshot_download.call_args.kwargs["allow_patterns"]
+    assert "annotations/" in snapshot_download.call_args.kwargs["allow_patterns"]
+
+
+def test_push_to_hub_ignores_unpublished_annotation_parts(tmp_path, monkeypatch):
+    from huggingface_hub.utils import filter_repo_objects
+
+    hub_api = Mock()
+    monkeypatch.setattr(lerobot_dataset_module, "HfApi", Mock(return_value=hub_api))
+    monkeypatch.setattr(lerobot_dataset_module, "create_lerobot_dataset_card", Mock())
+
+    dataset = LeRobotDataset.__new__(LeRobotDataset)
+    dataset.repo_id = DUMMY_REPO_ID
+    dataset.root = tmp_path
+    dataset.meta = SimpleNamespace(storage_format="lerobot", info={})
+
+    dataset.push_to_hub(tag_version=False)
+
+    ignore_patterns = hub_api.upload_folder.call_args.kwargs["ignore_patterns"]
+    paths = [
+        "annotations/progress.parquet",
+        "annotations/.progress.parquet.parts/manifest.json",
+        "annotations/.progress.parquet.parts/episode-000000.parquet",
+        "annotations/.progress.parquet.abc123.tmp",
+    ]
+    assert list(filter_repo_objects(paths, ignore_patterns=ignore_patterns)) == [
+        "annotations/progress.parquet"
+    ]
 
 
 def test_without_root_reads_different_revisions_from_distinct_snapshot_roots(

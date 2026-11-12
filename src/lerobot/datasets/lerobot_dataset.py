@@ -15,7 +15,7 @@
 # limitations under the License.
 import contextlib
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast, overload
 
@@ -42,6 +42,7 @@ from .storage import (
     make_dataset_reader,
 )
 from .utils import (
+    ANNOTATIONS_DIR,
     SCORES_DIR,
     create_lerobot_dataset_card,
     get_safe_version,
@@ -607,6 +608,37 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __getitems__(self, indices: list[int]) -> list[dict]:
         return self._ensure_reader().get_items(list(indices))
 
+    def get_frames(
+        self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
+    ) -> dict[str, torch.Tensor]:
+        """Read some features of some frames of one episode.
+
+        Unlike ``__getitem__``, only the requested features are read and decoded, and no delta
+        windows or image transforms are applied. Delegates to :meth:`DatasetReader.get_frames`.
+
+        Args:
+            episode_index: Global index of an episode selected by this dataset.
+            keys: Feature keys to read.
+            frame_indices: Frame positions inside the episode, starting at 0. They may be
+                unordered and repeated.
+
+        Returns:
+            One tensor per key, stacked along a leading dimension of length
+            ``len(frame_indices)``.
+
+        Raises:
+            RuntimeError: If the dataset is being recorded and not finalized.
+            NotImplementedError: If the dataset does not use the default storage format.
+            ValueError: If the episode is not selected, a key is not a feature, or a frame
+                position is outside the episode.
+        """
+        reader = self._ensure_reader()
+        if not isinstance(reader, DatasetReader):
+            raise NotImplementedError(
+                f"get_frames is not available for storage_format={self.meta.storage_format!r}."
+            )
+        return reader.get_frames(episode_index, keys, frame_indices)
+
     def select_columns(self, column_names: str | list[str]):
         """Select specific columns from the underlying dataset.
 
@@ -783,7 +815,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 f"push_to_hub is not supported for storage_format={self.meta.storage_format!r}: "
                 "the data files are not managed by LeRobotDataset."
             )
-        ignore_patterns = ["images/"]
+        # Hidden entries under annotations/ are unpublished parts of an interrupted annotation run.
+        ignore_patterns = ["images/", f"{ANNOTATIONS_DIR}/.*"]
         if not push_videos:
             ignore_patterns.append("videos/")
 
@@ -832,6 +865,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.episodes is not None:
             files = reader.get_episodes_file_paths()
             files.append(f"{SCORES_DIR}/")
+            files.append(f"{ANNOTATIONS_DIR}/")
 
         if self._requested_root is None:
             self.meta.root = Path(
