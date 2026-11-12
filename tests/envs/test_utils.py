@@ -109,12 +109,11 @@ def test_checkpoint_admission():
         validate_checkpoint(descriptor, config, rename_map)
 
 
-def test_deprecated_create_methods_build_through_the_factory():
-    with pytest.warns(DeprecationWarning, match="make_env"):
-        envs = ToyEnvConfig().create_envs(n_envs=1)
-    next(iter(envs["reach"].values())).close()
-    with pytest.warns(DeprecationWarning, match="make_task_env"):
-        ToyEnvConfig().create_env().close()
+def test_removed_create_methods_name_the_factory():
+    with pytest.raises(RuntimeError, match="make_env"):
+        ToyEnvConfig().create_envs(n_envs=1)
+    with pytest.raises(RuntimeError, match="make_task_env"):
+        ToyEnvConfig().create_env()
 
 
 def test_env_features_are_typed_as_dataset_features():

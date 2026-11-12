@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import logging
-import warnings
 from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -78,26 +77,22 @@ def make_env_pre_post_processors(
 
 
 def make_env(
-    cfg: EnvConfig | str,
+    cfg: EnvConfig,
     n_envs: int = 1,
     use_async_envs: bool = False,
-    hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """Build the vector envs of a config, or of a Hub repo's `make_env`.
+    """Build the vector envs of a config.
 
     Args:
-        cfg (`EnvConfig | str`):
-            The env config, or a Hugging Face Hub repo ID (e.g. `"username/repo"`) whose `env.py` builds the
-            envs.
+        cfg (`EnvConfig`):
+            The env config. An EnvHub repository is `HubEnvConfig(hub_path="user/repo", trust_remote_code=True)`.
         n_envs (`int`, *optional*, defaults to `1`):
             Number of envs in each vector env.
         use_async_envs (`bool`, *optional*, defaults to `False`):
             Run each env in its own worker process.
-        hub_cache_dir (`str`, *optional*):
-            Folder to cache the downloaded `env.py` in. Only used with a repo ID.
         trust_remote_code (`bool`, *optional*, defaults to `False`):
-            Consent to run a Hub repo's code, needed for a repo ID or an EnvHub config.
+            Consent to run an EnvHub repo's code, as `HubEnvConfig.trust_remote_code` gives it.
 
     Returns:
         `dict[str, dict[int, gym.vector.VectorEnv]]`: The vector envs, as `{suite: {task_id: env}}`. A
@@ -105,31 +100,24 @@ def make_env(
 
     Raises:
         ValueError: If `n_envs` is below 1.
-        RuntimeError: If a Hub repo's code would run without `trust_remote_code`.
+        RuntimeError: If an EnvHub repo's code would run without `trust_remote_code`.
         ModuleNotFoundError: If the simulator, or a package the repo's `env.py` needs, is not installed.
     """
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
-    # TODO: (jadechoghari): deprecate string API and remove this check
     if isinstance(cfg, str):
-        return envhub.make_envs(cfg, n_envs, use_async_envs, trust_remote_code, hub_cache_dir)
+        raise TypeError(
+            f"make_env no longer takes a Hub repo ID: build it with "
+            f'make_env(HubEnvConfig(hub_path="{cfg}", trust_remote_code=True), n_envs=...)'
+        )
     if isinstance(cfg, HubEnvConfig) and trust_remote_code:
         cfg.trust_remote_code = True
     if type(cfg).create_envs is not EnvConfig.create_envs:
-        warnings.warn(
-            f"{type(cfg).__name__} overrides EnvConfig.create_envs, which is deprecated: make_env builds every "
-            "env from its config's sim_settings()",
-            DeprecationWarning,
-            stacklevel=2,
+        raise TypeError(
+            f"{type(cfg).__name__} overrides EnvConfig.create_envs(), which make_env no longer calls: make_env "
+            "builds every env from its config's sim_settings(). Return the simulator and its options from "
+            "sim_settings() instead, as described in https://huggingface.co/docs/lerobot/adding_benchmarks"
         )
-        return cfg.create_envs(n_envs=n_envs, use_async_envs=use_async_envs)
-    return build_envs(cfg, n_envs, use_async_envs)
-
-
-def build_envs(
-    cfg: EnvConfig, n_envs: int, use_async_envs: bool
-) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """Build a config's vector envs, as ``make_env`` does, without calling an overridden ``create_envs``."""
     if isinstance(cfg, HubEnvConfig) and cfg.use_native_batch:
         return _make_native_batch(cfg, n_envs, use_async_envs)
     descriptor, make = _env_factory(cfg, n_envs, use_async_envs)

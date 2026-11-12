@@ -56,22 +56,6 @@ def test_identity_processors():
     assert len(pre.steps) == 0 and len(post.steps) == 0
 
 
-def test_deprecated_create_envs_override_is_still_called():
-    """A config that still overrides create_envs() is called, with a deprecation warning."""
-    sentinel = {"delegated": {0: "marker"}}
-    fake = type(
-        "Fake",
-        (),
-        {
-            "hub_path": None,
-            "create_envs": lambda self, n_envs, use_async_envs=False: sentinel,
-        },
-    )()
-    with pytest.warns(DeprecationWarning, match="create_envs"):
-        result = make_env(fake, n_envs=1)
-    assert result is sentinel
-
-
 def test_processors_delegation():
     """make_env_pre_post_processors delegates to cfg.get_env_processors()."""
     cfg = make_env_config("aloha")
@@ -167,29 +151,19 @@ def test_base_sim_settings_build_a_gym_env():
             del gym_registry[gym_id]
 
 
-def test_custom_create_envs_override():
-    """A custom EnvConfig subclass that overrides create_envs() still builds its envs, with a warning."""
-    mock_vec = gym.vector.SyncVectorEnv([lambda: gym.make("CartPole-v1")])
+def test_custom_create_envs_override_is_refused():
+    """make_env refuses a config that still overrides create_envs(), and says what to do instead."""
 
     @EnvConfig.register_subclass("_dispatch_custom_test")
     @dataclass
     class _Env(EnvConfig):
         task: str = "x"
-        features: dict[str, PolicyFeature] = field(default_factory=dict)
-
-        @property
-        def gym_kwargs(self):
-            return {}
 
         def create_envs(self, n_envs, use_async_envs=False):
-            return {"custom_suite": {0: mock_vec}}
+            return {}
 
-    try:
-        with pytest.warns(DeprecationWarning, match="create_envs"):
-            result = make_env(_Env(), n_envs=1)
-        assert "custom_suite" in result
-    finally:
-        mock_vec.close()
+    with pytest.raises(TypeError, match="sim_settings"):
+        make_env(_Env(), n_envs=1)
 
 
 def test_custom_get_env_processors_override():

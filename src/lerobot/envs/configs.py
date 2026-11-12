@@ -15,13 +15,11 @@
 from __future__ import annotations
 
 import abc
-import warnings
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal, NoReturn
 
 import draccus
-import gymnasium as gym
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.env_server import DEFAULT_MAX_PAYLOAD_BYTES
@@ -30,10 +28,6 @@ from lerobot.robots import RobotConfig
 from lerobot.sim import SimConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
-
-if TYPE_CHECKING:
-    from lerobot.env_server import RemoteVectorEnv
-    from lerobot.sim import LocalVectorEnv
 
 
 @dataclass
@@ -103,38 +97,19 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """Return ``sim_settings()`` with the sim's defaults, as local envs and the env server run it."""
         return SimConfig.resolve(self.sim_settings())
 
-    def create_envs(
-        self,
-        n_envs: int,
-        use_async_envs: bool = False,
-    ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        """Deprecated: use ``lerobot.envs.make_env(config, n_envs, use_async_envs)``."""
-        warnings.warn(
-            "EnvConfig.create_envs is deprecated; use lerobot.envs.make_env(config, ...)",
-            DeprecationWarning,
-            stacklevel=2,
+    def create_envs(self, *args: Any, **kwargs: Any) -> NoReturn:
+        """Removed: build the envs with ``lerobot.envs.make_env(config, n_envs, use_async_envs)``."""
+        raise RuntimeError(
+            "EnvConfig.create_envs() was removed: build the envs with "
+            "lerobot.envs.make_env(config, n_envs=..., use_async_envs=...)"
         )
-        from .factory import build_envs
 
-        return build_envs(self, n_envs, use_async_envs)
-
-    def create_env(
-        self,
-        task_group: str | None = None,
-        task_id: int | None = None,
-        n_envs: int = 1,
-        use_async_envs: bool = False,
-    ) -> LocalVectorEnv | RemoteVectorEnv:
-        """Deprecated: use ``lerobot.envs.make_task_env(config, task_group, task_id, n_envs, use_async_envs)``."""
-        warnings.warn(
-            "EnvConfig.create_env is deprecated; use lerobot.envs.make_task_env(config, ...)",
-            DeprecationWarning,
-            stacklevel=2,
+    def create_env(self, *args: Any, **kwargs: Any) -> NoReturn:
+        """Removed: build one task's env with ``lerobot.envs.make_task_env(config, task_group, task_id, ...)``."""
+        raise RuntimeError(
+            "EnvConfig.create_env() was removed: build one task's env with "
+            "lerobot.envs.make_task_env(config, task_group=..., task_id=..., n_envs=...)"
         )
-        # Imported here: the factory imports this module.
-        from .factory import make_task_env
-
-        return make_task_env(self, task_group, task_id, n_envs=n_envs, use_async_envs=use_async_envs)
 
     def get_env_processors(self):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
