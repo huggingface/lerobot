@@ -232,8 +232,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         self._cached_prompt: Any = None
         self._cached_context: Tensor | None = None
         self._cached_context_mask: Tensor | None = None
-        # With `return_predicted_video`: the current chunk's imagined clip `[B, T, H, W, 3]`, how
-        # many of its actions were served, and the frame last returned (see `_with_predicted_frame`).
+        # return_predicted_video state
         self._chunk_clip: Tensor | None = None
         self._served = 0
         self._shown_frame = -1
@@ -313,19 +312,15 @@ class FastWAMPolicy(PreTrainedPolicy):
                 the seed in `batch["seed"]`, or `config.inference_seed` if the batch has none.
 
         Returns:
-            Tensor: Action chunk with shape `[B, action_horizon, action_dim]`. The imagined clip
-            of `return_predicted_video` is only returned by `select_action`.
+            Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
         """
         return self._predict_chunk(batch, noise=noise, with_video=False)[0]
 
     def _predict_chunk(
         self, batch: dict[str, Tensor], *, noise: Tensor | None, with_video: bool
     ) -> tuple[Tensor, Tensor | None]:
-        """Predict an action chunk and, with `with_video`, the clip it leads to.
-
-        Returns the actions `[B, action_horizon, action_dim]` and the imagined clip as uint8
-        frames `[B, model_video_frames, H, W, 3]` on the CPU (None without `with_video`).
-        """
+        """Return actions `[B, action_horizon, action_dim]` and, with `with_video`, the predicted
+        clip `[B, model_video_frames, H, W, 3]` (uint8, CPU)."""
         self.eval()
         infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
         infer_kwargs["noise"] = noise
@@ -366,11 +361,6 @@ class FastWAMPolicy(PreTrainedPolicy):
     def select_action(
         self, batch: dict[str, Tensor], *, noise: Tensor | None = None
     ) -> Tensor | PolicyOutput:
-        """Return the next action of the queued chunk, predicting a new chunk when it runs out.
-
-        With `config.return_predicted_video`, returns a `PolicyOutput` whose prediction holds the
-        imagined camera frames the action moves toward (see `_with_predicted_frame`).
-        """
         self.eval()
         if len(self._action_queue) == 0:
             actions, self._chunk_clip = self._predict_chunk(
@@ -382,13 +372,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         return self._with_predicted_frame(self._action_queue.popleft())
 
     def _with_predicted_frame(self, action: Tensor) -> Tensor | PolicyOutput:
-        """Pair `action` with the imagined frame it moves toward.
-
-        Video frames are `action_horizon / (model_video_frames - 1)` actions apart and frame 0 is
-        the current observation, so the observation after the chunk's action `i` falls at frame
-        `(i + 1) * (model_video_frames - 1) / action_horizon`. The action is paired with the first
-        frame at or after it. Returns the bare action when that frame was already returned.
-        """
+        """Attach the predicted frame for `action`, only when it changes."""
         served = self._served
         self._served += 1
         if self._chunk_clip is None:
@@ -399,14 +383,11 @@ class FastWAMPolicy(PreTrainedPolicy):
         if index == self._shown_frame:
             return action
         self._shown_frame = index
-        frames = self._chunk_clip[:, index].permute(0, 3, 1, 2)  # [B, 3, H, W], like camera frames
+        frames = self._chunk_clip[:, index].permute(0, 3, 1, 2)
         return {ACTION: action, PREDICTION: {"observation": self._split_cameras(frames)}}
 
     def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
-        """Split frames `[B, 3, H, W]` back into the cameras they concatenate along the width.
-
-        Inverse of `_stack_video_from_images`: cameras in sorted key order, each at its feature width.
-        """
+        """Inverse of the width-wise camera concat in `_stack_video_from_images`."""
         keys = sorted(self.config.image_features)
         widths = [int(self.config.image_features[key].shape[2]) for key in keys]
         return dict(zip(keys, frames.split(widths, dim=3), strict=True))
@@ -485,7 +466,6 @@ class FastWAMPolicy(PreTrainedPolicy):
         )
 
 
-# `_batch_to_infer_kwargs` keys that `FastWAM.infer_video` takes as well.
 _VIDEO_INFER_KEYS = (
     "prompt",
     "input_image",

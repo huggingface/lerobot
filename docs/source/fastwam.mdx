@@ -157,18 +157,9 @@ for the current input shapes and is therefore slower; later predictions with the
 same shapes reuse it. Shape changes may trigger recompilation. The eager path
 remains available on unsupported PyTorch or accelerator configurations.
 
-### Watching the Imagined Video Live
+### Predicted Video
 
-FastWAM skips future-video generation at inference. To see what the video expert expects
-anyway, set `--policy.return_predicted_video=true` during `lerobot-rollout --display_data=true`.
-Each chunk then also denoises the clip that follows the current observation and shows, as each
-action executes, the imagined camera frame it moves toward (`prediction.images.<camera>`, next to
-each real camera).
-
-The clip comes from a separate pass over the video expert alone. Video tokens never attend to
-action tokens, so this pass returns the same clip as joint denoising and leaves the actions
-unchanged. It costs one video denoising pass and one VAE decode per chunk and environment, so
-leave it off for evaluation.
+`--policy.return_predicted_video=true` makes `select_action` also return the predicted camera frames, shown by `lerobot-rollout --display_data=true`. Actions are unchanged. It adds a video denoising pass and a VAE decode per chunk.
 
 ### LIBERO Action Toggle
 

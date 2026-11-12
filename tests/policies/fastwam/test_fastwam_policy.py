@@ -362,7 +362,6 @@ def test_predicted_video_splits_the_clip_back_into_cameras(monkeypatch):
         def infer_video(self, **kwargs):
             assert kwargs["num_video_frames"] == 5
             assert kwargs["prompt"] is None and kwargs["context"] is not None
-            # Frame t of the clip: the left camera is t, the right camera 10 + t.
             clip = torch.zeros(5, 16, 32, 3, dtype=torch.uint8)
             for t in range(5):
                 clip[t, :, :16] = t
@@ -395,11 +394,9 @@ def test_predicted_video_splits_the_clip_back_into_cameras(monkeypatch):
 
     outputs = [policy.select_action(batch) for _ in range(4)]
 
-    # 5 frames span the 8 actions, 2 actions apart: actions 0-1 move toward frame 1, 2-3 toward 2.
     assert [isinstance(output, dict) for output in outputs] == [True, False, True, False]
     for output, t in ((outputs[0], 1), (outputs[2], 2)):
         frames = output["prediction"]["observation"]
-        # Cameras concatenate in sorted key order: `top` is the left half, `wrist` the right one.
         assert set(frames) == {"observation.images.top", "observation.images.wrist"}
         assert frames["observation.images.top"].shape == (1, 3, 16, 16)
         assert frames["observation.images.top"].unique().tolist() == [t]

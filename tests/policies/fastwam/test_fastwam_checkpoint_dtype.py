@@ -56,7 +56,6 @@ class ShapeVAE(nn.Module):
         return video.new_zeros(b, 4, (t - 1) // 4 + 1, h // 2, w // 2)
 
     def decode(self, latents, **kwargs):
-        # [B, 4, t, h, w] latents -> [B, 3, (t - 1) * 4 + 1, 2h, 2w] pixels in [-1, 1].
         pixels = latents[:, :3].float().tanh()
         pixels = torch.cat([pixels[:, :, :1], pixels[:, :, 1:].repeat_interleave(4, dim=2)], dim=2)
         return pixels.repeat_interleave(2, dim=3).repeat_interleave(2, dim=4)
@@ -269,7 +268,6 @@ def test_fusion_uses_float32_softmax_with_policy_dtype_storage(dtype):
 
 @pytest.mark.parametrize("flags", [{}, DOT_FLAGS], ids=["default", "fasterwam"])
 def test_predicted_video_pairs_frames_with_unchanged_actions(offline_components, flags):
-    """`return_predicted_video` returns the imagined frames next to the actions it would return without."""
     torch.manual_seed(0)
     policy = FastWAMPolicy(tiny_config(dtype=torch.float32, n_action_steps=4, **flags))
     batch = training_batch()
@@ -279,19 +277,16 @@ def test_predicted_video_pairs_frames_with_unchanged_actions(offline_components,
     policy.reset()
     outputs = [policy.select_action(batch) for _ in range(4)]
 
-    # 5 video frames span the 8 actions, so a new frame comes every 2 actions: frames 1 and 2.
     assert [isinstance(output, dict) for output in outputs] == [True, False, True, False]
     actions = torch.stack([output["action"] if isinstance(output, dict) else output for output in outputs], 1)
     torch.testing.assert_close(actions, expected[:, :4], rtol=0, atol=0)
     frame = outputs[0]["prediction"]["observation"]["observation.images.image"]
     assert frame.shape == (1, 3, 16, 32)
     assert frame.dtype == torch.uint8
-    # The input image encodes to zero latents (a flat grey frame 0): frame 1 is denoised, not a copy.
     assert frame.unique().numel() > 1
 
 
 def test_infer_video_matches_the_joint_clip(offline_components):
-    """Video tokens never attend to action tokens, so denoising them alone gives the joint clip."""
     torch.manual_seed(0)
     model = FastWAMPolicy(tiny_config(dtype=torch.float32)).model
     kwargs = {

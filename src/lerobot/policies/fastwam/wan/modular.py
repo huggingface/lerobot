@@ -1343,7 +1343,7 @@ class FastWAM(torch.nn.Module):
     def _decode_latents_to_uint8(
         self, latents, tiled=False, tile_size=(30, 52), tile_stride=(15, 26)
     ) -> torch.Tensor:
-        """VAE-decode one clip of video latents into uint8 frames `[T, H, W, 3]` on the CPU."""
+        """Decode latents to uint8 frames `[T, H, W, 3]` on CPU."""
         video_tensor = self.vae.decode(
             latents, device=self.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride
         )
@@ -2233,16 +2233,9 @@ class FastWAM(torch.nn.Module):
         rand_device: str = "cpu",
         tiled: bool = False,
     ) -> torch.Tensor:
-        """Imagine the clip that follows `input_image` with the video expert alone.
+        """Denoise the video stream alone; returns uint8 frames `[T, H, W, 3]` on CPU.
 
-        Video tokens never attend to action tokens (see `_build_mot_attention_mask`), so
-        denoising the video without them gives the clip `infer_joint` would, and leaves the
-        actions of `infer_action` untouched. Running the video stream alone also works for
-        Faster-WAM's shallow action experts, which the joint forward rejects.
-
-        Returns:
-            torch.Tensor: The decoded clip as uint8 frames `[num_video_frames, H, W, 3]` on the
-            CPU. Frame 0 reconstructs `input_image`.
+        Video tokens don't attend to action tokens, so this matches `infer_joint`'s video.
         """
         self.eval()
         input_image, height, width = self._normalize_infer_input_image(input_image, num_video_frames)

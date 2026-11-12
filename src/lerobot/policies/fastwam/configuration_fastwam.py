@@ -206,11 +206,8 @@ class FastWAMConfig(PreTrainedConfig):
             without text cross-attention modules and receives no text/proprioceptive
             context; language and proprioception condition only the video backbone, and
             the action expert reads all conditioning through the fused video keys.
-        return_predicted_video (bool): Also imagine the clip each chunk leads to and return,
-            with each action, the predicted camera frames for the observation it should
-            reach (shown live by `--display_data`). The clip comes from a separate
-            video-only denoising pass, so the actions are unchanged. Costs one video
-            denoising pass and one VAE decode per chunk and environment.
+        return_predicted_video (bool): Also return predicted camera frames from
+            `select_action` (for `--display_data`). Adds a video denoising pass per chunk.
     """
 
     n_obs_steps: int = 1
