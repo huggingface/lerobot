@@ -146,6 +146,8 @@ For reproducible benchmarking, use **10 episodes per task** across all four stan
   (`--eval.batch_size` equal to episodes per task).
 </Tip>
 
+Two runs of the same command can still differ on GPU, because cuDNN autotuning and some CUDA kernels are not deterministic. To repeat an evaluation exactly on the same machine, add `--cudnn_deterministic=true` and export `CUBLAS_WORKSPACE_CONFIG=:4096:8` before launching. This slows down inference, and results can still differ across GPUs, drivers or library versions.
+
 ## Training
 
 ### Dataset

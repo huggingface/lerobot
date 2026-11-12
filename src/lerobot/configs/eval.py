@@ -37,6 +37,9 @@ class EvalPipelineConfig:
     output_dir: Path | None = None
     job_name: str | None = None
     seed: int | None = 1000
+    # Set to True to use deterministic cuDNN and PyTorch algorithms for reproducibility.
+    # This disables cudnn.benchmark and may reduce evaluation speed.
+    cudnn_deterministic: bool = False
     # TF32 in float32 matmuls and cuDNN convolutions on Ampere and newer GPUs.
     tf32: bool | None = True
     # Rename map for the observation to override the image and state keys
