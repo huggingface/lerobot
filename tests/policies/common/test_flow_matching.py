@@ -378,6 +378,44 @@ def test_euler_integrate_constant_velocity_is_exact():
     torch.testing.assert_close(out, noise - c, rtol=0, atol=1e-6)
 
 
+@pytest.mark.parametrize("convention", [FlowConvention.NOISE_AT_ONE, FlowConvention.NOISE_AT_ZERO])
+def test_euler_integrate_keeps_zero_padded_action_dims_on_analytic_path(convention):
+    noise = torch.randn(2, 4, 6)
+    time_grid = (
+        torch.tensor([1.0, 0.75, 0.2, 0.0])
+        if convention is FlowConvention.NOISE_AT_ONE
+        else torch.tensor([0.0, 0.25, 0.8, 1.0])
+    )
+
+    def denoise_fn(x_t, time):
+        noise_scale = time if convention is FlowConvention.NOISE_AT_ONE else 1 - time
+        torch.testing.assert_close(x_t[..., 3:], noise[..., 3:] * noise_scale[:, None, None])
+        return torch.full_like(x_t, 2.0)
+
+    out = euler_integrate(
+        denoise_fn,
+        noise,
+        time_grid=time_grid,
+        convention=convention,
+        action_dim=3,
+    )
+
+    total_dt = time_grid[-1] - time_grid[0]
+    torch.testing.assert_close(out[..., :3], noise[..., :3] + total_dt * 2.0)
+    torch.testing.assert_close(out[..., 3:], torch.zeros_like(out[..., 3:]))
+
+
+@pytest.mark.parametrize("action_dim", [-1, 3.5, 7, True])
+def test_euler_integrate_rejects_invalid_action_dim(action_dim):
+    with pytest.raises(ValueError, match="action_dim"):
+        euler_integrate(
+            lambda x_t, time: torch.zeros_like(x_t),
+            torch.zeros(1, 2, 6),
+            1,
+            action_dim=action_dim,
+        )
+
+
 def _reference_pi0_loop(denoise_fn, noise, num_steps, rtc_enabled, rtc_processor, kw):
     """Verbatim structure of the historical pi0/pi05/smolvla sample_actions loop."""
     bsize = noise.shape[0]

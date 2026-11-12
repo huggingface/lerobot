@@ -269,6 +269,7 @@ def euler_integrate(
     execution_horizon: int | None = None,
     hard_prefix: Tensor | None = None,
     hard_prefix_mask: Tensor | None = None,
+    action_dim: int | None = None,
     precompute_times: bool = False,
 ) -> Tensor:
     """Forward-Euler integration of a flow-matching velocity field between noise and actions.
@@ -312,6 +313,8 @@ def euler_integrate(
         execution_horizon: RTC guidance parameter, forwarded verbatim.
         hard_prefix: Optional clean action prefix to clamp throughout denoising.
         hard_prefix_mask: Boolean mask selecting the values clamped from ``hard_prefix``.
+        action_dim: Number of leading, supervised action dimensions. Any trailing zero-padded
+            dimensions follow their analytic noise-to-zero trajectory instead of the predicted velocity.
         precompute_times: Create the float32 timestep schedule on the target device once,
             avoiding a scalar tensor allocation/host transfer in each denoising step.
             Uses the same Python scalar arithmetic as the historical loop.
@@ -321,6 +324,13 @@ def euler_integrate(
     if not isinstance(convention, FlowConvention):
         raise TypeError(f"convention must be a FlowConvention, got {convention!r}")
     noise_at_one = convention is FlowConvention.NOISE_AT_ONE
+    if action_dim is not None and (
+        isinstance(action_dim, bool)
+        or not isinstance(action_dim, int)
+        or action_dim < 0
+        or action_dim > noise.shape[-1]
+    ):
+        raise ValueError(f"action_dim must be an integer in [0, {noise.shape[-1]}], got {action_dim!r}")
 
     if time_grid is not None:
         if time_grid.ndim != 1 or time_grid.shape[0] < 2:
@@ -411,6 +421,11 @@ def euler_integrate(
         if velocity_scale is not None:
             update = update * velocity_scale
         x_t = x_t + update
+
+        if action_dim is not None and action_dim < noise.shape[-1]:
+            next_time = time_grid[step + 1] if time_grid is not None else uniform_time(step + 1)
+            noise_scale = next_time if noise_at_one else 1 - next_time
+            x_t[..., action_dim:] = noise[..., action_dim:] * noise_scale
 
         if hard_prefix is not None:
             x_t = torch.where(hard_prefix_mask, hard_prefix, x_t)
