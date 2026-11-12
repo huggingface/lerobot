@@ -14,6 +14,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from types import SimpleNamespace
 
 import numpy as np
@@ -27,7 +28,7 @@ import pandas as pd
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.annotations import load_annotations
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStep, batch_to_transition
 from lerobot.rewards import score_dataset
 from lerobot.rewards.robometer.modeling_robometer import RobometerPrediction
 from lerobot.rewards.robometer.scoring_robometer import (
@@ -46,10 +47,11 @@ class _FrameIdsEncoderStep(ProcessorStep):
     """Stand in for RoboMeter's encoder: write each frame's first pixel as `observation.encoded`."""
 
     image_key: str = "observation.images.top"
+    task_key: str = "task"
     tasks: list[str | None] = field(default_factory=list)
 
     def __call__(self, transition):
-        self.tasks.append(transition[TransitionKey.COMPLEMENTARY_DATA].get("task"))
+        self.tasks.append(transition[TransitionKey.COMPLEMENTARY_DATA].get(self.task_key))
         observation = dict(transition[TransitionKey.OBSERVATION])
         observation["observation.encoded"] = observation[self.image_key][:, :, 0, 0, 0]
         return {**transition, TransitionKey.OBSERVATION: observation}
@@ -58,8 +60,11 @@ class _FrameIdsEncoderStep(ProcessorStep):
         return features
 
 
-def _make_preprocessor() -> PolicyProcessorPipeline:
-    return PolicyProcessorPipeline(steps=[_FrameIdsEncoderStep()])
+def _make_preprocessor(task_key: str = "task") -> PolicyProcessorPipeline:
+    return PolicyProcessorPipeline(
+        steps=[_FrameIdsEncoderStep(task_key=task_key)],
+        to_transition=partial(batch_to_transition, complementary_keys=(task_key,)),
+    )
 
 
 def test_build_subsample_indices_matches_upstream_frame_steps():
@@ -110,7 +115,7 @@ def test_make_robometer_frame_scorer_builds_processor_without_frame_cap(monkeypa
     assert config.max_frames == 8
 
 
-@pytest.mark.parametrize("task_key", ["task", "missing_task"])
+@pytest.mark.parametrize("task_key", ["task", "missing_task", "instruction"])
 def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     image_key = "observation.images.top"
 
@@ -119,8 +124,15 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
             self.meta = SimpleNamespace(
                 episodes=[{"dataset_from_index": 0, "dataset_to_index": 3}],
                 tasks=pd.DataFrame({"task_index": [0, 1]}, index=["another task", "pick up the cube"]),
+                features={"instruction": {"dtype": "string"}},
             )
             self.frame_requests: list[tuple[int, list[str], list[int]]] = []
+            self.row_requests: list[int] = []
+            self.absolute_to_relative_idx = None
+
+        def __getitem__(self, index: int):
+            self.row_requests.append(index)
+            return {"instruction": f"custom task at frame {index}"}
 
         def get_frames(
             self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
@@ -157,7 +169,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
 
     dataset = FakeDataset()
     model = FakeModel()
-    preprocessor = _make_preprocessor()
+    preprocessor = _make_preprocessor(task_key=task_key)
     scorer = RobometerFrameScorer(model, preprocessor, batch_size=2, num_subsampled_frames=2)
 
     result = scorer.score_episode(dataset, episode_index=0)
@@ -170,8 +182,9 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     assert scorer.descriptors[PROGRESS_SIGNAL].greater_is_better is True
     expected_requests = [(0, ["task_index"], [0])] if task_key == "task" else []
     assert dataset.frame_requests == [*expected_requests, (0, [image_key], [0, 1, 2])]
-    task = "pick up the cube" if task_key == "task" else None
+    task = {"task": "pick up the cube", "instruction": "custom task at frame 0"}.get(task_key)
     assert preprocessor.steps[0].tasks == [task, task]
+    assert dataset.row_requests == ([0] if task_key == "instruction" else [])
     assert scorer.name == "robometer"
     assert scorer.provenance == {
         "model": {"type": "robometer", "id": "test/robometer", "revision": "model-revision"},
@@ -191,7 +204,9 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     )
 
 
-def test_robometer_frame_scorer_supports_episode_filtered_dataset_views():
+@pytest.mark.parametrize("task_key", ["task", "instruction"])
+@pytest.mark.parametrize("filtered", [False, True])
+def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(task_key: str, filtered: bool):
     image_key = "observation.images.top"
 
     class FakeDataset:
@@ -202,7 +217,14 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views():
                     {"dataset_from_index": 5, "dataset_to_index": 7},
                 ],
                 tasks=pd.DataFrame({"task_index": [0]}, index=["selected task"]),
+                features={"instruction": {"dtype": "string"}},
             )
+            self.absolute_to_relative_idx = {5: 0, 6: 1} if filtered else None
+            self.row_requests: list[int] = []
+
+        def __getitem__(self, index: int):
+            self.row_requests.append(index)
+            return {"instruction": "selected instruction"}
 
         def get_frames(
             self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
@@ -221,7 +243,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views():
             }
 
     class FakeModel:
-        config = SimpleNamespace(image_key=image_key, task_key="task")
+        config = SimpleNamespace(image_key=image_key, task_key=task_key)
 
         def eval(self):
             return self
@@ -230,11 +252,17 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views():
             values = batch["observation.encoded"].float() / 10.0
             return RobometerPrediction(progress=values, success_probability=values)
 
-    scorer = RobometerFrameScorer(FakeModel(), _make_preprocessor(), num_subsampled_frames=2)
+    preprocessor = _make_preprocessor(task_key=task_key)
+    scorer = RobometerFrameScorer(FakeModel(), preprocessor, num_subsampled_frames=2)
+    dataset = FakeDataset()
 
-    result = scorer.score_episode(FakeDataset(), episode_index=1)
+    result = scorer.score_episode(dataset, episode_index=1)
 
     np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.5, 0.6])
+    assert dataset.row_requests == ([0 if filtered else 5] if task_key == "instruction" else [])
+    assert preprocessor.steps[0].tasks == [
+        "selected instruction" if task_key == "instruction" else "selected task"
+    ]
 
 
 def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):

@@ -377,7 +377,7 @@ def transition_to_prediction(transition: EnvTransition) -> PolicyPrediction:
     return prediction if prediction is not None else PolicyPrediction()
 
 
-def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
+def batch_to_transition(batch: dict[str, Any], *, complementary_keys: Sequence[str] = ()) -> EnvTransition:
     """
     Convert a batch dictionary from a dataset/dataloader into an `EnvTransition`.
 
@@ -386,6 +386,7 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
 
     Args:
         batch: A batch dictionary.
+        complementary_keys: Additional batch keys to preserve in complementary data when present.
 
     Returns:
         An `EnvTransition` dictionary.
@@ -405,6 +406,7 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
     # Extract observation and complementary data keys.
     observation_keys = {k: v for k, v in batch.items() if k.startswith(OBS_PREFIX)}
     complementary_data = _extract_complementary_data(batch)
+    complementary_data.update({key: batch[key] for key in complementary_keys if key in batch})
 
     return create_transition(
         observation=observation_keys if observation_keys else None,

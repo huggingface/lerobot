@@ -250,6 +250,57 @@ def test_annotations_overwrite_keeps_published_output_until_success(tmp_path):
     assert current[:] == original[:]
 
 
+@pytest.mark.parametrize("resume", [True, False])
+def test_annotations_retry_interrupted_overwrite(tmp_path, resume):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 2])
+    add_annotations(dataset, "test", dense(dataset), info=INFO)
+    original = load_annotations(dataset, "test")[:]
+    replacement_info = {"source": "replacement/model"}
+
+    def replacement(episode_index: int):
+        assert load_annotations(dataset, "test")[:] == original
+        assert load_annotations_info(dataset, "test") == INFO
+        return np.arange(2), {COLUMN: np.full(2, 0.5)}
+
+    def fail_second(episode_index: int):
+        if episode_index == 1:
+            raise RuntimeError("replacement interrupted")
+        return replacement(episode_index)
+
+    with pytest.raises(RuntimeError, match="replacement interrupted"):
+        add_annotations(dataset, "test", fail_second, info=replacement_info, overwrite=True)
+
+    assert load_annotations(dataset, "test")[:] == original
+    assert load_annotations_info(dataset, "test") == INFO
+    function = RecordingFunction(replacement)
+    add_annotations(dataset, "test", function, info=replacement_info, overwrite=True, resume=resume)
+
+    assert function.calls == ([1] if resume else [0, 1])
+    assert list(load_annotations(dataset, "test")[COLUMN]) == [0.5] * 4
+    assert load_annotations_info(dataset, "test") == replacement_info
+    assert not (dataset.root / "annotations" / ".test.parquet.parts").exists()
+
+
+def test_annotations_overwrite_requires_explicit_restart_for_changed_manifest(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 2])
+    add_annotations(dataset, "test", dense(dataset), info=INFO)
+    original = load_annotations(dataset, "test")[:]
+    writer = AnnotationWriter(dataset, "test", info=INFO, overwrite=True)
+    writer.write_episode(0, *dense(dataset)(0))
+    changed_info = {"source": "another/model"}
+    function = dense(dataset)
+
+    with pytest.raises(ValueError, match="info or episode selection changed"):
+        add_annotations(dataset, "test", function, info=changed_info, overwrite=True)
+
+    assert function.calls == []
+    assert load_annotations(dataset, "test")[:] == original
+    assert AnnotationWriter(dataset, "test", info=INFO, overwrite=True).pending_episodes == (1,)
+    add_annotations(dataset, "test", function, info=changed_info, overwrite=True, resume=False)
+    assert function.calls == [0, 1]
+    assert load_annotations_info(dataset, "test") == changed_info
+
+
 def test_annotations_resume_rejects_changed_selection(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [2, 2])
 

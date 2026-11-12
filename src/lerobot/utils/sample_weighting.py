@@ -157,6 +157,15 @@ def _make_rabc_weighter(
 
     if dataset is None:
         raise ValueError("RA-BC sample weighting requires a dataset containing reward annotations")
+
+    # Dataset factories import training configs, so keep this type import out of module initialization.
+    from lerobot.datasets.multi_dataset import MultiLeRobotDataset
+
+    if isinstance(dataset, MultiLeRobotDataset):
+        raise ValueError(
+            "RA-BC sample weighting does not support MultiLeRobotDataset; "
+            "use a single dataset with its own reward annotation table"
+        )
     if config.annotation_name is None or config.signal_name is None:
         raise ValueError("RA-BC sample weighting requires both 'annotation_name' and 'signal_name'")
 

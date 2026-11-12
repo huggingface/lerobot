@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -31,6 +32,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    batch_to_transition,
     policy_action_to_transition,
 )
 from lerobot.rewards.topreward.configuration_topreward import (
@@ -296,6 +298,7 @@ def make_topreward_pre_post_processors(
     result directly.
     """
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+        to_transition=partial(batch_to_transition, complementary_keys=(config.task_key,)),
         steps=[
             AddBatchDimensionProcessorStep(),
             TOPRewardEncoderProcessorStep(

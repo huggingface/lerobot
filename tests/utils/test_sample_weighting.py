@@ -16,6 +16,7 @@
 
 """Tests for the sample weighting infrastructure."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -25,6 +26,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import datasets
 
+from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.rewards.scoring import SignalDescriptor
 from lerobot.utils.sample_weighting import (
     SampleWeighter,
@@ -44,6 +46,20 @@ class FakeAnnotationDataset:
     def __init__(self, annotations: datasets.Dataset, descriptors: dict[str, SignalDescriptor]) -> None:
         self.annotations = annotations
         self.descriptors = descriptors
+        episode_indices = annotations["episode_index"]
+        episodes = []
+        for episode_index in range(max(episode_indices) + 1):
+            indices = [
+                index
+                for index, episode in zip(annotations["index"], episode_indices, strict=True)
+                if episode == episode_index
+            ]
+            episodes.append({"dataset_from_index": min(indices), "dataset_to_index": max(indices) + 1})
+        self.meta = SimpleNamespace(
+            total_frames=max(annotations["index"]) + 1,
+            total_episodes=max(episode_indices) + 1,
+            episodes=episodes,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -272,6 +288,19 @@ def test_factory_rabc_requires_dataset():
 
     with pytest.raises(ValueError, match="requires a dataset"):
         make_sample_weighter(config, policy, device)
+
+
+def test_factory_rabc_rejects_multi_dataset_before_loading_annotations(annotation_loaders):
+    dataset = MultiLeRobotDataset.__new__(MultiLeRobotDataset)
+    config = SampleWeightingConfig(annotation_name="sarm", signal_name="progress")
+    policy = Mock()
+    policy.config.chunk_size = 5
+
+    with pytest.raises(ValueError, match="does not support MultiLeRobotDataset"):
+        make_sample_weighter(config, policy, torch.device("cpu"), dataset=dataset)
+
+    for loader in annotation_loaders:
+        loader.assert_not_called()
 
 
 def test_factory_rabc_requires_annotation_and_signal_names(sample_annotation_dataset):

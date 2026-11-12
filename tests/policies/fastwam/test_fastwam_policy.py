@@ -271,7 +271,13 @@ def test_rabc_sample_weighter_uses_the_full_action_horizon(monkeypatch):
         SampleWeightingConfig(type="rabc", annotation_name="sarm", signal_name="progress"),
         SimpleNamespace(config=cfg),
         torch.device("cpu"),
-        dataset=SimpleNamespace(),
+        dataset=SimpleNamespace(
+            meta=SimpleNamespace(
+                total_frames=40,
+                total_episodes=1,
+                episodes=[{"dataset_from_index": 0, "dataset_to_index": 40}],
+            )
+        ),
     )
     assert weighter.chunk_size == 16
 

@@ -127,6 +127,60 @@ def test_score_dataset_writes_signals_descriptors_and_provenance(tmp_path: Path)
     assert scorer.calls == [0, 1]
 
 
+@pytest.mark.parametrize("lengths", [(2, 3), (3, 1), (5,)])
+def test_rabc_rejects_annotations_after_episode_ranges_change(
+    tmp_path: Path, lengths: tuple[int, ...]
+) -> None:
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    dataset = FakeDataset(tmp_path / "dataset")
+    score_dataset(dataset, FakeScorer())
+    changed_dataset = FakeDataset(dataset.root, lengths=lengths)
+
+    with pytest.raises(ValueError, match="no longer align"):
+        RABCWeights(changed_dataset, "fake", "progress", chunk_size=1)
+
+
+def test_rabc_accepts_annotations_after_episodes_are_appended(tmp_path: Path) -> None:
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    dataset = FakeDataset(tmp_path / "dataset")
+    score_dataset(dataset, FakeScorer())
+    original = RABCWeights(dataset, "fake", "progress", chunk_size=1)
+    appended_dataset = FakeDataset(dataset.root, lengths=(3, 2, 4))
+
+    weighter = RABCWeights(appended_dataset, "fake", "progress", chunk_size=1)
+
+    assert weighter.progress_lookup == original.progress_lookup
+    assert weighter.episode_boundaries == original.episode_boundaries
+    assert weighter.delta_mean == original.delta_mean
+    assert weighter.delta_std == original.delta_std
+
+
+def test_factory_rabc_reads_local_annotations_for_a_streaming_dataset(tmp_path: Path) -> None:
+    import torch
+
+    from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+    from lerobot.rewards.sarm.rabc import RABCWeights
+    from lerobot.utils.sample_weighting import SampleWeightingConfig, make_sample_weighter
+
+    dataset = FakeDataset(tmp_path / "dataset")
+    score_dataset(dataset, FakeScorer())
+    streaming = StreamingLeRobotDataset.__new__(StreamingLeRobotDataset)
+    streaming.root = dataset.root
+    streaming.meta = dataset.meta
+
+    weighter = make_sample_weighter(
+        SampleWeightingConfig(annotation_name="fake", signal_name="progress"),
+        SimpleNamespace(config=SimpleNamespace(chunk_size=1)),
+        torch.device("cpu"),
+        dataset=streaming,
+    )
+
+    assert isinstance(weighter, RABCWeights)
+    assert sorted(weighter.progress_lookup) == [0, 1, 2, 3, 4]
+
+
 def test_score_dataset_default_and_explicit_names_are_separate(tmp_path: Path) -> None:
     dataset = FakeDataset(tmp_path / "dataset")
     scorer = FakeScorer()

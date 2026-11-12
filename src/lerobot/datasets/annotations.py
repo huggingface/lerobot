@@ -178,9 +178,9 @@ class AnnotationWriter:
         episodes: Global episode indices to annotate. Defaults to every episode in the dataset
             view.
         resume: If ``True``, keep the episodes written by an interrupted run with the same
-            dataset, ``info`` and episode selection.
-        overwrite: If ``True``, start a new run and replace an existing table once the new one
-            is published.
+            dataset, ``info`` and episode selection, including replacement runs. Combine
+            ``resume=False`` with ``overwrite=True`` to discard staged parts and restart.
+        overwrite: If ``True``, allow replacing an existing table once the new one is published.
 
     Raises:
         RuntimeError: If the dataset is being recorded and not finalized.
@@ -246,18 +246,19 @@ class AnnotationWriter:
             )
 
         manifest_path = self.parts_dir / _MANIFEST_FILENAME
-        if overwrite:
-            shutil.rmtree(self.parts_dir, ignore_errors=True)
-        elif self.parts_dir.exists():
-            if not resume:
+        if self.parts_dir.exists():
+            if resume:
+                if not manifest_path.is_file() or load_json(manifest_path) != manifest:
+                    raise ValueError(
+                        "Cannot resume annotations because the dataset, info or episode selection changed; "
+                        "set overwrite=True and resume=False to restart"
+                    )
+                return
+            if not overwrite:
                 raise FileExistsError(
                     f"Unpublished annotation parts exist at {self.parts_dir}; set resume=True or overwrite=True"
                 )
-            if not manifest_path.is_file() or load_json(manifest_path) != manifest:
-                raise ValueError(
-                    "Cannot resume annotations because the dataset, info or episode selection changed"
-                )
-            return
+            shutil.rmtree(self.parts_dir)
 
         self.parts_dir.mkdir(parents=True)
         with _atomic_path(manifest_path) as temporary_path:
@@ -376,7 +377,8 @@ def add_annotations(
         episodes: Global episode indices to annotate. Defaults to every episode in the dataset
             view.
         resume: If ``True``, skip episodes written by an interrupted run with the same
-            dataset, ``info`` and episode selection.
+            dataset, ``info`` and episode selection, including replacement runs. Combine
+            ``resume=False`` with ``overwrite=True`` to discard staged parts and restart.
         overwrite: If ``True``, replace an existing table once the new one is published.
     """
     writer = AnnotationWriter(dataset, name, info=info, episodes=episodes, resume=resume, overwrite=overwrite)

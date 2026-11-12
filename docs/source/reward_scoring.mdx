@@ -60,6 +60,8 @@ For an immutable run, pass commit hashes through `--dataset_revision` and `--rew
 
 The command is resumable by default. A retry skips completed episodes only when the dataset revision, model revision, scorer options, episode selection, and schema are unchanged. Completed parts are combined into the final score in episode order, with one Parquet row group per episode. Published scores are immutable; choose another name or pass `--overwrite=true` to replace one atomically.
 
+To resume an interrupted replacement, retry with `--overwrite=true`; the published table stays available until its replacement is complete. To discard staged work and start again, pass `--overwrite=true --resume=false`. A changed run configuration requires this explicit restart or a new name.
+
 To score a large dataset in parallel, give each worker its own episodes and table name, then merge the results into one table:
 
 ```python

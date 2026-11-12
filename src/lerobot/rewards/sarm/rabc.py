@@ -113,6 +113,11 @@ class RABCWeights(SampleWeighter):
         episode_indices = np.asarray(scores["episode_index"])
         if progress_values.dtype.kind not in "iuf":
             raise ValueError(f"RA-BC signal {signal_name!r} must be numeric")
+        if np.any((global_indices < 0) | (global_indices >= dataset.meta.total_frames)):
+            raise ValueError(
+                f"Annotations {annotation_name!r} no longer align with the dataset's frame range; "
+                "score the dataset again"
+            )
 
         self.progress_lookup: dict[int, float] = {}
         self.episode_lookup: dict[int, int] = {}
@@ -130,8 +135,22 @@ class RABCWeights(SampleWeighter):
         # Build episode boundaries for delta computation
         self.episode_boundaries: dict[int, dict[str, int]] = {}
         for episode_idx in np.unique(episode_indices):
+            if not 0 <= episode_idx < dataset.meta.total_episodes:
+                raise ValueError(
+                    f"Annotations {annotation_name!r} no longer align with the dataset: "
+                    f"episode {episode_idx} does not exist; score the dataset again"
+                )
             episode_mask = episode_indices == episode_idx
             episode_global_indices = global_indices[episode_mask]
+            episode = dataset.meta.episodes[int(episode_idx)]
+            if np.any(
+                (episode_global_indices < int(episode["dataset_from_index"]))
+                | (episode_global_indices >= int(episode["dataset_to_index"]))
+            ):
+                raise ValueError(
+                    f"Annotations {annotation_name!r} no longer align with the dataset's "
+                    f"frame range for episode {episode_idx}; score the dataset again"
+                )
             self.episode_boundaries[int(episode_idx)] = {
                 "start": int(episode_global_indices.min()),
                 "end": int(episode_global_indices.max()) + 1,

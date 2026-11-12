@@ -122,6 +122,10 @@ class TOPRewardFrameScorer:
         if config.task_key == "task":
             task_index = dataset.get_frames(episode_index, ["task_index"], [0])["task_index"][0]
             task = str(dataset.meta.tasks.iloc[int(task_index)].name)
+        elif config.task_key in dataset.meta.features:
+            mapping = dataset.absolute_to_relative_idx
+            position = episode_start if mapping is None else mapping[episode_start]
+            task = dataset[position][config.task_key]
         frame_indices = list(range(num_frames))
         episode_frames = dataset.get_frames(episode_index, [config.image_key], frame_indices)[
             config.image_key
