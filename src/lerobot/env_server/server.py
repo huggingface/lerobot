@@ -18,14 +18,14 @@ import contextlib
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from queue import Empty
 from threading import Event
 from typing import Any, cast
 
 import numpy as np
 
-from lerobot.sim import EnvDescriptor, LocalVectorEnv, SimConfig
+from lerobot.sim import EnvDescriptor, LocalVectorEnv, SimConfig, SimSettings
 from lerobot.transport.protocol import (
     Envelope,
     ErrorCode,
@@ -97,7 +97,7 @@ class EnvServerConfig:
     """Simulator to serve, resource limits and Zenoh endpoints.
 
     Args:
-        sim (`SimConfig`, *optional*):
+        sim (`SimSettings`, *optional*):
             The simulator to serve. Settings left unset come from its integration's conventions when the server
             starts. `sim.type` is required.
         deployment (`str`, *optional*, defaults to `""`):
@@ -114,7 +114,7 @@ class EnvServerConfig:
             How long a new session waits for its client to announce itself before it is closed.
     """
 
-    sim: SimConfig = field(default_factory=SimConfig)
+    sim: SimSettings = field(default_factory=SimSettings)
     deployment: str = ""
     zenoh: ZenohConfig = field(default_factory=lambda: ZenohConfig(listen_endpoints=["tcp/127.0.0.1:7448"]))
     max_envs: int = 32
@@ -252,7 +252,7 @@ class EnvServer:
         try:
             # Open the transport first, so a port already in use fails before the slow simulator build.
             self.transport.open()
-            self.sim = SimConfig.resolve(self.config.sim)
+            self.sim = SimConfig.resolve(asdict(self.config.sim))
             self._startup_env = LocalVectorEnv(self.sim)
             self.descriptor = self._startup_env.descriptor
             root = deployment_prefix(self.config.deployment)

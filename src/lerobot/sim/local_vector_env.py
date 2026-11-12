@@ -250,7 +250,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
 
         Args:
             config (`SimConfig`):
-                The simulator to run. Settings it leaves unset come from the integration's conventions.
+                The simulator to run.
             num_envs (`int`, *optional*, defaults to `1`):
                 Number of envs in the batch.
             task_group (`str`, *optional*):
@@ -262,8 +262,6 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             descriptor (`EnvDescriptor`, *optional*):
                 The env's descriptor, if already known, as for another task of the same simulator.
         """
-        if not config.resolved:
-            config = SimConfig.resolve(config)
         with simulator_required(config.type):
             integration = importlib.import_module(f"lerobot.sim.integrations.{config.type}")
             vector_env_fns = getattr(integration, "vector_env_fns", None)
@@ -438,11 +436,9 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         if not isinstance(action_space, spaces.Box) or len(action_space.shape) != 1:
             raise ValueError(f"LeRobot simulation needs a 1-D Box action space, got {action_space}")
         config = self.config
-        if config.fps is None or config.control_mode is None or config.semantics is None:
-            raise ValueError("Describe a resolved SimConfig")
         features = []
         for name, value in self._canonical_observation(observation_space.sample()).items():
-            names = (config.state_names or ()) if name == OBS_STATE else ()
+            names = config.state_names if name == OBS_STATE else ()
             if not names and value.ndim == 1:
                 names = tuple(f"state_{index}" for index in range(value.shape[0]))
             kind = "rgb" if value.dtype == np.uint8 else "tensor"
@@ -459,7 +455,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             fps=config.fps,
             tasks=self.tasks,
             max_episode_steps=self._max_steps[0],
-            robot_type=config.robot_type or "",
+            robot_type=config.robot_type,
             config=asdict(config),
         )
 

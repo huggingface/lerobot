@@ -26,7 +26,7 @@ from lerobot.env_server import EnvClient, EnvServer, EnvServerConfig, RemoteVect
 from lerobot.env_server.protocol import decode_descriptor, encode_descriptor, instance_prefix
 from lerobot.envs import EnvClientConfig
 from lerobot.envs.factory import make_env, make_task_env
-from lerobot.sim import SimConfig
+from lerobot.sim import SimSettings
 from lerobot.transport.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig
 from tests.fixtures.sim_server import free_port
@@ -405,7 +405,7 @@ def test_a_server_that_finishes_starting_during_the_handshake_is_described(monke
     endpoint = f"tcp/127.0.0.1:{free_port()}"
     server = EnvServer(
         EnvServerConfig(
-            sim=SimConfig(**ToyEnvConfig().sim_settings()),
+            sim=SimSettings(**ToyEnvConfig().sim_settings()),
             deployment="toy",
             zenoh=ZenohConfig(listen_endpoints=[endpoint]),
         )
