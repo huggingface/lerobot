@@ -12,103 +12,63 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-import threading
 from unittest.mock import MagicMock
 
-import numpy as np
 import pytest
 
 from lerobot.robots.bi_yam_follower import BiYamFollower, BiYamFollowerConfig
 from lerobot.robots.yam_follower import (
-    YamFollower,
     YamFollowerConfig,
-    mit_control,
     yam_follower as yam_module,
 )
+from tests.mocks.mock_yam import calibrate_gripper, make_ready, mock_hardware as mock_arm_hardware
 
 
 def arm_config(port="can0", **kwargs):
     return YamFollowerConfig(port=port, gravity_compensation=False, **kwargs)
 
 
-def calibrate_arms(robot):
-    """Give both arms gripper limits at 0.1 and 6.1 motor radians."""
-    for arm in robot.arms.values():
-        arm.calibration = {
-            "gripper": yam_module.MotorCalibration(
-                id=7, drive_mode=0, homing_offset=0, range_min=math.degrees(0.1), range_max=math.degrees(6.1)
-            )
-        }
-        arm.controller.set_gripper_params(
-            yam_module._yam_gripper_params(arm.config, arm.calibration["gripper"])
-        )
-    return robot
-
-
 @pytest.fixture
 def robot(tmp_path, monkeypatch):
     monkeypatch.setattr(yam_module, "require_package", lambda *a, **kw: None)
-    return calibrate_arms(
-        BiYamFollower(
-            BiYamFollowerConfig(
-                id="test",
-                calibration_dir=tmp_path,
-                left_arm_config=arm_config("can0"),
-                right_arm_config=arm_config("can1"),
-            )
+    robot = BiYamFollower(
+        BiYamFollowerConfig(
+            id="test",
+            calibration_dir=tmp_path,
+            left_arm_config=arm_config("can0"),
+            right_arm_config=arm_config("can1"),
         )
     )
-
-
-def mock_bus():
-    bus = MagicMock(spec=yam_module._YamMotorsBus)
-    bus.enabled = False
-    position = np.array([0, 0, 0, 0, 0, 0, 0.1])  # raw radians, gripper closed
-    bus.read_states.return_value = mit_control.MotorStates(
-        position=position, velocity=np.zeros(7), torque=np.zeros(7)
-    )
-    bus.can_timeouts.return_value = dict.fromkeys(yam_module.MOTOR_NAMES, 8000)
-    return bus
-
-
-def attach_bus(arm, bus):
-    arm.bus = arm.controller._bus = bus
-    return bus
+    for arm in robot.arms.values():
+        calibrate_gripper(arm)
+    return robot
 
 
 def mock_hardware(robot, monkeypatch):
     for arm in robot.arms.values():
-        attach_bus(arm, mock_bus())
-        monkeypatch.setattr(arm.controller, "_run", lambda: None)
+        mock_arm_hardware(arm, monkeypatch)
 
 
-def mark_running(controller):
-    """Make the controller report active, with a finished thread that stop() can join."""
-    controller._thread = threading.Thread(target=lambda: None)
-    controller._thread.start()
+def answer_gripper_prompts(robot, monkeypatch, answers=()):
+    """Answer calibration prompts with `answers`, then put each arm's gripper where the prompt asks."""
+    pending = list(answers)
+    prompts = []
+
+    def prompt(text):
+        prompts.append(text)
+        side = "left" if "test_left" in text else "right"
+        robot.arms[side].bus.read_states.return_value.position[6] = 6.1 if "open" in text else 0.1
+        return pending.pop(0) if pending else ""
+
+    monkeypatch.setattr("builtins.input", prompt)
+    monkeypatch.setattr(yam_module.time, "sleep", lambda _: None)
+    return prompts
 
 
 def ready(robot):
-    zeros = np.zeros(7)
     for arm in robot.arms.values():
-        arm._connected = True
-        arm.controller._set_initial_state(
-            mit_control.JointState(position=zeros, velocity=zeros, torque=zeros)
-        )
-        mark_running(arm.controller)
+        make_ready(arm)
     return dict.fromkeys(robot.action_features, 0.0)
-
-
-def test_bimanual_composes_single_arm_followers(robot):
-    assert isinstance(robot.left_arm, YamFollower)
-    assert isinstance(robot.right_arm, YamFollower)
-    assert robot.left_arm.controller.stop_event is robot.right_arm.controller.stop_event is robot._stop
-
-
-def test_position_hold_is_supported_with_position_only_actions(robot):
-    assert robot.supports_position_hold
-    assert all(name.endswith(".pos") for name in robot.action_features)
 
 
 def test_default_id_gives_each_arm_its_own_calibration_file(tmp_path, monkeypatch):
@@ -157,7 +117,8 @@ def test_stale_feedback_on_either_arm_stops_both(robot):
     robot.right_arm.controller._updated_at -= 1
     with pytest.raises(ConnectionError, match="stale"):
         robot.send_action(action)
-    assert robot._stop.is_set()
+    with pytest.raises(ConnectionError, match="stopped"):
+        robot.left_arm.controller.latest()
 
 
 def test_inactive_arm_refuses_its_action(robot):
@@ -176,32 +137,48 @@ def test_connect_keeps_both_arms_off_until_both_are_calibrated(robot, monkeypatc
     robot.disconnect()
 
 
-def test_connect_calibrates_both_arms_before_enabling_torque(tmp_path, monkeypatch):
-    monkeypatch.setattr(yam_module, "require_package", lambda *a, **kw: None)
-    robot = BiYamFollower(
-        BiYamFollowerConfig(
-            id="test",
-            calibration_dir=tmp_path,
-            left_arm_config=YamFollowerConfig(port="can0", gravity_compensation=False),
-            right_arm_config=YamFollowerConfig(port="can1", gravity_compensation=False),
-        )
-    )
+def test_connect_calibrates_both_arms_before_enabling_torque(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-
-    def prompt(text):
-        side = "left" if "test_left" in text else "right"
-        robot.arms[side].bus.read_states.return_value.position[6] = 6.1 if "open" in text else 0.1
-        return ""
-
-    monkeypatch.setattr("builtins.input", prompt)
-    monkeypatch.setattr(yam_module.time, "sleep", lambda _: None)
+    calibrated_at_enable = []
+    for arm in robot.arms.values():
+        arm.calibration = {}
+        arm.bus.enable_torque_at.side_effect = lambda hold: calibrated_at_enable.append(robot.is_calibrated)
+    answer_gripper_prompts(robot, monkeypatch)
     robot.connect()
-
-    assert robot.is_calibrated
+    assert calibrated_at_enable == [True, True]
     for arm in robot.arms.values():
         arm.bus.connect.assert_called_once()
-        arm.bus.enable_torque_at.assert_called_once()
     robot.disconnect()
+
+
+def test_recalibrating_one_arm_keeps_the_other_running(robot, monkeypatch):
+    mock_hardware(robot, monkeypatch)
+    robot.connect(calibrate=False)  # what lerobot-calibrate does before calibrate()
+    # Re-measure the left gripper, keep the right one's calibration.
+    prompts = answer_gripper_prompts(robot, monkeypatch, answers=["c"])
+    robot.calibrate()
+    assert "Support the arm" in prompts[1] and "test_left" in prompts[1]
+    assert not robot.left_arm.controller.active
+    robot.left_arm.bus.disable_torque.assert_called_once()
+    robot.right_arm.controller.latest()  # still running, with torque on
+    robot.right_arm.bus.disable_torque.assert_not_called()
+    robot.disconnect()
+
+
+def test_second_arm_refuses_torque_after_a_fault_on_the_first(robot, monkeypatch):
+    mock_hardware(robot, monkeypatch)
+    left = robot.left_arm.controller
+    start_left = left.start
+
+    def start_then_fault():
+        start_left()
+        robot._fault.set()  # what the left control loop does when it faults
+
+    monkeypatch.setattr(left, "start", start_then_fault)
+    with pytest.raises(ConnectionError, match="can't start"):
+        robot.connect()
+    robot.right_arm.bus.enable_torque_at.assert_not_called()
+    assert not robot.is_connected
 
 
 def test_bad_second_arm_position_never_enables_first(robot, monkeypatch):
