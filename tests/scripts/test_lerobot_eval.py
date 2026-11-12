@@ -190,3 +190,28 @@ def test_rollout_ends_at_the_step_cap_below_the_env_limit():
         env.close()
     assert result[ACTION].shape[1] == 3
     assert result["done"][0].tolist() == [False, False, True]
+
+
+def test_rollout_does_not_score_a_final_info_without_is_success_as_success():
+    class _NoSuccessFlagEnv(_TwoStepEnv):
+        """Reports the end of an episode through ``final_info``, with no ``is_success`` key."""
+
+        def step(self, action):
+            observation, reward, terminated, truncated, _ = super().step(action)
+            info = {"final_info": {"done": True}} if terminated else {}
+            return observation, reward, terminated, truncated, info
+
+    env = gym.vector.SyncVectorEnv([_NoSuccessFlagEnv])
+    try:
+        result = rollout(
+            env,
+            _RecordingPolicy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=make_policy_processor_pipelines([], [])[0],
+            postprocessor=make_policy_processor_pipelines([], [])[1],
+            seeds=[0],
+        )
+    finally:
+        env.close()
+    assert result["success"].tolist() == [[False, False]]

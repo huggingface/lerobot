@@ -347,7 +347,9 @@ def rollout(
             if "final_info" in info:
                 final_info = info["final_info"]
                 if isinstance(final_info, dict):
-                    is_success = final_info.get("is_success", [False] * env.num_envs)
+                    # An array default: a list has no ``tolist`` and is truthy when non-empty, so it
+                    # would fall through to ``bool(...)`` below and mark every env as successful.
+                    is_success = final_info.get("is_success", np.zeros(env.num_envs, dtype=bool))
                     successes = (
                         is_success.tolist()
                         if hasattr(is_success, "tolist")
