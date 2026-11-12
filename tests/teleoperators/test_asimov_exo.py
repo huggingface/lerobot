@@ -111,6 +111,24 @@ def test_velocity_mode_stops_on_missed_sample(velocity_teleop):
     assert velocity_teleop.get_action() == dict.fromkeys(BASE_ACTIONS, 0.0)
 
 
+def test_whole_body_mode_sends_sticks_and_arms(velocity_teleop):
+    teleop = velocity_teleop
+    teleop.config.control_mode = "whole_body"
+    teleop.left_arm.joystick_from_raw.return_value = ExoJoystickState(x=0.0, y=1.0, pressed=False)
+    teleop.right_arm.joystick_from_raw.return_value = ExoJoystickState(x=0.0, y=0.0, pressed=False)
+    teleop.left_arm.get_angles.return_value = {}
+    teleop.right_arm.get_angles.return_value = {}
+    arms = dict.fromkeys(ARM_ACTIONS, 0.1)
+    teleop.ik_helper = MagicMock()
+    teleop.ik_helper.compute_asimov_joints_from_exo.return_value = arms
+
+    action = teleop.get_action()
+
+    assert action == pytest.approx(
+        {"x.vel": teleop.config.max_linear_velocity, "y.vel": 0.0, "theta.vel": 0.0, **arms}
+    )
+
+
 def test_ik_tracks_reachable_arm_motion(ik):
     rng = np.random.default_rng(0)
     idx = ik.arm_idx["left"][0] + ik.arm_idx["right"][0]

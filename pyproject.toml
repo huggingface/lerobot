@@ -191,7 +191,8 @@ damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
 
 # Robots
-asimov = ["menlo-sdk>=0.1.0,<0.2.0"]
+# onnxruntime runs LeRobot's whole-body controller; mujoco is its simulation.
+asimov = ["menlo-sdk>=0.1.0,<0.2.0", "onnxruntime>=1.16.0,<2.0.0", "mujoco>=3.0.0,<4.0.0"]
 openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]

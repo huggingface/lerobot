@@ -39,7 +39,8 @@ class AsimovExoTeleoperator(Teleoperator):
     Uses the same exoskeleton hardware and calibration as the Unitree G1 teleoperator:
     exoskeleton FK computes end-effector poses, Asimov IK solves for joint angles.
     Drive it with ``--robot.control_mode=arms``. With ``control_mode=velocity`` (on both robot
-    and teleop) the exo joysticks drive locomotion instead and the arms are not commanded.
+    and teleop) the exo joysticks drive locomotion instead and the arms are not commanded;
+    ``control_mode=whole_body`` sends both.
     """
 
     config_class = AsimovExoTeleoperatorConfig
@@ -81,6 +82,8 @@ class AsimovExoTeleoperator(Teleoperator):
     def action_features(self) -> dict[str, type]:
         if self.config.control_mode == "velocity":
             return dict.fromkeys(BASE_ACTIONS, float)
+        if self.config.control_mode == "whole_body":
+            return dict.fromkeys((*BASE_ACTIONS, *ARM_ACTIONS), float)
         return dict.fromkeys(ARM_ACTIONS, float)
 
     @cached_property
@@ -108,16 +111,17 @@ class AsimovExoTeleoperator(Teleoperator):
         self._ema = {"left": {}, "right": {}}
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
-        if self.config.control_mode == "velocity":
+        if self.config.control_mode in ("velocity", "whole_body"):
             time.sleep(0.1)  # Give serial time to populate buffer
             # Sticks must be untouched here: their current position becomes the center.
             for side, arm in (("left", self.left_arm), ("right", self.right_arm)):
                 if not arm.detect_joystick():
                     self.disconnect()
                     raise RuntimeError(
-                        f"Velocity mode needs a joystick on the {side} exo arm; none detected."
+                        f"{self.config.control_mode} mode needs a joystick on the {side} exo arm; none detected."
                     )
-            return
+            if self.config.control_mode == "velocity":
+                return
         self.ik_helper = self._make_ik_helper()
         logger.info("IK helper initialized")
         time.sleep(0.1)  # Give serial time to populate buffer
@@ -146,7 +150,10 @@ class AsimovExoTeleoperator(Teleoperator):
             return self._joystick_velocity()
         if self.ik_helper is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        return self.ik_helper.compute_asimov_joints_from_exo(*self._read_smoothed_angles())
+        arms = self.ik_helper.compute_asimov_joints_from_exo(*self._read_smoothed_angles())
+        if self.config.control_mode == "whole_body":
+            return {**self._joystick_velocity(), **arms}
+        return arms
 
     def _joystick_velocity(self) -> dict[str, float]:
         """Left stick: forward/strafe; right stick x: turn. A missed read stops the robot."""
