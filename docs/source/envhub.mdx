@@ -238,9 +238,10 @@ Every step takes the local folder that holds `env.py` in place of a Hub reposito
    ```python
    import numpy as np
 
-   from lerobot.envs.configs import HubEnvConfig
+   from lerobot.envs import HubEnvConfig, make_env
 
-   envs = HubEnvConfig(hub_path="./my-env", trust_remote_code=True).create_envs(n_envs=2)
+   # LeRobot's make_env, which calls the make_env of your env.py
+   envs = make_env(HubEnvConfig(hub_path="./my-env", trust_remote_code=True), n_envs=2)
    suite = next(iter(envs))
    env = envs[suite][0]
    obs, info = env.reset(seed=0)
