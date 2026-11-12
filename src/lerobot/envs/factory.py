@@ -107,8 +107,9 @@ def make_env(
         raise ValueError("`n_envs` must be at least 1")
     if isinstance(cfg, str):
         raise TypeError(
-            f"make_env no longer takes a Hub repo ID: build it with "
-            f'make_env(HubEnvConfig(hub_path="{cfg}", trust_remote_code=True), n_envs=...)'
+            "make_env() no longer takes a Hub repo ID. The equivalent is "
+            f'make_env(HubEnvConfig(hub_path="{cfg}", trust_remote_code=True, use_native_batch=True), n_envs=...). '
+            "Without use_native_batch, LeRobot builds the envs itself, as lerobot-eval and the env server do."
         )
     if isinstance(cfg, HubEnvConfig) and trust_remote_code:
         cfg.trust_remote_code = True
