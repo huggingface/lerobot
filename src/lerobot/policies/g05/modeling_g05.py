@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.nn.functional as functional
 from huggingface_hub import snapshot_download
-from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -76,6 +75,7 @@ else:
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.lerobot_types import BboxAnswer, Detection, PolicyOutput, PolicyPrediction
 from lerobot.optim.optimizers import OptimizerParams
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.common.flow_matching import (
     FlowConvention,
     make_flow_matching_inputs,
@@ -1804,16 +1804,16 @@ class G05Policy(PreTrainedPolicy):
         return _cot_subtask(text) or text
 
     @classmethod
-    def _load_as_safetensor(
+    def _load_checkpoint(
         cls,
         model: G05Policy,
-        model_file: str,
+        checkpoint: SafetensorsCheckpoint,
         map_location: str,
         strict: bool,
     ) -> G05Policy:
         """Load the weights from a safetensors file."""
         device = resolve_safetensors_device(map_location)
-        state_dict = load_file(model_file, device=device, backend="pread")
+        state_dict = checkpoint.load_state_dict(device=device, backend="pread")
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False, assign=True)
         model.backend.materialize_runtime_buffers(device)
         remaining_meta = [name for name, parameter in model.named_parameters() if parameter.is_meta]

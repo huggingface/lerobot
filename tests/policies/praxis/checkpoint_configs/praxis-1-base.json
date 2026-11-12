@@ -1,0 +1,237 @@
+{
+  "format_version": 2,
+  "model_type": "praxis",
+  "embodiment": "base",
+  "torch_dtype": "bfloat16",
+  "fp32_tensors": [
+    "*.ffn.expert_bias"
+  ],
+  "backbone": {
+    "dim": 3072,
+    "timestep_dim": 128,
+    "num_registers": 4,
+    "modulation_dtype": "mixed",
+    "norm_eps": 1e-06,
+    "norm_compute_dtype": "float32",
+    "attention": {
+      "num_heads": 24,
+      "num_kv_heads": 8,
+      "head_dim": 128,
+      "gated": true,
+      "qk_norm_eps": 1e-06,
+      "qk_norm_compute_dtype": "float32",
+      "rope_after_norm": false,
+      "flex_block_size": 128,
+      "backend": "flash"
+    },
+    "rope": {
+      "base": 26000000,
+      "dim": 128,
+      "effective_dim": 64,
+      "max_seq_len": 90000000,
+      "efficient_cache_max": 1000000,
+      "max_intra": 360,
+      "max_inter": 129600,
+      "chunked_video_layout": true,
+      "n_chunks": null,
+      "time_scale": 1.0,
+      "n_tiles": null,
+      "ref_placement": "group"
+    },
+    "moe": {
+      "num_experts": 129,
+      "num_routed_experts": 128,
+      "shared_expert": true,
+      "top_k": 9,
+      "top_k_routed": 8,
+      "expert_hidden": 1280,
+      "router_activation": "sigmoid",
+      "router_dtype": "float32",
+      "routed_scaling_factor": 2.5,
+      "no_expert_slots": false,
+      "routed_weight_layout": "expert_first",
+      "dispatch_chunk_size": 16384
+    },
+    "dense_ffn_hidden": 11520,
+    "encoder": {
+      "depth": 14,
+      "dense_blocks": [
+        0,
+        1
+      ],
+      "tap_blocks": [
+        0,
+        2,
+        4,
+        6,
+        7,
+        9,
+        11,
+        13
+      ],
+      "input_projections": {
+        "TextEncodingTensor": {
+          "c_in": 2048,
+          "timestep_modulated": false
+        },
+        "VideoTensor": {
+          "c_in": 192,
+          "move_dim": true,
+          "timestep_modulated": true
+        }
+      },
+      "output_projections": {
+        "VideoTensor": {
+          "c_out": 3072,
+          "move_dim": true
+        }
+      },
+      "positive_zero_residual_add": true
+    },
+    "decoder": {
+      "depth": 6,
+      "dense_blocks": [
+        0
+      ],
+      "modulation_dim": 3072,
+      "unpatch_factor": [
+        1,
+        2,
+        2
+      ],
+      "input_projections": {
+        "VideoTensor": {
+          "c_in": 48,
+          "move_dim": true,
+          "timestep_modulated": true
+        }
+      },
+      "output_projections": {
+        "VideoTensor": {
+          "c_out": 48,
+          "move_dim": true
+        }
+      },
+      "positive_zero_residual_add": true
+    },
+    "layout": "chunk_causal"
+  },
+  "action_expert": {
+    "dim": 1024,
+    "num_layers": 16,
+    "num_heads": 16,
+    "head_dim": 64,
+    "trunk_dim": 3072,
+    "num_future_per_chunk": 8,
+    "max_chunks": 16,
+    "max_action_tokens": 64,
+    "tap_norm": true,
+    "clean_only_conditioning": false,
+    "rope_cross": false,
+    "rope_self": false,
+    "rope_base": 100.0,
+    "absolute_positions": true,
+    "action_pos_table": false,
+    "future_chunk_offset": "zero",
+    "rope": {
+      "kind": "trunk",
+      "dim": 64,
+      "effective_dim": 64,
+      "base": 26000000,
+      "table_size": 1000000,
+      "order": "before_norm"
+    },
+    "global_order": [
+      "register",
+      "anchor",
+      "text"
+    ],
+    "attention": "flex_dynamic",
+    "flex_kernel_options": {
+      "fwd_BLOCK_M": 32,
+      "fwd_BLOCK_N": 128,
+      "num_warps": 4,
+      "num_stages": 3
+    },
+    "head_plus_zero": true,
+    "layout_stamp": 20260924
+  },
+  "chunking": {
+    "n_chunks": 4,
+    "action_chunk": 24,
+    "action_frames_per_token": 4,
+    "latents_per_chunk": 6,
+    "past_frames": 15,
+    "future_frames": 24,
+    "window_frames": 93,
+    "chunk_geometry": [
+      [
+        0,
+        21
+      ],
+      [
+        21,
+        24
+      ],
+      [
+        45,
+        24
+      ],
+      [
+        69,
+        24
+      ]
+    ],
+    "grid_hz": 15.0,
+    "global_frame_anchor": true,
+    "contiguous_chunks": true,
+    "context_format": "vxt",
+    "proprio_frames": 1
+  },
+  "video": {
+    "canvas": "tiles",
+    "layout": "hstack",
+    "keep_aspect": true,
+    "vae": "Wan2.2",
+    "vae_encode_chunk_frames": 4,
+    "latent_channels": 48,
+    "vae_stride": [
+      4,
+      16,
+      16
+    ],
+    "patch_size": [
+      1,
+      2,
+      2
+    ],
+    "aspect_tol": 0.03,
+    "vae_encode_impl": "megakernel",
+    "vae_megakernel_chunk_frames": 16
+  },
+  "text_encoder": {
+    "model": "Qwen3.5-2B",
+    "hidden_layer": -3,
+    "pad_to_multiple_of": 32,
+    "trim_padding": true,
+    "hidden_dim": 2048,
+    "uncond": "blank_caption",
+    "blank_caption": " "
+  },
+  "source": {
+    "checkpoint": "runwayml/praxis-1-base-lerobot",
+    "global_step": 526120,
+    "contents": "The base checkpoint: video backbone + shared action-expert trunk. No per-embodiment heads (head, embed_proprio, action_encoder.w1), no optimizer state. Add embodiment heads before fine-tuning."
+  },
+  "heads": {
+    "status": "absent: make a checkpoint of your rig with scripts/init_heads.py (praxis/train/README.md, Fine-tune the base checkpoint)",
+    "tensors": {
+      "action_expert.action_encoder.w1.weight": "[1024, action_patch_dim]",
+      "action_expert.action_encoder.w1.bias": "[1024]",
+      "action_expert.embed_proprio.weight": "[1024, proprio_patch_dim]",
+      "action_expert.embed_proprio.bias": "[1024]",
+      "action_expert.head.weight": "[action_patch_dim, 1024]",
+      "action_expert.head.bias": "[action_patch_dim]"
+    }
+  }
+}
