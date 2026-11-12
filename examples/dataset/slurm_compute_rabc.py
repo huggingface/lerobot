@@ -19,7 +19,7 @@ SLURM-distributed SARM scoring for RA-BC.
 
 Scores every frame of a dataset with SARM across SLURM workers, then merges the
 workers' scores into the dataset score `sarm`, which RA-BC reads with
-score_name=sarm and signal_name=reward.sarm.sparse_progress.
+sample_weighting.annotation_name=sarm and sample_weighting.signal_name=reward.sarm.sparse_progress.
 
 Two subcommands, each a separate SLURM submission:
 

@@ -28,12 +28,24 @@ samples with negative progress (going backwards) get zero weight.
 See: https://arxiv.org/abs/2509.25358 for the SARM paper.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 
-from lerobot.utils.sample_weighting import SampleWeighter, ScoreDataset
+from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
+from lerobot.utils.sample_weighting import SampleWeighter
+
+from ..scoring import load_signal_descriptors
+
+if TYPE_CHECKING:
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets.annotations import load_annotations
 
 
 class RABCWeights(SampleWeighter):
@@ -43,14 +55,14 @@ class RABCWeights(SampleWeighter):
     This class implements the SampleWeighter ABC for use with the generic
     sample weighting infrastructure in lerobot.
 
-    Progress values are loaded from a named dataset score sidecar.
+    Progress values are loaded from a named dataset annotation table.
     During training, computes:
         - progress_delta = progress[t + chunk_size] - progress[t]
         - rabc_weight based on the delta (paper Eq. 8-9)
 
     Args:
-        dataset: Dataset containing the score sidecar.
-        score_name: Name of the dataset score sidecar.
+        dataset: Dataset containing the annotation table.
+        annotation_name: Name of the dataset annotation table.
         signal_name: Progress signal selected from the sidecar.
         chunk_size: Number of frames ahead for computing progress delta.
         kappa: Hard threshold for high-quality samples (default: 0.01).
@@ -61,16 +73,18 @@ class RABCWeights(SampleWeighter):
 
     def __init__(
         self,
-        dataset: ScoreDataset,
-        score_name: str,
+        dataset: LeRobotDataset,
+        annotation_name: str,
         signal_name: str,
         chunk_size: int = 50,
         kappa: float = 0.01,
         epsilon: float = 1e-6,
         fallback_weight: float = 1.0,
         device: torch.device | None = None,
-    ):
-        self.score_name = score_name
+    ) -> None:
+        require_package("datasets", extra="dataset")
+        require_package("av", extra="dataset")
+        self.annotation_name = annotation_name
         self.signal_name = signal_name
         self.chunk_size = chunk_size
         self.kappa = kappa
@@ -78,21 +92,22 @@ class RABCWeights(SampleWeighter):
         self.fallback_weight = fallback_weight
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        logging.info("Loading signal %s from dataset score %s", signal_name, score_name)
-        scores = dataset.read_score(score_name)
-        descriptors = dataset.get_score_descriptors(score_name)
+        logging.info("Loading signal %s from dataset annotations %s", signal_name, annotation_name)
+        descriptors = load_signal_descriptors(dataset, annotation_name)
 
         if signal_name not in descriptors:
             raise ValueError(
-                f"Signal '{signal_name}' not found in score '{score_name}'. Available signals: {sorted(descriptors)}"
+                f"Signal '{signal_name}' not found in annotations '{annotation_name}'. "
+                f"Available signals: {sorted(descriptors)}"
             )
         descriptor = descriptors[signal_name]
-        if descriptor.direction != "higher":
+        if descriptor.greater_is_better is not True:
             raise ValueError(
                 f"RA-BC requires a signal where higher values indicate better progress, "
-                f"but {signal_name!r} declares direction={descriptor.direction!r}"
+                f"but {signal_name!r} declares greater_is_better={descriptor.greater_is_better!r}"
             )
 
+        scores = load_annotations(dataset, annotation_name, columns=["index", "episode_index", signal_name])
         global_indices = np.asarray(scores["index"])
         progress_values = np.asarray(scores[signal_name])
         episode_indices = np.asarray(scores["episode_index"])
@@ -297,7 +312,7 @@ class RABCWeights(SampleWeighter):
             "type": "rabc",
             "num_frames": len(self.progress_lookup),
             "chunk_size": self.chunk_size,
-            "score_name": self.score_name,
+            "annotation_name": self.annotation_name,
             "signal_name": self.signal_name,
             "delta_mean": self.delta_mean,
             "delta_std": self.delta_std,

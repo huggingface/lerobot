@@ -477,7 +477,7 @@ lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
   --policy.type=pi0 \
   --sample_weighting.type=rabc \
-  --sample_weighting.score_name=sarm \
+  --sample_weighting.annotation_name=sarm \
   --sample_weighting.signal_name=reward.sarm.sparse_progress \
   --sample_weighting.kappa=0.01 \
   --output_dir=outputs/train/policy_rabc \
@@ -494,13 +494,13 @@ The training script automatically:
 
 **RA-BC Arguments:**
 
-| Argument                         | Description                                                   | Default |
-| -------------------------------- | ------------------------------------------------------------- | ------- |
-| `--sample_weighting.type`        | Weighting strategy type (`rabc` or `uniform`)                 | `rabc`  |
-| `--sample_weighting.score_name`  | Dataset score containing progress signals                     | —       |
-| `--sample_weighting.signal_name` | Progress signal to use, such as `reward.sarm.sparse_progress` | —       |
-| `--sample_weighting.kappa`       | Threshold κ for high-quality samples                          | `0.01`  |
-| `--sample_weighting.epsilon`     | Small constant for numerical stability                        | `1e-6`  |
+| Argument                             | Description                                                   | Default |
+| ------------------------------------ | ------------------------------------------------------------- | ------- |
+| `--sample_weighting.type`            | Weighting strategy type (`rabc` or `uniform`)                 | `rabc`  |
+| `--sample_weighting.annotation_name` | Dataset score containing progress signals                     | —       |
+| `--sample_weighting.signal_name`     | Progress signal to use, such as `reward.sarm.sparse_progress` | —       |
+| `--sample_weighting.kappa`           | Threshold κ for high-quality samples                          | `0.01`  |
+| `--sample_weighting.epsilon`         | Small constant for numerical stability                        | `1e-6`  |
 
 ### Tuning RA-BC Kappa
 

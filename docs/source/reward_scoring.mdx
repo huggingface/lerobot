@@ -1,6 +1,6 @@
 # Offline Reward-Model Scoring
 
-LeRobot's offline scoring workflow runs a reward model over dataset episodes and writes frame-aligned signals to a versioned Parquet sidecar. A sidecar is a separate file that joins back to source frames through `(episode_index, frame_index)`. The optional `index` column is a convenient source-global index for unchanged datasets. The source dataset is not modified, and filtering remains a downstream decision.
+LeRobot's offline scoring workflow runs a reward model over dataset episodes and writes frame-aligned signals to a named annotation table in `annotations/<name>.parquet`. Each table joins back to source frames through `(episode_index, frame_index)` and includes an `index` column for the source-global frame index. The source frames are unchanged, and filtering remains a downstream decision.
 
 ```text
   LeRobotDataset                  reward model
@@ -14,21 +14,21 @@ LeRobot's offline scoring workflow runs a reward model over dataset episodes and
                        │ FrameSignals for one episode
                        ▼
              ┌───────────────────┐
-             │ LeRobotDataset    │
-             │ add_score()       │
+             │ rewards           │
+             │ score_dataset()   │
              └─────────┬─────────┘
                        │
                        ▼
              ┌───────────────────┐
-             │ dataset-owned     │
-             │ score storage     │
+             │ datasets          │
+             │ annotation store  │
              └─────────┬─────────┘
                        │
                        ▼
        annotation / filtering / weighting / evaluation
 ```
 
-The model-specific scorer owns sampling, preprocessing, and conversion from native predictions to `FrameSignals`. `LeRobotDataset` selects episodes, validates signals, and owns sidecar persistence, resume, reading, and discovery.
+The model-specific scorer owns sampling, preprocessing, and conversion from native predictions to `FrameSignals`. `lerobot.rewards.score_dataset()` validates signals and supplies their descriptors and provenance to the generic annotation store. `lerobot.datasets.annotations` owns persistence, resume, merging, reading, discovery, and upload.
 
 ## Score a Dataset
 
@@ -54,25 +54,35 @@ By default, the score is named after the scorer, such as `robometer`. Use `--nam
 
 Scoring requires a writable local LeRobot dataset root, not the Hub cache LeRobot downloads to by default. Pass `--dataset_root=/path/to/dataset`; a Hub dataset is downloaded there if it isn't yet.
 
-Pass `--push_to_hub=true` to upload the completed score to the dataset repository. The dataset API owns its Hub location and local staging data.
+Pass `--push_to_hub=true` to upload the completed annotation table to the dataset repository. The annotation store owns its Hub location and local staging data.
 
 For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model.pretrained_revision`. The requested revisions are stored in provenance and must match when resuming.
 
 The command is resumable by default. A retry skips completed episodes only when the dataset revision, model revision, scorer options, episode selection, and schema are unchanged. Completed parts are combined into the final score in episode order, with one Parquet row group per episode. Published scores are immutable; choose another name or pass `--overwrite=true` to replace one atomically.
 
-To score a large dataset in parallel, give each worker its own episodes and score name, then merge the results into one score:
+To score a large dataset in parallel, give each worker its own episodes and table name, then merge the results into one table:
 
 ```python
-dataset.add_score(scorer, name=f"sarm-rank{rank}", episodes=my_episodes)  # on each worker
-dataset.merge_scores([f"sarm-rank{rank}" for rank in range(world_size)], name="sarm")  # once at the end
+from lerobot.datasets.annotations import merge_annotations
+from lerobot.rewards import score_dataset
+
+score_dataset(dataset, scorer, name=f"sarm-rank{rank}", episodes=my_episodes)  # on each worker
+merge_annotations(dataset, [f"sarm-rank{rank}" for rank in range(world_size)], name="sarm")  # once at the end
 ```
 
-`merge_scores()` requires the same signals and provenance in every score and rejects episodes scored twice.
+`merge_annotations()` requires matching dataset identity, column types, and annotation info in every table, and rejects episodes written twice.
 
 ## Python API
 
 ```python
 from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.annotations import (
+    list_annotations,
+    load_annotations,
+    load_annotations_info,
+    push_annotations_to_hub,
+)
+from lerobot.rewards import load_signal_descriptors, score_dataset
 from lerobot.rewards.robometer import RobometerRewardModel
 from lerobot.rewards.robometer.scoring_robometer import make_robometer_frame_scorer
 
@@ -80,24 +90,33 @@ dataset = LeRobotDataset("user/my_dataset", root="/path/to/local/dataset")
 model = RobometerRewardModel.from_pretrained("lerobot/Robometer-4B")
 scorer = make_robometer_frame_scorer(model)
 
-dataset.add_score(
+score_dataset(
+    dataset,
     scorer,
     name="robometer-4b",
     episodes=[0, 1],
 )
 
-scores = dataset.read_score("robometer-4b")
+scores = load_annotations(dataset, "robometer-4b")
 print(scores.column_names)
 print(scores[0]["reward.robometer.progress"])
 
-descriptors = dataset.get_score_descriptors("robometer-4b")
-provenance = dataset.get_score_provenance("robometer-4b")
-available = dataset.list_scores()
+descriptors = load_signal_descriptors(dataset, "robometer-4b")
+provenance = load_annotations_info(dataset, "robometer-4b")["provenance"]
+available = list_annotations(dataset)
+
+# Read just the columns a consumer needs.
+progress = load_annotations(
+    dataset, "robometer-4b", columns=["index", "episode_index", "reward.robometer.progress"]
+)
+
+# Upload the completed table when ready to share it.
+push_annotations_to_hub(dataset, "robometer-4b")
 ```
 
-Applications that load reward models dynamically can use `lerobot.rewards.make_frame_scorer()` instead. The CLI and both programmatic factories follow the same path: construct a model-specific frame scorer, then call `dataset.add_score()`.
+Applications that load reward models dynamically can use `lerobot.rewards.make_frame_scorer()` instead. The CLI and both programmatic factories follow the same path: construct a model-specific frame scorer, then call `score_dataset()`.
 
-A scorer returns one `FrameSignals` object per episode. Frame indices may be dense or sparse, but must be episode-local, unique, strictly increasing, and aligned with one-dimensional numeric signal arrays.
+A scorer exposes its descriptors up front through `scorer.descriptors` and returns one `FrameSignals` object per episode. Frame indices may be dense or sparse, but must be episode-local, unique, strictly increasing, and aligned with one-dimensional numeric signal arrays. Scorers read selected features through `dataset.get_frames()`, which reads requested frames without delta windows or image transforms.
 
 ## Output Contract
 
@@ -105,12 +124,14 @@ Every new sidecar contains:
 
 - `index`, `episode_index`, and `frame_index` identity columns;
 - namespaced signal columns such as `reward.robometer.progress`;
-- semantic descriptors: a description, optimization direction, optional unit and bounds, plus whether NaN is allowed;
+- semantic descriptors: a description, `greater_is_better` (`True`, `False`, or `None`), optional unit and bounds, plus whether NaN is allowed;
 - provenance for the dataset, model, scorer options, and LeRobot version.
 
 `bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run. The first storage version validates structure and alignment; descriptor bounds and `allow_nan` remain metadata for consumers.
 
-`read_score()` returns a Hugging Face `datasets.Dataset`. The dataset-owned storage component keeps Arrow, Parquet, and filesystem paths private. Descriptors and provenance are encoded once in storage metadata rather than repeated on every frame row.
+`load_annotations()` returns a Hugging Face `datasets.Dataset`; its optional `columns` argument selects exactly the requested columns. Descriptors and scorer provenance are stored in annotation info, and `load_signal_descriptors()` restores the typed descriptors. The store records dataset identity and LeRobot version separately. Metadata is encoded once in the Parquet schema rather than repeated on every frame row.
+
+For RA-BC training, select a table and a progress signal with `--sample_weighting.annotation_name=robometer-4b` and `--sample_weighting.signal_name=reward.robometer.progress`. RA-BC requires `greater_is_better=True`.
 
 ## Scope
 

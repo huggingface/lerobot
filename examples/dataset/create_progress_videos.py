@@ -19,7 +19,7 @@ Create MP4 (or GIF) videos with per-frame progress overlay for specified episode
 
 Downloads datasets from HuggingFace, seeks directly into the episode segment
 of the source video, draws a progress line on each frame, and writes the result.
-The progress is one signal of a dataset score written by ``lerobot-score``, by
+The progress is one signal of an annotation table written by ``lerobot-score``, by
 default the score ``sarm`` (configurable via ``--score-name`` and ``--signal-name``).
 
 Usage:
@@ -55,6 +55,8 @@ import pandas as pd
 from huggingface_hub import snapshot_download
 
 from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.annotations import list_annotations, load_annotations
+from lerobot.rewards.scoring import load_signal_descriptors
 
 GRAPH_Y_TOP_FRAC = 0.01
 GRAPH_Y_BOT_FRAC = 0.99
@@ -68,7 +70,7 @@ TASK_FONT_SCALE = 0.55
 
 
 def load_episode_dataset(repo_id: str, episode: int) -> LeRobotDataset:
-    """Load the metadata, the episode's data and the dataset scores, without videos.
+    """Load the metadata, the episode's data and the annotation tables, without videos.
 
     Args:
         repo_id: HuggingFace dataset repository ID.
@@ -77,7 +79,7 @@ def load_episode_dataset(repo_id: str, episode: int) -> LeRobotDataset:
     Returns:
         The dataset restricted to that episode.
     """
-    logging.info("[1/4] Downloading metadata, episode %d and dataset scores for %s ...", episode, repo_id)
+    logging.info("[1/4] Downloading metadata, episode %d and annotations for %s ...", episode, repo_id)
     return LeRobotDataset(repo_id, episodes=[episode], download_videos=False)
 
 
@@ -221,29 +223,34 @@ def download_video_file(repo_id: str, local_path: Path, video_rel: str) -> Path:
 def load_progress_data(
     dataset: LeRobotDataset, episode: int, score_name: str, signal_name: str | None = None
 ) -> np.ndarray | None:
-    """Load an episode's per-frame values of one dataset score signal.
+    """Load an episode's per-frame values of one scored annotation signal.
 
     Args:
-        dataset: Dataset holding the score.
+        dataset: Dataset holding the annotation table.
         episode: Episode index.
-        score_name: Name of the dataset score, such as ``sarm``.
+        score_name: Name of the scored annotation table, such as ``sarm``.
         signal_name: Signal to read. Defaults to the score's first signal, which for
             SARM is the dense-head progress when the score has it.
 
     Returns:
         Sorted (N, 2) array of (frame_index, value), or None if unavailable.
     """
-    available = dataset.list_scores()
+    available = list_annotations(dataset)
     if score_name not in available:
-        logging.warning("Dataset score %r not found; available scores: %s", score_name, available)
+        logging.warning("Annotations %r not found; available tables: %s", score_name, available)
         return None
-    signals = sorted(dataset.get_score_descriptors(score_name))
+    signals = sorted(load_signal_descriptors(dataset, score_name))
+    if not signals:
+        logging.warning("No signals in annotations %r", score_name)
+        return None
     signal_name = signal_name or signals[0]
     if signal_name not in signals:
         logging.warning("Signal %r not in score %r; available signals: %s", signal_name, score_name, signals)
         return None
 
-    scores = dataset.read_score(score_name).to_pandas()
+    scores = load_annotations(
+        dataset, score_name, columns=["episode_index", "frame_index", signal_name]
+    ).to_pandas()
     episode_df = scores[scores["episode_index"] == episode].sort_values("frame_index")
     if episode_df.empty:
         logging.warning("No rows for episode %d in score %r", episode, score_name)

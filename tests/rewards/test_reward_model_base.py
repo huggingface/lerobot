@@ -357,7 +357,7 @@ def test_train_pipeline_config_from_pretrained_migrates_legacy_rabc_fields(tmp_p
     assert loaded.sample_weighting.type == "rabc"
     assert loaded.sample_weighting.kappa == 0.05
     assert loaded.sample_weighting.epsilon == 1e-5
-    assert loaded.sample_weighting.score_name is None
+    assert loaded.sample_weighting.annotation_name is None
     assert loaded.sample_weighting.signal_name is None
 
 
@@ -396,7 +396,7 @@ def test_train_pipeline_config_from_pretrained_strips_legacy_rabc_when_disabled(
 
 
 @pytest.mark.parametrize("weighting_type", ["uniform", "rabc"])
-def test_train_pipeline_config_from_pretrained_strips_progress_file_fields(tmp_path, weighting_type):
+def test_train_pipeline_config_from_pretrained_strips_progress_file_fields(tmp_path, weighting_type, caplog):
     """A ``sample_weighting`` saved with ``progress_path`` and ``head_mode`` should load without them."""
     from lerobot.configs.default import DatasetConfig
     from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
@@ -414,6 +414,8 @@ def test_train_pipeline_config_from_pretrained_strips_progress_file_fields(tmp_p
 
     payload["sample_weighting"] = {
         "type": weighting_type,
+        "annotation_name": "sarm",
+        "signal_name": "reward.sarm.sparse_progress",
         "progress_path": None,
         "head_mode": "sparse",
         "kappa": 0.02,
@@ -428,7 +430,9 @@ def test_train_pipeline_config_from_pretrained_strips_progress_file_fields(tmp_p
     assert loaded.sample_weighting is not None
     assert loaded.sample_weighting.type == weighting_type
     assert loaded.sample_weighting.kappa == 0.02
-    assert loaded.sample_weighting.score_name is None
+    assert loaded.sample_weighting.annotation_name == "sarm"
+    assert loaded.sample_weighting.signal_name == "reward.sarm.sparse_progress"
+    assert "whose RA-BC read a progress file" not in caplog.text
 
 
 # ---------------------------------------------------------------------------

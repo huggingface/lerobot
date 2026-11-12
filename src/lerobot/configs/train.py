@@ -95,7 +95,7 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
         "rabc_epsilon",
         "rabc_head_mode",
     )
-    # RA-BC now reads a dataset score, so a saved progress file and head can't be carried over.
+    # RA-BC now reads dataset annotations, so a saved progress file and head can't be carried over.
     progress_file_fields = ("progress_path", "head_mode")
     saved_sample_weighting = config.get("sample_weighting") or {}
     has_progress_file_fields = any(key in saved_sample_weighting for key in progress_file_fields)
@@ -124,11 +124,11 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
         }
 
     weighting = migrated_config.get("sample_weighting")
-    if weighting and weighting.get("type", "rabc") == "rabc" and not weighting.get("score_name"):
+    if weighting and weighting.get("type", "rabc") == "rabc" and not weighting.get("annotation_name"):
         logging.warning(
             f"Loaded a {TRAIN_CONFIG_NAME} whose RA-BC read a progress file, which LeRobot no longer reads. "
-            "Score the dataset with `lerobot-score`, then pass `--sample_weighting.score_name` and "
-            "`--sample_weighting.signal_name`, e.g. `--sample_weighting.score_name=sarm "
+            "Score the dataset with `lerobot-score`, then pass `--sample_weighting.annotation_name` and "
+            "`--sample_weighting.signal_name`, e.g. `--sample_weighting.annotation_name=sarm "
             "--sample_weighting.signal_name=reward.sarm.sparse_progress`."
         )
     return migrated_config
