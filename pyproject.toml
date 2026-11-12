@@ -99,7 +99,7 @@ dependencies = [
 # ── Feature-scoped extras ──────────────────────────────────
 lancedb = [
     "lerobot[dataset]",
-    "lancedb>=0.37.1,<0.40.0",
+    "lancedb>=0.37.1,<1.0.0",
 ]
 lancedb-convert = [
     "lerobot[lancedb]",
