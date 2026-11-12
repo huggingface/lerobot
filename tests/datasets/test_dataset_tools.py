@@ -40,7 +40,7 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.io_utils import load_episodes, load_info
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY, DUMMY_REPO_ID
@@ -1259,7 +1259,7 @@ def test_modify_tasks_single_task_for_all(sample_dataset):
         assert item["task"] == new_task
 
 
-@pytest.mark.parametrize("episodes", [None, [1, 3]], ids=["all-episodes", "selected-episodes"])
+@pytest.mark.parametrize("episodes", [None, [0, 3]], ids=["all-episodes", "selected-episodes"])
 @pytest.mark.parametrize(
     ("updates", "expected_tasks"),
     [
