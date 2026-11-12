@@ -33,7 +33,7 @@ You need:
 
 - Linux, and one USB-to-CAN adapter per arm (SocketCAN, classic CAN at 1 Mbit/s).
 - Every motor's CAN timeout set to at most 400 ms (`8000` ticks, I2RT's value), for example with `set_timeout.py --timeout` from the [I2RT SDK](https://github.com/i2rt-robotics/i2rt). The timeout is the last safeguard if LeRobot stops sending commands, so LeRobot won't enable torque without it.
-- Internet access the first time you connect: gravity compensation downloads the YAM model from the [`lerobot/robot-urdfs`](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/yam/v1) bucket and caches it under `HF_LEROBOT_HOME/robot-urdfs/yam/v1`.
+- Internet access the first time you connect: gravity compensation downloads the YAM model from the [`lerobot/robot-urdfs`](https://huggingface.co/datasets/lerobot/robot-urdfs/tree/main/yam/v1) dataset and caches it in the Hugging Face cache.
 
 > [!WARNING]
 > Bolt the arm to a stable surface and keep its workspace clear. Disconnecting disables torque, and the arm falls under gravity: support it first. If power or a CAN adapter disconnects while it runs, stop the program, support the arm, then reconnect.
