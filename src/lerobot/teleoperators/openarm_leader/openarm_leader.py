@@ -100,15 +100,10 @@ class OpenArmLeader(Teleoperator):
 
         # Run calibration if needed
         if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
+            logger.info(f"No calibration file found for {self.id}, running calibration")
             self.calibrate()
 
         self.configure()
-
-        if self.is_calibrated:
-            self.bus.set_zero_position()
 
         logger.info(f"{self} connected.")
 
