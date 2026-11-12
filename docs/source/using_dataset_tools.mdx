@@ -147,6 +147,8 @@ lerobot-edit-dataset \
 
 There are no constraints on the split names, they can be determined by the user. Resulting datasets are saved under the repo id with the split name appended, e.g. `lerobot/pusht_train`, `lerobot/pusht_task1`, `lerobot/pusht_task2`.
 
+Delete and split copy a dataset's `calibration` entry in `meta/info.json` unchanged. That entry is the follower's joint zeros and P/I/D gains, when the recording wrote them.
+
 #### Merge Datasets
 
 Combine multiple datasets into a single dataset.
@@ -158,6 +160,10 @@ lerobot-edit-dataset \
     --operation.type merge \
     --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 ```
+
+Merge keeps `calibration` when every source dataset has the same value. When the values disagree, or a source has none, the merged dataset omits the key and logs one warning that names the reason.
+
+Feature edits and image-to-video conversion also copy the key from their single source. In-place edits (modify tasks, recompute stats, re-encode videos) leave it as it stands.
 
 #### Remove Features
 

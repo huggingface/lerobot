@@ -23,7 +23,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.utils import INFO_PATH, follower_calibration
+from lerobot.datasets.utils import INFO_PATH, follower_calibration, merged_calibration
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE
 
 pytestmark = pytest.mark.dataset
@@ -607,3 +607,38 @@ def test_follower_calibration_reads_pid_or_omits_gains():
     assert "gains" not in follower_calibration(robot)
     assert follower_calibration(type("R", (), {"calibration": {}})()) is None
     assert follower_calibration(type("R", (), {"calibration": object()})()) is None
+
+
+CAL_A = {"motors": {"m": {"id": 1, "homing_offset": 11}}}
+CAL_B = {"motors": {"m": {"id": 1, "homing_offset": 22}}}
+
+
+def test_merged_calibration_keeps_one_equal_value():
+    kept, warning = merged_calibration([("a", CAL_A), ("b", CAL_A)])
+    assert kept == CAL_A
+    assert kept is not CAL_A
+    assert warning is None
+
+
+def test_merged_calibration_is_silent_when_every_source_has_none():
+    assert merged_calibration([("a", None), ("b", None)]) == (None, None)
+
+
+def test_merged_calibration_warns_once_when_values_disagree():
+    kept, warning = merged_calibration([("arm_a", CAL_A), ("arm_b", CAL_B)])
+    assert kept is None
+    assert warning == "Dropping calibration because the calibrations in arm_a, arm_b disagree."
+
+
+def test_merged_calibration_warns_once_when_a_source_has_none():
+    kept, warning = merged_calibration([("arm_a", CAL_A), ("arm_b", None)])
+    assert kept is None
+    assert warning == "Dropping calibration because arm_b has none."
+
+
+def test_merged_calibration_names_both_reasons_in_one_warning():
+    kept, warning = merged_calibration([("arm_a", CAL_A), ("arm_b", CAL_B), ("arm_c", None)])
+    assert kept is None
+    assert warning == (
+        "Dropping calibration because arm_c has none, and the calibrations in arm_a, arm_b disagree."
+    )

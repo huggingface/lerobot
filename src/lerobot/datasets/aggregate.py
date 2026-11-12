@@ -47,6 +47,7 @@ from .utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
+    merged_calibration,
     update_chunk_file_indices,
 )
 from .video_utils import concatenate_video_files, get_video_duration_in_s
@@ -413,6 +414,10 @@ def aggregate_datasets(
         data_files_size_in_mb=data_files_size_in_mb,
         video_files_size_in_mb=video_files_size_in_mb,
     )
+    calibration, reason = merged_calibration([(meta.repo_id, meta.info.calibration) for meta in all_metadata])
+    if reason is not None:
+        logger.warning(reason)
+    dst_meta.info.calibration = calibration
 
     logger.info("Find all tasks")
     unique_tasks = pd.concat([m.tasks for m in all_metadata]).index.unique()
