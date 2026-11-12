@@ -679,6 +679,40 @@ def test_resumed_getitem_after_finalize_with_delta_timestamps(
     assert len(resumed.meta.episodes) == len(appended_lengths) + 1
 
 
+@pytest.mark.parametrize("appended_episodes", [1, 10, 11])
+def test_resumed_metadata_filter_during_recording(tmp_path: Path, appended_episodes: int) -> None:
+    """Keep the loaded episode view until buffered and flushed appends are finalized."""
+    root = tmp_path / "resumed_filter"
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root, use_videos=False
+    )
+    for _ in range(2):
+        dataset.add_frame(_make_frame())
+    dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+    snapshot = resumed.meta.episodes
+    try:
+        for _ in range(appended_episodes):
+            for _ in range(2):
+                resumed.add_frame(_make_frame())
+            resumed.save_episode()
+
+        assert resumed.meta.filter_episodes(lambda row: True, candidates=[0]) == [0]
+        assert resumed.meta.episodes is snapshot
+    finally:
+        resumed.finalize()
+
+    expected_episodes = list(range(appended_episodes + 1))
+    assert resumed.meta.filter_episodes(lambda row: row["length"] == 2) == expected_episodes
+    assert resumed.meta.filter_episodes(lambda row: True, candidates=[appended_episodes]) == [
+        appended_episodes
+    ]
+    assert len(resumed.meta.episodes) == resumed.meta.total_episodes == appended_episodes + 1
+    assert resumed.meta.total_frames == 2 * (appended_episodes + 1)
+
+
 # ── Property delegation ──────────────────────────────────────────────
 
 
