@@ -136,6 +136,20 @@ def test_annotations_load_selected_columns(tmp_path):
     assert table.column_names == ["episode_index", COLUMN]
 
 
+def test_annotation_writer_rejects_dataset_being_recorded(tmp_path):
+    dataset = LeRobotDataset.create(
+        repo_id="test/dataset",
+        fps=10,
+        features={"state": {"dtype": "float32", "shape": (2,), "names": None}},
+        root=tmp_path / "dataset",
+    )
+
+    with pytest.raises(RuntimeError, match="being recorded"):
+        AnnotationWriter(dataset, "test", info=INFO)
+
+    assert not (dataset.root / "annotations").exists()
+
+
 def test_annotations_accept_repeated_frames_and_string_columns(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [3])
 

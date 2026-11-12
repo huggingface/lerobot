@@ -34,7 +34,6 @@ from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.dataset_writer import DatasetWriter
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.scores.storage import DatasetScoreStorage
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
 pytestmark = pytest.mark.dataset
@@ -255,7 +254,6 @@ def test_episode_download_includes_annotations(tmp_path, monkeypatch):
 
     dataset._download()
 
-    assert "reward_signals/" in snapshot_download.call_args.kwargs["allow_patterns"]
     assert "annotations/" in snapshot_download.call_args.kwargs["allow_patterns"]
 
 
@@ -499,7 +497,6 @@ def test_create_sets_writer_no_reader(tmp_path):
     )
     assert isinstance(dataset.writer, DatasetWriter)
     assert dataset.reader is None
-    assert isinstance(dataset.score_storage, DatasetScoreStorage)
 
 
 def test_create_initial_counts_zero(tmp_path):
@@ -521,19 +518,6 @@ def test_create_propagates_video_files_size_in_mb(tmp_path):
         video_files_size_in_mb=42.0,
     )
     assert dataset.meta.video_files_size_in_mb == 42.0
-
-
-def test_add_score_rejects_dataset_being_recorded(tmp_path):
-    """add_score() fails before scoring while recording is not finalized."""
-    dataset = LeRobotDataset.create(
-        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=tmp_path / "ds"
-    )
-    scorer = Mock()
-
-    with pytest.raises(RuntimeError, match="being recorded"):
-        dataset.add_score(scorer)
-
-    scorer.score_episode.assert_not_called()
 
 
 def test_add_frame_works_in_write_mode(tmp_path):
@@ -559,7 +543,6 @@ def test_resume_freshly_created_empty_dataset(tmp_path):
     assert resumed.meta.total_frames == 0
     assert resumed.meta.tasks is None
     assert resumed.meta.episodes is None
-    assert isinstance(resumed.score_storage, DatasetScoreStorage)
 
 
 def test_resume_creates_writer(tmp_path):
@@ -780,7 +763,6 @@ def test_create_record_finalize_read_roundtrip(tmp_path):
     reopened = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=root)
     assert len(reopened) == 5
     assert reopened.num_episodes == 2
-    assert isinstance(reopened.score_storage, DatasetScoreStorage)
 
     # Verify episode 0
     for i in range(3):
