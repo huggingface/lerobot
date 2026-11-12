@@ -55,3 +55,25 @@ def test_small_rotations_preserve_angle_and_axis(angle):
     np.testing.assert_allclose(rotation.as_rotvec(), rotvec, rtol=1e-12, atol=1e-24)
     np.testing.assert_allclose(rotation.as_quat()[:3], axis * np.sin(angle / 2), rtol=1e-12, atol=1e-24)
     np.testing.assert_allclose((rotation * rotation).as_rotvec(), 2 * rotvec, rtol=1e-12, atol=1e-24)
+
+
+def test_batched_conversions_have_scipy_bits():
+    """The batched static methods repeat scipy's operations, so the results are bitwise scipy's."""
+    scipy_rotation = pytest.importorskip("scipy.spatial.transform").Rotation
+    rng = np.random.default_rng(0)
+    rpy = rng.uniform(-np.pi, np.pi, size=(256, 3))
+    rpy[:4, 1] = [np.pi / 2, -np.pi / 2, 0.0, 1e-9]  # gimbal lock and a tiny angle
+    reference = scipy_rotation.from_euler("xyz", rpy)
+    np.testing.assert_array_equal(Rotation.euler_xyz_to_quat_xyzw(rpy), reference.as_quat(canonical=False))
+    matrices = Rotation.euler_xyz_to_matrix(rpy)
+    np.testing.assert_array_equal(matrices, reference.as_matrix())
+    np.testing.assert_array_equal(
+        Rotation.matrix_to_quat_xyzw(matrices),
+        scipy_rotation.from_matrix(matrices).as_quat(canonical=False),
+    )
+    quats = rng.normal(size=(256, 4))
+    np.testing.assert_array_equal(
+        Rotation.quat_xyzw_to_matrix(quats), scipy_rotation.from_quat(quats).as_matrix()
+    )
+    back = Rotation.matrix_to_euler_xyz(matrices[4:])
+    np.testing.assert_allclose(Rotation.euler_xyz_to_matrix(back), matrices[4:], atol=1e-12)

@@ -23,6 +23,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import require_package
@@ -166,7 +167,9 @@ class FastWAMPolicy(PreTrainedPolicy):
         return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
 
     @classmethod
-    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+    def _load_checkpoint(
+        cls, model: FastWAMPolicy, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> FastWAMPolicy:
         """Shape-aware load that supports cross-embodiment fine-tuning.
 
         `safetensors.load_model(strict=False)` ignores missing/unexpected keys but
@@ -178,27 +181,20 @@ class FastWAMPolicy(PreTrainedPolicy):
         initialized values — and load every compatible tensor. With `strict=True`
         the standard exact-match loader is used.
         """
-        from safetensors import safe_open
-
         model_state_dict = model.state_dict()
-        mismatched = []
-        with safe_open(model_file, framework="pt") as f:
-            checkpoint_keys = list(f.keys())
-            for key in checkpoint_keys:
-                if key in model_state_dict and tuple(model_state_dict[key].shape) != tuple(
-                    f.get_slice(key).get_shape()
-                ):
-                    mismatched.append(key)
+        mismatched = [
+            key
+            for key, shape in checkpoint.shapes().items()
+            if key in model_state_dict and tuple(model_state_dict[key].shape) != shape
+        ]
 
         if not mismatched:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
+            return super()._load_checkpoint(model, checkpoint, map_location, strict)
         if strict:
             raise RuntimeError(
                 f"FastWAM: {len(mismatched)} checkpoint tensors have a shape mismatch under "
                 f"strict=True: {mismatched}"
             )
-
-        from safetensors.torch import load_file
 
         logging.warning(
             "FastWAM cross-embodiment load: reinitializing %d shape-mismatched tensor(s), keeping "
@@ -206,7 +202,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             len(mismatched),
             mismatched,
         )
-        state_dict = load_file(model_file, device="cpu")
+        state_dict = checkpoint.load_state_dict(device="cpu")
         for key in mismatched:
             state_dict.pop(key, None)
         model.load_state_dict(state_dict, strict=False)
@@ -228,6 +224,23 @@ class FastWAMPolicy(PreTrainedPolicy):
 
     def reset(self) -> None:
         self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
+        # Per-episode text-embedding cache (mirrors LingBot-VA's `_prompt_embeds`). The task is
+        # fixed for an episode, so the ~11GB UMT5 encoder runs once on the first chunk and every
+        # later chunk reuses the result. Cleared here so a new episode's task is re-encoded.
+        # Only the text-only context is cached; proprio is still appended fresh per chunk.
+        self._cached_prompt: Any = None
+        self._cached_context: Tensor | None = None
+        self._cached_context_mask: Tensor | None = None
+
+    def _encode_prompt_cached(self, prompt: Any) -> tuple[Tensor, Tensor]:
+        """Encode `prompt` to `(context, context_mask)`, reusing the cache when the prompt is
+        unchanged so UMT5 runs at most once per episode (per distinct task)."""
+        if self._cached_context is None or self._cached_prompt != prompt:
+            context, context_mask = self.model.encode_prompt(prompt)
+            self._cached_prompt = prompt
+            self._cached_context = context
+            self._cached_context_mask = context_mask
+        return self._cached_context, self._cached_context_mask
 
     def _batch_to_training_sample(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Adapt a standard LeRobot batch to the FastWAM-native sample that
@@ -261,7 +274,7 @@ class FastWAMPolicy(PreTrainedPolicy):
                 sample["proprio"] = state.unsqueeze(1) if state.ndim == 2 else state
         return sample
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
+    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict[str, Any]]:
         """Compute FastWAM training loss for a LeRobot batch.
 
         Args:
@@ -269,15 +282,17 @@ class FastWAMPolicy(PreTrainedPolicy):
                 (`video`, `action`, `context`, `context_mask`) or LeRobot keys
                 that can be adapted (`observation.images.*`, `observation.state`,
                 `action`, `action_is_pad`).
+            reduction (str): "mean" returns the scalar loss (default); "none" returns per-sample
+                losses of shape (B,) for sample weighting (RA-BC).
 
         Returns:
-            tuple[Tensor, dict[str, Any]]: The scalar loss to backprop, and a dict of
-            logging metrics (e.g. `loss_video`, `loss_action`) — the `(loss, output_dict)`
-            contract the LeRobot training loop expects.
+            tuple[Tensor, dict[str, Any]]: The loss to backprop (scalar for "mean", per-sample (B,)
+            for "none"), and a dict of logging metrics (e.g. `loss_video`, `loss_action`) — the
+            `(loss, output_dict)` contract the LeRobot training loop expects.
         """
 
         sample = self._batch_to_training_sample(batch)
-        loss, metrics = self.model.training_loss(sample)
+        loss, metrics = self.model.training_loss(sample, reduction=reduction)
         return loss, dict(metrics or {})
 
     @torch.no_grad()
@@ -298,6 +313,15 @@ class FastWAMPolicy(PreTrainedPolicy):
         self.eval()
         infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
         infer_kwargs["noise"] = noise
+        # Encode the task once per episode and reuse it (LingBot-VA parity): swap the raw `prompt`
+        # for the cached `context`/`context_mask` so `infer_action` skips `encode_prompt`. Skipped
+        # when the caller supplies its own precomputed `context` (the two are mutually exclusive
+        # downstream).
+        if infer_kwargs.get("context") is None and infer_kwargs.get("prompt") is not None:
+            context, context_mask = self._encode_prompt_cached(infer_kwargs["prompt"])
+            infer_kwargs["prompt"] = None
+            infer_kwargs["context"] = context
+            infer_kwargs["context_mask"] = context_mask
         batch_size = _infer_kwargs_batch_size(infer_kwargs)
         if batch_size == 1:
             action = _action_from_model_output(self.model.infer_action(**infer_kwargs))
@@ -363,9 +387,10 @@ class FastWAMPolicy(PreTrainedPolicy):
             lite_kv_fusion=lite_kv_fusion,
             retracted_1d_rope=config.retracted_1d_rope,
         )
+        text_encoder_device = config.text_encoder_device or device
         text_encoder = (
             load_pretrained_wan_text_encoder(
-                model_id=config.text_encoder_model_id, torch_dtype=dtype, device=device
+                model_id=config.text_encoder_model_id, torch_dtype=dtype, device=text_encoder_device
             )
             if config.load_text_encoder
             else None
@@ -376,6 +401,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             mot=mot,
             vae=load_pretrained_wan_vae(torch_dtype=dtype, device=device),
             text_encoder=text_encoder,
+            text_encoder_device=config.text_encoder_device,
             tokenizer=build_wan_tokenizer(
                 model_id=config.tokenizer_model_id, tokenizer_max_len=config.tokenizer_max_len
             ),

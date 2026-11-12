@@ -25,6 +25,7 @@ pytestmark = pytest.mark.dataset
 
 class PositionRobot:
     supports_position_hold = True
+    supports_command_hold = False
     action_features = {"joint.pos": float}
     robot_type = "test_position_robot"
     is_connected = True
@@ -83,7 +84,7 @@ class GateEngine(InferenceEngine):
 def make_dispatch_context(engine):
     robot = PositionRobot()
     wrapper = ThreadSafeRobot(robot)
-    wrapper.configure_position_hold()
+    wrapper.configure_hold()
     wrapper.get_observation()
     ctx = SimpleNamespace(
         policy=SimpleNamespace(inference=engine),
@@ -303,7 +304,7 @@ def test_terminal_fault_shutdown_orders_hold_stop_home_disconnect(monkeypatch):
 
 def test_hold_before_first_command_retains_initial_measured_pose_and_rejects_velocity_modes():
     wrapper = ThreadSafeRobot(PositionRobot())
-    wrapper.configure_position_hold()
+    wrapper.configure_hold()
     wrapper.get_observation()
     wrapper.hold()
     wrapper.inner.position = 9.0
@@ -312,14 +313,14 @@ def test_hold_before_first_command_retains_initial_measured_pose_and_rejects_vel
     assert wrapper.inner.sent == [{"joint.pos": 7.0}, {"joint.pos": 7.0}]
     wrapper.inner.action_features = {"joint.pos": float, "base.vel": float}
     with pytest.raises(ValueError, match="position-hold"):
-        wrapper.configure_position_hold()
+        wrapper.configure_hold()
 
 
 def test_hold_retains_actual_clipped_target_and_gripper_instead_of_new_measurements(monkeypatch):
     robot = PositionRobot()
     robot.action_features = {"joint.pos": float, "gripper.pos": float}
     wrapper = ThreadSafeRobot(robot)
-    wrapper.configure_position_hold()
+    wrapper.configure_hold()
     sent = []
 
     def clipped_send(action):
@@ -343,7 +344,7 @@ def test_hold_retains_actual_clipped_target_and_gripper_instead_of_new_measureme
 def test_repeated_hold_retains_each_driver_returned_target(monkeypatch):
     robot = PositionRobot()
     wrapper = ThreadSafeRobot(robot)
-    wrapper.configure_position_hold()
+    wrapper.configure_hold()
     wrapper.get_observation()
     sent = []
 
@@ -361,7 +362,7 @@ def test_repeated_hold_retains_each_driver_returned_target(monkeypatch):
 def test_first_hold_requires_complete_finite_measured_positions(observation, monkeypatch):
     robot = PositionRobot()
     wrapper = ThreadSafeRobot(robot)
-    wrapper.configure_position_hold()
+    wrapper.configure_hold()
     if observation is not None:
         monkeypatch.setattr(robot, "get_observation", lambda: observation)
         wrapper.get_observation()
@@ -379,7 +380,7 @@ def test_hold_never_substitutes_requested_action_for_invalid_driver_return(
 ):
     robot = PositionRobot()
     wrapper = ThreadSafeRobot(robot)
-    wrapper.configure_position_hold()
+    wrapper.configure_hold()
     wrapper.get_observation()
     monkeypatch.setattr(robot, "send_action", lambda action: bad_return)
     with pytest.raises(RuntimeError, match="Position hold requires"):
