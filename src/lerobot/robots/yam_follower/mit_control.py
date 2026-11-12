@@ -528,12 +528,18 @@ class MitController:
             raise RuntimeError(f"{self.name} controller is already running")
         self._set_initial_state(self.read_state())
         self._failure = None
-        self._bus.enable_torque_at(_joint_to_motor(self.state.position, self._require_gripper_params()))
         self._thread = threading.Thread(target=self._run, name=f"{self.name}-controller", daemon=True)
         try:
+            self._bus.enable_torque_at(_joint_to_motor(self.state.position, self._require_gripper_params()))
             self._thread.start()
         except BaseException:
             self._thread = None
+            try:
+                self._bus.disable_torque()
+            except Exception:
+                logger.exception(
+                    "%s: could not disable torque after a failed start; use the hardware e-stop", self.name
+                )
             raise
 
     def stop(self, timeout_s: float = 2.0) -> None:
