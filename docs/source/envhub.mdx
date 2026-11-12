@@ -335,7 +335,7 @@ Running an EnvHub environment runs its code, with your permissions. LeRobot neve
 
 | Error                                                                        | Fix                                                                                                                        |
 | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `Refusing to execute remote code from the Hub`                               | Add `--env.trust_remote_code=true` (`--robot.env.trust_remote_code=true`) after reading the code, or serve the environment |
+| `Refusing to run the EnvHub environment`                                     | Add `--env.trust_remote_code=true` (`--robot.env.trust_remote_code=true`) after reading the code, or serve the environment |
 | `failed to import because the dependency '<name>' is not installed`          | Install the repository's `requirements.txt` next to LeRobot, or serve the environment                                      |
 | `requires an unwrapped SyncVectorEnv or AsyncVectorEnv`                      | Return the vector env built from factories, without wrappers                                                               |
 | `LEROBOT_SIM has unknown keys`                                               | Use the keys listed in [`LEROBOT_SIM`](#lerobot_sim); the error names the closest one                                      |

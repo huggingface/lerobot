@@ -83,16 +83,17 @@ def _download_hub_file(
     # A local copy of the repository, e.g. one baked into a simulator Docker image.
     directory, _, local_path = cfg_str.partition(":")
     if not trust_remote_code:
-        if os.path.isdir(directory):
-            raise RuntimeError(
-                f"Refusing to execute remote code in '{cfg_str}': running it runs arbitrary Python code. "
-                "If you trust it, pass trust_remote_code=True (--env.trust_remote_code=true)."
-            )
+        # A local folder has no commit to pin.
+        read = (
+            "Read its env.py"
+            if os.path.isdir(directory)
+            else "Read its env.py, pin the commit you read (user/repo@<commit>)"
+        )
         raise RuntimeError(
-            f"Refusing to execute remote code from the Hub for '{cfg_str}'. "
-            "Executing hub env modules runs arbitrary Python code from third-party repositories. "
-            "If you trust this repo and understand the risks, call `make_env(..., trust_remote_code=True)` "
-            "and prefer pinning to a specific revision: 'user/repo@<commit-hash>:env.py'."
+            f"Refusing to run the EnvHub environment '{cfg_str}': loading it runs its env.py in this process. {read}, "
+            "then pass --env.trust_remote_code=true (--robot.env.trust_remote_code=true for a sim robot, "
+            "HubEnvConfig(..., trust_remote_code=True) in Python), or serve it with lerobot-env-server, which "
+            "runs it there."
         )
     if os.path.isdir(directory):
         file_path = local_path or "env.py"

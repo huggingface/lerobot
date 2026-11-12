@@ -167,7 +167,7 @@ def test_envhub_runs_a_local_directory(tmp_path, monkeypatch):
     finally:
         env.close()
     # A local directory needs the same consent as a Hub repository.
-    with pytest.raises(RuntimeError, match="Refusing to execute remote code in"):
+    with pytest.raises(RuntimeError, match="Refusing to run the EnvHub environment"):
         LocalVectorEnv(_envhub(hub_path=str(tmp_path), trust_remote_code=False))
 
 
