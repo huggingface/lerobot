@@ -38,7 +38,7 @@ from torch import Tensor
 
 from lerobot.utils.constants import OBS_STR
 
-from ..prediction import ProgressPrediction
+from ..prediction import ProgressOutput
 from ..pretrained import PreTrainedRewardModel
 from .configuration_sarm import SARMConfig
 from .sarm_utils import (
@@ -359,7 +359,7 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
 
 
 @dataclass(frozen=True)
-class SARMPrediction(ProgressPrediction):
+class SARMOutput(ProgressOutput):
     """SARM frame signals on the encoded input device.
 
     ``progress``, ``stage_confidence``, and ``valid_mask`` have shape
@@ -499,7 +499,7 @@ class SARMRewardModel(PreTrainedRewardModel):
         batch: Mapping[str, Any],
         *,
         head_mode: Literal["sparse", "dense"] = "sparse",
-    ) -> SARMPrediction:
+    ) -> SARMOutput:
         """Predict progress and stage signals for every encoded frame.
 
         Args:
@@ -621,7 +621,7 @@ class SARMRewardModel(PreTrainedRewardModel):
                 subtask_names=self.config.dense_subtask_names,
             )
 
-        return SARMPrediction(
+        return SARMOutput(
             progress=normalized_reward.float(),
             stage_probabilities=stage_probs.float(),
             stage_confidence=stage_conf.float(),

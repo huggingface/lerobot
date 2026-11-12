@@ -311,7 +311,7 @@ def make_robometer_pre_post_processors(
     The preprocessor adds a batch dimension if needed, runs Robometer's
     encoder, and moves everything to the configured device. The
     postprocessor is the identity: `predict_progress()` returns a
-    `RobometerPrediction`.
+    `RobometerOutput`.
     """
     del dataset_stats  # Robometer has its own normalisation inside the Qwen-VL processor.
 

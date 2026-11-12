@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from lerobot.rewards.sarm import SARMPrediction
+from lerobot.rewards.sarm import SARMOutput
 
 
 @pytest.mark.dataset
@@ -56,7 +56,7 @@ def test_compute_sarm_progress_writes_progress_parquet(monkeypatch, tmp_path: Pa
         def predict_progress(self, batch, *, head_mode: str):  # noqa: ARG002
             progress = batch["video_features"][..., 0].float()
             batch_size, seq_len = progress.shape
-            return SARMPrediction(
+            return SARMOutput(
                 progress=progress,
                 stage_probabilities=torch.ones(batch_size, seq_len, 1),
                 stage_confidence=torch.ones(batch_size, seq_len),

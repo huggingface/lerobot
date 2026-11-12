@@ -19,7 +19,7 @@ from .factory import (
     make_reward_model_config as make_reward_model_config,
     make_reward_pre_post_processors as make_reward_pre_post_processors,
 )
-from .prediction import ProgressPrediction as ProgressPrediction
+from .prediction import ProgressOutput as ProgressOutput
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
@@ -33,8 +33,8 @@ __all__ = [
     "TOPRewardConfig",
     # Base class
     "PreTrainedRewardModel",
-    # Predictions
-    "ProgressPrediction",
+    # Outputs
+    "ProgressOutput",
     # Factory functions
     "get_reward_model_class",
     "make_reward_model",

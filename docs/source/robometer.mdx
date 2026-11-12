@@ -64,7 +64,7 @@ In LeRobot datasets, the preprocessor reads:
 | `reward_model.task_key`   | `task`                   | Key in complementary data that stores the task string |
 | `reward_model.max_frames` | `8`                      | Maximum number of frames passed to ROBOMETER          |
 
-`predict_progress()` returns a `RobometerPrediction` with two float32 tensors of shape `(batch_size, num_frames)`:
+`predict_progress()` returns a `RobometerOutput` with two float32 tensors of shape `(batch_size, num_frames)`:
 
 - `progress`: frame-level progress clamped to `[0, 1]`.
 - `success_probability`: frame-level sigmoid probabilities.

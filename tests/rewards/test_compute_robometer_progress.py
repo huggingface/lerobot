@@ -25,7 +25,7 @@ import torch
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.robometer import compute_rabc_weights
-from lerobot.rewards.robometer.modeling_robometer import ROBOMETER_FEATURE_PREFIX, RobometerPrediction
+from lerobot.rewards.robometer.modeling_robometer import ROBOMETER_FEATURE_PREFIX, RobometerOutput
 from lerobot.rewards.robometer.processor_robometer import _video_to_numpy
 
 
@@ -137,7 +137,7 @@ def test_compute_robometer_progress_writes_progress_parquet(monkeypatch, tmp_pat
 
         def predict_progress(self, batch):
             progress = batch[f"{ROBOMETER_FEATURE_PREFIX}input_ids"].float()
-            return RobometerPrediction(progress=progress, success_probability=torch.zeros_like(progress))
+            return RobometerOutput(progress=progress, success_probability=torch.zeros_like(progress))
 
     class FakeEncoder:
         def __init__(self, **kwargs) -> None:
