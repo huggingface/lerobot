@@ -25,6 +25,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pandas as pd
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
@@ -36,17 +37,62 @@ from lerobot.datasets.dataset_tools import (
     merge_datasets,
     modify_features,
     modify_tasks,
+    recompute_stats,
     reencode_dataset,
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_episodes, load_info
+from lerobot.datasets.io_utils import load_episodes, load_info, load_stats, write_info
+from lerobot.datasets.language import language_feature_info
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY, DUMMY_REPO_ID
 from tests.fixtures.dataset_factories import add_frames
 
 pytestmark = pytest.mark.dataset
+
+
+@pytest.mark.parametrize("language_column", ["language_events", "language_persistent"])
+@pytest.mark.parametrize("skip_image_video", [True, False])
+def test_recompute_stats_skips_language_annotations(
+    sample_dataset: LeRobotDataset, language_column: str, skip_image_video: bool
+) -> None:
+    data_path = next((sample_dataset.root / "data").glob("*/*.parquet"))
+    data = pd.read_parquet(data_path)
+    row: dict[str, str | float | None] = {
+        "role": "user",
+        "content": "pick up the object",
+        "style": "interjection" if language_column == "language_events" else "subtask",
+        "camera": None,
+        "tool_calls": None,
+    }
+    if language_column == "language_persistent":
+        row["timestamp"] = 0.0
+    data[language_column] = [[row] if i % 2 else [] for i in range(len(data))]
+    data.to_parquet(data_path)
+    sample_dataset.meta.info.features[language_column] = language_feature_info()[language_column]
+    write_info(sample_dataset.meta.info, sample_dataset.root)
+
+    dataset = LeRobotDataset(sample_dataset.repo_id, root=sample_dataset.root)
+    assert dataset[0][language_column] == []
+    assert dataset[1][language_column][0]["content"] == row["content"]
+    original_data = data_path.read_bytes()
+    image_stats = dataset.meta.stats["observation.images.top"]
+
+    assert recompute_stats(dataset, skip_image_video=skip_image_video) is dataset
+
+    assert data_path.read_bytes() == original_data
+    persisted_stats = load_stats(dataset.root)
+    assert language_column not in persisted_stats
+    for feature in ("action", "observation.state"):
+        values = np.stack(data[feature].to_numpy()).astype(np.float64)
+        for stat in ("min", "max", "mean", "std"):
+            expected = getattr(values, stat)(axis=0)
+            np.testing.assert_allclose(dataset.meta.stats[feature][stat], expected, rtol=1e-5, atol=1e-6)
+            np.testing.assert_array_equal(persisted_stats[feature][stat], dataset.meta.stats[feature][stat])
+        np.testing.assert_array_equal(persisted_stats[feature]["count"], [len(data)])
+    for stat, value in image_stats.items():
+        np.testing.assert_array_equal(persisted_stats["observation.images.top"][stat], value)
 
 
 @pytest.fixture(scope="module")
