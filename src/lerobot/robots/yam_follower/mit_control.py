@@ -298,7 +298,11 @@ class MitMotorsBus(Protocol):
         ...
 
     def disable_torque(self) -> None:
-        """Disable torque for the arm; repeated calls must be safe."""
+        """Disable torque for the arm; repeated calls must be safe.
+
+        Raises:
+            Exception: If the motors could not be disabled.
+        """
         ...
 
 
@@ -551,6 +555,7 @@ class MitController:
 
         Raises:
             RuntimeError: If the control thread does not stop before the timeout.
+            Exception: If the bus could not disable torque.
         """
         self.stop_event.set()
         if self._thread is not None:
