@@ -58,8 +58,8 @@ class EnvServerLaunchConfig(EnvServerConfig):
             `trust_remote_code`.
         trust_remote_code (`bool`, *optional*, defaults to `False`):
             Consent to run an EnvHub repository's code, from `envhub` or a YAML's `sim`: its `env.py` and, with
-            `docker`, the installation of its `requirements.txt` and `packages.txt`. A YAML can also give it as
-            `trust_remote_code: true` in `sim.kwargs`.
+            `docker`, the installation of its `requirements.txt` and `packages.txt`. A YAML gives it at its top
+            level, as `trust_remote_code: true`.
         docker (`bool`, *optional*, defaults to `False`):
             Run the server in its Docker image, built from this LeRobot checkout, on `localhost:7448`.
         build (`bool`, *optional*, defaults to `False`):
@@ -87,9 +87,13 @@ class EnvServerLaunchConfig(EnvServerConfig):
             self.sim.kwargs = {"make_env_kwargs": {}, **self.sim.kwargs, "hub_path": self.envhub}
             self.deployment = self.deployment or "envhub"
         if self.sim.type == "envhub":
+            if "trust_remote_code" in self.sim.kwargs:
+                raise ValueError(
+                    "Give your consent with trust_remote_code at the top level (--trust_remote_code=true, or "
+                    "trust_remote_code: true at the top of the YAML), not in sim.kwargs"
+                )
             # Checked before anything is downloaded or built: a Docker build installs the repository's packages.
-            trusted = self.trust_remote_code or bool(self.sim.kwargs.get("trust_remote_code"))
-            if not (trusted or self.stop):
+            if not (self.trust_remote_code or self.stop):
                 hub_path = str(self.sim.kwargs.get("hub_path", ""))
                 pin = (
                     ""
@@ -100,7 +104,8 @@ class EnvServerLaunchConfig(EnvServerConfig):
                     f"Serving the EnvHub repository {hub_path} runs its code. Read its env.py, requirements.txt "
                     f"and packages.txt{pin}, then pass --trust_remote_code=true"
                 )
-            self.sim.kwargs = {**self.sim.kwargs, "trust_remote_code": trusted}
+            # The EnvHub loader reads the consent from the simulator's options.
+            self.sim.kwargs = {**self.sim.kwargs, "trust_remote_code": self.trust_remote_code}
         super().__post_init__()
 
 
@@ -148,6 +153,9 @@ def run_in_docker(cfg: EnvServerLaunchConfig) -> None:
         env.setdefault("SIM_TAG", re.sub(r"[^a-z0-9_.-]+", "-", name.lower()).lstrip("-.")[:128])
         _, separator, file_path = hub_path.partition(":")
         data["sim"]["kwargs"]["hub_path"] = ENVHUB_IMAGE_DIR + separator + file_path
+        # The server in the container takes the same consent, at its config's top level.
+        del data["sim"]["kwargs"]["trust_remote_code"]
+        data["trust_remote_code"] = cfg.trust_remote_code
     # The container bind-mounts this file; keep it after startup so a restarted container can read it.
     content = yaml.safe_dump(data, sort_keys=False)
     config = directory / f"{hashlib.sha256(content.encode()).hexdigest()}.yaml"

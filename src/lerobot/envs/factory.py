@@ -80,7 +80,6 @@ def make_env(
     cfg: EnvConfig,
     n_envs: int = 1,
     use_async_envs: bool = False,
-    trust_remote_code: bool = False,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """Build the vector envs of a config.
 
@@ -91,8 +90,6 @@ def make_env(
             Number of envs in each vector env.
         use_async_envs (`bool`, *optional*, defaults to `False`):
             Run each env in its own worker process.
-        trust_remote_code (`bool`, *optional*, defaults to `False`):
-            Consent to run an EnvHub repo's code, as `HubEnvConfig.trust_remote_code` gives it.
 
     Returns:
         `dict[str, dict[int, gym.vector.VectorEnv]]`: The vector envs, as `{suite: {task_id: env}}`. A
@@ -100,7 +97,7 @@ def make_env(
 
     Raises:
         ValueError: If `n_envs` is below 1.
-        RuntimeError: If an EnvHub repo's code would run without `trust_remote_code`.
+        RuntimeError: If an EnvHub repo's code would run without its config's `trust_remote_code`.
         ModuleNotFoundError: If the simulator, or a package the repo's `env.py` needs, is not installed.
     """
     if n_envs < 1:
@@ -111,8 +108,6 @@ def make_env(
             f'make_env(HubEnvConfig(hub_path="{cfg}", trust_remote_code=True, use_native_batch=True), n_envs=...). '
             "Without use_native_batch, LeRobot builds the envs itself, as lerobot-eval and the env server do."
         )
-    if isinstance(cfg, HubEnvConfig) and trust_remote_code:
-        cfg.trust_remote_code = True
     if type(cfg).create_envs is not EnvConfig.create_envs:
         raise TypeError(
             f"{type(cfg).__name__} overrides EnvConfig.create_envs(), which make_env no longer calls: make_env "

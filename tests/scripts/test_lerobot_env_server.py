@@ -141,9 +141,9 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     assert mounted["deployment"] == "envhub"
     assert mounted["sim"]["kwargs"] == {
         "hub_path": lerobot_env_server.ENVHUB_IMAGE_DIR,
-        "trust_remote_code": True,
         "make_env_kwargs": {"episode_length": 900},
     }
+    assert mounted["trust_remote_code"] is True
     assert mounted["sim"]["fps"] == 50
 
 
@@ -193,14 +193,19 @@ def test_an_envhub_yaml_needs_consent_before_anything_is_built(tmp_path, monkeyp
         lerobot_env_server.main()
     assert "--trust_remote_code=true" in f"{error.value} {error.value.__cause__}"
     assert calls == []
-    # Consent from the command line, or from the YAML.
+    # Consent from the command line, or from the YAML's top level: one field.
     cfg = draccus.parse(EnvServerLaunchConfig, config_path=str(config), args=["--trust_remote_code=true"])
     assert cfg.sim.kwargs["trust_remote_code"] is True
-    sim["kwargs"]["trust_remote_code"] = True
-    config.write_text(yaml.safe_dump({"deployment": "envhub", "sim": sim}))
+    config.write_text(yaml.safe_dump({"deployment": "envhub", "trust_remote_code": True, "sim": sim}))
     assert draccus.parse(EnvServerLaunchConfig, config_path=str(config), args=[]).sim.kwargs[
         "trust_remote_code"
     ]
+    # Not from the simulator's options, where it would be a second consent.
+    sim["kwargs"]["trust_remote_code"] = True
+    config.write_text(yaml.safe_dump({"deployment": "envhub", "sim": sim}))
+    with pytest.raises(Exception) as error:
+        draccus.parse(EnvServerLaunchConfig, config_path=str(config), args=["--trust_remote_code=true"])
+    assert "not in sim.kwargs" in f"{error.value} {error.value.__cause__}"
 
 
 def test_build_and_stop_require_docker():

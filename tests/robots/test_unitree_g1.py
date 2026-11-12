@@ -851,7 +851,8 @@ class TestEmbodimentDriver:
                 robot.connect()
                 assert robot.is_connected
                 assert robot.sim_env is env
-                make_env.assert_called_once_with(robot.config.sim_env, trust_remote_code=True)
+                make_env.assert_called_once_with(robot.config.sim_env)
+                assert robot.config.sim_env.trust_remote_code
                 assert robot.config.sim_env.end_effector == robot.config.end_effector
                 robot._ChannelFactoryInitialize.assert_called_once_with(0, "lo")
                 for joint in robot.joint_index:

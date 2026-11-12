@@ -198,7 +198,7 @@ def test_normalize_hub_result():
 
 def test_make_env_refuses_a_hub_repo_id():
     with pytest.raises(TypeError, match="HubEnvConfig"):
-        make_env("lerobot/cartpole-env", trust_remote_code=True)
+        make_env("lerobot/cartpole-env")
 
 
 def test_make_env_from_hub_requires_trust_remote_code():
