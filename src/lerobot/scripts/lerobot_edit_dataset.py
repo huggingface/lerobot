@@ -717,8 +717,9 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         default_new_repo_id=f"{repo_id}_recomputed_stats",
     )
     _check_output_outside_hub_cache(output_root)
-    if cfg.root is None and not input_root.exists():
-        # Not stored locally: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id.
+    if cfg.root is None:
+        # Edit what `LeRobotDataset(repo_id)` reads: a Hub download, or a legacy Hub mirror at
+        # $HF_LEROBOT_HOME/repo_id, resolves to the snapshot cache.
         input_root = LeRobotDataset(repo_id).root.resolve()
     in_place = _is_in_place(input_root, output_root)
 
@@ -782,8 +783,9 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         default_new_repo_id=f"{repo_id}_reencoded",
     )
     _check_output_outside_hub_cache(output_root)
-    if cfg.root is None and not input_root.exists():
-        # Not stored locally: a Hub download lives in the snapshot cache, not at $HF_LEROBOT_HOME/repo_id.
+    if cfg.root is None:
+        # Edit what `LeRobotDataset(repo_id)` reads: a Hub download, or a legacy Hub mirror at
+        # $HF_LEROBOT_HOME/repo_id, resolves to the snapshot cache.
         input_root = LeRobotDataset(repo_id).root.resolve()
     in_place = _is_in_place(input_root, output_root)
 

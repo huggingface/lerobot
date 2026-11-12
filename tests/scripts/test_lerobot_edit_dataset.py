@@ -31,17 +31,23 @@ from lerobot.scripts.lerobot_edit_dataset import (
 pytestmark = pytest.mark.dataset
 
 
+@pytest.mark.parametrize("legacy_mirror", [False, True])
 @pytest.mark.parametrize(
     ("handler", "operation"),
     [(handle_recompute_stats, RecomputeStatsConfig()), (handle_reencode_videos, ReencodeVideosConfig())],
 )
 def test_copies_hub_dataset_from_snapshot_cache(
-    tmp_path, monkeypatch, lerobot_dataset_factory, handler, operation
+    tmp_path, monkeypatch, lerobot_dataset_factory, handler, operation, legacy_mirror
 ):
-    """Without --root and with nothing at $HF_LEROBOT_HOME/repo_id, the input is the Hub snapshot cache."""
+    """Without --root, the input is what the loader resolves (the Hub snapshot cache), even when a
+    legacy Hub mirror exists at $HF_LEROBOT_HOME/repo_id."""
     repo_id = "user/hub_dataset"
     snapshot_root = tmp_path / "hub" / "snapshot"
-    lerobot_dataset_factory(root=snapshot_root, repo_id=repo_id, use_videos=False)
+    lerobot_dataset_factory(root=snapshot_root, repo_id=repo_id, total_episodes=3, use_videos=False)
+    if legacy_mirror:
+        mirror = tmp_path / "lerobot_home" / repo_id
+        lerobot_dataset_factory(root=mirror, repo_id=repo_id, total_episodes=2, use_videos=False)
+        (mirror / ".cache" / "huggingface" / "download").mkdir(parents=True)
 
     monkeypatch.setattr(lerobot_edit_dataset, "HF_LEROBOT_HOME", tmp_path / "lerobot_home")
     monkeypatch.setattr(
@@ -53,4 +59,4 @@ def test_copies_hub_dataset_from_snapshot_cache(
     output_root = tmp_path / "output"
     handler(EditDatasetConfig(operation=operation, repo_id=repo_id, new_root=str(output_root)))
 
-    assert (output_root / "meta" / "info.json").is_file()
+    assert LeRobotDataset(repo_id, root=output_root).meta.total_episodes == 3
