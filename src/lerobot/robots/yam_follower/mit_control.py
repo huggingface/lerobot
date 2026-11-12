@@ -440,7 +440,8 @@ class MitController:
 
     `start` enables torque and `stop` disables it. After a fault on this arm, or on the other arm of a
     bimanual robot, the loop stops sending commands, so the motors' CAN timeout disables them, and the
-    next `latest` or `set_target` raises.
+    next `latest` or `set_target` raises. `stop` only stops this arm; faults set `fault_event`, shared by
+    both arms of a bimanual robot, and `start` refuses to run until its owner clears it.
 
     Args:
         name (`str`):
@@ -451,8 +452,8 @@ class MitController:
             Settings of the arm joints and the loop.
         gravity (`Callable[[np.ndarray], np.ndarray]`):
             Returns the arm-joint gravity torques for the measured positions.
-        stop_event (`threading.Event`):
-            Stop signal, shared by both controllers of a bimanual robot so a fault on one stops both.
+        fault_event (`threading.Event`):
+            Fault signal, shared by both controllers of a bimanual robot so a fault on one stops both.
         gripper_params (`MitGripperParams`, *optional*):
             Gripper calibration and settings; `None` until the gripper is calibrated.
     """
@@ -463,14 +464,15 @@ class MitController:
         bus: MitMotorsBus,
         params: MitArmParams,
         gravity: Callable[[np.ndarray], np.ndarray],
-        stop_event: threading.Event,
+        fault_event: threading.Event,
         gripper_params: MitGripperParams | None = None,
     ) -> None:
         self.name = name
         self._bus = bus
         self._params = params
         self._gravity = gravity
-        self.stop_event = stop_event
+        self.fault_event = fault_event
+        self._stop = threading.Event()
         self._gripper_params = gripper_params
         # Empty until start() reads the arm.
         self.state = JointState(position=np.zeros(0), velocity=np.zeros(0), torque=np.zeros(0))
@@ -526,10 +528,14 @@ class MitController:
 
         Raises:
             RuntimeError: If the controller is already running or the gripper is not calibrated.
+            ConnectionError: If `fault_event` is set, after a fault on either arm.
             ValueError: If a joint or the gripper is outside the allowed feedback range.
         """
         if self.active:
             raise RuntimeError(f"{self.name} controller is already running")
+        if self.fault_event.is_set():
+            raise ConnectionError(f"{self.name} controller can't start after a fault; reconnect first")
+        self._stop.clear()
         self._set_initial_state(self.read_state())
         self._failure = None
         self._thread = threading.Thread(target=self._run, name=f"{self.name}-controller", daemon=True)
@@ -557,7 +563,7 @@ class MitController:
             RuntimeError: If the control thread does not stop before the timeout.
             Exception: If the bus could not disable torque.
         """
-        self.stop_event.set()
+        self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout_s)
             if self._thread.is_alive():
@@ -617,14 +623,14 @@ class MitController:
         return self._gripper_params
 
     def _check_healthy(self) -> None:
-        if self._failure is not None or self.stop_event.is_set():
+        if self._failure is not None or self._stop.is_set() or self.fault_event.is_set():
             raise ConnectionError(
                 f"{self.name} controller stopped after a motor/feedback error"
             ) from self._failure
         # A healthy loop's own read can take a full feedback timeout, so allow two plus a cycle.
         progress_timeout_s = 2 * self._params.feedback_timeout_s + 1 / self._params.control_frequency
         if time.monotonic() - self._updated_at > progress_timeout_s:
-            self.stop_event.set()
+            self.fault_event.set()
             raise ConnectionError(
                 f"{self.name} controller feedback is stale; reconnect before commanding motion"
             )
@@ -636,7 +642,7 @@ class MitController:
             params, gripper_params, gripper = self._params, self._gripper_params, self._gripper
             if gripper_params is None or gripper is None:
                 raise RuntimeError(f"{self.name} controller runs only after start() reads the arm")
-            while not self.stop_event.is_set():
+            while not (self._stop.is_set() or self.fault_event.is_set()):
                 started = time.monotonic()
                 max_cycle_gap = max(max_cycle_gap, started - previous)
                 state = _read_joint_state(self._bus, params, gripper_params)
@@ -683,18 +689,18 @@ class MitController:
                             )
                         )
                 for name, command in packet:
-                    if self.stop_event.is_set():
+                    if self._stop.is_set() or self.fault_event.is_set():
                         break
                     self._bus.send_mit(name, command)
                 previous = started
-                self.stop_event.wait(max(0, 1 / params.control_frequency - (time.monotonic() - started)))
+                self._stop.wait(max(0, 1 / params.control_frequency - (time.monotonic() - started)))
         except Exception as exc:
             exc.add_note(
                 f"{self.name} maximum control cycle gap: {max_cycle_gap * 1000:.1f} ms; "
                 f"current cycle elapsed: {(time.monotonic() - started) * 1000:.1f} ms"
             )
             self._failure = exc
-            self.stop_event.set()
+            self.fault_event.set()
             logger.error(
                 "%s controller stopped: %s; %s",
                 self.name,

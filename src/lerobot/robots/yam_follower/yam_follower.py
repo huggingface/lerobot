@@ -305,15 +305,15 @@ class YamFollower(Robot):
     Args:
         config (`YamFollowerRobotConfig`):
             Hardware, calibration and control settings.
-        stop_event (`threading.Event | None`, *optional*):
-            Stop signal shared by both arms of a bimanual robot.
+        fault_event (`threading.Event | None`, *optional*):
+            Fault signal shared by both arms of a bimanual robot.
     """
 
     config_class = YamFollowerRobotConfig
     name = "yam_follower"
     supports_position_hold = True
 
-    def __init__(self, config: YamFollowerRobotConfig, stop_event: threading.Event | None = None) -> None:
+    def __init__(self, config: YamFollowerRobotConfig, fault_event: threading.Event | None = None) -> None:
         require_package("motorbridge", extra="yam")
         require_package("python-can", extra="yam", import_name="can")
         super().__init__(config)
@@ -327,7 +327,7 @@ class YamFollower(Robot):
             self.bus,
             _yam_arm_params(config),
             self._gravity_torque,
-            stop_event or threading.Event(),
+            fault_event or threading.Event(),
             gripper_params=None if gripper is None else _yam_gripper_params(config, gripper),
         )
         self._connected = False
@@ -372,6 +372,7 @@ class YamFollower(Robot):
                 camera.connect()
             self.configure()
             if self.is_calibrated:
+                self.controller.fault_event.clear()
                 self.prepare_controller()
                 self.controller.start()
         except BaseException:
@@ -470,7 +471,6 @@ class YamFollower(Robot):
         Raises:
             ValueError: If a joint is not within `initial_tolerance_deg` of `initial_position_deg`.
         """
-        self.controller.stop_event.clear()
         self._load_gravity_model()
         self._check_initial_position(self.controller.read_state().position)
 
