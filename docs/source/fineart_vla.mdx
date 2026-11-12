@@ -40,7 +40,9 @@ pip install -e ".[fineart_vla]"
 The `fineart_vla` extra includes the PaliGemma/FAST dependencies. For the optional
 fused training kernels on Linux with a CUDA GPU, install `".[fineart_vla_kernels]"`
 instead. It adds `liger-kernel` and the Hugging Face `kernels` package used by the
-FlashRT backends. Liger is opt-in with `--policy.use_liger_kernels=true`: it patches
+FlashRT backends. FlashRT kernels are only published for some PyTorch versions;
+without a matching build, the FlashRT backends log a warning and fall back to
+PyTorch. Liger is opt-in with `--policy.use_liger_kernels=true`: it patches
 transformers' PaliGemma RoPE/GeGLU for the whole process, so other PaliGemma-based
 policies loaded in the same process also run with the fused kernels.
 
@@ -121,11 +123,11 @@ lerobot-train \
     --steps=30000 \
     --output_dir=outputs/fineart_vla \
     --job_name=fineart_vla \
-    --wandb.enable=true
+    --trackio.enable=true
 ```
 
-Start with a small run and confirm that W&B examples show
-the expected prompt, text target, and action endpoints before scaling up.
+Start with a small run and confirm in the Trackio dashboard that the losses
+behave as expected before scaling up.
 
 To start from the plain PI0.5 checkpoint instead, keep FineART-VLA's default
 config and point `--policy.pretrained_path` at it:

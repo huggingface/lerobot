@@ -160,9 +160,6 @@ def _is_batched_messages(messages: Any) -> bool:
     return isinstance(messages, list) and bool(messages) and isinstance(messages[0], list)
 
 
-_VQA_COORD_SCALE = 1000.0
-
-
 def register_paligemma_loc_tokens(tokenizer: Any) -> Any:
     """Register PaliGemma's reserved ``<locDDDD>`` strings as single tokens.
 
@@ -174,9 +171,9 @@ def register_paligemma_loc_tokens(tokenizer: Any) -> Any:
     return tokenizer
 
 
-def _loc_token(coord: float, scale: float = _VQA_COORD_SCALE) -> str:
-    """PaliGemma ``<locNNNN>`` for a coord on a ``[0, scale]`` axis."""
-    idx = round(float(coord) / scale * 1023) if scale > 0 else 0
+def _loc_token(coord: float) -> str:
+    """PaliGemma ``<locNNNN>`` for a stored annotation in [0, 1] image fractions."""
+    idx = round(float(coord) * 1023)
     return f"<loc{max(0, min(1023, idx)):04d}>"
 
 

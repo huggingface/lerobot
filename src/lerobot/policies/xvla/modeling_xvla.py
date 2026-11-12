@@ -31,9 +31,9 @@ from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from ..chunk import FeatureSpec
 from ..common.vla_utils import pad_vector, resize_with_pad
 from ..pretrained import PreTrainedPolicy, T
 from ..utils import populate_queues
@@ -457,10 +457,9 @@ class XVLAPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         self.eval()
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-
         if len(self._queues[ACTION]) == 0:
-            actions = self._get_action_chunk(batch, noise=noise)
+            # Through predict_action_chunk, so a wrapper installed on it also covers this path.
+            actions = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()
@@ -520,8 +519,6 @@ class XVLAPolicy(PreTrainedPolicy):
                     revision=revision,
                     cache_dir=cache_dir,
                     force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
                     token=token,
                     local_files_only=local_files_only,
                 )

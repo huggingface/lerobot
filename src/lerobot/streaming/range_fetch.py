@@ -23,9 +23,8 @@ from urllib.parse import quote, urljoin, urlparse
 from uuid import uuid4
 
 import fsspec
-import httpx
 from huggingface_hub import HfApi, HfFileSystem, constants
-from huggingface_hub.utils import hf_raise_for_status
+from huggingface_hub.utils import hf_raise_for_status, httpx
 
 from .location import LocationKind, StorageLocation
 

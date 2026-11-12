@@ -105,7 +105,7 @@ def _tiny_core_config() -> DM05CoreModelConfig:
         "head_dim": 16,
         "max_position_embeddings": 128,
         "layer_types": ["full_attention", "full_attention"],
-        "sliding_window": None,
+        "sliding_window": 4096,
         "pad_token_id": 0,
         "bos_token_id": 2,
         "eos_token_id": 1,
@@ -630,7 +630,7 @@ def test_dm05_gradient_checkpointing_includes_vision_tower():
         ae_layers=2,
     )
     assert model.model.vlm.model.language_model.gradient_checkpointing
-    assert model.model.vlm.model.vision_tower.vision_model.encoder.gradient_checkpointing
+    assert model.model.vlm.model.vision_tower.encoder.gradient_checkpointing
     assert model.model.action_expert.gradient_checkpointing
     assert model.model.action_expert.gradient_checkpointing_layers == 2
 

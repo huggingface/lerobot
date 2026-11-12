@@ -31,11 +31,13 @@ from .converters import (
     identity_transition,
     observation_to_transition,
     policy_action_to_transition,
+    policy_output_to_transition,
     robot_action_observation_to_transition,
     robot_action_to_transition,
     transition_to_batch,
     transition_to_observation,
     transition_to_policy_action,
+    transition_to_prediction,
     transition_to_robot_action,
 )
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
@@ -99,7 +101,7 @@ from .relative_action_processor import (
     to_absolute_actions,
     to_relative_actions,
 )
-from .rename_processor import RenameObservationsProcessorStep, rename_stats
+from .rename_processor import RenameObservationsProcessorStep, rename_keys, rename_stats
 from .render_messages_processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
@@ -115,10 +117,12 @@ __all__ = [
     "identity_transition",
     "observation_to_transition",
     "policy_action_to_transition",
+    "policy_output_to_transition",
     "robot_action_observation_to_transition",
     "robot_action_to_transition",
     "transition_to_observation",
     "transition_to_policy_action",
+    "transition_to_prediction",
     "transition_to_robot_action",
     "DeviceProcessorStep",
     "DoneProcessorStep",
@@ -158,6 +162,7 @@ __all__ = [
     "RobotAction",
     "RobotActionProcessorStep",
     "RobotObservation",
+    "rename_keys",
     "rename_stats",
     "RenameObservationsProcessorStep",
     "RenderRuntimeMessagesStep",

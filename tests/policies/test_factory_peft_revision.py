@@ -23,7 +23,8 @@ from lerobot.configs import FeatureType
 from lerobot.utils.constants import ACTION
 
 
-def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch):
+@pytest.mark.parametrize("defer_weight_load", [False, True])
+def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch, defer_weight_load):
     cfg = SimpleNamespace(
         type="mock",
         device="cpu",
@@ -42,13 +43,20 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
     monkeypatch.setattr(policy_factory, "dataset_to_policy_features", lambda _: {})
     monkeypatch.setattr(policy_factory, "validate_visual_features_consistency", lambda *args: None)
 
+    # "user/adapter" is a fake repo id: pin the adapter-vs-base-model decision instead of
+    # letting `has_peft_adapter_config` reach the Hub for an `adapter_config.json`.
+    monkeypatch.setattr(policy_factory, "has_peft_adapter_config", lambda *args, **kwargs: True)
+
     peft_config = SimpleNamespace(
         base_model_name_or_path="user/base-policy",
         revision="base-sha",
+        inference_mode=True,
     )
     peft_config_from_pretrained = MagicMock(return_value=peft_config)
     adapted_policy = torch.nn.Linear(1, 1)
     peft_model_from_pretrained = MagicMock(return_value=adapted_policy)
+    get_peft_model = MagicMock(return_value=adapted_policy)
+    monkeypatch.setattr(policy_factory, "get_peft_model", get_peft_model)
     require_package = MagicMock()
     monkeypatch.setattr(policy_factory, "require_package", require_package)
     monkeypatch.setattr(
@@ -62,7 +70,7 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
         SimpleNamespace(from_pretrained=peft_model_from_pretrained),
     )
 
-    policy = policy_factory.make_policy(cfg, ds_meta=dataset_meta)
+    policy = policy_factory.make_policy(cfg, ds_meta=dataset_meta, defer_weight_load=defer_weight_load)
 
     assert policy is adapted_policy
     require_package.assert_called_once_with("peft", extra="peft")
@@ -77,6 +85,13 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
         pretrained_name_or_path="user/base-policy",
         revision="base-sha",
     )
+    if defer_weight_load:
+        # DCP resume: the base weights load, the adapter weights do not.
+        get_peft_model.assert_called_once_with(base_policy, peft_config)
+        assert peft_config.inference_mode is False
+        assert base_policy.name_or_path == "user/base-policy"
+        peft_model_from_pretrained.assert_not_called()
+        return
     peft_model_from_pretrained.assert_called_once_with(
         base_policy,
         "user/adapter",
@@ -137,6 +152,36 @@ def test_make_policy_reads_action_names(monkeypatch, action_key, raw_names, expe
     assert cfg.action_feature_names == expected_names
     assert dataset_meta.features[action_key]["names"] == raw_names
     assert cfg.output_features[ACTION].type is FeatureType.ACTION
+
+
+def test_make_policy_refuses_a_rename_onto_an_existing_action(monkeypatch):
+    """DROID keeps joint actions in `action` and cartesian ones in `action.cartesian`."""
+    cfg = SimpleNamespace(
+        type="mock",
+        device="cpu",
+        pretrained_path=None,
+        use_peft=False,
+        input_features={},
+        output_features={},
+        action_feature_names=None,
+    )
+    dataset_meta = SimpleNamespace(
+        features={
+            ACTION: {"dtype": "float32", "shape": (8,), "names": [f"joint_{i}" for i in range(8)]},
+            "action.cartesian": {"dtype": "float32", "shape": (7,), "names": list("xyzrpwg")},
+        },
+        stats={},
+    )
+    policy = torch.nn.Linear(1, 1)
+    monkeypatch.setattr(policy_factory, "get_policy_class", lambda _: MagicMock(return_value=policy))
+
+    with pytest.raises(ValueError, match="are named 'action' after rename_map"):
+        policy_factory.make_policy(cfg, ds_meta=dataset_meta, rename_map={"action.cartesian": ACTION})
+
+    rename_map = {"action.cartesian": ACTION, ACTION: "action.joint"}
+    policy_factory.make_policy(cfg, ds_meta=dataset_meta, rename_map=rename_map)
+    assert cfg.action_feature_names == list("xyzrpwg")
+    assert cfg.output_features[ACTION].shape == (7,)
 
 
 def test_make_policy_loads_resume_weights_and_keeps_the_parent(monkeypatch):

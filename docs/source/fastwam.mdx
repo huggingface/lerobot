@@ -78,7 +78,7 @@ Evaluate an existing LeRobot-format checkpoint on LIBERO-10 with:
 
 ```bash
 lerobot-eval \
-  --policy.path=ZibinDong/fastwam_libero_uncond_2cam224 \
+  --policy.path=lerobot/fastwam_libero_uncond_2cam224 \
   --policy.device=cuda \
   --policy.dtype=float32 \
   --policy.n_action_steps=10 \
@@ -94,6 +94,8 @@ lerobot-eval \
 
 For `libero_goal`, `libero_spatial`, and `libero_object`, use
 `--env.episode_length=300`.
+
+This checkpoint uses `VISUAL: IDENTITY` preprocessing. FastWAM rescales images to `[-1, 1]` inside the model, so applying image normalization in the preprocessor would normalize them twice.
 
 For real-robot rollout, use the same checkpoint path:
 
@@ -113,6 +115,25 @@ lerobot-rollout \
 ### Action Chunking
 
 `policy.action_horizon` controls the number of future actions supervised during training and predicted during inference. `policy.n_action_steps` controls how many actions are consumed before the policy predicts a fresh chunk. `policy.n_action_steps` must be less than or equal to `policy.action_horizon`.
+
+### Relative Actions
+
+FastWAM predicts absolute actions by default. With `policy.use_relative_actions=true` it predicts offsets from the current `observation.state` instead, so `policy.proprio_dim` must be set. Joints named in `policy.relative_exclude_joints` (default `["gripper"]`) stay absolute. Recompute the dataset stats in relative space first, with `--operation.chunk_size` set to `policy.action_horizon` (see [π₀.₅ relative actions](./pi05#relative-actions)):
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-org/your-dataset \
+  --policy.type=fastwam \
+  --policy.use_relative_actions=true \
+  --policy.relative_exclude_joints='["gripper"]' \
+  ...
+```
+
+Checkpoints saved before relative actions existed, such as `lerobot/fastwam_base`, get the relative-action processor steps added when fine-tuning from them with this option. This only applies at fine-tuning time: evaluation and rollout use the processors saved with the checkpoint as they are.
+
+### Text Encoder Device
+
+The frozen UMT5-XXL text encoder takes about 11 GB. `policy.text_encoder_device=cpu` keeps it off the GPU: prompts are encoded on the CPU and the embeddings moved to `policy.device`. During inference the encoded task is cached until `policy.reset()`, so the slower CPU encoding runs once per episode rather than once per chunk. Training encodes every batch, so there the CPU placement slows each step.
 
 ### Wan Components
 
@@ -148,7 +169,7 @@ evaluation pipeline:
 
 ## Results
 
-Evaluated on LIBERO with [`ZibinDong/fastwam_libero_uncond_2cam224`](https://huggingface.co/ZibinDong/fastwam_libero_uncond_2cam224):
+Evaluated on LIBERO with [`lerobot/fastwam_libero_uncond_2cam224`](https://huggingface.co/lerobot/fastwam_libero_uncond_2cam224):
 
 | Suite          | Success rate | n_episodes |
 | -------------- | -----------: | ---------: |
@@ -158,7 +179,7 @@ Evaluated on LIBERO with [`ZibinDong/fastwam_libero_uncond_2cam224`](https://hug
 | libero_10      |        94.0% |        500 |
 | **average**    |    **96.4%** |       2000 |
 
-Reproduce: `lerobot-eval --policy.path=ZibinDong/fastwam_libero_uncond_2cam224 --policy.device=cuda --policy.dtype=float32 --policy.n_action_steps=10 --env.type=libero --env.task=libero_spatial --env.observation_height=256 --env.observation_width=256 --eval.batch_size=1 --eval.n_episodes=50 --seed=0 --env.episode_length=300` (1x H20 140 GB).
+Reproduce: `lerobot-eval --policy.path=lerobot/fastwam_libero_uncond_2cam224 --policy.device=cuda --policy.dtype=float32 --policy.n_action_steps=10 --env.type=libero --env.task=libero_spatial --env.observation_height=256 --env.observation_width=256 --eval.batch_size=1 --eval.n_episodes=50 --seed=0 --env.episode_length=300` (1x H20 140 GB).
 
 ## References
 

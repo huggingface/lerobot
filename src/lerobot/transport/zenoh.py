@@ -384,12 +384,15 @@ class ZenohTransport:
         max_replies: int = 16,
         *,
         cancelled: Callable[[], bool] | None = None,
+        congestion_control: Literal["drop", "block"] = "drop",
     ) -> list[bytes]:
         """Collect bounded replies to one publication within a caller-local deadline.
 
         Blocks through routing and reply completion without retrying. All matching
         queryables may reply, up to ``max_replies`` and the aggregate payload bound;
         an empty result is possible. ``cancelled`` is polled on the caller thread.
+        Replies use the same ``congestion_control``: with ``drop``, a congested link may
+        silently lose a reply and the caller times out; ``block`` waits until it is sent.
         Cancellation stops local waiting, not already-admitted remote work.
 
         Raises ``QueryCancelled`` on cancellation, ``TimeoutError`` on expiry,
@@ -447,7 +450,11 @@ class ZenohTransport:
             timeout=timeout,
             target=zenoh.QueryTarget.ALL,
             consolidation=zenoh.ConsolidationMode.NONE,
-            congestion_control=zenoh.CongestionControl.DROP,
+            congestion_control=(
+                zenoh.CongestionControl.BLOCK
+                if congestion_control == "block"
+                else zenoh.CongestionControl.DROP
+            ),
             cancellation_token=cancellation_token,
         )
         try:

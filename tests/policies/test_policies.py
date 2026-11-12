@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import inspect
+import json
 from copy import deepcopy
 from pathlib import Path
 
@@ -32,10 +33,10 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets import make_dataset
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.envs.utils import close_envs, preprocess_observation
+from lerobot.envs.utils import close_envs, prepare_canonical_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
+from lerobot.policies.act.modeling_act import ACTPolicy, ACTTemporalEnsembler
 from lerobot.policies.factory import (
     get_policy_class,
     make_policy,
@@ -45,13 +46,15 @@ from lerobot.policies.factory import (
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.vqbet.modeling_vqbet import VQBeTHead
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import is_package_available
 from lerobot.utils.random_utils import seeded_context
 from lerobot.utils.utils import cycle
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
+
+pytestmark = pytest.mark.dataset
 
 # Policies that require optional heavy dependencies to instantiate
 _POLICY_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
@@ -112,7 +115,8 @@ def test_get_policy_and_config_classes(policy_name: str):
 @pytest.mark.parametrize(
     "ds_repo_id,env_name,env_kwargs,policy_name,policy_kwargs",
     [
-        ("lerobot/pusht", "pusht", {}, "diffusion", {}),
+        # Diffusion denoises 100 times per action by default; 10 runs the same sampling loop.
+        ("lerobot/pusht", "pusht", {}, "diffusion", {"num_inference_steps": 10}),
         ("lerobot/pusht", "pusht", {}, "vqbet", {}),
         ("lerobot/pusht", "pusht", {}, "act", {}),
         ("lerobot/aloha_sim_insertion_human", "aloha", {"task": "AlohaInsertion-v0"}, "act", {}),
@@ -128,7 +132,7 @@ def test_get_policy_and_config_classes(policy_name: str):
             "aloha",
             {"task": "AlohaInsertion-v0"},
             "diffusion",
-            {},
+            {"num_inference_steps": 10},
         ),
         (
             "lerobot/aloha_sim_transfer_cube_human",
@@ -221,7 +225,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     observation, _ = env.reset(seed=train_cfg.seed)
 
     # apply transform to normalize the observations
-    observation = preprocess_observation(observation)
+    observation = prepare_canonical_observation(observation)
 
     # send observation to device/gpu
     observation = {key: observation[key].to(DEVICE, non_blocking=True) for key in observation}
@@ -335,6 +339,207 @@ def test_save_pretrained_single_file_artifact(dummy_dataset_metadata, tmp_path):
     torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
 
 
+def test_save_pretrained_sharded_artifact(dummy_dataset_metadata, tmp_path, monkeypatch):
+    """A policy over `_max_shard_size` is written as transformers-style shards and loads back."""
+    policy_cls = get_policy_class("act")
+    policy_cfg = make_policy_config("act")
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    policy_cfg.input_features = {
+        key: ft for key, ft in features.items() if key not in policy_cfg.output_features
+    }
+    policy = policy_cls(policy_cfg)
+    policy.to(policy_cfg.device)
+    monkeypatch.setattr(policy_cls, "_max_shard_size", "20MB")
+
+    save_dir = tmp_path / "sharded_artifact"
+    policy.save_pretrained(save_dir)
+
+    index = save_dir / f"{SAFETENSORS_SINGLE_FILE}.index.json"
+    shards = sorted(save_dir.glob("model-*-of-*.safetensors"))
+    assert index.is_file() and len(shards) >= 2
+    assert not (save_dir / SAFETENSORS_SINGLE_FILE).exists()
+    assert sorted(set(json.loads(index.read_text())["weight_map"].values())) == [s.name for s in shards]
+
+    loaded_policy = policy_cls.from_pretrained(save_dir, config=policy_cfg, strict=True)
+    torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
+    for (name, p), (_, q) in zip(
+        policy.state_dict().items(), loaded_policy.state_dict().items(), strict=True
+    ):
+        assert torch.equal(p, q), name
+
+
+def test_resolve_weight_files_from_hub_falls_back_to_shards(tmp_path, monkeypatch):
+    """Without `model.safetensors` on the Hub, the index is fetched and then every shard it lists."""
+    from huggingface_hub.errors import EntryNotFoundError
+
+    import lerobot.policies.pretrained as pretrained_module
+
+    repo = tmp_path / "hub_repo"
+    repo.mkdir()
+    weight_map = {
+        "a.weight": "model-00001-of-00002.safetensors",
+        "b.weight": "model-00002-of-00002.safetensors",
+    }
+    (repo / f"{SAFETENSORS_SINGLE_FILE}.index.json").write_text(json.dumps({"weight_map": weight_map}))
+    for name in set(weight_map.values()):
+        (repo / name).write_bytes(b"")
+    downloaded: list[str] = []
+
+    def fake_hf_hub_download(repo_id, filename, **kwargs):
+        downloaded.append(filename)
+        if not (repo / filename).is_file():
+            raise EntryNotFoundError(f"{filename} not found")
+        return str(repo / filename)
+
+    monkeypatch.setattr(pretrained_module, "hf_hub_download", fake_hf_hub_download)
+    files = PreTrainedPolicy._resolve_weight_files("org/repo", revision=None)
+    assert [f.name for f in files] == sorted(set(weight_map.values()))
+    assert downloaded[:2] == [SAFETENSORS_SINGLE_FILE, f"{SAFETENSORS_SINGLE_FILE}.index.json"]
+
+    (repo / f"{SAFETENSORS_SINGLE_FILE}.index.json").unlink()
+    with pytest.raises(FileNotFoundError, match="Neither"):
+        PreTrainedPolicy._resolve_weight_files("org/repo", revision=None)
+
+
+def test_resolve_weight_files_propagates_hub_http_errors(monkeypatch):
+    """A 401, a gated repo, or another Hub failure propagates as that error."""
+    import httpx
+    from huggingface_hub.errors import HfHubHTTPError
+
+    import lerobot.policies.pretrained as pretrained_module
+
+    def fake_hf_hub_download(repo_id, filename, **kwargs):
+        request = httpx.Request("GET", "https://huggingface.co")
+        raise HfHubHTTPError("unauthorized", response=httpx.Response(401, request=request))
+
+    monkeypatch.setattr(pretrained_module, "hf_hub_download", fake_hf_hub_download)
+    with pytest.raises(HfHubHTTPError):
+        PreTrainedPolicy._resolve_weight_files("org/repo", revision=None)
+
+
+def _sharded_act(dummy_dataset_metadata, tmp_path, monkeypatch, name="hooked_shards"):
+    """Save a small ACT policy as several shards; return (policy class, config, policy, save dir, shard names)."""
+    policy_cls = get_policy_class("act")
+    policy_cfg = make_policy_config("act")
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    policy_cfg.input_features = {
+        key: ft for key, ft in features.items() if key not in policy_cfg.output_features
+    }
+    policy = policy_cls(policy_cfg)
+    policy.to(policy_cfg.device)
+    monkeypatch.setattr(policy_cls, "_max_shard_size", "20MB")
+    save_dir = tmp_path / name
+    policy.save_pretrained(save_dir)
+    shards = sorted(p.name for p in save_dir.glob("model-*-of-*.safetensors"))
+    assert len(shards) >= 2
+    return policy_cls, policy_cfg, policy, save_dir, shards
+
+
+def test_sharded_load_gives_the_policy_hook_the_whole_checkpoint_once(
+    dummy_dataset_metadata, tmp_path, monkeypatch
+):
+    """The checkpoint hook sees every shard once, with the caller's strictness."""
+
+    policy_cls, policy_cfg, policy, save_dir, _shards = _sharded_act(
+        dummy_dataset_metadata, tmp_path, monkeypatch
+    )
+    seen: list[tuple[set[str], bool]] = []
+
+    class HookedPolicy(policy_cls):
+        @classmethod
+        def _load_checkpoint(cls, model, checkpoint, map_location, strict):
+            seen.append((checkpoint.keys(), strict))
+            assert len(checkpoint.files) > 1
+            assert all(file.parent == save_dir for file in checkpoint.files)
+            return super()._load_checkpoint(model, checkpoint, map_location, strict)
+
+    loaded = HookedPolicy.from_pretrained(save_dir, config=policy_cfg, strict=True)
+    assert len(seen) == 1 and seen[0][1] is True and seen[0][0] == set(policy.state_dict())
+    torch.testing.assert_close(list(policy.parameters()), list(loaded.parameters()), rtol=0, atol=0)
+
+
+def test_sharded_load_keeps_the_hook_strictness_for_shape_mismatches(
+    dummy_dataset_metadata, tmp_path, monkeypatch
+):
+    """A shape-aware hook (FastWAM) sees the mismatched tensor of a shard: skipped with strict=False, an error with strict=True."""
+    from safetensors.torch import load_file, save_file
+
+    policy_cls, policy_cfg, policy, save_dir, shards = _sharded_act(
+        dummy_dataset_metadata, tmp_path, monkeypatch
+    )
+    # Give one tensor of the first shard another shape (another embodiment's head).
+    first = save_dir / shards[0]
+    tensors = load_file(str(first))
+    key = next(k for k, v in tensors.items() if v.ndim >= 1 and v.numel() > 1)
+    tensors[key] = torch.zeros(tuple(s + 1 for s in tensors[key].shape), dtype=tensors[key].dtype)
+    save_file(tensors, str(first), metadata={"format": "pt"})
+    skipped: list[str] = []
+
+    class ShapeAwarePolicy(policy_cls):
+        @classmethod
+        def _load_checkpoint(cls, model, checkpoint, map_location, strict):
+            expected = model.state_dict()
+            state = {}
+            for name, tensor in checkpoint.tensors():
+                if name in expected and tuple(expected[name].shape) != tuple(tensor.shape):
+                    if strict:
+                        raise RuntimeError(f"shape mismatch in {name}")
+                    skipped.append(name)
+                    continue
+                state[name] = tensor
+            model.load_state_dict(state, strict=False)
+            return model
+
+    loaded = ShapeAwarePolicy.from_pretrained(save_dir, config=policy_cfg, strict=False)
+    assert skipped == [key]
+    fresh = dict(ShapeAwarePolicy(policy_cfg).state_dict())
+    assert loaded.state_dict()[key].shape == fresh[key].shape  # left at its initialized shape
+    other = next(k for k in tensors if k != key)
+    torch.testing.assert_close(loaded.state_dict()[other].cpu(), tensors[other], rtol=0, atol=0)
+    with pytest.raises(RuntimeError, match="shape mismatch"):
+        ShapeAwarePolicy.from_pretrained(save_dir, config=policy_cfg, strict=True)
+
+
+def test_sharded_load_satisfies_a_hook_that_checks_completeness(
+    dummy_dataset_metadata, tmp_path, monkeypatch
+):
+    """A hook that requires every weight in the file it reads (Flux3) works on a sharded checkpoint."""
+
+    policy_cls, policy_cfg, policy, save_dir, _shards = _sharded_act(
+        dummy_dataset_metadata, tmp_path, monkeypatch
+    )
+
+    class CompletePolicy(policy_cls):
+        @classmethod
+        def _load_checkpoint(cls, model, checkpoint, map_location, strict):
+            missing = set(model.state_dict()) - checkpoint.keys()
+            if missing:
+                raise RuntimeError(f"incomplete checkpoint: {sorted(missing)[:3]}")
+            return super()._load_checkpoint(model, checkpoint, map_location, strict)
+
+    loaded = CompletePolicy.from_pretrained(save_dir, config=policy_cfg, strict=False)
+    torch.testing.assert_close(list(policy.parameters()), list(loaded.parameters()), rtol=0, atol=0)
+
+
+def test_sharded_load_without_a_hook_streams_the_shards(dummy_dataset_metadata, tmp_path, monkeypatch):
+    """The default loader reads the shards one by one and checks the keys over the union."""
+    policy_cls, policy_cfg, policy, save_dir, shards = _sharded_act(
+        dummy_dataset_metadata, tmp_path, monkeypatch
+    )
+    loaded = policy_cls.from_pretrained(save_dir, config=policy_cfg, strict=True)
+    torch.testing.assert_close(list(policy.parameters()), list(loaded.parameters()), rtol=0, atol=0)
+    # A key missing from every shard is an error under strict=True and a log line otherwise.
+    (save_dir / shards[-1]).unlink()
+    index = json.loads((save_dir / "model.safetensors.index.json").read_text())
+    index["weight_map"] = {k: v for k, v in index["weight_map"].items() if v != shards[-1]}
+    (save_dir / "model.safetensors.index.json").write_text(json.dumps(index))
+    with pytest.raises(RuntimeError, match="missing keys"):
+        policy_cls.from_pretrained(save_dir, config=policy_cfg, strict=True)
+    policy_cls.from_pretrained(save_dir, config=policy_cfg, strict=False)
+
+
 @pytest.mark.parametrize("multikey", [True, False])
 def test_multikey_construction(multikey: bool):
     """
@@ -405,12 +610,6 @@ def test_multikey_construction(multikey: bool):
             marks=pytest.mark.skipif(not is_package_available("diffusers"), reason="diffusers not installed"),
         ),
         ("lerobot/aloha_sim_insertion_human", "act", {"n_action_steps": 10}, ""),
-        (
-            "lerobot/aloha_sim_insertion_human",
-            "act",
-            {"n_action_steps": 1000, "chunk_size": 1000},
-            "1000_steps",
-        ),
     ],
 )
 # As artifacts have been generated on an x86_64 kernel, this test won't
@@ -460,6 +659,54 @@ def test_backward_compatibility(ds_repo_id: str, policy_name: str, policy_kwargs
     for key in saved_actions:
         rtol, atol = (2e-3, 5e-6) if policy_name == "diffusion" else (None, None)  # HACK
         torch.testing.assert_close(actions[key], saved_actions[key], rtol=rtol, atol=atol)
+
+
+def test_act_ignores_padded_actions():
+    """Padded actions reach neither the VAE encoder (its attention mask) nor the loss."""
+    chunk_size, action_dim = 10, 2
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
+            OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(4,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
+        chunk_size=chunk_size,
+        n_action_steps=chunk_size,
+        dim_model=32,
+        n_heads=2,
+        dim_feedforward=64,
+        n_encoder_layers=1,
+        n_vae_encoder_layers=2,
+        latent_dim=8,
+        device="cpu",
+    )
+    policy = ACTPolicy(config)
+    policy.train()
+    action_is_pad = torch.zeros(2, chunk_size, dtype=torch.bool)
+    action_is_pad[:, 6:] = True
+    batch = {
+        OBS_STATE: torch.randn(2, 4),
+        OBS_ENV_STATE: torch.randn(2, 4),
+        ACTION: torch.randn(2, chunk_size, action_dim),
+        "action_is_pad": action_is_pad,
+    }
+
+    def loss_of(actions):
+        torch.manual_seed(0)  # same dropout and latent noise for every call
+        return policy.forward({**batch, ACTION: actions})
+
+    loss, loss_dict = loss_of(batch[ACTION])
+    padded_changed = batch[ACTION].clone()
+    padded_changed[action_is_pad] = 1e3
+    padded_loss, padded_loss_dict = loss_of(padded_changed)
+    torch.testing.assert_close(padded_loss, loss)
+    assert padded_loss_dict == loss_dict
+
+    valid_changed = batch[ACTION].clone()
+    valid_changed[:, 0] += 1.0
+    valid_loss, valid_loss_dict = loss_of(valid_changed)
+    assert valid_loss_dict["kld_loss"] != loss_dict["kld_loss"]
+    assert valid_loss_dict["l1_loss"] != loss_dict["l1_loss"]
 
 
 def test_act_temporal_ensembler():

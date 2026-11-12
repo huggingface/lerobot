@@ -1302,18 +1302,18 @@ def make_groot_pre_post_processors(
 # GR00T specific processor steps
 
 
-def _to_uint8_np_bthwc(img_t: torch.Tensor) -> np.ndarray:
+def _to_uint8_bthwc(img_t: torch.Tensor) -> torch.Tensor:
     # img_t: (B, C, H, W) or (B, T, C, H, W), float in [0,1] or uint8
     if img_t.dtype.is_floating_point:
         img_t = (img_t.clamp(0, 1) * 255.0).to(torch.uint8)
     if img_t.dim() == 4:
-        return rearrange(img_t.cpu().numpy(), "b c h w -> b 1 h w c")
+        return rearrange(img_t, "b c h w -> b 1 h w c")
     if img_t.dim() == 5:
-        return rearrange(img_t.cpu().numpy(), "b t c h w -> b t h w c")
+        return rearrange(img_t, "b t c h w -> b t h w c")
     raise ValueError(f"Expected image tensor shape (B, C, H, W) or (B, T, C, H, W), got {tuple(img_t.shape)}")
 
 
-def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
+def _align_video_horizon(video: torch.Tensor, horizon: int | None) -> torch.Tensor:
     """Match the checkpoint video horizon by truncating or left-padding frames."""
 
     if horizon is None or horizon <= 0:
@@ -1323,8 +1323,8 @@ def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
         return video
     if current > horizon:
         return video[:, -horizon:]
-    pad = np.repeat(video[:, :1], horizon - current, axis=1)
-    return np.concatenate([pad, video], axis=1)
+    pad = video[:, :1].repeat_interleave(horizon - current, dim=1)
+    return torch.cat([pad, video], dim=1)
 
 
 def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> ProcessorMixin:
@@ -1812,9 +1812,12 @@ class GrootN17PackInputsStep(ProcessorStep):
 
         img_keys = self._ordered_image_keys(obs)
         if img_keys:
-            cams = [_align_video_horizon(_to_uint8_np_bthwc(obs[k]), self.video_horizon) for k in img_keys]
-            video = np.stack(cams, axis=2)  # (B, T, V, H, W, C)
-            obs["video"] = video
+            cams = [_align_video_horizon(_to_uint8_bthwc(obs[k]), self.video_horizon) for k in img_keys]
+            if cams[0].device.type != "cpu" and len({(cam.shape, cam.device) for cam in cams}) == 1:
+                obs["video"] = torch.stack(cams, dim=2)  # (B, T, V, H, W, C)
+            else:
+                # CPU frames, and cameras with different resolutions or devices, keep the numpy path.
+                obs["video"] = np.stack([cam.cpu().numpy() for cam in cams], axis=2)
             image_keys_to_remove = [key for key in obs if key.startswith(OBS_IMAGES)]
             if OBS_IMAGE in obs:
                 image_keys_to_remove.append(OBS_IMAGE)
@@ -2056,7 +2059,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
         ``target_device`` when set) for the torchvision-backed Qwen processor.
         """
         if self.use_albumentations:
-            video_np = np.asarray(video)
+            video_np = video.cpu().numpy() if torch.is_tensor(video) else np.asarray(video)
             train_crop = self.training and torch.is_grad_enabled()
             sample_images: list[list[Any]] = []
             for batch_idx in range(batch_size):
@@ -2082,10 +2085,10 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             return sample_images
 
         video_t = video if torch.is_tensor(video) else torch.from_numpy(np.ascontiguousarray(video))
-        # (B, T, V, H, W, C) uint8 -> (B, T, V, C, H, W)
-        video_t = video_t.permute(0, 1, 2, 5, 3, 4).contiguous()
         if target_device is not None and video_t.device != target_device:
             video_t = video_t.to(target_device, non_blocking=(target_device.type == "cuda"))
+        # (B, T, V, H, W, C) uint8 -> (B, T, V, C, H, W)
+        video_t = video_t.permute(0, 1, 2, 5, 3, 4).contiguous()
 
         frames_per_sample: list[list[Any]] = []
         for batch_idx in range(batch_size):

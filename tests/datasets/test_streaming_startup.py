@@ -29,6 +29,8 @@ from lerobot.streaming.mp4 import (
 )
 from tests.datasets.test_episode_video_streaming import _minimal_mp4
 
+pytestmark = pytest.mark.dataset
+
 
 def test_manifest_finishes_each_file_before_touching_the_next(monkeypatch: pytest.MonkeyPatch) -> None:
     """Rank ordering must not cause repeated random walks over the mapped sample tables."""

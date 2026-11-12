@@ -13,8 +13,13 @@ pip install lerobot_camera_<name>
 lerobot-record \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm \
     --robot.cameras="{ front: {type: <name>, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm \
     --dataset.repo_id=${HF_USER}/my-dataset \
+    --dataset.single_task="Describe your task here" \
     --dataset.num_episodes=5
 ```
 
@@ -56,6 +61,14 @@ lerobot-record \
     <tr style="border:0">
       <td><a href="https://github.com/hexfellow/hex_lerobot_drivers/tree/main/lerobot_camera_berxel">lerobot_camera_berxel</a></td>
       <td>Plugin for the <a href="https://www.berxel.com/">Berxel</a> depth camera, part of the broader <a href="https://hexfellow.com/">HEXFELLOW</a> driver suite.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/stereolabs/lerobot_camera_zed">lerobot_camera_zed</a></td>
+      <td>Official plugin for <a href="https://www.stereolabs.com/">Stereolabs</a> ZED cameras (ZED 2/2i/Mini, the ZED X family, and ZED X One), with metric depth, hardware timestamps, and SVO recording.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/maskjp/lerobot_camera_oak">lerobot_camera_oak</a></td>
+      <td>Plugin for <a href="https://www.luxonis.com/">Luxonis</a> OAK and OAK4 cameras over USB or PoE (DepthAI v3), with optional depth maps and point clouds.</td>
     </tr>
   </tbody>
 </table>

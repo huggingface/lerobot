@@ -271,3 +271,137 @@ class Rotation:
         )
 
         return Rotation(composed_quat)
+
+    # -----------------------------------------------------------------------
+    # Batched conversions with scipy's bits (xyzw quaternions, extrinsic x-y-z Euler angles)
+    # -----------------------------------------------------------------------
+    # These static methods take arrays of rotations (a leading batch axis) and repeat the operations
+    # of ``scipy.spatial.transform.Rotation`` (``from_euler``, ``as_matrix``, ``from_matrix``,
+    # ``as_quat``) in the same order, so their results have the bits of scipy's without the
+    # dependency. Datasets converted with scipy (DROID's pose columns, for one) and the policies
+    # trained on them reproduce exactly through these.
+
+    @staticmethod
+    def quat_mul_xyzw(p: np.ndarray, q: np.ndarray) -> np.ndarray:
+        """Return the products ``p * q`` of ``(N, 4)`` xyzw quaternions (scipy's order of operations)."""
+        c0 = p[:, 1] * q[:, 2] - p[:, 2] * q[:, 1]
+        c1 = p[:, 2] * q[:, 0] - p[:, 0] * q[:, 2]
+        c2 = p[:, 0] * q[:, 1] - p[:, 1] * q[:, 0]
+        out = np.empty_like(p)
+        out[:, 0] = p[:, 3] * q[:, 0] + q[:, 3] * p[:, 0] + c0
+        out[:, 1] = p[:, 3] * q[:, 1] + q[:, 3] * p[:, 1] + c1
+        out[:, 2] = p[:, 3] * q[:, 2] + q[:, 3] * p[:, 2] + c2
+        out[:, 3] = p[:, 3] * q[:, 3] - p[:, 0] * q[:, 0] - p[:, 1] * q[:, 1]
+        out[:, 3] -= p[:, 2] * q[:, 2]
+        return out
+
+    @staticmethod
+    def euler_xyz_to_quat_xyzw(rpy: np.ndarray) -> np.ndarray:
+        """Convert ``(N, 3)`` extrinsic x-y-z Euler angles to ``(N, 4)`` xyzw quaternions.
+
+        The rotation is ``Rz(yaw) @ Ry(pitch) @ Rx(roll)``. The operations are those of
+        ``Rotation.from_euler("xyz", rpy)``, so the result has the same bits.
+        """
+        e = np.asarray(rpy, dtype=np.float64).reshape(-1, 3)
+        q = np.zeros((e.shape[0], 4))
+        for axis in range(3):
+            half = e[:, axis] / 2
+            elem = np.zeros((e.shape[0], 4))
+            elem[:, axis] = np.sin(half)
+            elem[:, 3] = np.cos(half)
+            q = elem if axis == 0 else Rotation.quat_mul_xyzw(elem, q)
+        return q
+
+    @staticmethod
+    def _unit_quat_xyzw(q: np.ndarray) -> np.ndarray:
+        """Normalize ``(..., 4)`` xyzw quaternions in float64 (scipy's order of operations)."""
+        q = np.array(q, dtype=np.float64, copy=True)
+        x, y, z, w = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+        return q / np.sqrt(x * x + y * y + z * z + w * w)[..., None]
+
+    @staticmethod
+    def _quat_xyzw_matrix(q: np.ndarray) -> np.ndarray:
+        x, y, z, w = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+        x2, y2, z2, w2 = x * x, y * y, z * z, w * w
+        xy, zw, xz, yw, yz, xw = x * y, z * w, x * z, y * w, y * z, x * w
+        m = np.empty((*q.shape[:-1], 3, 3))
+        m[..., 0, 0] = x2 - y2 - z2 + w2
+        m[..., 1, 0] = 2 * (xy + zw)
+        m[..., 2, 0] = 2 * (xz - yw)
+        m[..., 0, 1] = 2 * (xy - zw)
+        m[..., 1, 1] = -x2 + y2 - z2 + w2
+        m[..., 2, 1] = 2 * (yz + xw)
+        m[..., 0, 2] = 2 * (xz + yw)
+        m[..., 1, 2] = 2 * (yz - xw)
+        m[..., 2, 2] = -x2 - y2 + z2 + w2
+        return m
+
+    @staticmethod
+    def quat_xyzw_to_matrix_raw(q: np.ndarray) -> np.ndarray:
+        """Convert ``(N, 4)`` xyzw quaternions to ``(N, 3, 3)`` matrices without normalizing them.
+
+        The operations are those of ``Rotation.as_matrix`` on a rotation from ``from_euler`` (scipy
+        keeps that quaternion as it is).
+        """
+        return Rotation._quat_xyzw_matrix(np.asarray(q, dtype=np.float64))
+
+    @staticmethod
+    def quat_xyzw_to_matrix(q: np.ndarray) -> np.ndarray:
+        """Convert ``(..., 4)`` xyzw quaternions to ``(..., 3, 3)`` float64 matrices.
+
+        The quaternion is normalized first. The operations are those of
+        ``Rotation.from_quat(q).as_matrix()``, so the result has the same bits.
+        """
+        return Rotation._quat_xyzw_matrix(Rotation._unit_quat_xyzw(q))
+
+    @staticmethod
+    def matrix_to_quat_xyzw(m: np.ndarray) -> np.ndarray:
+        """Convert ``(..., 3, 3)`` rotation matrices to ``(..., 4)`` xyzw quaternions.
+
+        The operations are those of ``Rotation.from_matrix(m).as_quat()`` (the largest-component
+        branch, then an exact normalization), so the result has the same bits. The sign is not made
+        canonical.
+        """
+        m = np.asarray(m, dtype=np.float64)
+        flat = m.reshape(-1, 3, 3)
+        out = np.empty((flat.shape[0], 4))
+        for n, c in enumerate(flat):
+            dec = [c[0, 0], c[1, 1], c[2, 2], c[0, 0] + c[1, 1] + c[2, 2]]
+            choice = int(np.argmax(dec))
+            q = np.empty(4)
+            if choice != 3:
+                i = choice
+                j = (i + 1) % 3
+                k = (j + 1) % 3
+                q[i] = 1 - dec[3] + 2 * c[i, i]
+                q[j] = c[j, i] + c[i, j]
+                q[k] = c[k, i] + c[i, k]
+                q[3] = c[k, j] - c[j, k]
+            else:
+                q[0] = c[2, 1] - c[1, 2]
+                q[1] = c[0, 2] - c[2, 0]
+                q[2] = c[1, 0] - c[0, 1]
+                q[3] = 1 + dec[3]
+            out[n] = q
+        return Rotation._unit_quat_xyzw(out).reshape(*m.shape[:-2], 4)
+
+    @staticmethod
+    def euler_xyz_to_matrix(rpy: np.ndarray) -> np.ndarray:
+        """Convert ``(N, 3)`` extrinsic x-y-z Euler angles to ``(N, 3, 3)`` rotation matrices (scipy's bits)."""
+        return Rotation.quat_xyzw_to_matrix_raw(Rotation.euler_xyz_to_quat_xyzw(rpy))
+
+    @staticmethod
+    def matrix_to_euler_xyz(rot: np.ndarray) -> np.ndarray:
+        """Convert ``(N, 3, 3)`` rotation matrices to ``(N, 3)`` extrinsic x-y-z Euler angles.
+
+        The inverse of :meth:`euler_xyz_to_matrix`: ``roll = atan2(R21, R22)``, ``pitch = asin(-R20)``,
+        ``yaw = atan2(R10, R00)``. Within 1e-6 rad of a right angle of pitch the roll is set to 0 and
+        the yaw absorbs the turn.
+        """
+        r = np.asarray(rot, dtype=np.float64).reshape(-1, 3, 3)
+        pitch = np.arcsin(np.clip(-r[:, 2, 0], -1.0, 1.0))
+        cos_pitch = np.cos(pitch)
+        regular = np.abs(cos_pitch) > 1e-6
+        roll = np.where(regular, np.arctan2(r[:, 2, 1], r[:, 2, 2]), 0.0)
+        yaw = np.where(regular, np.arctan2(r[:, 1, 0], r[:, 0, 0]), np.arctan2(-r[:, 0, 1], r[:, 1, 1]))
+        return np.stack([roll, pitch, yaw], axis=-1)

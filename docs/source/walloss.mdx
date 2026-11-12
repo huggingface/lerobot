@@ -43,15 +43,15 @@ policy.type=wall_x
 ### Text generation and interactive control
 
 WALL-OSS exposes native text generation through the policy contract from
-[Bring your own policy](./bring_your_own_policies#adding-a-text-head-the-language-contract).
-Runtime supplies `query_kind` and caller-owned `text` before running WALL-OSS's
+[Bring your own policy](./bring_your_own_policies#text-capable-policies).
+Runtime supplies `query_kind` and caller-owned `query_text` before running WALL-OSS's
 normal input pipeline:
 
 ```python
 request = {
     **observation,
     "query_kind": "vqa",
-    "text": "Which object is closest to the right gripper?",
+    "query_text": "Which object is closest to the right gripper?",
 }
 processed_batch = preprocessor(request)
 answer = policy.generate_text(processed_batch)
@@ -126,19 +126,19 @@ schema and available recipes.
 
 ### Training Arguments
 
-| Argument                       | Description                                                                                                                                                   |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--dataset.repo_id`            | The Hugging Face Hub repository ID for your training dataset (e.g., `lerobot/aloha_sim_insertion_human`)                                                      |
-| `--policy.type`                | Specifies using the WallX policy architecture                                                                                                                 |
-| `--output_dir`                 | Local directory where training checkpoints and logs will be saved                                                                                             |
-| `--job_name`                   | A name identifier for this training run (used in logging/tracking)                                                                                            |
-| `--policy.repo_id`             | Your Hugging Face Hub repo ID where the trained model will be pushed                                                                                          |
-| `--policy.pretrained_path`     | Path to pretrained WallX weights to initialize from (the official WALL-OSS checkpoint)                                                                        |
-| `--policy.prediction_mode`     | The action prediction strategy: `diffusion` or `fast` - `diffusion` uses iterative denoising for action generation, `fast` uses next token prediction instead |
-| `--policy.attn_implementation` | Attention implementation backend - `eager` uses standard PyTorch attention (alternatives include `flash_attention_2` or `sdpa`)                               |
-| `--steps`                      | Total number of training steps to run                                                                                                                         |
-| `--policy.device`              | Device to train on (`cuda` for GPU, `cpu` for CPU)                                                                                                            |
-| `--batch_size`                 | Number of samples per training batch                                                                                                                          |
+| Argument                           | Description                                                                                                                                                   |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--dataset.repo_id`                | The Hugging Face Hub repository ID for your training dataset (e.g., `lerobot/aloha_sim_insertion_human`)                                                      |
+| `--policy.type`                    | Specifies using the WallX policy architecture                                                                                                                 |
+| `--output_dir`                     | Local directory where training checkpoints and logs will be saved                                                                                             |
+| `--job_name`                       | A name identifier for this training run (used in logging/tracking)                                                                                            |
+| `--policy.repo_id`                 | Your Hugging Face Hub repo ID where the trained model will be pushed                                                                                          |
+| `--policy.pretrained_name_or_path` | Path to pretrained WallX weights to initialize from (the official WALL-OSS checkpoint)                                                                        |
+| `--policy.prediction_mode`         | The action prediction strategy: `diffusion` or `fast` - `diffusion` uses iterative denoising for action generation, `fast` uses next token prediction instead |
+| `--policy.attn_implementation`     | Attention implementation backend - `eager` uses standard PyTorch attention (alternatives include `flash_attention_2` or `sdpa`)                               |
+| `--steps`                          | Total number of training steps to run                                                                                                                         |
+| `--policy.device`                  | Device to train on (`cuda` for GPU, `cpu` for CPU)                                                                                                            |
+| `--batch_size`                     | Number of samples per training batch                                                                                                                          |
 
 Language training uses `policy.text_loss_weight` (default `0.01`),
 `policy.flow_loss_weight` (default `1.0`), and `policy.tokenizer_max_length`

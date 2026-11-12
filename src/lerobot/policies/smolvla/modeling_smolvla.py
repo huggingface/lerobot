@@ -62,9 +62,9 @@ from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import require_package
 
-from ..chunk import FeatureSpec
 from ..common.flow_matching import (
     FlowConvention,
     euler_integrate,
@@ -585,7 +585,6 @@ class VLAFlowMatching(nn.Module):
 
         # Compile model if requested
         if config.compile_model:
-            torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)  # type: ignore[method-assign]
             self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 
@@ -855,7 +854,8 @@ class VLAFlowMatching(nn.Module):
         )
         if past_key_values is not None:
             # Self-attention layers append suffix K/V in place; restore the prefix for the next step.
-            past_key_values.crop(prefix_len)
+            for layer in past_key_values.layers:
+                layer.crop(prefix_len - layer.get_seq_length())
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
