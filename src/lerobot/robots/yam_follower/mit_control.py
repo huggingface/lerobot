@@ -647,6 +647,7 @@ class MitController:
                 max_cycle_gap = max(max_cycle_gap, started - previous)
                 state = _read_joint_state(self._bus, params, gripper_params)
                 position = state.position
+                gravity = self._gravity(position)
                 with self._lock:
                     self.state = state
                     self._updated_at = time.monotonic()
@@ -663,7 +664,7 @@ class MitController:
                         n = params.num_joints
                         if self.idle and params.idle_mode == "float":
                             self._command, joint_commands = _float_step(
-                                params, gripper_params, state, self._command, self._gravity(position)
+                                params, gripper_params, state, self._command, gravity
                             )
                         else:
                             self._command, joint_commands = _track_step(
@@ -672,7 +673,7 @@ class MitController:
                                 position,
                                 self._target,
                                 self._command,
-                                self._gravity(position),
+                                gravity,
                                 min(started - previous, _MAX_CONTROL_DT_S),
                             )
                         packet = list(zip(self._bus.motor_names[:n], joint_commands, strict=True))
