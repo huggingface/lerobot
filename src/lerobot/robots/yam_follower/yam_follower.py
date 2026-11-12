@@ -323,7 +323,7 @@ class YamFollower(Robot):
         self.gravity_model: GravityCompensation | None = None
         gripper = self.calibration.get("gripper")
         self.controller = MitController(
-            str(self.id),
+            str(self),
             self.bus,
             _yam_arm_params(config),
             self._gravity_torque,
