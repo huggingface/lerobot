@@ -205,6 +205,7 @@ class _YamMotorsBus:
         motorbridge_controller, _ = self._require_connected()
         for name, value in zip(self.motor_names, hold, strict=True):
             self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
+        # Set before enabling, so disable_torque also turns off motors enabled by a failed enable_all.
         self.enabled = True
         motorbridge_controller.enable_all()
         self._enabled_at = time.monotonic()
