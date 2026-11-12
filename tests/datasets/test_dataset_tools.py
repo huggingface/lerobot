@@ -16,6 +16,7 @@
 """Tests for dataset tools utilities."""
 
 import shutil
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,17 +37,90 @@ from lerobot.datasets.dataset_tools import (
     merge_datasets,
     modify_features,
     modify_tasks,
+    recompute_stats,
     reencode_dataset,
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_episodes, load_info
+from lerobot.datasets.io_utils import load_episodes, load_info, load_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY, DUMMY_REPO_ID
 from tests.fixtures.dataset_factories import add_frames
 
 pytestmark = pytest.mark.dataset
+
+
+@pytest.mark.parametrize("operation", ["add", "recompute"])
+@pytest.mark.parametrize("native_unit,output_unit", [("m", "mm"), ("mm", "m"), ("m", "m"), ("mm", "mm")])
+def test_edits_preserve_native_depth_stats(
+    tmp_path: Path, operation: str, native_unit: str, output_unit: str
+) -> None:
+    """Reader-unit statistics must not be persisted and converted again on reopening."""
+    depth_key = "observation.images.depth"
+    source = LeRobotDataset.create(
+        "local/depth-stats",
+        root=tmp_path / "source",
+        fps=10,
+        use_videos=False,
+        features={
+            "state": {"dtype": "float32", "shape": (1,), "names": None},
+            depth_key: {
+                "dtype": "image",
+                "shape": (6, 8, 1),
+                "names": ["height", "width", "channels"],
+                "info": {"is_depth_map": True},
+            },
+        },
+    )
+    for episode in range(2):
+        for frame in range(3):
+            depth = np.full((6, 8, 1), 1 + episode + frame, dtype=np.float32)
+            if native_unit == "mm":
+                depth = (depth * 1000).astype(np.uint16)
+            source.add_frame(
+                {"state": np.array([episode * 3 + frame], dtype=np.float32), depth_key: depth, "task": "pick"}
+            )
+        source.save_episode()
+    source.finalize()
+    source = LeRobotDataset(source.repo_id, root=source.root, depth_output_unit=output_unit)
+    stored_stats = load_stats(source.root)
+    memory_stats = deepcopy(source.meta.stats)
+    original_data = {path: path.read_bytes() for path in source.root.glob("data/*/*.parquet")}
+    original_info = (source.root / "meta/info.json").read_bytes()
+
+    if operation == "add":
+        result = add_features(
+            source,
+            {"extra": (np.arange(6, dtype=np.float32), {"dtype": "float32", "shape": (1,), "names": None})},
+            output_dir=tmp_path / "added",
+            repo_id="local/added",
+        )
+    else:
+        result = recompute_stats(source)
+        recompute_stats(source, skip_image_video=False)
+
+    persisted = load_stats(result.root)
+    assert persisted is not None and stored_stats is not None and memory_stats is not None
+    assert source.meta.stats is not None
+    for key in (depth_key, "state"):
+        for stat, expected in stored_stats[key].items():
+            np.testing.assert_allclose(persisted[key][stat], expected, rtol=1e-6)
+            np.testing.assert_allclose(source.meta.stats[key][stat], memory_stats[key][stat], rtol=1e-6)
+    reopened = LeRobotDataset(result.repo_id, root=result.root)
+    assert reopened.meta.stats is not None
+    np.testing.assert_allclose(reopened.meta.stats[depth_key]["mean"], 2500)
+    np.testing.assert_allclose(
+        reopened.meta.stats[depth_key]["std"], np.std([1000, 2000, 3000, 2000, 3000, 4000])
+    )
+    np.testing.assert_array_equal(reopened.meta.stats[depth_key]["count"], [6])
+    for index in range(6):
+        np.testing.assert_allclose(reopened[index][depth_key], (1 + index // 3 + index % 3) * 1000)
+        np.testing.assert_array_equal(reopened[index]["state"], [index])
+        if operation == "add":
+            np.testing.assert_array_equal(reopened[index]["extra"], [index])
+    assert (source.root / "meta/info.json").read_bytes() == original_info
+    assert all(path.read_bytes() == data for path, data in original_data.items())
 
 
 @pytest.fixture(scope="module")
