@@ -13,12 +13,11 @@
 # limitations under the License.
 
 import abc
-import builtins
 import logging
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Self
 
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
@@ -32,8 +31,6 @@ from lerobot.utils.hub import HubMixin
 
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
-
-T = TypeVar("T", bound="PreTrainedRewardModel")
 
 
 class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
@@ -82,7 +79,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         config: RewardModelConfig | None = None,
@@ -95,7 +92,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         revision: str | None = None,
         strict: bool = False,
         **kwargs,
-    ) -> T:
+    ) -> Self:
         """
         The reward model is set in evaluation mode by default using `reward.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `reward.train()`.
@@ -140,7 +137,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         return reward
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+    def _load_as_safetensor(cls, model: Self, model_file: str, map_location: str, strict: bool) -> Self:
         missing_keys, unexpected_keys = load_model_as_safetensor(
             model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
         )

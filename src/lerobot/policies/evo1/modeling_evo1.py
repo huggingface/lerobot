@@ -14,17 +14,16 @@
 
 from __future__ import annotations
 
-import builtins
 from collections import deque
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Unpack
+from typing import Any, Self, Unpack
 
 import torch
 from torch import Tensor
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
+from lerobot.policies.pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 from ..rtc.modeling_rtc import RTCProcessor
@@ -73,7 +72,7 @@ class Evo1Policy(PreTrainedPolicy):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
@@ -86,7 +85,7 @@ class Evo1Policy(PreTrainedPolicy):
         revision: str | None = None,
         strict: bool | None = None,
         **kwargs,
-    ) -> T:
+    ) -> Self:
         if strict is None:
             strict = True
         vlm_hub_kwargs = kwargs.pop("vlm_hub_kwargs", None)

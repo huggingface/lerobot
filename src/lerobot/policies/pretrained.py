@@ -14,13 +14,12 @@
 from __future__ import annotations
 
 import abc
-import builtins
 import dataclasses
 import logging
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict, Unpack
 
 from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_INDEX_FILE, SAFETENSORS_SINGLE_FILE
@@ -51,8 +50,6 @@ else:
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-
-T = TypeVar("T", bound="PreTrainedPolicy")
 
 # Pinned far above any policy's total size so save_torch_state_dict always emits exactly one
 # `model.safetensors` (no shards, no index) — a constant, not a computed byte count.
@@ -195,7 +192,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
@@ -208,7 +205,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         revision: str | None = None,
         strict: bool = False,
         **kwargs,
-    ) -> T:
+    ) -> Self:
         """
         The policy is set in evaluation mode by default using `policy.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `policy.train()`.
@@ -293,7 +290,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         ]
 
     @classmethod
-    def _load_weight_files(cls, model: T, files: list[Path], map_location: str, strict: bool) -> T:
+    def _load_weight_files(cls, model: Self, files: list[Path], map_location: str, strict: bool) -> Self:
         """Dispatch a checkpoint to the policy's loader without writing a merged copy.
 
         Override `_load_checkpoint` to filter, rename or assign tensors across all shards.
@@ -318,8 +315,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_checkpoint(
-        cls, model: T, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
-    ) -> T:
+        cls, model: Self, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> Self:
         """Load a checkpoint, checking keys after all shards and load-state hooks have run.
 
         The default streams one shard at a time. Custom loaders can inspect the whole
@@ -351,7 +348,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return model
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+    def _load_as_safetensor(cls, model: Self, model_file: str, map_location: str, strict: bool) -> Self:
         """Compatibility entry point for a single weights file."""
         return cls._load_checkpoint(model, SafetensorsCheckpoint([Path(model_file)]), map_location, strict)
 
