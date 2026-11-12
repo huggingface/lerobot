@@ -68,13 +68,15 @@ def test_recompute_stats_skips_language_annotations(
     }
     if language_column == "language_persistent":
         row["timestamp"] = 0.0
-    data[language_column] = [[row] if i % 2 else [] for i in range(len(data))]
+        data[language_column] = [[row] for _ in range(len(data))]
+    else:
+        data[language_column] = [[row] if i % 2 else [] for i in range(len(data))]
     data.to_parquet(data_path)
     sample_dataset.meta.info.features[language_column] = language_feature_info()[language_column]
     write_info(sample_dataset.meta.info, sample_dataset.root)
 
     dataset = LeRobotDataset(sample_dataset.repo_id, root=sample_dataset.root)
-    assert dataset[0][language_column] == []
+    assert dataset[0][language_column] == ([row] if language_column == "language_persistent" else [])
     assert dataset[1][language_column][0]["content"] == row["content"]
     original_data = data_path.read_bytes()
     image_stats = dataset.meta.stats["observation.images.top"]
