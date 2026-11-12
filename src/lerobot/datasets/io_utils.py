@@ -264,7 +264,7 @@ def pil_to_chw_tensor(img: PILImage.Image) -> torch.Tensor:
     return transforms.ToTensor()(img)
 
 
-def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:
+def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[Any]]:
     """Convert a batch from a Hugging Face dataset to torch tensors.
 
     This transform function converts items from Hugging Face dataset format (pyarrow)
@@ -283,13 +283,14 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
     for key in items_dict:
         if key in LANGUAGE_COLUMNS:
             continue
-        first_item = items_dict[key][0]
-        if isinstance(first_item, PILImage.Image):
-            items_dict[key] = [pil_to_chw_tensor(img) for img in items_dict[key]]
-        elif first_item is None or isinstance(first_item, dict):
-            pass
-        else:
-            items_dict[key] = [x if isinstance(x, str) else torch.tensor(x) for x in items_dict[key]]
+        items_dict[key] = [
+            pil_to_chw_tensor(value)
+            if isinstance(value, PILImage.Image)
+            else value
+            if value is None or isinstance(value, str | dict | torch.Tensor)
+            else torch.tensor(value)
+            for value in items_dict[key]
+        ]
     return items_dict
 
 

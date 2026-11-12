@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import datasets
 import torch
@@ -96,6 +97,22 @@ class BaseDatasetReader(ABC):
 
     def __len__(self) -> int:
         return self.num_frames
+
+    @property
+    def supports_raw_reads(self) -> bool:
+        """Whether this reader implements the optional base-row read contract."""
+        return (
+            type(self).get_raw_item is not BaseDatasetReader.get_raw_item
+            and type(self).select_columns is not BaseDatasetReader.select_columns
+        )
+
+    def get_raw_item(self, idx: int) -> dict:
+        """Read one base row using the default tensor conversion."""
+        raise NotImplementedError("This reader does not support base-row reads.")
+
+    def select_columns(self, column_names: str | list[str]) -> Any:
+        """Return a read-only projection using this reader's base-row semantics."""
+        raise NotImplementedError("This reader does not support column projection.")
 
     def set_image_transforms(self, image_transforms: Callable | None) -> None:
         """Replace the transform applied to visual observations."""
@@ -226,6 +243,18 @@ class DatasetReader(BaseDatasetReader):
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
+
+    def _loaded_dataset(self) -> datasets.Dataset:
+        """Return the active HF dataset, loading it on first access."""
+        return self.hf_dataset if self.hf_dataset is not None else self.load_and_activate()
+
+    def select_columns(self, column_names: str | list[str]) -> datasets.Dataset:
+        """Keep the default backend's existing HF Dataset return type."""
+        return self._loaded_dataset().select_columns(column_names)
+
+    def get_raw_item(self, idx: int) -> dict:
+        """Read an HF base row with its existing tensor conversion."""
+        return self._loaded_dataset()[idx]
 
     def _validate_language_columns_declared(self, features: datasets.Features) -> None:
         """Require language columns stored in Parquet to be declared in metadata."""
