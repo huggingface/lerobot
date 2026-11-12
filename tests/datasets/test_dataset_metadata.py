@@ -16,11 +16,14 @@
 """Contract tests for LeRobotDatasetMetadata."""
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+import pyarrow.parquet as pq
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.utils import INFO_PATH
@@ -428,6 +431,40 @@ def test_finalize_flushes_buffered_metadata(tmp_path):
     assert episodes_dir.exists()
     parquet_files = list(episodes_dir.rglob("*.parquet"))
     assert len(parquet_files) > 0
+
+
+@pytest.mark.parametrize(
+    "key,first_value,next_value",
+    [
+        ("stats/state/min", np.array([0]), np.array([0.5])),
+        ("stats/state/max", np.array([0]), np.array([float(2**63)])),
+        ("stats/state/min", np.array([0.0]), np.array([2**53 + 1])),
+        ("stats/state/count", np.array([0]), np.array([1.0])),
+        ("custom", np.array([0]), np.array([1.0])),
+    ],
+)
+def test_metadata_schema_rejects_lossy_extrema_and_unrelated_type_changes(
+    tmp_path: Path, key: str, first_value: np.ndarray, next_value: np.ndarray
+) -> None:
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/schema",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=tmp_path / "ds",
+        use_videos=False,
+        metadata_buffer_size=1,
+    )
+    meta._save_episode_metadata({"episode_index": 0, "length": 1, key: first_value})
+    try:
+        with pytest.raises(ValueError):
+            meta._save_episode_metadata({"episode_index": 1, "length": 1, key: next_value})
+        np.testing.assert_array_equal(meta._metadata_buffer[0][key][0], next_value)
+    finally:
+        # Replace the rejected synthetic value so the pending writer can finalize normally.
+        meta._metadata_buffer[0][key] = [np.array([1], dtype=first_value.dtype)]
+        meta.finalize()
+    rows = pq.read_table(sorted((meta.root / "meta/episodes").glob("*/*.parquet"))).to_pylist()
+    assert [row[key] for row in rows] == [[0], [1]]
 
 
 # ── Tools accessor ───────────────────────────────────────────────────

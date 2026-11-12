@@ -184,6 +184,17 @@ class LeRobotDatasetMetadata:
             # different parquet shards with different column orders). Realign to the
             # writer's established schema so `write_table` doesn't reject a reordered match.
             table = table.select(self._pq_writer.schema.names)
+            # Singleton integer extrema and multi-frame extrema can infer different types.
+            # Normalize only those columns, rejecting truncation or overflow.
+            extrema_types = {pa.list_(pa.int64()), pa.list_(pa.float64())}
+            for field in self._pq_writer.schema:
+                if (
+                    field.name.startswith("stats/")
+                    and field.name.rsplit("/", 1)[-1] in ("min", "max")
+                    and {table.schema.field(field.name).type, field.type} == extrema_types
+                ):
+                    column = table[field.name].cast(field.type, safe=True)
+                    table = table.set_column(table.schema.get_field_index(field.name), field, column)
 
         self._pq_writer.write_table(table)
 
