@@ -14,6 +14,7 @@
 
 """Exercise the robot contract without a robot or the optional Menlo SDK."""
 
+import time
 from dataclasses import dataclass
 from math import radians
 from types import SimpleNamespace
@@ -40,7 +41,9 @@ class Velocity:
 @pytest.fixture
 def setup_robot(monkeypatch, tmp_path):
     state = SimpleNamespace(
-        joints=tuple(SimpleNamespace(name=name, pos=i / 100) for i, name in enumerate(ASIMOV_JOINTS)),
+        joints=tuple(
+            SimpleNamespace(name=name, pos=i / 100, vel=0.0) for i, name in enumerate(ASIMOV_JOINTS)
+        ),
         gravity=(0.0, 0.0, -1.0),
         gyro=(0.1, 0.2, 0.3),
         quat=(1.0, 0.0, 0.0, 0.0),
@@ -422,11 +425,96 @@ def test_disconnected_calls_fail(setup_robot):
         {"control_mode": "torque"},
         {"control_mode": "arms"},  # An unsupported robot would fall with the walking policy off.
         {"control_mode": "arms", "robot_supported": True, "max_arm_step_rad": 0},
+        {"control_mode": "whole_body"},  # Not yet validated off the gantry.
+        {"is_simulation": True},  # The sim has no onboard walking policy.
+        {"control_mode": "whole_body", "is_simulation": True, "input_timeout_s": 0},
     ],
 )
 def test_invalid_config(kwargs):
     with pytest.raises(ValueError):
         AsimovConfig(**{"host": "192.0.2.10", **kwargs})
+
+
+def test_simulation_needs_no_host():
+    AsimovConfig(control_mode="whole_body", is_simulation=True)
+
+
+class FakeController:
+    control_dt = 0.001
+    leg_defaults = np.full(12, 0.05)
+    default_pose = np.concatenate([leg_defaults, np.full(len(ASIMOV_JOINTS) - 12, 0.2)])
+    kp = np.ones(len(ASIMOV_JOINTS))
+    kd = np.ones(len(ASIMOV_JOINTS))
+
+    def __init__(self, repo_id):
+        self.commands = []
+
+    def reset(self):
+        pass
+
+    def run_step(self, q, dq, gyro, gravity, command, upper_body):
+        self.commands.append(np.array(command))
+        return upper_body
+
+
+@pytest.fixture
+def whole_body(setup_robot, monkeypatch):
+    pytest.importorskip("menlo")
+    from lerobot.controllers.asimov import locomotion
+
+    monkeypatch.setattr(locomotion, "AsimovLocomotionController", FakeController)
+    env = setup_robot
+    env.state.mode = 1
+    robot = env.make(control_mode="whole_body", robot_supported=True, controller_ease_in_s=0.005)
+    robot.connect()
+    deadline = time.monotonic() + 2.0
+    while not robot._controller.commands and time.monotonic() < deadline:
+        time.sleep(0.001)
+    return robot
+
+
+def test_ankle_conversion_matches_sdk_wire_format():
+    pytest.importorskip("menlo")
+    from menlo.asimov.robots import trajectory_wire_positions
+
+    joints = np.zeros(len(ASIMOV_JOINTS))
+    joints[[4, 5, 10, 11]] = (0.2, -0.05, -0.3, 0.08)
+    motors = module.joints_to_motors(joints)
+    assert trajectory_wire_positions(tuple(motors)) == pytest.approx(joints)
+    assert module.motors_to_joints(motors) == pytest.approx(joints)
+
+
+def test_whole_body_streams_policy_targets_with_policy_gains(whole_body, setup_robot):
+    assert set(whole_body.action_features) == {*BASE_ACTIONS, *ARM_ACTIONS}
+    (positions,), kwargs = setup_robot.client.trajectory.call_args
+    assert kwargs["kp"] == pytest.approx(FakeController.kp) and kwargs["timeout"] == 0.0
+    assert module.motors_to_joints(positions)[12:] == pytest.approx(FakeController.default_pose[12:])
+    setup_robot.client.set_velocity.assert_not_called()
+
+
+def test_whole_body_actions_only_update_controller_input(whole_body, setup_robot):
+    elbow = ASIMOV_JOINTS.index("L_Elbow")
+    sent = whole_body.send_action({"x.vel": 9.0, "theta.vel": -10.0, "L_Elbow.pos": 1.0})
+    assert sent["x.vel"] == pytest.approx(whole_body.config.max_linear_velocity)
+    assert sent["y.vel"] == 0.0 and sent["theta.vel"] == pytest.approx(-10.0)
+    assert sent["L_Elbow.pos"] == pytest.approx(0.2 + whole_body.config.max_arm_step_rad)
+    assert whole_body._upper_targets[elbow] == pytest.approx(sent["L_Elbow.pos"])
+    controller = whole_body._controller
+    n = len(controller.commands)
+    deadline = time.monotonic() + 2.0
+    while len(controller.commands) <= n + 1 and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert controller.commands[-1] == pytest.approx([0.3, 0.0, radians(-10.0)])
+    whole_body.stop()
+    time.sleep(0.01)
+    assert controller.commands[-1] == pytest.approx([0.0, 0.0, 0.0])
+
+
+def test_whole_body_surfaces_damp_from_send_action(whole_body, setup_robot):
+    setup_robot.state.mode = 0
+    whole_body._controller_thread.join(timeout=2.0)
+    with pytest.raises(RuntimeError, match="controller stopped"):
+        whole_body.send_action({"x.vel": 0.1})
 
 
 def test_cli_config_roundtrip():
