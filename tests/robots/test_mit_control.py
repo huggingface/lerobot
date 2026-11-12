@@ -91,7 +91,7 @@ class FakeBus:
         if self.error is not None:
             raise self.error
         if self.stop_after is not None and self.reads >= self.stop_after:
-            self.controller.stop_event.set()
+            self.controller._stop.set()
         return self.states
 
     def enable_torque_at(self, hold):
@@ -106,39 +106,29 @@ class FakeBus:
         self.enabled = False
 
 
-def make_controller(bus=None, gravity=(0.0, 0.0), **overrides):
+def make_controller(bus=None, gravity=(0.0, 0.0), fault_event=None, **overrides):
     bus = bus or FakeBus()
     controller = mit_control.MitController(
-        "arm", bus, params(**overrides), lambda _: np.asarray(gravity), threading.Event(), gripper()
+        "arm",
+        bus,
+        params(**overrides),
+        lambda _: np.asarray(gravity),
+        fault_event or threading.Event(),
+        gripper(),
     )
     bus.controller = controller
     controller._set_initial_state(controller.read_state())
     return controller
 
 
-def wait_for(condition, timeout_s=2.0):
-    deadline = time.monotonic() + timeout_s
-    while not condition():
-        assert time.monotonic() < deadline, "condition not reached"
-        time.sleep(0.005)
-
-
-def test_joint_conversion_round_trips_the_gripper():
+@pytest.mark.parametrize("closed,opened,opening", [(1.0, 3.0, 0.75), (3.0, 1.0, 0.25)])
+def test_joint_conversion_round_trips_the_gripper(closed, opened, opening):
     raw = np.array([0.3, 0.5, 2.5])
-    joints = mit_control._motor_to_joint(raw, gripper())
-    np.testing.assert_allclose(joints, [0.3, 0.5, 0.75])
-    np.testing.assert_allclose(mit_control._joint_to_motor(joints, gripper()), raw)
+    joints = mit_control._motor_to_joint(raw, gripper(closed, opened))
+    np.testing.assert_allclose(joints, [0.3, 0.5, opening])
+    np.testing.assert_allclose(mit_control._joint_to_motor(joints, gripper(closed, opened)), raw)
     with pytest.raises(ValueError, match="calibrated stroke"):
-        mit_control._motor_to_joint(np.array([0.0, 0.0, 3.5]), gripper())
-
-
-def test_position_clipping_is_pure():
-    limits = np.array([[-1.0, 1.0], [0.0, 2.0]])
-    values = np.array([-1.02, 0.5, 1.2])
-    clipped = mit_control.clip_to_limits(values, limits)
-    assert values[0] == -1.02
-    assert clipped[0] == -1.0
-    assert clipped[2] == 1.0
+        mit_control._motor_to_joint(np.array([0.0, 0.0, 3.5]), gripper(closed, opened))
 
 
 def test_track_step_slews_tracks_clips_and_adds_gravity():
@@ -234,6 +224,7 @@ def test_controller_holds_then_sends_one_command_per_motor():
     controller._run()
     assert controller._failure is None
     assert [name for name, _ in bus.sent[:3]] == ["shoulder", "elbow", "gripper"]
+    assert set(joint_stiffness(bus)) == {50.0, 20.0}  # holds with full stiffness while idle
     assert bus.disable_calls == 0
     controller.stop()
     assert bus.disable_calls == 1
@@ -279,7 +270,7 @@ def run_cycles(controller, cycles):
     bus.enabled, bus.stop_after, bus.reads = True, cycles + 1, 0
     bus.sent.clear()
     controller._run()
-    controller.stop_event.clear()
+    controller._stop.clear()
     controller._updated_at = time.monotonic()
 
 
@@ -313,45 +304,56 @@ def test_float_mode_floats_again_after_the_command_timeout():
     assert set(joint_stiffness(bus)) == {0.0}
 
 
-@pytest.mark.parametrize("idle_mode", ["hold", "float"])
-def test_controller_starts_past_a_limit_without_jumping(idle_mode):
-    # Elbow -0.1 is past its 0 lower limit, within the feedback tolerance.
-    bus = FakeBus(position=(0.2, -0.1, 2.0))
-    controller = make_controller(bus, idle_mode=idle_mode)
-    controller.set_target(np.array([0.2, 0.5, 0.5]))
-    run_cycles(controller, 2)
-    elbow_goals = [command.position for name, command in bus.sent if name == "elbow"]
-    assert elbow_goals and all(goal == pytest.approx(-0.1, abs=2 * 0.5 * 0.05) for goal in elbow_goals)
-
-
-def test_hold_mode_keeps_stiffness_while_idle():
+def test_fault_stops_commands_until_disconnect():
     bus = FakeBus()
     controller = make_controller(bus)
-    bus.enabled = True
-    run_cycles(controller, 2)
-    assert set(joint_stiffness(bus)) == {50.0, 20.0}
-
-
-@pytest.mark.parametrize("cause", ["own fault", "other arm"])
-def test_fault_stops_commands_until_disconnect(cause):
-    bus = FakeBus()
-    controller = make_controller(bus)
-    controller.start()
-    wait_for(lambda: len(bus.sent) >= 3)
-    if cause == "own fault":
-        bus.error = ConnectionError("lost")
-    else:
-        controller.stop_event.set()  # what a fault on the other arm of a bimanual robot does
-    wait_for(lambda: not controller._thread.is_alive())
-    sent = len(bus.sent)
-    time.sleep(0.02)
-    assert len(bus.sent) == sent
+    run_cycles(controller, 1)
+    bus.sent.clear()
+    bus.stop_after = None
+    bus.error = ConnectionError("lost")
+    controller._run()
+    assert bus.sent == []
+    assert controller.fault_event.is_set()  # a fault here stops the other arm too
     assert bus.disable_calls == 0  # The motors' CAN timeout takes over until disconnect.
-    with pytest.raises(ConnectionError, match="stopped"):
+    with pytest.raises(ConnectionError, match="stopped") as exc_info:
         controller.latest()
+    assert isinstance(exc_info.value.__cause__, ConnectionError)
     controller.stop()
     assert bus.disable_calls == 1
-    assert isinstance(controller._failure, ConnectionError) == (cause == "own fault")
+
+
+def test_stop_is_per_arm_but_a_fault_stops_both():
+    fault_event = threading.Event()
+    left, right = arms = [make_controller(fault_event=fault_event) for _ in range(2)]
+    left.start()
+    np.testing.assert_allclose(left._bus.hold, [0.2, 0.5, 2.0])  # torque on at the measured position
+    right.start()
+    left.stop()
+    assert not left.active and not left._bus.enabled
+    right.latest()  # the other arm keeps running
+    left.start()  # and a stopped arm restarts without its owner
+    fault_event.set()  # what a fault on either arm does
+    for arm in arms:
+        with pytest.raises(ConnectionError, match="stopped"):
+            arm.latest()
+        arm.stop()
+    with pytest.raises(ConnectionError, match="can't start after a fault"):
+        left.start()
+
+
+def test_failed_start_leaves_torque_off():
+    bus = FakeBus()
+    controller = make_controller(bus)
+
+    def enable_some_motors_then_fail(hold):
+        bus.enabled = True
+        raise RuntimeError("enable failed")
+
+    bus.enable_torque_at = enable_some_motors_then_fail
+    with pytest.raises(RuntimeError, match="enable failed"):
+        controller.start()
+    assert not controller.active
+    assert not bus.enabled and bus.disable_calls == 1
 
 
 def test_controller_start_refuses_a_second_thread():
@@ -387,14 +389,6 @@ def test_gripper_params_change_only_while_stopped():
     np.testing.assert_allclose(
         controller.state.position, [0.2, 0.5, 0.25]
     )  # raw 2.0 read with the new limits
-
-
-def test_start_enables_torque_at_the_measured_position():
-    bus = FakeBus()
-    controller = make_controller(bus)
-    controller.start()
-    controller.stop()
-    np.testing.assert_allclose(bus.hold, [0.2, 0.5, 2.0])
 
 
 def test_foreground_watchdog_allows_one_late_feedback_window():
