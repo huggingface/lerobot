@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
@@ -20,6 +21,8 @@ import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+import pandas as pd
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
@@ -95,20 +98,31 @@ class _FakeModel:
 
 
 class _FakeDataset:
-    absolute_to_relative_idx: dict[int, int] | None = None
-
     def __init__(self, num_frames: int = 5, *, with_state: bool = True):
         self.meta = SimpleNamespace(
             episodes=[{"dataset_from_index": 0, "dataset_to_index": num_frames}],
             stats={"observation.state": {}},
+            tasks=pd.DataFrame({"task_index": [0, 1]}, index=["another task", "pick up the cube"]),
+            features={IMAGE_KEY: {}, "task_index": {}, **({STATE_KEY: {}} if with_state else {})},
         )
-        self.with_state = with_state
+        self.frame_requests: list[tuple[int, list[str], list[int]]] = []
 
-    def __getitem__(self, position: int):
-        sample = {IMAGE_KEY: torch.full((3, 2, 2), float(position)), "task": "pick up the cube"}
-        if self.with_state:
-            sample[STATE_KEY] = torch.full((2,), float(position))
-        return sample
+    def get_frames(
+        self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
+    ) -> dict[str, torch.Tensor]:
+        assert set(keys) <= self.meta.features.keys()
+        self.frame_requests.append((episode_index, list(keys), list(frame_indices)))
+        return {
+            key: torch.stack(
+                [
+                    torch.tensor(1)
+                    if key == "task_index"
+                    else torch.full((3, 2, 2) if key == IMAGE_KEY else (2,), float(position))
+                    for position in frame_indices
+                ]
+            )
+            for key in keys
+        }
 
 
 @pytest.fixture
@@ -125,11 +139,13 @@ def encoder(monkeypatch):
     return step
 
 
-def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder):
+@pytest.mark.parametrize("with_state", [True, False])
+def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder, with_state: bool):
     model = _FakeModel()
     scorer = SARMFrameScorer(model, batch_size=2)
+    dataset = _FakeDataset(with_state=with_state)
 
-    result = scorer.score_episode(_FakeDataset(), 0)
+    result = scorer.score_episode(dataset, 0)
 
     np.testing.assert_array_equal(result.frame_indices, np.arange(5))
     np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, 0.2, 0.3, 0.4])
@@ -138,6 +154,10 @@ def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder):
     assert [call["index"] for call in encoder.calls] == [[0, 1], [2, 3], [4]]
     assert encoder.calls[0]["task"] == "pick up the cube"
     assert encoder.received == {"dataset_stats": {"observation.state": {}}, "dataset_meta": None}
+    keys = [IMAGE_KEY, STATE_KEY] if with_state else [IMAGE_KEY]
+    assert dataset.frame_requests == [(0, ["task_index"], [0]), (0, keys, list(range(5)))]
+    assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL}
+    assert scorer.descriptors[SPARSE_PROGRESS_SIGNAL].greater_is_better is True
     assert scorer.name == "sarm"
     assert scorer.provenance["scorer"]["options"] == {
         "image_key": IMAGE_KEY,
@@ -171,24 +191,28 @@ def test_sarm_frame_scorer_interpolates_between_strided_frames(encoder):
 
 def test_sarm_frame_scorer_scores_both_heads_of_a_dual_head_model(encoder):
     model = _FakeModel(dual_heads=True)
+    scorer = SARMFrameScorer(model, head_mode="both")
 
-    result = SARMFrameScorer(model, head_mode="both").score_episode(_FakeDataset(num_frames=2), 0)
+    result = scorer.score_episode(_FakeDataset(num_frames=2), 0)
 
     np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1])
     np.testing.assert_allclose(result.signals[DENSE_PROGRESS_SIGNAL], [0.5, 0.6])
+    assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL, DENSE_PROGRESS_SIGNAL}
 
 
 def test_sarm_frame_scorer_falls_back_to_the_sparse_head_without_dual_heads(encoder):
     scorer = SARMFrameScorer(_FakeModel(dual_heads=False), head_mode="dense")
 
     assert scorer.heads == ["sparse"]
+    assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL}
 
 
 def test_sarm_frame_scorer_stores_nan_for_frames_that_fail(encoder):
-    result = SARMFrameScorer(_FakeModel(fail_on=2), batch_size=1).score_episode(_FakeDataset(num_frames=4), 0)
+    scorer = SARMFrameScorer(_FakeModel(fail_on=2), batch_size=1)
+    result = scorer.score_episode(_FakeDataset(num_frames=4), 0)
 
     np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, np.nan, 0.3])
-    assert result.descriptors[SPARSE_PROGRESS_SIGNAL].allow_nan is True
+    assert scorer.descriptors[SPARSE_PROGRESS_SIGNAL].allow_nan is True
 
 
 def test_make_sarm_frame_scorer_forwards_options():

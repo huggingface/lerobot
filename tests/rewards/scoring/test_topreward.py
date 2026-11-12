@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
@@ -21,9 +22,13 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pandas as pd
+
 from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.annotations import load_annotations
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
+from lerobot.rewards import score_dataset
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.scoring_topreward import (
     PROGRESS_SIGNAL,
@@ -67,13 +72,29 @@ def test_make_topreward_frame_scorer_builds_processor_without_frame_cap(monkeypa
 
 
 class _FakeDataset:
-    absolute_to_relative_idx: dict[int, int] | None = None
-
     def __init__(self, episodes):
-        self.meta = SimpleNamespace(episodes=episodes)
+        self.meta = SimpleNamespace(
+            episodes=episodes,
+            tasks=pd.DataFrame({"task_index": [0, 1]}, index=["another task", "pick up the cube"]),
+        )
+        self.frame_requests: list[tuple[int, list[str], list[int]]] = []
 
-    def __getitem__(self, position: int):
-        return {IMAGE_KEY: torch.full((3, 2, 2), float(position)), "task": "pick up the cube"}
+    def get_frames(
+        self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
+    ) -> dict[str, torch.Tensor]:
+        self.frame_requests.append((episode_index, list(keys), list(frame_indices)))
+        episode_start = self.meta.episodes[episode_index]["dataset_from_index"]
+        return {
+            key: torch.stack(
+                [
+                    torch.tensor(1)
+                    if key == "task_index"
+                    else torch.full((3, 2, 2), float(episode_start + position))
+                    for position in frame_indices
+                ]
+            )
+            for key in keys
+        }
 
 
 @dataclass
@@ -81,8 +102,10 @@ class _PrefixLengthEncoderStep(ProcessorStep):
     """Stand in for TOPReward's encoder: record each prefix and write its length."""
 
     prefix_shapes: list[tuple[int, ...]] = field(default_factory=list)
+    tasks: list[str | None] = field(default_factory=list)
 
     def __call__(self, transition):
+        self.tasks.append(transition[TransitionKey.COMPLEMENTARY_DATA].get("task"))
         observation = dict(transition[TransitionKey.OBSERVATION])
         frames = observation[IMAGE_KEY]
         self.prefix_shapes.append(tuple(frames.shape))
@@ -126,17 +149,25 @@ class _FakeModel:
         return torch.tensor([float(batch["observation.prefix_length"]) - 5.0])
 
 
-def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress():
+@pytest.mark.parametrize("task_key", ["task", "missing_task"])
+def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress(monkeypatch, task_key: str):
+    monkeypatch.setattr(_FakeModel.config, "task_key", task_key)
     encoder = _FakeEncoder()
     scorer = TOPRewardFrameScorer(_FakeModel(), encoder, num_samples=3)
+    dataset = _FakeDataset([{"dataset_from_index": 0, "dataset_to_index": 5}])
 
-    result = scorer.score_episode(_FakeDataset([{"dataset_from_index": 0, "dataset_to_index": 5}]), 0)
+    result = scorer.score_episode(dataset, 0)
 
     assert encoder.prefix_shapes == [(1, 1, 3, 2, 2), (1, 3, 3, 2, 2), (1, 5, 3, 2, 2)]
     np.testing.assert_array_equal(result.frame_indices, np.arange(5))
     np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.0, 0.25, 0.5, 0.75, 1.0])
     assert result.signals[PROGRESS_SIGNAL].dtype == np.float32
-    assert result.descriptors[PROGRESS_SIGNAL].bounds == (0.0, 1.0)
+    assert scorer.descriptors[PROGRESS_SIGNAL].bounds == (0.0, 1.0)
+    assert scorer.descriptors[PROGRESS_SIGNAL].greater_is_better is True
+    expected_requests = [(0, ["task_index"], [0])] if task_key == "task" else []
+    assert dataset.frame_requests == [*expected_requests, (0, [IMAGE_KEY], list(range(5)))]
+    task = "pick up the cube" if task_key == "task" else None
+    assert encoder.steps[0].tasks == [task] * 3
     assert scorer.name == "topreward"
     assert scorer.provenance["scorer"]["options"]["num_samples"] == 3
     assert scorer.provenance["scorer"]["options"]["vlm_name"] == "fake/vlm"
@@ -144,7 +175,6 @@ def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress(
 
 def test_topreward_scores_publish_to_the_dataset(tmp_path):
     class FakeDataset(LeRobotDataset):
-        absolute_to_relative_idx = None
         episodes = None
         reader = SimpleNamespace()
         writer = None
@@ -159,22 +189,32 @@ def test_topreward_scores_publish_to_the_dataset(tmp_path):
                 total_frames=5,
                 storage_format="lerobot",
                 episodes=[{"dataset_from_index": 0, "dataset_to_index": 5}],
+                tasks=pd.DataFrame({"task_index": [0]}, index=["pick up the cube"]),
             )
 
-        def __getitem__(self, position: int):
-            return {IMAGE_KEY: torch.full((3, 2, 2), float(position)), "task": "pick up the cube"}
+        def get_frames(
+            self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
+        ) -> dict[str, torch.Tensor]:
+            return {
+                key: torch.stack(
+                    [
+                        torch.tensor(0) if key == "task_index" else torch.full((3, 2, 2), float(position))
+                        for position in frame_indices
+                    ]
+                )
+                for key in keys
+            }
 
     dataset = FakeDataset()
-    dataset.add_score(TOPRewardFrameScorer(_FakeModel(), _FakeEncoder(), num_samples=3))
+    score_dataset(dataset, TOPRewardFrameScorer(_FakeModel(), _FakeEncoder(), num_samples=3))
 
-    assert list(dataset.read_score("topreward")[PROGRESS_SIGNAL]) == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert list(load_annotations(dataset, "topreward")[PROGRESS_SIGNAL]) == [0.0, 0.25, 0.5, 0.75, 1.0]
 
 
 def test_topreward_frame_scorer_supports_episode_filtered_dataset_views():
     dataset = _FakeDataset(
         [{"dataset_from_index": 0, "dataset_to_index": 5}, {"dataset_from_index": 5, "dataset_to_index": 7}]
     )
-    dataset.absolute_to_relative_idx = {5: 0, 6: 1}
     encoder = _FakeEncoder()
 
     result = TOPRewardFrameScorer(_FakeModel(), encoder, num_samples=None).score_episode(dataset, 1)

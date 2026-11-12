@@ -68,7 +68,7 @@ class ComputeWorkerScores(PipelineStep):
 
         from lerobot.configs.rewards import RewardModelConfig
         from lerobot.datasets import LeRobotDataset
-        from lerobot.rewards import make_frame_scorer, make_reward_model
+        from lerobot.rewards import make_frame_scorer, make_reward_model, score_dataset
         from lerobot.utils.utils import init_logging
 
         init_logging()
@@ -84,7 +84,7 @@ class ComputeWorkerScores(PipelineStep):
             self.reward_model_path, cli_overrides=[f"--device={self.device}"]
         )
         scorer = make_frame_scorer(make_reward_model(config), head_mode=self.head_mode, stride=self.stride)
-        dataset.add_score(scorer, name=f"{self.score_name}-rank{rank:05d}", episodes=my_episodes)
+        score_dataset(dataset, scorer, name=f"{self.score_name}-rank{rank:05d}", episodes=my_episodes)
 
 
 class MergeWorkerScores(PipelineStep):
@@ -101,6 +101,11 @@ class MergeWorkerScores(PipelineStep):
         import logging
 
         from lerobot.datasets import LeRobotDataset
+        from lerobot.datasets.annotations import (
+            list_annotations,
+            merge_annotations,
+            push_annotations_to_hub,
+        )
         from lerobot.utils.utils import init_logging
 
         init_logging()
@@ -109,14 +114,16 @@ class MergeWorkerScores(PipelineStep):
             return
 
         dataset = LeRobotDataset(self.repo_id, root=self.dataset_root)
-        worker_scores = [name for name in dataset.list_scores() if name.startswith(f"{self.score_name}-rank")]
+        worker_scores = [
+            name for name in list_annotations(dataset) if name.startswith(f"{self.score_name}-rank")
+        ]
         if not worker_scores:
             raise ValueError(f"No worker scores named {self.score_name}-rank* in {dataset.root}")
         logging.info(f"Merging {len(worker_scores)} worker scores into {self.score_name!r}")
-        dataset.merge_scores(worker_scores, name=self.score_name)
+        merge_annotations(dataset, worker_scores, name=self.score_name)
 
         if self.push_to_hub:
-            dataset.push_score_to_hub(self.score_name)
+            push_annotations_to_hub(dataset, self.score_name)
 
 
 def make_compute_executor(
