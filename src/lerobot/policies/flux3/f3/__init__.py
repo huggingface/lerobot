@@ -26,7 +26,7 @@ Encoding also works without NATTEN and on the CPU: the attention then runs in pl
 from . import packing, sampling
 from .positional import batched_prc_audio, batched_prc_vid, times_to_ids
 from .text_encoder import VEC_DIM, load_text_encoder, text_context
-from .transformer import JointSingleSeq, JointSingleSeqParams
+from .transformer import JointSingleSeq, JointSingleSeqParams, TextStream
 from .video_vae import load_video_vae
 from .wiring import (
     REQUIRED_CONTENT_STREAMS,
@@ -44,6 +44,7 @@ __all__ = [
     "VEC_DIM",
     "JointSingleSeq",
     "JointSingleSeqParams",
+    "TextStream",
     "action_dit_params",
     "batched_prc_audio",
     "batched_prc_vid",

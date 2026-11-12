@@ -711,6 +711,24 @@ def test_policy_single_layout_relative_actions_and_cfg_one(fake_vae):
     assert torch.isfinite(loss) and info["n_valid_windows"] == 2
 
 
+@pytest.mark.parametrize("late_blocks", [0, 1])
+@pytest.mark.parametrize(("guidance", "captions"), [(1.0, 1), (4.0, 2)])
+def test_prediction_runs_the_text_blocks_once_per_caption(
+    fake_vae, monkeypatch, guidance, captions, late_blocks
+):
+    dit = {**TINY_DIT, "depth_late_blocks": late_blocks}  # late blocks read the stream's late modulation
+    policy = Flux3Policy(single_config(num_inference_steps=4, guidance_scale=guidance, dit_config=dit)).eval()
+    calls = []
+    policy.dit.txt_mode_blocks[0].register_forward_hook(lambda *_: calls.append(None))
+    obs = {"observation.images.top": torch.rand(1, 3, 64, 96), OBS_STATE: torch.rand(1, 6), "task": ["stack"]}
+    chunk = policy.predict_action_chunk(obs)
+    assert len(calls) == captions  # the task, and the empty caption when guided; not once per step
+    # Every step gets what a DiT computing the text itself would.
+    eager = policy.dit.forward
+    monkeypatch.setattr(policy.dit, "forward", lambda *args, text_stream=None, **kw: eager(*args, **kw))
+    assert torch.equal(policy.predict_action_chunk(obs), chunk)
+
+
 def test_gripper_flip_is_applied_symmetrically(fake_vae):
     cfg = droid_config()
     policy = Flux3Policy(cfg)
