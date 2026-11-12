@@ -323,8 +323,6 @@ An environment's versions are its Hub commits. A revision after `@` (a commit, a
 | `lerobot-env-server --sim.kwargs=...`         | The server's `make_env` options, e.g. `'{make_env_kwargs: {episode_length: 900}}'`                  |
 | `lerobot-env-server --sim.<key>=...`          | Override a `LEROBOT_SIM` value, e.g. `--sim.fps=15`                                                 |
 
-In Python, `make_env("user/repo", trust_remote_code=True)` from `lerobot.envs` returns the repository's vector envs as `make_env` built them, without LeRobot's conventions. Prefer `HubEnvConfig`, as in [Test before publishing](#test-before-publishing): it builds them as `lerobot-eval` and the server do.
-
 ### Security
 
 Running an EnvHub environment runs its code, with your permissions. LeRobot never runs it without your explicit consent: `trust_remote_code` in your process, `--trust_remote_code=true` on the server. Before giving it:
