@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.rewards.sarm import SARMConfig, SARMPrediction, SARMRewardModel
+from lerobot.rewards.sarm import SARMConfig, SARMOutput, SARMRewardModel
 
 
 class _FakeStageModel(torch.nn.Module):
@@ -89,7 +89,7 @@ def test_sarm_predict_progress_returns_typed_frame_signals(head_mode: str, num_s
 
     prediction = model.predict_progress(batch, head_mode=head_mode)
 
-    assert isinstance(prediction, SARMPrediction)
+    assert isinstance(prediction, SARMOutput)
     assert prediction.progress.shape == (2, 4)
     assert prediction.stage_probabilities.shape == (2, 4, num_stages)
     assert prediction.stage_confidence.shape == (2, 4)

@@ -63,7 +63,7 @@ from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.utils.constants import OBS_PREFIX
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from ..prediction import ProgressPrediction
+from ..prediction import ProgressOutput
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoModelForImageTextToText
@@ -135,7 +135,7 @@ class RobometerPredictionHead(nn.Sequential):
 
 
 @dataclass(frozen=True)
-class RobometerPrediction(ProgressPrediction):
+class RobometerOutput(ProgressOutput):
     """Task progress and success probability for each frame, from 0 to 1, shaped `(batch, time)`."""
 
     success_probability: Tensor
@@ -222,7 +222,7 @@ class RobometerRewardModel(PreTrainedRewardModel):
         self.success_head.to(dtype=model_dtype)
         self.frame_pool_attn.to(dtype=model_dtype)
 
-    def predict_progress(self, batch: Mapping[str, Any]) -> RobometerPrediction:
+    def predict_progress(self, batch: Mapping[str, Any]) -> RobometerOutput:
         """Predict task progress and success probability for every frame.
 
         It changes neither the model mode nor gradients: for inference, call it in `eval()` mode under
@@ -233,7 +233,7 @@ class RobometerRewardModel(PreTrainedRewardModel):
                 Output of the RoboMeter preprocessor.
 
         Returns:
-            `RobometerPrediction`: Values for every frame; the caller picks frames and thresholds.
+            `RobometerOutput`: Values for every frame; the caller picks frames and thresholds.
         """
         inputs = {
             key: batch[f"{ROBOMETER_FEATURE_PREFIX}{key}"]
@@ -259,7 +259,7 @@ class RobometerRewardModel(PreTrainedRewardModel):
         progress_pred = progress_pred.clamp(0.0, 1.0)
         success_probs = torch.sigmoid(success_logits.float())
 
-        return RobometerPrediction(
+        return RobometerOutput(
             progress=progress_pred,
             success_probability=success_probs,
         )

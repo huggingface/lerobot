@@ -30,7 +30,7 @@ from lerobot.datasets.annotations import load_annotations
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep, batch_to_transition
 from lerobot.rewards import score_dataset
-from lerobot.rewards.robometer.modeling_robometer import RobometerPrediction
+from lerobot.rewards.robometer.modeling_robometer import RobometerOutput
 from lerobot.rewards.robometer.scoring_robometer import (
     PROGRESS_SIGNAL,
     SUCCESS_PROBABILITY_SIGNAL,
@@ -162,7 +162,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
 
         def predict_progress(self, batch):
             progress = batch["observation.encoded"].float() / 2.0
-            return RobometerPrediction(
+            return RobometerOutput(
                 progress=progress,
                 success_probability=progress / 2.0,
             )
@@ -250,7 +250,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(task_key
 
         def predict_progress(self, batch):
             values = batch["observation.encoded"].float() / 10.0
-            return RobometerPrediction(progress=values, success_probability=values)
+            return RobometerOutput(progress=values, success_probability=values)
 
     preprocessor = _make_preprocessor(task_key=task_key)
     scorer = RobometerFrameScorer(FakeModel(), preprocessor, num_subsampled_frames=2)
@@ -313,7 +313,7 @@ def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):
 
         def predict_progress(self, batch):
             progress = batch["observation.encoded"].float() / 2.0
-            return RobometerPrediction(
+            return RobometerOutput(
                 progress=progress,
                 success_probability=progress / 2.0,
             )

@@ -26,7 +26,7 @@ import pandas as pd
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
-from lerobot.rewards.sarm import SARMPrediction, scoring_sarm
+from lerobot.rewards.sarm import SARMOutput, scoring_sarm
 from lerobot.rewards.sarm.scoring_sarm import (
     DENSE_PROGRESS_SIGNAL,
     SPARSE_PROGRESS_SIGNAL,
@@ -89,7 +89,7 @@ class _FakeModel:
         # Progress is the frame id divided by 10, plus 0.5 for the dense head.
         progress = window_ids / 10.0 + (0.5 if head_mode == "dense" else 0.0)
         batch_size, steps = progress.shape
-        return SARMPrediction(
+        return SARMOutput(
             progress=progress,
             stage_probabilities=torch.ones(batch_size, steps, 1),
             stage_confidence=torch.ones(batch_size, steps),

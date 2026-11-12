@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Prediction types shared by reward models."""
+"""Output types shared by reward models."""
 
 from dataclasses import dataclass
 
@@ -20,7 +20,7 @@ from torch import Tensor
 
 
 @dataclass(frozen=True)
-class ProgressPrediction:
+class ProgressOutput:
     """Task progress for each frame, from 0 to 1, shaped `(batch, time)`."""
 
     progress: Tensor
