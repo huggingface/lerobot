@@ -316,6 +316,8 @@ class YamFollower(Robot):
     def __init__(self, config: YamFollowerRobotConfig, fault_event: threading.Event | None = None) -> None:
         require_package("motorbridge", extra="yam")
         require_package("python-can", extra="yam", import_name="can")
+        if config.gravity_compensation:
+            require_package("placo", extra="yam")
         super().__init__(config)
         self.config = config
         self.cameras = make_cameras_from_configs(config.cameras)
