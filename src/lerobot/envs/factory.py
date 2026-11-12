@@ -123,6 +123,13 @@ def make_env(
             stacklevel=2,
         )
         return cfg.create_envs(n_envs=n_envs, use_async_envs=use_async_envs)
+    return build_envs(cfg, n_envs, use_async_envs)
+
+
+def build_envs(
+    cfg: EnvConfig, n_envs: int, use_async_envs: bool
+) -> dict[str, dict[int, gym.vector.VectorEnv]]:
+    """Build a config's vector envs, as ``make_env`` does, without calling an overridden ``create_envs``."""
     if isinstance(cfg, HubEnvConfig) and cfg.use_native_batch:
         return _make_native_batch(cfg, n_envs, use_async_envs)
     descriptor, make = _env_factory(cfg, n_envs, use_async_envs)

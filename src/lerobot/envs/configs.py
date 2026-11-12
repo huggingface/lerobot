@@ -114,10 +114,9 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             DeprecationWarning,
             stacklevel=2,
         )
-        # Imported here: the factory imports this module.
-        from .factory import make_env
+        from .factory import build_envs
 
-        return make_env(self, n_envs=n_envs, use_async_envs=use_async_envs)
+        return build_envs(self, n_envs, use_async_envs)
 
     def create_env(
         self,
