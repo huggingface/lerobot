@@ -221,38 +221,37 @@ class _YamMotorsBus:
         )
 
     def disable_torque(self) -> None:
-        """Disable torque if enabled; logs instead of raising so shutdown can continue."""
+        """Disable torque if enabled."""
         if not self.enabled or self.motorbridge_controller is None:
             return
-        try:
-            self.motorbridge_controller.disable_all()
-            self.enabled = False
-        except Exception:
-            logger.exception("Could not disable YAM torque; use the hardware e-stop")
+        self.motorbridge_controller.disable_all()
+        self.enabled = False
 
     def disconnect(self) -> None:
-        """Disable torque and close all CAN resources."""
-        self.disable_torque()
-        for name, motor in self.motors.items():
-            try:
-                motor.close()
-            except Exception:
-                logger.exception("Failed to close YAM motor %s", name)
-        self.motors.clear()
-        if self.motorbridge_controller is not None:
-            try:
-                self.motorbridge_controller.close()
-            except Exception:
-                logger.exception("Failed to close YAM MotorBridge")
-            finally:
-                self.motorbridge_controller = None
-        if self.monitor is not None:
-            try:
-                self.monitor.shutdown()
-            except Exception:
-                logger.exception("Failed to close YAM feedback monitor")
-            finally:
-                self.monitor = None
+        """Disable torque and close all CAN resources; CAN is closed even if disabling torque fails."""
+        try:
+            self.disable_torque()
+        finally:
+            for name, motor in self.motors.items():
+                try:
+                    motor.close()
+                except Exception:
+                    logger.exception("Failed to close YAM motor %s", name)
+            self.motors.clear()
+            if self.motorbridge_controller is not None:
+                try:
+                    self.motorbridge_controller.close()
+                except Exception:
+                    logger.exception("Failed to close YAM MotorBridge")
+                finally:
+                    self.motorbridge_controller = None
+            if self.monitor is not None:
+                try:
+                    self.monitor.shutdown()
+                except Exception:
+                    logger.exception("Failed to close YAM feedback monitor")
+                finally:
+                    self.monitor = None
 
     def _require_connected(self) -> "tuple[MotorBridgeController, can.BusABC]":
         if self.motorbridge_controller is None or self.monitor is None:
@@ -376,7 +375,10 @@ class YamFollower(Robot):
                 self.prepare_controller()
                 self.controller.start()
         except BaseException:
-            self.disconnect()
+            try:
+                self._close()
+            except Exception:
+                logger.exception(f"Failed to clean up {self} after a connection failure")
             raise
         logger.info(f"{self} connected." if self.is_calibrated else f"{self} connected with torque off.")
 
@@ -453,7 +455,10 @@ class YamFollower(Robot):
             self.bus.read_states()
             self._connected = True
         except BaseException:
-            self._close()
+            try:
+                self._close()
+            except Exception:
+                logger.exception(f"Failed to clean up {self} after a connection failure")
             raise
 
     @check_if_not_connected
@@ -569,23 +574,27 @@ class YamFollower(Robot):
         )
 
     def _close(self) -> None:
-        stop_error: RuntimeError | None = None
         try:
             self.controller.stop()
-        except RuntimeError as exc:
-            stop_error = exc
-            # Leave CAN open while the thread might still be using it, but still try to disable torque.
-            self.bus.disable_torque()
-            logger.exception("YAM controller did not stop; CAN remains open for a disconnect retry")
-        if stop_error is not None:
-            raise stop_error
+        except Exception:
+            if self.controller.active:
+                # Leave CAN open while the thread might still be using it, but still try to disable torque.
+                try:
+                    self.bus.disable_torque()
+                except Exception:
+                    logger.exception("Could not disable YAM torque; use the hardware e-stop")
+                logger.exception("YAM controller did not stop; CAN remains open for a disconnect retry")
+                raise
+            # Torque could not be disabled: bus.disconnect() tries again, and raises after closing CAN.
+            logger.exception(
+                "Could not disable YAM torque; closing CAN so the motors' CAN timeout stops them"
+            )
         try:
             self.bus.disconnect()
-        except Exception:
-            logger.exception("Failed to close YAM arm")
-        try:
-            for camera in self.cameras.values():
-                if camera.is_connected:
-                    camera.disconnect()
         finally:
-            self._connected = False
+            try:
+                for camera in self.cameras.values():
+                    if camera.is_connected:
+                        camera.disconnect()
+            finally:
+                self._connected = False
