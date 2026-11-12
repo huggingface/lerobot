@@ -41,7 +41,7 @@ from lerobot.policies.flux3.processor_flux3 import PAST_ACTIONS, ObservationHist
 from lerobot.processor.device_processor import DeviceProcessorStep
 from lerobot.scripts.lerobot_train import make_dataloaders, train
 from lerobot.utils.constants import ACTION, OBS_STATE
-from tests.policies.flux3.helpers import TaskVideoVAE, rich_task_config, single_config, task_config
+from tests.policies.flux3.helpers import FakeVideoVAE, rich_task_config, single_config, task_config
 
 pytestmark = pytest.mark.dataset
 
@@ -76,7 +76,7 @@ def test_native_task_vae_disables_droid_chunking():
 
 @pytest.fixture(autouse=True)
 def task_vae(monkeypatch, fake_text_encoder):
-    monkeypatch.setattr(Flux3Policy, "_build_video_vae", lambda self, cfg: TaskVideoVAE())
+    monkeypatch.setattr(Flux3Policy, "_build_video_vae", lambda self, cfg: FakeVideoVAE())
 
 
 def training_batch(cfg, b=1):
@@ -147,7 +147,7 @@ def test_history_encoding_and_positions():
     task_config()
     videos = torch.zeros(1, 3, 40, 64, 96)
     videos[:, :, 7] = 1
-    result = packing.pack_history_video(TaskVideoVAE(), videos, 8, 2, 24, (2, 3))
+    result = packing.pack_history_video(FakeVideoVAE(), videos, 8, 2, 24, (2, 3))
     assert result["x_video_cond"].shape == (1, 12, 96)
     assert result["x_video"].shape == (1, 48, 96)
     assert result["x_video_cond_ids"][0, :, 0].unique().tolist() == [0, 29]

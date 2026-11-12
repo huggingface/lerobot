@@ -235,6 +235,15 @@ def test_vae_encodes_with_the_plain_attention(frames, monkeypatch):
     assert set(dims) == {2 if frames == 1 else 3}
 
 
+def test_vae_encodes_a_frame_alone_as_the_first_latent_of_its_clip():
+    # A frame checkpoint encodes its current frame alone: right only while the encoder is causal in time.
+    vae = VideoVAE(_small_vae().float())
+    torch.manual_seed(0)
+    frame = torch.rand(1, 3, 1, 96, 96) * 2 - 1
+    clip = torch.cat([frame, torch.full((1, 3, 44, 96, 96), -1.0)], dim=2)  # black padding, as in training
+    torch.testing.assert_close(vae.encode_task(frame), vae.encode(clip)[:, :, :1], rtol=0, atol=1e-6)
+
+
 @pytest.mark.parametrize(
     ("device", "warnings"),
     [
