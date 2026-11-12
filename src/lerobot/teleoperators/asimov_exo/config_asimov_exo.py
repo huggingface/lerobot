@@ -41,6 +41,7 @@ class AsimovExoTeleoperatorConfig(TeleoperatorConfig):
 
     # Match --robot.control_mode. "arms": exo arms drive Asimov's arms via IK.
     # "velocity": exo joysticks drive locomotion (left stick: walk/strafe, right stick x: turn).
+    # "whole_body": both at once.
     control_mode: str = "arms"
     # Normalized stick deflection below which an axis reads zero.
     joystick_deadzone: float = 0.1
@@ -52,7 +53,7 @@ class AsimovExoTeleoperatorConfig(TeleoperatorConfig):
     def __post_init__(self):
         if self.ema_window < 1:
             raise ValueError("ema_window must be >= 1.")
-        if self.control_mode not in ("arms", "velocity"):
-            raise ValueError("control_mode must be 'arms' or 'velocity'.")
+        if self.control_mode not in ("arms", "velocity", "whole_body"):
+            raise ValueError("control_mode must be 'arms', 'velocity' or 'whole_body'.")
         if not 0 <= self.joystick_deadzone < 1:
             raise ValueError("joystick_deadzone must be in [0, 1).")
