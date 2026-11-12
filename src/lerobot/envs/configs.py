@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import abc
-import importlib.util
 import warnings
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
@@ -62,12 +61,7 @@ class EnvClientConfig:
 
 @dataclass
 class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
-    """An environment's options. `make_env` builds the environment.
-
-    A config whose type names a simulator integration (`lerobot.sim.integrations.<type>`) passes the options it adds
-    to this class to the integration's `env_fns` as keyword arguments. Any other config is a Gymnasium env that its
-    package registers, built with `gym.make(gym_id, **gym_kwargs)`.
-    """
+    """An environment's options. `make_env` builds the environment from its `sim_settings()`."""
 
     task: str | None = None
     fps: int = 30
@@ -101,16 +95,9 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     def sim_settings(self) -> dict[str, Any]:
         """Return the sim settings, as in a server YAML's ``sim`` section; missing ones use sim defaults.
 
-        For a simulator integration, its kwargs are this config's own options. Otherwise, the Gymnasium env ``gym_id``
-        with ``gym_kwargs`` and delta actions.
+        The default is the Gymnasium env ``gym_id`` with ``gym_kwargs`` and delta actions; override otherwise.
         """
-        if importlib.util.find_spec(f"lerobot.sim.integrations.{self.type}") is None:
-            return _gym_settings(self, "delta")
-        shared = {option.name for option in fields(EnvConfig)}
-        options = {
-            option.name: getattr(self, option.name) for option in fields(self) if option.name not in shared
-        }
-        return {"type": self.type, "task": self.task or "", "kwargs": options}
+        return _gym_settings(self, "delta")
 
     def sim_config(self) -> SimConfig:
         """Return ``sim_settings()`` with the sim's defaults, as local envs and the env server run it."""
@@ -370,10 +357,35 @@ class LiberoEnvConfig(EnvConfig):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
+    @property
+    def gym_kwargs(self) -> dict:
+        kwargs: dict[str, Any] = {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
+            "control_freq": self.fps,
+            "hard_reset": self.hard_reset,
+        }
+        if self.task_ids is not None:
+            kwargs["task_ids"] = self.task_ids
+        return kwargs
+
     def sim_settings(self) -> dict[str, Any]:
-        # --env.fps is LIBERO's controller frequency, so the simulator runs at it.
-        settings = super().sim_settings()
-        return {**settings, "fps": self.fps, "kwargs": {**settings["kwargs"], "fps": self.fps}}
+        return {
+            "type": self.type,
+            "task": self.task,
+            "fps": self.fps,
+            "kwargs": {
+                "gym_kwargs": self.gym_kwargs,
+                "camera_name": self.camera_name,
+                "init_states": self.init_states,
+                "control_mode": self.control_mode,
+                "episode_length": self.episode_length,
+                "camera_name_mapping": self.camera_name_mapping,
+                "is_libero_plus": self.is_libero_plus,
+            },
+        }
 
 
 @EnvConfig.register_subclass("metaworld")
@@ -387,6 +399,16 @@ class MetaworldEnvConfig(EnvConfig):
     def __post_init__(self):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+        }
+
+    def sim_settings(self) -> dict[str, Any]:
+        return {"type": "metaworld", "task": self.task, "kwargs": {"gym_kwargs": self.gym_kwargs}}
 
 
 @EnvConfig.register_subclass("robocasa")
@@ -416,6 +438,32 @@ class RoboCasaEnvConfig(EnvConfig):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
+    @property
+    def gym_kwargs(self) -> dict:
+        kwargs: dict[str, Any] = {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
+            "visualization_height": self.visualization_height,
+            "visualization_width": self.visualization_width,
+        }
+        if self.split is not None:
+            kwargs["split"] = self.split
+        return kwargs
+
+    def sim_settings(self) -> dict[str, Any]:
+        return {
+            "type": "robocasa",
+            "task": self.task,
+            "kwargs": {
+                "gym_kwargs": self.gym_kwargs,
+                "camera_name": self.camera_name,
+                "episode_length": self.episode_length,
+                "obj_registries": list(self.obj_registries),
+            },
+        }
+
 
 @EnvConfig.register_subclass("vlabench")
 @dataclass
@@ -432,6 +480,20 @@ class VLABenchEnvConfig(EnvConfig):
     def __post_init__(self):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "render_resolution": list(self.render_resolution),
+            "robot": self.robot,
+            "max_episode_steps": self.episode_length,
+            "action_mode": self.action_mode,
+        }
+
+    def sim_settings(self) -> dict[str, Any]:
+        return {"type": "vlabench", "task": self.task, "kwargs": {"gym_kwargs": self.gym_kwargs}}
 
 
 @EnvConfig.register_subclass("isaaclab_arena")
@@ -629,6 +691,19 @@ class RoboTwinEnvConfig(EnvConfig):
     # (for world-model policies like LingBot-VA that predict per-arm xyz+quaternion+gripper poses).
     action_mode: str = "joint"
 
+    def sim_settings(self) -> dict[str, Any]:
+        return {
+            "type": "robotwin",
+            "task": self.task,
+            "kwargs": {
+                "camera_names": [c.strip() for c in self.camera_names.split(",") if c.strip()],
+                "observation_height": self.observation_height,
+                "observation_width": self.observation_width,
+                "episode_length": self.episode_length,
+                "action_mode": self.action_mode,
+            },
+        }
+
 
 @EnvConfig.register_subclass("robomme")
 @dataclass
@@ -656,6 +731,20 @@ class RoboMMEEnvConfig(EnvConfig):
         if self.front_camera_name == self.wrist_camera_name:
             raise ValueError("RoboMME front and wrist camera names must be distinct.")
 
+    def sim_settings(self) -> dict[str, Any]:
+        return {
+            "type": "robomme",
+            "task": self.task,
+            "kwargs": {
+                "action_space_type": self.action_space,
+                "dataset": self.dataset_split,
+                "episode_length": self.episode_length,
+                "task_ids": self.task_ids,
+                "front_camera_name": self.front_camera_name,
+                "wrist_camera_name": self.wrist_camera_name,
+            },
+        }
+
 
 @EnvConfig.register_subclass("robolab")
 @dataclass
@@ -679,3 +768,15 @@ class RoboLabEnvConfig(EnvConfig):
     # Resize camera frames on the GPU before sending them; RoboLab renders 1280x720.
     observation_height: int | None = None
     observation_width: int | None = None
+
+    def sim_settings(self) -> dict[str, Any]:
+        return {
+            "type": "robolab",
+            "task": self.task or "",
+            "kwargs": {
+                "cameras": self.cameras,
+                "instruction_type": self.instruction_type,
+                "observation_height": self.observation_height,
+                "observation_width": self.observation_width,
+            },
+        }

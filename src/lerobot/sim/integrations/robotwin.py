@@ -31,7 +31,7 @@ from gymnasium import spaces
 
 from lerobot.utils.import_utils import _scipy_available
 
-from .utils import RobotObservation, canonical_observation, parse_camera_names
+from .utils import RobotObservation, canonical_observation
 
 __all__ = ["canonical_observation", "conventions", "env_fns"]
 
@@ -580,7 +580,7 @@ def _make_env_fns(
 def env_fns(
     task: str,
     n_envs: int,
-    camera_names: str | Sequence[str] = ROBOTWIN_CAMERA_NAMES,
+    camera_names: Sequence[str] = ROBOTWIN_CAMERA_NAMES,
     observation_height: int = DEFAULT_CAMERA_H,
     observation_width: int = DEFAULT_CAMERA_W,
     episode_length: int = DEFAULT_EPISODE_LENGTH,
@@ -620,7 +620,7 @@ def env_fns(
         out[task_name][0] = _make_env_fns(
             task_name=task_name,
             n_envs=n_envs,
-            camera_names=parse_camera_names(camera_names),
+            camera_names=list(camera_names),
             observation_height=observation_height,
             observation_width=observation_width,
             episode_length=episode_length,

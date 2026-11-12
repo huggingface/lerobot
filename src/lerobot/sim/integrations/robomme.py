@@ -237,8 +237,8 @@ def _make_env_fns(
 def env_fns(
     task: str,
     n_envs: int = 1,
-    action_space: str = "joint_angle",
-    dataset_split: str = "test",
+    action_space_type: str = "joint_angle",
+    dataset: str = "test",
     episode_length: int = 300,
     task_ids: list[int] | None = None,
     front_camera_name: str = "camera1",
@@ -262,8 +262,8 @@ def env_fns(
             task_id: _make_env_fns(
                 task=task_name,
                 n_envs=n_envs,
-                action_space_type=action_space,
-                dataset=dataset_split,
+                action_space_type=action_space_type,
+                dataset=dataset,
                 episode_length=episode_length,
                 task_id=task_id,
                 front_camera_name=front_camera_name,
@@ -278,7 +278,7 @@ def env_fns(
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     """Return RoboMME's default fps, control mode, and state and action names."""
     joints = (*(f"joint_{i}.pos" for i in range(7)), "gripper.pos")
-    joint_actions = kwargs.get("action_space", "joint_angle") == "joint_angle"
+    joint_actions = kwargs.get("action_space_type", "joint_angle") == "joint_angle"
     return {
         "fps": 10,
         "control_mode": "position" if joint_actions else "eef_pose",

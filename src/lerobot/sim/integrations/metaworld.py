@@ -286,7 +286,7 @@ class MetaworldEnv(gym.Env):
 def env_fns(
     task: str,
     n_envs: int,
-    **env_kwargs: Any,
+    gym_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
     """Return `n_envs` env factories per Meta-World task, as `{group: {task_id: [factory, ...]}}`.
 
@@ -294,11 +294,11 @@ def env_fns(
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
         - `task` can be a single difficulty group (e.g., "easy", "medium", "hard") or a comma-separated list.
         - If a task name is not in DIFFICULTY_TO_TASKS, we treat it as a single custom task.
-        - Other keyword arguments (`obs_type`, `render_mode`...) go to `MetaworldEnv`.
     """
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
+    gym_kwargs = dict(gym_kwargs or {})
     task_groups = [t.strip() for t in task.split(",") if t.strip()]
     if not task_groups:
         raise ValueError("`task` must contain at least one Meta-World task or difficulty group.")
@@ -312,7 +312,7 @@ def env_fns(
         tasks = DIFFICULTY_TO_TASKS.get(group, [group])
 
         for tid, task_name in enumerate(tasks):
-            out[group][tid] = [partial(MetaworldEnv, task=task_name, **env_kwargs)] * n_envs
+            out[group][tid] = [partial(MetaworldEnv, task=task_name, **gym_kwargs)] * n_envs
 
     # return a plain dict for consistency
     return {group: dict(task_map) for group, task_map in out.items()}

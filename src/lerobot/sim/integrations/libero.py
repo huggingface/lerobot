@@ -481,29 +481,26 @@ def _make_env_fns(
 def env_fns(
     task: str,
     n_envs: int,
+    gym_kwargs: dict[str, Any] | None = None,
     camera_name: str | Sequence[str] = "agentview_image,robot0_eye_in_hand_image",
     init_states: bool = True,
     control_mode: str = "relative",
     episode_length: int | None = None,
     camera_name_mapping: dict[str, str] | None = None,
     is_libero_plus: bool = False,
-    task_ids: Sequence[int] | None = None,
-    fps: int = 20,
-    **env_kwargs: Any,
 ) -> dict[str, dict[int, list[Callable[[], Any]]]]:
     """Return `n_envs` LIBERO env factories per task, as `{suite: {task_id: [factory, ...]}}`.
 
     Notes:
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
         - `task` can be a single suite or a comma-separated list of suites.
-        - `task_ids` restricts the tasks of each suite; `fps` is the controller frequency.
-        - Other keyword arguments (`obs_type`, `render_mode`, `observation_height`, `hard_reset`...) go to
-          `LiberoEnv`.
+        - You may pass `task_ids` (list[int]) inside `gym_kwargs` to restrict tasks per suite.
     """
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
 
-    gym_kwargs = {**env_kwargs, "control_freq": fps}
+    gym_kwargs = dict(gym_kwargs or {})
+    task_ids_filter = gym_kwargs.pop("task_ids", None)  # optional: limit to specific tasks
 
     camera_names = parse_camera_names(camera_name)
     suite_names = [s.strip() for s in str(task).split(",") if s.strip()]
@@ -516,14 +513,14 @@ def env_fns(
         n_envs,
         init_states,
     )
-    if task_ids is not None:
-        logger.info("Restricting to task_ids=%s", task_ids)
+    if task_ids_filter is not None:
+        logger.info("Restricting to task_ids=%s", task_ids_filter)
 
     out: dict[str, dict[int, list[Callable[[], Any]]]] = defaultdict(dict)
     for suite_name in suite_names:
         suite = _get_suite(suite_name)
         total = len(suite.tasks)
-        selected = _select_task_ids(total, task_ids)
+        selected = _select_task_ids(total, task_ids_filter)
         if not selected:
             raise ValueError(f"No tasks selected for suite '{suite_name}' (available: {total}).")
 
@@ -554,7 +551,7 @@ def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     absolute = kwargs.get("control_mode", "relative") == "absolute"
     commanded = pose if absolute else tuple(name.replace("eef.", "eef.delta.") for name in pose)
     return {
-        "fps": kwargs.get("fps", 20),
+        "fps": (kwargs.get("gym_kwargs") or {}).get("control_freq", 20),
         "control_mode": "eef_pose" if absolute else "delta",
         "state_names": (*pose, "gripper.left.pos", "gripper.right.pos"),
         "action_names": (*commanded, "gripper.command"),

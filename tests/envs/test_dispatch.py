@@ -39,18 +39,9 @@ def test_unknown_type():
 
 
 def test_libero_fps_controls_simulator_frequency():
-    settings = LiberoEnvConfig(fps=17).sim_settings()
+    cfg = LiberoEnvConfig(fps=17)
 
-    assert settings["fps"] == 17 and settings["kwargs"]["fps"] == 17
-
-
-def test_benchmark_options_are_its_integration_kwargs():
-    settings = LiberoEnvConfig(observation_height=128).sim_settings()
-
-    assert settings["type"] == "libero" and settings["task"] == "libero_10"
-    assert settings["kwargs"]["observation_height"] == 128
-    # Options every env shares stay out of the integration's kwargs.
-    assert not {"task", "features", "server", "max_parallel_tasks"} & set(settings["kwargs"])
+    assert cfg.gym_kwargs["control_freq"] == 17
 
 
 def test_libero_rejects_nonpositive_fps():
@@ -138,8 +129,8 @@ def test_libero_processor_flattens_state_to_raw_8_dim():
     assert torch.allclose(state, torch.tensor([[1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 4.0, 5.0]]))
 
 
-def test_config_without_integration_is_a_gym_env():
-    """A config whose type names no simulator integration is built with gym.make(gym_id)."""
+def test_base_sim_settings_build_a_gym_env():
+    """The base sim_settings() builds a single-task env via gym.make()."""
     gym_id = "_dispatch_test/CartPole-v99"
     if gym_id not in gym_registry:
         register(id=gym_id, entry_point=DictObservationEnv)

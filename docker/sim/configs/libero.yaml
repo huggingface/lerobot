@@ -4,16 +4,16 @@ sim:
   type: libero
   task: libero_spatial
   kwargs:
-    task_ids: null
-    episode_length: null
-    obs_type: pixels_agent_pos
-    render_mode: rgb_array
+    gym_kwargs:
+      obs_type: pixels_agent_pos
+      render_mode: rgb_array
+      observation_height: 360
+      observation_width: 360
+      control_freq: 20
+      hard_reset: true
     camera_name: agentview_image,robot0_eye_in_hand_image
     init_states: true
-    hard_reset: true
-    camera_name_mapping: null
-    observation_height: 360
-    observation_width: 360
-    is_libero_plus: false
     control_mode: relative
-    fps: 20
+    episode_length: null
+    camera_name_mapping: null
+    is_libero_plus: false
