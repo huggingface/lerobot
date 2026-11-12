@@ -31,11 +31,11 @@ class RecordingVAE(FakeVideoVAE):
         self.calls = []
 
     def encode(self, video):
-        self.calls.append(("frame", video.shape[2]))
+        self.calls.append(("encode", video.shape[2]))
         return super().encode(video)
 
     def encode_task(self, video):
-        self.calls.append(("history", video.shape[2]))
+        self.calls.append(("task", video.shape[2]))
         return super().encode(video[:, :, : 1 + 4 * ((video.shape[2] - 1) // 4)])
 
 
@@ -60,16 +60,19 @@ def test_builtin_packers_preserve_vae_boundaries_and_token_clocks(
     packer = packing.build_packer(cfg)
     vae = RecordingVAE()
     batch = 2
-    videos = torch.zeros(batch, 3, cfg.window_frames, *cfg.canvas_hw)
+    # Every frame differs, so a latent taken from the wrong frame shows.
+    videos = torch.linspace(-1, 1, cfg.window_frames).view(1, 1, -1, 1, 1).repeat(batch, 3, 1, *cfg.canvas_hw)
     video = packer.pack_video(cfg, vae, videos, targets=True)
     if layout == "frame":
-        assert vae.calls == [("frame", 45)] * batch
+        assert vae.calls == [("encode", 45)] * batch
     else:
-        assert vae.calls == [("history", 1)] * (batch * cfg.history_snapshots) + [("history", 32)] * batch
+        assert vae.calls == [("task", 1)] * (batch * cfg.history_snapshots) + [("task", 32)] * batch
     vae.calls.clear()
     observed = packer.pack_video(cfg, vae, videos[:, :, : cfg.n_obs_steps], targets=False)
-    assert vae.calls == [(layout, 1)] * (batch * (cfg.history_snapshots if layout == "history" else 1))
+    assert vae.calls == [("task", 1)] * (batch * (cfg.history_snapshots if layout == "history" else 1))
     assert set(observed) == {"x_video_cond", "x_video_cond_ids"}
+    if layout == "frame":  # inference conditions on what training conditions on
+        assert all(torch.equal(value, video[key]) for key, value in observed.items())
     frames = packer.predicted_latent_frames(cfg)
     assert video["x_video"].shape[1] == frames * cfg.latent_hw[0] * cfg.latent_hw[1]
     video_times = video["x_video_ids"].reshape(batch, frames, -1, 4)[:, :, 0, 0]

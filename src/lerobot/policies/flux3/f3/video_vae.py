@@ -931,13 +931,15 @@ def _note_attention(device_type: str) -> None:
 
 
 class VideoVAE:
-    """Frozen video VAE behind the encode/decode contract the packing code relies on.
+    """Frozen video VAE behind the encode/encode_task/decode contract the packing code relies on.
 
     ``encode`` takes ``(B, 3, T, H, W)`` in ``[-1, 1]`` with ``T == 1 (mod 4)`` and returns normalized
     latents ``(B, 96, 1 + (T - 1) // 4, H // 32, W // 32)``. Encoding is chunked (45-frame chunks,
-    1-frame overlap, first latent of each later chunk dropped); shorter clips are padded by repeating
-    the last frame and trimmed back. ``packing.encode_video`` pads with black to the chunk length
-    *before* calling this, so training and deployment see the same latent distribution.
+    1-frame overlap, first latent of each later chunk dropped). ``packing.encode_video`` pads training
+    clips with black to the chunk length before calling it; ``encode`` itself pads any other short clip
+    by repeating the last frame and trims the result back. ``encode_task`` encodes a clip as it is,
+    unchunked: the frame checkpoint's conditioning frame at inference, history snapshots, and the
+    task-LoRA future clip.
     """
 
     def __init__(self, model: "ViTNormInference"):
@@ -965,7 +967,7 @@ class VideoVAE:
 
     @torch.inference_mode()
     def encode_task(self, video: Tensor) -> Tensor:
-        """Native task-LoRA encoding: independent snapshots/future clip, without DROID black padding."""
+        """Unchunked, unpadded encoding: single frames and the task-LoRA future clip."""
         _note_attention(video.device.type)
         return self._model.encode(video, chunked_encode=False)
 

@@ -21,7 +21,7 @@ import math
 import pytest
 import torch
 
-from lerobot.policies.flux3.f3 import neighborhood, video_vae
+from lerobot.policies.flux3.f3 import neighborhood, packing, video_vae
 from lerobot.policies.flux3.f3.neighborhood import neighborhood_attention
 from lerobot.policies.flux3.f3.runtime import random_init_
 from lerobot.policies.flux3.f3.video_vae import Natten3D, VideoVAE, ViTNormInference, ViTNormInferenceParams
@@ -164,6 +164,45 @@ def test_attention_block_exports():
     x = torch.randn(1, 4, 5, 6, 32)
     program = torch.export.export(block, (x,))
     torch.testing.assert_close(program.module()(x), block(x))
+
+
+@torch.no_grad()
+def test_frame_encode_exports_within_tensorrt_dimensions():
+    # TensorRT takes tensors of at most 8 dimensions; the attention of a repeated-frame clip gathered in 9.
+    params = video_vae.ViTNormInferenceParams(
+        embed_dim=8, enc_depths=[1] * 4, dec_depths=[1] * 4, num_heads=[1] * 4, use_compile=False
+    )
+    vae = video_vae.VideoVAE(video_vae.ViTNormInference(params))
+
+    class FrameEncode(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.vae = vae.module
+
+        def forward(self, frame):
+            return packing.encode_single_frame(vae, frame, (5, 5))
+
+    program = torch.export.export(FrameEncode(), (torch.rand(3, 160, 160),), strict=False)
+    graph = program.run_decompositions({}).graph
+    ranks = [n.meta["val"].dim() for n in graph.nodes if isinstance(n.meta.get("val"), torch.Tensor)]
+    assert max(ranks) <= 8
+
+
+@torch.no_grad()
+def test_single_frame_latent_matches_the_first_latent_of_a_clip():
+    # The encoder is causal in time, so a clip's first latent depends on its first frame alone.
+    torch.manual_seed(0)
+    params = video_vae.ViTNormInferenceParams(
+        embed_dim=8,
+        enc_depths=[1] * 4,
+        dec_depths=[1] * 4,
+        num_heads=[1] * 4,
+        use_compile=False,
+        dtype="float32",
+    )
+    vae = video_vae.VideoVAE(video_vae.ViTNormInference(params))
+    clip = torch.rand(1, 3, 45, 160, 160) * 2 - 1
+    torch.testing.assert_close(vae.encode_task(clip[:, :, :1]), vae.encode(clip)[:, :, :1])
 
 
 def test_attention_block_gives_natten_kernels_no_cpu_tensors(monkeypatch):
