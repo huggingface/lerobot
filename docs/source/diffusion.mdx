@@ -1,4 +1,54 @@
 # Diffusion Policy
 
-> [!NOTE]
-> This page is being written as part of the docs redesign. It will cover the Diffusion Policy: what it is, when to use it, and how to train and run it.
+| Field           | Value                                                                     |
+| --------------- | ------------------------------------------------------------------------- |
+| Policy type     | `--policy.type=diffusion`                                                 |
+| Family          | Small imitation-learning model                                            |
+| GPU memory      | 8–14 GB to train                                                          |
+| Takes text      | No                                                                        |
+| Base checkpoint | None, trains from scratch on your data                                    |
+| Install         | `pip install 'lerobot[diffusion]'`                                        |
+| Paper           | [Diffusion Policy](https://diffusion-policy.cs.columbia.edu) (Chi et al.) |
+
+Diffusion Policy learns one task from your episodes, like [ACT](./act). It creates its actions the way image-generation models create pictures: it starts from random noise and refines it, step by step, into a smooth sequence of movements. This makes it good at tasks that can be done in several different ways, where other policies may average two ways into one that doesn't work.
+
+## When to use it
+
+- **Choose it** for a single task where your episodes don't all move the same way, or where you want very smooth motion.
+- **Start with ACT** otherwise: Diffusion Policy trains more slowly (2 to 4 hours on an RTX 4090 for a 50-episode dataset, against under an hour for ACT) and usually needs more training steps.
+
+## How it works
+
+Each time it's called, Diffusion Policy looks at the last 2 observations (camera images and joint positions), and plans the next 64 actions by removing noise from them over several steps. The robot carries out the first 32 of them, then the policy plans again. Each camera image is read by its own ResNet-18 image encoder, pretrained on ImageNet.
+
+## Train it
+
+Follow the [tutorial](./il_robots) up to [5. Train a policy](./train_policy), and replace `--policy.type=act` with `--policy.type=diffusion`. Diffusion Policy usually needs more steps than ACT: start with 80,000 to 150,000 for a 50-episode dataset.
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_first_dataset_clean \
+    --policy.type=diffusion \
+    --policy.device=cuda \
+    --policy.repo_id=${HF_USER}/my_diffusion_policy \
+    --steps=100000 \
+    --output_dir=outputs/train/my_diffusion_policy \
+    --job_name=my_diffusion_policy
+```
+
+To match the original implementation, keep an average of the policy's weights during training with `--ema.type=warmup`. The checkpoints then also hold the averaged weights, in a `pretrained_model_ema` folder next to `pretrained_model`: run the policy from that folder. Other averaging methods are `--ema.type=constant --ema.decay=0.99` and `--ema.type=power --ema.sigma_rel=0.1`.
+
+## Run it
+
+Run it on your robot like any other policy: see [6. Run it on your robot](./run_policy), with your Diffusion Policy in `--policy.path`.
+
+## Citation
+
+```bibtex
+@article{chi2024diffusionpolicy,
+	author = {Cheng Chi and Zhenjia Xu and Siyuan Feng and Eric Cousineau and Yilun Du and Benjamin Burchfiel and Russ Tedrake and Shuran Song},
+	title ={Diffusion Policy: Visuomotor Policy Learning via Action Diffusion},
+	journal = {The International Journal of Robotics Research},
+	year = {2024},
+}
+```
