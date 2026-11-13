@@ -116,6 +116,7 @@ class _SamplePlan(TypedDict):
 
     abs_idx: int
     ep_idx: int
+    video_locations: dict[str, tuple[tuple[str, int, int], float]]
     rows: set[int]
     windows: dict[str, list[int]]
     padding: dict[str, torch.Tensor]
@@ -304,17 +305,6 @@ class LanceDatasetReader(BaseDatasetReader):
             key for key in self._tabular_keys if self.meta.features[key].get("dtype") == "language"
         }
 
-        # Which (chunk, file) mp4 holds each episode and where it starts inside
-        # it (episodes share files in v3.0; timestamps shift by from_timestamp).
-        self._video_locator = {
-            key: (
-                self._episode_numpy(f"videos/{key}/chunk_index", np.int64),
-                self._episode_numpy(f"videos/{key}/file_index", np.int64),
-                self._episode_numpy(f"videos/{key}/from_timestamp", np.float64),
-            )
-            for key in self.meta.video_keys
-        }
-
         # Resolved once here so DataLoader workers inherit the map instead of each
         # scanning the videos table.
         self._video_row_ids: dict[tuple, int] = {}
@@ -333,8 +323,12 @@ class LanceDatasetReader(BaseDatasetReader):
             }
             referenced = {
                 (key, int(chunk), int(file))
-                for key, (chunks, files, _) in self._video_locator.items()
-                for chunk, file in zip(chunks, files, strict=True)
+                for key in self.meta.video_keys
+                for chunk, file in zip(
+                    self._episode_numpy(f"videos/{key}/chunk_index", np.int64),
+                    self._episode_numpy(f"videos/{key}/file_index", np.int64),
+                    strict=True,
+                )
             }
             missing = referenced - self._video_row_ids.keys()
             if missing:
@@ -358,6 +352,23 @@ class LanceDatasetReader(BaseDatasetReader):
         # Read straight from the underlying Arrow column, not HF Dataset __getitem__
         column = self.meta.episodes.data.column(name).to_numpy(zero_copy_only=False)
         return column.astype(dtype, copy=False)
+
+    def _episode_video_location(self, key: str, ep_idx: int) -> tuple[tuple[str, int, int], float]:
+        """Read one episode's video location from Arrow-backed metadata.
+
+        ``meta.episodes`` is loaded from Parquet as a memory-mapped Arrow table.
+        Keeping the location there avoids copying three arrays per camera into the
+        reader and serializing those arrays into every DataLoader worker.
+        """
+        episodes = self.meta.episodes
+        if episodes is None:
+            raise ValueError("Video features require episode metadata.")
+        columns = episodes.data
+        prefix = f"videos/{key}"
+        chunk = int(columns.column(f"{prefix}/chunk_index")[ep_idx].as_py())
+        file = int(columns.column(f"{prefix}/file_index")[ep_idx].as_py())
+        from_timestamp = float(columns.column(f"{prefix}/from_timestamp")[ep_idx].as_py())
+        return (key, chunk, file), from_timestamp
 
     def _ensure_open(self) -> None:
         if self._frames_perm is not None:
@@ -471,13 +482,19 @@ class LanceDatasetReader(BaseDatasetReader):
     def _plan_batch(self, indices: list[int]) -> list[_SamplePlan]:
         """Resolve each sample to the absolute rows it needs and its padding masks."""
         plans: list[_SamplePlan] = []
+        video_locations_by_episode: dict[int, dict[str, tuple[tuple[str, int, int], float]]] = {}
         for idx in indices:
             abs_idx = self._resolve_abs_idx(idx)
             ep_idx = self._episode_index_for_abs_idx(abs_idx)
             start, end = self._episode_bounds(ep_idx)
+            if ep_idx not in video_locations_by_episode:
+                video_locations_by_episode[ep_idx] = {
+                    key: self._episode_video_location(key, ep_idx) for key in self.meta.video_keys
+                }
             plan: _SamplePlan = {
                 "abs_idx": abs_idx,
                 "ep_idx": ep_idx,
+                "video_locations": video_locations_by_episode[ep_idx],
                 "rows": {abs_idx},
                 "windows": {},
                 "padding": {},
@@ -515,11 +532,11 @@ class LanceDatasetReader(BaseDatasetReader):
         self, key: str, ep_idx: int, plan: _SamplePlan, fps: float
     ) -> tuple[tuple[str, int, int], tuple[int, int]]:
         ep_start, _ = self._episode_bounds(ep_idx)
-        _, _, from_ts_arr = self._video_locator[key]
+        file_key, from_timestamp = plan["video_locations"][key]
         window = plan["windows"].get(key, [plan["abs_idx"]])
-        base = round(float(from_ts_arr[ep_idx]) * fps) - ep_start
+        base = round(from_timestamp * fps) - ep_start
         first = base + min(window) - (1 if key in self.meta.depth_keys else 0)
-        return self._video_file_key(key, ep_idx), (first, base + max(window))
+        return file_key, (first, base + max(window))
 
     def _fetch_rows(self, rows: list[int]) -> dict[str, np.ndarray]:
         batch = _opened(self._frames_perm).__getitems__(rows)
@@ -678,11 +695,14 @@ class LanceDatasetReader(BaseDatasetReader):
     ) -> dict[tuple, list[tuple[int, list[float]]]]:
         requests: dict[tuple, list[tuple[int, list[float]]]] = defaultdict(list)
         for sample_idx, plan in enumerate(plans):
-            ep_idx = plan["ep_idx"]
             for key in self.meta.video_keys:
                 window = plan["windows"].get(key, [plan["abs_idx"]])
-                requests[self._video_file_key(key, ep_idx)].append(
-                    (sample_idx, self._shifted_video_timestamps(key, ep_idx, window, timestamps, row_pos))
+                file_key, from_timestamp = plan["video_locations"][key]
+                requests[file_key].append(
+                    (
+                        sample_idx,
+                        [from_timestamp + float(timestamps[row_pos[row]]) for row in window],
+                    )
                 )
         return requests
 
@@ -758,22 +778,6 @@ class LanceDatasetReader(BaseDatasetReader):
     def _blob_handle(self, key: tuple) -> _RangeReader:
         videos_table = _opened(self._videos_table)
         return videos_table.fetch_blob_files(VIDEO_BLOB_COLUMN, [self._video_row_ids[key]])[0]
-
-    def _video_file_key(self, key: str, ep_idx: int) -> tuple[str, int, int]:
-        chunk_arr, file_arr, _ = self._video_locator[key]
-        return key, int(chunk_arr[ep_idx]), int(file_arr[ep_idx])
-
-    def _shifted_video_timestamps(
-        self,
-        key: str,
-        ep_idx: int,
-        window: list[int],
-        timestamps: np.ndarray,
-        row_pos: dict[int, int],
-    ) -> list[float]:
-        _, _, from_ts_arr = self._video_locator[key]
-        base = float(from_ts_arr[ep_idx])
-        return [base + float(timestamps[row_pos[row]]) for row in window]
 
     def _decode_depth_frames(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
         """Decode and dequantize to (N, C, H, W), preserving timestamp order and the time axis."""
