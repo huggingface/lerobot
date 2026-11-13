@@ -179,24 +179,23 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
         """
 
         texts: list[str] = []
-        # transformers 5.22 rejects clips shorter than one temporal patch. Earlier versions padded
-        # them by repeating the last frame; doing the same keeps their pixels and timestamps.
+        # Qwen3-VL resizes before temporal padding, so short clips must already fill one patch.
+        # Repeat the final frame and its index to preserve the frame's timestamp.
         num_frames = int(videos.shape[1])
         padding = max(self._processor.video_processor.temporal_patch_size - num_frames, 0)
         if padding:
             videos = torch.cat([videos, videos[:, -1:].expand(-1, padding, -1, -1, -1)], dim=1)
-        frames_indices = list(range(num_frames)) + [num_frames - 1] * padding
         video_metadata = [
             {
-                "total_num_frames": int(videos.shape[1]),
+                "total_num_frames": num_frames,
                 "fps": float(self.fps),
-                "frames_indices": frames_indices,
+                "frames_indices": list(range(num_frames)) + [num_frames - 1] * padding,
             }
             for _ in range(batch_size)
         ]
         eos_token = self._processor.tokenizer.eos_token
-        # The chat template wraps the video token in vision markers. transformers 5.22 no longer
-        # replaces the markers along with the token, so keep the bare token, as earlier versions did.
+        # Qwen3-VL expands each bare video token into timestamps and vision markers.
+        # Strip the chat template's outer markers to avoid nesting them.
         video_token = self._processor.video_token
         wrapped_video_token = (
             f"{self._processor.vision_start_token}{video_token}{self._processor.vision_end_token}"

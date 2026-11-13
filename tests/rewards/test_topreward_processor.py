@@ -226,6 +226,7 @@ def test_encoder_step_repeats_a_single_frame_to_fill_a_temporal_patch(monkeypatc
 
     assert call["videos"].shape[1] == 2
     assert torch.equal(call["videos"][0, 1], call["videos"][0, 0])
+    assert call["video_metadata"][0]["total_num_frames"] == 1
     assert call["video_metadata"][0]["frames_indices"] == [0, 0]
 
 
@@ -235,6 +236,25 @@ def test_encoder_step_leaves_clips_of_a_temporal_patch_or_more_unpadded(monkeypa
 
     assert call["videos"].shape[1] == 3
     assert call["video_metadata"][0]["frames_indices"] == [0, 1, 2]
+
+
+@_skip_if_topreward_extras_missing
+def test_encoder_step_keeps_frame_metadata_independent_between_videos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    step = _build_step(monkeypatch)
+    step(
+        _make_transition(
+            observation={"observation.images.top": torch.zeros(2, 3, 3, 8, 8)},
+            complementary={"task": ["pick", "place"]},
+        )
+    )
+    metadata = _FakeAutoProcessor.last_call["video_metadata"]
+
+    # Qwen3-VL extends the frame-index list while constructing timestamps for odd-length clips.
+    metadata[0]["frames_indices"].append(2)
+
+    assert metadata[1]["frames_indices"] == [0, 1, 2]
 
 
 @_skip_if_topreward_extras_missing
