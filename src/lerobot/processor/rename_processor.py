@@ -15,12 +15,12 @@
 # limitations under the License.
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 
-from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
+from .pipeline import DataProcessorPipeline, ObservationProcessorStep, ProcessorStepRegistry
 
 
 @dataclass
@@ -125,3 +125,16 @@ def rename_keys[V](mapping: Mapping[str, V], rename_map: dict[str, str] | None) 
         renamed[new_key] = value
         sources[new_key] = key
     return renamed
+
+
+def without_observation_renaming[P: DataProcessorPipeline](pipeline: P) -> P:
+    """Return a copy of `pipeline` whose observation renames do nothing, for data renamed already.
+
+    A rename map is not idempotent: applied twice, `{"b": "a", "a": "a.original"}` renames the new `a`
+    onto `a.original`. The steps other than the renames are shared with `pipeline`.
+    """
+    steps = [
+        RenameObservationsProcessorStep() if isinstance(step, RenameObservationsProcessorStep) else step
+        for step in pipeline.steps
+    ]
+    return replace(pipeline, steps=steps)

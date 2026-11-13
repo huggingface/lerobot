@@ -28,7 +28,12 @@ from lerobot.processor import (
     TransitionKey,
 )
 from lerobot.processor.converters import create_transition, identity_transition
-from lerobot.processor.rename_processor import rename_batch_keys, rename_keys, rename_stats
+from lerobot.processor.rename_processor import (
+    rename_batch_keys,
+    rename_keys,
+    rename_stats,
+    without_observation_renaming,
+)
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from tests.conftest import assert_contract_is_typed
 
@@ -560,3 +565,23 @@ def test_rename_onto_an_existing_key(rename):
         "action.joint": {"dim": 8},
         ACTION: {"dim": 7},
     }
+
+
+def test_renamed_batches_are_not_renamed_twice():
+    """Training renames the batch keys, then runs the preprocessor whose rename step holds the same map."""
+    rename_map = {f"{OBS_STATE}.cartesian": OBS_STATE, OBS_STATE: f"{OBS_STATE}.joint"}
+    pipeline = DataProcessorPipeline(
+        [RenameObservationsProcessorStep(rename_map=rename_map)],
+        to_transition=identity_transition,
+        to_output=identity_transition,
+    )
+    batch = rename_batch_keys({OBS_STATE: 8, f"{OBS_STATE}.cartesian": 7}, rename_map)
+    with pytest.raises(ValueError, match="are named 'observation.state.joint'"):
+        pipeline(create_transition(observation=batch))
+
+    dataset_pipeline = without_observation_renaming(pipeline)
+    processed = dataset_pipeline(create_transition(observation=batch))[TransitionKey.OBSERVATION]
+    assert processed == {OBS_STATE: 7, f"{OBS_STATE}.joint": 8}
+    # The saved pipeline keeps its renames for raw observations.
+    assert pipeline.steps[0].rename_map == rename_map
+    assert type(dataset_pipeline) is type(pipeline)
