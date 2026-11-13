@@ -65,6 +65,7 @@ from lerobot.policies.flux3.f3 import (
 from lerobot.policies.flux3.processor_flux3 import PAST_ACTIONS
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.hub import hub_safe_id
 
 from .utils import resolve_weights
 
@@ -158,7 +159,7 @@ class Flux3Policy(PreTrainedPolicy):
         if policy.config.use_peft:
             # Preserve the adapter's processor path; fresh PEFT wrapping must still update the caller's config.
             policy.config = copy.copy(policy.config)
-        policy.config.pretrained_path = str(pretrained_name_or_path)
+        policy.config.pretrained_path = hub_safe_id(pretrained_name_or_path)
         return policy
 
     # ------------------------------------------------------------------ construction hooks

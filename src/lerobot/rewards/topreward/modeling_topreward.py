@@ -72,6 +72,7 @@ from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.processor_topreward import TOPREWARD_FEATURE_PREFIX, TOPREWARD_INPUT_KEYS
+from lerobot.utils.hub import hub_safe_id
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -179,7 +180,7 @@ class TOPRewardModel(PreTrainedRewardModel):
                 "TOPReward checkpoint."
             )
 
-        model_id = str(pretrained_name_or_path)
+        model_id = hub_safe_id(pretrained_name_or_path)
         if not os.path.isdir(model_id):
             try:
                 hf_hub_download(

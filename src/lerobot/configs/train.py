@@ -33,7 +33,7 @@ from lerobot.configs.parallelism import ParallelismConfig
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.optim.ema import EMAConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
-from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
+from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint, hub_safe_id
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
@@ -232,7 +232,7 @@ class TrainPipelineConfig(HubMixin):
                 revision=parser.get_pretrained_revision("reward_model"),
                 cli_overrides=cli_overrides,
             )
-            self.reward_model.pretrained_path = str(Path(reward_model_path))
+            self.reward_model.pretrained_path = hub_safe_id(reward_model_path)
         elif policy_path:
             overrides = parser.get_yaml_overrides("policy") + (parser.get_cli_overrides("policy") or [])
             self.policy = PreTrainedConfig.from_pretrained(
@@ -462,7 +462,7 @@ class TrainPipelineConfig(HubMixin):
         revision: str | None = None,
         **kwargs: Any,
     ) -> "TrainPipelineConfig":
-        model_id = str(pretrained_name_or_path)
+        model_id = hub_safe_id(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():
             if TRAIN_CONFIG_NAME in os.listdir(model_id):

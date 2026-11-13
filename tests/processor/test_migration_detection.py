@@ -221,7 +221,7 @@ def test_from_pretrained_multiple_json_files_migration_error():
 
         # Check the error details
         error = exc_info.value
-        assert str(tmp_path) in str(error.model_path)
+        assert tmp_path.as_posix() in str(error.model_path)
         assert "migrate_policy_normalization.py" in error.migration_command
         assert "not a valid processor configuration" in error.original_error
 
@@ -243,7 +243,7 @@ def test_from_pretrained_no_processor_config_migration_error():
 
         # Check the error details
         error = exc_info.value
-        assert str(tmp_path) in str(error.model_path)
+        assert tmp_path.as_posix() in str(error.model_path)
         assert "migrate_policy_normalization.py" in error.migration_command
         assert "not a valid processor configuration" in error.original_error
 
