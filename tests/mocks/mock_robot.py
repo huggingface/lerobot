@@ -34,6 +34,7 @@ class MockRobotConfig(RobotConfig):
     random_values: bool = True
     static_values: list[float] | None = None
     calibrated: bool = True
+    action_scale: float = 1.0
 
     def __post_init__(self):
         if self.n_motors < 1:
@@ -126,7 +127,7 @@ class MockRobot(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        return action
+        return {key: value * self.config.action_scale for key, value in action.items()}
 
     @check_if_not_connected
     def disconnect(self) -> None:
