@@ -27,6 +27,7 @@ the praxis repository does for its own LoRA saves.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -44,13 +45,13 @@ logger = logging.getLogger(__name__)
 
 
 def _local_dir(spec: str | Path) -> Path:
-    """A local directory for ``spec``: the path itself, or the processor files of a Hub repo."""
+    """A local directory for ``spec``: the path itself, or the config and processor files of a Hub repo."""
     path = Path(spec)
     if path.is_dir():
         return path
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(str(spec), allow_patterns=["policy_*processor*"]))
+    return Path(snapshot_download(str(spec), allow_patterns=["config.json", "policy_*processor*"]))
 
 
 def merge_adapter(base: str | Path, adapter: str | Path, out: str | Path, device: str = "cpu") -> Path:
@@ -74,6 +75,9 @@ def merge_adapter(base: str | Path, adapter: str | Path, out: str | Path, device
     config = PreTrainedConfig.from_pretrained(base)
     if not isinstance(config, PraxisConfig):
         raise TypeError(f"{base} holds a {type(config).__name__}, expected a PraxisConfig")
+    # The device the base config names, as stored: loading the config on a host without that device
+    # switches it to an available one. The merged checkpoint keeps it (the merge device is a tool option).
+    stored_device = json.loads((_local_dir(base) / "config.json").read_text()).get("device")
     config.device = str(torch.device(device))
     policy = PraxisPolicy.from_pretrained(base, config=config, strict=True, load_frozen_parts=False)
     peft_model = PeftModel.from_pretrained(policy, str(adapter))
@@ -82,6 +86,8 @@ def merge_adapter(base: str | Path, adapter: str | Path, out: str | Path, device
         raise TypeError(f"merge_and_unload returned {type(merged).__name__}, expected PraxisPolicy")
     merged.config.pretrained_path = None
     merged.config.use_peft = False
+    if stored_device:
+        merged.config.device = stored_device
     merged.save_pretrained(out)
     # The processors of the adapter checkpoint first (training can change settings such as the
     # camera keys), those of the base when the adapter has none.

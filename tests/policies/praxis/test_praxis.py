@@ -655,6 +655,33 @@ def test_predict_action_chunk_takes_the_executed_frames_as_a_stack() -> None:
         chunked.predict_action_chunk(bad)
 
 
+def test_predict_action_chunk_drops_the_frames_of_the_padded_rows() -> None:
+    """The first chunk of a window has 21 real commands, padded to 24 with the last one. A caller
+    that executes all 24 rows and hands over the 24 frames gets the chunk of a caller that executed
+    the 21 real ones: the frames of the padded rows would shift the context by 3 frames."""
+
+    def stack_of(steps: range) -> dict:
+        since = [fake_observation(s) for s in steps]
+        return {
+            key: torch.stack([obs[key][0] for obs in since])[None]
+            if isinstance(value, torch.Tensor)
+            else value
+            for key, value in since[0].items()
+        }
+
+    chunks = []
+    for executed in (21, 24):
+        policy = make_tiny_policy(seed=7)
+        policy.reset()
+        policy.predict_action_chunk(fake_observation(0))
+        chunks.append(policy.predict_action_chunk(stack_of(range(1, executed + 1)))[0])
+        assert policy.sessions()[0].state.stream.depth == 1
+        # the second chunk has 24 real rows: 24 frames after it are all context
+        chunks.append(policy.predict_action_chunk(stack_of(range(executed + 1, executed + 25)))[0])
+    assert torch.equal(chunks[0], chunks[2])
+    assert not torch.equal(chunks[1], chunks[3])  # the frames differ (steps 22-45 against 25-48)
+
+
 def test_tokenizer_step_strips_the_instruction() -> None:
     """The step tokenizes the instruction as the praxis session and data module hand it to the text
     encoder: stripped of surrounding whitespace, a blank one as a single space."""
