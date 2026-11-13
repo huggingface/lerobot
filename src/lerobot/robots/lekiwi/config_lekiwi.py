@@ -59,6 +59,11 @@ class LeKiwiConfig(RobotConfig):
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = True
 
+    # Set to `True` to teleoperate only the mobile base (wheel motors 7-9) without any follower
+    # arm connected. Arm motors (ids 1-6) are then excluded from the motor bus and from the
+    # observation/action features, so keyboard teleop of the base works with just the base driven.
+    teleop_base_only: bool = False
+
     # Number of extra attempts when a `sync_read` of the motors fails. Feetech buses can occasionally
     # return a corrupted status packet ("Incorrect status packet!"), especially when several joints move
     # at once, which otherwise aborts the control loop. Retries are immediate (no sleep) and only happen on
