@@ -1,4 +1,82 @@
 # Choose a policy
 
-> [!NOTE]
-> This page is being written as part of the docs redesign. It will cover which policy to start with, what the policy families are (small imitation-learning models, vision-language-action models, world action models), and a comparison of every policy in LeRobot.
+A [policy](./glossary#policy) is the AI model that controls your robot. LeRobot has more than 25 of them. **Start with [ACT](./act):** it's small, it trains in about an hour on a gaming GPU, and it learns one task well from about 50 episodes. For a single task, it's often as good as policies many times its size.
+
+## Which one should I use?
+
+| If you…                                                                              | Use                                                                                  |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Are training your first policy, or want one task done well                           | [ACT](./act)                                                                         |
+| Want one policy for several tasks, that follows a text instruction, with a 16 GB GPU | [SmolVLA](./smolvla), fine-tuned from its pretrained version                         |
+| Have a GPU with 24 GB or more, and want the strongest pretrained policies            | A large VLA such as [π₀.₅](./pi05), [GR00T](./groot) or [X-VLA](./xvla)              |
+| Want to evaluate on simulation benchmarks or reproduce published results             | The policy's own page: most have recipes for [LIBERO](./libero) and other benchmarks |
+| Work on research into world models                                                   | A world action model (see the table below)                                           |
+
+Bigger isn't automatically better: large policies need more GPU memory, train more slowly and run more slowly on the robot. Get a working result with ACT first, then try a bigger policy with the same dataset to see if it helps.
+
+## The three kinds of policies
+
+- **Small imitation-learning models** learn from scratch on your episodes. They're small and fast, and usually learn one task at a time. [ACT](./act) and [Diffusion Policy](./diffusion) are the classic choices; [Multitask DiT](./multi_task_dit) also reads a text instruction, to learn several tasks.
+- **Vision-language-action models (VLAs)** start from a policy already trained on many robots and tasks, and read a text instruction as well as the cameras. You [fine-tune](./glossary#fine-tune) them on your episodes, which needs fewer episodes per task but a larger GPU.
+- **World action models (WAMs)** predict what the cameras will see next as well as the actions to take. They are large, mostly used in research, and most of their guides show results on simulation benchmarks.
+
+## All policies
+
+- **GPU memory** is for training, as measured in [Which GPU do I need?](./hardware_guide). "Large" means the policy wasn't measured there: see its page.
+- **Guide shows** tells you what the policy's page demonstrates: a run on a real robot, results in simulation, or training only.
+
+### Small imitation-learning models
+
+| Policy                            | `--policy.type`  | Reads text | Starts from | GPU memory | Guide shows                        |
+| --------------------------------- | ---------------- | ---------- | ----------- | ---------- | ---------------------------------- |
+| [ACT](./act)                      | `act`            | No         | Scratch     | 2–6 GB     | Real robot (SO-101)                |
+| [Diffusion Policy](./diffusion)   | `diffusion`      | No         | Scratch     | 8–14 GB    | Training and running on your robot |
+| [Multitask DiT](./multi_task_dit) | `multi_task_dit` | Yes        | Scratch     | 8–14 GB    | Training                           |
+
+VQ-BeT (`vqbet`) and TD-MPC (`tdmpc`) are also available, without a guide yet.
+
+### Vision-language-action models (VLAs)
+
+| Policy                              | `--policy.type`  | Reads text | Starts from | GPU memory | Guide shows                              |
+| ----------------------------------- | ---------------- | ---------- | ----------- | ---------- | ---------------------------------------- |
+| [SmolVLA](./smolvla)                | `smolvla`        | Yes        | Pretrained  | 10–16 GB   | Real robot (SO-101)                      |
+| [π₀ (pi0)](./pi0)                   | `pi0`            | Yes        | Pretrained  | 24–40 GB   | Training                                 |
+| [π₀-FAST (pi0_fast)](./pi0fast)     | `pi0_fast`       | Yes        | Pretrained  | 24–40 GB   | Simulation (LIBERO)                      |
+| [π₀.₅ (pi05)](./pi05)               | `pi05`           | Yes        | Pretrained  | 24–40 GB   | Real robot (SO-100), simulation (LIBERO) |
+| [GR00T](./groot)                    | `groot`          | Yes        | Pretrained  | 24–40 GB   | Real robot (SO-101), simulation (LIBERO) |
+| [X-VLA](./xvla)                     | `xvla`           | Yes        | Pretrained  | 24–40 GB   | Simulation (LIBERO)                      |
+| [EO-1](./eo1)                       | `eo1`            | Yes        | Pretrained  | 24–40 GB   | Real robot (SO-101), simulation (LIBERO) |
+| [WALL-OSS](./walloss)               | `wall_x`         | Yes        | Pretrained  | 24–40 GB   | Training                                 |
+| [WALL-OSS 0.5](./wall_oss_05)       | `wall_oss_05`    | Yes        | Pretrained  | Large      | Training                                 |
+| [DM0.5](./dm05)                     | `dm05`           | Yes        | Pretrained  | Large      | Simulation (LIBERO)                      |
+| [EVO1](./evo1)                      | `evo1`           | Yes        | Pretrained  | Large      | Simulation (LIBERO)                      |
+| [FineART-VLA](./fineart_vla)        | `fineart_vla`    | Yes        | Pretrained  | Large      | Training                                 |
+| [G0.5](./g05)                       | `g05`            | Yes        | Pretrained  | Large      | Real robot (SO-101), simulation (LIBERO) |
+| [LingBot-VLA 2.0](./lingbot_vla_v2) | `lingbot_vla_v2` | Yes        | Pretrained  | Large      | Simulation (RoboTwin)                    |
+| [MolmoAct2](./molmoact2)            | `molmoact2`      | Yes        | Pretrained  | Large      | Real robot (SO-100), simulation (LIBERO) |
+| [VLA-JEPA](./vla_jepa)              | `vla_jepa`       | Yes        | Pretrained  | Large      | Simulation (LIBERO)                      |
+
+### World action models (WAMs)
+
+| Policy                     | `--policy.type`                | Reads text | Starts from | GPU memory | Guide shows                              |
+| -------------------------- | ------------------------------ | ---------- | ----------- | ---------- | ---------------------------------------- |
+| [Cosmos3](./cosmos3)       | `cosmos3_edge`, `cosmos3_nano` | Yes        | Pretrained  | Large      | Simulation (LIBERO)                      |
+| [FastWAM](./fastwam)       | `fastwam`                      | Yes        | Pretrained  | Large      | Real robot (SO-101), simulation (LIBERO) |
+| [FLUX 3 Action](./flux3)   | `flux3`                        | Yes        | Pretrained  | Large      | Fine-tuning on SO-101 and DROID data     |
+| [LaWAM](./lawam)           | `lawam`                        | Yes        | Pretrained  | Large      | Simulation (LIBERO)                      |
+| [LingBot-VA](./lingbot_va) | `lingbot_va`                   | Yes        | Pretrained  | Large      | Simulation (LIBERO, RoboTwin)            |
+| [Long-WAM](./longwam)      | `longwam`                      | Yes        | Pretrained  | Large      | Simulation (LIBERO)                      |
+| [Praxis-1](./praxis)       | `praxis`                       | Yes        | Pretrained  | Large      | Checkpoints for DROID (Franka) and YAM   |
+
+> [!WARNING]
+> **Check the licence before commercial use.** LeRobot's code is Apache 2.0, but some pretrained weights come with their own terms: the G0.5 checkpoints are for **non-commercial** use only, and the Cosmos3 weights use the OpenMDW-1.1 licence. Each policy's page and model card list its licence.
+
+## Learning by trial and error
+
+All the policies above learn from your episodes. LeRobot can also train a policy by trial and error, with reinforcement learning: see [Reinforcement learning: when to use it](./rl_overview).
+
+## Next steps
+
+- **Train your first policy:** follow [5. Train a policy](./train_policy) in the tutorial.
+- **Pick a GPU:** see [Which GPU do I need?](./hardware_guide).
+- **Fine-tune a large policy on a smaller GPU:** see [Fine-tune large policies on a small GPU (LoRA)](./peft_training).
