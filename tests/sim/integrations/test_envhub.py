@@ -17,8 +17,15 @@
 import builtins
 
 import gymnasium as gym
+import httpx
 import numpy as np
 import pytest
+from huggingface_hub.errors import (
+    GatedRepoError,
+    HfHubHTTPError,
+    RepositoryNotFoundError,
+    RevisionNotFoundError,
+)
 
 from lerobot.envs import EnvClientConfig, HubEnvConfig
 from lerobot.envs.factory import make_env, make_task_env
@@ -66,7 +73,7 @@ def hub_repo(tmp_path, monkeypatch):
     snapshot = tmp_path / "snapshot"
     snapshot.mkdir()
     # Only the network download is stubbed; the consent check and URL parsing run for real.
-    monkeypatch.setattr(envhub, "snapshot_download", lambda **kwargs: str(snapshot))
+    monkeypatch.setattr(envhub, "snapshot_download", lambda *args, **kwargs: str(snapshot))
     return (snapshot / "env.py").write_text
 
 
@@ -98,6 +105,88 @@ def test_envhub_runs_a_hub_repository(hub_repo):
     # Running remote code needs explicit consent.
     with pytest.raises(RuntimeError, match="Refusing"):
         LocalVectorEnv(_envhub(trust_remote_code=False), num_envs=1)
+
+
+@pytest.mark.parametrize(
+    "hub_path,available_type,expected_types",
+    [
+        ("user/reach", "model", ["model"]),
+        ("user/reach", "space", ["model", "space"]),
+        ("spaces/user/reach", "space", ["space"]),
+        ("models/user/reach", "model", ["model"]),
+    ],
+)
+def test_envhub_selects_the_repository_type(tmp_path, monkeypatch, hub_path, available_type, expected_types):
+    (tmp_path / "custom.py").write_text(_ENVHUB_ENV)
+    calls = []
+
+    def download(repo_id, **kwargs):
+        assert repo_id == "user/reach"
+        assert kwargs["revision"] == "v1"
+        assert kwargs["cache_dir"] == str(tmp_path / "cache")
+        calls.append(kwargs["repo_type"])
+        if kwargs["repo_type"] != available_type:
+            raise RepositoryNotFoundError(
+                "No such repository",
+                response=httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co")),
+            )
+        return str(tmp_path)
+
+    monkeypatch.setattr(envhub, "snapshot_download", download)
+    envs = envhub.make_envs(
+        hub_path=f"{hub_path}@v1:custom.py",
+        n_envs=1,
+        use_async_envs=False,
+        trust_remote_code=True,
+        hub_cache_dir=str(tmp_path / "cache"),
+    )
+    env = envs["reach_suite"][0]
+    try:
+        assert env.reset(seed=0)[0]["agent_pos"].shape == (1, 2)
+    finally:
+        env.close()
+    assert calls == expected_types
+
+
+@pytest.mark.parametrize(
+    "error_type", [GatedRepoError, RevisionNotFoundError, HfHubHTTPError, ConnectionError]
+)
+def test_envhub_does_not_change_repository_on_access_revision_or_network_errors(monkeypatch, error_type):
+    calls = []
+    error = (
+        error_type(
+            "Cannot download",
+            response=httpx.Response(403, request=httpx.Request("GET", "https://huggingface.co")),
+        )
+        if issubclass(error_type, HfHubHTTPError)
+        else error_type("Cannot download")
+    )
+
+    def download(*args, **kwargs):
+        calls.append(kwargs["repo_type"])
+        raise error
+
+    monkeypatch.setattr(envhub, "snapshot_download", download)
+    with pytest.raises(error_type) as caught:
+        LocalVectorEnv(_envhub())
+    assert caught.value is error
+    assert calls == ["model"]
+
+
+def test_explicit_space_does_not_fall_back_to_a_model(monkeypatch):
+    calls = []
+
+    def download(*args, **kwargs):
+        calls.append(kwargs["repo_type"])
+        raise RepositoryNotFoundError(
+            "No such Space",
+            response=httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co")),
+        )
+
+    monkeypatch.setattr(envhub, "snapshot_download", download)
+    with pytest.raises(RepositoryNotFoundError):
+        LocalVectorEnv(_envhub(hub_path="spaces/user/reach"))
+    assert calls == ["space"]
 
 
 def test_envhub_make_env_takes_the_options_of_the_command(hub_repo):
@@ -144,8 +233,8 @@ def test_envhub_repository_files_sit_next_to_env_py(hub_repo, tmp_path):
 def test_envhub_names_a_file_missing_from_the_repository(tmp_path, monkeypatch):
     downloads = []
 
-    def download(**kwargs):
-        downloads.append((kwargs["repo_id"], kwargs["revision"]))
+    def download(repo_id, **kwargs):
+        downloads.append((repo_id, kwargs["revision"]))
         return str(tmp_path)
 
     monkeypatch.setattr(envhub, "snapshot_download", download)

@@ -1,6 +1,6 @@
 # EnvHub: Share a Simulator on the Hub
 
-An EnvHub environment is a Hugging Face Hub repository with an `env.py` that builds a [Gymnasium](https://gymnasium.farama.org) environment following LeRobot's conventions (see [The environment](#the-environment)). That file is the whole integration: no pull request to LeRobot, no package to publish. Once it is on the Hub, anyone can:
+An EnvHub environment is a Hugging Face Space with an `env.py` that builds a [Gymnasium](https://gymnasium.farama.org) environment following LeRobot's conventions (see [The environment](#the-environment)). That file is the whole integration: no pull request to LeRobot, no package to publish. Once it is on the Hub, anyone can:
 
 - **evaluate** a policy on it with `lerobot-eval`,
 - **drive it as a robot** with `lerobot-rollout`, `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay`, swappable with the real robot it simulates,
@@ -10,16 +10,18 @@ This page shows how to use an EnvHub environment, then everything needed to writ
 
 ## Use an EnvHub environment
 
-Browse published environments in the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments), or search the Hub for the [`envhub` tag](https://huggingface.co/models?other=envhub).
+Browse [Spaces tagged `envhub`](https://huggingface.co/spaces?filter=envhub) or the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments).
 
-The examples use [`lerobot/so101-tabletop-mujoco`](https://huggingface.co/lerobot/so101-tabletop-mujoco): an SO-101 arm, four cubes and a box on a table, simulated with MuJoCo. Its state and actions are those of the real `so101_follower` with `use_degrees=True`.
+The commands below use `spaces/my-org/my-env@<commit>`. Replace it with the Space ID and commit you want to run. The robot and camera options illustrate an SO-101 environment; adapt them to your environment and policy.
 
 ### Serve it
 
 From a LeRobot source checkout (the image is built from it), with Docker and GPU access for its containers:
 
 ```bash
-lerobot-env-server --envhub=lerobot/so101-tabletop-mujoco@<commit> --trust_remote_code=true --docker=true
+lerobot-env-server \
+  --envhub=spaces/my-org/my-env@<commit> \
+  --trust_remote_code=true --docker=true
 ```
 
 This builds an image with the repository and its `requirements.txt` on first use, and starts the server on `localhost:7448`. `--trust_remote_code=true` is your consent to run the repository's code, in the container: read `env.py`, `requirements.txt` and `packages.txt` first, and pin the commit you read, so that you run exactly that code and results stay reproducible. Without it, the server refuses to start. The client side needs the `remote` extra (`pip install 'lerobot[remote]'`).
@@ -31,7 +33,7 @@ The server can as well run on another machine, such as a GPU workstation or a cl
 ```bash
 lerobot-eval \
   --policy.path=<your SO-101 checkpoint> \
-  --env.type=envhub --env.hub_path=lerobot/so101-tabletop-mujoco@<commit> \
+  --env.type=envhub --env.hub_path=spaces/my-org/my-env@<commit> \
   --env.server.endpoint=tcp/127.0.0.1:7448 \
   --rename_map='{"observation.images.front": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}' \
   --eval.n_episodes=10 --eval.batch_size=1
@@ -45,7 +47,7 @@ The same environment is a robot: `--robot.type=sim`, with the environment option
 
 ```bash
 lerobot-teleoperate \
-  --robot.type=sim --robot.env.type=envhub --robot.env.hub_path=lerobot/so101-tabletop-mujoco@<commit> \
+  --robot.type=sim --robot.env.type=envhub --robot.env.hub_path=spaces/my-org/my-env@<commit> \
   --robot.env.server.endpoint=tcp/127.0.0.1:7448 \
   --teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop.id=my_leader \
   --fps=30 --display_data=true
@@ -66,19 +68,24 @@ lerobot-env-server --envhub=./my-env --trust_remote_code=true                  #
 lerobot-env-server --envhub=./my-env --trust_remote_code=true --docker=true    # in an image built from the folder
 ```
 
+Published examples: [SO-101 tabletop in MuJoCo](https://huggingface.co/spaces/lerobot/so101-tabletop-mujoco) includes an interactive CPU demo; [SO-101 tabletop in Isaac Sim](https://huggingface.co/spaces/lerobot/so101-tabletop-isaac) includes a recorded rollout and setup instructions.
+
 ## Create an environment
 
 ### The repository
 
-| File               | Required | Content                                                                                                                        |
-| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `env.py`           | yes      | `make_env`, the environment, and optionally `LEROBOT_SIM`                                                                      |
-| `requirements.txt` | no       | Python packages `env.py` needs, installed in the server image                                                                  |
-| `packages.txt`     | no       | Ubuntu packages, one per line, installed in the server image                                                                   |
-| `README.md`        | yes      | What the environment simulates, its observations, actions, task, rewards and episode end, the commands to run it, its licenses |
-| anything else      | no       | Scenes, robot models, textures, configs: `env.py` finds them next to itself, in every mode                                     |
+| File               | Required               | Content                                                                                                                        |
+| ------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `env.py`           | yes                    | `make_env`, the environment, and optionally `LEROBOT_SIM`                                                                      |
+| `requirements.txt` | no                     | Python packages `env.py` needs, installed in the server image                                                                  |
+| `packages.txt`     | no                     | Ubuntu packages, one per line, installed in the server image                                                                   |
+| `index.html`       | yes for a static Space | A page presenting the environment and explaining how to run it                                                                 |
+| `README.md`        | yes                    | What the environment simulates, its observations, actions, task, rewards and episode end, the commands to run it, its licenses |
+| anything else      | no                     | Scenes, robot models, textures, configs: `env.py` finds them next to itself, in every mode                                     |
 
-Create it as a model repository on the Hub.
+Publish your environment as a Space using [Static HTML](https://huggingface.co/docs/hub/spaces-sdks-static) for a page, [Gradio](https://huggingface.co/docs/hub/spaces-sdks-gradio) for an interactive demo, or [Docker](https://huggingface.co/docs/hub/spaces-sdks-docker) for a custom app. Document the task, robot, installation and evaluation commands, and link to the source and licenses. Videos and camera views help show what to expect. Beyond that, get creative with how you present your environment!
+
+Keep demo code and dependencies in their own directory. A Docker Space uses the root `Dockerfile` for its web app; place any separate simulator-server Dockerfile at a different path, such as `deploy/Dockerfile.envhub`.
 
 ### Python and dependencies
 
@@ -206,7 +213,7 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False, **kwargs):
     return {"reach": {0: vector_cls([factory] * n_envs)}}
 ```
 
-For a real simulator, see [`lerobot/so101-tabletop-mujoco`](https://huggingface.co/lerobot/so101-tabletop-mujoco) (MuJoCo) and [`lerobot/so101-tabletop-isaac`](https://huggingface.co/lerobot/so101-tabletop-isaac) (Isaac Sim, installed through `requirements.txt` and `packages.txt`). They serve the same SO-101 scene with the same observations, actions and `LEROBOT_SIM`, so the same policies and commands run against both. More are in the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments).
+Each EnvHub Space should document its simulator, installation requirements, observations and actions, and provide a page or demo showing what to expect.
 
 ### Batches
 
@@ -278,11 +285,62 @@ Every step takes the local folder that holds `env.py` in place of a Hub reposito
 
 ## Publish
 
-Upload the folder to a model repository on the Hub, then:
+Create a Space with your chosen SDK. For a static page, add this metadata to `README.md`, followed by your environment documentation:
+
+```yaml
+---
+title: My robotics environment
+emoji: 🤖
+colorFrom: blue
+colorTo: green
+sdk: static
+app_file: index.html
+tags: [lerobot, envhub, robotics, simulation]
+license: apache-2.0
+---
+```
+
+Add an `index.html` page, for example:
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My robotics environment</title>
+  </head>
+  <body>
+    <h1>My robotics environment</h1>
+    <p>An SO-101 arm picks up cubes and places them in a box.</p>
+    <p>
+      <a href="https://huggingface.co/spaces/my-org/my-env/blob/main/README.md"
+        >Installation, evaluation and licenses</a
+      >
+    </p>
+  </body>
+</html>
+```
+
+Replace the example details with yours, then upload your folder (`--sdk gradio` or `--sdk docker` for those SDKs):
+
+```bash
+hf auth login
+hf repos create my-org/my-env --type space --sdk static
+hf upload my-org/my-env ./my-env . --repo-type space
+```
+
+Serve the environment:
+
+```bash
+lerobot-env-server --envhub=spaces/my-org/my-env@<commit> --trust_remote_code=true --docker=true
+```
+
+Use the same `spaces/my-org/my-env@<commit>` for `--env.hub_path` or `--robot.env.hub_path`. A bare `my-org/my-env` is also detected automatically; see [Hub paths](#hub-paths). After publishing:
 
 - Note the commit, and use it in your README's commands: users run exactly what you tested.
 - State in the README the licenses of everything the repository includes (robot models, scenes, textures), and a reference result if you have one: a checkpoint, its revision, the `lerobot-eval` command and the success rate it gets.
-- Add `tags: [lerobot, envhub]` to the README's metadata, so the environment can be found on the Hub.
+- Add `tags: [lerobot, envhub]` to the README's metadata to appear in the [EnvHub Spaces filter](https://huggingface.co/spaces?filter=envhub).
 - To have it listed in the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments), open an issue on [LeRobot's GitHub](https://github.com/huggingface/lerobot/issues) with a link to the repository.
 
 Updates are new commits: users pinned to an older commit keep running the code they reviewed.
@@ -293,20 +351,24 @@ Updates are new commits: users pinned to an older commit keep running the code t
 
 `--env.hub_path` (and `--envhub` for the server) take:
 
-| Pattern              | Loads                               | Example                                                                  |
-| -------------------- | ----------------------------------- | ------------------------------------------------------------------------ |
-| `user/repo`          | `env.py` from the main branch       | `lerobot/so101-tabletop-mujoco`                                          |
-| `user/repo@revision` | `env.py` at a commit, branch or tag | `lerobot/so101-tabletop-mujoco@4684f500b94d07194f2c860314c4e27cb9349e8c` |
-| `user/repo:path`     | Another file                        | `my-org/my-envs:envs/task_a.py`                                          |
-| `user/repo@rev:path` | Another file at a revision          | `my-org/my-envs@v1.0:envs/task_a.py`                                     |
-| `./folder`           | `env.py` in a local folder          | `./my-env`                                                               |
+| Pattern              | Loads                               | Example                              |
+| -------------------- | ----------------------------------- | ------------------------------------ |
+| `spaces/user/repo`   | `env.py` from a Space               | `spaces/my-org/my-env`               |
+| `models/user/repo`   | `env.py` from a model repository    | `models/my-org/my-env`               |
+| `user/repo`          | Automatically detect the repo type  | `my-org/my-env`                      |
+| `user/repo@revision` | `env.py` at a commit, branch or tag | `spaces/my-org/my-env@<commit>`      |
+| `user/repo:path`     | Another file                        | `my-org/my-envs:envs/task_a.py`      |
+| `user/repo@rev:path` | Another file at a revision          | `my-org/my-envs@v1.0:envs/task_a.py` |
+| `./folder`           | `env.py` in a local folder          | `./my-env`                           |
+
+Bare `user/repo` paths try a model repository first, then a Space if no accessible model repository exists. If both types share a name, the model repository wins: use `spaces/user/repo` or `models/user/repo` to select one explicitly. The prefixes also work with revisions and custom files, e.g. `spaces/my-org/my-env@v1.0:envs/task_a.py`.
 
 ### Versions
 
 An environment's versions are its Hub commits. A revision after `@` (a commit, a branch or a tag) selects one, in your process and on the server:
 
 - **In your process**, the repository at that revision is downloaded and cached. Without a revision, each run follows the latest commit of `main`.
-- **On the server**, `--envhub=user/repo@<revision>` builds the image from that revision's files, and each revision gets its own image. Without a revision, the image holds the commit that was latest when it was built, until `--build=true` rebuilds it from the latest one.
+- **On the server**, `--envhub=spaces/user/repo@<revision>` builds the image from that revision's files, and each revision gets its own image. Without a revision, the image holds the commit that was latest when it was built, until `--build=true` rebuilds it from the latest one.
 - **Tag releases** so users can pin a name rather than a hash, and keep `main` for development. Pin a commit for papers and comparisons: unlike a tag or a branch, it cannot move.
 
 ### Options

@@ -24,6 +24,7 @@ from typing import Any
 
 import gymnasium as gym
 from huggingface_hub import snapshot_download
+from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
 
 from .utils import canonical_observation
 
@@ -43,6 +44,46 @@ SIM_DEFAULTS: dict[str, Any] = {
 }
 
 
+def parse_envhub_path(hub_path: str) -> tuple[str, str | None, str | None, str]:
+    """Return repo id, repo type, revision and entry file for an EnvHub Hub path.
+
+    Explicit paths use `spaces/owner/repo[@revision][:path]` or `models/owner/repo[@revision][:path]`.
+    Unprefixed `owner/repo` paths leave the type unset for automatic detection.
+    Local directories are handled by the caller before parsing.
+    """
+    location, _, file_path = hub_path.partition(":")
+    repo_id, _, revision = location.partition("@")
+    repo_type = None
+    for prefix, kind in (("spaces/", "space"), ("models/", "model")):
+        if repo_id.startswith(prefix):
+            repo_id = repo_id.removeprefix(prefix)
+            repo_type = kind
+            break
+    return repo_id, repo_type, revision or None, file_path or "env.py"
+
+
+def download_envhub_snapshot(
+    repo_id: str,
+    repo_type: str | None,
+    revision: str | None,
+    cache_dir: str | None = None,
+) -> str:
+    """Download an EnvHub repo, trying a model repo then a Space when its type is unset.
+
+    Model-first resolution preserves existing references when both types share an id. Only a
+    missing/inaccessible repository triggers fallback: gated access, missing revisions and network
+    errors must surface instead of selecting different code. Explicit prefixes never fall back.
+    """
+    if repo_type is not None:
+        return snapshot_download(repo_id, repo_type=repo_type, revision=revision, cache_dir=cache_dir)
+    try:
+        return snapshot_download(repo_id, repo_type="model", revision=revision, cache_dir=cache_dir)
+    except GatedRepoError:
+        raise
+    except RepositoryNotFoundError:
+        return snapshot_download(repo_id, repo_type="space", revision=revision, cache_dir=cache_dir)
+
+
 def _load_module_from_path(path: str, module_name: str | None = None):
     module_name = module_name or f"hub_env_{os.path.basename(path).replace('.', '_')}"
     spec = importlib.util.spec_from_file_location(module_name, path)
@@ -51,23 +92,6 @@ def _load_module_from_path(path: str, module_name: str | None = None):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _parse_hub_url(hub_uri: str):
-    """Split `user/repo[@revision][:path]` into repo id, revision and path (default `env.py`)."""
-    revision = None
-    file_path = "env.py"
-    if "@" in hub_uri:
-        repo_and_rev, *rest = hub_uri.split(":", 1)
-        repo_id, rev = repo_and_rev.split("@", 1)
-        revision = rev
-        if rest:
-            file_path = rest[0]
-    else:
-        repo_id, *rest = hub_uri.split(":", 1)
-        if rest:
-            file_path = rest[0]
-    return repo_id, revision, file_path
 
 
 def _download_hub_file(
@@ -104,9 +128,9 @@ def _download_hub_file(
             None,
         )
 
-    repo_id, revision, file_path = _parse_hub_url(cfg_str)
+    repo_id, repo_type, revision, file_path = parse_envhub_path(cfg_str)
 
-    snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
+    snapshot_dir = download_envhub_snapshot(repo_id, repo_type, revision, hub_cache_dir)
     local_file = os.path.join(snapshot_dir, file_path)
     if not os.path.isfile(local_file):
         raise FileNotFoundError(f"Could not find {file_path} in repository {repo_id}@{revision or 'main'}")
