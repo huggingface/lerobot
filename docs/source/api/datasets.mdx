@@ -21,3 +21,51 @@ See [Using LeRobotDataset](../lerobot-dataset-v3) for the format and the common 
 ## StreamingLeRobotDataset
 
 [[autodoc]] lerobot.datasets.StreamingLeRobotDataset
+
+## Paimon datasets
+
+Train directly from tagged [Apache Paimon](https://paimon.apache.org/) lake tables with
+`LeRobotDataset` or `lerobot-train`, without exporting frame rows or media.
+
+```bash
+pip install 'lerobot[paimon]'
+```
+
+Import a LeRobot v3 dataset, tag its tables, and prepare local metadata:
+
+```python
+import pypaimon.multimodal as pm
+from lerobot.datasets.paimon_backend import prepare_paimon_dataset
+
+catalog_options = {"warehouse": "/data/robot_lake"}
+conn = pm.connect(options=catalog_options)
+conn.load_from_lerobot("robot_frames", "/data/lerobot_v3")
+conn.create_lerobot_tag("robot_frames", "training-v1")
+
+prepare_paimon_dataset(
+    "/data/paimon_training",
+    table="robot_frames",
+    catalog_options=catalog_options,
+    tag_name="training-v1",
+)
+```
+
+Only `meta/` and the catalog/table/tag reference (`paimon.json`) are saved locally.
+Frame rows and media stay in Paimon. Remote catalogs are supported; supply credentials
+through the environment because catalog options are saved in `paimon.json`.
+Use a new tag and metadata directory for each training version.
+
+Train with the prepared directory; the backend is selected automatically:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=robot/frames \
+  --dataset.root=/data/paimon_training \
+  --policy.type=act \
+  --policy.push_to_hub=false \
+  --output_dir=outputs/paimon-act
+```
+
+Episode selection, temporal windows, RGB transforms and DataLoader workers use the standard
+LeRobot interfaces. This read-only backend supports RGB images/video, numeric state/action
+and task text. Depth, structured language, subtask metadata and streaming mode are not supported.
