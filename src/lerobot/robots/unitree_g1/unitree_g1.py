@@ -389,7 +389,7 @@ class UnitreeG1(Robot):
             from lerobot.envs import make_env
 
             self._ChannelFactoryInitialize(0, "lo")
-            self._env_wrapper = make_env(self.config.sim_env, trust_remote_code=True)
+            self._env_wrapper = make_env(self.config.sim_env)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         else:

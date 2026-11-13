@@ -840,7 +840,6 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         cfg.env,
         n_envs=cfg.eval.batch_size,
         use_async_envs=cfg.eval.use_async_envs,
-        trust_remote_code=cfg.trust_remote_code,
     )
 
     # Environment-specific preprocessor and postprocessor (e.g. for LIBERO environments), built before

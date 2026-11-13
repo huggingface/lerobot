@@ -198,7 +198,7 @@ def test_normalize_hub_result():
 
 def test_make_env_refuses_a_hub_repo_id():
     with pytest.raises(TypeError, match="HubEnvConfig"):
-        make_env("lerobot/cartpole-env", trust_remote_code=True)
+        make_env("lerobot/cartpole-env")
 
 
 def test_make_env_from_hub_requires_trust_remote_code():
@@ -206,11 +206,11 @@ def test_make_env_from_hub_requires_trust_remote_code():
     hub_id = "lerobot/cartpole-env"
 
     # Should raise RuntimeError when trust_remote_code=False (default)
-    with pytest.raises(RuntimeError, match="Refusing to execute remote code"):
+    with pytest.raises(RuntimeError, match="Refusing to run the EnvHub environment"):
         envhub.make_envs(hub_id, 1, False, trust_remote_code=False)
 
     # Should also raise when not specified (defaults to False)
-    with pytest.raises(RuntimeError, match="Refusing to execute remote code"):
+    with pytest.raises(RuntimeError, match="Refusing to run the EnvHub environment"):
         envhub.make_envs(hub_id, 1, False)
 
 
