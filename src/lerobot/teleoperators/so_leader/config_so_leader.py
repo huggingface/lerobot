@@ -35,6 +35,12 @@ class SOLeaderConfig:
     # happen on failure, so the steady-state read cost is unchanged.
     num_read_retries: int = 2
 
+    # Mirror the leader's motion left-right, for a follower set up as the leader's mirror image (e.g. the
+    # two arms facing each other, or a right leader driving a left follower). Negates shoulder_pan and
+    # wrist_roll, the joints that turn about axes in the arm's own plane, about the middle of their
+    # calibrated range; the other joints pass through. Applies to `get_action` and to `send_feedback`.
+    mirror: bool = False
+
 
 @TeleoperatorConfig.register_subclass("so101_leader")
 @TeleoperatorConfig.register_subclass("so100_leader")
