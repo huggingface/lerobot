@@ -84,6 +84,9 @@ class Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
         return transition
 
+    def get_config(self) -> dict[str, Any]:
+        return {"max_state_dim": self.max_state_dim, "task_key": self.task_key}
+
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
