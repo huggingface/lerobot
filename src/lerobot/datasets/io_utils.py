@@ -25,6 +25,7 @@ import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 import torch
 from datasets import Dataset
+from datasets.features.features import require_storage_embed
 from datasets.table import embed_table_storage
 from numpy.typing import DTypeLike
 from PIL import Image as PILImage
@@ -109,7 +110,11 @@ def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
 
     Returns:
         datasets.Dataset: The dataset with images embedded in the table storage.
+            Returned unchanged if no features require storage embedding.
     """
+    if not any(require_storage_embed(feature) for feature in dataset.features.values()):
+        return dataset
+
     # Embed image bytes into the table before saving to parquet
     format = dataset.format
     dataset = dataset.with_format("arrow")
