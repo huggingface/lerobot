@@ -10,13 +10,7 @@ This page shows how to use an EnvHub environment, then everything needed to writ
 
 ## Use an EnvHub environment
 
-Browse published environments in the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments). You can also list Spaces tagged `envhub` with the Hub CLI:
-
-```bash
-hf spaces ls --filter envhub
-```
-
-The Spaces website's name search does not search README tags.
+Browse [Spaces tagged `envhub`](https://huggingface.co/spaces?filter=envhub) or the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments).
 
 The commands below use `spaces/my-org/my-env@<commit>`. Replace it with the Space ID and commit you want to run. The robot and camera options illustrate an SO-101 environment; adapt them to your environment and policy.
 
@@ -346,7 +340,7 @@ Use the same `spaces/my-org/my-env@<commit>` for `--env.hub_path` or `--robot.en
 
 - Note the commit, and use it in your README's commands: users run exactly what you tested.
 - State in the README the licenses of everything the repository includes (robot models, scenes, textures), and a reference result if you have one: a checkpoint, its revision, the `lerobot-eval` command and the success rate it gets.
-- Add `tags: [lerobot, envhub]` to the README's metadata for tag-based discovery with `hf spaces ls --filter envhub`.
+- Add `tags: [lerobot, envhub]` to the README's metadata to appear in the [EnvHub Spaces filter](https://huggingface.co/spaces?filter=envhub).
 - To have it listed in the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments), open an issue on [LeRobot's GitHub](https://github.com/huggingface/lerobot/issues) with a link to the repository.
 
 Updates are new commits: users pinned to an older commit keep running the code they reviewed.
