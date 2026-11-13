@@ -29,6 +29,7 @@ Usage:
 
     python examples/dataset/create_progress_videos.py \
         --repo-id lerobot-data-collection/level2_final_quality3 \
+        --dataset-root /path/to/local/dataset \
         --episode 1100 \
         --score-name robometer \
         --signal-name reward.robometer.progress
@@ -69,18 +70,19 @@ DEFAULT_SCORE_NAME = "sarm"
 TASK_FONT_SCALE = 0.55
 
 
-def load_episode_dataset(repo_id: str, episode: int) -> LeRobotDataset:
+def load_episode_dataset(repo_id: str, episode: int, dataset_root: Path | None = None) -> LeRobotDataset:
     """Load the metadata, the episode's data and the annotation tables, without videos.
 
     Args:
         repo_id: HuggingFace dataset repository ID.
         episode: Episode index to download.
+        dataset_root: Local dataset root containing annotations, or None to use the Hub cache.
 
     Returns:
         The dataset restricted to that episode.
     """
     logging.info("[1/4] Downloading metadata, episode %d and annotations for %s ...", episode, repo_id)
-    return LeRobotDataset(repo_id, episodes=[episode], download_videos=False)
+    return LeRobotDataset(repo_id, root=dataset_root, episodes=[episode], download_videos=False)
 
 
 def load_episode_meta(local_path: Path, episode: int, camera_key: str | None) -> dict:
@@ -587,6 +589,7 @@ def process_dataset(
     create_gif: bool = False,
     score_name: str = DEFAULT_SCORE_NAME,
     signal_name: str | None = None,
+    dataset_root: Path | None = None,
 ) -> Path | None:
     """Full pipeline: download, extract metadata, composite progress, write output.
 
@@ -598,6 +601,7 @@ def process_dataset(
         create_gif: If True, also generate a GIF from the MP4.
         score_name: Name of the dataset score holding the progress.
         signal_name: Signal of that score to draw, or None for its first signal.
+        dataset_root: Local dataset root containing annotations, or None to use the Hub cache.
 
     Returns:
         Path to the final output file, or None on failure.
@@ -605,7 +609,7 @@ def process_dataset(
     safe_name = repo_id.replace("/", "_")
     logging.info("Processing: %s  |  episode %d", repo_id, episode)
 
-    dataset = load_episode_dataset(repo_id, episode)
+    dataset = load_episode_dataset(repo_id, episode, dataset_root)
     local_path = Path(dataset.root)
     logging.info("   Local cache: %s", local_path)
 
@@ -648,6 +652,12 @@ def main() -> None:
         type=str,
         required=True,
         help="HuggingFace dataset repository ID (e.g. 'lerobot-data-collection/level2_final_quality3').",
+    )
+    parser.add_argument(
+        "--dataset-root",
+        type=Path,
+        default=None,
+        help="Local dataset root containing annotations (default: use the Hub cache).",
     )
     parser.add_argument(
         "--episode",
@@ -698,6 +708,7 @@ def main() -> None:
         create_gif=args.gif,
         score_name=args.score_name,
         signal_name=args.signal_name,
+        dataset_root=args.dataset_root,
     )
 
     if result:
