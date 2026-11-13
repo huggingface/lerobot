@@ -949,6 +949,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         bsize = tokens.shape[0]
         device = tokens.device
+        action_feature = self.config.action_feature
 
         if noise is None:
             # Sample noise with padded dimension as expected by action_in_proj
@@ -1017,6 +1018,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             execution_horizon=kwargs.get("execution_horizon"),
             hard_prefix=trained_prefix,
             hard_prefix_mask=trained_prefix_mask,
+            action_dim=action_feature.shape[0] if action_feature is not None else None,
             precompute_times=self.precompute_denoise_times,
         )
 
