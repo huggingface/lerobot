@@ -213,10 +213,31 @@ class SOFollower(Robot):
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     @check_if_not_connected
-    def disconnect(self):
-        self.bus.disconnect(self.config.disable_torque_on_disconnect)
-        for cam in self.cameras.values():
-            cam.disconnect()
+    def disconnect(self) -> None:
+        """Attempt bus and camera cleanup, then re-raise the first failure.
+
+        Cleanup continues after errors or interrupts. Additional failures are logged.
+
+        Raises:
+            BaseException: The first cleanup failure, after all resources have been attempted.
+        """
+        first_exception: BaseException | None = None
+        try:
+            self.bus.disconnect(self.config.disable_torque_on_disconnect)
+        except BaseException as e:
+            logger.error(f"Failed to disconnect motor bus: {e}")
+            first_exception = e
+
+        for name, cam in self.cameras.items():
+            try:
+                cam.disconnect()
+            except BaseException as e:
+                logger.error(f"Failed to disconnect camera '{name}': {e}")
+                if first_exception is None:
+                    first_exception = e
+
+        if first_exception is not None:
+            raise first_exception
 
         logger.info(f"{self} disconnected.")
 
