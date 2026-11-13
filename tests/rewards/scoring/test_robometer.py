@@ -31,7 +31,7 @@ from lerobot.rewards.robometer.scoring_robometer import (
     PROGRESS_SIGNAL,
     SUCCESS_PROBABILITY_SIGNAL,
     RobometerFrameScorer,
-    build_subsample_indices,
+    _build_subsample_indices,
     make_robometer_frame_scorer,
 )
 
@@ -63,7 +63,7 @@ def _make_preprocessor(task_key: str = "task") -> PolicyProcessorPipeline:
 
 
 def test_build_subsample_indices_matches_upstream_frame_steps():
-    actual = build_subsample_indices(6, 4)
+    actual = _build_subsample_indices(6, 4)
 
     assert [indices.tolist() for indices in actual] == [
         np.linspace(0, frame_index, 4, dtype=int).tolist() for frame_index in range(6)
@@ -79,7 +79,7 @@ def test_build_subsample_indices_matches_upstream_frame_steps():
 
 
 def test_build_subsample_indices_keeps_prefix_endpoints():
-    for current_frame, indices in enumerate(build_subsample_indices(7, 4)):
+    for current_frame, indices in enumerate(_build_subsample_indices(7, 4)):
         assert indices.shape == (4,)
         assert indices.dtype == np.int64
         assert indices[0] == 0
@@ -179,7 +179,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     }
 
     episode_frames = torch.stack([dataset[index][image_key] for index in range(3)])
-    prefix_batch = torch.stack([episode_frames[indices] for indices in build_subsample_indices(3, 2)])
+    prefix_batch = torch.stack([episode_frames[indices] for indices in _build_subsample_indices(3, 2)])
     direct = model.predict_progress(preprocessor({image_key: prefix_batch, task_key: task}))
     np.testing.assert_allclose(
         result.signals[PROGRESS_SIGNAL],

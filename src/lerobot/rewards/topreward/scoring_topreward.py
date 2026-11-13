@@ -47,14 +47,14 @@ TOPREWARD_SIGNAL_DESCRIPTORS = {
 }
 
 
-def build_prefix_lengths(num_frames: int, num_samples: int | None) -> NDArray[np.int64]:
+def _build_prefix_lengths(num_frames: int, num_samples: int | None) -> NDArray[np.int64]:
     """Return the prefix lengths to score: every prefix, or ``num_samples`` evenly spaced ones."""
     if num_samples is None or num_samples >= num_frames:
         return np.arange(1, num_frames + 1, dtype=np.int64)
     return np.unique(np.linspace(1, num_frames, num_samples).round().astype(np.int64))
 
 
-def normalize_rewards(rewards: NDArray[np.float64]) -> NDArray[np.float64]:
+def _normalize_rewards(rewards: NDArray[np.float64]) -> NDArray[np.float64]:
     """Min-max normalize an episode's prefix rewards to ``[0, 1]``, as upstream TOPReward does."""
     if rewards.size == 1:
         return np.ones(1)
@@ -128,7 +128,7 @@ class TOPRewardFrameScorer:
         task = dataset[positions[0]].get(config.task_key)
         episode_frames = torch.stack([dataset[position][config.image_key] for position in positions])
 
-        prefix_lengths = build_prefix_lengths(num_frames, self.num_samples)
+        prefix_lengths = _build_prefix_lengths(num_frames, self.num_samples)
         log_probabilities: NDArray[np.float64] = np.empty(len(prefix_lengths), dtype=np.float64)
 
         self.model.eval()
@@ -141,7 +141,7 @@ class TOPRewardFrameScorer:
 
         # Frame t ends the prefix of length t + 1; frames between scored prefixes are interpolated.
         progress = np.interp(
-            np.arange(1, num_frames + 1), prefix_lengths, normalize_rewards(log_probabilities)
+            np.arange(1, num_frames + 1), prefix_lengths, _normalize_rewards(log_probabilities)
         )
         return FrameSignals(
             frame_indices=np.arange(num_frames, dtype=np.int64),

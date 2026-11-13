@@ -14,7 +14,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Score a LeRobot dataset and publish a frame-signal sidecar."""
+r"""Score a LeRobot dataset and save frame-aligned signals under ``scores/<name>.parquet``.
+
+Use a writable local dataset root. Replace the dataset ID and paths below with your own.
+
+Examples:
+    Score with a pretrained RoboMeter checkpoint:
+
+        uv run lerobot-score \
+            --dataset_repo_id=user/dataset \
+            --dataset_root=/path/to/local/dataset \
+            --reward_model.path=lerobot/Robometer-4B \
+            --reward_model.device=cuda
+
+    Score with a trained SARM checkpoint, evaluating every fifth frame and interpolating:
+
+        uv run lerobot-score \
+            --dataset_repo_id=user/dataset \
+            --dataset_root=/path/to/local/dataset \
+            --reward_model.path=/path/to/sarm-checkpoint \
+            --reward_model.device=cuda \
+            --head_mode=sparse \
+            --stride=5
+
+    Score with zero-shot TOPReward:
+
+        uv run lerobot-score \
+            --dataset_repo_id=user/dataset \
+            --dataset_root=/path/to/local/dataset \
+            --reward_model.type=topreward \
+            --reward_model.device=cuda \
+            --num_samples=15
+
+The score name defaults to the model type; override it with ``--name=my-run``.
+Set ``--reward_model.image_key`` if your camera differs from the checkpoint's configured key.
+Rerun the same command to resume an interrupted run. To discard staged work and replace
+existing scores, add ``--overwrite=true --resume=false``. Add ``--push_to_hub=true`` to
+upload the completed scores to the dataset repository.
+"""
 
 import logging
 from dataclasses import dataclass

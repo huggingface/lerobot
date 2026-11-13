@@ -30,7 +30,7 @@ from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.scoring_topreward import (
     PROGRESS_SIGNAL,
     TOPRewardFrameScorer,
-    build_prefix_lengths,
+    _build_prefix_lengths,
     make_topreward_frame_scorer,
 )
 
@@ -44,7 +44,7 @@ IMAGE_KEY = "observation.images.top"
     [(5, None, [1, 2, 3, 4, 5]), (5, 15, [1, 2, 3, 4, 5]), (20, 4, [1, 7, 14, 20])],
 )
 def test_build_prefix_lengths(num_frames, num_samples, expected):
-    assert build_prefix_lengths(num_frames, num_samples).tolist() == expected
+    assert _build_prefix_lengths(num_frames, num_samples).tolist() == expected
 
 
 def test_make_topreward_frame_scorer_builds_processor_without_frame_cap(monkeypatch):

@@ -50,7 +50,7 @@ ROBOMETER_SIGNAL_DESCRIPTORS = {
 }
 
 
-def build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> list[np.ndarray]:
+def _build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> list[np.ndarray]:
     """For each frame, pick ``num_subsampled_frames`` indices spread over the prefix ending at it.
 
     Indices are truncated, not rounded, as in RoboMeter's own frame-step evaluation.
@@ -124,7 +124,7 @@ class RobometerFrameScorer:
         task = dataset[positions[0]].get(config.task_key)
         episode_frames = torch.stack([dataset[position][config.image_key] for position in positions])
 
-        subsample_indices = build_subsample_indices(num_frames, self.num_subsampled_frames)
+        subsample_indices = _build_subsample_indices(num_frames, self.num_subsampled_frames)
         progress: NDArray[np.float32] = np.empty(num_frames, dtype=np.float32)
         success_probability: NDArray[np.float32] = np.empty(num_frames, dtype=np.float32)
 
