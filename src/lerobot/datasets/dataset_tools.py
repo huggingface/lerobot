@@ -35,7 +35,6 @@ from pathlib import Path
 import datasets
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
@@ -65,6 +64,7 @@ from .io_utils import (
     load_episodes,
     write_info,
     write_stats,
+    write_table_one_row_group_per_episode,
     write_tasks,
 )
 from .lerobot_dataset import LeRobotDataset
@@ -1103,9 +1103,7 @@ def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -
         ep_dataset = embed_images(ep_dataset)
 
     table = ep_dataset.with_format("arrow")[:]
-    writer = pq.ParquetWriter(path, schema=table.schema, compression="snappy", use_dictionary=True)
-    writer.write_table(table)
-    writer.close()
+    write_table_one_row_group_per_episode(table, path)
 
 
 def _save_data_chunk(

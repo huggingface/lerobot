@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 import torch
 
@@ -1732,3 +1733,54 @@ def test_reencode_dataset_multi_key_multiprocessing(
     for vk in dataset.meta.video_keys:
         persisted_encoder = RGBEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg
+
+
+@pytest.mark.parametrize("operation", ["add", "split"])
+@pytest.mark.parametrize("images", [False, True])
+def test_edits_preserve_episode_row_groups(tmp_path: Path, operation: str, images: bool) -> None:
+    """Edited shards remain prunable by episode without changing frame values."""
+    features = {"state": {"dtype": "float32", "shape": (2,), "names": None}}
+    key = "observation.images.rgb"
+    if images:
+        features[key] = {"dtype": "image", "shape": (6, 8, 3), "names": ["height", "width", "channels"]}
+    ds = LeRobotDataset.create(
+        "local/rowgroups", root=tmp_path / "source", fps=10, use_videos=False, features=features
+    )
+    for ep, length in enumerate([2, 3, 4]):
+        for i in range(length):
+            frame = {"state": np.array([ep, i], dtype=np.float32), "task": "move"}
+            if images:
+                frame[key] = np.full((6, 8, 3), 50 * ep + i, dtype=np.uint8)
+            ds.add_frame(frame)
+        ds.save_episode()
+    ds.finalize()
+    ds = LeRobotDataset(ds.repo_id, root=ds.root)
+    if operation == "add":
+        result = add_features(
+            ds,
+            {"extra": (np.arange(9, dtype=np.float32), {"dtype": "float32", "shape": (1,), "names": None})},
+            output_dir=tmp_path / "edited",
+            repo_id="local/edited",
+        )
+        indices = list(range(9))
+    else:
+        result = split_dataset(ds, {"selected": [0, 2]}, output_dir=tmp_path / "edited")["selected"]
+        indices = [0, 1, 5, 6, 7, 8]
+    for i, original in enumerate(indices):
+        np.testing.assert_array_equal(result[i]["state"], ds[original]["state"])
+        assert result[i]["task"] == ds[original]["task"]
+        assert result[i]["index"] == i
+        if operation == "add":
+            assert result[i]["extra"] == i
+        if images:
+            np.testing.assert_array_equal(result[i][key], ds[original][key])
+    observed = []
+    for path in sorted((result.root / "data").glob("*/*.parquet")):
+        f = pq.ParquetFile(path)
+        groups = [
+            f.read_row_group(i, columns=["episode_index"]).column(0).to_pylist()
+            for i in range(f.num_row_groups)
+        ]
+        observed.extend(groups)
+    assert len(observed) == result.num_episodes
+    assert all(len(set(group)) == 1 for group in observed)
