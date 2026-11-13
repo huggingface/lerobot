@@ -404,8 +404,8 @@ def test_resolve_weight_files_from_hub_falls_back_to_shards(tmp_path, monkeypatc
 
 def test_resolve_weight_files_propagates_hub_http_errors(monkeypatch):
     """A 401, a gated repo, or another Hub failure propagates as that error."""
-    import httpx
     from huggingface_hub.errors import HfHubHTTPError
+    from huggingface_hub.utils import httpx
 
     import lerobot.policies.pretrained as pretrained_module
 
