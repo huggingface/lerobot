@@ -26,7 +26,7 @@ from .configs import (
     HubEnvConfig,
     PushtEnvConfig,
 )
-from .factory import make_env, make_env_config, make_env_pre_post_processors
+from .factory import make_env, make_env_config, make_env_pre_post_processors, make_task_env
 from .utils import check_env_attributes_and_types, close_envs, env_to_policy_features, preprocess_observation
 
 __all__ = [
@@ -42,5 +42,6 @@ __all__ = [
     "make_env",
     "make_env_config",
     "make_env_pre_post_processors",
+    "make_task_env",
     "preprocess_observation",
 ]

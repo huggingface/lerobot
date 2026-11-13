@@ -159,6 +159,8 @@
       title: LingBot-VA
     - local: longwam
       title: Long-WAM
+    - local: praxis
+      title: Praxis-1
     title: World action models (WAMs)
   title: Policies
 - sections:
@@ -168,10 +170,10 @@
     title: Train and evaluate in simulation
   - local: simulation
     title: Simulated robots and environments
-  - local: envhub_leisaac
-    title: Record demos in Isaac Sim (LeIsaac)
   - local: envhub
-    title: Load and share simulations (EnvHub)
+    title: Share a simulation on the Hub (EnvHub)
+  - local: envhub_leisaac
+    title: Record demos in Isaac Sim (LeIsaac, deprecated)
   - isExpanded: false
     sections:
     - local: libero
@@ -192,8 +194,10 @@
       title: RoboMME
     - local: vlabench
       title: VLABench
+    - local: robocolosseum
+      title: RoboColosseum (real robots)
     - local: envhub_isaaclab_arena
-      title: Isaac Lab Arena (NVIDIA)
+      title: Isaac Lab Arena (NVIDIA, deprecated)
     title: Benchmarks
   title: Simulation & benchmarks
 - sections:

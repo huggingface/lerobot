@@ -34,7 +34,7 @@ pre-commit run --all-files                           # Lint + format (ruff, typo
 - **`policies/`** — Each policy in its own subdir. All inherit `PreTrainedPolicy` (`nn.Module` + `HubMixin`) from `pretrained.py`. Factory with lazy imports in `factory.py`.
 - **`processor/`** — Data transformation pipeline. `ProcessorStep` base with registry. `DataProcessorPipeline` / `PolicyProcessorPipeline` chain steps.
 - **`datasets/`** — `LeRobotDataset` (episode-aware sampling + video decoding) and `LeRobotDatasetMetadata`.
-- **`envs/`** — `EnvConfig` base in `configs.py`, factory in `factory.py`. Each env subclass defines `gym_kwargs` and `create_envs()`.
+- **`envs/`** — `EnvConfig` options in `configs.py`; `make_env()` / `make_task_env()` in `factory.py` build the envs. A config's `sim_settings()` maps its options to its `lerobot.sim.integrations.<type>` module's `env_fns()` kwargs.
 - **`robots/`, `motors/`, `cameras/`, `teleoperators/`** — Hardware abstraction layers.
 - **`types.py`** and **`configs/types.py`** — Core type aliases and feature type definitions.
 

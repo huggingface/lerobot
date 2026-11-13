@@ -28,7 +28,7 @@ import torch
 
 pytest.importorskip("transformers")
 
-from safetensors.torch import save_file  # noqa: E402
+from huggingface_hub import save_torch_state_dict
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig  # noqa: E402
 from lerobot.policies import (  # noqa: E402
@@ -305,13 +305,17 @@ class _TinyPolicy(torch.nn.Module):
 
 
 @pytest.mark.parametrize("native", [True, False])
-def test_loader_converts_only_pi05_format_checkpoints(tmp_path, native):
+@pytest.mark.parametrize("sharded", [False, True])
+def test_loader_converts_only_pi05_format_checkpoints(tmp_path, native, sharded):
     source = torch.nn.Linear(2, 2)
     prefix = "model." if native else ""
-    checkpoint = tmp_path / "model.safetensors"
-    save_file({f"{prefix}{key}": value for key, value in source.state_dict().items()}, str(checkpoint))
-
-    policy = FineARTVLAPolicy._load_as_safetensor(_TinyPolicy(), str(checkpoint), "cpu", strict=True)
+    save_torch_state_dict(
+        {f"{prefix}{key}": value for key, value in source.state_dict().items()},
+        tmp_path,
+        max_shard_size=1 if sharded else "1TB",
+    )
+    files = FineARTVLAPolicy._resolve_weight_files(str(tmp_path))
+    policy = FineARTVLAPolicy._load_weight_files(_TinyPolicy(), files, "cpu", strict=True)
 
     assert policy.converted is not native
     torch.testing.assert_close(policy.model.weight, source.weight)

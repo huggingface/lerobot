@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from lerobot.envs.factory import make_task_env
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.sim import EnvDescriptor, StepResult
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE, OBS_STR
@@ -55,7 +56,7 @@ class SimRobot(Robot):
         task = config.env.task
         task_group = task if task and "," not in task else None
         # Build the env here, not in connect(): scripts read the features and descriptor before connecting.
-        self._env: LocalVectorEnv | RemoteVectorEnv = config.env.create_env(task_group, config.task_id)
+        self._env: LocalVectorEnv | RemoteVectorEnv = make_task_env(config.env, task_group, config.task_id)
         descriptor = self._env.descriptor
         self.robot_type = descriptor.robot_type or self.name
         state = next((feature for feature in descriptor.features if feature.name == OBS_STATE), None)
