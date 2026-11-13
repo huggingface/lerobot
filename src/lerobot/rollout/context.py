@@ -436,6 +436,7 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
                 encoder_threads=cfg.dataset.encoder_threads,
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * camera_count,
+                image_writer_queue_maxsize=cfg.dataset.image_writer_queue_maxsize,
             )
             if not math.isclose(dataset.fps, cfg.fps):
                 dataset.finalize()
@@ -460,6 +461,7 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
                 use_videos=cfg.dataset.video,
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * camera_count,
+                image_writer_queue_maxsize=cfg.dataset.image_writer_queue_maxsize,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 rgb_encoder=cfg.dataset.rgb_encoder,
                 depth_encoder=cfg.dataset.depth_encoder,
