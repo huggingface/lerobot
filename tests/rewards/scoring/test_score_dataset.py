@@ -141,6 +141,27 @@ def test_rabc_rejects_annotations_after_episode_ranges_change(
         RABCWeights(changed_dataset, "fake", "progress", chunk_size=1)
 
 
+def test_rabc_rejects_sparse_annotations_after_episode_start_moves(tmp_path: Path) -> None:
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    dataset = FakeDataset(tmp_path / "dataset")
+    scorer = FakeScorer(
+        result=FrameSignals(
+            frame_indices=np.asarray([1], dtype=np.int64),
+            signals={"progress": np.asarray([0.5], dtype=np.float32)},
+        )
+    )
+    score_dataset(dataset, scorer)
+    original = RABCWeights(dataset, "fake", "progress", chunk_size=1)
+    assert sorted(original.progress_lookup) == [1, 4]
+
+    # Both global indices still fit their episodes, but episode 1 now starts at 2 instead of 3.
+    changed_dataset = FakeDataset(dataset.root, lengths=(2, 3))
+
+    with pytest.raises(ValueError, match="no longer align"):
+        RABCWeights(changed_dataset, "fake", "progress", chunk_size=1)
+
+
 def test_rabc_accepts_annotations_after_episodes_are_appended(tmp_path: Path) -> None:
     from lerobot.rewards.sarm.rabc import RABCWeights
 

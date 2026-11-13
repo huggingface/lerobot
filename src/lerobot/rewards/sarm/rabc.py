@@ -107,8 +107,11 @@ class RABCWeights(SampleWeighter):
                 f"but {signal_name!r} declares greater_is_better={descriptor.greater_is_better!r}"
             )
 
-        scores = load_annotations(dataset, annotation_name, columns=["index", "episode_index", signal_name])
+        scores = load_annotations(
+            dataset, annotation_name, columns=["index", "episode_index", "frame_index", signal_name]
+        )
         global_indices = np.asarray(scores["index"])
+        frame_indices = np.asarray(scores["frame_index"])
         progress_values = np.asarray(scores[signal_name])
         episode_indices = np.asarray(scores["episode_index"])
         if progress_values.dtype.kind not in "iuf":
@@ -143,13 +146,15 @@ class RABCWeights(SampleWeighter):
             episode_mask = episode_indices == episode_idx
             episode_global_indices = global_indices[episode_mask]
             episode = dataset.meta.episodes[int(episode_idx)]
+            episode_start = int(episode["dataset_from_index"])
             if np.any(
-                (episode_global_indices < int(episode["dataset_from_index"]))
+                (episode_global_indices < episode_start)
                 | (episode_global_indices >= int(episode["dataset_to_index"]))
+                | (episode_global_indices != episode_start + frame_indices[episode_mask])
             ):
                 raise ValueError(
                     f"Annotations {annotation_name!r} no longer align with the dataset's "
-                    f"frame range for episode {episode_idx}; score the dataset again"
+                    f"frame indices for episode {episode_idx}; score the dataset again"
                 )
             self.episode_boundaries[int(episode_idx)] = {
                 "start": int(episode_global_indices.min()),

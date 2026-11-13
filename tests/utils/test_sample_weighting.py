@@ -358,7 +358,9 @@ def test_rabc_compute_batch_weights(sample_annotation_dataset, annotation_loader
     descriptors, annotations = annotation_loaders
     descriptors.assert_called_once_with(sample_annotation_dataset, "sarm")
     annotations.assert_called_once_with(
-        sample_annotation_dataset, "sarm", columns=["index", "episode_index", "progress_sparse"]
+        sample_annotation_dataset,
+        "sarm",
+        columns=["index", "episode_index", "frame_index", "progress_sparse"],
     )
 
 

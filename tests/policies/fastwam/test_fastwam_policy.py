@@ -253,7 +253,12 @@ def test_rabc_sample_weighter_uses_the_full_action_horizon(monkeypatch):
     from lerobot.utils.sample_weighting import SampleWeightingConfig, make_sample_weighter
 
     annotations = hf_datasets.Dataset.from_dict(
-        {"index": list(range(40)), "episode_index": [0] * 40, "progress": [0.0] * 40}
+        {
+            "index": list(range(40)),
+            "episode_index": [0] * 40,
+            "frame_index": list(range(40)),
+            "progress": [0.0] * 40,
+        }
     )
     monkeypatch.setattr(
         rabc, "load_annotations", lambda dataset, name, columns: annotations.select_columns(columns)
