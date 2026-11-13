@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Named frame-aligned tables stored beside a dataset.
+"""Named sets of per-frame scores stored beside a dataset.
 
-A score table adds columns to some frames of a dataset without modifying its data
-files. It is written to ``<root>/scores/<name>.parquet`` and joins the dataset on
-``(episode_index, frame_index)``. Each table carries a caller-defined ``info`` dict that the
+Scores add columns to some frames of a dataset without modifying its data files. Each named
+set of scores is one Parquet file, ``<root>/scores/<name>.parquet``, that joins the dataset on
+``(episode_index, frame_index)``. Each file carries a caller-defined ``info`` dict that the
 store saves and compares but never interprets.
 
 Episodes are written one at a time to a staging folder, so an interrupted run can resume, and
-the table is published only once every selected episode is written.
+the file is published only once every selected episode is written.
 """
 
 from __future__ import annotations
@@ -163,29 +163,29 @@ def _write_episode_tables(path: Path, schema: pa.Schema, tables: Iterable[pa.Tab
 
 
 class ScoreWriter:
-    """Write a named score table episode by episode, then publish it.
+    """Write named scores episode by episode, then publish them as one Parquet file.
 
     Each written episode is stored as its own part file in a hidden staging folder next to the
-    published table. A new writer with the same name, dataset, ``info`` and episode selection
+    published file. A new writer with the same name, dataset, ``info`` and episode selection
     resumes from the parts already written.
 
     Args:
         dataset: Dataset to score. It must use the default storage format in a writable
             local root.
-        name: Table name. The table is written to ``<root>/scores/<name>.parquet``.
-        info: JSON-serializable description of the table, stored with it and compared on
+        name: Score name. The scores are written to ``<root>/scores/<name>.parquet``.
+        info: JSON-serializable description of the scores, stored with them and compared on
             resume. The store does not interpret it.
         episodes: Global episode indices to score. Defaults to every episode in the dataset
             view.
         resume: If ``True``, keep the episodes written by an interrupted run with the same
             dataset, ``info`` and episode selection, including replacement runs. Combine
             ``resume=False`` with ``overwrite=True`` to discard staged parts and restart.
-        overwrite: If ``True``, allow replacing an existing table once the new one is published.
+        overwrite: If ``True``, allow replacing existing scores once the new ones are published.
 
     Raises:
         RuntimeError: If the dataset is being recorded and not finalized.
         NotImplementedError: If the dataset root cannot hold score files.
-        FileExistsError: If the table exists and ``overwrite`` is ``False``, or staged parts
+        FileExistsError: If the scores exist and ``overwrite`` is ``False``, or staged parts
             exist and both ``resume`` and ``overwrite`` are ``False``.
         ValueError: If staged parts were written for a different dataset, ``info`` or
             episode selection.
@@ -338,7 +338,7 @@ class ScoreWriter:
         self._completed.add(episode_index)
 
     def finalize(self) -> None:
-        """Publish the written episodes, in episode order, as one table and remove the parts.
+        """Publish the written episodes, in episode order, as one Parquet file and remove the parts.
 
         Raises:
             RuntimeError: If a selected episode has not been written.
@@ -364,22 +364,22 @@ def add_scores(
     resume: bool = True,
     overwrite: bool = False,
 ) -> None:
-    """Score episodes with ``function`` and publish the result as a named table.
+    """Score episodes with ``function`` and publish the result under a name.
 
     ``function`` is called once per episode that still needs work, in ascending episode order.
 
     Args:
         dataset: Dataset to score.
-        name: Table name.
+        name: Score name.
         function: Called as ``function(episode_index)``; returns ``(frame_indices, columns)``
             as accepted by :meth:`ScoreWriter.write_episode`.
-        info: JSON-serializable description of the table, stored with it.
+        info: JSON-serializable description of the scores, stored with them.
         episodes: Global episode indices to score. Defaults to every episode in the dataset
             view.
         resume: If ``True``, skip episodes written by an interrupted run with the same
             dataset, ``info`` and episode selection, including replacement runs. Combine
             ``resume=False`` with ``overwrite=True`` to discard staged parts and restart.
-        overwrite: If ``True``, replace an existing table once the new one is published.
+        overwrite: If ``True``, replace existing scores once the new ones are published.
     """
     writer = ScoreWriter(dataset, name, info=info, episodes=episodes, resume=resume, overwrite=overwrite)
     for episode_index in writer.pending_episodes:
@@ -389,11 +389,11 @@ def add_scores(
 
 
 def _read_schema(path: Path) -> pa.Schema:
-    """Read and check a score table's schema without loading its rows."""
+    """Read and check a score file's schema without loading its rows."""
     schema = pq.read_schema(path)
     metadata = schema.metadata or {}
     if metadata.get(_FORMAT_KEY) != SCORES_FORMAT.encode():
-        raise ValueError(f"Not a LeRobot score table: {path}")
+        raise ValueError(f"Not a LeRobot score file: {path}")
     version = metadata.get(_SCHEMA_VERSION_KEY)
     if version != str(SCORES_SCHEMA_VERSION).encode():
         raise ValueError(f"Unsupported score schema version: {version!r}")
@@ -401,16 +401,16 @@ def _read_schema(path: Path) -> pa.Schema:
 
 
 def load_scores(dataset: LeRobotDataset, name: str, columns: Sequence[str] | None = None) -> datasets.Dataset:
-    """Load a named score table.
+    """Load named scores.
 
     Args:
-        dataset: Dataset the table belongs to.
-        name: Table name.
+        dataset: Dataset the scores belong to.
+        name: Score name.
         columns: Columns to load. Defaults to every column, including ``index``,
             ``episode_index`` and ``frame_index``.
 
     Returns:
-        The table as a Hugging Face dataset.
+        The scores as a Hugging Face dataset.
     """
     path = _scores_path(dataset, name)
     schema = _read_schema(path)
@@ -419,12 +419,12 @@ def load_scores(dataset: LeRobotDataset, name: str, columns: Sequence[str] | Non
 
 
 def load_scores_info(dataset: LeRobotDataset, name: str) -> dict[str, Any]:
-    """Return the ``info`` dict a named score table was written with."""
+    """Return the ``info`` dict that named scores were written with."""
     return json.loads(_read_schema(_scores_path(dataset, name)).metadata[_INFO_KEY])
 
 
 def list_scores(dataset: LeRobotDataset) -> list[str]:
-    """List the names of the score tables published for a dataset."""
+    """List the names of the scores published for a dataset."""
     directory = Path(dataset.root) / SCORES_DIR
     return sorted(path.stem for path in directory.glob("*.parquet") if path.is_file())
 
@@ -432,25 +432,25 @@ def list_scores(dataset: LeRobotDataset) -> list[str]:
 def merge_scores(
     dataset: LeRobotDataset, names: Sequence[str], *, name: str, overwrite: bool = False
 ) -> None:
-    """Merge score tables of disjoint episodes into one named table.
+    """Merge scores of disjoint episodes under one name.
 
-    Useful when episodes were scored in parallel, each worker with its own table name. The
-    merged tables are kept.
+    Useful when episodes were scored in parallel, each worker with its own score name. The
+    merged scores are kept.
 
     Args:
-        dataset: Dataset the tables belong to.
-        names: Tables to merge. They must have the same columns, dataset identity and ``info``,
+        dataset: Dataset the scores belong to.
+        names: Score names to merge. They must have the same columns, dataset identity and ``info``,
             and share no episode.
-        name: Name of the merged table.
-        overwrite: If ``True``, replace an existing table with that name.
+        name: Name of the merged scores.
+        overwrite: If ``True``, replace existing scores with that name.
 
     Raises:
-        FileExistsError: If the table exists and ``overwrite`` is ``False``.
-        ValueError: If the tables differ in columns, dataset identity or ``info``, or share an
+        FileExistsError: If the scores exist and ``overwrite`` is ``False``.
+        ValueError: If the scores differ in columns, dataset identity or ``info``, or share an
             episode.
     """
     if not names:
-        raise ValueError("At least one score table must be given to merge")
+        raise ValueError("At least one score name must be given to merge")
     output_path = _scores_path(dataset, name)
     _validate_writable_storage(dataset)
     if output_path.exists() and not overwrite:
@@ -471,7 +471,7 @@ def merge_scores(
         )
         shared = sorted(int(index) for index in episodes if int(index) in episode_paths)
         if shared:
-            raise ValueError(f"Scores {part!r} repeat episodes of earlier tables: {shared}")
+            raise ValueError(f"Scores {part!r} repeat episodes of earlier scores: {shared}")
         episode_paths.update((int(index), path) for index in episodes)
 
     tables = (
@@ -483,7 +483,7 @@ def merge_scores(
 
 
 def push_scores_to_hub(dataset: LeRobotDataset, name: str) -> None:
-    """Upload one named score table to the dataset repository on the Hub."""
+    """Upload the named scores to the dataset repository on the Hub."""
     local_path = _scores_path(dataset, name)
     if not local_path.is_file():
         raise FileNotFoundError(f"Scores {name!r} do not exist")

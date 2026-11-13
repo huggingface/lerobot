@@ -19,7 +19,7 @@ Create MP4 (or GIF) videos with per-frame progress overlay for specified episode
 
 Downloads datasets from HuggingFace, seeks directly into the episode segment
 of the source video, draws a progress line on each frame, and writes the result.
-The progress is one signal of a score table written by ``lerobot-score``, by
+The progress is one signal of the scores written by ``lerobot-score``, by
 default the score ``sarm`` (configurable via ``--score-name`` and ``--signal-name``).
 
 Usage:
@@ -71,7 +71,7 @@ TASK_FONT_SCALE = 0.55
 
 
 def load_episode_dataset(repo_id: str, episode: int, dataset_root: Path | None = None) -> LeRobotDataset:
-    """Load the metadata, the episode's data and the score tables, without videos.
+    """Load the metadata, the episode's data and the scores, without videos.
 
     Args:
         repo_id: HuggingFace dataset repository ID.
@@ -228,9 +228,9 @@ def load_progress_data(
     """Load an episode's per-frame values of one score signal.
 
     Args:
-        dataset: Dataset holding the score table.
+        dataset: Dataset holding the scores.
         episode: Episode index.
-        score_name: Name of the score table, such as ``sarm``.
+        score_name: Name of the scores, such as ``sarm``.
         signal_name: Signal to read. Defaults to the score's first signal, which for
             SARM is the dense-head progress when the score has it.
 
@@ -239,7 +239,7 @@ def load_progress_data(
     """
     available = list_scores(dataset)
     if score_name not in available:
-        logging.warning("Scores %r not found; available tables: %s", score_name, available)
+        logging.warning("Scores %r not found; available scores: %s", score_name, available)
         return None
     signals = sorted(load_signal_descriptors(dataset, score_name))
     if not signals:

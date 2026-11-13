@@ -102,7 +102,7 @@ def dense(dataset: FakeDataset) -> RecordingFunction:
     return RecordingFunction(function)
 
 
-def test_scores_write_load_and_list_named_tables(tmp_path):
+def test_scores_write_load_and_list_by_name(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [3, 4])
 
     def function(episode_index: int):
@@ -430,7 +430,7 @@ def test_load_scores_rejects_parquet_without_score_metadata(tmp_path):
     path.parent.mkdir(parents=True)
     pq.write_table(pa.table({"value": [1.0]}), path)
 
-    with pytest.raises(ValueError, match="Not a LeRobot score table"):
+    with pytest.raises(ValueError, match="Not a LeRobot score file"):
         load_scores(dataset, "other")
 
 
@@ -486,7 +486,7 @@ def test_merge_scores_rejects_different_info(tmp_path):
         merge_scores(dataset, ["a", "b"], name="test")
 
 
-def test_merge_scores_replaces_a_table_only_with_overwrite(tmp_path):
+def test_merge_scores_replaces_existing_scores_only_with_overwrite(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [2, 2])
     add_scores(dataset, "a", dense(dataset), info=INFO, episodes=[0])
     add_scores(dataset, "b", dense(dataset), info=INFO, episodes=[1])

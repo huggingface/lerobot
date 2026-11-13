@@ -73,15 +73,15 @@ def score_dataset(
     resume: bool = True,
     overwrite: bool = False,
 ) -> None:
-    """Score selected episodes and store their signals as a named score table.
+    """Score selected episodes and store their signals as named scores.
 
     Args:
         dataset: Dataset to score.
         scorer: Model adapter providing signals, their descriptors and provenance.
-        name: Table name. Defaults to ``scorer.name``.
+        name: Score name. Defaults to ``scorer.name``.
         episodes: Global episode indices to score. Defaults to the dataset's selected episodes.
         resume: If ``True``, skip episodes written by an interrupted matching run.
-        overwrite: If ``True``, replace an existing table once scoring succeeds.
+        overwrite: If ``True``, replace existing scores once scoring succeeds.
 
     Raises:
         ImportError: If the dataset extra's dependencies are unavailable.
@@ -129,24 +129,24 @@ def score_dataset(
 
 
 def load_signal_descriptors(dataset: LeRobotDataset, name: str) -> dict[str, SignalDescriptor]:
-    """Load the descriptors stored with a score table.
+    """Load the signal descriptors stored with named scores.
 
     Args:
-        dataset: Dataset the table belongs to.
-        name: Table name.
+        dataset: Dataset the scores belong to.
+        name: Score name.
 
     Returns:
-        The table's signal descriptors, with bounds restored as tuples.
+        The signal descriptors, with bounds restored as tuples.
 
     Raises:
         ImportError: If the dataset extra's dependencies are unavailable.
-        ValueError: If the table has no signal descriptors from ``score_dataset``.
+        ValueError: If the scores have no signal descriptors from ``score_dataset``.
     """
     require_package("datasets", extra="dataset")
     require_package("av", extra="dataset")
     info = load_scores_info(dataset, name)
     if "signals" not in info:
-        raise ValueError(f"Scores {name!r} have no signal descriptors; use a table written by score_dataset")
+        raise ValueError(f"Scores {name!r} have no signal descriptors; use scores written by score_dataset")
 
     descriptors = {}
     for signal_name, descriptor in info["signals"].items():

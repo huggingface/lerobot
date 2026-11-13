@@ -1,6 +1,6 @@
 # Offline Reward-Model Scoring
 
-LeRobot's offline scoring workflow runs a reward model over dataset episodes and writes frame-aligned signals to a named score table in `scores/<name>.parquet`. Each table joins back to source frames through `(episode_index, frame_index)` and includes an `index` column for the source-global frame index. The source frames are unchanged, and filtering remains a downstream decision.
+LeRobot's offline scoring workflow runs a reward model over dataset episodes and writes frame-aligned signals to a named Parquet file, `scores/<name>.parquet`. Each file joins back to source frames through `(episode_index, frame_index)` and includes an `index` column for the source-global frame index. The source frames are unchanged, and filtering remains a downstream decision.
 
 ```text
   LeRobotDataset                  reward model
@@ -54,15 +54,15 @@ By default, the score is named after the scorer, such as `robometer`. Use `--nam
 
 Scoring requires a writable local LeRobot dataset root, not the Hub cache LeRobot downloads to by default. Pass `--dataset_root=/path/to/dataset`; a Hub dataset is downloaded there if it isn't yet.
 
-Pass `--push_to_hub=true` to upload the completed score table to the dataset repository. The score store owns its Hub location and local staging data.
+Pass `--push_to_hub=true` to upload the completed score file to the dataset repository. The score store owns its Hub location and local staging data.
 
 For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model.pretrained_revision`. The requested revisions are stored in provenance and must match when resuming.
 
 The command is resumable by default. A retry skips completed episodes only when the dataset revision, model revision, scorer options, episode selection, and schema are unchanged. Completed parts are combined into the final score in episode order, with one Parquet row group per episode. Published scores are immutable; choose another name or pass `--overwrite=true` to replace one atomically.
 
-To resume an interrupted replacement, retry with `--overwrite=true`; the published table stays available until its replacement is complete. To discard staged work and start again, pass `--overwrite=true --resume=false`. A changed run configuration requires this explicit restart or a new name.
+To resume an interrupted replacement, retry with `--overwrite=true`; the published scores stay available until their replacement is complete. To discard staged work and start again, pass `--overwrite=true --resume=false`. A changed run configuration requires this explicit restart or a new name.
 
-To score a large dataset in parallel, give each worker its own episodes and table name, then merge the results into one table:
+To score a large dataset in parallel, give each worker its own episodes and score name, then merge the results under one name:
 
 ```python
 from lerobot.datasets.scores import merge_scores
@@ -72,7 +72,7 @@ score_dataset(dataset, scorer, name=f"sarm-rank{rank}", episodes=my_episodes)  #
 merge_scores(dataset, [f"sarm-rank{rank}" for rank in range(world_size)], name="sarm")  # once at the end
 ```
 
-`merge_scores()` requires matching dataset identity, column types, and score info in every table, and rejects episodes written twice.
+`merge_scores()` requires matching dataset identity, column types, and score info in every file, and rejects episodes written twice.
 
 ## Python API
 
@@ -112,7 +112,7 @@ progress = load_scores(
     dataset, "robometer-4b", columns=["index", "episode_index", "reward.robometer.progress"]
 )
 
-# Upload the completed table when ready to share it.
+# Upload the completed scores when ready to share them.
 push_scores_to_hub(dataset, "robometer-4b")
 ```
 
@@ -131,9 +131,9 @@ Every new sidecar contains:
 
 `bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run. The first storage version validates structure and alignment; descriptor bounds and `allow_nan` remain metadata for consumers.
 
-`load_scores()` returns a Hugging Face `datasets.Dataset`; its optional `columns` argument selects exactly the requested columns. Descriptors and scorer provenance are stored in the table's info, and `load_signal_descriptors()` restores the typed descriptors. The store records dataset identity and LeRobot version separately. Metadata is encoded once in the Parquet schema rather than repeated on every frame row.
+`load_scores()` returns a Hugging Face `datasets.Dataset`; its optional `columns` argument selects exactly the requested columns. Descriptors and scorer provenance are stored in the score file's info, and `load_signal_descriptors()` restores the typed descriptors. The store records dataset identity and LeRobot version separately. Metadata is encoded once in the Parquet schema rather than repeated on every frame row.
 
-For RA-BC training, select a table and a progress signal with `--sample_weighting.score_name=robometer-4b` and `--sample_weighting.signal_name=reward.robometer.progress`. RA-BC requires `greater_is_better=True`.
+For RA-BC training, select the scores and a progress signal with `--sample_weighting.score_name=robometer-4b` and `--sample_weighting.signal_name=reward.robometer.progress`. RA-BC requires `greater_is_better=True`.
 
 ## Scope
 

@@ -55,14 +55,14 @@ class RABCWeights(SampleWeighter):
     This class implements the SampleWeighter ABC for use with the generic
     sample weighting infrastructure in lerobot.
 
-    Progress values are loaded from a named dataset score table.
+    Progress values are loaded from named dataset scores.
     During training, computes:
         - progress_delta = progress[t + chunk_size] - progress[t]
         - rabc_weight based on the delta (paper Eq. 8-9)
 
     Args:
-        dataset: Dataset containing the score table.
-        score_name: Name of the dataset score table.
+        dataset: Dataset containing the scores.
+        score_name: Name of the dataset scores.
         signal_name: Progress signal selected from the sidecar.
         chunk_size: Number of frames ahead for computing progress delta.
         kappa: Hard threshold for high-quality samples (default: 0.01).

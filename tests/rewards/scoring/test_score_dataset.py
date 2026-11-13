@@ -352,7 +352,7 @@ def test_score_dataset_forwards_episode_selection_and_overwrite(tmp_path: Path) 
     assert list(load_scores(dataset, scorer.name)["episode_index"]) == [1, 1, 1]
 
 
-def test_load_signal_descriptors_rejects_tables_without_signals_metadata(tmp_path: Path) -> None:
+def test_load_signal_descriptors_rejects_scores_without_signals_metadata(tmp_path: Path) -> None:
     dataset = FakeDataset(tmp_path / "dataset", lengths=(1,))
     add_scores(
         dataset,
