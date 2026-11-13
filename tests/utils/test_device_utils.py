@@ -18,7 +18,12 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from lerobot.utils.device_utils import get_safe_torch_device, is_torch_device_available
+from lerobot.utils.device_utils import (
+    get_safe_dtype,
+    get_safe_torch_device,
+    is_amp_available,
+    is_torch_device_available,
+)
 
 
 def test_cpu_always_available():
@@ -34,3 +39,50 @@ def test_missing_cuda_raises_valueerror():
 def test_missing_mps_raises_valueerror():
     with patch("torch.backends.mps.is_available", return_value=False), pytest.raises(ValueError, match="MPS"):
         get_safe_torch_device("mps")
+
+
+def test_missing_indexed_mps_and_xpu_raise_valueerror():
+    with patch("torch.backends.mps.is_available", return_value=False), pytest.raises(ValueError, match="MPS"):
+        get_safe_torch_device("mps:0")
+    with patch("torch.xpu.is_available", return_value=False), pytest.raises(ValueError, match="XPU"):
+        get_safe_torch_device("xpu:0")
+
+
+def test_indexed_devices_are_available():
+    with patch("torch.cuda.is_available", return_value=True):
+        assert is_torch_device_available("cuda:1")
+    with patch("torch.backends.mps.is_available", return_value=True):
+        assert is_torch_device_available("mps:0")
+    with patch("torch.xpu.is_available", return_value=True):
+        assert is_torch_device_available("xpu:0")
+
+
+def test_amp_availability_ignores_device_index():
+    assert is_amp_available("cuda:1")
+    assert is_amp_available("xpu:0")
+    assert not is_amp_available("mps:0")
+
+
+def test_amp_availability_accepts_torch_device():
+    assert is_amp_available(torch.device("cuda:1"))
+    assert not is_amp_available(torch.device("mps"))
+
+
+def test_safe_dtype_ignores_device_index():
+    assert get_safe_dtype(torch.float64, "mps:0") == torch.float32
+    assert get_safe_dtype(torch.float64, torch.device("mps:0")) == torch.float32
+
+
+@pytest.mark.parametrize("as_device", [False, True])
+@pytest.mark.parametrize("target_has_fp64", [False, True])
+def test_safe_dtype_uses_requested_xpu_capability(as_device, target_has_fp64):
+    target = torch.device("xpu:1") if as_device else "xpu:1"
+
+    def capability(device=None):
+        # Current device and requested device deliberately differ.
+        is_target = device is not None and torch.device(device) == torch.device("xpu:1")
+        return {"has_fp64": target_has_fp64 if is_target else not target_has_fp64}
+
+    with patch("torch.xpu.get_device_capability", side_effect=capability):
+        expected = torch.float64 if target_has_fp64 else torch.float32
+        assert get_safe_dtype(torch.float64, target) == expected
