@@ -93,6 +93,7 @@ class DatasetConfig:
     num_episodes_to_record: int = 5
     replay_episode: int | None = None
     push_to_hub: bool = False
+    private: bool | None = None
 
 
 @dataclass
@@ -772,7 +773,7 @@ def control_loop(
         logging.info("Finalizing dataset before pushing to hub")
         dataset.finalize()
         logging.info("Pushing dataset to hub")
-        dataset.push_to_hub()
+        dataset.push_to_hub(private=cfg.dataset.private)
 
 
 def replay_trajectory(
