@@ -1076,6 +1076,7 @@ def _copy_and_reindex_episodes_metadata(
     dst_meta.info.total_frames = total_frames
     dst_meta.info.total_tasks = len(dst_meta.tasks) if dst_meta.tasks is not None else 0
     dst_meta.info.splits = {"train": f"0:{len(episode_mapping)}"}
+    dst_meta.info.tools = deepcopy(src_dataset.meta.info.tools)
     write_info(dst_meta.info, dst_meta.root)
 
     if not all_stats:
@@ -1245,6 +1246,7 @@ def _copy_episodes_metadata_and_stats(
     dst_meta.info.total_episodes = src_dataset.meta.total_episodes
     dst_meta.info.total_frames = src_dataset.meta.total_frames
     dst_meta.info.total_tasks = src_dataset.meta.total_tasks
+    dst_meta.info.tools = deepcopy(src_dataset.meta.info.tools)
     # Preserve original splits if available, otherwise create default
     dst_meta.info.splits = (
         src_dataset.meta.info.splits
@@ -2057,6 +2059,7 @@ def convert_image_to_video_dataset(
         new_meta.info.total_frames = sum(ep["length"] for ep in all_episode_metadata.values())
         new_meta.info.total_tasks = dataset.meta.total_tasks
         new_meta.info.splits = {"train": f"0:{len(episode_indices)}"}
+        new_meta.info.tools = deepcopy(dataset.meta.info.tools)
 
         # Update video info for all image keys (now videos). They are registered as
         # video features above, so update_video_info populates their (still-empty) info.

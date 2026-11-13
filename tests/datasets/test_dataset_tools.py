@@ -856,6 +856,70 @@ def test_split_preserves_stats(sample_dataset, tmp_path):
             assert "std" in split_ds.meta.stats[feature]
 
 
+@pytest.mark.parametrize("custom_tools", [False, True])
+@pytest.mark.parametrize("operation", ["split", "add", pytest.param("convert", marks=require_h264)])
+def test_edits_preserve_tool_catalog(sample_dataset, tmp_path, custom_tools, operation):
+    """Single-source edits keep the schemas used to interpret language tool calls."""
+    tools = (
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "grasp",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"object": {"type": "string"}},
+                        "required": ["object"],
+                    },
+                },
+            }
+        ]
+        if custom_tools
+        else None
+    )
+    sample_dataset.meta.tools = tools
+    source_info = (sample_dataset.root / "meta/info.json").read_bytes()
+
+    if operation == "split":
+        outputs = list(
+            split_dataset(
+                sample_dataset, {"train": [0, 2, 4], "val": [1, 3]}, output_dir=tmp_path / "split"
+            ).values()
+        )
+    elif operation == "add":
+        outputs = [
+            add_features(
+                sample_dataset,
+                {
+                    "extra": (
+                        np.arange(len(sample_dataset), dtype=np.float32),
+                        {"dtype": "float32", "shape": (1,), "names": None},
+                    )
+                },
+                output_dir=tmp_path / "added",
+                repo_id="test/added",
+            )
+        ]
+    else:
+        outputs = [
+            convert_image_to_video_dataset(
+                sample_dataset,
+                output_dir=tmp_path / "video",
+                repo_id="test/video",
+                rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=30),
+                num_workers=1,
+            )
+        ]
+
+    for output in outputs:
+        assert output.meta.info.tools == tools
+        assert load_info(output.root).tools == tools
+        assert output.meta.tools == sample_dataset.meta.tools
+        reloaded = LeRobotDataset(output.repo_id, root=output.root)
+        assert reloaded.meta.tools == sample_dataset.meta.tools
+    assert (sample_dataset.root / "meta/info.json").read_bytes() == source_info
+
+
 def test_merge_three_datasets(sample_dataset, tmp_path, empty_lerobot_dataset_factory):
     """Test merging three datasets."""
     features = {
