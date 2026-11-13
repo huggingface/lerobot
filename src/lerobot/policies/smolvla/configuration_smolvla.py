@@ -62,6 +62,16 @@ class SmolVLAConfig(PreTrainedConfig):
     # Decoding
     num_steps: int = 10
 
+    # Optional torch.compile for the action expert denoise loop.
+    # When enabled, torch.compile is applied to `denoise_step` using `compile_mode` (default: "max-autotune")
+    # with `dynamic=True`. Prefer `compile_denoise=True` (with `compile_model=False`) for CUDA-graph
+    # acceleration of the 10-step denoise loop (or `compile_mode="reduce-overhead"` on consumer GPUs to skip
+    # exhaustive Triton autotuning); if combining with whole-model `compile_model=True`, use
+    # `compile_mode="max-autotune-no-cudagraphs"`. The first call compiles for ~60-70s cold, and changing from
+    # batch size 1 to batch size > 1 triggers one recompile, so warm up with your target batch size before
+    # starting the robot control loop.
+    compile_denoise: bool = False
+
     # Attention utils
     use_cache: bool = True
 
