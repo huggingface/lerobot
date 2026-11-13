@@ -24,3 +24,10 @@ class ProgressOutput:
     """Task progress for each frame, from 0 to 1, shaped `(batch, time)`."""
 
     progress: Tensor
+
+
+@dataclass(frozen=True)
+class RemainingTimeOutput:
+    """Seconds until the task is completed, at the last frame of each trajectory, shaped `(batch,)`."""
+
+    remaining_time_s: Tensor

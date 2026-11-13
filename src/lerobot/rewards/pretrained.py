@@ -173,7 +173,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin):
         raise NotImplementedError(
             f"{self.__class__.__name__}.compute_reward() was removed. Use the model's own prediction method "
             "instead: `predict_progress()` for RoboMeter and SARM, `compute_log_probability()` for TOPReward, "
-            "or `predict_reward()` for the reward classifier."
+            "`predict_remaining_time()` for RynnValue, or `predict_reward()` for the reward classifier."
         )
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:

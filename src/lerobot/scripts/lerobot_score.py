@@ -85,6 +85,7 @@ class ScoreConfig:
     num_samples: int | None = None
     stride: int | None = None
     head_mode: str | None = None
+    inference_fps: float | None = None
     resume: bool = True
     overwrite: bool = False
     push_to_hub: bool = False
@@ -104,13 +105,14 @@ class ScoreConfig:
         return ["reward_model"]
 
     @property
-    def scorer_options(self) -> dict[str, int | str]:
+    def scorer_options(self) -> dict[str, int | float | str]:
         options = {
             "batch_size": self.batch_size,
             "num_subsampled_frames": self.num_subsampled_frames,
             "num_samples": self.num_samples,
             "stride": self.stride,
             "head_mode": self.head_mode,
+            "inference_fps": self.inference_fps,
         }
         return {name: value for name, value in options.items() if value is not None}
 
