@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
-    from lerobot.datasets.annotations import load_annotations
+    from lerobot.datasets.scores import load_scores
 
 
 class RABCWeights(SampleWeighter):
@@ -55,14 +55,14 @@ class RABCWeights(SampleWeighter):
     This class implements the SampleWeighter ABC for use with the generic
     sample weighting infrastructure in lerobot.
 
-    Progress values are loaded from a named dataset annotation table.
+    Progress values are loaded from a named dataset score table.
     During training, computes:
         - progress_delta = progress[t + chunk_size] - progress[t]
         - rabc_weight based on the delta (paper Eq. 8-9)
 
     Args:
-        dataset: Dataset containing the annotation table.
-        annotation_name: Name of the dataset annotation table.
+        dataset: Dataset containing the score table.
+        score_name: Name of the dataset score table.
         signal_name: Progress signal selected from the sidecar.
         chunk_size: Number of frames ahead for computing progress delta.
         kappa: Hard threshold for high-quality samples (default: 0.01).
@@ -74,7 +74,7 @@ class RABCWeights(SampleWeighter):
     def __init__(
         self,
         dataset: LeRobotDataset,
-        annotation_name: str,
+        score_name: str,
         signal_name: str,
         chunk_size: int = 50,
         kappa: float = 0.01,
@@ -84,7 +84,7 @@ class RABCWeights(SampleWeighter):
     ) -> None:
         require_package("datasets", extra="dataset")
         require_package("av", extra="dataset")
-        self.annotation_name = annotation_name
+        self.score_name = score_name
         self.signal_name = signal_name
         self.chunk_size = chunk_size
         self.kappa = kappa
@@ -92,12 +92,12 @@ class RABCWeights(SampleWeighter):
         self.fallback_weight = fallback_weight
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        logging.info("Loading signal %s from dataset annotations %s", signal_name, annotation_name)
-        descriptors = load_signal_descriptors(dataset, annotation_name)
+        logging.info("Loading signal %s from dataset scores %s", signal_name, score_name)
+        descriptors = load_signal_descriptors(dataset, score_name)
 
         if signal_name not in descriptors:
             raise ValueError(
-                f"Signal '{signal_name}' not found in annotations '{annotation_name}'. "
+                f"Signal '{signal_name}' not found in scores '{score_name}'. "
                 f"Available signals: {sorted(descriptors)}"
             )
         descriptor = descriptors[signal_name]
@@ -107,8 +107,8 @@ class RABCWeights(SampleWeighter):
                 f"but {signal_name!r} declares greater_is_better={descriptor.greater_is_better!r}"
             )
 
-        scores = load_annotations(
-            dataset, annotation_name, columns=["index", "episode_index", "frame_index", signal_name]
+        scores = load_scores(
+            dataset, score_name, columns=["index", "episode_index", "frame_index", signal_name]
         )
         global_indices = np.asarray(scores["index"])
         frame_indices = np.asarray(scores["frame_index"])
@@ -118,7 +118,7 @@ class RABCWeights(SampleWeighter):
             raise ValueError(f"RA-BC signal {signal_name!r} must be numeric")
         if np.any((global_indices < 0) | (global_indices >= dataset.meta.total_frames)):
             raise ValueError(
-                f"Annotations {annotation_name!r} no longer align with the dataset's frame range; "
+                f"Scores {score_name!r} no longer align with the dataset's frame range; "
                 "score the dataset again"
             )
 
@@ -140,7 +140,7 @@ class RABCWeights(SampleWeighter):
         for episode_idx in np.unique(episode_indices):
             if not 0 <= episode_idx < dataset.meta.total_episodes:
                 raise ValueError(
-                    f"Annotations {annotation_name!r} no longer align with the dataset: "
+                    f"Scores {score_name!r} no longer align with the dataset: "
                     f"episode {episode_idx} does not exist; score the dataset again"
                 )
             episode_mask = episode_indices == episode_idx
@@ -153,7 +153,7 @@ class RABCWeights(SampleWeighter):
                 | (episode_global_indices != episode_start + frame_indices[episode_mask])
             ):
                 raise ValueError(
-                    f"Annotations {annotation_name!r} no longer align with the dataset's "
+                    f"Scores {score_name!r} no longer align with the dataset's "
                     f"frame indices for episode {episode_idx}; score the dataset again"
                 )
             self.episode_boundaries[int(episode_idx)] = {
@@ -336,7 +336,7 @@ class RABCWeights(SampleWeighter):
             "type": "rabc",
             "num_frames": len(self.progress_lookup),
             "chunk_size": self.chunk_size,
-            "annotation_name": self.annotation_name,
+            "score_name": self.score_name,
             "signal_name": self.signal_name,
             "delta_mean": self.delta_mean,
             "delta_std": self.delta_std,

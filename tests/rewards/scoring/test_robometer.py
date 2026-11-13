@@ -23,7 +23,7 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.annotations import load_annotations
+from lerobot.datasets.scores import load_scores
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep, batch_to_transition
 from lerobot.rewards import score_dataset
@@ -290,7 +290,7 @@ def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):
     dataset = FakeDataset()
     score_dataset(dataset, scorer)
 
-    scores = load_annotations(dataset, "robometer")
+    scores = load_scores(dataset, "robometer")
     assert list(scores[PROGRESS_SIGNAL]) == [0.0, 0.5, 1.0]
     assert list(scores[SUCCESS_PROBABILITY_SIGNAL]) == [0.0, 0.25, 0.5]
     assert scores.features[PROGRESS_SIGNAL].dtype == "float32"

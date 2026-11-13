@@ -19,7 +19,7 @@ SLURM-distributed SARM scoring for RA-BC.
 
 Scores every frame of a dataset with SARM across SLURM workers, then merges the
 workers' scores into the dataset score `sarm`, which RA-BC reads with
-sample_weighting.annotation_name=sarm and sample_weighting.signal_name=reward.sarm.sparse_progress.
+sample_weighting.score_name=sarm and sample_weighting.signal_name=reward.sarm.sparse_progress.
 
 Two subcommands, each a separate SLURM submission:
 
@@ -101,10 +101,10 @@ class MergeWorkerScores(PipelineStep):
         import logging
 
         from lerobot.datasets import LeRobotDataset
-        from lerobot.datasets.annotations import (
-            list_annotations,
-            merge_annotations,
-            push_annotations_to_hub,
+        from lerobot.datasets.scores import (
+            list_scores,
+            merge_scores,
+            push_scores_to_hub,
         )
         from lerobot.utils.utils import init_logging
 
@@ -114,16 +114,14 @@ class MergeWorkerScores(PipelineStep):
             return
 
         dataset = LeRobotDataset(self.repo_id, root=self.dataset_root)
-        worker_scores = [
-            name for name in list_annotations(dataset) if name.startswith(f"{self.score_name}-rank")
-        ]
+        worker_scores = [name for name in list_scores(dataset) if name.startswith(f"{self.score_name}-rank")]
         if not worker_scores:
             raise ValueError(f"No worker scores named {self.score_name}-rank* in {dataset.root}")
         logging.info(f"Merging {len(worker_scores)} worker scores into {self.score_name!r}")
-        merge_annotations(dataset, worker_scores, name=self.score_name)
+        merge_scores(dataset, worker_scores, name=self.score_name)
 
         if self.push_to_hub:
-            push_annotations_to_hub(dataset, self.score_name)
+            push_scores_to_hub(dataset, self.score_name)
 
 
 def make_compute_executor(

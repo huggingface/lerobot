@@ -23,7 +23,7 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.annotations import load_annotations
+from lerobot.datasets.scores import load_scores
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep, batch_to_transition
 from lerobot.rewards import score_dataset
@@ -189,7 +189,7 @@ def test_topreward_scores_publish_to_the_dataset(tmp_path):
     dataset = FakeDataset()
     score_dataset(dataset, TOPRewardFrameScorer(_FakeModel(), _FakeEncoder(), num_samples=3))
 
-    assert list(load_annotations(dataset, "topreward")[PROGRESS_SIGNAL]) == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert list(load_scores(dataset, "topreward")[PROGRESS_SIGNAL]) == [0.0, 0.25, 0.5, 0.75, 1.0]
 
 
 @pytest.mark.parametrize("task_key", ["task", "instruction"])

@@ -236,7 +236,7 @@ def test_data_download_forwards_token(tmp_path, monkeypatch, token):
     assert snapshot_download.call_args.kwargs["token"] is token
 
 
-def test_episode_download_includes_annotations(tmp_path, monkeypatch):
+def test_episode_download_includes_scores(tmp_path, monkeypatch):
     snapshot_root = tmp_path / "snapshot"
     snapshot_download = Mock(return_value=str(snapshot_root))
     monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", snapshot_download)
@@ -254,10 +254,10 @@ def test_episode_download_includes_annotations(tmp_path, monkeypatch):
 
     dataset._download()
 
-    assert "annotations/" in snapshot_download.call_args.kwargs["allow_patterns"]
+    assert "scores/" in snapshot_download.call_args.kwargs["allow_patterns"]
 
 
-def test_push_to_hub_ignores_unpublished_annotation_parts(tmp_path, monkeypatch):
+def test_push_to_hub_ignores_unpublished_score_parts(tmp_path, monkeypatch):
     from huggingface_hub.utils import filter_repo_objects
 
     hub_api = Mock()
@@ -273,14 +273,12 @@ def test_push_to_hub_ignores_unpublished_annotation_parts(tmp_path, monkeypatch)
 
     ignore_patterns = hub_api.upload_folder.call_args.kwargs["ignore_patterns"]
     paths = [
-        "annotations/progress.parquet",
-        "annotations/.progress.parquet.parts/manifest.json",
-        "annotations/.progress.parquet.parts/episode-000000.parquet",
-        "annotations/.progress.parquet.abc123.tmp",
+        "scores/progress.parquet",
+        "scores/.progress.parquet.parts/manifest.json",
+        "scores/.progress.parquet.parts/episode-000000.parquet",
+        "scores/.progress.parquet.abc123.tmp",
     ]
-    assert list(filter_repo_objects(paths, ignore_patterns=ignore_patterns)) == [
-        "annotations/progress.parquet"
-    ]
+    assert list(filter_repo_objects(paths, ignore_patterns=ignore_patterns)) == ["scores/progress.parquet"]
 
 
 def test_without_root_reads_different_revisions_from_distinct_snapshot_roots(

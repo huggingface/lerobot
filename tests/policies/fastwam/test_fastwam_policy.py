@@ -252,7 +252,7 @@ def test_rabc_sample_weighter_uses_the_full_action_horizon(monkeypatch):
     from lerobot.rewards.scoring import SignalDescriptor
     from lerobot.utils.sample_weighting import SampleWeightingConfig, make_sample_weighter
 
-    annotations = hf_datasets.Dataset.from_dict(
+    scores = hf_datasets.Dataset.from_dict(
         {
             "index": list(range(40)),
             "episode_index": [0] * 40,
@@ -260,9 +260,7 @@ def test_rabc_sample_weighter_uses_the_full_action_horizon(monkeypatch):
             "progress": [0.0] * 40,
         }
     )
-    monkeypatch.setattr(
-        rabc, "load_annotations", lambda dataset, name, columns: annotations.select_columns(columns)
-    )
+    monkeypatch.setattr(rabc, "load_scores", lambda dataset, name, columns: scores.select_columns(columns))
     monkeypatch.setattr(
         rabc,
         "load_signal_descriptors",
@@ -273,7 +271,7 @@ def test_rabc_sample_weighter_uses_the_full_action_horizon(monkeypatch):
 
     cfg = FastWAMConfig(action_horizon=16, n_action_steps=4, base_model_id=None)
     weighter = make_sample_weighter(
-        SampleWeightingConfig(type="rabc", annotation_name="sarm", signal_name="progress"),
+        SampleWeightingConfig(type="rabc", score_name="sarm", signal_name="progress"),
         SimpleNamespace(config=cfg),
         torch.device("cpu"),
         dataset=SimpleNamespace(

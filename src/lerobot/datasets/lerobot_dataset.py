@@ -40,7 +40,7 @@ from .storage import (
     make_dataset_reader,
 )
 from .utils import (
-    ANNOTATIONS_DIR,
+    SCORES_DIR,
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
@@ -684,8 +684,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 f"push_to_hub is not supported for storage_format={self.meta.storage_format!r}: "
                 "the data files are not managed by LeRobotDataset."
             )
-        # Hidden entries under annotations/ are unpublished parts of an interrupted annotation run.
-        ignore_patterns = ["images/", f"{ANNOTATIONS_DIR}/.*"]
+        # Hidden entries under scores/ are unpublished parts of an interrupted scoring run.
+        ignore_patterns = ["images/", f"{SCORES_DIR}/.*"]
         if not push_videos:
             ignore_patterns.append("videos/")
 
@@ -733,7 +733,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         reader = cast(DatasetReader, self.reader)
         if self.episodes is not None:
             files = reader.get_episodes_file_paths()
-            files.append(f"{ANNOTATIONS_DIR}/")
+            files.append(f"{SCORES_DIR}/")
 
         if self._requested_root is None:
             self.meta.root = Path(

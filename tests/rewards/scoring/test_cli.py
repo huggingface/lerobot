@@ -72,8 +72,8 @@ def test_run_score_uses_reward_scoring_api(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         lerobot_score,
-        "push_annotations_to_hub",
-        lambda dataset, name: captured.update(push_annotations_to_hub=(dataset, name)),
+        "push_scores_to_hub",
+        lambda dataset, name: captured.update(push_scores_to_hub=(dataset, name)),
     )
 
     cfg = ScoreConfig(
@@ -105,7 +105,7 @@ def test_run_score_uses_reward_scoring_api(monkeypatch, tmp_path):
         fake_scorer,
         {"name": "robometer-4b", "episodes": [1], "resume": True, "overwrite": False},
     )
-    assert captured["push_annotations_to_hub"] == (fake_dataset, "robometer-4b")
+    assert captured["push_scores_to_hub"] == (fake_dataset, "robometer-4b")
 
 
 def test_run_score_requires_a_reward_model():

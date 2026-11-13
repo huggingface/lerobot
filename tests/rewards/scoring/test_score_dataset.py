@@ -23,11 +23,11 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.annotations import (
-    add_annotations,
-    list_annotations,
-    load_annotations,
-    load_annotations_info,
+from lerobot.datasets.scores import (
+    add_scores,
+    list_scores,
+    load_scores,
+    load_scores_info,
 )
 from lerobot.rewards import FrameSignals, SignalDescriptor, load_signal_descriptors, score_dataset
 
@@ -115,7 +115,7 @@ def test_score_dataset_writes_signals_descriptors_and_provenance(tmp_path: Path)
 
     score_dataset(dataset, scorer)
 
-    table = load_annotations(dataset, scorer.name)
+    table = load_scores(dataset, scorer.name)
     assert list(table["index"]) == [0, 1, 2, 3, 4]
     assert list(table["episode_index"]) == [0, 0, 0, 1, 1]
     assert list(table["frame_index"]) == [0, 1, 2, 0, 1]
@@ -123,14 +123,12 @@ def test_score_dataset_writes_signals_descriptors_and_provenance(tmp_path: Path)
     descriptors = load_signal_descriptors(dataset, scorer.name)
     assert descriptors == dict(scorer.descriptors)
     assert isinstance(descriptors["progress"].bounds, tuple)
-    assert load_annotations_info(dataset, scorer.name)["provenance"] == dict(scorer.provenance)
+    assert load_scores_info(dataset, scorer.name)["provenance"] == dict(scorer.provenance)
     assert scorer.calls == [0, 1]
 
 
 @pytest.mark.parametrize("lengths", [(2, 3), (3, 1), (5,)])
-def test_rabc_rejects_annotations_after_episode_ranges_change(
-    tmp_path: Path, lengths: tuple[int, ...]
-) -> None:
+def test_rabc_rejects_scores_after_episode_ranges_change(tmp_path: Path, lengths: tuple[int, ...]) -> None:
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     dataset = FakeDataset(tmp_path / "dataset")
@@ -141,7 +139,7 @@ def test_rabc_rejects_annotations_after_episode_ranges_change(
         RABCWeights(changed_dataset, "fake", "progress", chunk_size=1)
 
 
-def test_rabc_rejects_sparse_annotations_after_episode_start_moves(tmp_path: Path) -> None:
+def test_rabc_rejects_sparse_scores_after_episode_start_moves(tmp_path: Path) -> None:
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     dataset = FakeDataset(tmp_path / "dataset")
@@ -162,7 +160,7 @@ def test_rabc_rejects_sparse_annotations_after_episode_start_moves(tmp_path: Pat
         RABCWeights(changed_dataset, "fake", "progress", chunk_size=1)
 
 
-def test_rabc_accepts_annotations_after_episodes_are_appended(tmp_path: Path) -> None:
+def test_rabc_accepts_scores_after_episodes_are_appended(tmp_path: Path) -> None:
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     dataset = FakeDataset(tmp_path / "dataset")
@@ -178,7 +176,7 @@ def test_rabc_accepts_annotations_after_episodes_are_appended(tmp_path: Path) ->
     assert weighter.delta_std == original.delta_std
 
 
-def test_factory_rabc_reads_local_annotations_for_a_streaming_dataset(tmp_path: Path) -> None:
+def test_factory_rabc_reads_local_scores_for_a_streaming_dataset(tmp_path: Path) -> None:
     import torch
 
     from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
@@ -192,7 +190,7 @@ def test_factory_rabc_reads_local_annotations_for_a_streaming_dataset(tmp_path: 
     streaming.meta = dataset.meta
 
     weighter = make_sample_weighter(
-        SampleWeightingConfig(annotation_name="fake", signal_name="progress"),
+        SampleWeightingConfig(score_name="fake", signal_name="progress"),
         SimpleNamespace(config=SimpleNamespace(chunk_size=1)),
         torch.device("cpu"),
         dataset=streaming,
@@ -209,8 +207,8 @@ def test_score_dataset_default_and_explicit_names_are_separate(tmp_path: Path) -
     score_dataset(dataset, scorer)
     score_dataset(dataset, scorer, name="another-run")
 
-    assert list_annotations(dataset) == ["another-run", scorer.name]
-    assert load_annotations(dataset, "another-run")[:] == load_annotations(dataset, scorer.name)[:]
+    assert list_scores(dataset) == ["another-run", scorer.name]
+    assert load_scores(dataset, "another-run")[:] == load_scores(dataset, scorer.name)[:]
 
 
 @pytest.mark.parametrize("greater_is_better", [True, False, None])
@@ -238,7 +236,7 @@ def test_score_dataset_rejects_invalid_directions_before_scoring(
         score_dataset(dataset, scorer)
 
     assert scorer.calls == []
-    assert not (dataset.root / "annotations").exists()
+    assert not (dataset.root / "scores").exists()
 
 
 def test_score_dataset_rejects_signal_descriptor_name_mismatch(tmp_path: Path) -> None:
@@ -276,7 +274,7 @@ def test_score_dataset_accepts_boolean_and_integer_signals(tmp_path: Path, value
 
     score_dataset(dataset, scorer)
 
-    assert list(load_annotations(dataset, scorer.name)["progress"]) == values.tolist()
+    assert list(load_scores(dataset, scorer.name)["progress"]) == values.tolist()
 
 
 def test_score_dataset_resumes_only_missing_episodes(tmp_path: Path) -> None:
@@ -292,7 +290,7 @@ def test_score_dataset_resumes_only_missing_episodes(tmp_path: Path) -> None:
     score_dataset(dataset, scorer)
 
     assert scorer.calls == [1, 2]
-    assert len(load_annotations(dataset, scorer.name)) == 6
+    assert len(load_scores(dataset, scorer.name)) == 6
 
 
 @pytest.mark.parametrize("model_type", ["robometer", "topreward"])
@@ -335,7 +333,7 @@ def test_score_dataset_rejects_changed_task_configuration_on_resume(
     producer.fail_on_episode = None
     setattr(config, field_name, value)
 
-    with pytest.raises(ValueError, match="Cannot resume annotations"):
+    with pytest.raises(ValueError, match="Cannot resume scoring"):
         score_dataset(dataset, scorer)
     assert producer.calls == []
 
@@ -346,17 +344,17 @@ def test_score_dataset_forwards_episode_selection_and_overwrite(tmp_path: Path) 
 
     score_dataset(dataset, scorer, episodes=[2, 0])
     assert scorer.calls == [0, 2]
-    assert list(load_annotations(dataset, scorer.name)["episode_index"]) == [0, 0, 2]
+    assert list(load_scores(dataset, scorer.name)["episode_index"]) == [0, 0, 2]
 
     scorer.calls.clear()
     score_dataset(dataset, scorer, episodes=[1], overwrite=True)
     assert scorer.calls == [1]
-    assert list(load_annotations(dataset, scorer.name)["episode_index"]) == [1, 1, 1]
+    assert list(load_scores(dataset, scorer.name)["episode_index"]) == [1, 1, 1]
 
 
 def test_load_signal_descriptors_rejects_tables_without_signals_metadata(tmp_path: Path) -> None:
     dataset = FakeDataset(tmp_path / "dataset", lengths=(1,))
-    add_annotations(
+    add_scores(
         dataset,
         "other-results",
         lambda episode_index: (np.asarray([0]), {"value": np.asarray([0.5])}),

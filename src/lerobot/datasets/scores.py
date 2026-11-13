@@ -14,8 +14,8 @@
 
 """Named frame-aligned tables stored beside a dataset.
 
-An annotation table adds columns to some frames of a dataset without modifying its data
-files. It is written to ``<root>/annotations/<name>.parquet`` and joins the dataset on
+A score table adds columns to some frames of a dataset without modifying its data
+files. It is written to ``<root>/scores/<name>.parquet`` and joins the dataset on
 ``(episode_index, frame_index)``. Each table carries a caller-defined ``info`` dict that the
 store saves and compares but never interprets.
 
@@ -46,19 +46,19 @@ from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.io_utils import load_json, write_json
 
 from .storage import DEFAULT_STORAGE_FORMAT
-from .utils import ANNOTATIONS_DIR, resolve_episode_indices
+from .utils import SCORES_DIR, resolve_episode_indices
 
 if TYPE_CHECKING:
     from .lerobot_dataset import LeRobotDataset
 
-ANNOTATIONS_FORMAT = "lerobot.annotations"
-ANNOTATIONS_SCHEMA_VERSION = 1
+SCORES_FORMAT = "lerobot.scores"
+SCORES_SCHEMA_VERSION = 1
 RESERVED_COLUMNS = ("index", "episode_index", "frame_index")
 
-_FORMAT_KEY = b"lerobot.annotations.format"
-_SCHEMA_VERSION_KEY = b"lerobot.annotations.schema_version"
-_DATASET_KEY = b"lerobot.annotations.dataset"
-_INFO_KEY = b"lerobot.annotations.info"
+_FORMAT_KEY = b"lerobot.scores.format"
+_SCHEMA_VERSION_KEY = b"lerobot.scores.schema_version"
+_DATASET_KEY = b"lerobot.scores.dataset"
+_INFO_KEY = b"lerobot.scores.info"
 _MANIFEST_FILENAME = "manifest.json"
 
 logger = logging.getLogger(__name__)
@@ -71,27 +71,27 @@ def _canonical_json(value: Any, *, label: str) -> str:
         raise ValueError(f"{label} must be JSON-serializable with finite numeric values") from exc
 
 
-def _annotations_path(dataset: LeRobotDataset, name: str) -> Path:
+def _scores_path(dataset: LeRobotDataset, name: str) -> Path:
     if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
-        raise ValueError(f"Annotation name must be a non-empty filename component, got {name!r}")
-    return Path(dataset.root) / ANNOTATIONS_DIR / f"{name}.parquet"
+        raise ValueError(f"Score name must be a non-empty filename component, got {name!r}")
+    return Path(dataset.root) / SCORES_DIR / f"{name}.parquet"
 
 
 def _validate_writable_storage(dataset: LeRobotDataset) -> None:
-    """Reject datasets whose root cannot hold annotation files."""
+    """Reject datasets whose root cannot hold score files."""
     if dataset.meta.storage_format != DEFAULT_STORAGE_FORMAT:
         raise NotImplementedError(
-            f"Annotations are not supported for storage_format={dataset.meta.storage_format!r}; "
+            f"Scores are not supported for storage_format={dataset.meta.storage_format!r}; "
             "materialize the dataset in the default local LeRobot format first"
         )
     if dataset._storage_root is not None:
         raise NotImplementedError(
-            "Annotations cannot be written through a localized metadata-only root; "
+            "Scores cannot be written through a localized metadata-only root; "
             "materialize the dataset locally first"
         )
     if Path(dataset.root).resolve().is_relative_to(Path(HF_LEROBOT_HUB_CACHE).resolve()):
         raise NotImplementedError(
-            "Annotations cannot be written into the revision-safe Hub snapshot cache; "
+            "Scores cannot be written into the revision-safe Hub snapshot cache; "
             "materialize the dataset into a writable local root first"
         )
 
@@ -119,10 +119,10 @@ def _resolve_episode_indices(dataset: LeRobotDataset, episodes: Sequence[int] | 
 
 def _build_metadata(dataset_block: Mapping[str, Any], info: Mapping[str, Any]) -> dict[bytes, bytes]:
     return {
-        _FORMAT_KEY: ANNOTATIONS_FORMAT.encode(),
-        _SCHEMA_VERSION_KEY: str(ANNOTATIONS_SCHEMA_VERSION).encode(),
+        _FORMAT_KEY: SCORES_FORMAT.encode(),
+        _SCHEMA_VERSION_KEY: str(SCORES_SCHEMA_VERSION).encode(),
         _DATASET_KEY: _canonical_json(dict(dataset_block), label="dataset identity").encode(),
-        _INFO_KEY: _canonical_json(dict(info), label="annotation info").encode(),
+        _INFO_KEY: _canonical_json(dict(info), label="score info").encode(),
     }
 
 
@@ -162,20 +162,20 @@ def _write_episode_tables(path: Path, schema: pa.Schema, tables: Iterable[pa.Tab
             writer.close()
 
 
-class AnnotationWriter:
-    """Write a named annotation table episode by episode, then publish it.
+class ScoreWriter:
+    """Write a named score table episode by episode, then publish it.
 
     Each written episode is stored as its own part file in a hidden staging folder next to the
     published table. A new writer with the same name, dataset, ``info`` and episode selection
     resumes from the parts already written.
 
     Args:
-        dataset: Dataset to annotate. It must use the default storage format in a writable
+        dataset: Dataset to score. It must use the default storage format in a writable
             local root.
-        name: Table name. The table is written to ``<root>/annotations/<name>.parquet``.
+        name: Table name. The table is written to ``<root>/scores/<name>.parquet``.
         info: JSON-serializable description of the table, stored with it and compared on
             resume. The store does not interpret it.
-        episodes: Global episode indices to annotate. Defaults to every episode in the dataset
+        episodes: Global episode indices to score. Defaults to every episode in the dataset
             view.
         resume: If ``True``, keep the episodes written by an interrupted run with the same
             dataset, ``info`` and episode selection, including replacement runs. Combine
@@ -184,7 +184,7 @@ class AnnotationWriter:
 
     Raises:
         RuntimeError: If the dataset is being recorded and not finalized.
-        NotImplementedError: If the dataset root cannot hold annotation files.
+        NotImplementedError: If the dataset root cannot hold score files.
         FileExistsError: If the table exists and ``overwrite`` is ``False``, or staged parts
             exist and both ``resume`` and ``overwrite`` are ``False``.
         ValueError: If staged parts were written for a different dataset, ``info`` or
@@ -202,7 +202,7 @@ class AnnotationWriter:
         overwrite: bool = False,
     ) -> None:
         dataset._ensure_reader()
-        self.output_path = _annotations_path(dataset, name)
+        self.output_path = _scores_path(dataset, name)
         _validate_writable_storage(dataset)
         self.episode_indices = _resolve_episode_indices(dataset, episodes)
         self._selected = set(self.episode_indices)
@@ -218,10 +218,10 @@ class AnnotationWriter:
         }
         # A JSON round trip makes both blocks compare equal to the manifest stored for resume.
         self._dataset_block = json.loads(_canonical_json(dataset_block, label="dataset identity"))
-        self._info = json.loads(_canonical_json(dict(info), label="annotation info"))
+        self._info = json.loads(_canonical_json(dict(info), label="score info"))
         manifest = {
-            "format": ANNOTATIONS_FORMAT,
-            "schema_version": ANNOTATIONS_SCHEMA_VERSION,
+            "format": SCORES_FORMAT,
+            "schema_version": SCORES_SCHEMA_VERSION,
             "name": name,
             "dataset": self._dataset_block,
             "info": self._info,
@@ -241,7 +241,7 @@ class AnnotationWriter:
     def _prepare(self, manifest: dict[str, Any], *, resume: bool, overwrite: bool) -> None:
         if self.output_path.exists() and not overwrite:
             raise FileExistsError(
-                f"Published annotations already exist at {self.output_path}; "
+                f"Published scores already exist at {self.output_path}; "
                 "choose another name or set overwrite=True"
             )
 
@@ -250,13 +250,13 @@ class AnnotationWriter:
             if resume:
                 if not manifest_path.is_file() or load_json(manifest_path) != manifest:
                     raise ValueError(
-                        "Cannot resume annotations because the dataset, info or episode selection changed; "
+                        "Cannot resume scoring because the dataset, info or episode selection changed; "
                         "set overwrite=True and resume=False to restart"
                     )
                 return
             if not overwrite:
                 raise FileExistsError(
-                    f"Unpublished annotation parts exist at {self.parts_dir}; set resume=True or overwrite=True"
+                    f"Unpublished score parts exist at {self.parts_dir}; set resume=True or overwrite=True"
                 )
             shutil.rmtree(self.parts_dir)
 
@@ -278,7 +278,7 @@ class AnnotationWriter:
         frame_indices: Sequence[int] | np.ndarray,
         columns: Mapping[str, Sequence[Any] | np.ndarray],
     ) -> None:
-        """Write the annotation rows of one episode.
+        """Write the score rows of one episode.
 
         Args:
             episode_index: Global index of a selected episode.
@@ -345,16 +345,16 @@ class AnnotationWriter:
         """
         missing = list(self.pending_episodes)
         if missing:
-            raise RuntimeError(f"Cannot publish annotations; missing episodes: {missing}")
+            raise RuntimeError(f"Cannot publish scores; missing episodes: {missing}")
 
         schema = pq.read_schema(self._part_path(self.episode_indices[0]))
         tables = (pq.read_table(self._part_path(index)) for index in self.episode_indices)
         _write_episode_tables(self.output_path, schema, tables)
         shutil.rmtree(self.parts_dir, ignore_errors=True)
-        logger.info("Published annotations to %s", self.output_path)
+        logger.info("Published scores to %s", self.output_path)
 
 
-def add_annotations(
+def add_scores(
     dataset: LeRobotDataset,
     name: str,
     function: Callable[[int], tuple[Sequence[int] | np.ndarray, Mapping[str, Sequence[Any] | np.ndarray]]],
@@ -364,24 +364,24 @@ def add_annotations(
     resume: bool = True,
     overwrite: bool = False,
 ) -> None:
-    """Annotate episodes with ``function`` and publish the result as a named table.
+    """Score episodes with ``function`` and publish the result as a named table.
 
     ``function`` is called once per episode that still needs work, in ascending episode order.
 
     Args:
-        dataset: Dataset to annotate.
+        dataset: Dataset to score.
         name: Table name.
         function: Called as ``function(episode_index)``; returns ``(frame_indices, columns)``
-            as accepted by :meth:`AnnotationWriter.write_episode`.
+            as accepted by :meth:`ScoreWriter.write_episode`.
         info: JSON-serializable description of the table, stored with it.
-        episodes: Global episode indices to annotate. Defaults to every episode in the dataset
+        episodes: Global episode indices to score. Defaults to every episode in the dataset
             view.
         resume: If ``True``, skip episodes written by an interrupted run with the same
             dataset, ``info`` and episode selection, including replacement runs. Combine
             ``resume=False`` with ``overwrite=True`` to discard staged parts and restart.
         overwrite: If ``True``, replace an existing table once the new one is published.
     """
-    writer = AnnotationWriter(dataset, name, info=info, episodes=episodes, resume=resume, overwrite=overwrite)
+    writer = ScoreWriter(dataset, name, info=info, episodes=episodes, resume=resume, overwrite=overwrite)
     for episode_index in writer.pending_episodes:
         frame_indices, columns = function(episode_index)
         writer.write_episode(episode_index, frame_indices, columns)
@@ -389,21 +389,19 @@ def add_annotations(
 
 
 def _read_schema(path: Path) -> pa.Schema:
-    """Read and check an annotation table's schema without loading its rows."""
+    """Read and check a score table's schema without loading its rows."""
     schema = pq.read_schema(path)
     metadata = schema.metadata or {}
-    if metadata.get(_FORMAT_KEY) != ANNOTATIONS_FORMAT.encode():
-        raise ValueError(f"Not a LeRobot annotation table: {path}")
+    if metadata.get(_FORMAT_KEY) != SCORES_FORMAT.encode():
+        raise ValueError(f"Not a LeRobot score table: {path}")
     version = metadata.get(_SCHEMA_VERSION_KEY)
-    if version != str(ANNOTATIONS_SCHEMA_VERSION).encode():
-        raise ValueError(f"Unsupported annotation schema version: {version!r}")
+    if version != str(SCORES_SCHEMA_VERSION).encode():
+        raise ValueError(f"Unsupported score schema version: {version!r}")
     return schema
 
 
-def load_annotations(
-    dataset: LeRobotDataset, name: str, columns: Sequence[str] | None = None
-) -> datasets.Dataset:
-    """Load a named annotation table.
+def load_scores(dataset: LeRobotDataset, name: str, columns: Sequence[str] | None = None) -> datasets.Dataset:
+    """Load a named score table.
 
     Args:
         dataset: Dataset the table belongs to.
@@ -414,29 +412,29 @@ def load_annotations(
     Returns:
         The table as a Hugging Face dataset.
     """
-    path = _annotations_path(dataset, name)
+    path = _scores_path(dataset, name)
     schema = _read_schema(path)
     table = pq.read_table(path, columns=None if columns is None else list(columns))
     return datasets.Dataset(table.replace_schema_metadata(schema.metadata))
 
 
-def load_annotations_info(dataset: LeRobotDataset, name: str) -> dict[str, Any]:
-    """Return the ``info`` dict a named annotation table was written with."""
-    return json.loads(_read_schema(_annotations_path(dataset, name)).metadata[_INFO_KEY])
+def load_scores_info(dataset: LeRobotDataset, name: str) -> dict[str, Any]:
+    """Return the ``info`` dict a named score table was written with."""
+    return json.loads(_read_schema(_scores_path(dataset, name)).metadata[_INFO_KEY])
 
 
-def list_annotations(dataset: LeRobotDataset) -> list[str]:
-    """List the names of the annotation tables published for a dataset."""
-    directory = Path(dataset.root) / ANNOTATIONS_DIR
+def list_scores(dataset: LeRobotDataset) -> list[str]:
+    """List the names of the score tables published for a dataset."""
+    directory = Path(dataset.root) / SCORES_DIR
     return sorted(path.stem for path in directory.glob("*.parquet") if path.is_file())
 
 
-def merge_annotations(
+def merge_scores(
     dataset: LeRobotDataset, names: Sequence[str], *, name: str, overwrite: bool = False
 ) -> None:
-    """Merge annotation tables of disjoint episodes into one named table.
+    """Merge score tables of disjoint episodes into one named table.
 
-    Useful when episodes were annotated in parallel, each worker with its own table name. The
+    Useful when episodes were scored in parallel, each worker with its own table name. The
     merged tables are kept.
 
     Args:
@@ -452,28 +450,28 @@ def merge_annotations(
             episode.
     """
     if not names:
-        raise ValueError("At least one annotation table must be given to merge")
-    output_path = _annotations_path(dataset, name)
+        raise ValueError("At least one score table must be given to merge")
+    output_path = _scores_path(dataset, name)
     _validate_writable_storage(dataset)
     if output_path.exists() and not overwrite:
         raise FileExistsError(
-            f"Published annotations already exist at {output_path}; choose another name or set overwrite=True"
+            f"Published scores already exist at {output_path}; choose another name or set overwrite=True"
         )
 
-    paths = [_annotations_path(dataset, part) for part in names]
+    paths = [_scores_path(dataset, part) for part in names]
     schemas = [_read_schema(path) for path in paths]
     reference = schemas[0]
     episode_paths: dict[int, Path] = {}
     for part, path, schema in zip(names, paths, schemas, strict=True):
         # Equal schemas, metadata included, mean equal columns, dtypes, dataset identity and info.
         if not schema.equals(reference, check_metadata=True):
-            raise ValueError(f"Annotations {part!r} have different columns or info than {names[0]!r}")
+            raise ValueError(f"Scores {part!r} have different columns or info than {names[0]!r}")
         episodes = np.unique(
             pq.read_table(path, columns=["episode_index"]).column("episode_index").to_numpy()
         )
         shared = sorted(int(index) for index in episodes if int(index) in episode_paths)
         if shared:
-            raise ValueError(f"Annotations {part!r} repeat episodes of earlier tables: {shared}")
+            raise ValueError(f"Scores {part!r} repeat episodes of earlier tables: {shared}")
         episode_paths.update((int(index), path) for index in episodes)
 
     tables = (
@@ -481,21 +479,21 @@ def merge_annotations(
         for index in sorted(episode_paths)
     )
     _write_episode_tables(output_path, reference, tables)
-    logger.info("Published merged annotations %r to %s", name, output_path)
+    logger.info("Published merged scores %r to %s", name, output_path)
 
 
-def push_annotations_to_hub(dataset: LeRobotDataset, name: str) -> None:
-    """Upload one named annotation table to the dataset repository on the Hub."""
-    local_path = _annotations_path(dataset, name)
+def push_scores_to_hub(dataset: LeRobotDataset, name: str) -> None:
+    """Upload one named score table to the dataset repository on the Hub."""
+    local_path = _scores_path(dataset, name)
     if not local_path.is_file():
-        raise FileNotFoundError(f"Annotations {name!r} do not exist")
+        raise FileNotFoundError(f"Scores {name!r} do not exist")
 
-    path_in_repo = f"{ANNOTATIONS_DIR}/{local_path.name}"
+    path_in_repo = f"{SCORES_DIR}/{local_path.name}"
     HfApi().upload_file(
         path_or_fileobj=local_path,
         path_in_repo=path_in_repo,
         repo_id=dataset.repo_id,
         repo_type="dataset",
-        commit_message=f"Upload annotations {name}",
+        commit_message=f"Upload scores {name}",
     )
-    logger.info("Uploaded annotations %s to hf://datasets/%s/%s", name, dataset.repo_id, path_in_repo)
+    logger.info("Uploaded scores %s to hf://datasets/%s/%s", name, dataset.repo_id, path_in_repo)

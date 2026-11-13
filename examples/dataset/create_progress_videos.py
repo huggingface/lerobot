@@ -19,7 +19,7 @@ Create MP4 (or GIF) videos with per-frame progress overlay for specified episode
 
 Downloads datasets from HuggingFace, seeks directly into the episode segment
 of the source video, draws a progress line on each frame, and writes the result.
-The progress is one signal of an annotation table written by ``lerobot-score``, by
+The progress is one signal of a score table written by ``lerobot-score``, by
 default the score ``sarm`` (configurable via ``--score-name`` and ``--signal-name``).
 
 Usage:
@@ -56,7 +56,7 @@ import pandas as pd
 from huggingface_hub import snapshot_download
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.annotations import list_annotations, load_annotations
+from lerobot.datasets.scores import list_scores, load_scores
 from lerobot.rewards.scoring import load_signal_descriptors
 
 GRAPH_Y_TOP_FRAC = 0.01
@@ -71,17 +71,17 @@ TASK_FONT_SCALE = 0.55
 
 
 def load_episode_dataset(repo_id: str, episode: int, dataset_root: Path | None = None) -> LeRobotDataset:
-    """Load the metadata, the episode's data and the annotation tables, without videos.
+    """Load the metadata, the episode's data and the score tables, without videos.
 
     Args:
         repo_id: HuggingFace dataset repository ID.
         episode: Episode index to download.
-        dataset_root: Local dataset root containing annotations, or None to use the Hub cache.
+        dataset_root: Local dataset root containing scores, or None to use the Hub cache.
 
     Returns:
         The dataset restricted to that episode.
     """
-    logging.info("[1/4] Downloading metadata, episode %d and annotations for %s ...", episode, repo_id)
+    logging.info("[1/4] Downloading metadata, episode %d and scores for %s ...", episode, repo_id)
     return LeRobotDataset(repo_id, root=dataset_root, episodes=[episode], download_videos=False)
 
 
@@ -225,32 +225,32 @@ def download_video_file(repo_id: str, local_path: Path, video_rel: str) -> Path:
 def load_progress_data(
     dataset: LeRobotDataset, episode: int, score_name: str, signal_name: str | None = None
 ) -> np.ndarray | None:
-    """Load an episode's per-frame values of one scored annotation signal.
+    """Load an episode's per-frame values of one score signal.
 
     Args:
-        dataset: Dataset holding the annotation table.
+        dataset: Dataset holding the score table.
         episode: Episode index.
-        score_name: Name of the scored annotation table, such as ``sarm``.
+        score_name: Name of the score table, such as ``sarm``.
         signal_name: Signal to read. Defaults to the score's first signal, which for
             SARM is the dense-head progress when the score has it.
 
     Returns:
         Sorted (N, 2) array of (frame_index, value), or None if unavailable.
     """
-    available = list_annotations(dataset)
+    available = list_scores(dataset)
     if score_name not in available:
-        logging.warning("Annotations %r not found; available tables: %s", score_name, available)
+        logging.warning("Scores %r not found; available tables: %s", score_name, available)
         return None
     signals = sorted(load_signal_descriptors(dataset, score_name))
     if not signals:
-        logging.warning("No signals in annotations %r", score_name)
+        logging.warning("No signals in scores %r", score_name)
         return None
     signal_name = signal_name or signals[0]
     if signal_name not in signals:
         logging.warning("Signal %r not in score %r; available signals: %s", signal_name, score_name, signals)
         return None
 
-    scores = load_annotations(
+    scores = load_scores(
         dataset, score_name, columns=["episode_index", "frame_index", signal_name]
     ).to_pandas()
     episode_df = scores[scores["episode_index"] == episode].sort_values("frame_index")
@@ -601,7 +601,7 @@ def process_dataset(
         create_gif: If True, also generate a GIF from the MP4.
         score_name: Name of the dataset score holding the progress.
         signal_name: Signal of that score to draw, or None for its first signal.
-        dataset_root: Local dataset root containing annotations, or None to use the Hub cache.
+        dataset_root: Local dataset root containing scores, or None to use the Hub cache.
 
     Returns:
         Path to the final output file, or None on failure.
@@ -657,7 +657,7 @@ def main() -> None:
         "--dataset-root",
         type=Path,
         default=None,
-        help="Local dataset root containing annotations (default: use the Hub cache).",
+        help="Local dataset root containing scores (default: use the Hub cache).",
     )
     parser.add_argument(
         "--episode",

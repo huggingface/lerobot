@@ -23,7 +23,7 @@ Example usage:
     # In training config
     sample_weighting:
         type: rabc
-        annotation_name: robometer
+        score_name: robometer
         signal_name: reward.robometer.progress
         kappa: 0.01
 
@@ -84,7 +84,7 @@ class SampleWeightingConfig:
 
     Attributes:
         type: Weighting strategy type ("rabc", "uniform", etc.)
-        annotation_name: Dataset annotation table used by RA-BC
+        score_name: Dataset score table used by RA-BC
         signal_name: Progress signal selected from the sidecar
         kappa: Hard threshold for high-quality samples (RABC-specific)
         epsilon: Small constant for numerical stability
@@ -92,7 +92,7 @@ class SampleWeightingConfig:
     """
 
     type: str = "rabc"
-    annotation_name: str | None = None
+    score_name: str | None = None
     signal_name: str | None = None
     kappa: float = 0.01
     epsilon: float = 1e-6
@@ -115,7 +115,7 @@ def make_sample_weighter(
         config: Sample weighting configuration, or None to disable weighting.
         policy: The policy being trained (used to extract chunk_size, etc.)
         device: Device to place weight tensors on.
-        dataset: Dataset containing the reward annotation table.
+        dataset: Dataset containing the reward score table.
     """
     if config is None:
         return None
@@ -142,7 +142,7 @@ def _make_rabc_weighter(
         config: Sample weighting configuration.
         policy: The policy being trained (used to extract chunk_size).
         device: Device to place weight tensors on.
-        dataset: Dataset containing the reward annotation table.
+        dataset: Dataset containing the reward score table.
     """
     # Import here to avoid circular imports and keep RABC code in SARM module
     from lerobot.rewards.sarm.rabc import RABCWeights
@@ -156,7 +156,7 @@ def _make_rabc_weighter(
         )
 
     if dataset is None:
-        raise ValueError("RA-BC sample weighting requires a dataset containing reward annotations")
+        raise ValueError("RA-BC sample weighting requires a dataset containing reward scores")
 
     # Dataset factories import training configs, so keep this type import out of module initialization.
     from lerobot.datasets.multi_dataset import MultiLeRobotDataset
@@ -164,14 +164,14 @@ def _make_rabc_weighter(
     if isinstance(dataset, MultiLeRobotDataset):
         raise ValueError(
             "RA-BC sample weighting does not support MultiLeRobotDataset; "
-            "use a single dataset with its own reward annotation table"
+            "use a single dataset with its own reward score table"
         )
-    if config.annotation_name is None or config.signal_name is None:
-        raise ValueError("RA-BC sample weighting requires both 'annotation_name' and 'signal_name'")
+    if config.score_name is None or config.signal_name is None:
+        raise ValueError("RA-BC sample weighting requires both 'score_name' and 'signal_name'")
 
     return RABCWeights(
         dataset=dataset,
-        annotation_name=config.annotation_name,
+        score_name=config.score_name,
         signal_name=config.signal_name,
         chunk_size=chunk_size,
         kappa=config.kappa,

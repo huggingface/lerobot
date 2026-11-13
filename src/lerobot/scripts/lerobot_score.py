@@ -28,7 +28,7 @@ from lerobot.utils.import_utils import _av_available, _datasets_available, requi
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import LeRobotDataset
-    from lerobot.datasets.annotations import push_annotations_to_hub
+    from lerobot.datasets.scores import push_scores_to_hub
 
 
 @dataclass
@@ -108,7 +108,7 @@ def run_score(cfg: ScoreConfig) -> None:
     )
 
     if cfg.push_to_hub:
-        push_annotations_to_hub(dataset, score_name)
+        push_scores_to_hub(dataset, score_name)
 
 
 @parser.wrap()

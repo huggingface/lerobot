@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
-    from lerobot.datasets.annotations import add_annotations, load_annotations_info
+    from lerobot.datasets.scores import add_scores, load_scores_info
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,7 @@ def score_dataset(
     resume: bool = True,
     overwrite: bool = False,
 ) -> None:
-    """Score selected episodes and store their signals as a named annotation table.
+    """Score selected episodes and store their signals as a named score table.
 
     Args:
         dataset: Dataset to score.
@@ -117,7 +117,7 @@ def score_dataset(
                 )
         return frame_signals.frame_indices, dict(frame_signals.signals)
 
-    add_annotations(
+    add_scores(
         dataset,
         scorer.name if name is None else name,
         score_episode,
@@ -129,7 +129,7 @@ def score_dataset(
 
 
 def load_signal_descriptors(dataset: LeRobotDataset, name: str) -> dict[str, SignalDescriptor]:
-    """Load the descriptors stored with a scored annotation table.
+    """Load the descriptors stored with a score table.
 
     Args:
         dataset: Dataset the table belongs to.
@@ -144,11 +144,9 @@ def load_signal_descriptors(dataset: LeRobotDataset, name: str) -> dict[str, Sig
     """
     require_package("datasets", extra="dataset")
     require_package("av", extra="dataset")
-    info = load_annotations_info(dataset, name)
+    info = load_scores_info(dataset, name)
     if "signals" not in info:
-        raise ValueError(
-            f"Annotations {name!r} have no signal descriptors; use a table written by score_dataset"
-        )
+        raise ValueError(f"Scores {name!r} have no signal descriptors; use a table written by score_dataset")
 
     descriptors = {}
     for signal_name, descriptor in info["signals"].items():
