@@ -211,15 +211,14 @@ class ScoreWriter:
         self.parts_dir = self.output_path.with_name(f".{self.output_path.name}.parts")
         self._dataset = dataset
 
-        dataset_block = {
+        self._dataset_block = {
             "lerobot_version": __version__,
             "repo_id": dataset.repo_id,
             "revision": dataset.revision,
             "total_episodes": int(dataset.meta.total_episodes),
             "total_frames": int(dataset.meta.total_frames),
         }
-        # A JSON round trip makes both blocks compare equal to the manifest stored for resume.
-        self._dataset_block = json.loads(_canonical_json(dataset_block, label="dataset identity"))
+        # Normalize info so it compares equal to the JSON manifest stored for resume.
         self._info = json.loads(_canonical_json(dict(info), label="score info"))
         # Selection-specific ranges belong in the manifest, not the metadata shared by merged scores.
         episode_ranges: list[list[int]] = []
@@ -421,9 +420,9 @@ def load_scores(dataset: LeRobotDataset, name: str, columns: Sequence[str] | Non
         The scores as a Hugging Face dataset.
     """
     path = _scores_path(dataset, name)
-    schema = _read_schema(path)
+    _read_schema(path)
     table = pq.read_table(path, columns=None if columns is None else list(columns))
-    return datasets.Dataset(table.replace_schema_metadata(schema.metadata))
+    return datasets.Dataset(table)
 
 
 def load_scores_info(dataset: LeRobotDataset, name: str) -> dict[str, Any]:
