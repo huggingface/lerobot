@@ -335,6 +335,30 @@ def test_multi_task_dit_pre_post_processors_normalization():
     assert torch.allclose(unnormalized_action[0], input_action, atol=1e-4)
 
 
+def test_multi_task_dit_preprocessor_longest_padding_across_batches():
+    """With "longest" padding, a batch mixing tasks first tokenized in different batches still stacks."""
+    config = create_config()
+    config.tokenizer_padding = "longest"
+    config.normalization_mapping = {
+        "VISUAL": NormalizationMode.IDENTITY,
+        "STATE": NormalizationMode.IDENTITY,
+        "ACTION": NormalizationMode.IDENTITY,
+    }
+    preprocessor, _ = make_multi_task_dit_pre_post_processors(config=config, dataset_stats=None)
+
+    short_task, long_task = "pick up the cube", "pick up the red cube and place it in the blue bowl"
+    for tasks in ([short_task, short_task], [short_task, long_task]):
+        batch = create_train_batch()
+        batch["task"] = tasks
+        processed_batch = preprocessor(batch)
+
+    tokens = processed_batch[OBS_LANGUAGE_TOKENS]
+    mask = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
+    assert tokens.shape == mask.shape
+    assert tokens.shape[0] == 2
+    assert mask.sum(dim=-1).max() == tokens.shape[1]
+
+
 @pytest.mark.parametrize("batch_size,state_dim,action_dim", [(2, 10, 10), (1, 6, 6)])
 def test_multi_task_dit_policy_select_action(batch_size: int, state_dim: int, action_dim: int):
     """Test select_action (inference mode)."""
