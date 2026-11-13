@@ -14,9 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import re
-from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -25,7 +23,6 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[hardware])")
 
 from lerobot.configs.dataset import DatasetRecordConfig
-from lerobot.datasets.io_utils import load_info, write_info
 from lerobot.processor import make_default_processors
 from lerobot.robots import make_robot_from_config
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
@@ -258,114 +255,3 @@ def test_record_loop_without_a_teleoperator_paces_and_terminates():
 
     # 0.1 s at 30 Hz is 3 ticks; the upper bound is what proves the phase was paced.
     assert 1 <= calls <= 6
-
-
-_CAL_11 = {"motors": {"joint": {"id": 1, "homing_offset": 11}}}
-_CAL_22 = {"motors": {"joint": {"id": 1, "homing_offset": 22}}}
-
-
-def _record_cfg(root):
-    return RecordConfig(
-        robot=MockRobotConfig(),
-        dataset=DatasetRecordConfig(
-            repo_id=DUMMY_REPO_ID,
-            single_task="Dummy task",
-            root=root,
-            num_episodes=1,
-            episode_time_s=0.1,
-            reset_time_s=0,
-            push_to_hub=False,
-            no_stamp=True,
-        ),
-        teleop=MockTeleopConfig(),
-        play_sounds=False,
-    )
-
-
-@contextmanager
-def _resume_hub():
-    with (
-        patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
-        patch("lerobot.datasets.dataset_metadata.snapshot_download", return_value="unused"),
-    ):
-        yield
-
-
-def _stamp_calibration(root, calibration):
-    info = load_info(root)
-    info.calibration = calibration
-    write_info(info, root)
-
-
-def _calibration_warnings():
-    found = []
-
-    def capture(msg, *args, **kwargs):
-        if "calibration" in str(msg):
-            found.append(str(msg))
-
-    return found, capture
-
-
-def test_aborted_resume_does_not_relabel_existing_calibration(tmp_path):
-    root = tmp_path / "abort"
-    cfg = _record_cfg(root)
-    record(cfg)
-    _stamp_calibration(root, _CAL_11)
-    info_path = root / "meta" / "info.json"
-    before = info_path.read_bytes()
-    cfg.resume = True
-    warnings, capture = _calibration_warnings()
-    with (
-        _resume_hub(),
-        patch("lerobot.scripts.lerobot_record.follower_calibration", return_value=_CAL_22),
-        patch(
-            "lerobot.scripts.lerobot_record.init_keyboard_listener",
-            return_value=(None, {"exit_early": False, "rerecord_episode": False, "stop_recording": True}),
-        ),
-        patch("lerobot.scripts.lerobot_record.logging.warning", side_effect=capture),
-    ):
-        record(cfg)
-
-    after = json.loads(info_path.read_text())
-    assert after["total_episodes"] == 1
-    assert after["calibration"]["motors"]["joint"]["homing_offset"] == 11
-    assert info_path.read_bytes() == before
-    assert warnings == [
-        "No episode was saved, so the dataset calibration was left unchanged "
-        "because the calibrations in dummy/repo, the connected follower disagree."
-    ]
-
-
-def test_resume_drops_calibration_when_a_new_episode_is_saved(tmp_path):
-    root = tmp_path / "save"
-    cfg = _record_cfg(root)
-    record(cfg)
-    _stamp_calibration(root, _CAL_11)
-    cfg.resume = True
-    warnings, capture = _calibration_warnings()
-    with (
-        _resume_hub(),
-        patch("lerobot.scripts.lerobot_record.follower_calibration", return_value=_CAL_22),
-        patch("lerobot.scripts.lerobot_record.logging.warning", side_effect=capture),
-    ):
-        dataset = record(cfg)
-
-    info = json.loads((root / "meta" / "info.json").read_text())
-    assert dataset.num_episodes == 2
-    assert "calibration" not in info
-    assert warnings == [
-        "Dropping calibration because the calibrations in dummy/repo, the connected follower disagree."
-    ]
-
-
-def test_empty_dataset_records_follower_calibration(tmp_path):
-    root = tmp_path / "empty"
-    cfg = _record_cfg(root)
-    cfg.dataset.num_episodes = 0
-    with patch("lerobot.scripts.lerobot_record.follower_calibration", return_value=_CAL_22):
-        record(cfg)
-
-    info = json.loads((root / "meta" / "info.json").read_text())
-    assert info["total_episodes"] == 0
-    assert info["calibration"] == _CAL_22

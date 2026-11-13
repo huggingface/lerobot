@@ -14,9 +14,8 @@
 
 """Per-episode servo settings recorded beside each episode.
 
-The dataset-wide ``calibration`` key in ``meta/info.json`` is a separate choice.
-``RECORD_INFO_JSON_CALIBRATION`` is the only switch: ``True`` keeps today's write,
-``False`` stops it. The per-episode column does not read that flag.
+``meta/info.json`` does not carry a dataset-wide calibration. The episode column
+is the only record.
 """
 
 from __future__ import annotations
@@ -34,9 +33,6 @@ else:
     rustypot = None
 
 SERVO_SETTINGS_COLUMN = "servo_settings"
-
-# Flip this to stop writing the dataset-wide info.json key. Per-episode settings stay.
-RECORD_INFO_JSON_CALIBRATION = True
 
 _CALIBRATION_KEYS = ("id", "drive_mode", "homing_offset", "range_min", "range_max")
 

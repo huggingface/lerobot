@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-import copy
 import dataclasses
 import importlib.resources
 import json
@@ -22,7 +21,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import packaging.version
@@ -223,8 +222,6 @@ class DatasetInfo:
     # OpenAI-style tool schemas declared by the dataset. ``None`` means the
     # dataset doesn't declare any — readers fall back to ``DEFAULT_TOOLS``.
     tools: list[dict] | None = None
-    # Follower calibration and P/I/D gains. None when the dataset has none.
-    calibration: dict | None = None
 
     def __post_init__(self) -> None:
         # Coerce feature shapes from list to tuple — JSON deserialisation
@@ -246,8 +243,8 @@ class DatasetInfo:
         """Return a JSON-serialisable dict.
 
         Converts tuple shapes back to lists so ``json.dump`` can handle them.
-        Drops ``tools``, ``storage_format`` and ``calibration`` when unset so
-        existing datasets keep a clean ``info.json``.
+        Drops ``tools`` and ``storage_format`` when unset so existing datasets
+        keep a clean ``info.json``.
         """
         d = dataclasses.asdict(self)
         for ft in d["features"].values():
@@ -257,8 +254,6 @@ class DatasetInfo:
             d.pop("tools", None)
         if d.get("storage_format") is None:
             d.pop("storage_format", None)
-        if d.get("calibration") is None:
-            d.pop("calibration", None)
         return d
 
     @classmethod
@@ -317,92 +312,6 @@ class DatasetInfo:
             return getattr(self, key)
         except AttributeError:
             return default
-
-
-def follower_calibration(robot: Any) -> dict[str, Any] | None:
-    """Follower calibration and P/I/D gains, or None when the robot has no calibration dict."""
-    cal = getattr(robot, "calibration", None)
-    if not isinstance(cal, dict) or len(cal) == 0:
-        return None
-    keys = ("id", "drive_mode", "homing_offset", "range_min", "range_max")
-    record: dict[str, Any] = {"motors": {}}
-    for motor, c in cal.items():
-        record["motors"][motor] = {k: int(c[k] if isinstance(c, dict) else getattr(c, k)) for k in keys}
-    # A missing bus or a failed read keeps the calibration and omits the gains.
-    with contextlib.suppress(Exception):
-        record["gains"] = {
-            n: {m: int(v) for m, v in robot.bus.sync_read(n).items()}
-            for n in ("P_Coefficient", "I_Coefficient", "D_Coefficient")
-        }
-    return record
-
-
-def copy_calibration(calibration: dict | None, info: DatasetInfo) -> None:
-    """Copy one source dataset's calibration onto a rebuilt ``info`` object.
-
-    ``None`` leaves the key unset. Later ``write_info`` calls on this same object persist it.
-    """
-    if calibration is not None:
-        info.calibration = copy.deepcopy(calibration)
-
-
-def merged_calibration(
-    sources: Sequence[tuple[str, dict | None]],
-) -> tuple[dict | None, str | None]:
-    """The calibration a merge should store, and one warning when it should not.
-
-    Equal calibrations are kept. When the values disagree, or a source has none, the key is
-    dropped and the returned warning names that reason. Sources that all have none produce
-    no warning.
-    """
-    values = [calibration for _, calibration in sources]
-    if all(calibration is None for calibration in values):
-        return None, None
-
-    missing = [name for name, calibration in sources if calibration is None]
-    if missing:
-        verb = "has" if len(missing) == 1 else "have"
-        reason = f"Dropping calibration because {', '.join(missing)} {verb} none"
-        present = [(name, calibration) for name, calibration in sources if calibration is not None]
-        if len(present) >= 2 and any(calibration != present[0][1] for _, calibration in present[1:]):
-            names = ", ".join(name for name, _ in present)
-            reason += f", and the calibrations in {names} disagree"
-        return None, reason + "."
-
-    first = values[0]
-    if any(calibration != first for calibration in values[1:]):
-        names = ", ".join(name for name, _ in sources)
-        return None, f"Dropping calibration because the calibrations in {names} disagree."
-    return copy.deepcopy(first), None
-
-
-def apply_resume_calibration(
-    existing: dict | None,
-    follower: dict | None,
-    *,
-    dataset_name: str,
-    saved_new_episode: bool,
-) -> tuple[dict | None, str | None, bool]:
-    """Calibration a resume should leave in ``info.json``, one warning, and whether to write it.
-
-    A dataset with no episodes is not handled here. The caller records that follower as before.
-
-    Equal values are kept and the file is not rewritten. When the follower disagrees with the
-    dataset, or the dataset has no calibration, saving an episode drops a dataset-wide value
-    that would be false for the older episodes and logs one warning. If no episode was saved,
-    the file is left untouched.
-    """
-    chosen, reason = merged_calibration([(dataset_name, existing), ("the connected follower", follower)])
-    if reason is None or not saved_new_episode or chosen == existing:
-        if reason is None:
-            return existing, None, False
-        detail = reason.removeprefix("Dropping calibration ")
-        if not saved_new_episode:
-            warning = f"No episode was saved, so the dataset calibration was left unchanged {detail}"
-        else:
-            warning = f"Not recording a dataset-wide calibration {detail}"
-        return existing, warning, False
-    return chosen, reason, True
 
 
 def has_legacy_hub_download_metadata(root: Path) -> bool:

@@ -30,7 +30,6 @@ from datasets import Dataset
 
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets.dataset_tools import delete_episodes, merge_datasets, split_dataset
-from lerobot.datasets.io_utils import load_info, write_info
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.servo_settings import (
     SERVO_SETTINGS_COLUMN,
@@ -43,8 +42,6 @@ from tests.mocks.mock_robot import MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleopConfig
 
 pytestmark = [pytest.mark.dataset, pytest.mark.hardware]
-
-_CAL_11 = {"motors": {"joint": {"id": 1, "homing_offset": 11}}}
 
 
 def test_setting_registers_include_acceleration_and_skip_live_readings():
@@ -150,8 +147,11 @@ def test_record_writes_servo_settings_on_each_episode(tmp_path):
     assert len(stored) == 2
     for value in stored:
         parsed = json.loads(value)
-        assert "motor_1" in parsed["motors"]
-        assert parsed["motors"]["motor_1"]["model"] == "model_1"
+        motor = parsed["motors"]["motor_1"]
+        assert motor["model"] == "model_1"
+        assert "registers" not in motor
+    info = json.loads((root / "meta" / "info.json").read_text())
+    assert "calibration" not in info
 
 
 def test_resume_of_an_old_dataset_writes_no_servo_settings(tmp_path):
@@ -161,19 +161,16 @@ def test_resume_of_an_old_dataset_writes_no_servo_settings(tmp_path):
     frame = pd.read_parquet(path)
     frame = frame.drop(columns=[SERVO_SETTINGS_COLUMN])
     frame.to_parquet(path)
-    info = load_info(root)
-    info.calibration = _CAL_11
-    write_info(info, root)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["calibration"] = {"motors": {"joint": {"id": 1, "homing_offset": 11}}}
+    info_path.write_text(json.dumps(info))
 
     warnings = []
     cfg = _record_cfg(root)
     cfg.resume = True
     with (
         _local_dataset(),
-        patch(
-            "lerobot.scripts.lerobot_record.follower_calibration",
-            return_value={"motors": {"joint": {"id": 1, "homing_offset": 22}}},
-        ),
         patch(
             "lerobot.scripts.lerobot_record.logging.warning",
             side_effect=lambda msg, *args, **kwargs: warnings.append(str(msg)),
@@ -185,13 +182,12 @@ def test_resume_of_an_old_dataset_writes_no_servo_settings(tmp_path):
         "Not recording servo settings: this dataset has episodes and no "
         "servo_settings column. Start a new dataset to record them."
     ]
-    info = json.loads((root / "meta" / "info.json").read_text())
-    assert info["calibration"] == _CAL_11
+    info = json.loads(info_path.read_text())
+    assert "calibration" not in info
     assert info["total_episodes"] == 2
     loaded = Dataset.from_parquet([str(path) for path in _episode_files(root)])
     assert SERVO_SETTINGS_COLUMN not in loaded.column_names
     assert loaded.num_rows == 2
-    assert json.loads((root / "meta" / "info.json").read_text())["calibration"] == _CAL_11
 
 
 def test_delete_and_split_keep_servo_settings(tmp_path):
@@ -239,14 +235,30 @@ def test_merge_of_old_and_new_datasets_stays_loadable(tmp_path):
     assert any("dummy/old" in msg and "have none" in msg for msg in warnings)
 
 
-def test_info_json_calibration_is_one_switch(tmp_path, monkeypatch):
-    monkeypatch.setattr("lerobot.scripts.lerobot_record.RECORD_INFO_JSON_CALIBRATION", False)
-    root = tmp_path / "flag"
-    with patch(
-        "lerobot.scripts.lerobot_record.follower_calibration",
-        return_value=_CAL_11,
-    ):
-        record(_record_cfg(root))
-    info = json.loads((root / "meta" / "info.json").read_text())
-    assert "calibration" not in info
-    assert json.loads(_settings(root)[0])["motors"]["motor_1"]["model"] == "model_1"
+def test_unreadable_registers_are_omitted():
+    class Motor:
+        model = "not-a-real-servo"
+        id = 1
+
+    class Bus:
+        def __init__(self):
+            self.motors = {"shoulder": Motor()}
+
+        def sync_read(self, *args, **kwargs):
+            raise AssertionError("a model with no setting registers is not read")
+
+    robot = type("R", (), {})()
+    robot.bus = Bus()
+    robot.calibration = {
+        "shoulder": {
+            "id": 1,
+            "drive_mode": 0,
+            "homing_offset": 11,
+            "range_min": 0,
+            "range_max": 100,
+        }
+    }
+    motor = read_servo_settings(robot)["motors"]["shoulder"]
+    assert motor["model"] == "not-a-real-servo"
+    assert motor["calibration"]["homing_offset"] == 11
+    assert "registers" not in motor

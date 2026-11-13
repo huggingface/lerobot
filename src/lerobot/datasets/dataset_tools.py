@@ -78,7 +78,6 @@ from .utils import (
     DEPTH_FILE_PATTERN,
     IMAGE_FILE_PATTERN,
     VIDEO_DIR,
-    copy_calibration,
     update_chunk_file_indices,
 )
 from .video_utils import (
@@ -156,7 +155,6 @@ def delete_episodes(
         root=output_dir,
         use_videos=len(dataset.meta.video_keys) > 0,
     )
-    copy_calibration(dataset.meta.info.calibration, new_meta.info)
 
     episode_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(episodes_to_keep)}
 
@@ -262,7 +260,6 @@ def split_dataset(
             data_files_size_in_mb=dataset.meta.data_files_size_in_mb,
             video_files_size_in_mb=dataset.meta.video_files_size_in_mb,
         )
-        copy_calibration(dataset.meta.info.calibration, new_meta.info)
 
         video_metadata = None
         if dataset.meta.video_keys:
@@ -413,7 +410,6 @@ def modify_features(
         root=output_dir,
         use_videos=len(remaining_video_keys) > 0,
     )
-    copy_calibration(dataset.meta.info.calibration, new_meta.info)
 
     _copy_data_with_feature_changes(
         dataset=dataset,
@@ -1938,7 +1934,6 @@ def convert_image_to_video_dataset(
         data_files_size_in_mb=dataset.meta.data_files_size_in_mb,
         video_files_size_in_mb=dataset.meta.video_files_size_in_mb,
     )
-    copy_calibration(dataset.meta.info.calibration, new_meta.info)
     video_path_template = new_meta.video_path
     if video_path_template is None:
         raise ValueError("Destination metadata has no video_path defined")

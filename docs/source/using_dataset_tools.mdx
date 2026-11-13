@@ -147,7 +147,7 @@ lerobot-edit-dataset \
 
 There are no constraints on the split names, they can be determined by the user. Resulting datasets are saved under the repo id with the split name appended, e.g. `lerobot/pusht_train`, `lerobot/pusht_task1`, `lerobot/pusht_task2`.
 
-Delete and split copy a dataset's `calibration` entry in `meta/info.json` unchanged. That entry is the follower's joint zeros and P/I/D gains, when the recording wrote them. They also copy the per-episode `servo_settings` column.
+Delete and split copy the per-episode `servo_settings` column.
 
 #### Merge Datasets
 
@@ -161,9 +161,7 @@ lerobot-edit-dataset \
     --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 ```
 
-Merge keeps `calibration` when every source dataset has the same value. When the values disagree, or a source has none, the merged dataset omits the key and logs one warning that names the reason.
-
-A new recording also stores servo settings on each episode, in a `servo_settings` column of `meta/episodes`. The column holds the servo model, the calibration, and the setting registers the code can read, including acceleration. Position, speed, load, voltage, temperature and current are not stored. The registers are read at the start of the episode, not in the control loop. Merge keeps that column when any source has it, and leaves it empty on episodes that had none. A resume of a dataset recorded without the column keeps that format, writes no servo settings, and logs one warning. Start a new dataset to record them.
+A new recording stores servo settings on each episode, in a `servo_settings` column of `meta/episodes`. The column holds the servo model, the calibration, and the setting registers the code can read, including acceleration. Position, speed, load, voltage, temperature and current are not stored. The registers are read at the start of the episode, not in the control loop. There is no dataset-wide calibration key in `meta/info.json`. Merge keeps the column when any source has it, and leaves it empty on episodes that had none. A resume of a dataset recorded without the column keeps that format, writes no servo settings, and logs one warning. Start a new dataset to record them.
 
 Feature edits and image-to-video conversion also copy the key from their single source. In-place edits (modify tasks, recompute stats, re-encode videos) leave it as it stands.
 
