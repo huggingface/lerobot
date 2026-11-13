@@ -31,6 +31,9 @@ from lerobot.processor import ActionTokenizerProcessorStep, DataProcessorPipelin
 from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.utils.constants import (
     ACTION,
+    ACTION_CODE_TOKEN_MASK,
+    ACTION_TOKEN_MASK,
+    ACTION_TOKENS,
     OBS_IMAGE,
     OBS_LANGUAGE,
     OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
@@ -132,6 +135,164 @@ def test_action_tokenizer_can_reject_truncated_sequences():
 
     with pytest.raises(ValueError, match="max_action_tokens=4"):
         processor._tokenize_action(torch.zeros(1, 2, 1))
+
+
+class FakePaligemmaTokenizer:
+    """Minimal PaliGemma tokenizer: "Action: " -> [10, 11], "|" -> [12, 1]."""
+
+    vocab_size = 1000
+    bos_token_id = 2
+
+    def encode(self, text, **_kwargs):
+        return [10, 11] if text == "Action: " else [12, 1]
+
+
+def _make_action_tokenizer(action_tokenizer, max_action_tokens=16, allow_truncation=True):
+    processor = object.__new__(ActionTokenizerProcessorStep)
+    processor.max_action_tokens = max_action_tokens
+    processor.fast_skip_tokens = 128
+    processor.allow_truncation = allow_truncation
+    processor.action_tokenizer = action_tokenizer
+    processor._paligemma_tokenizer = FakePaligemmaTokenizer()
+    return processor
+
+
+# FAST tokens [1, 2, 3] map to 1000 - 1 - 128 - t, framed by BOS, the "Action: " prefix and the "|" suffix.
+EXPECTED_SEQUENCE = [2, 10, 11, 870, 869, 868, 12, 1]
+EXPECTED_CODE_MASK = [False, False, False, True, True, True, False, False]
+
+
+def test_action_tokenizer_pads_tokens_and_masks():
+    processor = _make_action_tokenizer(lambda _actions: [1, 2, 3], max_action_tokens=12)
+
+    tokens, mask, code_mask = processor._tokenize_action(torch.zeros(1, 2, 1))
+
+    assert tokens.shape == mask.shape == code_mask.shape == (1, 12)
+    assert tokens.dtype == torch.long
+    assert mask.dtype == code_mask.dtype == torch.bool
+    assert tokens[0].tolist() == EXPECTED_SEQUENCE + [0, 0, 0, 0]
+    assert mask[0].tolist() == [True] * 8 + [False] * 4
+    assert code_mask[0].tolist() == EXPECTED_CODE_MASK + [False] * 4
+
+
+def test_action_tokenizer_flattens_2d_tokenizer_output():
+    processor = _make_action_tokenizer(lambda _actions: torch.tensor([[1, 2, 3]]), max_action_tokens=8)
+
+    tokens, mask, code_mask = processor._tokenize_action(torch.zeros(1, 2, 1))
+
+    assert tokens[0].tolist() == EXPECTED_SEQUENCE
+    assert mask[0].all()
+    assert code_mask[0].tolist() == EXPECTED_CODE_MASK
+
+
+def test_action_tokenizer_truncation_keeps_prefix_and_drops_suffix(caplog):
+    processor = _make_action_tokenizer(lambda _actions: [1, 2, 3], max_action_tokens=5)
+
+    with caplog.at_level("WARNING"):
+        tokens, mask, code_mask = processor._tokenize_action(torch.zeros(1, 2, 1))
+
+    assert "truncating" in caplog.text
+    assert tokens[0].tolist() == EXPECTED_SEQUENCE[:5]
+    assert mask[0].tolist() == [True] * 5
+    assert code_mask[0].tolist() == EXPECTED_CODE_MASK[:5]
+
+
+def test_action_tokenizer_sequence_of_exactly_max_length_is_not_truncated(caplog):
+    processor = _make_action_tokenizer(
+        lambda _actions: [1, 2, 3], max_action_tokens=len(EXPECTED_SEQUENCE), allow_truncation=False
+    )
+
+    with caplog.at_level("WARNING"):
+        tokens, mask, code_mask = processor._tokenize_action(torch.zeros(1, 2, 1))
+
+    assert "truncating" not in caplog.text
+    assert tokens[0].tolist() == EXPECTED_SEQUENCE
+    assert mask[0].all()
+    assert code_mask[0].tolist() == EXPECTED_CODE_MASK
+
+
+def test_action_tokenizer_batch_pads_each_sample_independently():
+    calls = []
+
+    def fast_tokenizer(actions):
+        calls.append(actions)
+        # The number of FAST tokens is the sample's first value, so each row has its own length.
+        return list(range(1, int(actions[0, 0, 0].item()) + 1))
+
+    processor = _make_action_tokenizer(fast_tokenizer, max_action_tokens=10)
+    action = torch.tensor([1.0, 3.0, 2.0]).view(3, 1, 1).expand(3, 4, 2).contiguous()
+
+    tokens, mask, code_mask = processor._tokenize_action(action)
+
+    assert tokens.shape == mask.shape == code_mask.shape == (3, 10)
+    # The FAST tokenizer sees one sample at a time, on CPU, with its batch dimension kept.
+    assert [c.shape for c in calls] == [(1, 4, 2)] * 3
+    assert all(c.device.type == "cpu" for c in calls)
+    for row, n_codes in enumerate([1, 3, 2]):
+        seq_len = 1 + 2 + n_codes + 2
+        assert mask[row].tolist() == [True] * seq_len + [False] * (10 - seq_len)
+        assert code_mask[row].tolist() == [False] * 3 + [True] * n_codes + [False] * (10 - 3 - n_codes)
+        assert tokens[row, 3 : 3 + n_codes].tolist() == [871 - t for t in range(1, n_codes + 1)]
+        assert tokens[row, 3 + n_codes : seq_len].tolist() == [12, 1]
+        assert tokens[row, seq_len:].eq(0).all()
+
+
+def test_action_tokenizer_single_unbatched_sample_returns_unbatched_outputs():
+    calls = []
+
+    def fast_tokenizer(actions):
+        calls.append(actions.shape)
+        return [1, 2, 3]
+
+    processor = _make_action_tokenizer(fast_tokenizer, max_action_tokens=12)
+
+    tokens, mask, code_mask = processor._tokenize_action(torch.zeros(4))
+
+    assert calls == [(1, 4)]
+    assert tokens.shape == mask.shape == code_mask.shape == (12,)
+    assert tokens[:8].tolist() == EXPECTED_SEQUENCE
+
+
+def test_action_tokenizer_call_writes_tokens_and_masks_to_complementary_data():
+    processor = _make_action_tokenizer(lambda _actions: [1, 2, 3], max_action_tokens=12)
+    action = torch.zeros(1, 2, 1)
+    transition = create_transition(action=action, complementary_data={"task": ["pick"]})
+
+    result = processor(transition)
+
+    data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert data["task"] == ["pick"]
+    assert data[ACTION_TOKENS][0].tolist() == EXPECTED_SEQUENCE + [0, 0, 0, 0]
+    assert data[ACTION_TOKEN_MASK][0].tolist() == [True] * 8 + [False] * 4
+    assert data[ACTION_CODE_TOKEN_MASK][0].tolist() == EXPECTED_CODE_MASK + [False] * 4
+    # The continuous action stays in place for the flow-matching loss.
+    assert result[TransitionKey.ACTION] is action
+
+
+def test_action_tokenizer_call_handles_missing_complementary_data():
+    processor = _make_action_tokenizer(lambda _actions: [1, 2, 3], max_action_tokens=12)
+    transition = create_transition(action=torch.zeros(1, 2, 1))
+    transition[TransitionKey.COMPLEMENTARY_DATA] = None
+
+    result = processor(transition)
+
+    assert set(result[TransitionKey.COMPLEMENTARY_DATA]) == {
+        ACTION_TOKENS,
+        ACTION_TOKEN_MASK,
+        ACTION_CODE_TOKEN_MASK,
+    }
+
+
+def test_action_tokenizer_call_without_action_skips_tokenization():
+    def fail(_actions):
+        raise AssertionError("the FAST tokenizer must not run without an action")
+
+    processor = _make_action_tokenizer(fail)
+    transition = create_transition(complementary_data={"task": ["pick"]})
+
+    result = processor(transition)
+
+    assert result[TransitionKey.COMPLEMENTARY_DATA] == {"task": ["pick"]}
 
 
 @pytest.fixture
