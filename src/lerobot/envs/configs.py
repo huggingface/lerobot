@@ -474,6 +474,7 @@ class LiberoEnvConfig(EnvConfig):
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
     hard_reset: bool = True
+    num_steps_wait: int = 10
     # Raw camera name -> observation name. Default: agentview_image -> image,
     # robot0_eye_in_hand_image -> image2.
     camera_name_mapping: dict[str, str] | None = None
@@ -487,6 +488,8 @@ class LiberoEnvConfig(EnvConfig):
             raise ValueError(f"fps must be positive, got {self.fps}")
         if not self.hard_reset and not self.init_states:
             raise ValueError("hard_reset=False requires init_states=True")
+        if self.num_steps_wait < 0:
+            raise ValueError(f"num_steps_wait must be non-negative, got {self.num_steps_wait}")
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
@@ -499,6 +502,7 @@ class LiberoEnvConfig(EnvConfig):
             "observation_width": self.observation_width,
             "control_freq": self.fps,
             "hard_reset": self.hard_reset,
+            "num_steps_wait": self.num_steps_wait,
         }
         if self.task_ids is not None:
             kwargs["task_ids"] = self.task_ids
