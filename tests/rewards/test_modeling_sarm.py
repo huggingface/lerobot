@@ -82,8 +82,17 @@ def _make_batch(batch_size: int = 2, seq_len: int = 4) -> dict[str, torch.Tensor
     }
 
 
-@pytest.mark.parametrize(("head_mode", "num_stages"), [("sparse", 2), ("dense", 3)])
-def test_sarm_predict_progress_returns_typed_frame_signals(head_mode: str, num_stages: int):
+@pytest.mark.parametrize(
+    ("head_mode", "expected_progress", "expected_probabilities"),
+    [
+        ("sparse", [0.04, 0.14666667, 0.25333333, 0.36], [0.88079708, 0.11920292]),
+        ("dense", [0.02, 0.07333333, 0.12666667, 0.18], [0.78698604, 0.10650698, 0.10650698]),
+    ],
+    ids=["sparse", "dense"],
+)
+def test_sarm_predict_progress_returns_typed_frame_signals(
+    head_mode: str, expected_progress: list[float], expected_probabilities: list[float]
+) -> None:
     model = _make_model()
     batch = _make_batch()
 
@@ -91,7 +100,7 @@ def test_sarm_predict_progress_returns_typed_frame_signals(head_mode: str, num_s
 
     assert isinstance(prediction, SARMOutput)
     assert prediction.progress.shape == (2, 4)
-    assert prediction.stage_probabilities.shape == (2, 4, num_stages)
+    assert prediction.stage_probabilities.shape == (2, 4, len(expected_probabilities))
     assert prediction.stage_confidence.shape == (2, 4)
     assert prediction.valid_mask.shape == (2, 4)
     assert prediction.progress.dtype == torch.float32
@@ -101,7 +110,11 @@ def test_sarm_predict_progress_returns_typed_frame_signals(head_mode: str, num_s
     assert prediction.progress.device == model.device
     assert prediction.valid_mask.device == model.device
     assert prediction.valid_mask.all()
-    assert torch.all((prediction.progress >= 0.0) & (prediction.progress <= 1.0))
+    torch.testing.assert_close(prediction.progress, torch.tensor(expected_progress).expand(2, -1))
+    torch.testing.assert_close(
+        prediction.stage_probabilities, torch.tensor(expected_probabilities).expand(2, 4, -1)
+    )
+    torch.testing.assert_close(prediction.stage_confidence, torch.full((2, 4), expected_probabilities[0]))
 
 
 def test_sarm_predict_progress_marks_padded_frames_invalid():

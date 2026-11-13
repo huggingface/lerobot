@@ -136,6 +136,7 @@ def test_compute_robometer_progress_writes_progress_parquet(monkeypatch, tmp_pat
             return self
 
         def predict_progress(self, batch):
+            assert not torch.is_grad_enabled()
             progress = batch[f"{ROBOMETER_FEATURE_PREFIX}input_ids"].float()
             return RobometerOutput(progress=progress, success_probability=torch.zeros_like(progress))
 
@@ -188,5 +189,10 @@ def test_compute_robometer_progress_writes_progress_parquet(monkeypatch, tmp_pat
     assert table.schema.field("frame_index").type == pa.int64()
     assert table.schema.field("progress_sparse").type == pa.float32()
     assert table.schema.metadata == {b"reward_model_path": b"local/robometer"}
-    assert table.column("progress_sparse").to_pylist() == [0.0, 1.0, 2.0]
+    assert table.to_pydict() == {
+        "index": [0, 1, 2],
+        "episode_index": [0, 0, 0],
+        "frame_index": [0, 1, 2],
+        "progress_sparse": [0.0, 1.0, 2.0],
+    }
     assert encoder_kwargs["max_frames"] is None  # the sub-samples are already the right size

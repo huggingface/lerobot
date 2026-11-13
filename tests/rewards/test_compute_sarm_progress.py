@@ -24,7 +24,10 @@ from lerobot.rewards.sarm import SARMOutput
 
 
 @pytest.mark.dataset
-def test_compute_sarm_progress_writes_progress_parquet(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("dual_heads", [False, True], ids=["sparse", "sparse-and-dense"])
+def test_compute_sarm_progress_writes_progress_parquet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dual_heads: bool
+) -> None:
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
     pytest.importorskip("matplotlib")
@@ -49,12 +52,15 @@ def test_compute_sarm_progress_writes_progress_parquet(monkeypatch, tmp_path: Pa
             image_key=image_key,
             state_key="observation.state",
             frame_gap=30,
-            uses_dual_heads=False,
+            uses_dual_heads=dual_heads,
             n_obs_steps=2,
         )
 
-        def predict_progress(self, batch, *, head_mode: str):  # noqa: ARG002
+        def predict_progress(self, batch, *, head_mode: str):
+            assert not torch.is_grad_enabled()
             progress = batch["video_features"][..., 0].float()
+            if head_mode == "dense":
+                progress = progress + 0.25
             batch_size, seq_len = progress.shape
             return SARMOutput(
                 progress=progress,
@@ -87,15 +93,25 @@ def test_compute_sarm_progress_writes_progress_parquet(monkeypatch, tmp_path: Pa
         dataset_repo_id="local/test",
         reward_model_path="local/sarm",
         output_path=str(tmp_path / "sarm_progress.parquet"),
+        head_mode="both" if dual_heads else "sparse",
         device="cpu",
         num_visualizations=0,
     )
 
     table = pq.read_table(output_path)
-    assert table.schema.names == ["index", "episode_index", "frame_index", "progress_sparse"]
+    expected = {
+        "index": [0, 1, 2],
+        "episode_index": [0, 0, 0],
+        "frame_index": [0, 1, 2],
+        "progress_sparse": [0.0, 1.0, 2.0],
+    }
+    if dual_heads:
+        expected["progress_dense"] = [0.25, 1.25, 2.25]
+        assert table.schema.field("progress_dense").type == pa.float32()
+    assert table.schema.names == list(expected)
     assert table.schema.field("index").type == pa.int64()
     assert table.schema.field("episode_index").type == pa.int64()
     assert table.schema.field("frame_index").type == pa.int64()
     assert table.schema.field("progress_sparse").type == pa.float32()
     assert table.schema.metadata == {b"reward_model_path": b"local/sarm"}
-    assert table.column("progress_sparse").to_pylist() == [0.0, 1.0, 2.0]
+    assert table.to_pydict() == expected

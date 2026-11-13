@@ -65,6 +65,7 @@ def test_compute_topreward_progress_writes_progress_parquet(monkeypatch, tmp_pat
             return self
 
         def compute_log_probability(self, batch):
+            assert not torch.is_grad_enabled()
             return batch["prefix_length"].float()
 
     class FakeEncoder:
@@ -112,4 +113,9 @@ def test_compute_topreward_progress_writes_progress_parquet(monkeypatch, tmp_pat
     assert table.schema.field("frame_index").type == pa.int64()
     assert table.schema.field("progress_sparse").type == pa.float32()
     assert table.schema.metadata == {b"vlm_name": b"fake/vlm"}
-    assert table.column("progress_sparse").to_pylist() == [0.0, 0.5, 1.0]
+    assert table.to_pydict() == {
+        "index": [0, 1, 2],
+        "episode_index": [0, 0, 0],
+        "frame_index": [0, 1, 2],
+        "progress_sparse": [0.0, 0.5, 1.0],
+    }
