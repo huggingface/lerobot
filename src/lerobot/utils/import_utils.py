@@ -88,15 +88,42 @@ def is_package_available(
         return package_exists
 
 
+def _load_torchcodec_or_raise() -> None:
+    """Import torchcodec, raising if the package or its native library cannot be loaded.
+
+    torchcodec prints its native-library load failure itself (ending with
+    "[end of libtorchcodec loading traceback]") and re-raises, so the caller
+    sees the original error. Recent releases import even when FFmpeg fails
+    to load, so probe torchcodec._core's ffmpeg_major_version too.
+    """
+    core = importlib.import_module("torchcodec._core")
+    if getattr(core, "ffmpeg_major_version", True) is None:
+        raise RuntimeError("TorchCodec could not load the FFmpeg libraries.")
+
+
+def is_video_backend_available(backend: str) -> bool:
+    """Return True if the given video backend can be loaded in this environment."""
+    if backend in ("pyav", "video_reader"):  # "video_reader" is a deprecated alias of pyav
+        try:
+            importlib.import_module("av")
+            return True
+        except Exception:
+            return False
+    if backend == "torchcodec":
+        try:
+            _load_torchcodec_or_raise()
+            return True
+        except (ImportError, OSError, RuntimeError):
+            return False
+    return True
+
+
 def get_safe_default_video_backend() -> Literal["torchcodec", "pyav"]:
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
         # Despite being installed, torchcodec may not be loadable at runtime.
         try:
-            # Recent releases import even when FFmpeg fails to load; older ones raise here instead.
-            core = importlib.import_module("torchcodec._core")
-            if getattr(core, "ffmpeg_major_version", True) is None:
-                raise RuntimeError("TorchCodec could not load the FFmpeg libraries.")
+            _load_torchcodec_or_raise()
             return "torchcodec"
         except (ImportError, OSError, RuntimeError) as e:
             logger.warning(
