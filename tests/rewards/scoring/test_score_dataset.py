@@ -295,6 +295,51 @@ def test_score_dataset_resumes_only_missing_episodes(tmp_path: Path) -> None:
     assert len(load_annotations(dataset, scorer.name)) == 6
 
 
+@pytest.mark.parametrize("model_type", ["robometer", "topreward"])
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [("task_key", "instruction"), ("default_task", "new fallback task")],
+)
+def test_score_dataset_rejects_changed_task_configuration_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model_type: str, field_name: str, value: str
+) -> None:
+    from lerobot.rewards.robometer import RobometerConfig
+    from lerobot.rewards.robometer.scoring_robometer import RobometerFrameScorer
+    from lerobot.rewards.topreward import TOPRewardConfig
+    from lerobot.rewards.topreward.scoring_topreward import TOPRewardFrameScorer
+
+    options = (
+        {"task_key": "missing_task", "default_task": "old fallback task"}
+        if field_name == "default_task"
+        else {}
+    )
+    if model_type == "robometer":
+        config = RobometerConfig(device="cpu", vlm_config={"model_type": "fake"}, **options)
+        scorer = RobometerFrameScorer(SimpleNamespace(config=config), object())
+    else:
+        config = TOPRewardConfig(device="cpu", **options)
+        scorer = TOPRewardFrameScorer(SimpleNamespace(config=config), object())
+    producer = FakeScorer(
+        result=FrameSignals(
+            np.asarray([0]), {name: np.asarray([0.5], dtype=np.float32) for name in scorer.descriptors}
+        ),
+        fail_on_episode=1,
+    )
+    monkeypatch.setattr(scorer, "score_episode", producer.score_episode)
+    dataset = FakeDataset(tmp_path / "dataset")
+    with pytest.raises(RuntimeError, match="Scoring interrupted"):
+        score_dataset(dataset, scorer)
+    assert producer.calls == [0, 1]
+
+    producer.calls.clear()
+    producer.fail_on_episode = None
+    setattr(config, field_name, value)
+
+    with pytest.raises(ValueError, match="Cannot resume annotations"):
+        score_dataset(dataset, scorer)
+    assert producer.calls == []
+
+
 def test_score_dataset_forwards_episode_selection_and_overwrite(tmp_path: Path) -> None:
     dataset = FakeDataset(tmp_path / "dataset", lengths=(2, 3, 1))
     scorer = FakeScorer()

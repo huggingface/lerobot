@@ -147,6 +147,7 @@ class _FakeModel:
         vlm_name="fake/vlm",
         image_key=IMAGE_KEY,
         task_key="task",
+        default_task=None,
         fps=2.0,
         prompt_prefix="prefix",
         prompt_suffix_template="{instruction}",

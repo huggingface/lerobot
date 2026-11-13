@@ -102,6 +102,8 @@ class RobometerFrameScorer:
                 "version": 1,
                 "options": {
                     "image_key": config.image_key,
+                    "task_key": config.task_key,
+                    "default_task": config.default_task,
                     "num_subsampled_frames": self.num_subsampled_frames,
                 },
             },

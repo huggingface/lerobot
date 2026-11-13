@@ -154,6 +154,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
             type="robometer",
             image_key=image_key,
             task_key=task_key,
+            default_task=None,
             pretrained_path="test/robometer",
             pretrained_revision="model-revision",
         )
@@ -192,7 +193,15 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     assert scorer.name == "robometer"
     assert scorer.provenance == {
         "model": {"type": "robometer", "id": "test/robometer", "revision": "model-revision"},
-        "scorer": {"version": 1, "options": {"image_key": image_key, "num_subsampled_frames": 2}},
+        "scorer": {
+            "version": 1,
+            "options": {
+                "image_key": image_key,
+                "task_key": task_key,
+                "default_task": None,
+                "num_subsampled_frames": 2,
+            },
+        },
     }
 
     episode_frames = dataset.get_frames(0, [image_key], list(range(3)))[image_key]
@@ -308,6 +317,7 @@ def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):
             type="robometer",
             image_key=image_key,
             task_key="task",
+            default_task=None,
             pretrained_path="test/robometer",
             pretrained_revision="model-revision",
         )

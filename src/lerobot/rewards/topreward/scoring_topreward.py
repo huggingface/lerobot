@@ -102,6 +102,8 @@ class TOPRewardFrameScorer:
                 "options": {
                     "vlm_name": config.vlm_name,
                     "image_key": config.image_key,
+                    "task_key": config.task_key,
+                    "default_task": config.default_task,
                     "fps": config.fps,
                     "prompt_prefix": config.prompt_prefix,
                     "prompt_suffix_template": config.prompt_suffix_template,
