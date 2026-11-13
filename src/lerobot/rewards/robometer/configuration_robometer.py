@@ -56,8 +56,6 @@ class RobometerConfig(RewardModelConfig):
     default_task: str | None = None
 
     max_frames: int | None = 8
-    # Deprecated and ignored; callers apply thresholds to the returned success probabilities.
-    success_threshold: float = 0.5
 
     license: str | None = "apache-2.0"
     tags: list[str] | None = field(

@@ -328,7 +328,6 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
         # Knobs the user might tweak — must survive the round-trip.
         image_key="observation.images.cam_top",
         task_key="task",
-        success_threshold=0.7,
         progress_loss_type="l2",
     )
     model = RobometerRewardModel(cfg)
@@ -342,6 +341,7 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
     config_path = tmp_path / CONFIG_NAME
     saved_config = json.loads(config_path.read_text())
     assert "reward_output" not in saved_config
+    assert "success_threshold" not in saved_config
 
     # All three heads must be present in the saved safetensors. The preference
     # head is unused at inference but the published checkpoint expects its
@@ -360,7 +360,6 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
 
     assert reloaded.config.image_key == "observation.images.cam_top"
     assert reloaded.config.task_key == "task"
-    assert reloaded.config.success_threshold == 0.7
     assert reloaded.config.progress_loss_type == "l2"  # came back from config.json
 
     # A successful load must restore values, not merely recreate keys. Compare
