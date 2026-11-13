@@ -16,11 +16,13 @@
 
 """Unitree G1 robot controllers: locomotion (GR00T, Holosoma) and whole-body (SONIC)."""
 
+from .depth_dodge import DepthDodgeController
 from .gr00t_locomotion import GrootLocomotionController
 from .holosoma_locomotion import HolosomaLocomotionController
 from .sonic_whole_body import SonicWholeBodyController
 
 __all__ = [
+    "DepthDodgeController",
     "GrootLocomotionController",
     "HolosomaLocomotionController",
     "SonicWholeBodyController",
