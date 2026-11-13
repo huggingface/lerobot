@@ -1759,7 +1759,7 @@ def recompute_stats(
     numeric_features = {
         k: v
         for k, v in features.items()
-        if v["dtype"] not in ["image", "video", "string"] and k not in meta_keys
+        if v["dtype"] not in ["image", "video", "string", "language"] and k not in meta_keys
     }
 
     if skip_image_video:

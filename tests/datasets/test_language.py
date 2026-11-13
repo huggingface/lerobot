@@ -11,6 +11,7 @@ import pyarrow as pa  # noqa: E402
 
 from lerobot.datasets import LeRobotDataset  # noqa: E402
 from lerobot.datasets.io_utils import write_info  # noqa: E402
+from lerobot.datasets.dataset_tools import recompute_stats  # noqa: E402
 from lerobot.datasets.language import (
     EVENT_ONLY_STYLES,
     PERSISTENT_STYLES,
@@ -186,3 +187,39 @@ def test_lerobot_dataset_passes_language_columns_through(tmp_path, empty_lerobot
     assert streamed[0][LANGUAGE_EVENTS] == [event]
     assert streamed[1][LANGUAGE_PERSISTENT] == persistent
     assert streamed[1][LANGUAGE_EVENTS] == []
+
+
+def test_recompute_stats_skips_sparse_language_events(tmp_path, empty_lerobot_dataset_factory):
+    root = tmp_path / "language_stats_dataset"
+    dataset = empty_lerobot_dataset_factory(
+        root=root,
+        features={"state": {"dtype": "float32", "shape": (2,), "names": None}},
+        use_videos=False,
+    )
+    for value in (0, 2):
+        dataset.add_frame(
+            {"state": np.array([value, value + 1], dtype=np.float32), "task": "tidy"}
+        )
+    dataset.save_episode()
+    dataset.finalize()
+
+    data_path = root / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
+    df = pd.read_parquet(data_path)
+    df[LANGUAGE_EVENTS] = [[], [{
+        "role": "user",
+        "content": "stop",
+        "style": "interjection",
+        "camera": None,
+        "tool_calls": None,
+    }]]
+    df.to_parquet(data_path)
+
+    dataset.meta.info.features["language_events"] = language_feature_info()["language_events"]
+    write_info(dataset.meta.info, root)
+
+    reloaded = LeRobotDataset(repo_id=dataset.repo_id, root=root)
+    assert reloaded[1][LANGUAGE_EVENTS][0]["content"] == "stop"
+
+    # Should not raise (previously: ValueError 'all input arrays must have the same shape')
+    recompute_stats(reloaded)
+
