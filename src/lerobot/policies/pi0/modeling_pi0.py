@@ -62,7 +62,7 @@ from ..common.flow_matching import (
     sample_time_beta,
 )
 from ..common.vla_utils import (
-    clone_past_key_values,
+    ReadOnlyPrefixCache,
     create_sinusoidal_pos_embedding,
     make_att_2d_masks,
     pad_vector,
@@ -548,10 +548,22 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
-        embs = []
-        pad_masks = []
-        att_masks = []
+        embs = self._embed_suffix_tokens(state, noisy_actions, timestep)
+        bsize, suffix_len = embs.shape[:2]
+        pad_masks = torch.ones(bsize, suffix_len, dtype=torch.bool, device=timestep.device)
 
+        # The state token starts a block, and so does the first action token, so that image,
+        # language and state inputs do not attend to action tokens
+        att_masks = [1] + [1] + ([0] * (self.config.chunk_size - 1))
+        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+
+        return embs, pad_masks, att_masks, None
+
+    def _embed_suffix_tokens(self, state, noisy_actions, timestep):
+        """The suffix embeddings (state token, then the action and timestep tokens). The masks
+        ``embed_suffix`` adds don't depend on the step, so the denoise loop builds them once per
+        chunk (``_suffix_attention``)."""
         if self.state_proj.weight.dtype == torch.float32:
             state = state.to(torch.float32)
 
@@ -559,13 +571,6 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             return self.state_proj(state)
 
         state_emb = self._apply_checkpoint(state_proj_func, state)
-        embs.append(state_emb[:, None, :])
-        bsize = state_emb.shape[0]
-        device = state_emb.device
-
-        state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
-        pad_masks.append(state_mask)
-        att_masks += [1]
 
         # Embed timestep using sine-cosine positional encoding
         time_emb = create_sinusoidal_pos_embedding(
@@ -592,22 +597,26 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             return self.action_time_mlp_out(x)
 
         action_time_emb = self._apply_checkpoint(mlp_func, action_time_emb)
-        adarms_cond = None
+        return torch.cat([state_emb[:, None, :], action_time_emb], dim=1)
 
-        embs.append(action_time_emb)
-        bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
-        pad_masks.append(action_time_mask)
+    def _suffix_attention(self, prefix_pad_masks: Tensor) -> tuple[Tensor, Tensor]:
+        """The denoise steps' 4D attention mask and position ids. They depend only on the prefix
+        padding and the chunk size, so one chunk's ten steps share them."""
+        batch_size, prefix_len = prefix_pad_masks.shape
+        suffix_len = self.config.chunk_size + 1  # the state token, then the actions
+        device = prefix_pad_masks.device
+        suffix_pad_masks = torch.ones(batch_size, suffix_len, dtype=torch.bool, device=device)
+        # the state token and the first action token each start a new block, as in embed_suffix
+        suffix_att_masks = torch.zeros(batch_size, suffix_len, device=device)
+        suffix_att_masks[:, :2] = 1
 
-        # Set attention masks so that image, language and state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.chunk_size - 1))
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
 
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
-        return embs, pad_masks, att_masks, adarms_cond
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+        return prepare_attention_masks_4d(full_att_2d_masks), position_ids
 
     def forward(self, images, img_masks, lang_tokens, lang_masks, state, actions, noise, time) -> Tensor:
         """Do a full training forward pass and compute the loss."""
@@ -705,14 +714,29 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=True,
         )
 
+        if type(self).denoise_step is not PI0Pytorch.denoise_step:
+            # a subclass with its own denoise_step keeps the old keyword call and the prefill's
+            # cache it manages itself
+            def denoise(input_x_t, current_timestep):
+                return self.denoise_step(
+                    state=state,
+                    prefix_pad_masks=prefix_pad_masks,
+                    past_key_values=past_key_values,
+                    x_t=input_x_t,
+                    timestep=current_timestep,
+                )
+
+        else:
+            prefix_cache = ReadOnlyPrefixCache.from_cache(past_key_values)
+            suffix_attention = self._suffix_attention(prefix_pad_masks)
+
+            def denoise(input_x_t, current_timestep):
+                return self.denoise_step(
+                    state, prefix_pad_masks, prefix_cache, input_x_t, current_timestep, suffix_attention
+                )
+
         return euler_integrate(
-            lambda input_x_t, current_timestep: self.denoise_step(
-                state=state,
-                prefix_pad_masks=prefix_pad_masks,
-                past_key_values=past_key_values,
-                x_t=input_x_t,
-                timestep=current_timestep,
-            ),
+            denoise,
             noise,
             num_steps,
             rtc_processor=self.rtc_processor,
@@ -729,32 +753,28 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         past_key_values,
         x_t,
         timestep,
+        suffix_attention: tuple[Tensor, Tensor] | None = None,
     ):
-        """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, timestep)
+        """Apply one denoising step of the noise `x_t` at a given timestep.
 
-        suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-        prefix_len = prefix_pad_masks.shape[1]
-
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
-        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-
-        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
-        full_att_2d_masks_4d = prepare_attention_masks_4d(full_att_2d_masks)
+        ``sample_actions`` passes a ``ReadOnlyPrefixCache`` and the chunk's ``suffix_attention``;
+        a caller that passes the prefill's ``DynamicCache`` and no mask gets the same result.
+        """
+        if not isinstance(past_key_values, ReadOnlyPrefixCache):
+            past_key_values = ReadOnlyPrefixCache.from_cache(past_key_values)
+        if suffix_attention is None:
+            suffix_attention = self._suffix_attention(prefix_pad_masks)
+        full_att_2d_masks_4d, position_ids = suffix_attention
+        suffix_embs = self._embed_suffix_tokens(state, x_t, timestep)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        past_key_values = clone_past_key_values(past_key_values)
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=[None, suffix_embs],
             use_cache=False,
-            adarms_cond=[None, adarms_cond],
+            adarms_cond=[None, None],
         )
 
         suffix_out = outputs_embeds[1]

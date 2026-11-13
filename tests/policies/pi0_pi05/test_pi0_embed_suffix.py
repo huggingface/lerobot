@@ -38,6 +38,7 @@ class _Suffix(nn.Module):
 
     _apply_checkpoint = PI0Pytorch._apply_checkpoint
     embed_suffix = PI0Pytorch.embed_suffix
+    _embed_suffix_tokens = PI0Pytorch._embed_suffix_tokens
 
     def __init__(self, dtype):
         super().__init__()
