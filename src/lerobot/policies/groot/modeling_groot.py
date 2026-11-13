@@ -100,6 +100,7 @@ class GrootPolicy(PreTrainedPolicy):
             # Forwarded as a GR00TN17Config override; read back by set_trainable_parameters.
             "tune_top_llm_layers": self.config.tune_top_llm_layers,
             "use_flash_attention": self.config.use_flash_attention,
+            "denoise_cuda_graph": self.config.denoise_cuda_graph,
         }
         # Surface the inference-time knobs onto the model config only when the user set them; None
         # leaves the value baked into the checkpoint untouched.

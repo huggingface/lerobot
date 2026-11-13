@@ -3140,3 +3140,180 @@ def test_gr00t_n1_7_model_forward_with_mocked_backbone():
     inference_inputs = {key: value for key, value in inputs.items() if key != "action"}
     action_output = model.get_action(inference_inputs)
     assert action_output["action_pred"].shape == (2, config.action_horizon, config.max_action_dim)
+
+
+def _small_action_head_config(**overrides):
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17Config
+
+    kwargs = {
+        "backbone_embedding_dim": 32,
+        "hidden_size": 32,
+        "input_embedding_dim": 32,
+        "max_state_dim": 7,
+        "max_action_dim": 5,
+        "action_horizon": 6,
+        "state_history_length": 1,
+        "num_inference_timesteps": 4,
+        "max_num_embodiments": 4,
+        "use_alternate_vl_dit": True,
+        "attend_text_every_n_blocks": 2,
+        "use_vlln": True,
+        "add_pos_embed": True,
+        "vl_self_attention_cfg": {"num_layers": 0},
+        "diffusion_model_cfg": {
+            "positional_embeddings": None,
+            "num_layers": 4,
+            "num_attention_heads": 2,
+            "attention_head_dim": 16,
+            "norm_type": "ada_norm",
+            "dropout": 0.2,
+            "final_dropout": True,
+            "output_dim": 32,
+            "interleave_self_attention": True,
+        },
+    }
+    kwargs.update(overrides)
+    return GR00TN17Config(**kwargs)
+
+
+def _action_head_inputs(config, batch_size, seq_len, seed, device, rtc_prefix=False):
+    from transformers.feature_extraction_utils import BatchFeature
+
+    g = torch.Generator().manual_seed(seed)
+    # image tokens and padded prompt slots move with the seed, so chunks sharing a graph differ in both
+    image_mask = torch.rand(batch_size, seq_len, generator=g) < 0.5
+    attention_mask = torch.ones(batch_size, seq_len, dtype=torch.bool)
+    attention_mask[:, seq_len - 1 - seed % 3 :] = False
+    backbone_output = BatchFeature(
+        data={
+            "backbone_features": torch.randn(batch_size, seq_len, config.backbone_embedding_dim, generator=g),
+            "backbone_attention_mask": attention_mask,
+            "image_mask": image_mask,
+        }
+    )
+    action_input = BatchFeature(
+        data={
+            "state": torch.randn(batch_size, 1, config.max_state_dim, generator=g),
+            "embodiment_id": torch.randint(0, config.max_num_embodiments, (batch_size,), generator=g),
+        }
+    )
+    options = None
+    if rtc_prefix:
+        action_input["action"] = torch.randn(batch_size, 4, config.max_action_dim, generator=g)
+        options = {"action_horizon": 4, "rtc_overlap_steps": 3, "rtc_frozen_steps": 1, "rtc_ramp_rate": 6.0}
+    noise = torch.randn(batch_size, config.action_horizon, config.max_action_dim, generator=g)
+    backbone_output = BatchFeature(data={k: v.to(device) for k, v in backbone_output.items()})
+    action_input = BatchFeature(data={k: v.to(device) for k, v in action_input.items()})
+    return backbone_output, action_input, options, noise.to(device)
+
+
+def _get_action(head, backbone_output, action_input, options, noise, *, graph, autocast=False):
+    from transformers.feature_extraction_utils import BatchFeature
+
+    head.config.denoise_cuda_graph = graph
+    # process_backbone_output writes into the BatchFeature, so give each call its own copy
+    backbone_output = BatchFeature(data=dict(backbone_output))
+    # one autocast region per chunk, as GrootPolicy.predict_action_chunk opens
+    with torch.autocast(noise.device.type, dtype=torch.bfloat16, enabled=autocast):
+        return head.get_action(backbone_output, action_input, options, noise=noise)["action_pred"]
+
+
+def test_groot_denoise_cuda_graph_is_off_by_default_and_reaches_the_model_config(monkeypatch):
+    pytest.importorskip("transformers")
+
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17, GR00TN17Config
+
+    assert GrootConfig().denoise_cuda_graph is False
+    assert GR00TN17Config().denoise_cuda_graph is False
+
+    called = {}
+
+    def fake_from_pretrained(cls, **kwargs):
+        called.update(kwargs)
+        return _DummyGrootModel()
+
+    monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(fake_from_pretrained))
+    config = _groot_config()
+    config.denoise_cuda_graph = True
+    GrootPolicy(config)
+    assert called["denoise_cuda_graph"] is True
+
+
+def test_groot_denoise_cuda_graph_runs_the_eager_loop_off_cuda():
+    pytest.importorskip("diffusers")
+    pytest.importorskip("transformers")
+
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17ActionHead
+
+    torch.manual_seed(0)
+    head = GR00TN17ActionHead(_small_action_head_config()).eval()
+    inputs = _action_head_inputs(head.config, batch_size=2, seq_len=5, seed=0, device="cpu")
+    eager = _get_action(head, *inputs, graph=False)
+    with_flag = _get_action(head, *inputs, graph=True)
+    assert torch.equal(eager, with_flag)
+    assert not head.__dict__.get("_denoise_graphs")
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+@pytest.mark.parametrize("param_dtype", [torch.float32, torch.bfloat16])
+def test_groot_denoise_cuda_graph_matches_eager(param_dtype):
+    pytest.importorskip("diffusers")
+    pytest.importorskip("transformers")
+
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17ActionHead
+
+    torch.manual_seed(0)
+    head = GR00TN17ActionHead(_small_action_head_config()).to("cuda", dtype=param_dtype).eval()
+    try:
+        # the first two share a graph but differ in features, masks, state and noise
+        cases = [(1, 9, 1, False), (1, 9, 2, False), (2, 9, 3, False), (1, 12, 4, False), (2, 9, 5, True)]
+        for batch_size, seq_len, seed, rtc_prefix in cases:
+            inputs = _action_head_inputs(head.config, batch_size, seq_len, seed, "cuda", rtc_prefix)
+            # fp32 parameters under bf16 autocast is the policy's default inference setting
+            eager = _get_action(head, *inputs, graph=False, autocast=True)
+            graphed = _get_action(head, *inputs, graph=True, autocast=True)
+            assert torch.equal(graphed, eager), (batch_size, seq_len, rtc_prefix)
+        # one capture per batch size and sequence length, reused across chunks (RTC included)
+        assert len(head._denoise_graphs) == 3
+    finally:
+        head.config.denoise_cuda_graph = False
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_groot_denoise_cuda_graph_follows_the_noise_and_can_be_reset():
+    pytest.importorskip("diffusers")
+    pytest.importorskip("transformers")
+
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17ActionHead
+
+    torch.manual_seed(0)
+    head = GR00TN17ActionHead(_small_action_head_config()).to("cuda").eval()
+    backbone_output, action_input, options, noise = _action_head_inputs(head.config, 1, 9, 0, "cuda")
+    try:
+        first = _get_action(head, backbone_output, action_input, options, noise, graph=True)
+        # same observation, other noise: a replay that kept the captured noise would repeat itself
+        second = _get_action(
+            head, backbone_output, action_input, options, torch.randn_like(noise), graph=True
+        )
+        assert not torch.equal(first, second)
+        assert len(head._denoise_graphs) == 1
+
+        # training mode (dropout on) keeps the eager loop
+        head.train()
+        with patch.object(head, "_denoise_graph", side_effect=AssertionError("graph used in training")):
+            _get_action(head, backbone_output, action_input, options, noise, graph=True)
+        head.eval()
+
+        # the least recently used capture is dropped past the limit
+        head._MAX_DENOISE_GRAPHS = 2
+        for seq_len in (10, 11):
+            _get_action(head, *_action_head_inputs(head.config, 1, seq_len, 0, "cuda"), graph=True)
+        assert len(head._denoise_graphs) == 2
+
+        head.to("cuda")  # moving or casting the head drops the captures
+        assert not head.__dict__.get("_denoise_graphs")
+        _get_action(head, backbone_output, action_input, options, noise, graph=True)
+        head.reset_denoise_graphs()
+        assert not head.__dict__.get("_denoise_graphs")
+    finally:
+        head.config.denoise_cuda_graph = False
