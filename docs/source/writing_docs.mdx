@@ -1,0 +1,120 @@
+# Writing docs
+
+These docs are read by people who have never trained a robot before, and by people who do it every day. Write for the first group without slowing down the second: plain words, short pages, the common path first, and every detail one click away.
+
+## Where does my page go?
+
+| You are adding                    | Put the page in                                                        | Also update                                                                                                                    |
+| --------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| A robot                           | **Robots & hardware**, in the matching group (arms, mobile & humanoid) | Add a row to [Choose a robot](./robots) and to the "Your robot's settings" table in [1. Set up your robot](./setup_your_robot) |
+| A teleoperation device            | **Robots & hardware → Teleoperation devices**                          | Add a row to [Teleoperation devices](./teleoperators)                                                                          |
+| A policy                          | **Policies**, in its family (small imitation-learning model, VLA, WAM) | Add a row to [Choose a policy](./policies), and start the page with the "At a glance" table (see [Page types](#page-types))    |
+| A simulation benchmark            | **Simulation & benchmarks → Benchmarks**                               | Follow [Adding a benchmark](./adding_benchmarks)                                                                               |
+| A feature (training, datasets, …) | The matching group under **Guides**                                    | Link it from the tutorial step where a beginner would first need it, if there is one                                           |
+| A new term                        | -                                                                      | Add it to the [Glossary](./glossary) and to the [vocabulary](#vocabulary) below if it has competing names                      |
+
+Every page must be listed in `docs/source/_toctree.yml`, or the docs build fails. The sidebar title is set there, so keep it short and say what the page helps you do.
+
+## Page types
+
+Each page does **one** of these jobs. If a page tries to do two, split it.
+
+| Type               | Job                                           | Examples                                                  |
+| ------------------ | --------------------------------------------- | --------------------------------------------------------- |
+| Tutorial step      | Take a beginner through one step, in order    | [3. Record a dataset](./record_dataset)                   |
+| Guide              | Help someone who knows the basics do one task | [Train on multiple GPUs](./multi_gpu_training)            |
+| Chooser / overview | Help someone pick between options             | [Choose a policy](./policies), [Choose a robot](./robots) |
+| Reference          | List every option, flag or class              | [Cheat sheet](./cheat-sheet), the Python API reference    |
+
+**Tutorial step** template:
+
+1. `# N. Do the thing`
+2. A short line with **Goal**, **Time** and **You need**.
+3. A `> [!TIP]` callout titled **Key idea**: the one concept this step relies on, in two sentences, with a link to the [Glossary](./glossary).
+4. Numbered `##` steps. Commands that depend on the robot use the robot tabs (see [Commands](#commands)).
+5. `## Check it worked`: what the reader should see.
+6. A collapsed `<details>` block, **If something goes wrong**.
+7. A collapsed `<details>` block, **Go further**, linking to guides.
+8. A **Next** link to the following step.
+
+**Policy page** "At a glance" table, at the top of every policy page:
+
+| Field           | Example                               |
+| --------------- | ------------------------------------- |
+| Policy type     | `--policy.type=act`                   |
+| Family          | Small imitation-learning model        |
+| Size            | 80M parameters                        |
+| GPU memory      | 2–6 GB to train (or "not measured")   |
+| Takes text      | No                                    |
+| Base checkpoint | None, trains from scratch             |
+| Tested on       | Real robot (SO-101) / simulation only |
+
+**Chooser** template: one sentence with the default recommendation first ("Start with ACT"), then a short table or diagram to decide, then the full comparison table, then links.
+
+## Writing rules
+
+- **Say what the page helps you do.** Titles start with the purpose, then the technical name in parentheses: "Smoother motion for slow models (RTC)", "Fine-tune large models on a small GPU (LoRA)". Never rename models, robots or benchmarks: write "SmolVLA", "LIBERO".
+- **Define a term the first time a page uses it**, in one sentence, and link it to the [Glossary](./glossary). Spell out abbreviations once: "vision-language-action model (VLA)".
+- **Short sentences, "you", present tense.** Cut words that don't help the reader do the task.
+- **The common path first.** Put options, edge cases and background in a collapsed `<details>` block or on a guide page.
+- **One place per procedure.** If another page already explains how to calibrate, record or train, link to it instead of repeating it.
+- **Give a default.** When there is a choice, say which option to start with and why.
+- **Say what success looks like** after every step that changes something.
+
+## Vocabulary
+
+Use one word per idea, everywhere. Command-line flags keep their names (`--teleop.*`, `--policy.*`), but prose uses the words below.
+
+| Use                         | Meaning                                                                                       | Don't use                               |
+| --------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------- |
+| **policy**                  | The AI model that controls the robot. Define it on first use.                                 | "model" for the thing you train and run |
+| **robot**, **follower arm** | The robot that does the task. "Follower arm" only when contrasting with the leader arm.       | -                                       |
+| **leader arm**              | The arm you move by hand; the follower copies it.                                             | "master arm"                            |
+| **teleoperation device**    | Anything you control the robot with: leader arm, keyboard, gamepad, phone, VR headset.        | "teleop" in prose                       |
+| **teleoperate**             | Control the robot yourself, live.                                                             | -                                       |
+| **episode**                 | One recording of the task, from start to end.                                                 | "trajectory", "demo"                    |
+| **dataset**                 | A collection of episodes in the LeRobot format. `LeRobotDataset` only for the Python class.   | "LeRobot Dataset" with a capital D      |
+| **observation**             | What the robot senses at one moment: camera images and its **state** (joint positions).       | -                                       |
+| **action**                  | The command sent to the motors at one moment.                                                 | -                                       |
+| **checkpoint**              | A saved copy of a policy, during or after training.                                           | -                                       |
+| **fine-tune**               | Keep training an existing policy on your data.                                                | "finetune"                              |
+| **run a policy**            | Let a trained policy control the robot (`lerobot-rollout`).                                   | "deploy", "inference" in beginner pages |
+| **evaluate**                | Measure how often a policy succeeds (its success rate).                                       | "evaluate" for just running a policy    |
+| **simulation**              | Software that imitates a robot and its world. A **simulated robot** stands in for a real one. | "sim robot"                             |
+| **environment**             | One simulated scene and task that LeRobot can run (`--env.type`).                             | "env" in prose                          |
+| **benchmark**               | A standard set of simulated tasks used to compare policies.                                   | -                                       |
+| **VLA**                     | Vision-language-action model: a large policy that reads camera images and a text instruction. | "VLA model"                             |
+| **WAM**                     | World action model: a policy that predicts future camera frames as well as actions.           | "world-action model", "world model"     |
+
+Spelling: **SO-101**, **SO-100** in prose (`so101_follower` in code), **π₀ (pi0)**, **π₀.₅ (pi05)**, **π₀-FAST (pi0_fast)**, **Isaac Lab**, **Isaac Sim**, **GR00T**, **the Hugging Face Hub** (then "the Hub").
+
+## Commands
+
+- Commands must be complete and copy-pasteable. Never put a `# comment` after a line that ends in `\`: it breaks the command. Put the comment above the block.
+- Placeholders are written in capitals with a `YOUR_` prefix: `YOUR_ROBOT_PORT`, `YOUR_ROBOT_TYPE`. Don't use `<...>`, which the shell reads as a redirect. The Hugging Face username is always `${HF_USER}`.
+- **Robot tabs.** In the tutorial, every command that depends on the robot is shown in tabs, using the docs' options component with `id="robot"` and two options: `SO-101` first (the default, with real values) and `Other robots` (with placeholders). Use the same `id` on every block of the page so the tabs switch together. Start each option with a bold label line, **SO-101:** or **Other robots:**, so the label survives when the page is read as plain Markdown (by AI assistants, for example). See the source of [1. Set up your robot](./setup_your_robot) for an example.
+
+## Callouts, collapsed sections and diagrams
+
+- Callouts use the Markdown syntax: `> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`. Don't use `<Tip>`, which is the older syntax.
+- Collapsed sections use `<details>` with a `<summary>` line.
+- Diagrams use Mermaid code blocks. Keep them small and top-to-bottom (they must fit a phone screen), and add `%%{init: {"theme": "neutral"}}%%` as the first line so they stay readable in dark mode.
+
+## Images and videos
+
+- Don't commit images to the repository. Upload them to the [`huggingface/documentation-images`](https://huggingface.co/datasets/huggingface/documentation-images) dataset, under `lerobot/`, and link to the `resolve/main` URL.
+- Every image needs alt text that says what it shows.
+- Use Markdown image syntax, or an `<img>` tag spread over several lines: a one-line HTML tag is dropped from the Markdown version of the page.
+- For an image that needs a dark-mode version, add both, with `class="block dark:hidden"` on the light one and `class="hidden dark:block"` on the dark one.
+
+## Links and page names
+
+- Link to other pages with relative links: `[Record a dataset](./record_dataset)`.
+- **Never rename or delete a page** without adding a line to `docs/source/_redirects.yml` (`old_name: new_name`). Many URLs are printed by the code, written into model cards on the Hub, or shared in blog posts.
+- When you rewrite a heading that other pages link to, keep its old anchor: `## New title[[old-anchor]]`.
+
+## Check your page
+
+1. Build the docs with the toctree check: `doc-builder build lerobot docs/source/ --build_dir ~/tmp/test-build`.
+2. Run `pre-commit run --files docs/source/your_page.mdx`.
+3. Open your pull request and check the docs preview linked in it: the sidebar there is the real one, the local preview flattens it.
