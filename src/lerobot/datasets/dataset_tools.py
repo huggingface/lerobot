@@ -1956,6 +1956,8 @@ def convert_image_to_video_dataset(
                 # All rows go to the single episodes file written below.
                 "meta/episodes/chunk_index": 0,
                 "meta/episodes/file_index": 0,
+                # Overwritten below if the source has tasks; edit operations need the column.
+                "tasks": [],
             }
             src_episode_full = _load_episode_with_stats(dataset, ep_idx)
             ep_meta.update(
