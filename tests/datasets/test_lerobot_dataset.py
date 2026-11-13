@@ -23,10 +23,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+import pyarrow.parquet as pq
 
 import lerobot.datasets.dataset_metadata as dataset_metadata_module
 import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
@@ -496,6 +499,84 @@ def test_resume_freshly_created_empty_dataset(tmp_path):
     assert resumed.meta.total_frames == 0
     assert resumed.meta.tasks is None
     assert resumed.meta.episodes is None
+
+
+@pytest.mark.parametrize(
+    "metadata_buffer_size,lengths",
+    [(1, [2, 1]), (1, [1, 2]), (1, [2, 3]), (1, [1, 1]), (10, [2] * 10 + [1]), (10, [1] * 10 + [2])],
+)
+def test_record_single_frame_episodes_across_metadata_batches(
+    tmp_path: Path, metadata_buffer_size: int, lengths: list[int]
+) -> None:
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features={**SIMPLE_FEATURES, "discrete": {"dtype": "int64", "shape": (2,), "names": None}},
+        root=tmp_path / "ds",
+        use_videos=False,
+        metadata_buffer_size=metadata_buffer_size,
+    )
+    for episode, length in enumerate(lengths):
+        for frame in range(length):
+            dataset.add_frame(
+                {
+                    "state": np.full(2, episode + frame / 2, dtype=np.float32),
+                    "discrete": np.array([frame, 7], dtype=np.int64),
+                    "task": "Test task",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+    reopened = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=dataset.root)
+    assert len(reopened) == sum(lengths)
+    assert reopened.num_episodes == len(lengths)
+    saved_metadata = pq.read_table(sorted((dataset.root / "meta/episodes").glob("*/*.parquet"))).to_pylist()
+    assert len(saved_metadata) == len(lengths)
+    index = 0
+    for episode, length in enumerate(lengths):
+        metadata = saved_metadata[episode]
+        assert metadata["length"] == length
+        np.testing.assert_array_equal(metadata["stats/discrete/count"], [length])
+        np.testing.assert_array_equal(metadata["stats/discrete/min"], [0, 7])
+        np.testing.assert_array_equal(metadata["stats/discrete/max"], [length - 1, 7])
+        np.testing.assert_allclose(metadata["stats/discrete/mean"], [(length - 1) / 2, 7])
+        np.testing.assert_allclose(metadata["stats/discrete/std"], [np.arange(length).std(), 0])
+        for frame in range(length):
+            item = reopened[index]
+            torch.testing.assert_close(item["state"], torch.full((2,), episode + frame / 2))
+            torch.testing.assert_close(item["discrete"], torch.tensor([frame, 7]))
+            assert item["task"] == "Test task"
+            index += 1
+
+
+@pytest.mark.parametrize("value", [2**53 + 1, np.iinfo(np.int64).max])
+def test_resume_single_frame_episodes_preserves_large_integer_extrema(tmp_path: Path, value: int) -> None:
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features={"discrete": {"dtype": "int64", "shape": (1,), "names": None}},
+        root=tmp_path / "ds",
+        use_videos=False,
+    )
+    dataset.add_frame({"discrete": np.array([value], dtype=np.int64), "task": "Test task"})
+    dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=dataset.root)
+    resumed.add_frame({"discrete": np.array([value], dtype=np.int64), "task": "Test task"})
+    resumed.save_episode()
+    resumed.finalize()
+
+    reopened = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=dataset.root)
+    for index in range(2):
+        torch.testing.assert_close(
+            reopened[index]["discrete"].reshape(-1), torch.tensor([value], dtype=torch.int64)
+        )
+    for name in ("min", "max"):
+        np.testing.assert_array_equal(
+            reopened.meta.stats["discrete"][name], np.array([value], dtype=np.int64)
+        )
 
 
 def test_resume_creates_writer(tmp_path):
