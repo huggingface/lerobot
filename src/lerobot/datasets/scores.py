@@ -74,8 +74,8 @@ def _canonical_json(value: Any, *, label: str) -> str:
 
 
 def _scores_path(dataset: LeRobotDataset, name: str) -> Path:
-    if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
-        raise ValueError(f"Score name must be a non-empty filename component, got {name!r}")
+    if not name.strip() or name.startswith(".") or "/" in name or "\\" in name:
+        raise ValueError(f"Score name must be a non-empty filename without a leading dot, got {name!r}")
     return Path(dataset.root) / SCORES_DIR / f"{name}.parquet"
 
 
@@ -221,6 +221,11 @@ class ScoreWriter:
         # A JSON round trip makes both blocks compare equal to the manifest stored for resume.
         self._dataset_block = json.loads(_canonical_json(dataset_block, label="dataset identity"))
         self._info = json.loads(_canonical_json(dict(info), label="score info"))
+        # Selection-specific ranges belong in the manifest, not the metadata shared by merged scores.
+        episode_ranges: list[list[int]] = []
+        for index in self.episode_indices:
+            episode = dataset.meta.episodes[index]
+            episode_ranges.append([int(episode["dataset_from_index"]), int(episode["dataset_to_index"])])
         manifest = {
             "format": SCORES_FORMAT,
             "schema_version": SCORES_SCHEMA_VERSION,
@@ -228,6 +233,7 @@ class ScoreWriter:
             "dataset": self._dataset_block,
             "info": self._info,
             "episodes": list(self.episode_indices),
+            "episode_ranges": episode_ranges,
         }
         self._prepare(manifest, resume=resume, overwrite=overwrite)
 

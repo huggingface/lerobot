@@ -360,6 +360,26 @@ def test_scores_resume_rejects_changed_info(tmp_path):
         add_scores(dataset, "test", dense(dataset), info={"source": "other/model"})
 
 
+@pytest.mark.parametrize(
+    "lengths,changed_lengths",
+    [([2, 2], [1, 3]), ([2, 2, 2], [2, 1, 3])],
+    ids=["completed-episode", "pending-episodes"],
+)
+def test_scores_resume_rejects_changed_episode_ranges(tmp_path, lengths, changed_lengths):
+    dataset = FakeDataset(tmp_path / "dataset", lengths)
+    writer = ScoreWriter(dataset, "test", info=INFO)
+    writer.write_episode(0, *dense(dataset)(0))
+    changed_dataset = FakeDataset(dataset.root, changed_lengths)
+    function = dense(changed_dataset)
+
+    with pytest.raises(ValueError, match="dataset, info or episode selection changed"):
+        add_scores(changed_dataset, "test", function, info=INFO)
+
+    assert function.calls == []
+    assert not writer.output_path.exists()
+    assert ScoreWriter(dataset, "test", info=INFO).pending_episodes == tuple(range(1, len(lengths)))
+
+
 def test_scores_explicit_episodes_must_belong_to_view(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [2, 2, 2], episodes=[0, 2])
     function = dense(dataset)
@@ -370,7 +390,7 @@ def test_scores_explicit_episodes_must_belong_to_view(tmp_path):
     assert function.calls == []
 
 
-@pytest.mark.parametrize("name", ["", ".", "..", "nested/name", r"nested\name"])
+@pytest.mark.parametrize("name", ["", ".", "..", ".sarm", "nested/name", r"nested\name"])
 def test_scores_reject_invalid_names(tmp_path, name):
     dataset = FakeDataset(tmp_path / "dataset", [1])
 
