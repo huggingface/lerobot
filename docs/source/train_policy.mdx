@@ -1,4 +1,148 @@
 # 5. Train a policy
 
+**Goal:** train a [policy](./glossary#policy) on your dataset. **Time:** 1 to 8 hours depending on the GPU, mostly waiting. **You need:** the name of your dataset from [step 4](./check_dataset), and a GPU: your own, or one in the cloud.
+
+> [!TIP]
+> **Key idea:** training shows the policy the frames of your dataset again and again, until the actions it predicts match yours. Along the way it saves [checkpoints](./glossary#checkpoint), copies of the policy you can run. This tutorial trains [ACT](./act): a small, fast policy made to learn one task from about 50 episodes. It's the best first policy; [Choose a policy](./policies) compares the others.
+
+## Step 1: Choose where to train
+
+Training needs a GPU. Your robot isn't needed for this step, so you can train on any computer.
+
+| Where                        | How                                                                            | Time for this tutorial |
+| ---------------------------- | ------------------------------------------------------------------------------ | ---------------------- |
+| **Your own NVIDIA GPU**      | Add `--policy.device=cuda`. 8 GB of GPU memory is plenty for ACT.              | 30 minutes to 2 hours  |
+| **A Mac with Apple Silicon** | Add `--policy.device=mps` (macOS 15 or newer).                                 | 6 to 14 hours          |
+| **Google Colab**             | Free GPU in your browser: follow the [ACT notebook](./notebooks#training-act). | 2 to 4 hours           |
+| **Hugging Face Jobs**        | A rented cloud GPU, paid per second: see [Step 3](#step-3-start-training).     | 1 to 2 hours           |
+
+These times are for about 30,000 training steps of ACT. See [Which GPU do I need?](./hardware_guide) for other GPUs and policies.
+
+## Step 2: Choose how long to train
+
+Training length is counted in **steps**: one step learns from a small batch of frames, 8 by default. One pass over the whole dataset is an **epoch**. Policies like ACT usually learn a task in 5 to 10 epochs.
+
+Your 50 episodes of about 30 seconds at 30 frames per second hold about 45,000 frames, so one epoch is about 5,600 steps. **30,000 steps** (about 5 epochs) is a good first run. The default is 100,000 steps, which is more than a small dataset needs. For other dataset sizes, see [how to calculate the number of steps](./hardware_guide#training-time).
+
+## Step 3: Start training
+
+Run this on the computer with the GPU. Use the name of your cleaned dataset from step 4 (or the full name of the original if you didn't remove any episodes):
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_first_dataset_clean \
+    --policy.type=act \
+    --policy.device=cuda \
+    --policy.repo_id=${HF_USER}/my_first_policy \
+    --steps=30000 \
+    --save_freq=10000 \
+    --output_dir=outputs/train/my_first_policy \
+    --job_name=my_first_policy \
+    --trackio.enable=true
+```
+
+What the options mean:
+
+- `--dataset.repo_id`: the dataset to learn from.
+- `--policy.type=act`: train a new ACT policy. It adapts automatically to your robot's joints and cameras, as saved in the dataset.
+- `--policy.device`: `cuda` for an NVIDIA GPU, `mps` for a Mac.
+- `--policy.repo_id`: where the trained policy is uploaded on the Hub when training ends.
+- `--steps` and `--save_freq`: train for 30,000 steps, and save a checkpoint every 10,000.
+- `--output_dir` and `--job_name`: where the checkpoints are saved on your computer, and the name of the run.
+- `--trackio.enable=true`: log training curves to [Trackio](https://huggingface.co/docs/trackio), which you can watch in your browser (see Step 4).
+
+**On Hugging Face Jobs**, the same training runs on a rented cloud GPU. Add `--job.target` with the GPU you want, here an A10G:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_first_dataset_clean \
+    --policy.type=act \
+    --policy.repo_id=${HF_USER}/my_first_policy \
+    --steps=30000 \
+    --save_freq=10000 \
+    --job.target=a10g-small
+```
+
+Jobs are billed per second of use: `hf jobs hardware` lists the GPUs and their prices. The training logs stream to your terminal, and the policy is uploaded to `${HF_USER}/my_first_policy` when the job ends. Pressing <kbd>Ctrl</kbd> + <kbd>C</kbd> only stops showing the logs: the job keeps running in the cloud (see "Go further" below to follow or cancel it).
+
+## Step 4: Watch training
+
+Every 200 steps, the training log prints a line with the current `step` and `loss`. The **loss** measures how far the policy's actions are from yours: it should drop quickly at first, then flatten out.
+
+With `--trackio.enable=true`, open the training curves in your browser with:
+
+```bash
+trackio show --project lerobot
+```
+
+Checkpoints are saved in `outputs/train/my_first_policy/checkpoints/`, in one folder per save (named after the step) and in `last`, which always points to the newest one.
+
+## Check it worked
+
+- Training reached the last step without an error.
+- `outputs/train/my_first_policy/checkpoints/last/pretrained_model` exists on the computer you trained on.
+- Your policy has a page on the Hub: `https://huggingface.co/YOUR_HF_USERNAME/my_first_policy`.
+
 > [!NOTE]
-> This page is being written as part of the docs redesign. It will cover how to train a policy on your dataset on your own GPU, in Google Colab or on Hugging Face Jobs, how long it takes, and how to find and resume checkpoints.
+> Like datasets, policies are uploaded **publicly** by default. Add `--policy.private=true` to upload a private policy, or `--policy.push_to_hub=false` to keep it only on your computer.
+
+<details>
+<summary>If something goes wrong</summary>
+
+- **`CUDA out of memory`:** lower the batch size with `--batch_size=4`. See [Troubleshooting](./troubleshooting#cuda-out-of-memory).
+- **Training is very slow:** check that it uses the GPU. Run `lerobot-info` and look at `Is PyTorch built with CUDA support?`, and see [Training is slow, or PyTorch doesn't use the GPU](./troubleshooting#training-is-slow-or-pytorch-doesnt-use-the-gpu).
+- **`'repo_id' argument missing`:** add `--policy.repo_id=${HF_USER}/my_first_policy`, or `--policy.push_to_hub=false` if you don't want to upload the policy.
+- **Training stopped before the end:** resume it, see "Go further" below.
+
+</details>
+
+<details>
+<summary>Go further</summary>
+
+**Resume training** from the last checkpoint, with the same settings:
+
+```bash
+lerobot-train \
+    --config_path=outputs/train/my_first_policy/checkpoints/last/pretrained_model/train_config.json \
+    --resume=true
+```
+
+If the run uploaded its checkpoints to the Hub (with `--save_checkpoint_to_hub=true`), resume straight from there with `--config_path=${HF_USER}/my_first_policy --resume=true`. Adding `--job.target=a10g-small` to either command resumes on Hugging Face Jobs.
+
+**Upload a checkpoint yourself**, for example if you stopped training early, or to keep an intermediate one:
+
+```bash
+hf upload ${HF_USER}/my_first_policy outputs/train/my_first_policy/checkpoints/last/pretrained_model
+```
+
+**Describe your policy on the Hub** with `--policy.tags='["so101","tutorial"]'` and `--policy.license=mit`.
+
+**More about Hugging Face Jobs:**
+
+- Follow or stop a job with `hf jobs logs JOB_ID` and `hf jobs cancel JOB_ID`.
+- A job stops after 2 days. Change that with `--job.timeout`, for example `--job.timeout=4h`.
+- If your dataset is only on your computer, it's uploaded to a **private** Hub repository first, so the job can read it.
+- Add `--save_checkpoint_to_hub=true` to upload every checkpoint as it's saved, so you can follow progress during the run.
+- Add your own tags to the job with `--job.tags='["my-tag"]'`.
+- The policy's repository is created before training starts. If a job fails before uploading the policy, the empty repository stays on the Hub: delete it with `hf repos delete REPO_ID`.
+- To log training curves from a job, pass `--trackio.space_id=${HF_USER}/lerobot-training`: the runs are saved in that Hugging Face Space.
+
+**Train another policy:** [Choose a policy](./policies) compares them all. **Train faster on several GPUs:** see [Train on multiple GPUs](./multi_gpu_training).
+
+</details>
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**Next (SO-101):** [6. Run it on your robot →](./run_policy)
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Next (other robots):** [6. Run it on your robot →](./run_policy?robot=Other%20robots)
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->

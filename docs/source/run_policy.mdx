@@ -1,4 +1,169 @@
-# 6. Run your policy on the robot
+# 6. Run it on your robot
 
-> [!NOTE]
-> This page is being written as part of the docs redesign. It will cover how to let your trained policy control the robot, and how to measure how often it succeeds.
+**Goal:** let your policy do the task on its own, and measure how often it succeeds. **Time:** about 30 minutes. **You need:** your robot and cameras set up exactly as when you recorded, and your trained policy from [step 5](./train_policy).
+
+> [!TIP]
+> **Key idea:** the policy knows only the world it saw in your episodes. Run it with the same robot ID, the same camera names and positions, the same lighting and the same task text as when you recorded, or it may not recognize what it sees.
+
+## Before you start
+
+- The cameras are in the same place as when you recorded, with the same names (`top` and `wrist`).
+- The lighting is the same.
+- The object is in one of the positions you used while recording.
+- Nothing else is within the robot's reach.
+
+> [!WARNING]
+> The robot now moves on its own. Keep your hands out of its way, and be ready to press <kbd>Ctrl</kbd> + <kbd>C</kbd>, or to unplug its power supply.
+
+## Step 1: Watch your policy work
+
+This downloads your policy from the Hub and lets it control the robot for 60 seconds:
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**SO-101:**
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_first_policy \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --task="Pick up the cube and put it in the box" \
+    --duration=60
+```
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Other robots:**
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_first_policy \
+    --robot.type=YOUR_ROBOT_TYPE \
+    --robot.port=YOUR_ROBOT_PORT \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --task="Pick up the cube and put it in the box" \
+    --duration=60
+```
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+- `--strategy.type=base`: just run the policy, without recording anything.
+- `--policy.path`: your policy on the Hub. To use a checkpoint on your computer instead, give its folder: `outputs/train/my_first_policy/checkpoints/last/pretrained_model`.
+- `--task`: the same task text as in your dataset.
+- `--duration`: how long to run, in seconds.
+
+When the time is up, or when you press <kbd>Ctrl</kbd> + <kbd>C</kbd>, the robot moves back to the position it started from.
+
+## Step 2: Measure the success rate
+
+A policy that worked once may not work every time. To know how good it really is, run it for 10 episodes and count how many succeed. This records the 10 episodes too, so you can watch them later:
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**SO-101:**
+
+```bash
+lerobot-rollout \
+    --strategy.type=episodic \
+    --policy.path=${HF_USER}/my_first_policy \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --dataset.repo_id=${HF_USER}/rollout_my_first_policy \
+    --dataset.single_task="Pick up the cube and put it in the box" \
+    --dataset.num_episodes=10 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10
+```
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Other robots:**
+
+```bash
+lerobot-rollout \
+    --strategy.type=episodic \
+    --policy.path=${HF_USER}/my_first_policy \
+    --robot.type=YOUR_ROBOT_TYPE \
+    --robot.port=YOUR_ROBOT_PORT \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --dataset.repo_id=${HF_USER}/rollout_my_first_policy \
+    --dataset.single_task="Pick up the cube and put it in the box" \
+    --dataset.num_episodes=10 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10
+```
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+It works like recording in step 3, except that the policy does the task:
+
+1. **Episode** (up to 30 s): the policy tries the task. Note whether it succeeds. Press <kbd>→</kbd> to end the episode early once it has succeeded or clearly failed.
+2. **Reset** (10 s): the robot goes back to its starting position. Put the object back in one of your recorded positions.
+
+<kbd>←</kbd> discards the current episode and runs it again, and <kbd>Esc</kbd>
+stops the session. The name of a dataset recorded this way must start with
+`rollout_`, and like with `lerobot-record`, the date and time are added to it.
+
+**Your success rate** is the number of successful episodes out of 10. With 50 clean episodes of a simple task, ACT usually succeeds more than 7 times out of 10 in the positions you recorded. Lower than that is usually a data problem, not a training problem: [step 7](./improve_policy) shows how to find and fix it.
+
+## Check it worked
+
+- The robot did the task on its own at least some of the time.
+- You know your success rate out of 10 episodes.
+- The 10 episodes were uploaded as a dataset, `rollout_my_first_policy_YYYYMMDD_HHMMSS`, that you can watch in the [visualizer](./check_dataset#step-1-watch-your-episodes-in-the-browser).
+
+<details>
+<summary>If something goes wrong</summary>
+
+- **The robot barely moves, shakes, or ignores the object:** check that the robot ID, the camera names, the camera positions and the lighting match your recording. See [Troubleshooting](./troubleshooting#the-robot-barely-moves-shakes-or-ignores-the-object) and [step 7](./improve_policy).
+- **`Dataset names for rollout must start with 'rollout_'`:** rename the dataset in `--dataset.repo_id` so it starts with `rollout_`.
+- **The computer connected to the robot has no GPU:** add `--device=cpu`. ACT is small enough to run on a CPU. Larger policies can run on another computer with a GPU: see [Run the policy on another computer](./remote_inference).
+
+</details>
+
+<details>
+<summary>Go further</summary>
+
+- **Watch what the robot sees** while the policy runs: add `--display_data=true`.
+- **Use a specific checkpoint** uploaded to the Hub: add `--policy.pretrained_revision` with its step, for example `--policy.pretrained_revision=010000`, when you trained with `--save_checkpoint_to_hub=true`.
+- **More ways to run a policy:** record continuously, save only interesting moments, or take over when the policy makes a mistake. See [All ways to run a policy](./inference).
+- **Smoother motion for large policies:** see [Smoother motion for slow policies (RTC)](./rtc).
+
+</details>
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**Next (SO-101):** [7. Make it work better →](./improve_policy)
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Next (other robots):** [7. Make it work better →](./improve_policy?robot=Other%20robots)
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
