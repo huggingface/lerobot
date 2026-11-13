@@ -236,7 +236,7 @@ class DamiaoMotorsBus(MotorsBusBase):
             if response is None:
                 missing_motors.append(motor_name)
             else:
-                self._process_response(motor_name, msg)
+                self._process_response(motor_name, response)
             time.sleep(MEDIUM_TIMEOUT_SEC)
 
         if missing_motors:
