@@ -14,25 +14,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import math
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
+from huggingface_hub import _CACHED_NO_EXIST, hf_hub_download, try_to_load_from_cache
+from huggingface_hub.errors import LocalEntryNotFoundError, RemoteEntryNotFoundError
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs import NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.teleoperators.utils import TeleopEvents
 
 if TYPE_CHECKING:
     from lerobot.teleoperators.teleoperator import Teleoperator
 
 from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.utils.constants import OBS_IMAGE, REWARD_CLASSIFIER_PREPROCESSOR_DEFAULT_NAME
 
+from .normalize_processor import NormalizerProcessorStep
 from .pipeline import (
     ComplementaryDataProcessorStep,
+    DataProcessorPipeline,
     InfoProcessorStep,
     ObservationProcessorStep,
     ProcessorStep,
@@ -43,6 +50,8 @@ from .pipeline import (
 GRIPPER_KEY = "gripper"
 DISCRETE_PENALTY_KEY = "discrete_penalty"
 TELEOP_ACTION_KEY = "teleop_action"
+# Saved by `lerobot-train` alongside the reward classifier weights.
+REWARD_CLASSIFIER_PREPROCESSOR_FILENAME = f"{REWARD_CLASSIFIER_PREPROCESSOR_DEFAULT_NAME}.json"
 
 
 @runtime_checkable
@@ -592,6 +601,10 @@ class RewardClassifierProcessorStep(ProcessorStep):
         success_reward: The reward value to assign on success.
         terminate_on_success: If True, terminates the episode upon successful classification.
         reward_classifier: The loaded classifier model instance.
+        reward_preprocessor: The classifier's own preprocessor (image normalization with the training
+            dataset stats), loaded from `pretrained_path`. It is applied to the classifier's inputs only, so
+            the classifier sees images preprocessed as during training. None when the checkpoint has no
+            saved preprocessor, in which case the images are passed to the classifier as they are.
     """
 
     pretrained_path: str | None = None
@@ -601,15 +614,124 @@ class RewardClassifierProcessorStep(ProcessorStep):
     terminate_on_success: bool = True
 
     reward_classifier: Any = None
+    reward_preprocessor: DataProcessorPipeline | None = None
 
     def __post_init__(self):
-        """Initializes the reward classifier model after the dataclass is created."""
+        """Initializes the reward classifier model and its preprocessor after the dataclass is created."""
         if self.pretrained_path is not None:
             from lerobot.rewards.classifier.modeling_classifier import Classifier
 
             self.reward_classifier = Classifier.from_pretrained(self.pretrained_path)
             self.reward_classifier.to(self.device)
             self.reward_classifier.eval()
+            if self.reward_preprocessor is None:
+                self.reward_preprocessor = self._load_reward_preprocessor(self.pretrained_path)
+
+    def _load_reward_preprocessor(self, pretrained_path: str) -> DataProcessorPipeline | None:
+        """Load the preprocessor saved next to the classifier by `lerobot-train`.
+
+        Args:
+            pretrained_path: Local directory or Hub repository of the reward classifier.
+
+        Returns:
+            The preprocessor, moving its outputs to `self.device`, or None if the checkpoint has none.
+
+        Raises:
+            Any error other than the preprocessor file not existing (e.g. network, authentication or
+            offline cache miss, see `_has_saved_preprocessor`), so that it never silently falls back to
+            unnormalized inputs.
+        """
+        if not self._has_saved_preprocessor(pretrained_path):
+            logging.warning(
+                "The reward classifier at '%s' has no saved preprocessor ('%s'): its input images will NOT be "
+                "normalized and may not match what it saw during training. Retraining it with the current "
+                "version of lerobot saves this preprocessor alongside the classifier weights.",
+                pretrained_path,
+                REWARD_CLASSIFIER_PREPROCESSOR_FILENAME,
+            )
+            return None
+
+        preprocessor: DataProcessorPipeline = DataProcessorPipeline.from_pretrained(
+            pretrained_path,
+            config_filename=REWARD_CLASSIFIER_PREPROCESSOR_FILENAME,
+            overrides={"device_processor": {"device": str(self.device)}},
+        )
+        image_keys = [
+            key for key in self.reward_classifier.config.input_features if key.startswith(OBS_IMAGE)
+        ]
+        normalizers = [step for step in preprocessor.steps if isinstance(step, NormalizerProcessorStep)]
+        keys_not_normalized = [
+            key for key in image_keys if not any(self._normalizes(step, key) for step in normalizers)
+        ]
+        if keys_not_normalized:
+            logging.warning(
+                "The reward classifier preprocessor at '%s' does not normalize %s (no normalizer has both "
+                "normalization stats and a normalization mode for them): these images will NOT be normalized "
+                "and may not match what the classifier saw during training.",
+                pretrained_path,
+                keys_not_normalized,
+            )
+        return preprocessor
+
+    @staticmethod
+    def _normalizes(normalizer: NormalizerProcessorStep, key: str) -> bool:
+        """Whether `normalizer` normalizes the observation `key`, i.e. does not pass it through unchanged.
+
+        Mirrors the conditions under which `NormalizerProcessorStep` transforms an observation.
+        """
+        feature = normalizer.features.get(key)
+        if feature is None or key not in (normalizer.stats or {}):
+            return False
+        if (
+            normalizer.normalize_observation_keys is not None
+            and key not in normalizer.normalize_observation_keys
+        ):
+            return False
+        norm_map = cast(dict[Any, NormalizationMode], normalizer.norm_map)
+        return norm_map.get(feature.type, NormalizationMode.IDENTITY) != NormalizationMode.IDENTITY
+
+    @staticmethod
+    def _has_saved_preprocessor(pretrained_path: str) -> bool:
+        """Whether the reward classifier at `pretrained_path` has a saved preprocessor.
+
+        Args:
+            pretrained_path: Local directory or Hub repository of the reward classifier.
+
+        Returns:
+            False only when the file is known not to exist: missing from the local directory or the Hub
+            repository, or offline with its absence cached by an earlier online lookup.
+
+        Raises:
+            LocalEntryNotFoundError: Offline (or the Hub is unreachable) and neither the file nor its absence
+                is in the local cache, so whether the classifier has a preprocessor is unknown.
+            Any other failure to look the file up (e.g. unknown repository or authentication error).
+        """
+        if Path(pretrained_path).is_dir():
+            return (Path(pretrained_path) / REWARD_CLASSIFIER_PREPROCESSOR_FILENAME).is_file()
+        try:
+            hf_hub_download(
+                repo_id=pretrained_path, filename=REWARD_CLASSIFIER_PREPROCESSOR_FILENAME, repo_type="model"
+            )
+        except RemoteEntryNotFoundError:
+            # The repository exists but has no such file (the Hub lookup caches that it does not exist).
+            return False
+        except LocalEntryNotFoundError as error:
+            # Offline or the Hub is unreachable, and the file is not cached. `hf_hub_download` does not check
+            # the cached "does not exist" marker in that case, so check it here.
+            cached = try_to_load_from_cache(
+                pretrained_path, REWARD_CLASSIFIER_PREPROCESSOR_FILENAME, repo_type="model"
+            )
+            if cached is _CACHED_NO_EXIST:
+                return False
+            raise LocalEntryNotFoundError(
+                f"Cannot tell whether the reward classifier '{pretrained_path}' has a saved preprocessor "
+                f"('{REWARD_CLASSIFIER_PREPROCESSOR_FILENAME}'): the Hub cannot be reached (offline mode or no "
+                "connection) and the local cache has no record of this file. Load the classifier once while "
+                f"online, or run `hf download {pretrained_path} {REWARD_CLASSIFIER_PREPROCESSOR_FILENAME}` "
+                "while online (if the repository has no such file, this records it and the classifier then "
+                "runs without normalizing its inputs)."
+            ) from error
+        return True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
@@ -632,6 +754,11 @@ class RewardClassifierProcessorStep(ProcessorStep):
 
         if not images:
             return new_transition
+
+        if self.reward_preprocessor is not None:
+            # Preprocess (normalize) the images as during training. Only the classifier's inputs are
+            # transformed: the observation passed down the pipeline is left untouched.
+            images = self.reward_preprocessor.process_observation(images)
 
         # Run reward classifier
         start_time = time.perf_counter()
