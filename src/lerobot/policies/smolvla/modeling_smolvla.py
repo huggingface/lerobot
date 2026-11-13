@@ -356,9 +356,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
         """Preserve prepare_images' camera subset, resizing and padding semantics.
 
-        The deployment explicitly selects physical cameras. Missing visual slots
-        remain missing; prepare_images applies the checkpoint's empty-camera limit
-        and masks exactly as in local inference. Never synthesize unmasked cameras.
+        The deployment explicitly selects physical cameras. prepare_images keeps
+        missing visual slots masked in their configured positions, exactly as in
+        local inference. Never synthesize unmasked cameras.
         """
         expected = self.config.input_features or {}
         supplied = {feature.name: feature for feature in features}
@@ -382,12 +382,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
             elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
                 raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
-    def prepare_images(self, batch):
+    def prepare_images(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], list[Tensor]]:
         """Apply SmolVLA preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
         convert pixel range from [0.0, 1.0] to [-1.0, 1.0] as requested by SigLIP.
         """
-        images = []
-        img_masks = []
+        images: dict[str, Tensor] = {}
+        img_masks: dict[str, Tensor] = {}
         present_img_keys = [key for key in self.config.image_features if key in batch]
         missing_img_keys = [key for key in self.config.image_features if key not in batch]
 
@@ -418,19 +418,16 @@ class SmolVLAPolicy(PreTrainedPolicy):
                 mask = batch[f"{key}_padding_mask"].bool()
             else:
                 mask = torch.ones(bsize, dtype=torch.bool, device=device)
-            images.append(img)
-            img_masks.append(mask)
+            images[key] = img
+            img_masks[key] = mask
 
-        # Create image features not present in the batch
-        # as fully 0 padded images.
-        for num_empty_cameras in range(len(missing_img_keys)):
-            if num_empty_cameras >= self.config.empty_cameras:
-                break
-            img = torch.ones_like(img) * -1
-            mask = torch.zeros_like(mask)
-            images.append(img)
-            img_masks.append(mask)
-        return images, img_masks
+        # empty_cameras adds configured features; any missing feature still needs its own slot.
+        for key in missing_img_keys:
+            images[key] = torch.full_like(img, -1)
+            img_masks[key] = torch.zeros_like(mask)
+        return [images[key] for key in self.config.image_features], [
+            img_masks[key] for key in self.config.image_features
+        ]
 
     def _pi_aloha_decode_state(self, state):
         # Flip the joints.
