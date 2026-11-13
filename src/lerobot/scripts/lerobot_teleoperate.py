@@ -87,6 +87,7 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    asimov,
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
@@ -108,6 +109,7 @@ from lerobot.robots.utils import check_control_rate, episode_ended, start_episod
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    asimov_exo,
     bi_openarm_leader,
     bi_openarm_mini,
     bi_rebot_102_leader,

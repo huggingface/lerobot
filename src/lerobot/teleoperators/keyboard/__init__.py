@@ -15,13 +15,17 @@
 # limitations under the License.
 
 from .configuration_keyboard import (
+    KeyboardBaseTeleopConfig,
     KeyboardEndEffectorTeleopConfig,
     KeyboardRoverTeleopConfig,
     KeyboardTeleopConfig,
 )
 from .teleop_keyboard import KeyboardEndEffectorTeleop, KeyboardRoverTeleop, KeyboardTeleop
+from .teleop_keyboard_base import KeyboardBaseTeleop
 
 __all__ = [
+    "KeyboardBaseTeleop",
+    "KeyboardBaseTeleopConfig",
     "KeyboardTeleopConfig",
     "KeyboardTeleop",
     "KeyboardEndEffectorTeleopConfig",
