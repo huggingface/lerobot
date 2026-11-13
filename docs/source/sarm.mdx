@@ -353,13 +353,13 @@ Add `accelerate launch --multi_gpu --num_processes=4` to use multiple GPUs for t
 
 ## Step 4: Visualize Predictions
 
-Use `visualize_sarm.py` to plot model predictions (and, if available, annotation-derived targets) without writing a dataset score.
+From the repository root, use `examples/rewards/visualize_sarm.py` to plot model predictions (and, if available, annotation-derived targets) without writing a dataset score.
 
 <hfoptions id="viz_mode">
 <hfoption id="single_stage">
 
 ```bash
-python -m lerobot.rewards.sarm.visualize_sarm \
+uv run examples/rewards/visualize_sarm.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
   --num-visualizations 5 \
@@ -371,7 +371,7 @@ python -m lerobot.rewards.sarm.visualize_sarm \
 <hfoption id="dense_only">
 
 ```bash
-python -m lerobot.rewards.sarm.visualize_sarm \
+uv run examples/rewards/visualize_sarm.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
   --num-visualizations 5 \
@@ -383,7 +383,7 @@ python -m lerobot.rewards.sarm.visualize_sarm \
 <hfoption id="dual">
 
 ```bash
-python -m lerobot.rewards.sarm.visualize_sarm \
+uv run examples/rewards/visualize_sarm.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
   --num-visualizations 5 \

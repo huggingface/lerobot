@@ -22,7 +22,7 @@ targets when the dataset has subtask annotations, and a strip of sample frames. 
 for RA-BC, use `lerobot-score --reward_model.path=<SARM checkpoint>`.
 
 Usage:
-    python -m lerobot.rewards.sarm.visualize_sarm \\
+    uv run examples/rewards/visualize_sarm.py \\
         --dataset-repo-id lerobot/aloha_sim_insertion_human \\
         --reward-model-path <USER>/sarm_single_uni4 \\
         --num-visualizations 5
@@ -42,14 +42,13 @@ import torch
 from tqdm import tqdm
 
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
+from lerobot.rewards.sarm.processor_sarm import make_sarm_pre_post_processors
+from lerobot.rewards.sarm.sarm_utils import interpolate_progress, normalize_stage_tau
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import LeRobotDataset
-
-from .modeling_sarm import SARMRewardModel
-from .processor_sarm import make_sarm_pre_post_processors
-from .sarm_utils import interpolate_progress, normalize_stage_tau
 
 
 def load_sarm_resources(
