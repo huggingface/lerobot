@@ -63,6 +63,7 @@ from .image_writer import write_image
 from .io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
+    load_stats,
     write_info,
     write_stats,
     write_tasks,
@@ -1261,17 +1262,19 @@ def _copy_episodes_metadata_and_stats(
 
     write_info(dst_meta.info, dst_meta.root)
 
+    # Persist statistics in their recorded units, not the reader's depth output unit.
+    source_stats = load_stats(src_dataset.root)
     if set(dst_meta.features.keys()) != set(src_dataset.meta.features.keys()):
         logger.info("Recalculating dataset statistics...")
-        if src_dataset.meta.stats:
+        if source_stats:
             new_stats = {}
             for key in dst_meta.features:
-                if key in src_dataset.meta.stats:
-                    new_stats[key] = src_dataset.meta.stats[key]
+                if key in source_stats:
+                    new_stats[key] = source_stats[key]
             write_stats(new_stats, dst_meta.root)
     else:
-        if src_dataset.meta.stats:
-            write_stats(src_dataset.meta.stats, dst_meta.root)
+        if source_stats:
+            write_stats(source_stats, dst_meta.root)
 
 
 def _save_episode_images_for_video(
@@ -1822,14 +1825,16 @@ def recompute_stats(
     if relative_action_stats is not None:
         new_stats[ACTION] = relative_action_stats
 
-    # Merge: keep existing stats for features we didn't recompute
-    if dataset.meta.stats:
-        for key, value in dataset.meta.stats.items():
+    # Keep unchanged statistics in their recorded units when writing them back.
+    stored_stats = load_stats(dataset.root)
+    if stored_stats:
+        for key, value in stored_stats.items():
             if key not in new_stats:
                 new_stats[key] = value
 
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
+    dataset.meta.rescale_depth_stats(dataset.depth_output_unit)
 
     logger.info("Stats recomputed successfully")
     return dataset
