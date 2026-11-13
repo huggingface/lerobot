@@ -152,10 +152,10 @@ Before uploading, test your environment locally:
 ```python
 import numpy as np
 
-from lerobot.envs.configs import HubEnvConfig
+from lerobot.envs import HubEnvConfig, make_env
 
 # Build the envs from the local folder that holds env.py, as lerobot-eval and the env server do
-envs = HubEnvConfig(hub_path="./my-env", trust_remote_code=True).create_envs(n_envs=2)
+envs = make_env(HubEnvConfig(hub_path="./my-env", trust_remote_code=True), n_envs=2)
 
 # Verify it works
 suite_name = next(iter(envs))

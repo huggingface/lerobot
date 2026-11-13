@@ -26,8 +26,9 @@ from gymnasium.utils.env_checker import check_env
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
-from lerobot.envs.factory import make_env, make_env_config
+from lerobot.envs.factory import make_env, make_env_config, make_task_env
 from lerobot.envs.utils import prepare_canonical_observation, preprocess_observation
+from lerobot.sim.integrations import envhub
 from lerobot.sim.integrations.envhub import _normalize_hub_result, _parse_hub_url
 from tests.fixtures.toy_env import DictObservationEnv, ToyEnvConfig
 from tests.utils import require_env
@@ -195,17 +196,22 @@ def test_normalize_hub_result():
         _normalize_hub_result("invalid_type")
 
 
+def test_make_env_refuses_a_hub_repo_id():
+    with pytest.raises(TypeError, match="HubEnvConfig"):
+        make_env("lerobot/cartpole-env", trust_remote_code=True)
+
+
 def test_make_env_from_hub_requires_trust_remote_code():
     """Test that loading from hub requires explicit trust_remote_code=True."""
     hub_id = "lerobot/cartpole-env"
 
     # Should raise RuntimeError when trust_remote_code=False (default)
     with pytest.raises(RuntimeError, match="Refusing to execute remote code"):
-        make_env(hub_id, trust_remote_code=False)
+        envhub.make_envs(hub_id, 1, False, trust_remote_code=False)
 
     # Should also raise when not specified (defaults to False)
     with pytest.raises(RuntimeError, match="Refusing to execute remote code"):
-        make_env(hub_id)
+        envhub.make_envs(hub_id, 1, False)
 
 
 @pytest.mark.parametrize(
@@ -219,7 +225,7 @@ def test_make_env_from_hub_requires_trust_remote_code():
 def test_make_env_from_hub_with_trust(hub_id):
     """Test loading environment from Hugging Face Hub with trust_remote_code=True."""
     # load environment from hub
-    envs_dict = make_env(hub_id, n_envs=2, trust_remote_code=True)
+    envs_dict = envhub.make_envs(hub_id, 2, False, trust_remote_code=True)
 
     # verify structure
     assert isinstance(envs_dict, dict)
@@ -255,7 +261,7 @@ def test_make_env_from_hub_async():
     hub_id = "lerobot/cartpole-env"
 
     # load with async envs
-    envs_dict = make_env(hub_id, n_envs=2, use_async_envs=True, trust_remote_code=True)
+    envs_dict = envhub.make_envs(hub_id, 2, True, trust_remote_code=True)
 
     suite_name = next(iter(envs_dict))
     task_id = next(iter(envs_dict[suite_name]))
@@ -301,5 +307,5 @@ def test_env_server_options_are_one_optional_group():
 def test_env_config_saves_only_its_settings():
     # Saved with a training config after its env is built; the env's description is runtime state.
     config = ToyEnvConfig()
-    config.create_env().close()
+    make_task_env(config).close()
     assert "descriptor" not in draccus.encode(config)

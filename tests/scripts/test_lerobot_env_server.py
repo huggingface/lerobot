@@ -28,7 +28,8 @@ import pytest
 import yaml
 
 from lerobot.env_server import EnvClient, EnvServerConfig
-from lerobot.envs.configs import EnvConfig, check_served
+from lerobot.envs.configs import EnvConfig
+from lerobot.envs.factory import check_served
 from lerobot.scripts import lerobot_env_server
 from lerobot.scripts.lerobot_env_server import EnvServerLaunchConfig
 from lerobot.sim import SimSettings
