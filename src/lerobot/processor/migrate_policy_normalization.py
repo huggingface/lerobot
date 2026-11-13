@@ -56,6 +56,7 @@ from typing import Any, get_type_hints
 import draccus
 import torch
 from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError
 from safetensors.torch import load_file as load_safetensors
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
@@ -464,7 +465,8 @@ def load_model_from_hub(
         train_config_path = hf_hub_download(repo_id=repo_id, filename="train_config.json", revision=revision)
         with open(train_config_path) as f:
             train_config = json.load(f)
-    except FileNotFoundError:
+    except EntryNotFoundError:
+        # Hub 404 (`RemoteEntryNotFoundError`) or cache miss (`LocalEntryNotFoundError`, a `FileNotFoundError`).
         print("train_config.json not found - continuing without training configuration")
 
     return state_dict, config, train_config
