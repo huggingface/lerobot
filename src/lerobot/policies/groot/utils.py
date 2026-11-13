@@ -206,6 +206,22 @@ def homogeneous_to_xyz_rot6d(transform: np.ndarray) -> np.ndarray:
     return np.concatenate([transform[:3, 3], transform[:2, :3].reshape(-1)], axis=0)
 
 
+def absolute_eef_to_relative(action: np.ndarray, reference_state: np.ndarray) -> np.ndarray:
+    """Convert absolute EEF poses in xyz+rot6d format to relative EEF deltas.
+
+    Inverse of :func:`relative_eef_to_absolute`: each pose is expressed in the reference
+    (current state) end-effector frame, ``inv(reference) @ pose``.
+    """
+
+    out = np.empty_like(action, dtype=np.float64)
+    for batch_idx in range(action.shape[0]):
+        reference_inv = np.linalg.inv(xyz_rot6d_to_homogeneous(reference_state[batch_idx]))
+        for timestep in range(action.shape[1]):
+            absolute = xyz_rot6d_to_homogeneous(action[batch_idx, timestep])
+            out[batch_idx, timestep] = homogeneous_to_xyz_rot6d(reference_inv @ absolute)
+    return out.astype(np.float32)
+
+
 def relative_eef_to_absolute(action: np.ndarray, reference_state: np.ndarray) -> np.ndarray:
     """Convert relative EEF deltas in xyz+rot6d format to absolute EEF poses."""
 

@@ -86,6 +86,7 @@ from .configuration_groot import (
     is_raw_groot_n1_7_checkpoint,
 )
 from .utils import (
+    absolute_eef_to_relative,
     as_int_pair,
     as_optional_float,
     as_optional_int,
@@ -1643,7 +1644,8 @@ class GrootN17PackInputsStep(ProcessorStep):
             )
             if config_value(cfg.get("rep")) == "relative":
                 action_type = config_value(cfg.get("type"))
-                if action_type != "non_eef":
+                action_format = config_value(cfg.get("format"))
+                if action_type != "non_eef" and not (action_type == "eef" and action_format == "xyz+rot6d"):
                     raise ValueError(f"Unsupported relative N1.7 action config for '{key}': {cfg}")
                 state_key = cfg.get("state_key") or key
                 reference = state_groups.get(state_key)
@@ -1657,7 +1659,16 @@ class GrootN17PackInputsStep(ProcessorStep):
                 if not cloned:
                     converted = action.clone()
                     cloned = True
-                converted[..., start_idx:end_idx] -= reference[:, None, :]
+                if action_type == "eef":
+                    relative = absolute_eef_to_relative(
+                        action[..., start_idx:end_idx].detach().cpu().numpy(),
+                        reference.detach().cpu().numpy(),
+                    )
+                    converted[..., start_idx:end_idx] = torch.as_tensor(
+                        relative, dtype=action.dtype, device=action.device
+                    )
+                else:
+                    converted[..., start_idx:end_idx] -= reference[:, None, :]
 
             start_idx = end_idx
 
