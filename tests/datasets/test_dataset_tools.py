@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 
@@ -29,6 +30,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
     _fractions_to_episode_indices,
+    _load_episode_with_stats,
     _try_keep_episodes_from_video_by_stream_copy,
     add_features,
     convert_image_to_video_dataset,
@@ -1572,6 +1574,106 @@ def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
 
         if output_dir.exists():
             shutil.rmtree(output_dir)
+
+
+@require_libsvtav1
+def test_convert_image_to_video_dataset_output_can_be_edited(tmp_path, empty_lerobot_dataset_factory):
+    """The converted dataset keeps the episode metadata that the edit operations read."""
+    features = {
+        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+        "observation.images.cam": {
+            "dtype": "image",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+    }
+    source_dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "img_ds",
+        features=features,
+        use_videos=False,
+    )
+    for _ in range(3):
+        add_frames(source_dataset, num_frames=4)
+        source_dataset.save_episode()
+    source_dataset.finalize()
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.side_effect = AssertionError("Local datasets must not be downloaded")
+
+        video_dataset = convert_image_to_video_dataset(
+            dataset=source_dataset,
+            output_dir=tmp_path / "video_ds",
+            repo_id="dummy/video",
+            rgb_encoder=RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+            num_workers=1,
+        )
+
+        episode = video_dataset.meta.episodes[1]
+        assert episode["tasks"] == source_dataset.meta.episodes[1]["tasks"]
+        # meta.episodes drops the stats columns on load, so read them from the parquet row.
+        np.testing.assert_array_equal(
+            _load_episode_with_stats(video_dataset, 1)["stats/action/mean"],
+            _load_episode_with_stats(source_dataset, 1)["stats/action/mean"],
+        )
+
+        kept = delete_episodes(video_dataset, [0], output_dir=tmp_path / "deleted", repo_id="dummy/deleted")
+        assert kept.meta.total_episodes == 2
+        assert kept[0]["observation.images.cam"].shape == (3, 64, 96)
+
+        merged = merge_datasets([video_dataset, kept], "dummy/merged", output_dir=tmp_path / "merged")
+        assert merged.meta.total_episodes == 5
+
+        relabeled = modify_tasks(video_dataset, new_task="relabeled")
+        assert relabeled.meta.episodes[0]["tasks"] == ["relabeled"]
+
+
+@require_libsvtav1
+def test_convert_image_to_video_dataset_without_source_tasks(tmp_path, empty_lerobot_dataset_factory):
+    """A source episodes file without a tasks column converts to empty task lists."""
+    features = {
+        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+        "observation.images.cam": {
+            "dtype": "image",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+    }
+    source_dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "img_ds",
+        features=features,
+        use_videos=False,
+    )
+    for _ in range(2):
+        add_frames(source_dataset, num_frames=4)
+        source_dataset.save_episode()
+    source_dataset.finalize()
+
+    episodes_path = source_dataset.root / "meta/episodes/chunk-000/file-000.parquet"
+    pd.read_parquet(episodes_path).drop(columns=["tasks"]).to_parquet(episodes_path)
+    source_dataset.meta.episodes = load_episodes(source_dataset.root)
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.side_effect = AssertionError("Local datasets must not be downloaded")
+
+        video_dataset = convert_image_to_video_dataset(
+            dataset=source_dataset,
+            output_dir=tmp_path / "video_ds",
+            repo_id="dummy/video",
+            rgb_encoder=RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+            num_workers=1,
+        )
+
+        assert video_dataset.meta.episodes[0]["tasks"] == []
+        relabeled = modify_tasks(video_dataset, new_task="relabeled")
+        assert relabeled.meta.episodes[0]["tasks"] == ["relabeled"]
 
 
 @require_libsvtav1

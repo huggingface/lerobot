@@ -1953,7 +1953,16 @@ def convert_image_to_video_dataset(
                 "length": ep_length,
                 "dataset_from_index": cumulative_frame_idx,
                 "dataset_to_index": cumulative_frame_idx + ep_length,
+                # All rows go to the single episodes file written below.
+                "meta/episodes/chunk_index": 0,
+                "meta/episodes/file_index": 0,
+                # Overwritten below if the source has tasks; edit operations need the column.
+                "tasks": [],
             }
+            src_episode_full = _load_episode_with_stats(dataset, ep_idx)
+            ep_meta.update(
+                {k: v for k, v in src_episode_full.items() if k == "tasks" or k.startswith("stats/")}
+            )
             if "data/chunk_index" in src_episode:
                 ep_meta["data/chunk_index"] = src_episode["data/chunk_index"]
                 ep_meta["data/file_index"] = src_episode["data/file_index"]
