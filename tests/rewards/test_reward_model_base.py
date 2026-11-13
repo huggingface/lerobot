@@ -194,6 +194,19 @@ def test_reward_model_config_from_pretrained_roundtrip(tmp_path):
     assert loaded.learning_rate == 5e-4
 
 
+def test_reward_model_from_pretrained_applies_config_overrides(tmp_path: Path) -> None:
+    original = _DummyHubReward(_DummyHubRewardConfig(device="cpu", private=False))
+    with torch.no_grad():
+        original.bias.fill_(0.75)
+    original.save_pretrained(tmp_path)
+
+    loaded = _DummyHubReward.from_pretrained(tmp_path, cli_overrides=["--private=true"], strict=True)
+
+    assert loaded.config.private is True
+    assert torch.equal(loaded.bias, original.bias)
+    assert loaded.training is False
+
+
 # ---------------------------------------------------------------------------
 # TrainPipelineConfig — reward model training path
 # ---------------------------------------------------------------------------
