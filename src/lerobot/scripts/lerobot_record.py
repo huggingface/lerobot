@@ -110,6 +110,11 @@ from lerobot.datasets import (
     safe_stop_image_writer,
 )
 from lerobot.datasets.io_utils import write_info
+from lerobot.datasets.servo_settings import (
+    RECORD_INFO_JSON_CALIBRATION,
+    dataset_records_servo_settings,
+    servo_settings_json,
+)
 from lerobot.datasets.utils import apply_resume_calibration, follower_calibration
 from lerobot.processor import (
     RobotAction,
@@ -446,6 +451,7 @@ def record(
     resume_nonempty = False
     follower_cal = None
     recorded_episodes = 0
+    record_settings = False
     # One timer for the whole session, so its statistics describe the recording rather
     # than one episode's slice of it.  The reset phases below deliberately run on their
     # own private timers: they write no frames, so folding their ticks in would dilute
@@ -506,12 +512,23 @@ def record(
         # Optional: the follower's joint zeros and the P/I/D gains read back from its motors.
         # A new or empty dataset takes that calibration now. A dataset that already has
         # episodes is decided after the session, so an aborted resume cannot relabel it.
+        # Servo settings for each episode are read at the episode boundary below, not here
+        # and not inside the control loop. A dataset recorded without that column keeps
+        # its format: this session writes no calibration and logs one warning.
         follower_cal = follower_calibration(robot)
-        if dataset is not None and dataset.num_episodes == 0:
+        if dataset is not None:
+            record_settings = dataset_records_servo_settings(dataset)
+            if not record_settings:
+                logging.warning(
+                    "Not recording servo settings: this dataset has episodes and no "
+                    "servo_settings column. Start a new dataset to record them."
+                )
+        write_info_calibration = RECORD_INFO_JSON_CALIBRATION and record_settings
+        if write_info_calibration and dataset is not None and dataset.num_episodes == 0:
             if follower_cal is not None:
                 dataset.meta.info.calibration = follower_cal
                 write_info(dataset.meta.info, dataset.meta.root)
-        elif dataset is not None:
+        elif write_info_calibration and dataset is not None:
             resume_nonempty = True
 
         listener, events = init_keyboard_listener()
@@ -526,6 +543,9 @@ def record(
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 episode_index = dataset.num_episodes
                 start_episode(robot)
+                # Episode boundary, before the control loop. One read of the setting registers.
+                if record_settings and dataset.writer is not None:
+                    dataset.writer.pending_servo_settings = servo_settings_json(robot)
                 log_say(f"Recording episode {episode_index}", cfg.play_sounds)
                 record_loop(
                     robot=robot,

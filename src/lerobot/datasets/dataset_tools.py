@@ -68,6 +68,7 @@ from .io_utils import (
     write_tasks,
 )
 from .lerobot_dataset import LeRobotDataset
+from .servo_settings import SERVO_SETTINGS_COLUMN
 from .utils import (
     DATA_DIR,
     DEFAULT_CHUNK_SIZE,
@@ -1068,6 +1069,11 @@ def _copy_and_reindex_episodes_metadata(
             "tasks": src_episode["tasks"],
             "length": src_episode["length"],
         }
+        if SERVO_SETTINGS_COLUMN in src_episode_full:
+            value = src_episode_full[SERVO_SETTINGS_COLUMN]
+            if not isinstance(value, str):
+                value = None
+            episode_dict[SERVO_SETTINGS_COLUMN] = value
         episode_dict.update(episode_meta)
         episode_dict.update(flatten_dict({"stats": episode_stats}))
         dst_meta._save_episode_metadata(episode_dict)

@@ -40,6 +40,7 @@ from .io_utils import (
     write_stats,
     write_tasks,
 )
+from .servo_settings import SERVO_SETTINGS_COLUMN, episodes_have_servo_settings
 from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -419,6 +420,19 @@ def aggregate_datasets(
         logger.warning(reason)
     dst_meta.info.calibration = calibration
 
+    sources_with_settings = [meta.repo_id for meta in all_metadata if episodes_have_servo_settings(meta)]
+    sources_without_settings = [
+        meta.repo_id
+        for meta in all_metadata
+        if meta.total_episodes > 0 and not episodes_have_servo_settings(meta)
+    ]
+    keep_servo_settings = bool(sources_with_settings)
+    if sources_with_settings and sources_without_settings:
+        logger.warning(
+            "Keeping servo_settings for episodes that have it. "
+            f"{', '.join(sources_without_settings)} have none, so those episodes are left empty."
+        )
+
     logger.info("Find all tasks")
     unique_tasks = pd.concat([m.tasks for m in all_metadata]).index.unique()
     dst_meta.tasks = pd.DataFrame(
@@ -441,7 +455,14 @@ def aggregate_datasets(
             src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size, concatenate_data
         )
 
-        meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
+        meta_idx = aggregate_metadata(
+            src_meta,
+            dst_meta,
+            meta_idx,
+            data_idx,
+            videos_idx,
+            keep_servo_settings=keep_servo_settings,
+        )
 
         # Clear the src_to_dst mapping after processing each source dataset
         # to avoid interference between different source datasets
@@ -663,6 +684,7 @@ def aggregate_metadata(
     meta_idx: IndexState,
     data_idx: IndexState,
     videos_idx: VideoIndexState,
+    keep_servo_settings: bool = False,
 ) -> IndexState:
     """Aggregates metadata from a source dataset into the destination dataset.
 
@@ -692,6 +714,9 @@ def aggregate_metadata(
     for chunk_idx, file_idx in chunk_file_ids:
         src_path = src_meta.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         df = pd.read_parquet(src_path)
+        if keep_servo_settings and SERVO_SETTINGS_COLUMN not in df.columns:
+            df = df.copy()
+            df[SERVO_SETTINGS_COLUMN] = None
         df = update_meta_data(
             df,
             dst_meta,
