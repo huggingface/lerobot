@@ -1,0 +1,154 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "recipe": {
+          "bindings": null,
+          "blend": null,
+          "messages": [
+            {
+              "content": "${task}\nPredict the next action in language.\n",
+              "if_present": null,
+              "role": "user",
+              "stream": "high_level",
+              "target": false,
+              "tool_calls_from": null
+            },
+            {
+              "content": "${subtask}",
+              "if_present": "subtask",
+              "role": "assistant",
+              "stream": "high_level",
+              "target": true,
+              "tool_calls_from": null
+            }
+          ],
+          "route": null,
+          "weight": null
+        }
+      },
+      "registry_name": "render_runtime_messages_processor"
+    },
+    {
+      "config": {
+        "recipe": {
+          "bindings": null,
+          "blend": null,
+          "messages": [
+            {
+              "content": "${task}\nPredict the next action in language.\n",
+              "if_present": null,
+              "role": "user",
+              "stream": "high_level",
+              "target": false,
+              "tool_calls_from": null
+            },
+            {
+              "content": "${subtask}",
+              "if_present": "subtask",
+              "role": "assistant",
+              "stream": "high_level",
+              "target": true,
+              "tool_calls_from": null
+            }
+          ],
+          "route": null,
+          "weight": null
+        }
+      },
+      "registry_name": "render_training_messages_processor"
+    },
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "wall_x_task_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          },
+          "observation.image.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.images.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.state": {
+            "shape": [
+              6
+            ],
+            "type": "STATE"
+          }
+        },
+        "norm_map": {
+          "ACTION": "MEAN_STD",
+          "STATE": "MEAN_STD",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "normalizer_processor",
+      "state_file": "policy_preprocessor_step_5_normalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "chunk_size": 32,
+        "image_keys": [
+          "observation.image.cam",
+          "observation.images.cam"
+        ]
+      },
+      "registry_name": "wall_x_prompt"
+    },
+    {
+      "config": {
+        "action_tokenizer_name": null,
+        "chunk_size": 32,
+        "image_keys": [
+          "observation.image.cam",
+          "observation.images.cam"
+        ],
+        "max_action_dim": 20,
+        "max_state_dim": 20,
+        "output_action_dim": 6,
+        "processor_name": "x-square-robot/wall-oss-flow",
+        "processor_revision": null,
+        "tokenizer_max_length": 768,
+        "use_fast_tokenizer": false
+      },
+      "registry_name": "wall_x_tokenizer"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}

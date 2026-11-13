@@ -1,0 +1,103 @@
+{
+  "name": "policy_postprocessor",
+  "steps": [
+    {
+      "config": {
+        "action_spans": {
+          "arm.position": [
+            [
+              0,
+              14
+            ]
+          ],
+          "base.velocity": [
+            [
+              48,
+              51
+            ]
+          ],
+          "effector.position": [
+            [
+              28,
+              30
+            ]
+          ],
+          "end.position": [
+            [
+              14,
+              28
+            ]
+          ],
+          "hand.position": [
+            [
+              30,
+              42
+            ]
+          ],
+          "head.position": [
+            [
+              46,
+              48
+            ]
+          ],
+          "reserved.slots": [
+            [
+              51,
+              55
+            ]
+          ],
+          "waist.position": [
+            [
+              42,
+              46
+            ]
+          ]
+        },
+        "canonical_joints": {
+          "arm.position": 14,
+          "base.velocity": 3,
+          "effector.position": 2,
+          "end.position": 14,
+          "hand.position": 12,
+          "head.position": 2,
+          "reserved.slots": 4,
+          "waist.position": 4
+        }
+      },
+      "registry_name": "lingbot_vla_v2_inverse_slot_mapping"
+    },
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          }
+        },
+        "norm_map": {
+          "ACTION": "MEAN_STD",
+          "STATE": "MEAN_STD",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "unnormalizer_processor",
+      "state_file": "policy_postprocessor_step_1_unnormalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "enabled": false
+      },
+      "registry_name": "absolute_actions_processor"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}

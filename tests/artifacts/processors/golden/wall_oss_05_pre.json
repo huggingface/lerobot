@@ -1,0 +1,157 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "recipe": {
+          "bindings": null,
+          "blend": null,
+          "messages": [
+            {
+              "content": "${task}\nPredict the next action in language.\n",
+              "if_present": null,
+              "role": "user",
+              "stream": "low_level",
+              "target": false,
+              "tool_calls_from": null
+            },
+            {
+              "content": "${subtask}",
+              "if_present": "subtask",
+              "role": "assistant",
+              "stream": "low_level",
+              "target": true,
+              "tool_calls_from": null
+            }
+          ],
+          "route": null,
+          "weight": null
+        }
+      },
+      "registry_name": "render_runtime_messages_processor"
+    },
+    {
+      "config": {
+        "recipe": {
+          "bindings": null,
+          "blend": null,
+          "messages": [
+            {
+              "content": "${task}\nPredict the next action in language.\n",
+              "if_present": null,
+              "role": "user",
+              "stream": "low_level",
+              "target": false,
+              "tool_calls_from": null
+            },
+            {
+              "content": "${subtask}",
+              "if_present": "subtask",
+              "role": "assistant",
+              "stream": "low_level",
+              "target": true,
+              "tool_calls_from": null
+            }
+          ],
+          "route": null,
+          "weight": null
+        }
+      },
+      "registry_name": "render_training_messages_processor"
+    },
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "wall_oss_05_task_passthrough"
+    },
+    {
+      "config": {
+        "eps": 1.0,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          },
+          "observation.image.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.images.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.state": {
+            "shape": [
+              6
+            ],
+            "type": "STATE"
+          }
+        },
+        "norm_map": {
+          "ACTION": "QUANTILES",
+          "STATE": "QUANTILES",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "normalizer_processor",
+      "state_file": "policy_preprocessor_step_5_normalizer_processor.safetensors"
+    },
+    {
+      "config": {},
+      "registry_name": "wall_oss_05_clamp_normalized"
+    },
+    {
+      "config": {
+        "max_state_dim": 26
+      },
+      "registry_name": "wall_oss_05_pad_state"
+    },
+    {
+      "config": {
+        "max_action_dim": 26
+      },
+      "registry_name": "wall_oss_05_pad_action"
+    },
+    {
+      "config": {
+        "action_dim": 6,
+        "camera_key_mapping": {
+          "observation.images.face_view": "face_view",
+          "observation.images.right_wrist_view": "right_wrist_view"
+        },
+        "chunk_size": 32,
+        "max_state_dim": 26,
+        "processor_name": "lerobot/wall-oss-0.5",
+        "revision": null,
+        "tokenizer_max_length": 1000
+      },
+      "registry_name": "wall_oss_05_tokenizer"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}

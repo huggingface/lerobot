@@ -1,0 +1,33 @@
+{
+  "covered": [
+    "act",
+    "cosmos3_edge",
+    "cosmos3_nano",
+    "diffusion",
+    "dm05",
+    "eo1",
+    "evo1",
+    "fastwam",
+    "fineart_vla",
+    "flux3",
+    "g05",
+    "gaussian_actor",
+    "groot",
+    "lawam",
+    "lingbot_va",
+    "lingbot_vla_v2",
+    "longwam",
+    "molmoact2",
+    "multi_task_dit",
+    "pi0",
+    "pi05",
+    "pi0_fast",
+    "smolvla",
+    "tdmpc",
+    "vla_jepa",
+    "vqbet",
+    "wall_oss_05",
+    "wall_x",
+    "xvla"
+  ]
+}
