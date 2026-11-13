@@ -19,13 +19,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-import pandas as pd
-import pyarrow.parquet as pq
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[hardware])")
 
+import pandas as pd
+import pyarrow.parquet as pq
 from datasets import Dataset
 
 from lerobot.configs.dataset import DatasetRecordConfig
@@ -42,7 +42,7 @@ from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleopConfig
 
-pytestmark = pytest.mark.dataset
+pytestmark = [pytest.mark.dataset, pytest.mark.hardware]
 
 _CAL_11 = {"motors": {"joint": {"id": 1, "homing_offset": 11}}}
 
