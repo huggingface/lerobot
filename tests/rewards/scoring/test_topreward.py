@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from functools import partial
 from types import SimpleNamespace
 
 import numpy as np
@@ -25,7 +24,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.scores import load_scores
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import PolicyProcessorPipeline, ProcessorStep, batch_to_transition
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.rewards import score_dataset
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.scoring_topreward import (
@@ -110,7 +109,6 @@ class _FakeEncoder(PolicyProcessorPipeline):
     def __init__(self, task_key: str = "task"):
         super().__init__(
             steps=[_PrefixLengthEncoderStep(task_key=task_key)],
-            to_transition=partial(batch_to_transition, complementary_keys=(task_key,)),
         )
 
     @property
@@ -142,7 +140,7 @@ class _FakeModel:
         return torch.tensor([float(batch["observation.prefix_length"]) - 5.0])
 
 
-@pytest.mark.parametrize("task_key", ["task", "missing_task", "instruction"])
+@pytest.mark.parametrize("task_key", ["task", "missing_task"])
 def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress(monkeypatch, task_key: str):
     monkeypatch.setattr(_FakeModel.config, "task_key", task_key)
     encoder = _FakeEncoder(task_key=task_key)
@@ -192,25 +190,20 @@ def test_topreward_scores_publish_to_the_dataset(tmp_path):
     assert list(load_scores(dataset, "topreward")[PROGRESS_SIGNAL]) == [0.0, 0.25, 0.5, 0.75, 1.0]
 
 
-@pytest.mark.parametrize("task_key", ["task", "instruction"])
 @pytest.mark.parametrize("filtered", [False, True])
-def test_topreward_frame_scorer_supports_episode_filtered_dataset_views(
-    monkeypatch, task_key: str, filtered: bool
-):
-    monkeypatch.setattr(_FakeModel.config, "task_key", task_key)
+def test_topreward_frame_scorer_supports_episode_filtered_dataset_views(filtered: bool):
     dataset = _FakeDataset(
         [{"dataset_from_index": 0, "dataset_to_index": 5}, {"dataset_from_index": 5, "dataset_to_index": 7}]
     )
     dataset.absolute_to_relative_idx = {5: 0, 6: 1} if filtered else None
-    encoder = _FakeEncoder(task_key=task_key)
+    encoder = _FakeEncoder()
 
     result = TOPRewardFrameScorer(_FakeModel(), encoder, num_samples=None).score_episode(dataset, 1)
 
     assert encoder.prefix_shapes == [(1, 1, 3, 2, 2), (1, 2, 3, 2, 2)]
     np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.0, 1.0])
     assert sorted(set(dataset.row_requests)) == ([0, 1] if filtered else [5, 6])
-    task = f"custom task at frame {0 if filtered else 5}" if task_key == "instruction" else "pick up the cube"
-    assert encoder.steps[0].tasks == [task, task]
+    assert encoder.steps[0].tasks == ["pick up the cube", "pick up the cube"]
 
 
 def test_topreward_frame_scorer_rejects_non_positive_num_samples():

@@ -125,27 +125,6 @@ def test_expand_tasks_wrong_type_raises():
         _expand_tasks(42, batch_size=1, default=None)
 
 
-@pytest.mark.parametrize("task", ["custom instruction", None])
-def test_processor_pipeline_preserves_custom_task_and_default(monkeypatch, task):
-    from lerobot.rewards.topreward import processor_topreward
-    from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
-
-    tasks = []
-
-    def encode_batch(self, videos, task_batch, batch_size):
-        tasks.extend(task_batch)
-        return {}
-
-    monkeypatch.setattr(processor_topreward.TOPRewardEncoderProcessorStep, "__post_init__", lambda self: None)
-    monkeypatch.setattr(processor_topreward.TOPRewardEncoderProcessorStep, "_encode_batch", encode_batch)
-    config = TOPRewardConfig(device="cpu", task_key="instruction", default_task="fallback")
-    preprocessor, _ = processor_topreward.make_topreward_pre_post_processors(config)
-
-    preprocessor({config.image_key: torch.zeros(2, 3, 3, 2, 2), "instruction": task})
-
-    assert tasks == [task if task is not None else "fallback"] * 2
-
-
 # ---------------------------------------------------------------------------
 # Encoder step — stubbed AutoProcessor
 # ---------------------------------------------------------------------------

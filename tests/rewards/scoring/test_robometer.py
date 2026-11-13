@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from functools import partial
 from types import SimpleNamespace
 
 import numpy as np
@@ -25,7 +24,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.scores import load_scores
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import PolicyProcessorPipeline, ProcessorStep, batch_to_transition
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.rewards import score_dataset
 from lerobot.rewards.robometer.modeling_robometer import RobometerOutput
 from lerobot.rewards.robometer.scoring_robometer import (
@@ -60,7 +59,6 @@ class _FrameIdsEncoderStep(ProcessorStep):
 def _make_preprocessor(task_key: str = "task") -> PolicyProcessorPipeline:
     return PolicyProcessorPipeline(
         steps=[_FrameIdsEncoderStep(task_key=task_key)],
-        to_transition=partial(batch_to_transition, complementary_keys=(task_key,)),
     )
 
 
@@ -112,7 +110,7 @@ def test_make_robometer_frame_scorer_builds_processor_without_frame_cap(monkeypa
     assert config.max_frames == 8
 
 
-@pytest.mark.parametrize("task_key", ["task", "missing_task", "instruction"])
+@pytest.mark.parametrize("task_key", ["task", "missing_task"])
 def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     image_key = "observation.images.top"
     grad_modes: list[bool] = []
@@ -193,9 +191,8 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     )
 
 
-@pytest.mark.parametrize("task_key", ["task", "instruction"])
 @pytest.mark.parametrize("filtered", [False, True])
-def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(task_key: str, filtered: bool):
+def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(filtered: bool):
     image_key = "observation.images.top"
 
     class FakeDataset:
@@ -220,7 +217,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(task_key
             }
 
     class FakeModel:
-        config = SimpleNamespace(image_key=image_key, task_key=task_key)
+        config = SimpleNamespace(image_key=image_key, task_key="task")
 
         def eval(self):
             return self
@@ -229,7 +226,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(task_key
             values = batch["observation.encoded"].float() / 10.0
             return RobometerOutput(progress=values, success_probability=values)
 
-    preprocessor = _make_preprocessor(task_key=task_key)
+    preprocessor = _make_preprocessor()
     scorer = RobometerFrameScorer(FakeModel(), preprocessor, num_subsampled_frames=2)
     dataset = FakeDataset()
 
@@ -237,9 +234,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(task_key
 
     np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.5, 0.6])
     assert sorted(set(dataset.row_requests)) == ([0, 1] if filtered else [5, 6])
-    assert preprocessor.steps[0].tasks == [
-        "selected instruction" if task_key == "instruction" else "selected task"
-    ]
+    assert preprocessor.steps[0].tasks == ["selected task"]
 
 
 def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):

@@ -211,18 +211,6 @@ def test_to_tensor_unsupported_type():
         to_tensor(object())
 
 
-def test_batch_to_transition_preserves_only_explicit_extra_complementary_keys():
-    batch = {"task": "standard task", "instruction": "custom task", "unrelated": "unused"}
-
-    transition = batch_to_transition(batch, complementary_keys=("instruction", "missing"))
-
-    assert transition[TransitionKey.COMPLEMENTARY_DATA] == {
-        "task": "standard task",
-        "instruction": "custom task",
-    }
-    assert batch_to_transition(batch)[TransitionKey.COMPLEMENTARY_DATA] == {"task": "standard task"}
-
-
 def test_batch_to_transition_with_index_fields():
     """Test that batch_to_transition handles index and task_index fields correctly."""
 

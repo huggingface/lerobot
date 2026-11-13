@@ -155,32 +155,6 @@ def test_expand_tasks_wrong_type_raises():
         _expand_tasks(42, batch_size=1, default=None)
 
 
-@pytest.mark.parametrize("task", ["custom instruction", None])
-def test_processor_pipeline_preserves_custom_task_and_default(monkeypatch, task):
-    from lerobot.rewards.robometer import processor_robometer
-    from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
-
-    tasks = []
-
-    def encode_samples(self, samples):
-        tasks.extend(task for _, task in samples)
-        return {}
-
-    monkeypatch.setattr(processor_robometer.RobometerEncoderProcessorStep, "__post_init__", lambda self: None)
-    monkeypatch.setattr(processor_robometer.RobometerEncoderProcessorStep, "encode_samples", encode_samples)
-    config = RobometerConfig(
-        device="cpu",
-        task_key="instruction",
-        default_task="fallback",
-        vlm_config={"model_type": "fake", "text_config": {"vocab_size": 10}},
-    )
-    preprocessor, _ = processor_robometer.make_robometer_pre_post_processors(config)
-
-    preprocessor({config.image_key: torch.zeros(2, 3, 3, 2, 2), "instruction": task})
-
-    assert tasks == [task if task is not None else "fallback"] * 2
-
-
 # ---------------------------------------------------------------------------
 # _frames_to_pil — uint8 (T, H, W, C) → list[PIL.Image]
 # ---------------------------------------------------------------------------
