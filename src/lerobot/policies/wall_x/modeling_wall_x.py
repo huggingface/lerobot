@@ -1569,9 +1569,18 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
 
         # Initialize MoE token types if not provided
         if moe_token_types is None:
-            moe_token_types = torch.zeros_like(
-                input_ids
-            )  # FIXME: Handle case when input_embeds is used instead
+            if inputs_embeds is not None and input_ids.shape[1] == 0:
+                # ``inputs_embeds`` carries the tokens while ``input_ids`` is empty
+                # (cached generation with pre-computed embeddings). Derive the
+                # routing tensor from the embeddings so it covers every input
+                # token instead of staying empty like ``zeros_like(input_ids)``.
+                moe_token_types = torch.zeros(
+                    (inputs_embeds.shape[0], inputs_embeds.shape[1]),
+                    dtype=torch.long,
+                    device=inputs_embeds.device,
+                )
+            else:
+                moe_token_types = torch.zeros_like(input_ids)
         else:
             # Ensure moe_token_types length matches input_ids
             if moe_token_types.shape[1] < input_ids.shape[1]:
