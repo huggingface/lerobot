@@ -61,6 +61,8 @@ class FastWAMPolicy(PreTrainedPolicy):
     # FSDP2 wrap units: MoTLayer is the single FSDP owner of each layer's expert blocks
     # (the blocks are re-parented onto it precisely so sharding has one boundary to hook).
     _fsdp_wrap_modules = ["MoTLayer"]
+    # Core model built by `_build_core_model`; variants such as CAE-FastWAM extend it.
+    _core_model_class: type[FastWAM] = FastWAM
 
     def __init__(
         self,
@@ -395,7 +397,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             if config.load_text_encoder
             else None
         )
-        return FastWAM(
+        return self._core_model_class(
             video_expert=video_expert,
             action_expert=action_expert,
             mot=mot,
