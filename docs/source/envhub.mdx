@@ -12,14 +12,25 @@ This page shows how to use an EnvHub environment, then everything needed to writ
 
 Browse published environments in the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments), or browse [Spaces tagged `envhub`](https://huggingface.co/spaces?search=envhub).
 
-The commands below use `spaces/my-org/my-env` as a placeholder for an SO-101 environment with `front` and `wrist` cameras. Replace it with your chosen Space and a commit from that Space; adapt the camera names and robot options to its documentation.
+Two published SO-101 environments show how a Space can present the same tabletop task in different ways:
+
+| Space                                                                                     | Try it in the browser                                                                                         | Run the environment                                                              |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| [SO-101 tabletop · MuJoCo](https://huggingface.co/spaces/lerobot/so101-tabletop-mujoco)   | Interactive keyboard playground running on CPU, with front and wrist camera views                             | Load its `env.py` with LeRobot, as in the commands below                         |
+| [SO-101 tabletop · Isaac Sim](https://huggingface.co/spaces/lerobot/so101-tabletop-isaac) | Static presentation page with a recorded rollout and setup instructions; it does not host a running simulator | Run Isaac Sim 6.2 on your own NVIDIA RTX GPU, following the Space's instructions |
+
+Both simulate an SO-101 arm, four cubes and a green box on a table. They expose `front` and `wrist` cameras, six joint-position actions, and state in the real SO-101 follower's units: arm angles in degrees and gripper opening from 0 to 100.
+
+The commands below use the MuJoCo Space at commit `c21b5b560893004a818954466319cba26d579402`. They run its full environment through LeRobot, rather than connecting to the browser demo as an env server. The demo's rendering optimizations apply only to the web app; the distributed environment keeps its original assets, physics and observations.
 
 ### Serve it
 
 From a LeRobot source checkout (the image is built from it), with Docker and GPU access for its containers:
 
 ```bash
-lerobot-env-server --envhub=spaces/my-org/my-env@<commit> --trust_remote_code=true --docker=true
+lerobot-env-server \
+  --envhub=spaces/lerobot/so101-tabletop-mujoco@c21b5b560893004a818954466319cba26d579402 \
+  --trust_remote_code=true --docker=true
 ```
 
 This builds an image with the repository and its `requirements.txt` on first use, and starts the server on `localhost:7448`. `--trust_remote_code=true` is your consent to run the repository's code, in the container: read `env.py`, `requirements.txt` and `packages.txt` first, and pin the commit you read, so that you run exactly that code and results stay reproducible. Without it, the server refuses to start. The client side needs the `remote` extra (`pip install 'lerobot[remote]'`).
@@ -31,7 +42,7 @@ The server can as well run on another machine, such as a GPU workstation or a cl
 ```bash
 lerobot-eval \
   --policy.path=<your SO-101 checkpoint> \
-  --env.type=envhub --env.hub_path=spaces/my-org/my-env@<commit> \
+  --env.type=envhub --env.hub_path=spaces/lerobot/so101-tabletop-mujoco@c21b5b560893004a818954466319cba26d579402 \
   --env.server.endpoint=tcp/127.0.0.1:7448 \
   --rename_map='{"observation.images.front": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}' \
   --eval.n_episodes=10 --eval.batch_size=1
@@ -45,7 +56,7 @@ The same environment is a robot: `--robot.type=sim`, with the environment option
 
 ```bash
 lerobot-teleoperate \
-  --robot.type=sim --robot.env.type=envhub --robot.env.hub_path=spaces/my-org/my-env@<commit> \
+  --robot.type=sim --robot.env.type=envhub --robot.env.hub_path=spaces/lerobot/so101-tabletop-mujoco@c21b5b560893004a818954466319cba26d579402 \
   --robot.env.server.endpoint=tcp/127.0.0.1:7448 \
   --teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop.id=my_leader \
   --fps=30 --display_data=true
@@ -363,14 +374,14 @@ Updates are new commits: users pinned to an older commit keep running the code t
 
 `--env.hub_path` (and `--envhub` for the server) take:
 
-| Pattern              | Loads                               | Example                              |
-| -------------------- | ----------------------------------- | ------------------------------------ |
-| `spaces/user/repo`   | `env.py` from a Space               | `spaces/my-org/my-env`               |
-| `user/repo`          | Automatically detect the repo type  | `my-org/my-env`                      |
-| `user/repo@revision` | `env.py` at a commit, branch or tag | `spaces/my-org/my-env@<commit>`      |
-| `user/repo:path`     | Another file                        | `my-org/my-envs:envs/task_a.py`      |
-| `user/repo@rev:path` | Another file at a revision          | `my-org/my-envs@v1.0:envs/task_a.py` |
-| `./folder`           | `env.py` in a local folder          | `./my-env`                           |
+| Pattern              | Loads                               | Example                                                                         |
+| -------------------- | ----------------------------------- | ------------------------------------------------------------------------------- |
+| `spaces/user/repo`   | `env.py` from a Space               | `spaces/lerobot/so101-tabletop-mujoco`                                          |
+| `user/repo`          | Automatically detect the repo type  | `my-org/my-env`                                                                 |
+| `user/repo@revision` | `env.py` at a commit, branch or tag | `spaces/lerobot/so101-tabletop-mujoco@c21b5b560893004a818954466319cba26d579402` |
+| `user/repo:path`     | Another file                        | `my-org/my-envs:envs/task_a.py`                                                 |
+| `user/repo@rev:path` | Another file at a revision          | `my-org/my-envs@v1.0:envs/task_a.py`                                            |
+| `./folder`           | `env.py` in a local folder          | `./my-env`                                                                      |
 
 <Tip>
   **Spaces are preferred for new EnvHub environments.** Existing environments in
