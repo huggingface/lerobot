@@ -1340,17 +1340,22 @@ class FastWAM(torch.nn.Module):
             z = z[0].unsqueeze(0)
         return z
 
-    def _decode_latents(self, latents, tiled=False, tile_size=(30, 52), tile_stride=(15, 26)):
+    def _decode_latents_to_uint8(
+        self, latents, tiled=False, tile_size=(30, 52), tile_stride=(15, 26)
+    ) -> torch.Tensor:
+        """Decode latents to uint8 frames `[T, H, W, 3]` on CPU."""
         video_tensor = self.vae.decode(
             latents, device=self.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride
         )
         video_tensor = video_tensor.squeeze(0).detach().float().clamp(-1, 1)
         video_tensor = ((video_tensor + 1.0) * 127.5).to(torch.uint8).cpu()
-        frames = []
-        for t in range(video_tensor.shape[1]):
-            frame = video_tensor[:, t].permute(1, 2, 0).numpy()
-            frames.append(Image.fromarray(frame))
-        return frames
+        return video_tensor.permute(1, 2, 3, 0)
+
+    def _decode_latents(self, latents, tiled=False, tile_size=(30, 52), tile_stride=(15, 26)):
+        frames = self._decode_latents_to_uint8(
+            latents, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride
+        )
+        return [Image.fromarray(frame.numpy()) for frame in frames]
 
     def build_inputs(self, sample, tiled: bool = False):
         video = sample["video"]
@@ -2212,6 +2217,70 @@ class FastWAM(torch.nn.Module):
         return {
             "action": latents_action[0].detach().to(device="cpu", dtype=torch.float32),
         }
+
+    @torch.no_grad()
+    def infer_video(
+        self,
+        prompt: str | None,
+        input_image: torch.Tensor,
+        num_video_frames: int,
+        proprio: torch.Tensor | None = None,
+        context: torch.Tensor | None = None,
+        context_mask: torch.Tensor | None = None,
+        num_inference_steps: int = 20,
+        sigma_shift: float | None = None,
+        seed: int | None = None,
+        rand_device: str = "cpu",
+        tiled: bool = False,
+    ) -> torch.Tensor:
+        """Denoise the video stream alone; returns uint8 frames `[T, H, W, 3]` on CPU.
+
+        Video tokens don't attend to action tokens, so this matches `infer_joint`'s video.
+        """
+        self.eval()
+        input_image, height, width = self._normalize_infer_input_image(input_image, num_video_frames)
+        proprio = self._normalize_infer_proprio(proprio)
+        latents_video = self._make_video_latents(num_video_frames, height, width, seed, rand_device)
+
+        input_image = input_image.to(device=self.device, dtype=self.torch_dtype)
+        first_frame_latents = self._encode_input_image_latents_tensor(input_image=input_image, tiled=tiled)
+        latents_video[:, :, 0:1] = first_frame_latents.clone()
+        fuse_flag = bool(getattr(self.video_expert, "fuse_vae_embedding_in_latents", False))
+        context, context_mask = self._prepare_infer_context(prompt, context, context_mask, proprio)
+
+        infer_timesteps_video, infer_deltas_video = self.infer_video_scheduler.build_inference_schedule(
+            num_inference_steps=num_inference_steps,
+            device=self.device,
+            dtype=latents_video.dtype,
+            shift_override=sigma_shift,
+        )
+        for step_t_video, step_delta_video in zip(infer_timesteps_video, infer_deltas_video, strict=True):
+            timestep_video = step_t_video.unsqueeze(0).to(dtype=latents_video.dtype, device=self.device)
+            video_pre = self.video_expert.pre_dit(
+                x=latents_video,
+                timestep=timestep_video,
+                context=context,
+                context_mask=context_mask,
+                action=None,
+                fuse_vae_embedding_in_latents=fuse_flag,
+            )
+            video_seq_len = int(video_pre["tokens"].shape[1])
+            video_tokens, _ = self.mot.run_video_prefill(
+                video_tokens=video_pre["tokens"],
+                video_freqs=video_pre["freqs"],
+                video_t_mod=video_pre["t_mod"],
+                video_context_payload={"context": video_pre["context"], "mask": video_pre["context_mask"]},
+                video_attention_mask=self.video_expert.build_video_to_video_mask(
+                    video_seq_len=video_seq_len,
+                    video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
+                    device=video_pre["tokens"].device,
+                ),
+            )
+            pred_video = self.video_expert.post_dit(video_tokens, video_pre)
+            latents_video = self.infer_video_scheduler.step(pred_video, step_delta_video, latents_video)
+            latents_video[:, :, 0:1] = first_frame_latents.clone()
+
+        return self._decode_latents_to_uint8(latents_video, tiled=tiled)
 
     @torch.no_grad()
     def infer(

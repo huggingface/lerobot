@@ -20,6 +20,7 @@ import sys
 from copy import deepcopy
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 from torch import nn
@@ -53,6 +54,11 @@ class ShapeVAE(nn.Module):
             return [item.new_zeros(4, 1, item.shape[-2] // 2, item.shape[-1] // 2) for item in video]
         b, _, t, h, w = video.shape
         return video.new_zeros(b, 4, (t - 1) // 4 + 1, h // 2, w // 2)
+
+    def decode(self, latents, **kwargs):
+        pixels = latents[:, :3].float().tanh()
+        pixels = torch.cat([pixels[:, :, :1], pixels[:, :, 1:].repeat_interleave(4, dim=2)], dim=2)
+        return pixels.repeat_interleave(2, dim=3).repeat_interleave(2, dim=4)
 
 
 def tiny_config(**overrides) -> FastWAMConfig:
@@ -258,3 +264,44 @@ def test_fusion_uses_float32_softmax_with_policy_dtype_storage(dtype):
     (k.float().square().mean() + v.float().square().mean()).backward()
     assert torch.isfinite(fusion.logits.grad).all() and fusion.logits.grad.abs().sum() > 0
     assert all(torch.isfinite(entry[key].grad).all() for entry in cache for key in ("k", "v"))
+
+
+@pytest.mark.parametrize("flags", [{}, DOT_FLAGS], ids=["default", "fasterwam"])
+def test_predicted_video_pairs_frames_with_unchanged_actions(offline_components, flags):
+    torch.manual_seed(0)
+    policy = FastWAMPolicy(tiny_config(dtype=torch.float32, n_action_steps=4, **flags))
+    batch = training_batch()
+    expected = policy.predict_action_chunk(batch)
+
+    policy.config.return_predicted_video = True
+    policy.reset()
+    outputs = [policy.select_action(batch) for _ in range(4)]
+
+    assert [isinstance(output, dict) for output in outputs] == [True, False, True, False]
+    actions = torch.stack([output["action"] if isinstance(output, dict) else output for output in outputs], 1)
+    torch.testing.assert_close(actions, expected[:, :4], rtol=0, atol=0)
+    frame = outputs[0]["prediction"]["observation"]["observation.images.image"]
+    assert frame.shape == (1, 3, 16, 32)
+    assert frame.dtype == torch.uint8
+    assert frame.unique().numel() > 1
+
+
+def test_infer_video_matches_the_joint_clip(offline_components):
+    torch.manual_seed(0)
+    model = FastWAMPolicy(tiny_config(dtype=torch.float32)).model
+    kwargs = {
+        "prompt": None,
+        "input_image": torch.rand(1, 3, 16, 32),
+        "context": torch.randn(1, 4, 8),
+        "context_mask": torch.ones(1, 4, dtype=torch.bool),
+        "proprio": torch.rand(1, 2),
+        "num_inference_steps": 3,
+        "seed": 5,
+        "num_video_frames": 5,
+    }
+
+    joint = model.infer_joint(action_horizon=8, test_action_with_infer_action=False, **kwargs)
+    video = model.infer_video(**kwargs)
+
+    assert video.shape == (5, 16, 32, 3)
+    torch.testing.assert_close(video, torch.stack([torch.from_numpy(np.asarray(f)) for f in joint["video"]]))
