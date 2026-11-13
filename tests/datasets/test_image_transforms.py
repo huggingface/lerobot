@@ -23,9 +23,11 @@ from torchvision.transforms.v2 import functional as F  # noqa: N812
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.configs import DatasetConfig
 from lerobot.scripts.lerobot_imgtransform_viz import (
     save_all_transforms,
     save_each_transform,
+    visualize_image_transforms,
 )
 from lerobot.transforms import (
     BatchedCoarseDropout,
@@ -49,6 +51,7 @@ from lerobot.transforms import (
 )
 from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.image_transforms.save_image_transforms_to_safetensors import ARTIFACT_DIR
+from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.utils import require_x86_64_kernel
 
 pytestmark = pytest.mark.dataset
@@ -475,6 +478,16 @@ def test_save_each_transform(img_tensor_factory, tmp_path):
             assert (transform_dir / file_name).exists(), (
                 f"{file_name} was not found in {transform} directory."
             )
+
+
+def test_visualize_image_transforms_loads_dataset_from_root(tmp_path, lerobot_dataset_factory):
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(root=root, total_episodes=1, total_frames=2, use_videos=False)
+    output_dir = tmp_path / "outputs"
+
+    visualize_image_transforms(DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(root)), output_dir, n_examples=1)
+
+    assert (output_dir / "repo" / "original_frame.png").exists()
 
 
 # --- Tests for robotics-relevant augmentations ---
