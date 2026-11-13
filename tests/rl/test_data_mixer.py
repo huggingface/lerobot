@@ -89,3 +89,44 @@ def test_online_offline_mixer_iterator():
     batch2 = next(it)
     assert batch1["state"][OBS_STATE].shape[0] == 4
     assert batch2["state"][OBS_STATE].shape[0] == 4
+
+
+@pytest.mark.parametrize("online_ratio", [0.0, 0.25, 1.0])
+@pytest.mark.parametrize("async_prefetch", [False, True])
+def test_online_only_iterator_ignores_ratio(online_ratio, async_prefetch):
+    mixer = OnlineOfflineMixer(_make_buffer(), online_ratio=online_ratio)
+    iterator = mixer.get_iterator(batch_size=8, async_prefetch=async_prefetch)
+    try:
+        for _ in range(2):
+            batch = next(iterator)
+            assert batch["action"].shape[0] == 8
+            assert batch["state"][OBS_STATE].shape[0] == 8
+    finally:
+        iterator.close()
+
+
+@pytest.mark.parametrize("online_ratio", [0.0, 1.0])
+@pytest.mark.parametrize("access", ["sample", "iterator"])
+def test_mixer_does_not_sample_unused_buffer(online_ratio, access):
+    populated = _make_buffer()
+    empty = ReplayBuffer(capacity=10, device="cpu", use_drq=False)
+    online, offline = (empty, populated) if online_ratio == 0.0 else (populated, empty)
+    mixer = OnlineOfflineMixer(online, offline, online_ratio=online_ratio)
+
+    if access == "sample":
+        batch = mixer.sample(8)
+    else:
+        iterator = mixer.get_iterator(8, async_prefetch=False)
+        try:
+            batch = next(iterator)
+        finally:
+            iterator.close()
+    assert batch["action"].shape[0] == 8
+    assert batch["state"][OBS_STATE].shape[0] == 8
+
+
+def test_single_sample_mixer_does_not_query_offline_buffer():
+    online = _make_buffer()
+    offline = ReplayBuffer(capacity=10, device="cpu", use_drq=False)
+    mixer = OnlineOfflineMixer(online, offline, online_ratio=0.5)
+    assert mixer.sample(1)["action"].shape[0] == 1
