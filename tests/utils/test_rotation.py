@@ -46,6 +46,17 @@ def test_rotvec_roundtrip():
     assert np.allclose(r.as_rotvec(), rotvec, atol=1e-6)
 
 
+@pytest.mark.parametrize("angle", [1e-12, 1e-9, 3e-8, 1e-6])
+def test_small_rotations_preserve_angle_and_axis(angle):
+    axis = np.array([1.0, -2.0, 3.0]) / np.sqrt(14.0)
+    rotvec = angle * axis
+    rotation = Rotation.from_rotvec(rotvec)
+
+    np.testing.assert_allclose(rotation.as_rotvec(), rotvec, rtol=1e-12, atol=1e-24)
+    np.testing.assert_allclose(rotation.as_quat()[:3], axis * np.sin(angle / 2), rtol=1e-12, atol=1e-24)
+    np.testing.assert_allclose((rotation * rotation).as_rotvec(), 2 * rotvec, rtol=1e-12, atol=1e-24)
+
+
 def test_batched_conversions_have_scipy_bits():
     """The batched static methods repeat scipy's operations, so the results are bitwise scipy's."""
     scipy_rotation = pytest.importorskip("scipy.spatial.transform").Rotation
