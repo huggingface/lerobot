@@ -27,6 +27,7 @@ from lerobot.utils.random_utils import (
     deserialize_torch_rng_state,
     get_rng_state,
     load_rng_state,
+    preserve_rng_state,
     save_rng_state,
     seeded_context,
     serialize_numpy_rng_state,
@@ -263,3 +264,172 @@ def test_seeded_context_preserves_gaussian_caches(fixed_seed, fail):
 
     assert [random.gauss(0, 1) for _ in range(6)] == expected_python
     np.testing.assert_array_equal(np.random.standard_normal(6), expected_numpy)
+
+
+def _cpu_rng_state():
+    return random.getstate(), np.random.get_state(), torch.get_rng_state()
+
+
+def _assert_cpu_rng_state(expected):
+    assert random.getstate() == expected[0]
+    actual_numpy = np.random.get_state()
+    assert actual_numpy[0] == expected[1][0]
+    np.testing.assert_array_equal(actual_numpy[1], expected[1][1])
+    assert actual_numpy[2:] == expected[1][2:]
+    assert torch.equal(torch.get_rng_state(), expected[2])
+
+
+def _draw_cpu():
+    return random.gauss(0, 1), np.random.standard_normal(), torch.rand(3)
+
+
+@pytest.mark.parametrize("error_type", [None, RuntimeError, KeyboardInterrupt])
+def test_preserve_rng_state_cpu_caches_and_nested_scopes(fixed_seed, error_type):
+    random.gauss(0, 1)
+    np.random.standard_normal()
+    original = _cpu_rng_state()
+    assert original[0][2] is not None
+    assert original[1][3] == 1
+    error = error_type("context failed") if error_type else None
+
+    def run():
+        with preserve_rng_state(torch.device("cpu")):
+            first = _draw_cpu()
+            assert first[:2] == (original[0][2], original[1][4])
+            outer = _cpu_rng_state()
+            with pytest.raises(RuntimeError), preserve_rng_state(torch.device("cpu")):
+                _draw_cpu()
+                raise RuntimeError("inner failure")
+            _assert_cpu_rng_state(outer)
+            with preserve_rng_state(torch.device("cpu")):
+                nested = _draw_cpu()
+            _assert_cpu_rng_state(outer)
+            continuation = _draw_cpu()
+            assert nested[:2] == continuation[:2]
+            assert torch.equal(nested[2], continuation[2])
+            if error is not None:
+                raise error
+            return first
+
+    if error is not None:
+        with pytest.raises(error_type) as exc_info:
+            run()
+        assert exc_info.value is error
+    else:
+        first = run()
+        _assert_cpu_rng_state(original)
+        continuation = _draw_cpu()
+        assert first[:2] == continuation[:2]
+        assert torch.equal(first[2], continuation[2])
+        random.setstate(original[0])
+        np.random.set_state(original[1])
+        torch.set_rng_state(original[2])
+    _assert_cpu_rng_state(original)
+
+
+def test_preserve_cpu_never_reseeds_or_accesses_accelerators(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("CPU preservation must not reseed or access an accelerator")
+
+    for module, names in (
+        (random, ["seed"]),
+        (np.random, ["seed"]),
+        (torch, ["seed", "manual_seed"]),
+        (torch.backends.mps, ["is_available"]),
+    ):
+        for name in names:
+            monkeypatch.setattr(module, name, forbidden)
+    for backend in (torch.cuda, torch.mps, torch.xpu):
+        for name in (
+            "is_available",
+            "is_initialized",
+            "device_count",
+            "current_device",
+            "get_rng_state",
+            "set_rng_state",
+            "manual_seed",
+            "manual_seed_all",
+            "seed",
+            "seed_all",
+        ):
+            if hasattr(backend, name):
+                monkeypatch.setattr(backend, name, forbidden)
+    original = _cpu_rng_state()
+    with preserve_rng_state(torch.device("cpu")):
+        _draw_cpu()
+    _assert_cpu_rng_state(original)
+
+
+@pytest.mark.parametrize(
+    "device_name, selected", [("cuda:2", 2), ("cuda", 1), ("xpu:2", 2), ("xpu", 1), ("mps", 0)]
+)
+@pytest.mark.parametrize("error_type", [None, RuntimeError, KeyboardInterrupt])
+def test_preserve_selected_backend_routing(monkeypatch, device_name, selected, error_type):
+    # Real fork_rng, fake device state APIs: this checks routing, not native GPU behavior.
+    device = torch.device(device_name)
+    backend = getattr(torch, device.type)
+    states = {0: torch.tensor([10]), 1: torch.tensor([11]), 2: torch.tensor([12])}
+    current = 1
+    current_calls = []
+    calls = []
+
+    def get_state(index):
+        calls.append(("get", index))
+        return states[index].clone()
+
+    def set_state(state, index):
+        calls.append(("set", index))
+        states[index] = state.clone()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Must not enumerate or probe unrelated devices")
+
+    def current_device():
+        current_calls.append(current)
+        return current
+
+    for name in ("cuda", "mps", "xpu"):
+        module = getattr(torch, name)
+        for method in ("is_available", "device_count", "get_rng_state", "set_rng_state"):
+            monkeypatch.setattr(module, method, forbidden)
+    monkeypatch.setattr(backend, "get_rng_state", get_state)
+    monkeypatch.setattr(backend, "set_rng_state", set_state)
+    if device.type != "mps":
+        monkeypatch.setattr(backend, "current_device", current_device)
+    original = _cpu_rng_state()
+    error = error_type("device context failed") if error_type else None
+
+    def run():
+        nonlocal current
+        with preserve_rng_state(device):
+            states[selected] += 20
+            current = 0
+            _draw_cpu()
+            if error is not None:
+                raise error
+
+    if error is None:
+        run()
+    else:
+        with pytest.raises(error_type) as exc_info:
+            run()
+        assert exc_info.value is error
+    assert calls == [("get", selected), ("set", selected)]
+    assert current_calls == ([1] if device.index is None and device.type != "mps" else [])
+    assert [states[i].item() for i in range(3)] == [10, 11, 12]
+    _assert_cpu_rng_state(original)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("device_type", ["cuda", "mps", "xpu"])
+def test_preserve_rng_state_native_device(device_type):
+    backend = getattr(torch, device_type)
+    if not backend.is_available():
+        pytest.skip(f"Native {device_type} unavailable")
+    device = torch.device(device_type, 0)
+    original = backend.get_rng_state(device)
+    with preserve_rng_state(device):
+        expected = torch.rand(8, device=device)
+        assert not torch.equal(backend.get_rng_state(device), original)
+    assert torch.equal(backend.get_rng_state(device), original)
+    assert torch.equal(torch.rand(8, device=device), expected)

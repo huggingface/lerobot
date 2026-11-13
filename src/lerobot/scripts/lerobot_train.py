@@ -32,7 +32,7 @@ import dataclasses
 import logging
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
@@ -95,7 +95,7 @@ from lerobot.utils.import_utils import (
     require_package,
 )
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
-from lerobot.utils.random_utils import set_seed
+from lerobot.utils.random_utils import preserve_rng_state, set_seed
 from lerobot.utils.sample_weighting import SampleWeighter
 from lerobot.utils.utils import (
     cycle,
@@ -176,6 +176,34 @@ def _preprocess_dataset_batch(
             batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
     batch = rename_batch_keys(batch, rename_map)
     return preprocessor(batch)
+
+
+def _evaluate_held_out(
+    policy: PreTrainedPolicy,
+    eval_dataloader: Iterable[dict[str, Any]],
+    camera_keys: list[str],
+    rename_map: dict[str, str],
+    preprocessor: Any,
+    accelerator: "Accelerator",
+    device: torch.device,
+) -> float:
+    """Compute held-out loss without advancing the training process's global RNGs."""
+    with preserve_rng_state(device):
+        was_training = policy.training
+        try:
+            policy.eval()
+            eval_loss_sum = 0.0
+            n_eval_batches = 0
+            with torch.no_grad(), accelerator.autocast():
+                for eval_batch in eval_dataloader:
+                    eval_batch = _preprocess_dataset_batch(eval_batch, camera_keys, rename_map, preprocessor)
+                    loss, _ = policy(eval_batch)  # __call__, so FSDP2 forward hooks run
+                    eval_loss_sum += loss.item()
+                    n_eval_batches += 1
+            eval_loss = torch.tensor(eval_loss_sum / max(n_eval_batches, 1), device=device)
+            return accelerator.reduce(eval_loss, reduction="mean").item()
+        finally:
+            policy.train(was_training)
 
 
 def update_policy(
@@ -908,21 +936,15 @@ def train(cfg: TrainPipelineConfig) -> None:
             train_tracker.reset_averages()
 
         if is_eval_step and eval_dataloader is not None:
-            policy.eval()
-            eval_loss_sum = 0.0
-            n_eval_batches = 0
-            with torch.no_grad(), accelerator.autocast():
-                for eval_batch in eval_dataloader:
-                    eval_batch = _preprocess_dataset_batch(
-                        eval_batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor
-                    )
-                    loss, _ = policy(eval_batch)  # __call__, so FSDP2 forward hooks run
-                    eval_loss_sum += loss.item()
-                    n_eval_batches += 1
-            eval_loss = eval_loss_sum / max(n_eval_batches, 1)
-            eval_loss = torch.tensor(eval_loss, device=device)
-            eval_loss = accelerator.reduce(eval_loss, reduction="mean").item()
-            policy.train()
+            eval_loss = _evaluate_held_out(
+                policy,
+                eval_dataloader,
+                dataset.meta.camera_keys,
+                cfg.rename_map,
+                preprocessor,
+                accelerator,
+                device,
+            )
 
             if is_main_process():
                 logging.info(f"step {step}: eval_loss={eval_loss:.4f}")
