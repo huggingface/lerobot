@@ -37,6 +37,13 @@ from .pipeline import (
 )
 
 
+def _require_tensor_observation(*, key: str, value: object) -> Tensor:
+    """Validate that a recognized observation field contains a tensor."""
+    if not isinstance(value, Tensor):
+        raise TypeError(f"Observation '{key}' should be a torch.Tensor, got {type(value).__name__}")
+    return value
+
+
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_action")
 class AddBatchDimensionActionStep(PolicyActionProcessorStep):
@@ -99,23 +106,25 @@ class AddBatchDimensionObservationStep(ObservationProcessorStep):
         Returns:
             The observation dictionary with batch dimensions added to tensors.
         """
-        # Process state observations - add batch dim if 1D
+        # Process state observations - add batch dim if 1D.
         for state_key in [OBS_STATE, OBS_ENV_STATE]:
             if state_key in observation:
-                state_value = observation[state_key]
-                if isinstance(state_value, Tensor) and state_value.dim() == 1:
+                state_value = _require_tensor_observation(key=state_key, value=observation[state_key])
+                if state_value.dim() == 1:
                     observation[state_key] = state_value.unsqueeze(0)
 
-        # Process single image observation - add batch dim if 3D
+        # Process single image observation - add batch dim if 3D.
         if OBS_IMAGE in observation:
-            image_value = observation[OBS_IMAGE]
-            if isinstance(image_value, Tensor) and image_value.dim() == 3:
+            image_value = _require_tensor_observation(key=OBS_IMAGE, value=observation[OBS_IMAGE])
+            if image_value.dim() == 3:
                 observation[OBS_IMAGE] = image_value.unsqueeze(0)
 
-        # Process multiple image observations - add batch dim if 3D
+        # Process multiple image observations - add batch dim if 3D.
         for key, value in observation.items():
-            if key.startswith(f"{OBS_IMAGES}.") and isinstance(value, Tensor) and value.dim() == 3:
-                observation[key] = value.unsqueeze(0)
+            if key.startswith(f"{OBS_IMAGES}."):
+                value = _require_tensor_observation(key=key, value=value)
+                if value.dim() == 3:
+                    observation[key] = value.unsqueeze(0)
         return observation
 
     def transform_features(
