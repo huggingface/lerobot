@@ -23,7 +23,12 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.utils import INFO_PATH, follower_calibration, merged_calibration
+from lerobot.datasets.utils import (
+    INFO_PATH,
+    apply_resume_calibration,
+    follower_calibration,
+    merged_calibration,
+)
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE
 
 pytestmark = pytest.mark.dataset
@@ -642,3 +647,54 @@ def test_merged_calibration_names_both_reasons_in_one_warning():
     assert warning == (
         "Dropping calibration because arm_c has none, and the calibrations in arm_a, arm_b disagree."
     )
+
+
+def test_resume_leaves_a_different_calibration_when_no_episode_is_saved():
+    stored, warning, write = apply_resume_calibration(
+        CAL_A, CAL_B, dataset_name="arm_a", saved_new_episode=False
+    )
+    assert stored == CAL_A
+    assert write is False
+    assert warning == (
+        "No episode was saved, so the dataset calibration was left unchanged "
+        "because the calibrations in arm_a, the connected follower disagree."
+    )
+
+
+def test_resume_drops_a_different_calibration_when_an_episode_is_saved():
+    stored, warning, write = apply_resume_calibration(
+        CAL_A, CAL_B, dataset_name="arm_a", saved_new_episode=True
+    )
+    assert stored is None
+    assert write is True
+    assert warning == (
+        "Dropping calibration because the calibrations in arm_a, the connected follower disagree."
+    )
+
+
+def test_resume_keeps_an_equal_calibration_without_rewriting():
+    stored, warning, write = apply_resume_calibration(
+        CAL_A, CAL_A, dataset_name="arm_a", saved_new_episode=True
+    )
+    assert stored == CAL_A
+    assert stored is CAL_A
+    assert warning is None
+    assert write is False
+
+
+def test_resume_does_not_add_calibration_to_legacy_episodes():
+    stored, warning, write = apply_resume_calibration(
+        None, CAL_A, dataset_name="arm_a", saved_new_episode=True
+    )
+    assert stored is None
+    assert write is False
+    assert warning == "Not recording a dataset-wide calibration because arm_a has none."
+
+
+def test_resume_drops_calibration_when_the_follower_has_none():
+    stored, warning, write = apply_resume_calibration(
+        CAL_A, None, dataset_name="arm_a", saved_new_episode=True
+    )
+    assert stored is None
+    assert write is True
+    assert warning == "Dropping calibration because the connected follower has none."

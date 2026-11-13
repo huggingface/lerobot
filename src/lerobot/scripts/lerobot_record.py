@@ -110,7 +110,7 @@ from lerobot.datasets import (
     safe_stop_image_writer,
 )
 from lerobot.datasets.io_utils import write_info
-from lerobot.datasets.utils import follower_calibration
+from lerobot.datasets.utils import apply_resume_calibration, follower_calibration
 from lerobot.processor import (
     RobotAction,
     RobotObservation,
@@ -443,6 +443,9 @@ def record(
 
     dataset = None
     listener = None
+    resume_nonempty = False
+    follower_cal = None
+    recorded_episodes = 0
     # One timer for the whole session, so its statistics describe the recording rather
     # than one episode's slice of it.  The reset phases below deliberately run on their
     # own private timers: they write no frames, so folding their ticks in would dilute
@@ -501,10 +504,15 @@ def record(
         robot.connect()
 
         # Optional: the follower's joint zeros and the P/I/D gains read back from its motors.
-        calibration = follower_calibration(robot)
-        if dataset is not None and calibration is not None:
-            dataset.meta.info.calibration = calibration
-            write_info(dataset.meta.info, dataset.meta.root)
+        # A new or empty dataset takes that calibration now. A dataset that already has
+        # episodes is decided after the session, so an aborted resume cannot relabel it.
+        follower_cal = follower_calibration(robot)
+        if dataset is not None and dataset.num_episodes == 0:
+            if follower_cal is not None:
+                dataset.meta.info.calibration = follower_cal
+                write_info(dataset.meta.info, dataset.meta.root)
+        elif dataset is not None:
+            resume_nonempty = True
 
         listener, events = init_keyboard_listener()
 
@@ -577,6 +585,19 @@ def record(
                 timer.log_episode_summary(f"episode {episode_index}")
                 timer.restart()
     finally:
+        if dataset is not None and resume_nonempty:
+            stored, warning, write = apply_resume_calibration(
+                dataset.meta.info.calibration,
+                follower_cal,
+                dataset_name=cfg.dataset.repo_id,
+                saved_new_episode=recorded_episodes > 0,
+            )
+            if write:
+                dataset.meta.info.calibration = stored
+                write_info(dataset.meta.info, dataset.meta.root)
+            if warning is not None:
+                logging.warning(warning)
+
         # First, and in `finally`: ^C is how most recording sessions end, and the summary
         # is most useful before the video encoding and the hub upload scroll it away.
         timer.log_run_summary()

@@ -376,6 +376,35 @@ def merged_calibration(
     return copy.deepcopy(first), None
 
 
+def apply_resume_calibration(
+    existing: dict | None,
+    follower: dict | None,
+    *,
+    dataset_name: str,
+    saved_new_episode: bool,
+) -> tuple[dict | None, str | None, bool]:
+    """Calibration a resume should leave in ``info.json``, one warning, and whether to write it.
+
+    A dataset with no episodes is not handled here. The caller records that follower as before.
+
+    Equal values are kept and the file is not rewritten. When the follower disagrees with the
+    dataset, or the dataset has no calibration, saving an episode drops a dataset-wide value
+    that would be false for the older episodes and logs one warning. If no episode was saved,
+    the file is left untouched.
+    """
+    chosen, reason = merged_calibration([(dataset_name, existing), ("the connected follower", follower)])
+    if reason is None or not saved_new_episode or chosen == existing:
+        if reason is None:
+            return existing, None, False
+        detail = reason.removeprefix("Dropping calibration ")
+        if not saved_new_episode:
+            warning = f"No episode was saved, so the dataset calibration was left unchanged {detail}"
+        else:
+            warning = f"Not recording a dataset-wide calibration {detail}"
+        return existing, warning, False
+    return chosen, reason, True
+
+
 def has_legacy_hub_download_metadata(root: Path) -> bool:
     """Return ``True`` when *root* looks like a legacy Hub ``local_dir`` mirror.
 
