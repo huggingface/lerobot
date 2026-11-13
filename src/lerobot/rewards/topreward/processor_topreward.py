@@ -179,15 +179,27 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
         """
 
         texts: list[str] = []
+        # Qwen3-VL resizes before temporal padding, so short clips must already fill one patch.
+        # Repeat the final frame and its index to preserve the frame's timestamp.
+        num_frames = int(videos.shape[1])
+        padding = max(self._processor.video_processor.temporal_patch_size - num_frames, 0)
+        if padding:
+            videos = torch.cat([videos, videos[:, -1:].expand(-1, padding, -1, -1, -1)], dim=1)
         video_metadata = [
             {
-                "total_num_frames": int(videos.shape[1]),
+                "total_num_frames": num_frames,
                 "fps": float(self.fps),
-                "frames_indices": list(range(int(videos.shape[1]))),
+                "frames_indices": list(range(num_frames)) + [num_frames - 1] * padding,
             }
             for _ in range(batch_size)
         ]
         eos_token = self._processor.tokenizer.eos_token
+        # Qwen3-VL expands each bare video token into timestamps and vision markers.
+        # Strip the chat template's outer markers to avoid nesting them.
+        video_token = self._processor.video_token
+        wrapped_video_token = (
+            f"{self._processor.vision_start_token}{video_token}{self._processor.vision_end_token}"
+        )
 
         for i in range(batch_size):
             instruction_suffix = self.prompt_suffix_template.format(instruction=tasks[i])
@@ -223,7 +235,7 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
                     prompt_chat = prompt_chat.split(eos_token)[0]
                 full_text = f"{prompt_chat}{instruction_suffix}"
 
-            texts.append(full_text)
+            texts.append(full_text.replace(wrapped_video_token, video_token))
 
         result = self._processor(
             text=texts,
@@ -279,7 +291,8 @@ def make_topreward_pre_post_processors(
     The preprocessor adds a batch dimension if needed, runs TOPReward's
     encoder (which tokenises the full prompt and emits ``labels``), and
     moves everything to the configured device. The postprocessor is
-    the identity since TOPReward outputs a single reward tensor.
+    the identity because ``compute_log_probability`` returns its tensor
+    result directly.
     """
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         steps=[

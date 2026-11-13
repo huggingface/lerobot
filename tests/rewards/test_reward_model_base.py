@@ -43,9 +43,6 @@ class _DummyHubReward(PreTrainedRewardModel):
         super().__init__(config)
         self.bias = torch.nn.Parameter(torch.zeros(1))
 
-    def compute_reward(self, batch):
-        return self.bias.expand(1)
-
 
 def test_reward_model_config_registry():
     """Verify that classifier and sarm are registered."""
@@ -80,15 +77,18 @@ def test_factory_unknown_raises():
         get_reward_model_class("nonexistent_reward_model")
 
 
+def test_pretrained_reward_model_compute_reward_points_to_native_methods():
+    model = _DummyHubReward(_DummyHubRewardConfig())
+    with pytest.raises(NotImplementedError, match=r"_DummyHubReward\.compute_reward\(\) was removed"):
+        model.compute_reward({})
+
+
 def test_pretrained_reward_model_requires_config_class():
     """Subclass without config_class should fail."""
     with pytest.raises(TypeError, match="must define 'config_class'"):
 
         class BadModel(PreTrainedRewardModel):
             name = "bad"
-
-            def compute_reward(self, batch):
-                pass
 
 
 def test_pretrained_reward_model_requires_name():
@@ -97,9 +97,6 @@ def test_pretrained_reward_model_requires_name():
 
         class BadModel(PreTrainedRewardModel):
             config_class = RewardModelConfig
-
-            def compute_reward(self, batch):
-                pass
 
 
 def test_non_trainable_forward_raises():
@@ -117,9 +114,6 @@ def test_non_trainable_forward_raises():
         config_class = DummyConfig
         name = "dummy_test"
 
-        def compute_reward(self, batch):
-            return torch.zeros(1)
-
     config = DummyConfig()
     model = DummyReward(config)
 
@@ -136,7 +130,7 @@ def test_non_trainable_forward_raises():
 
 
 def test_is_trainable_false_when_forward_not_overridden():
-    """A reward model that only implements ``compute_reward`` is zero-shot."""
+    """A reward model that does not override ``forward`` is zero-shot."""
     model, _ = _make_dummy_reward_model()
     assert model.is_trainable is False
 
@@ -198,6 +192,19 @@ def test_reward_model_config_from_pretrained_roundtrip(tmp_path):
     assert loaded.latent_dim == 64
     assert loaded.num_cameras == 1
     assert loaded.learning_rate == 5e-4
+
+
+def test_reward_model_from_pretrained_applies_config_overrides(tmp_path: Path) -> None:
+    original = _DummyHubReward(_DummyHubRewardConfig(device="cpu", private=False))
+    with torch.no_grad():
+        original.bias.fill_(0.75)
+    original.save_pretrained(tmp_path)
+
+    loaded = _DummyHubReward.from_pretrained(tmp_path, cli_overrides=["--private=true"], strict=True)
+
+    assert loaded.config.private is True
+    assert torch.equal(loaded.bias, original.bias)
+    assert loaded.training is False
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +366,7 @@ def test_reward_model_generate_model_card_renders_expected_fields(_offline_model
     model, _ = _make_dummy_reward_model(
         license="mit",
         tags=["robot", "sim"],
+        repo_id="user/my_reward_model",
     )
 
     card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
@@ -377,6 +385,7 @@ def test_reward_model_generate_model_card_renders_expected_fields(_offline_model
     assert "Reward Model Card" in body
     assert "This reward model has been trained" in body
     assert "--reward_model.type=" in body  # reward-model-specific usage block
+    assert 'RewardModelConfig.from_pretrained("user/my_reward_model")' in body
 
 
 def test_reward_model_generate_model_card_leaves_an_unknown_license_out(_offline_model_card):
@@ -386,6 +395,17 @@ def test_reward_model_generate_model_card_leaves_an_unknown_license_out(_offline
     card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
 
     assert card.data.license is None
+
+
+def test_inference_only_reward_model_card_does_not_advertise_training(_offline_model_card):
+    from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
+
+    card = generate_model_card(TOPRewardConfig(), cfg=_make_train_cfg("user/my_dataset"))
+    body = str(card)
+
+    assert "inference-only" in body
+    assert "### Train from scratch" not in body
+    assert "compute_log_probability" in body
 
 
 def test_publish_trained_model_uploads_expected_reward_files(monkeypatch, _offline_model_card):

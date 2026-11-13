@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from collections.abc import Mapping
 
 import torch
 from torch import Tensor, nn
@@ -235,18 +236,6 @@ class Classifier(PreTrainedRewardModel):
 
         return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
 
-    def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
-        """Returns 1.0 for success, 0.0 for failure based on image observations."""
-        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
-        output = self.predict(images)
-        if output.probabilities is None:
-            raise ValueError("Classifier.predict() returned no probabilities")
-
-        if self.config.num_classes == 2:
-            return (output.probabilities > 0.5).float()
-        else:
-            return torch.argmax(output.probabilities, dim=1).float()
-
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor]]:
         """Standard forward pass for training compatible with train.py."""
         # Extract images and labels
@@ -279,14 +268,25 @@ class Classifier(PreTrainedRewardModel):
 
         return loss, output_dict
 
-    def predict_reward(self, batch, threshold=0.5):
-        """Eval method. Returns predicted reward with the decision threshold as argument."""
-        # Extract images from batch dict
+    def predict_reward(self, batch: Mapping[str, Tensor], threshold: float = 0.5) -> Tensor:
+        """Predict a reward for each sample from its images.
+
+        Args:
+            batch (`Mapping[str, Tensor]`):
+                Observations with the image features the classifier was trained on.
+            threshold (`float`, defaults to 0.5):
+                Success probability above which a binary classifier returns 1.
+
+        Returns:
+            `Tensor`: 0 or 1 for a binary classifier, otherwise the most likely class, shaped `(batch,)`.
+        """
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
+        probs = self.predict(images).probabilities
+        if probs is None:
+            raise ValueError("Classifier.predict() returned no probabilities")
 
         if self.config.num_classes == 2:
-            probs = self.predict(images).probabilities
             logging.debug(f"Predicted reward images: {probs}")
             return (probs > threshold).float()
         else:
-            return torch.argmax(self.predict(images).probabilities, dim=1)
+            return torch.argmax(probs, dim=1)

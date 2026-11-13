@@ -40,9 +40,10 @@ class TOPRewardConfig(RewardModelConfig):
     TOPReward is **zero-shot**: it has no learnable parameters of its own.
     The "model" is a generic vision-language model (default
     ``Qwen/Qwen3-VL-8B-Instruct``) used with a fixed prompt to extract
-    token log-probabilities as a reward signal. There is therefore no
-    fine-tuned checkpoint to host: ``pretrained_path`` is unused at
-    runtime — the model identity is :attr:`vlm_name` (an HF Hub id).
+    token log-probabilities as a reward signal. There are therefore no
+    fine-tuned weights to host: ``pretrained_path`` may identify a saved
+    configuration, while :attr:`vlm_name` identifies the VLM weights
+    (an HF Hub id).
 
     Args:
         vlm_name: Hugging Face Hub id of the underlying VLM. Must be a
@@ -63,14 +64,10 @@ class TOPRewardConfig(RewardModelConfig):
             before the suffix template.
         prompt_suffix_template: Suffix appended after ``prompt_prefix``.
             Must contain ``{instruction}``; the VLM scores the
-            log-likelihood of the tokens that follow the prefix.
+            log-probability of the final target token.
         add_chat_template: If ``True``, wrap the full prompt with the
             tokenizer's chat template before tokenisation (matches
             upstream ``add_chat_template=True``).
-        success_threshold: Optional log-prob threshold. If finite,
-            :meth:`TOPRewardModel.compute_reward` returns
-            ``(reward > success_threshold).float()`` instead of the raw
-            log-prob.
         max_input_length: Hard limit on the total tokenized input length;
             samples that exceed it raise a ``ValueError``.
     """
@@ -94,7 +91,6 @@ class TOPRewardConfig(RewardModelConfig):
     prompt_suffix_template: str = DEFAULT_PROMPT_SUFFIX_TEMPLATE
     add_chat_template: bool = False
 
-    success_threshold: float = float("-inf")
     max_input_length: int = 32768
 
     license: str | None = "mit"  # matches upstream TOPReward
