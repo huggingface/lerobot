@@ -53,7 +53,6 @@ existing scores, add ``--overwrite=true --resume=false``. Add ``--push_to_hub=tr
 upload the completed scores to the dataset repository.
 """
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -62,6 +61,7 @@ from lerobot.configs import parser
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards import make_frame_scorer, make_reward_model, score_dataset
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
+from lerobot.utils.utils import init_logging
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import LeRobotDataset
@@ -150,7 +150,7 @@ def run_score(cfg: ScoreConfig) -> None:
 
 @parser.wrap()
 def score_cli(cfg: ScoreConfig) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    init_logging()
     run_score(cfg)
 
 
