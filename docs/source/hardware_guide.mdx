@@ -100,3 +100,7 @@ Notes:
 - `--job.target` maps onto the table above: `t4-small`/`t4-medium` (T4, ACT only), `l4x1`/`l4x4` (L4 24 GB), `a10g-small/large/largex2/largex4` (A10G 24 GB scaled out), `a100-large` (A100). List the current catalogue with pricing via `hf jobs hardware`, or see [https://huggingface.co/docs/hub/jobs](https://huggingface.co/docs/hub/jobs).
 - The job defaults to a `2d` (48h) timeout. Override it with `--job.timeout=4h` (or any other valid duration string) to shorten or extend the timeout. The job automatically stops when the command completes.
 - For the full walkthrough — dataset upload, checkpoint streaming, resuming a run on a job — see the [imitation-learning training guide](./il_robots#train-using-hugging-face-jobs).
+
+### Nebius Serverless Jobs
+
+To run the local trainer in a GPU job container, see [Train and resume ACT on Nebius Serverless Jobs](./nebius_jobs). The guide covers a pinned image, Hub datasets, full checkpoint uploads, and resuming in a new job.
