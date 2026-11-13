@@ -24,11 +24,11 @@ import tempfile
 import threading
 import warnings
 from collections import OrderedDict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, cast
 
 import av
@@ -346,14 +346,17 @@ class VideoDecoderCache:
             raise ValueError(f"max_size must be positive or None; got {max_size}")
         self.max_size: int | None = max_size
         self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
-        self._lock = Lock()
+        self._lock = RLock()
 
     def __contains__(self, video_path: object) -> bool:
         with self._lock:
             return str(video_path) in self._cache
 
     def get_decoder(self, video_path: str):
-        """Get a cached decoder or create a new one, evicting LRU if at capacity."""
+        """Get a cached decoder, evicting LRU if at capacity.
+
+        Use ``use_decoder`` to protect decoding from concurrent eviction or clearing.
+        """
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
         else:
@@ -388,6 +391,16 @@ class VideoDecoderCache:
                         evicted_handle.close()
 
             return decoder
+
+    @contextlib.contextmanager
+    def use_decoder(self, video_path: str) -> Iterator[Any]:
+        """Keep a decoder and its backing file alive for the duration of decoding.
+
+        Other threads cannot evict or clear entries while this context is active.
+        Decoding is serialized per cache, including access to the same decoder.
+        """
+        with self._lock:
+            yield self.get_decoder(video_path)
 
     def clear(self):
         """Clear the cache and close all file handles."""
@@ -440,18 +453,12 @@ def decode_video_frames_torchcodec(
     if decoder_cache is None:
         decoder_cache = _default_decoder_cache
 
-    # Use cached decoder instead of creating new one each time
-    decoder = decoder_cache.get_decoder(str(video_path))
-
-    # get metadata for frame information
-    metadata = decoder.metadata
-    average_fps = metadata.average_fps
-    # convert timestamps to frame indices
-    frame_indices = [round(ts * average_fps) for ts in timestamps]
-    # retrieve frames based on indices: get_frames_at returns exactly one frame per
-    # requested index, in order, so frame i already corresponds to timestamps[i] --
-    # no nearest-match/re-stack needed (that redundant copy dominates decode overhead).
-    frames_batch = decoder.get_frames_at(indices=frame_indices)
+    # Protect the backing file from eviction/clear until the frame read completes.
+    with decoder_cache.use_decoder(str(video_path)) as decoder:
+        average_fps = decoder.metadata.average_fps
+        frame_indices = [round(ts * average_fps) for ts in timestamps]
+        # get_frames_at returns one frame per requested index, in order.
+        frames_batch = decoder.get_frames_at(indices=frame_indices)
     closest_frames = frames_batch.data
 
     # float64: hour-scale timestamps quantize past tolerance_s in float32.
