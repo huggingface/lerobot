@@ -17,7 +17,11 @@ import importlib
 import importlib.metadata
 import importlib.util
 import logging
-from typing import Any, Literal, overload
+import pkgutil
+from collections.abc import Iterable, Sequence
+from pkgutil import ModuleInfo
+from types import ModuleType
+from typing import Any, Literal, get_args, overload
 
 from draccus.choice_types import ChoiceRegistry
 
@@ -246,23 +250,35 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     )
 
 
-def register_third_party_plugins() -> None:
+PluginKind = Literal["robot", "camera", "teleoperator", "policy", "env", "strategy"]
+PLUGIN_KINDS: tuple[PluginKind, ...] = get_args(PluginKind)
+DEVICE_PLUGIN_KINDS: tuple[PluginKind, ...] = ("robot", "camera", "teleoperator")
+# A sim robot (`--robot.type=sim`) takes its env from the EnvConfig registry when the command line is
+# parsed, so the commands that accept one also import env plugins.
+DEVICE_AND_ENV_PLUGIN_KINDS: tuple[PluginKind, ...] = (*DEVICE_PLUGIN_KINDS, "env")
+
+
+def register_third_party_plugins(kinds: Iterable[PluginKind] = PLUGIN_KINDS) -> None:
     """
     Discover and import third-party LeRobot plugins so they can register themselves.
 
     This function uses `importlib.metadata` to find packages installed in the environment
-    (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_' or 'lerobot_strategy_' and
-    imports them.
+    (including editable installs) named `lerobot_<kind>_...` for each of `kinds`, such as
+    `lerobot_robot_` or `lerobot_policy_`, and imports them.
+
+    Args:
+        kinds (`Iterable[PluginKind]`, *optional*, defaults to `('robot', 'camera', 'teleoperator', 'policy', 'env', 'strategy')`):
+            The plugin kinds to import, from `PLUGIN_KINDS`. Pass only the kinds the command uses, so
+            plugins of other kinds cannot slow it down or log unrelated import errors.
+
+    Raises:
+        ValueError: If `kinds` names a kind that is not in `PLUGIN_KINDS`.
     """
-    prefixes = (
-        "lerobot_robot_",
-        "lerobot_camera_",
-        "lerobot_teleoperator_",
-        "lerobot_policy_",
-        "lerobot_env_",
-        "lerobot_strategy_",
-    )
+    kinds = tuple(kinds)
+    unknown = set(kinds) - set(PLUGIN_KINDS)
+    if unknown:
+        raise ValueError(f"Unknown plugin kinds {sorted(unknown)}, expected some of {PLUGIN_KINDS}.")
+    prefixes = tuple(f"lerobot_{kind}_" for kind in kinds)
     imported: list[str] = []
     failed: list[str] = []
 
@@ -283,3 +299,111 @@ def register_third_party_plugins() -> None:
             attempt_import(dist_name)
 
     logging.debug("Third-party plugin import summary: imported=%s failed=%s", imported, failed)
+
+
+PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
+
+
+def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, str]:
+    """Parse plugin-related arguments from command-line arguments.
+
+    This function extracts arguments from command-line arguments that match a specified suffix pattern.
+    It accepts arguments in the formats '--key=value' and '--key value' and returns them as a dictionary.
+
+    Args:
+        plugin_arg_suffix (str): The suffix to identify plugin-related arguments.
+        cli_args (Sequence[str]): A sequence of command-line arguments to parse.
+
+    Returns:
+        dict: A dictionary containing the parsed plugin arguments where:
+            - Keys are the argument names (with '--' prefix removed if present)
+            - Values are the corresponding argument values
+
+    Example:
+        >>> args = ["--env.discover_packages_path=my_package", "--other_arg=value"]
+        >>> parse_plugin_args("discover_packages_path", args)
+        {'env.discover_packages_path': 'my_package'}
+    """
+    plugin_args = {}
+    for index, arg in enumerate(args):
+        if not arg.startswith("--"):
+            continue
+
+        key, separator, value = arg[2:].partition("=")
+        if plugin_arg_suffix not in key:
+            continue
+        if not separator:
+            if index + 1 >= len(args) or args[index + 1].startswith("--"):
+                continue
+            value = args[index + 1]
+        plugin_args[key] = value
+    return plugin_args
+
+
+class PluginLoadError(Exception):
+    """Raised when a plugin fails to load."""
+
+
+def load_plugin(plugin_path: str) -> None:
+    """Load and initialize a plugin from a given Python package path.
+
+    This function attempts to load a plugin by importing its package and any submodules.
+    Plugin registration is expected to happen during package initialization, i.e. when
+    the package is imported the gym environment should be registered and the config classes
+    registered with their parents using the `register_subclass` decorator.
+
+    Args:
+        plugin_path (str): The Python package path to the plugin (e.g. "mypackage.plugins.myplugin")
+
+    Raises:
+        PluginLoadError: If the plugin cannot be loaded due to import errors or if the package path is invalid.
+
+    Examples:
+        >>> load_plugin("external_plugin.core")  # Loads plugin from external package
+
+    Notes:
+        - The plugin package should handle its own registration during import
+        - All submodules in the plugin package will be imported
+        - Implementation follows the plugin discovery pattern from Python packaging guidelines
+
+    See Also:
+        https://packaging.python.org/en/latest/guides/creating-and-discovering-plugins/
+    """
+    try:
+        package_module = importlib.import_module(plugin_path, __package__)
+    except (ImportError, ModuleNotFoundError) as e:
+        raise PluginLoadError(
+            f"Failed to load plugin '{plugin_path}'. Verify the path and installation: {str(e)}"
+        ) from e
+
+    def iter_namespace(ns_pkg: ModuleType) -> Iterable[ModuleInfo]:
+        return pkgutil.iter_modules(ns_pkg.__path__, ns_pkg.__name__ + ".")
+
+    try:
+        for _finder, pkg_name, _ispkg in iter_namespace(package_module):
+            importlib.import_module(pkg_name)
+    except ImportError as e:
+        raise PluginLoadError(
+            f"Failed to load plugin '{plugin_path}'. Verify the path and installation: {str(e)}"
+        ) from e
+
+
+def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
+    if args is None:
+        return []
+    option = f"--{field_to_filter}"
+    filtered_args = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == option:
+            index += 1
+            if index < len(args) and not args[index].startswith("--"):
+                index += 1
+            continue
+        if arg.startswith(f"{option}="):
+            index += 1
+            continue
+        filtered_args.append(arg)
+        index += 1
+    return filtered_args

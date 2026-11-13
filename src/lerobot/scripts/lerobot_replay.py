@@ -75,7 +75,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.robots.utils import check_control_rate, episode_ended
 from lerobot.utils.constants import ACTION
 from lerobot.utils.cycle_timer import CycleTimer
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import DEVICE_AND_ENV_PLUGIN_KINDS, register_third_party_plugins
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -153,7 +153,7 @@ def replay(cfg: ReplayConfig):
 
 
 def main():
-    register_third_party_plugins()
+    register_third_party_plugins(kinds=DEVICE_AND_ENV_PLUGIN_KINDS)
     replay()
 
 

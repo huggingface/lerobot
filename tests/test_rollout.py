@@ -34,8 +34,9 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 # above already guards everything below it.
 from lerobot.inference import SyncInferenceEngine, sync  # noqa: E402
 from lerobot.processor import transition_to_prediction  # noqa: E402
-from lerobot.rollout import BaseStrategyConfig, status  # noqa: E402
+from lerobot.rollout import BaseStrategyConfig  # noqa: E402
 from lerobot.rollout.strategies import BaseStrategy  # noqa: E402
+from lerobot.utils import rollout_status as status  # noqa: E402
 from lerobot.utils.cycle_timer import CycleTimer  # noqa: E402
 from tests.interactive_helpers import _FakeEngine, _loop_ctx  # noqa: E402
 
@@ -753,8 +754,8 @@ def test_create_inference_engine_remote_explains_session_construction():
 
 
 def test_align_to_checkpoint_order_reorders_motors_and_preserves_cameras(caplog):
-    from lerobot.rollout.context import _align_to_checkpoint_order
     from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
+    from lerobot.utils.robot_utils import align_to_checkpoint_order
 
     features = {
         "wrist_camera": (480, 640, 3),
@@ -762,7 +763,7 @@ def test_align_to_checkpoint_order_reorders_motors_and_preserves_cameras(caplog)
         "joint_a.pos": float,
     }
 
-    aligned = _align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="state")
+    aligned = align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="state")
 
     assert list(aligned) == ["joint_a.pos", "joint_b.pos", "wrist_camera"]
     assert aligned["wrist_camera"] == (480, 640, 3)
@@ -779,11 +780,11 @@ def test_align_to_checkpoint_order_reorders_motors_and_preserves_cameras(caplog)
 
 def test_align_to_checkpoint_order_aligns_the_action_side_by_the_same_rule(caplog):
     """One primitive serves both sides; the action dict simply has no camera entries."""
-    from lerobot.rollout.context import _align_to_checkpoint_order
+    from lerobot.utils.robot_utils import align_to_checkpoint_order
 
     features = {"joint_b.pos": float, "joint_a.pos": float}
 
-    aligned = _align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="action")
+    aligned = align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="action")
 
     assert list(aligned) == ["joint_a.pos", "joint_b.pos"]
     assert "reordering action" in caplog.text
@@ -801,7 +802,7 @@ def test_align_to_checkpoint_order_aligns_the_action_side_by_the_same_rule(caplo
 )
 def test_align_to_checkpoint_order_is_noop_without_an_exact_name_match(policy_action_names, what):
     """A set mismatch means the two describe different things: keep the robot's own order."""
-    from lerobot.rollout.context import _align_to_checkpoint_order
+    from lerobot.utils.robot_utils import align_to_checkpoint_order
 
     features = {
         "joint_b.pos": float,
@@ -809,7 +810,7 @@ def test_align_to_checkpoint_order_is_noop_without_an_exact_name_match(policy_ac
         "wrist_camera": (480, 640, 3),
     }
 
-    aligned = _align_to_checkpoint_order(features, policy_action_names, what=what)
+    aligned = align_to_checkpoint_order(features, policy_action_names, what=what)
 
     assert aligned is features
     assert list(aligned) == ["joint_b.pos", "joint_a.pos", "wrist_camera"]
@@ -1806,6 +1807,13 @@ def test_disabled_and_interactive_skip_measurements(probes, clock, caplog, inter
     probes[1].assert_not_called()
     assert engine.latency.interval_s == 0
     assert not any(r.message.startswith("Rollout:") for r in caplog.records)
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps", "cuda", "cuda:0"])
+def test_the_memory_probe_never_imports_torch(monkeypatch, device):
+    # A loop that runs without PyTorch may still name its device.
+    monkeypatch.setitem(sys.modules, "torch", None)
+    assert status._gpu_memory_bytes(device) is None
 
 
 def test_sync_latency_excludes_precomputed_actions(monkeypatch, clock):
