@@ -218,6 +218,145 @@ def test_is_calibrated(dummy_motors, dummy_calibration):
     assert bus.is_calibrated
 
 
+def test_write_calibration_verifies_each_motor_before_writing_next_one(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors)
+    events = []
+    write = bus.write
+    read = bus.read
+
+    def record_write(register, motor, value, **kwargs):
+        events.append(("write", motor, register))
+        write(register, motor, value, **kwargs)
+
+    def record_read(register, motor, **kwargs):
+        events.append(("read", motor, register))
+        return read(register, motor, **kwargs)
+
+    with (
+        patch.object(bus, "write", side_effect=record_write),
+        patch.object(bus, "read", side_effect=record_read),
+        patch("lerobot.motors.motors_bus.time.sleep"),
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    expected_events = []
+    for motor in dummy_motors:
+        for register in ("Homing_Offset", "Min_Position_Limit", "Max_Position_Limit"):
+            expected_events.append(("write", motor, register))
+        for register in ("Homing_Offset", "Min_Position_Limit", "Max_Position_Limit"):
+            expected_events.append(("read", motor, register))
+
+    # The turn count reset (Operating_Mode writes) comes after every motor is verified.
+    assert events[: len(expected_events)] == expected_events
+    assert {event[2] for event in events[len(expected_events) :]} == {"Operating_Mode"}
+    assert bus.calibration == dummy_calibration
+    for calibration in dummy_calibration.values():
+        assert written(bus, "Homing_Offset", calibration.id) == calibration.homing_offset
+        assert written(bus, "Min_Position_Limit", calibration.id) == calibration.range_min
+        assert written(bus, "Max_Position_Limit", calibration.id) == calibration.range_max
+
+
+def test_write_calibration_stops_at_read_back_mismatch(dummy_motors, dummy_calibration):
+    previous_calibration = dummy_calibration.copy()
+    bus = make_bus(dummy_motors, previous_calibration)
+    read_register = bus._bus.read_register_with_error
+
+    def mismatched_read(motor_id, register, retries=0):
+        value, status = read_register(motor_id, register, retries)
+        if motor_id == 1 and register == "max_position_limit":
+            return 4095, status
+        return value, status
+
+    with (
+        patch.object(bus._bus, "read_register_with_error", side_effect=mismatched_read),
+        pytest.raises(RuntimeError, match=r"dummy_1.*Max_Position_Limit.*1335.*4095"),
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    assert [motor_id for motor_id, _, _ in bus._bus.writes] == [1, 1, 1]
+    assert bus.calibration is previous_calibration
+
+
+def test_write_calibration_reports_partial_write_without_replacing_error(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors)
+    seed(bus, "Homing_Offset", 1, 0)
+    seed(bus, "Min_Position_Limit", 1, 10)
+    seed(bus, "Max_Position_Limit", 1, 4000)
+    write_register = bus._bus.write_register_with_error
+
+    def fail_on_minimum(motor_id, register, value, retries=0):
+        if motor_id == 1 and register == "min_position_limit":
+            raise RuntimeError("Timeout error")
+        return write_register(motor_id, register, value, retries)
+
+    with (
+        patch.object(bus._bus, "write_register_with_error", side_effect=fail_on_minimum),
+        pytest.raises(ConnectionError, match="Timeout error") as exc_info,
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    assert bus._bus.stored(1, "homing_offset") == dummy_calibration["dummy_1"].homing_offset
+    assert bus._bus.stored(1, "min_position_limit") == 10
+    assert bus._bus.stored(1, "max_position_limit") == 4000
+    assert bus._bus.reads == [
+        (1, "homing_offset"),
+        (1, "min_position_limit"),
+        (1, "max_position_limit"),
+    ]
+    assert len(bus._bus.writes) == 1
+    assert "may be partially applied" in " ".join(exc_info.value.__notes__)
+    assert "Min_Position_Limit" in " ".join(exc_info.value.__notes__)
+    assert bus.calibration == {}
+
+
+def test_write_calibration_reports_ack_loss_when_read_back_matches(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors)
+    write_register = bus._bus.write_register_with_error
+
+    def lose_max_ack(motor_id, register, value, retries=0):
+        result = write_register(motor_id, register, value, retries)
+        if motor_id == 1 and register == "max_position_limit":
+            raise RuntimeError("Timeout error")
+        return result
+
+    with (
+        patch.object(bus._bus, "write_register_with_error", side_effect=lose_max_ack),
+        pytest.raises(ConnectionError, match="Timeout error") as exc_info,
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    assert bus._bus.stored(1, "max_position_limit") == dummy_calibration["dummy_1"].range_max
+    assert all(motor_id == 1 for motor_id, _, _ in bus._bus.writes)
+    assert "match the requested values despite the write error" in " ".join(exc_info.value.__notes__)
+    assert bus.calibration == {}
+
+
+def test_write_calibration_notes_when_read_back_after_write_failure_fails(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors)
+    write_register = bus._bus.write_register_with_error
+    read_register = bus._bus.read_register_with_error
+
+    def fail_write(motor_id, register, value, retries=0):
+        if motor_id == 1 and register == "min_position_limit":
+            raise RuntimeError("write timeout")
+        return write_register(motor_id, register, value, retries)
+
+    def fail_read(motor_id, register, retries=0):
+        if motor_id == 1 and register == "homing_offset":
+            raise RuntimeError("read timeout")
+        return read_register(motor_id, register, retries)
+
+    with (
+        patch.object(bus._bus, "write_register_with_error", side_effect=fail_write),
+        patch.object(bus._bus, "read_register_with_error", side_effect=fail_read),
+        pytest.raises(ConnectionError, match="write timeout") as exc_info,
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    assert "could not be verified" in " ".join(exc_info.value.__notes__)
+    assert bus.calibration == {}
+
+
 def test_a_drive_mode_kept_in_software_does_not_count(dummy_motors, dummy_calibration):
     """A Feetech has no Drive_Mode register: the drive mode lives in the calibration alone."""
     calibration = {**dummy_calibration}
@@ -364,3 +503,127 @@ def test_scs_has_no_homing_offset():
     assert all(register != "homing_offset" for _, register, _ in bus._bus.writes)
     assert all(register != "homing_offset" for _, register in bus._bus.reads)
     assert all(register != "homing_offset" for _, register in bus._bus.sync_reads)
+
+
+def mode_writes(bus: SerialMotorsBus) -> list[tuple[int, int]]:
+    return [
+        (motor_id, value) for motor_id, register, value in bus._bus.writes if register == "operating_mode"
+    ]
+
+
+def test_write_calibration_zeroes_the_turn_count_once_every_motor_is_verified(
+    dummy_motors, dummy_calibration
+):
+    """A joint moved by hand through the encoder's zero during the calibration leaves the
+    STS3215 counting a turn: once the registers are checked, with the torque read first, each
+    motor is switched to velocity mode and, after a dwell, back to the mode it had."""
+    bus = make_bus(dummy_motors)
+    seed(bus, "Operating_Mode", 3, 3)  # dummy_3 is in step mode and gets it back
+    events = []
+    write_register = bus._bus.write_register_with_error
+    read_register = bus._bus.read_register_with_error
+    sync_read = bus._bus.sync_read_register_with_error
+
+    def record(name, call):
+        def recorded(*args, **kwargs):
+            events.append(name)
+            return call(*args, **kwargs)
+
+        return recorded
+
+    with (
+        patch.object(bus._bus, "write_register_with_error", side_effect=record("write", write_register)),
+        patch.object(bus._bus, "read_register_with_error", side_effect=record("read", read_register)),
+        patch.object(bus._bus, "sync_read_register_with_error", side_effect=record("sync_read", sync_read)),
+        patch("lerobot.motors.motors_bus.time.sleep", side_effect=lambda s: events.append(("sleep", s))),
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    per_motor = ["write"] * 3 + ["read"] * 3
+    dwell = ("sleep", SerialMotorsBus._TURN_COUNT_RESET_DWELL_S)
+    assert events == per_motor * 3 + ["sync_read"] * 2 + ["write"] * 3 + [dwell] + ["write"] * 3 + [
+        "sync_read"
+    ]
+    assert bus._bus.sync_reads == [
+        ([1, 2, 3], "torque_enable"),
+        ([1, 2, 3], "operating_mode"),
+        ([1, 2, 3], "operating_mode"),
+    ]
+    assert mode_writes(bus) == [(1, 1), (2, 1), (3, 1), (1, 0), (2, 0), (3, 3)]
+    assert bus.calibration == dummy_calibration
+
+
+def test_write_calibration_refuses_to_zero_a_turn_count_with_the_torque_on(dummy_motors, dummy_calibration):
+    bus = make_bus(dummy_motors)
+    seed(bus, "Torque_Enable", 2, 1)
+
+    with pytest.raises(RuntimeError, match=r"dummy_2.*torque is on"):
+        bus.write_calibration(dummy_calibration)
+
+    assert mode_writes(bus) == []
+    assert bus.calibration == {}
+
+
+def test_a_turn_count_reset_that_fails_fails_the_calibration(dummy_motors, dummy_calibration):
+    previous_calibration = dummy_calibration.copy()
+    bus = make_bus(dummy_motors, previous_calibration)
+    write_register = bus._bus.write_register_with_error
+
+    def silent_on_mode(motor_id, register, value, retries=0):
+        if register == "operating_mode" and motor_id == 2:
+            raise RuntimeError("Timeout error")
+        return write_register(motor_id, register, value, retries)
+
+    with (
+        patch.object(bus._bus, "write_register_with_error", side_effect=silent_on_mode),
+        pytest.raises(ConnectionError, match=r"'Operating_Mode' of motor ID 2.*Timeout error"),
+    ):
+        bus.write_calibration(dummy_calibration)
+
+    assert bus.calibration is previous_calibration
+
+
+def test_a_turn_count_reset_that_does_not_restore_the_mode_is_reported(dummy_motors):
+    bus = make_bus(dummy_motors)
+    write_register = bus._bus.write_register_with_error
+
+    def stuck_in_velocity(motor_id, register, value, retries=0):
+        status = write_register(motor_id, register, value, retries)
+        if register == "operating_mode" and motor_id == 2:
+            bus._bus.seed(2, "operating_mode", 1)
+        return status
+
+    with (
+        patch.object(bus._bus, "write_register_with_error", side_effect=stuck_in_velocity),
+        patch("lerobot.motors.motors_bus.time.sleep"),
+        pytest.raises(RuntimeError, match=r"not restored.*'dummy_2': \(0, 1\)"),
+    ):
+        bus.reset_turn_count()
+
+
+def test_only_the_feetech_sts_motors_get_their_turn_count_zeroed():
+    """A Dynamixel keeps no turn count in position mode, and the Feetech SCS0009 has no
+    operating modes: both are left out of the reset, and refused when asked for by name."""
+    motors = {
+        "sts": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100),
+        "xl": Motor(2, "xl330-m288", MotorNormMode.RANGE_M100_100),
+    }
+    bus = make_bus(motors)
+    calibration = {
+        motor: MotorCalibration(id=m.id, drive_mode=0, homing_offset=0, range_min=100, range_max=4000)
+        for motor, m in motors.items()
+    }
+
+    with patch("lerobot.motors.motors_bus.time.sleep"):
+        bus.write_calibration(calibration)
+        assert mode_writes(bus) == [(1, 1), (1, 0)]
+        assert bus.reset_turn_count() == ["sts"]
+    with pytest.raises(ValueError, match=r"\['xl'\] keep no turn count"):
+        bus.reset_turn_count("xl")
+    assert mode_writes(bus) == [(1, 1), (1, 0)] * 2
+
+    scs = make_bus({"scs": Motor(3, "scs0009", MotorNormMode.RANGE_M100_100)})
+    assert scs.reset_turn_count() == []
+    with pytest.raises(ValueError, match=r"\['scs'\] keep no turn count"):
+        scs.reset_turn_count("scs")
+    assert scs._bus.writes == []
