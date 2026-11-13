@@ -112,6 +112,160 @@ else:
 logger = logging.getLogger(__name__)
 
 
+def _warn_on_visual_resolution_mismatch(
+    policy_config: Any,
+    env_config: Any,
+    rename_map: dict[str, str] | None = None,
+) -> bool:
+    """Warn when environment visual feature resolutions differ from policy input features.
+
+    Evaluating a policy on observations at a different resolution than its declared policy
+    input-feature resolution can induce visual domain shift (scale/aspect-ratio differences)
+    even when downstream image resizing or padding succeeds without error.
+
+    Initial issue report: #5185 (jdubray); early investigation: akushonkamen & sattyamjjain.
+    """
+    if policy_config is None or env_config is None:
+        return False
+
+    policy_input_features = getattr(policy_config, "input_features", None)
+    env_features = getattr(env_config, "features", None)
+    if not policy_input_features or not env_features:
+        return False
+
+    # Extract policy camera dimensions (H, W) from (C, H, W) or (H, W)
+    policy_cameras: dict[str, tuple[int, int]] = {}
+    for key, ft in policy_input_features.items():
+        ft_type = getattr(ft, "type", None)
+        if ft_type is FeatureType.VISUAL and hasattr(ft, "shape"):
+            shape = ft.shape
+            if len(shape) == 3 and shape[1] > 0 and shape[2] > 0:
+                policy_cameras[key] = (int(shape[1]), int(shape[2]))
+            elif len(shape) == 2 and shape[0] > 0 and shape[1] > 0:
+                policy_cameras[key] = (int(shape[0]), int(shape[1]))
+        elif ft_type is None and hasattr(ft, "shape"):
+            shape = ft.shape
+            if len(shape) == 3 and shape[0] in (1, 3, 4) and shape[1] > 0 and shape[2] > 0:
+                policy_cameras[key] = (int(shape[1]), int(shape[2]))
+
+    # Extract env camera dimensions (H, W) from (H, W, C) or (H, W)
+    # and map keys to policy namespace matching policies/factory.py:
+    # features_map is applied first, then rename_map is applied to those mapped keys.
+    features_map = getattr(env_config, "features_map", None) or {}
+    rename_mapping = rename_map or {}
+
+    # Map effective_key -> list of (env_h, env_w, env_key) to detect conflicting mappings
+    mapped_env_cameras: dict[str, list[tuple[int, int, str]]] = defaultdict(list)
+    for env_key, ft in env_features.items():
+        ft_type = getattr(ft, "type", None)
+        res: tuple[int, int] | None = None
+        if ft_type is FeatureType.VISUAL and hasattr(ft, "shape"):
+            shape = ft.shape
+            if len(shape) in (2, 3) and shape[0] > 0 and shape[1] > 0:
+                res = (int(shape[0]), int(shape[1]))
+        elif ft_type is None and hasattr(ft, "shape"):
+            shape = ft.shape
+            if len(shape) == 3 and shape[2] in (1, 3, 4) and shape[0] > 0 and shape[1] > 0:
+                res = (int(shape[0]), int(shape[1]))
+
+        if res is not None:
+            mapped_key = features_map.get(env_key, env_key)
+            effective_key = rename_mapping.get(mapped_key, mapped_key)
+            mapped_env_cameras[effective_key].append((res[0], res[1], env_key))
+
+    if not policy_cameras or not mapped_env_cameras:
+        return False
+
+    # Check for conflicting mappings (multiple env cameras mapped to the same effective key)
+    conflicts: list[str] = []
+    for eff_key, entries in mapped_env_cameras.items():
+        if len(entries) > 1:
+            sources = ", ".join(f"'{e[2]}'" for e in entries)
+            conflicts.append(f"multiple env cameras ({sources}) map to '{eff_key}'")
+
+    if conflicts:
+        logger.warning(
+            "Conflicting camera mapping detected in evaluation configuration: "
+            f"{'; '.join(conflicts)}. Camera correspondence is ambiguous."
+        )
+
+    common_keys = sorted(set(policy_cameras.keys()) & set(mapped_env_cameras.keys()))
+    unmapped_env_keys = sorted(set(mapped_env_cameras.keys()) - set(policy_cameras.keys()))
+    unmapped_pol_keys = sorted(set(policy_cameras.keys()) - set(mapped_env_cameras.keys()))
+
+    mismatches: list[tuple[str, str, tuple[int, int], tuple[int, int]]] = []
+    for key in common_keys:
+        entries = mapped_env_cameras[key]
+        if len(entries) == 1:
+            env_h, env_w, env_key = entries[0]
+            pol_h, pol_w = policy_cameras[key]
+            if (env_h, env_w) != (pol_h, pol_w):
+                mismatches.append((key, env_key, (env_h, env_w), (pol_h, pol_w)))
+
+    # Conservative handling of unmapped / ambiguous camera identities:
+    # Never assume cameras correspond merely because their resolution sets match,
+    # and do not manufacture synthetic per-camera comparisons when correspondence is unknown.
+    unresolved_diagnostic: str | None = None
+    if not common_keys:
+        env_res_set = {(e[0], e[1]) for entries in mapped_env_cameras.values() for e in entries}
+        pol_res_set = set(policy_cameras.values())
+        env_res_str = ", ".join(f"{h}x{w}" for h, w in sorted(env_res_set))
+        pol_res_str = ", ".join(f"{h}x{w}" for h, w in sorted(pol_res_set))
+        unresolved_diagnostic = (
+            "Visual camera keys could not be aligned between environment and policy via "
+            "features_map or rename_map (camera identity is unresolved). Environment rendered "
+            f"resolution(s): [{env_res_str}]; declared policy input-feature resolution(s): [{pol_res_str}]. "
+            "Camera correspondence cannot be verified by key."
+        )
+    elif unmapped_env_keys or unmapped_pol_keys:
+        unresolved_diagnostic = (
+            f"Partial camera mapping: unmapped environment key(s) {unmapped_env_keys} "
+            f"and unmapped policy key(s) {unmapped_pol_keys}."
+        )
+
+    if not mismatches and not unresolved_diagnostic:
+        return False
+
+    suggestion = ""
+    if mismatches and hasattr(env_config, "observation_height") and hasattr(env_config, "observation_width"):
+        expected_resolutions = sorted({pol_res for _, _, _, pol_res in mismatches if pol_res != (-1, -1)})
+        if len(expected_resolutions) == 1:
+            exp_h, exp_w = expected_resolutions[0]
+            suggestion = (
+                f" Consider setting the environment resolution to match the policy: "
+                f"`--env.observation_height={exp_h} --env.observation_width={exp_w}`."
+            )
+        elif len(expected_resolutions) > 1:
+            res_str = ", ".join(f"{h}x{w}" for h, w in expected_resolutions)
+            suggestion = (
+                f" Multiple distinct policy target resolutions are required ({res_str}); "
+                "no single global environment resolution can align all cameras simultaneously."
+            )
+
+    parts: list[str] = []
+    if mismatches:
+        mismatch_details = [
+            f"camera '{key}' (env '{env_key}'): rendered {env_res[0]}x{env_res[1]} vs declared policy input-feature resolution {pol_res[0]}x{pol_res[1]}"
+            for key, env_key, env_res, pol_res in mismatches
+        ]
+        parts.append(
+            "Environment visual feature resolution(s) differ from declared policy input-feature resolution: "
+            f"{', '.join(mismatch_details)}. Evaluating a policy on observations at a different resolution "
+            "than its declared policy input-feature resolution may induce visual domain shift (e.g. scale or aspect-ratio changes) "
+            "even if downstream image resizing or padding is active."
+        )
+    if unresolved_diagnostic:
+        parts.append(unresolved_diagnostic)
+    if suggestion:
+        parts.append(suggestion.strip())
+    parts.append(
+        "Ignore this advisory if your policy pipeline intentionally resizes or crops from this environment resolution."
+    )
+
+    logger.warning(" ".join(parts))
+    return bool(mismatches)
+
+
 def _env_features_to_dataset_features(env_features: dict[str, PolicyFeature]) -> dict[str, dict[str, Any]]:
     """Convert EnvConfig.features to the dict format expected by LeRobotDataset.create()."""
     features: dict[str, dict[str, Any]] = {}
@@ -833,6 +987,8 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         torch.backends.cudnn.allow_tf32 = cfg.tf32
     set_seed(cfg.seed)
 
+    warned_mismatch = _warn_on_visual_resolution_mismatch(cfg.policy, cfg.env, cfg.rename_map)
+
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
 
     logging.info(f"Making environment (batch_size={cfg.eval.batch_size}, async={cfg.eval.use_async_envs}).")
@@ -869,6 +1025,10 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     )
 
     policy.eval()
+    # Deduplicate: if eval_main already diagnosed and warned about a visual resolution mismatch,
+    # suppress duplicate runtime warnings from prepare_images.
+    if warned_mismatch and hasattr(policy, "_warned_visual_resolution"):
+        policy._warned_visual_resolution = True
 
     # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
     preprocessor_overrides = {
