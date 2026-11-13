@@ -293,33 +293,60 @@ class DiT(ModelMixin, ConfigMixin):
         all_hidden_states = [hidden_states]
 
         # Process through transformer blocks
-        for idx, block in enumerate(self.transformer_blocks):
-            if idx % 2 == 1 and self.config.interleave_self_attention:
-                hidden_states = block(
-                    hidden_states,
-                    attention_mask=None,
-                    encoder_hidden_states=None,
-                    encoder_attention_mask=None,
-                    temb=temb,
-                )
-            else:
-                hidden_states = block(
-                    hidden_states,
-                    attention_mask=None,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=None,
-                    temb=temb,
-                )
+        for idx in range(len(self.transformer_blocks)):
+            hidden_states = self.run_block(idx, hidden_states, encoder_hidden_states, temb)
             all_hidden_states.append(hidden_states)
 
-        # Output processing
-        conditioning = temb
-        shift, scale = self.proj_out_1(F.silu(conditioning)).chunk(2, dim=1)
-        hidden_states = self.norm_out(hidden_states) * (1 + scale[:, None]) + shift[:, None]
         if return_all_hidden_states:
-            return self.proj_out_2(hidden_states), all_hidden_states
+            return self.output(hidden_states, temb), all_hidden_states
         else:
-            return self.proj_out_2(hidden_states)
+            return self.output(hidden_states, temb)
+
+    def run_block(
+        self,
+        idx: int,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor | None,
+        temb: torch.Tensor,
+        encoder_attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Block `idx`: self-attention on every other block when the config interleaves it, else cross-attention.
+
+        A cross-attention block passes `encoder_hidden_states` to its attention processor unchanged.
+        """
+        block = self.transformer_blocks[idx]
+        if idx % 2 == 1 and self.config.interleave_self_attention:
+            return block(
+                hidden_states,
+                attention_mask=None,
+                encoder_hidden_states=None,
+                encoder_attention_mask=None,
+                temb=temb,
+            )
+        return block(
+            hidden_states,
+            attention_mask=None,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_attention_mask,
+            temb=temb,
+        )
+
+    def encoder_masks(
+        self, image_mask: torch.Tensor | None, backbone_attention_mask: torch.Tensor | None
+    ) -> list[torch.Tensor | None]:
+        """For each block, the encoder tokens it attends to if it cross-attends: those
+        `backbone_attention_mask` keeps.
+
+        `forward` attends to every token, so the two agree when the mask keeps every token, as for one prompt
+        without padding. A caller that pads the tokens passes these masks to `run_block` to leave the padding out.
+        """
+        return [backbone_attention_mask] * len(self.transformer_blocks)
+
+    def output(self, hidden_states: torch.Tensor, temb: torch.Tensor) -> torch.Tensor:
+        """The blocks' last hidden states, normalized with the time conditioning and projected."""
+        shift, scale = self.proj_out_1(F.silu(temb)).chunk(2, dim=1)
+        hidden_states = self.norm_out(hidden_states) * (1 + scale[:, None]) + shift[:, None]
+        return self.proj_out_2(hidden_states)
 
 
 class AlternateVLDiT(DiT):
@@ -339,52 +366,37 @@ class AlternateVLDiT(DiT):
         image_mask: torch.Tensor | None = None,
         backbone_attention_mask: torch.Tensor | None = None,
     ):
-        if image_mask is None:
-            raise ValueError("image_mask is required for AlternateVLDiT.")
-        if backbone_attention_mask is None:
-            raise ValueError("backbone_attention_mask is required for AlternateVLDiT.")
+        masks = self.encoder_masks(image_mask, backbone_attention_mask)
 
         temb = self.timestep_encoder(timestep)
         hidden_states = hidden_states.contiguous()
         encoder_hidden_states = encoder_hidden_states.contiguous()
 
-        image_attention_mask = image_mask & backbone_attention_mask
-        non_image_attention_mask = (~image_mask) & backbone_attention_mask
-
         all_hidden_states = [hidden_states]
-        if not self.config.interleave_self_attention:
-            raise ValueError("AlternateVLDiT requires interleave_self_attention=True.")
-
-        for idx, block in enumerate(self.transformer_blocks):
-            if idx % 2 == 1:
-                hidden_states = block(
-                    hidden_states,
-                    attention_mask=None,
-                    encoder_hidden_states=None,
-                    encoder_attention_mask=None,
-                    temb=temb,
-                )
-            else:
-                curr_encoder_attention_mask = (
-                    non_image_attention_mask
-                    if idx % (2 * self.attend_text_every_n_blocks) == 0
-                    else image_attention_mask
-                )
-                hidden_states = block(
-                    hidden_states,
-                    attention_mask=None,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=curr_encoder_attention_mask,
-                    temb=temb,
-                )
+        for idx in range(len(self.transformer_blocks)):
+            hidden_states = self.run_block(idx, hidden_states, encoder_hidden_states, temb, masks[idx])
             all_hidden_states.append(hidden_states)
 
-        conditioning = temb
-        shift, scale = self.proj_out_1(F.silu(conditioning)).chunk(2, dim=1)
-        hidden_states = self.norm_out(hidden_states) * (1 + scale[:, None]) + shift[:, None]
         if return_all_hidden_states:
-            return self.proj_out_2(hidden_states), all_hidden_states
-        return self.proj_out_2(hidden_states)
+            return self.output(hidden_states, temb), all_hidden_states
+        return self.output(hidden_states, temb)
+
+    def encoder_masks(
+        self, image_mask: torch.Tensor | None, backbone_attention_mask: torch.Tensor | None
+    ) -> list[torch.Tensor | None]:
+        """Of the tokens `backbone_attention_mask` keeps, the text ones on every
+        `attend_text_every_n_blocks`-th cross-attention block, else the image ones."""
+        # Here rather than in forward, as a caller running the blocks one by one takes its masks from here.
+        if not self.config.interleave_self_attention:
+            raise ValueError("AlternateVLDiT requires interleave_self_attention=True.")
+        if image_mask is None:
+            raise ValueError("image_mask is required for AlternateVLDiT.")
+        if backbone_attention_mask is None:
+            raise ValueError("backbone_attention_mask is required for AlternateVLDiT.")
+        # Made once for every block: a forward per denoising step would otherwise rebuild them per block.
+        text, image = ~image_mask & backbone_attention_mask, image_mask & backbone_attention_mask
+        period = 2 * self.attend_text_every_n_blocks
+        return [text if idx % period == 0 else image for idx in range(len(self.transformer_blocks))]
 
 
 class SelfAttentionTransformer(ModelMixin, ConfigMixin):
@@ -440,14 +452,16 @@ class SelfAttentionTransformer(ModelMixin, ConfigMixin):
         self,
         hidden_states: torch.Tensor,  # Shape: (B, T, D)
         return_all_hidden_states: bool = False,
+        attention_mask: torch.Tensor | None = None,
     ):
+        """`attention_mask` (B, T) is true at the tokens to attend to; by default every token is."""
         # Process through transformer blocks - single pass through the blocks
         hidden_states = hidden_states.contiguous()
         all_hidden_states = [hidden_states]
 
         # Process through transformer blocks
         for _idx, block in enumerate(self.transformer_blocks):
-            hidden_states = block(hidden_states)
+            hidden_states = block(hidden_states, attention_mask=attention_mask)
             all_hidden_states.append(hidden_states)
 
         if return_all_hidden_states:

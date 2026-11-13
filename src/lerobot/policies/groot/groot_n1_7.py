@@ -19,12 +19,14 @@ from __future__ import annotations
 import logging
 from contextlib import suppress
 from copy import deepcopy
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from huggingface_hub import snapshot_download
-from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
+from huggingface_hub.errors import HfHubHTTPError, HFValidationError, RepositoryNotFoundError
+from huggingface_hub.utils import httpx
 from torch import nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -244,8 +246,17 @@ class MultiEmbodimentActionEncoder(nn.Module):
         if timesteps.dim() != 1 or timesteps.shape[0] != batch_size:
             raise ValueError("Expected `timesteps` to have shape (B,).")
         timesteps = timesteps.unsqueeze(1).expand(-1, horizon)
+        return self.encode(actions, self.pos_encoding(timesteps), cat_ids)
+
+    def encode(
+        self, actions: torch.Tensor, time_encoding: torch.Tensor, cat_ids: torch.Tensor
+    ) -> torch.Tensor:
+        """The actions `(B, T, action_dim)` encoded with their sinusoidal time encoding, `(B, T, D)` or `(1, 1, D)`."""
+        # A (B, D) encoding would broadcast over the horizon instead of the batch.
+        if time_encoding.dim() != 3:
+            raise ValueError("Expected `time_encoding` to have shape (B, T, D) or (1, 1, D).")
         action_emb = self.W1(actions, cat_ids)
-        time_emb = self.pos_encoding(timesteps).to(dtype=action_emb.dtype)
+        time_emb = time_encoding.expand(*action_emb.shape[:2], -1).to(dtype=action_emb.dtype)
         x = swish(self.W2(torch.cat([action_emb, time_emb], dim=-1), cat_ids))
         return self.W3(x, cat_ids)
 
@@ -359,7 +370,11 @@ class Qwen3Backbone(nn.Module):
         if _is_cosmos_reason2_backbone(model_name):
             backbone_config = _cosmos_reason2_qwen3_vl_config()
         else:
-            backbone_config = AutoConfig.from_pretrained(model_name, **config_kwargs)
+            # Qwen3-VL is built into transformers, so reading the config of a backbone that a checkpoint names
+            # runs no code from that folder.
+            backbone_config = AutoConfig.from_pretrained(
+                model_name, **{**config_kwargs, "trust_remote_code": False}
+            )
         return Qwen3VLForConditionalGeneration._from_config(backbone_config, **model_kwargs)
 
     def prepare_input(self, batch: dict[str, Any]) -> BatchFeature:
@@ -911,7 +926,7 @@ class GR00TN17(PreTrainedModel):
         return next(iter(self.parameters())).dtype
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str | None, **kwargs):
         tune_visual = kwargs.pop("tune_visual", True)
         tune_llm = kwargs.pop("tune_llm", False)
         tune_projector = kwargs.pop("tune_projector", True)
@@ -925,17 +940,24 @@ class GR00TN17(PreTrainedModel):
             if key in kwargs:
                 transformers_loading_kwargs.setdefault(key, kwargs[key])
 
-        try:
-            local_model_path = snapshot_download(
+        local_model_path = pretrained_model_name_or_path
+        # None means `config` and `state_dict` are passed in, as transformers allows, so there is nothing to download.
+        if pretrained_model_name_or_path is not None:
+            download = partial(
+                snapshot_download,
                 pretrained_model_name_or_path,
                 repo_type="model",
                 revision=kwargs.get("revision"),
                 cache_dir=kwargs.get("cache_dir"),
-                local_files_only=kwargs.get("local_files_only", False),
                 token=kwargs.get("token"),
             )
-        except (HFValidationError, RepositoryNotFoundError):
-            local_model_path = pretrained_model_name_or_path
+            try:
+                with suppress(HFValidationError, RepositoryNotFoundError):
+                    local_model_path = download(local_files_only=kwargs.get("local_files_only", False))
+            except (httpx.ConnectError, httpx.TimeoutException, HfHubHTTPError):
+                # For a commit, snapshot_download asks the Hub for the file list and, unlike for a branch,
+                # does not fall back to the cache when the Hub cannot be reached or answers with an error.
+                local_model_path = download(local_files_only=True)
 
         pretrained_model = super().from_pretrained(
             local_model_path,
@@ -943,17 +965,34 @@ class GR00TN17(PreTrainedModel):
             load_backbone_weights=load_backbone_weights,
             **kwargs,
         )
-        pretrained_model.backbone.set_trainable_parameters(
-            tune_visual=tune_visual,
+        _set_trainable_parameters(
+            pretrained_model,
             tune_llm=tune_llm,
-            tune_top_llm_layers=pretrained_model.config.tune_top_llm_layers,
-        )
-        pretrained_model.action_head.set_trainable_parameters(
+            tune_visual=tune_visual,
             tune_projector=tune_projector,
             tune_diffusion_model=tune_diffusion_model,
             tune_vlln=tune_vlln,
         )
         return pretrained_model
+
+
+def _set_trainable_parameters(
+    model: GR00TN17,
+    *,
+    tune_llm: bool,
+    tune_visual: bool,
+    tune_projector: bool,
+    tune_diffusion_model: bool,
+    tune_vlln: bool,
+) -> None:
+    """Set which parts of the backbone and the action head of `model` train, with `tune_top_llm_layers` from its
+    config."""
+    model.backbone.set_trainable_parameters(
+        tune_visual=tune_visual, tune_llm=tune_llm, tune_top_llm_layers=model.config.tune_top_llm_layers
+    )
+    model.action_head.set_trainable_parameters(
+        tune_projector=tune_projector, tune_diffusion_model=tune_diffusion_model, tune_vlln=tune_vlln
+    )
 
 
 def _register_with_transformers() -> None:
