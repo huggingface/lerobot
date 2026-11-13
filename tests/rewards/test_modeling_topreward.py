@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -177,11 +178,6 @@ def test_topreward_compute_log_probability_returns_one_scalar_per_sample(monkeyp
     assert model.model._param.grad is not None
 
 
-def test_topreward_config_rejects_finite_success_threshold():
-    with pytest.raises(ValueError, match="compute_log_probability"):
-        TOPRewardConfig(device="cpu", success_threshold=0.0)
-
-
 @skip_if_package_missing("transformers")
 def test_topreward_compute_log_probability_errors_when_inputs_missing(monkeypatch):
     from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
@@ -247,6 +243,7 @@ def test_topreward_save_pretrained_writes_only_config_json(monkeypatch, tmp_path
 
     assert (tmp_path / CONFIG_NAME).exists()
     assert not (tmp_path / SAFETENSORS_SINGLE_FILE).exists()
+    assert "success_threshold" not in json.loads((tmp_path / CONFIG_NAME).read_text())
 
 
 @skip_if_package_missing("transformers")
