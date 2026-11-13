@@ -16,6 +16,7 @@
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -394,6 +395,15 @@ class SingleStreamBlock(nn.Module):
         return ctx + mod_gate_ctx * ctx_out, x + mod_gate_x * x_out
 
 
+class TextStream(NamedTuple):
+    """The DiT's text tokens after the early text blocks, their position embedding and their modulations."""
+
+    tokens: Tensor
+    pe: Tensor
+    single_mod: tuple[Tensor, ...]
+    late_mod: tuple[Tensor, ...] | None
+
+
 class JointSingleSeq(nn.Module):
     def __init__(self, params: JointSingleSeqParams = JointSingleSeqParams()):
         super().__init__()
@@ -566,6 +576,24 @@ class JointSingleSeq(nn.Module):
             vec = self.time_in(timestep_embedding(ts, 256, out_dtype=weight_dtype))
         return vec.to(out_dtype)
 
+    def text_stream(self, ctx: Tensor, ctx_ids: Tensor, vector: Tensor, timesteps_ctx: Tensor) -> TextStream:
+        """The text half of the DiT, which reads only ``ctx``, ``ctx_ids``, ``vector`` and ``timesteps_ctx``.
+
+        Sampling holds those four fixed for a chunk, so it computes this once per caption and passes it to every
+        step as ``forward``'s ``text_stream``.
+        """
+        ts_ctx = rearrange(timesteps_ctx, "b t -> (b t)")
+        vec_ctx = rearrange(self.embed_timesteps(ts_ctx, ctx.dtype), "(b t) d -> b t d", b=ctx.shape[0])
+        vec_ctx = vec_ctx + self.vector_in(vector)[:, None, :]
+        early_mod, _ = self.early_stream_modulations["txt"](vec_ctx)
+        single_mod, _ = self.single_stream_modulations["txt"](vec_ctx)
+        late_mod = self.late_stream_modulations["txt"](vec_ctx)[0] if self.depth_late_blocks > 0 else None
+        tokens = self.txt_in(ctx)
+        pe = self.pe_embedder(ctx_ids)
+        for block in self.txt_mode_blocks:
+            tokens = self._run_block(block, tokens, pe, early_mod)
+        return TextStream(tokens, pe, single_mod, late_mod)
+
     def forward(
         self,
         ctx: Tensor,
@@ -574,8 +602,10 @@ class JointSingleSeq(nn.Module):
         timesteps_ctx: Tensor,
         pag_single_layers: list[int] | None = None,
         pag_strength: float = 1.0,
+        text_stream: TextStream | None = None,
         **kwargs: Tensor,
     ) -> dict[str, Tensor]:
+        """``text_stream``, when given, is ``text_stream(ctx, ctx_ids, vector, timesteps_ctx)``; it is not recomputed."""
         assert vector.ndim == 2
         batch_size = ctx.shape[0]
 
@@ -621,13 +651,13 @@ class JointSingleSeq(nn.Module):
         for k in all_mods:
             ts = rearrange(ts_by_mod[k], "b t -> (b t)")
             vec_by_mod[k] = rearrange(self.embed_timesteps(ts, dtype), "(b t) d -> b t d", b=batch_size)
-        ts_ctx = rearrange(timesteps_ctx, "b t -> (b t)")
-        vec_ctx = rearrange(self.embed_timesteps(ts_ctx, dtype), "(b t) d -> b t d", b=batch_size)
+        if text_stream is None:
+            text_stream = self.text_stream(ctx, ctx_ids, vector, timesteps_ctx)
+        txt, pe_ctx, single_txt_mod, late_txt_mod = text_stream
 
         vector_emb = self.vector_in(vector)
         for k in all_mods:
             vec_by_mod[k] = vec_by_mod[k] + vector_emb[:, None, :]
-        vec_ctx = vec_ctx + vector_emb[:, None, :]
 
         early_content_mods: dict[str, tuple] = {}
         for key in self.early_stream_modulations:
@@ -635,7 +665,6 @@ class JointSingleSeq(nn.Module):
                 continue
             mod, _ = self.early_stream_modulations[key](vec_by_mod[key])
             early_content_mods[key] = mod
-        early_txt_mod, _ = self.early_stream_modulations["txt"](vec_ctx)
 
         single_content_mods: dict[str, list] = {}
         for key in self.single_stream_modulations:
@@ -643,7 +672,6 @@ class JointSingleSeq(nn.Module):
                 continue
             mod, _ = self.single_stream_modulations[key](vec_by_mod[key])
             single_content_mods[key] = list(mod)
-        single_txt_mod, _ = self.single_stream_modulations["txt"](vec_ctx)
 
         if self.depth_late_blocks > 0:
             late_content_mods: dict[str, tuple] = {}
@@ -652,20 +680,16 @@ class JointSingleSeq(nn.Module):
                     continue
                 mod, _ = self.late_stream_modulations[key](vec_by_mod[key])
                 late_content_mods[key] = mod
-            late_txt_mod, _ = self.late_stream_modulations["txt"](vec_ctx)
 
         content_by_mod = {k: self.emb_in[k](x_by_mod[k]) for k in all_mods}
-        txt = self.txt_in(ctx)
 
         pe_by_mod = {k: self.pe_embedder(ids_by_mod[k]) for k in all_mods}
-        pe_ctx = self.pe_embedder(ctx_ids)
 
         for d in range(self.depth):
             for m in all_mods:
                 content_by_mod[m] = self._run_block(
                     self.content_mode_blocks[m][d], content_by_mod[m], pe_by_mod[m], early_content_mods[m]
                 )
-            txt = self._run_block(self.txt_mode_blocks[d], txt, pe_ctx, early_txt_mod)
 
         img = torch.cat([content_by_mod[k] for k in active], dim=1)
         content_mod = tuple(torch.cat([single_content_mods[k][i] for k in active], dim=1) for i in range(3))

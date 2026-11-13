@@ -19,7 +19,7 @@ import math
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -31,49 +31,23 @@ import torch.nn.functional as F  # noqa: N812
 from safetensors.torch import load_file
 from torch import Tensor
 
-from lerobot.utils.import_utils import _natten_available, require_package
+from lerobot.utils.import_utils import _natten_available
 
 from ..utils import resolve_weights
+from .neighborhood import neighborhood_attention
 from .positional import prc_vid, scatter_ids, times_to_ids
 
 if TYPE_CHECKING or _natten_available:
-    from natten import backends as nb
     from natten.functional import na2d, na3d
 
 logger = logging.getLogger(__name__)
 
 _norm_layer = partial(nn.LayerNorm, eps=1e-5)
 
-# NATTEN neighborhood-attention backend, resolved at first use per tensor
-# layout (2D/3D). Prebuilt NATTEN wheels only carry fused CUTLASS kernels for
-# some GPU architectures, so the fastest supported backend is probed at
-# runtime: blackwell (SM100) > hopper (SM90) > generic CUTLASS > flex-attention
-# (pure torch, runs everywhere at a speed/memory cost). Set $F3_NATTEN_BACKEND
-# (blackwell-fna | hopper-fna | cutlass-fna | flex-fna) to override.
+# Natten3D hands this to the kernels' own `backend` argument: NATTEN reads `attention_kwargs` only when it
+# falls back to plain attention. Without NATTEN, and for tensors not on CUDA, the plain PyTorch attention runs
+# instead and ignores it.
 _NATTEN_BACKEND_ENV = "F3_NATTEN_BACKEND"
-_PERSISTENT_KERNEL_BACKENDS = ("blackwell-fna", "hopper-fna")
-_natten_backends: dict[int, str] = {}
-
-
-def _natten_attention_kwargs(q: Tensor, k: Tensor, v: Tensor) -> dict:
-    backend = _natten_backends.get(q.ndim)
-    if backend is None:
-        backend = os.environ.get(_NATTEN_BACKEND_ENV)
-        if not backend:
-            if nb.can_run_cutlass_blackwell_fna(q, k, v):
-                backend = "blackwell-fna"
-            elif nb.can_run_cutlass_hopper_fna(q, k, v):
-                backend = "hopper-fna"
-            elif nb.can_run_cutlass_fna(q, k, v):
-                backend = "cutlass-fna"
-            else:
-                backend = "flex-fna"  # universal fallback, no compiled kernels needed
-        logger.info("natten backend (%dD tokens): %s", q.ndim - 3, backend)
-        _natten_backends[q.ndim] = backend
-    kwargs: dict[str, str | bool] = {"backend": backend}
-    if backend in _PERSISTENT_KERNEL_BACKENDS:
-        kwargs["run_persistent_kernel"] = True
-    return kwargs
 
 
 @dataclass
@@ -368,24 +342,25 @@ class Natten3D(nn.Module):
             k = self.k_norm(k).to(v.dtype)
         q, k = self.rope(q, k)
 
+        # A window cannot be longer than the input, so a single frame takes 2D attention.
         if t == 1:
-            q2, k2, v2 = q.squeeze(1), k.squeeze(1), v.squeeze(1)
-            out = na2d(
-                q2,
-                k2,
-                v2,
-                kernel_size=self.window_size[1:],
-                attention_kwargs=_natten_attention_kwargs(q2, k2, v2),
-            ).unsqueeze(1)
+            q, k, v = q.squeeze(1), k.squeeze(1), v.squeeze(1)
+            kernel_size, is_causal = self.window_size[1:], [False, False]
         else:
-            out = na3d(
+            kernel_size, is_causal = self.window_size, [self.causal, False, False]
+        # NATTEN's fused kernels need CUDA. On the CPU it uses flex attention, far slower than the plain path.
+        if _natten_available and q.is_cuda:
+            na = na2d if t == 1 else na3d
+            out = na(
                 q,
                 k,
                 v,
-                is_causal=[self.causal, False, False],
-                kernel_size=self.window_size,
-                attention_kwargs=_natten_attention_kwargs(q, k, v),
+                kernel_size=kernel_size,
+                is_causal=is_causal,
+                backend=os.environ.get(_NATTEN_BACKEND_ENV),
             )
+        else:
+            out = neighborhood_attention(q, k, v, kernel_size, is_causal)
         out = out.reshape(b, t, h, w, c)
         return self.proj(out)
 
@@ -944,14 +919,27 @@ from .runtime import random_init_  # noqa: E402
 VIDEO_VAE_WEIGHTS_FILENAME = "video_vae.safetensors"
 
 
+@cache
+def _note_attention(device_type: str) -> None:
+    """Warn once when CUDA tensors get the plain attention. Called by ``VideoVAE`` because a log call inside the
+    compiled attention blocks would split their graphs."""
+    if device_type == "cuda" and not _natten_available:
+        logger.warning(
+            "NATTEN is not installed, so the Video VAE computes its attention on CUDA in plain PyTorch, "
+            "which is much slower. See docs/source/flux3.mdx to install NATTEN."
+        )
+
+
 class VideoVAE:
-    """Frozen video VAE behind the encode/decode contract the packing code relies on.
+    """Frozen video VAE behind the encode/encode_task/decode contract the packing code relies on.
 
     ``encode`` takes ``(B, 3, T, H, W)`` in ``[-1, 1]`` with ``T == 1 (mod 4)`` and returns normalized
     latents ``(B, 96, 1 + (T - 1) // 4, H // 32, W // 32)``. Encoding is chunked (45-frame chunks,
-    1-frame overlap, first latent of each later chunk dropped); shorter clips are padded by repeating
-    the last frame and trimmed back. ``packing.encode_video`` pads with black to the chunk length
-    *before* calling this, so training and deployment see the same latent distribution.
+    1-frame overlap, first latent of each later chunk dropped). ``packing.encode_video`` pads training
+    clips with black to the chunk length before calling it; ``encode`` itself pads any other short clip
+    by repeating the last frame and trims the result back. ``encode_task`` encodes a clip as it is,
+    unchunked: the frame checkpoint's conditioning frame at inference, history snapshots, and the
+    task-LoRA future clip.
     """
 
     def __init__(self, model: "ViTNormInference"):
@@ -963,6 +951,7 @@ class VideoVAE:
 
     @torch.inference_mode()
     def encode(self, video: Tensor) -> Tensor:
+        _note_attention(video.device.type)
         num_frames = video.shape[2]
         if (num_frames - 1) % 4 != 0:
             raise ValueError(
@@ -978,11 +967,13 @@ class VideoVAE:
 
     @torch.inference_mode()
     def encode_task(self, video: Tensor) -> Tensor:
-        """Native task-LoRA encoding: independent snapshots/future clip, without DROID black padding."""
+        """Unchunked, unpadded encoding: single frames and the task-LoRA future clip."""
+        _note_attention(video.device.type)
         return self._model.encode(video, chunked_encode=False)
 
     @torch.inference_mode()
     def decode(self, latents: Tensor) -> Tensor:
+        _note_attention(latents.device.type)
         return self._model.decode(latents)
 
 
@@ -996,15 +987,9 @@ def load_video_vae(
 
     ``weights``: ``None`` -> random init (shapes only, for wiring tests), a ``.safetensors`` file, a
     distributed-checkpoint directory (``.metadata`` + ``__*.distcp``), or a Hub ``repo_id[:filename]``
-    (default filename ``video_vae.safetensors``). Requires NATTEN to construct the model.
+    (default filename ``video_vae.safetensors``). On CUDA its attention runs NATTEN's kernels when NATTEN is
+    installed, and otherwise (or on another device) the same neighborhood attention in plain PyTorch.
     """
-    try:
-        require_package("natten", "flux3")
-    except ImportError as e:
-        raise ImportError(
-            "The FLUX3 video VAE requires NATTEN. Install a torch/CUDA-matched wheel from "
-            "https://whl.natten.org; see docs/source/flux3.mdx."
-        ) from e
     params = ViTNormInferenceParams(
         use_compile=compile_model,
         compile_decoder=compile_model,

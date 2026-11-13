@@ -16,16 +16,17 @@
 ``transformer`` (the JointSingleSeq DiT, vendored), ``positional`` (4-axis position ids), ``packing``
 (observation -> tokens, noise, loss), ``sampling`` (Cosmos UniPC + Euler with two-pass CFG), ``wiring``
 (action modality on the shared action branch, fresh heads, checkpoint key remap), ``text_encoder``
-(Qwen3-VL-4B embedder) and ``video_vae`` (Video VAE; requires NATTEN).
+(Qwen3-VL-4B embedder), ``video_vae`` (Video VAE; NATTEN's kernels on CUDA when NATTEN is installed) and
+``neighborhood`` (the same attention in plain PyTorch).
 
-Policy code imports these components through this package. Missing NATTEN is reported
-when ``load_video_vae`` is called, so the other components remain importable without NATTEN.
+Policy code imports these components through this package. The policy only encodes with the Video VAE.
+Encoding also works without NATTEN and on the CPU: the attention then runs in plain PyTorch.
 """
 
 from . import packing, sampling
 from .positional import batched_prc_audio, batched_prc_vid, times_to_ids
 from .text_encoder import VEC_DIM, load_text_encoder, text_context
-from .transformer import JointSingleSeq, JointSingleSeqParams
+from .transformer import JointSingleSeq, JointSingleSeqParams, TextStream
 from .video_vae import load_video_vae
 from .wiring import (
     REQUIRED_CONTENT_STREAMS,
@@ -43,6 +44,7 @@ __all__ = [
     "VEC_DIM",
     "JointSingleSeq",
     "JointSingleSeqParams",
+    "TextStream",
     "action_dit_params",
     "batched_prc_audio",
     "batched_prc_vid",

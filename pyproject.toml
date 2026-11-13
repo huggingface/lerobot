@@ -259,7 +259,7 @@ fastwam = [
     "lerobot[diffusers-dep]",
 ]
 # flux3 (FLUX 3 Action): Qwen3-VL text encoder via transformers. The video
-# VAE additionally needs NATTEN (`natten`, torch-matched wheel, not on PyPI for every platform): see
+# VAE runs faster with NATTEN (`natten`, torch-matched wheel, not on PyPI for every platform): see
 # docs/source/flux3.mdx.
 flux3 = [
     "lerobot[transformers-dep]",

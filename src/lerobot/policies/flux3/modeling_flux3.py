@@ -40,12 +40,14 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.policies.checkpoint import SafetensorsCheckpoint
+from lerobot.policies.chunk import ChunkPolicySpec
 from lerobot.policies.flux3.configuration_flux3 import Flux3Config
 from lerobot.policies.flux3.f3 import (
     REQUIRED_CONTENT_STREAMS,
     VEC_DIM,
     JointSingleSeq,
     JointSingleSeqParams,
+    TextStream,
     action_dit_params,
     batched_prc_audio,
     batched_prc_vid,
@@ -189,7 +191,7 @@ class Flux3Policy(PreTrainedPolicy):
         )
 
     def _build_video_vae(self, config: Flux3Config):
-        """Frozen Video VAE (needs NATTEN). Tests replace this hook with a shape-compatible fake."""
+        """Frozen Video VAE. Tests replace this hook with a shape-compatible fake."""
         return load_video_vae(config.video_vae_id, device="cpu", compile_model=config.compile_model)
 
     def _build_text_encoder(self, config: Flux3Config) -> nn.Module:
@@ -212,7 +214,8 @@ class Flux3Policy(PreTrainedPolicy):
         """The DiT forward used by sampling: ``torch.compile``d once, lazily, when ``compile_model`` is set.
 
         Only inference uses it. Training keeps the eager forward until compilation under caption-length
-        batching and gradient checkpointing has been measured.
+        batching and gradient checkpointing has been measured. The text stream, computed once per caption and
+        chunk, stays eager.
         """
         if not self.config.compile_model:
             return self.dit
@@ -239,6 +242,25 @@ class Flux3Policy(PreTrainedPolicy):
 
     def reset(self) -> None:
         self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Serve a frame checkpoint chunk by chunk from the current observation.
+
+        The future video frames in ``observation_delta_indices`` are training targets: a frame checkpoint
+        predicts its chunk from the current frame alone. History checkpoints keep image, state and command
+        history in their processors, and relative actions need RTC, so neither is served this way.
+        """
+        if self.config.conditioning != "frame":
+            raise ValueError("FLUX3 chunk serving requires frame conditioning.")
+        if self.config.use_relative_actions:
+            raise ValueError(
+                "FLUX3 relative-action execution requires RTC, which is not implemented yet. "
+                "predict_action_chunk is available for offline evaluation."
+            )
+        return ChunkPolicySpec(
+            prediction_steps=self.config.chunk_size,
+            execution_steps=self.config.n_action_steps,
+        )
 
     def _get_default_peft_targets(self) -> dict[str, Any]:
         """LoRA on every attention / MLP projection of the DiT; the fresh heads train in full."""
@@ -558,8 +580,13 @@ class Flux3Policy(PreTrainedPolicy):
             "x_video": cfg.guidance_scale,
             ak: cfg.guidance_scale if cfg.guidance_scale_action is None else cfg.guidance_scale_action,
         }
-        ctx_c = self._context(caption, device)
-        ctx_uc = self._context("", device) if any(g != 1.0 for g in guidance.values()) else None
+
+        def with_text(ctx: Tensor, ctx_ids: Tensor) -> tuple[Tensor, Tensor, TextStream]:
+            zeros = torch.zeros(ctx.shape[:2], device=device)
+            return ctx, ctx_ids, self.dit.text_stream(ctx, ctx_ids, fixed["vector"], zeros)
+
+        ctx_c = with_text(*self._context(caption, device))
+        ctx_uc = with_text(*self._context("", device)) if any(g != 1.0 for g in guidance.values()) else None
         dit = self._inference_dit()
 
         def predict(samples: dict[str, Tensor], t) -> dict[str, Tensor]:
@@ -570,7 +597,7 @@ class Flux3Policy(PreTrainedPolicy):
             }
             model_in = {k: v.to(mdt) for k, v in samples.items()}
             if ctx_uc is None:  # guidance 1.0 on every stream: a single conditional pass
-                ctx, ctx_ids = ctx_c
+                ctx, ctx_ids, text_stream = ctx_c
                 pred = dit(
                     **model_in,
                     **fixed,
@@ -578,6 +605,7 @@ class Flux3Policy(PreTrainedPolicy):
                     ctx=ctx,
                     ctx_ids=ctx_ids,
                     timesteps_ctx=torch.zeros(ctx.shape[:2], device=device),
+                    text_stream=text_stream,
                 )
                 pred = {k: pred[k] for k in model_in}
             else:
