@@ -89,13 +89,9 @@ Published examples: [SO-101 tabletop in MuJoCo](https://huggingface.co/spaces/le
 | `README.md`        | yes                    | What the environment simulates, its observations, actions, task, rewards and episode end, the commands to run it, its licenses |
 | anything else      | no                     | Scenes, robot models, textures, configs: `env.py` finds them next to itself, in every mode                                     |
 
-Publish new environments as Spaces, choosing the SDK that fits your presentation: [Static HTML](https://huggingface.co/docs/hub/spaces-sdks-static) for a documentation page, [Gradio](https://huggingface.co/docs/hub/spaces-sdks-gradio) for an interactive demo, or [Docker](https://huggingface.co/docs/hub/spaces-sdks-docker) for a custom application. Every Space should explain the task, robot, installation and evaluation commands, and link to the source and licenses. Rollout videos, camera views, task examples, datasets, checkpoints and reference results make the environment easier to understand and reuse. A live simulator demo is optional.
+Publish your environment as a Space using [Static HTML](https://huggingface.co/docs/hub/spaces-sdks-static) for a page, [Gradio](https://huggingface.co/docs/hub/spaces-sdks-gradio) for an interactive demo, or [Docker](https://huggingface.co/docs/hub/spaces-sdks-docker) for a custom app. Document the task, robot, installation and evaluation commands, and link to the source and licenses. Videos and camera views help show what to expect. Beyond that, get creative with how you present your environment!
 
-A static page does not execute `env.py` or need GPU compute; an interactive app can run the simulator if its runtime and hardware support it. In every case, LeRobot downloads the same Space repository and runs the environment locally or on a simulator server, exactly as for a model repository. Publishing a Docker Space does not automatically make its web URL compatible with LeRobot's env-server protocol, and `--docker=true` still builds LeRobot's standard simulator image rather than the Space's Dockerfile.
-
-See [Publish](#publish) for a static Space example and upload commands; Gradio and Docker Spaces are equally valid EnvHubs.
-
-The README's `sdk` selects how Spaces builds the app. With `sdk: docker`, the root `Dockerfile` belongs to the Space demo. Keep any separate simulator-server recipe at a distinct path such as `deploy/Dockerfile.envhub`, and select it explicitly with `docker build -f deploy/Dockerfile.envhub .`. With `sdk: static` or `sdk: gradio`, including a Dockerfile does not select the Docker SDK.
+Keep demo code and dependencies in their own directory. A Docker Space uses the root `Dockerfile` for its web app; place any separate simulator-server Dockerfile at a different path, such as `deploy/Dockerfile.envhub`.
 
 ### Python and dependencies
 
@@ -295,19 +291,7 @@ Every step takes the local folder that holds `env.py` in place of a Hub reposito
 
 ## Publish
 
-Create a Space with your chosen SDK, and keep `env.py`, its dependencies and assets in the same repository as the presentation or demo. The following example uses Static HTML; for Gradio or Docker, replace `index.html` with your app entry point or Dockerfile and use the matching SDK configuration:
-
-```text
-my-env/
-├── README.md            # Space metadata, usage and licenses
-├── index.html           # Environment page
-├── env.py               # LeRobot entry point
-├── requirements.txt     # Simulator dependencies, if needed
-├── packages.txt         # System dependencies, if needed
-└── assets/              # Robot models, scenes and textures
-```
-
-Add the Space configuration to the top of `README.md`, followed by your environment documentation. Set the license to the one that applies to your code:
+Create a Space with your chosen SDK. For a static page, add this metadata to `README.md`, followed by your environment documentation:
 
 ```yaml
 ---
@@ -322,7 +306,7 @@ license: apache-2.0
 ---
 ```
 
-A minimal `index.html` can start with the task description and a link to your usage guide; expand it with videos and examples as the environment develops:
+Add an `index.html` page, for example:
 
 ```html
 <!doctype html>
@@ -344,7 +328,7 @@ A minimal `index.html` can start with the task description and a link to your us
 </html>
 ```
 
-Replace the example name, task and README link with yours. For this static example, upload the folder using the Hub CLI (`--sdk gradio` or `--sdk docker` for the other SDKs):
+Replace the example details with yours, then upload your folder (`--sdk gradio` or `--sdk docker` for those SDKs):
 
 ```bash
 hf auth login
@@ -352,7 +336,7 @@ hf repos create my-org/my-env --type space --sdk static
 hf upload my-org/my-env ./my-env . --repo-type space
 ```
 
-Then serve the environment from the Space repository (the Space's web app does not need to run a simulator):
+Serve the environment:
 
 ```bash
 lerobot-env-server --envhub=spaces/my-org/my-env@<commit> --trust_remote_code=true --docker=true
@@ -376,21 +360,14 @@ Updates are new commits: users pinned to an older commit keep running the code t
 | Pattern              | Loads                               | Example                              |
 | -------------------- | ----------------------------------- | ------------------------------------ |
 | `spaces/user/repo`   | `env.py` from a Space               | `spaces/my-org/my-env`               |
+| `models/user/repo`   | `env.py` from a model repository    | `models/my-org/my-env`               |
 | `user/repo`          | Automatically detect the repo type  | `my-org/my-env`                      |
 | `user/repo@revision` | `env.py` at a commit, branch or tag | `spaces/my-org/my-env@<commit>`      |
 | `user/repo:path`     | Another file                        | `my-org/my-envs:envs/task_a.py`      |
 | `user/repo@rev:path` | Another file at a revision          | `my-org/my-envs@v1.0:envs/task_a.py` |
 | `./folder`           | `env.py` in a local folder          | `./my-env`                           |
 
-<Tip>
-  **Spaces are preferred for new EnvHub environments.** Existing environments in
-  model repositories remain fully supported, including their current commands
-  and pinned revisions. No migration is required. Spaces add a page or
-  interactive demo to help people discover and try your environment. Use
-  `models/user/repo` if you need to select a model repository explicitly.
-</Tip>
-
-Bare `user/repo` paths try a model repository first, then a Space if no accessible model repository exists. This preserves existing EnvHub commands and commit pins. If both types share a name, the model repository wins: use `spaces/user/repo` or `models/user/repo` to select one explicitly. The prefixes also work with revisions and custom files, e.g. `spaces/my-org/my-env@v1.0:envs/task_a.py`.
+Bare `user/repo` paths try a model repository first, then a Space if no accessible model repository exists. If both types share a name, the model repository wins: use `spaces/user/repo` or `models/user/repo` to select one explicitly. The prefixes also work with revisions and custom files, e.g. `spaces/my-org/my-env@v1.0:envs/task_a.py`.
 
 ### Versions
 
