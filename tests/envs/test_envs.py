@@ -29,7 +29,7 @@ from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
 from lerobot.envs.factory import make_env, make_env_config, make_task_env
 from lerobot.envs.utils import prepare_canonical_observation, preprocess_observation
 from lerobot.sim.integrations import envhub
-from lerobot.sim.integrations.envhub import _normalize_hub_result, _parse_hub_url
+from lerobot.sim.integrations.envhub import _normalize_hub_result, parse_envhub_path
 from tests.fixtures.toy_env import DictObservationEnv, ToyEnvConfig
 from tests.utils import require_env
 
@@ -131,32 +131,37 @@ def test_factory_custom_gym_id():
 def test_make_env_hub_url_parsing():
     """Test URL parsing for hub environment references."""
     # simple repo_id
-    repo_id, revision, file_path = _parse_hub_url("user/repo")
+    repo_id, repo_type, revision, file_path = parse_envhub_path("user/repo")
     assert repo_id == "user/repo"
+    assert repo_type is None
     assert revision is None
     assert file_path == "env.py"
 
     # repo with revision
-    repo_id, revision, file_path = _parse_hub_url("user/repo@main")
+    repo_id, repo_type, revision, file_path = parse_envhub_path("user/repo@main")
     assert repo_id == "user/repo"
+    assert repo_type is None
     assert revision == "main"
     assert file_path == "env.py"
 
     # repo with custom file path
-    repo_id, revision, file_path = _parse_hub_url("user/repo:custom_env.py")
+    repo_id, repo_type, revision, file_path = parse_envhub_path("user/repo:custom_env.py")
     assert repo_id == "user/repo"
+    assert repo_type is None
     assert revision is None
     assert file_path == "custom_env.py"
 
     # repo with revision and custom file path
-    repo_id, revision, file_path = _parse_hub_url("user/repo@v1.0:envs/my_env.py")
+    repo_id, repo_type, revision, file_path = parse_envhub_path("user/repo@v1.0:envs/my_env.py")
     assert repo_id == "user/repo"
+    assert repo_type is None
     assert revision == "v1.0"
     assert file_path == "envs/my_env.py"
 
     # repo with commit hash
-    repo_id, revision, file_path = _parse_hub_url("org/repo@abc123def456")
+    repo_id, repo_type, revision, file_path = parse_envhub_path("org/repo@abc123def456")
     assert repo_id == "org/repo"
+    assert repo_type is None
     assert revision == "abc123def456"
     assert file_path == "env.py"
 

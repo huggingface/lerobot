@@ -34,10 +34,10 @@ from typing import cast
 
 import draccus
 import yaml
-from huggingface_hub import snapshot_download
 
 import lerobot
 from lerobot.env_server import EnvServer, EnvServerConfig
+from lerobot.sim.integrations.envhub import download_envhub_snapshot, parse_envhub_path
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 
@@ -53,8 +53,9 @@ class EnvServerLaunchConfig(EnvServerConfig):
 
     Args:
         envhub (`str`, *optional*):
-            EnvHub repository to serve: `user/repo[@revision]`, or a local directory. Settings left unset come
-            from its `LEROBOT_SIM`, else from the EnvHub defaults. Serving it runs its code, so it needs
+            EnvHub repository to serve: `user/repo[@revision]`, optionally prefixed with `spaces/` or
+            `models/`, or a local directory. Settings left unset come from its `LEROBOT_SIM`, else from
+            the EnvHub defaults. Serving it runs its code, so it needs
             `trust_remote_code`.
         trust_remote_code (`bool`, *optional*, defaults to `False`):
             Consent to run an EnvHub repository's code, from `envhub` or a YAML's `sim`: its `env.py` and, with
@@ -117,9 +118,9 @@ def envhub_context(hub_path: str, directory: Path) -> Path:
     location = hub_path.split(":")[0]
     if Path(location).is_dir():
         return Path(location).resolve()
-    repo, _, revision = location.partition("@")
-    snapshot = snapshot_download(repo, revision=revision or None)
-    context = directory / "envhub" / re.sub(r"[^a-z0-9_.-]+", "-", repo.lower())
+    repo, repo_type, revision, _ = parse_envhub_path(hub_path)
+    snapshot = download_envhub_snapshot(repo, repo_type, revision)
+    context = directory / "envhub" / re.sub(r"[^a-z0-9_.-]+", "-", location.lower())
     shutil.rmtree(context, ignore_errors=True)
     shutil.copytree(snapshot, context)
     return context

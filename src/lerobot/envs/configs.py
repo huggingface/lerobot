@@ -121,7 +121,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 class HubEnvConfig(EnvConfig):
     """An env from an EnvHub repo's ``env.py``; running it needs ``trust_remote_code``."""
 
-    hub_path: str | None = None  # required: e.g., "username/repo" or "username/repo@branch:file.py"
+    # owner/repo[@revision][:file.py]; use spaces/ or models/ to select the repository type explicitly.
+    hub_path: str | None = None
     trust_remote_code: bool = False
     # Keyword arguments for the repo's make_env, e.g. '{"episode_length": 9000}'.
     make_env_kwargs: dict[str, Any] = field(default_factory=dict)

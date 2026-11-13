@@ -23,9 +23,11 @@ from dataclasses import asdict
 from pathlib import Path
 
 import draccus
+import httpx
 import numpy as np
 import pytest
 import yaml
+from huggingface_hub.errors import RepositoryNotFoundError
 
 from lerobot.env_server import EnvClient, EnvServerConfig
 from lerobot.envs.configs import EnvConfig
@@ -33,6 +35,7 @@ from lerobot.envs.factory import check_served
 from lerobot.scripts import lerobot_env_server
 from lerobot.scripts.lerobot_env_server import EnvServerLaunchConfig
 from lerobot.sim import SimSettings
+from lerobot.sim.integrations import envhub
 from tests.fixtures.sim_server import free_port
 from tests.fixtures.toy_env import ToyEnvConfig
 from tests.utils import resolve_without_simulator
@@ -102,7 +105,17 @@ def test_docker_launch_selects_backend_from_overridden_config(tmp_path, monkeypa
     assert len(calls) == 4
 
 
-def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "hub_path,repo_type,expected_types,tag",
+    [
+        ("User/My-Env", "model", ["model"], "user-my-env-v1"),
+        ("User/My-Env", "space", ["model", "space"], "user-my-env-v1"),
+        ("spaces/User/My-Env", "space", ["space"], "spaces-user-my-env-v1"),
+    ],
+)
+def test_docker_launch_serves_an_envhub_repository(
+    tmp_path, monkeypatch, hub_path, repo_type, expected_types, tag
+):
     calls = []
     monkeypatch.setattr(
         lerobot_env_server.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs))
@@ -112,15 +125,20 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     (snapshot / "env.py").write_text("")
     downloads = []
 
-    def download(repo, revision=None):
-        downloads.append((repo, revision))
+    def download(repo, revision=None, **kwargs):
+        downloads.append((repo, revision, kwargs["repo_type"]))
+        if kwargs["repo_type"] != repo_type:
+            raise RepositoryNotFoundError(
+                "No such repository",
+                response=httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co")),
+            )
         return str(snapshot)
 
-    monkeypatch.setattr(lerobot_env_server, "snapshot_download", download)
+    monkeypatch.setattr(envhub, "snapshot_download", download)
     monkeypatch.setattr(lerobot_env_server, "HF_LEROBOT_HOME", tmp_path)
     argv = [
         "lerobot-env-server",
-        "--envhub=User/My-Env@v1",
+        f"--envhub={hub_path}@v1",
         "--trust_remote_code=true",
         "--sim.fps=50",
         "--sim.kwargs={make_env_kwargs: {episode_length: 900}}",
@@ -132,9 +150,9 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     command, options = calls[-1]
     assert command[-5:] == ["up", "-d", "--wait", "--build", "sim"]
     env = options["env"]
-    assert (env["SIM"], env["SIM_TAG"]) == ("envhub", "user-my-env-v1")
+    assert (env["SIM"], env["SIM_TAG"]) == ("envhub", tag)
     # Downloaded on the host, then copied as plain files into the build context.
-    assert downloads == [("User/My-Env", "v1")]
+    assert downloads == [("User/My-Env", "v1", kind) for kind in expected_types]
     assert (Path(env["ENVHUB_DIR"]) / "env.py").is_file() and Path(env["ENVHUB_DIR"]) != snapshot
     # The server loads the copy baked into the image.
     mounted = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())
@@ -184,7 +202,7 @@ def test_an_envhub_yaml_needs_consent_before_anything_is_built(tmp_path, monkeyp
     # A Docker build installs the repository's packages, so consent is checked before it starts.
     calls = []
     monkeypatch.setattr(lerobot_env_server.subprocess, "run", lambda *args, **kwargs: calls.append(args))
-    monkeypatch.setattr(lerobot_env_server, "snapshot_download", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(envhub, "snapshot_download", lambda *args, **kwargs: calls.append(args))
     config = tmp_path / "envhub.yaml"
     sim = {"type": "envhub", "kwargs": {"hub_path": "user/repo"}}
     config.write_text(yaml.safe_dump({"deployment": "envhub", "sim": sim}))
