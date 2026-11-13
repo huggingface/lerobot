@@ -35,6 +35,8 @@ HW_VIDEO_CODECS = [
     "hevc_videotoolbox",  # macOS
     "h264_nvenc",  # NVIDIA GPU
     "hevc_nvenc",  # NVIDIA GPU
+    "h264_nvmpi",  # NVIDIA Jetson (jetson-ffmpeg, Multimedia API)
+    "hevc_nvmpi",  # NVIDIA Jetson (jetson-ffmpeg, Multimedia API)
     "h264_vaapi",  # Linux Intel/AMD
     "h264_qsv",  # Intel Quick Sync
 ]
