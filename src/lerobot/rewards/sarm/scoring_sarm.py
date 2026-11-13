@@ -137,14 +137,23 @@ class SARMFrameScorer:
         episode_end = int(episode["dataset_to_index"])
         num_frames = episode_end - episode_start
 
-        task_index = dataset.get_frames(episode_index, ["task_index"], [0])["task_index"][0]
-        task = str(dataset.meta.tasks.iloc[int(task_index)].name)
-        keys = [config.image_key]
-        if config.state_key in dataset.meta.features:
-            keys.append(config.state_key)
-        episode_frames = dataset.get_frames(episode_index, keys, list(range(num_frames)))
-        frames = episode_frames[config.image_key]
-        states = episode_frames.get(config.state_key)
+        mapping = dataset.absolute_to_relative_idx
+        positions = [
+            index if mapping is None else mapping[index] for index in range(episode_start, episode_end)
+        ]
+        # One pass over the episode, so each frame is decoded once for both the image and the state.
+        task = ""
+        frame_list: list[torch.Tensor] = []
+        state_list: list[torch.Tensor] = []
+        for position in positions:
+            sample = dataset[position]
+            if not frame_list:
+                task = sample["task"]
+            frame_list.append(sample[config.image_key])
+            if config.state_key in sample:
+                state_list.append(sample[config.state_key])
+        frames = torch.stack(frame_list)
+        states = torch.stack(state_list) if state_list else None
 
         query_frames = list(range(0, num_frames, self.stride))
         if query_frames[-1] != num_frames - 1:

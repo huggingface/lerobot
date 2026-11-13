@@ -16,7 +16,7 @@
 """Private reader component for LeRobotDataset. Handles random-access reading (HF dataset, delta indices, video decoding)."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -460,69 +460,6 @@ class DatasetReader(BaseDatasetReader):
         with ThreadPoolExecutor(max_workers=len(items)) as pool:
             futures = [pool.submit(_decode_single, k, ts) for k, ts in items]
             return dict(f.result() for f in futures)
-
-    def get_frames(
-        self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
-    ) -> dict[str, torch.Tensor]:
-        """Read some features of some frames of one episode.
-
-        Only the requested features are read and decoded. No delta windows or image transforms
-        are applied. Like :meth:`_query_videos`, do not call this in the main process while
-        ``DataLoader`` workers are reading videos.
-
-        Args:
-            episode_index: Global index of a selected episode.
-            keys: Feature keys to read.
-            frame_indices: Frame positions inside the episode, starting at 0. They may be
-                unordered and repeated.
-
-        Returns:
-            One tensor per key, stacked along a leading dimension of length
-            ``len(frame_indices)``.
-
-        Raises:
-            ValueError: If the episode is not selected, a key is not a feature, or a frame
-                position is outside the episode.
-        """
-        if self.hf_dataset is None:
-            self.load_and_activate()
-        selected = (
-            0 <= episode_index < self._meta.total_episodes
-            if self.episodes is None
-            else episode_index in self.episodes
-        )
-        if not selected:
-            raise ValueError(f"Episode {episode_index} is not in the selected episodes")
-        unknown = [key for key in keys if key not in self._meta.features]
-        if unknown:
-            raise ValueError(f"Unknown feature keys: {unknown}")
-        if len(frame_indices) == 0:
-            raise ValueError("frame_indices must not be empty")
-
-        episode = self._meta.episodes[episode_index]
-        start = int(episode["dataset_from_index"])
-        length = int(episode["dataset_to_index"]) - start
-        positions = [int(position) for position in frame_indices]
-        outside = [position for position in positions if not 0 <= position < length]
-        if outside:
-            raise ValueError(
-                f"Frame positions {outside} are outside episode {episode_index} of length {length}"
-            )
-        rows = self._to_relative([start + position for position in positions])
-
-        frames: dict[str, torch.Tensor] = {}
-        video_keys = [key for key in keys if key in self._meta.video_keys]
-        if video_keys:
-            timestamps = [float(timestamp) for timestamp in self._column_view("timestamp")[rows]["timestamp"]]
-            decoded = self._query_videos(dict.fromkeys(video_keys, timestamps), episode_index)
-            for key in video_keys:
-                # _query_videos squeezes the frame dimension away when a single frame is decoded.
-                frames[key] = decoded[key].unsqueeze(0) if len(rows) == 1 else decoded[key]
-        for key in keys:
-            if key not in frames:
-                frames[key] = torch.stack(list(self._column_view(key)[rows][key]))
-        convert_image_depth_units(frames, self._image_depth_units, self._depth_output_unit)
-        return {key: frames[key] for key in keys}
 
     def get_item(self, idx: int) -> dict:
         """Return one fully assembled frame dict for a single *relative* index.

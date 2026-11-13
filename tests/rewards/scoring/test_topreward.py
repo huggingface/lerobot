@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from types import SimpleNamespace
@@ -22,8 +21,6 @@ import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
-
-import pandas as pd
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.annotations import load_annotations
@@ -74,34 +71,16 @@ def test_make_topreward_frame_scorer_builds_processor_without_frame_cap(monkeypa
 
 class _FakeDataset:
     def __init__(self, episodes):
-        self.meta = SimpleNamespace(
-            episodes=episodes,
-            tasks=pd.DataFrame({"task_index": [0, 1]}, index=["another task", "pick up the cube"]),
-            features={"instruction": {"dtype": "string"}},
-        )
-        self.frame_requests: list[tuple[int, list[str], list[int]]] = []
+        self.meta = SimpleNamespace(episodes=episodes)
         self.row_requests: list[int] = []
         self.absolute_to_relative_idx = None
 
     def __getitem__(self, index: int):
         self.row_requests.append(index)
-        return {"instruction": f"custom task at frame {index}"}
-
-    def get_frames(
-        self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
-    ) -> dict[str, torch.Tensor]:
-        self.frame_requests.append((episode_index, list(keys), list(frame_indices)))
-        episode_start = self.meta.episodes[episode_index]["dataset_from_index"]
         return {
-            key: torch.stack(
-                [
-                    torch.tensor(1)
-                    if key == "task_index"
-                    else torch.full((3, 2, 2), float(episode_start + position))
-                    for position in frame_indices
-                ]
-            )
-            for key in keys
+            IMAGE_KEY: torch.full((3, 2, 2), float(index)),
+            "task": "pick up the cube",
+            "instruction": f"custom task at frame {index}",
         }
 
 
@@ -178,11 +157,8 @@ def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress(
     assert result.signals[PROGRESS_SIGNAL].dtype == np.float32
     assert scorer.descriptors[PROGRESS_SIGNAL].bounds == (0.0, 1.0)
     assert scorer.descriptors[PROGRESS_SIGNAL].greater_is_better is True
-    expected_requests = [(0, ["task_index"], [0])] if task_key == "task" else []
-    assert dataset.frame_requests == [*expected_requests, (0, [IMAGE_KEY], list(range(5)))]
     task = {"task": "pick up the cube", "instruction": "custom task at frame 0"}.get(task_key)
     assert encoder.steps[0].tasks == [task] * 3
-    assert dataset.row_requests == ([0] if task_key == "instruction" else [])
     assert scorer.name == "topreward"
     assert scorer.provenance["scorer"]["options"]["num_samples"] == 3
     assert scorer.provenance["scorer"]["options"]["vlm_name"] == "fake/vlm"
@@ -190,6 +166,7 @@ def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress(
 
 def test_topreward_scores_publish_to_the_dataset(tmp_path):
     class FakeDataset(LeRobotDataset):
+        absolute_to_relative_idx = None
         episodes = None
         reader = SimpleNamespace()
         writer = None
@@ -204,21 +181,10 @@ def test_topreward_scores_publish_to_the_dataset(tmp_path):
                 total_frames=5,
                 storage_format="lerobot",
                 episodes=[{"dataset_from_index": 0, "dataset_to_index": 5}],
-                tasks=pd.DataFrame({"task_index": [0]}, index=["pick up the cube"]),
             )
 
-        def get_frames(
-            self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
-        ) -> dict[str, torch.Tensor]:
-            return {
-                key: torch.stack(
-                    [
-                        torch.tensor(0) if key == "task_index" else torch.full((3, 2, 2), float(position))
-                        for position in frame_indices
-                    ]
-                )
-                for key in keys
-            }
+        def __getitem__(self, index: int):
+            return {IMAGE_KEY: torch.full((3, 2, 2), float(index)), "task": "pick up the cube"}
 
     dataset = FakeDataset()
     score_dataset(dataset, TOPRewardFrameScorer(_FakeModel(), _FakeEncoder(), num_samples=3))
@@ -242,7 +208,7 @@ def test_topreward_frame_scorer_supports_episode_filtered_dataset_views(
 
     assert encoder.prefix_shapes == [(1, 1, 3, 2, 2), (1, 2, 3, 2, 2)]
     np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.0, 1.0])
-    assert dataset.row_requests == ([0 if filtered else 5] if task_key == "instruction" else [])
+    assert sorted(set(dataset.row_requests)) == ([0, 1] if filtered else [5, 6])
     task = f"custom task at frame {0 if filtered else 5}" if task_key == "instruction" else "pick up the cube"
     assert encoder.steps[0].tasks == [task, task]
 

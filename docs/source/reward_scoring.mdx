@@ -118,7 +118,7 @@ push_annotations_to_hub(dataset, "robometer-4b")
 
 Applications that load reward models dynamically can use `lerobot.rewards.make_frame_scorer()` instead. The CLI and both programmatic factories follow the same path: construct a model-specific frame scorer, then call `score_dataset()`.
 
-A scorer exposes its descriptors up front through `scorer.descriptors` and returns one `FrameSignals` object per episode. Frame indices may be dense or sparse, but must be episode-local, unique, strictly increasing, and aligned with one-dimensional numeric signal arrays. Scorers read selected features through `dataset.get_frames()`, which reads requested frames without delta windows or image transforms.
+A scorer exposes its descriptors up front through `scorer.descriptors` and returns one `FrameSignals` object per episode. Frame indices may be dense or sparse, but must be episode-local, unique, strictly increasing, and aligned with one-dimensional numeric signal arrays.
 
 ## Output Contract
 

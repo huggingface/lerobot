@@ -120,18 +120,13 @@ class TOPRewardFrameScorer:
         episode_end = int(episode["dataset_to_index"])
         num_frames = episode_end - episode_start
 
-        task = None
-        if config.task_key == "task":
-            task_index = dataset.get_frames(episode_index, ["task_index"], [0])["task_index"][0]
-            task = str(dataset.meta.tasks.iloc[int(task_index)].name)
-        elif config.task_key in dataset.meta.features:
-            mapping = dataset.absolute_to_relative_idx
-            position = episode_start if mapping is None else mapping[episode_start]
-            task = dataset[position][config.task_key]
-        frame_indices = list(range(num_frames))
-        episode_frames = dataset.get_frames(episode_index, [config.image_key], frame_indices)[
-            config.image_key
+        mapping = dataset.absolute_to_relative_idx
+        positions = [
+            index if mapping is None else mapping[index] for index in range(episode_start, episode_end)
         ]
+        # `dataset[i]` holds the task under "task" and a custom task feature under its own key.
+        task = dataset[positions[0]].get(config.task_key)
+        episode_frames = torch.stack([dataset[position][config.image_key] for position in positions])
 
         prefix_lengths = build_prefix_lengths(num_frames, self.num_samples)
         log_probabilities: NDArray[np.float64] = np.empty(len(prefix_lengths), dtype=np.float64)

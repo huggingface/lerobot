@@ -135,15 +135,6 @@ for batch in data_loader:
 
 ## Annotate a dataset
 
-`dataset.get_frames()` reads some features of some frames of one episode. Unlike `dataset[i]`, it
-reads only the requested features, decodes each video once for all requested frames, and applies
-no delta windows or image transforms:
-
-```python
-frames = dataset.get_frames(episode_index=0, keys=["observation.images.front_left"], frame_indices=[0, 10, 20])
-print(frames["observation.images.front_left"].shape)  # [3, C, H, W]
-```
-
 `lerobot.datasets.annotations` stores named tables of values computed for some frames, such as
 model predictions, in `annotations/<name>.parquet`. The `data/` files are not modified. Rows join
 the dataset on `(episode_index, frame_index)`, and a frame may have several rows. `add_annotations`
@@ -156,10 +147,10 @@ from lerobot.datasets.annotations import add_annotations, load_annotations, push
 
 
 def brightness(episode_index):
-    length = dataset.meta.episodes[episode_index]["length"]
-    frame_indices = np.arange(length)
-    images = dataset.get_frames(episode_index, ["observation.images.front_left"], frame_indices)
-    return frame_indices, {"brightness": images["observation.images.front_left"].mean(dim=(1, 2, 3)).numpy()}
+    episode = dataset.meta.episodes[episode_index]
+    rows = range(episode["dataset_from_index"], episode["dataset_to_index"])
+    values = [float(dataset[row]["observation.images.front_left"].mean()) for row in rows]
+    return np.arange(len(values)), {"brightness": np.asarray(values, dtype=np.float32)}
 
 
 add_annotations(dataset, "brightness", brightness, info={"description": "Mean pixel value."})

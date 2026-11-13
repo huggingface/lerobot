@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
@@ -21,8 +20,6 @@ import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
-
-import pandas as pd
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
@@ -99,31 +96,22 @@ class _FakeModel:
 
 
 class _FakeDataset:
+    absolute_to_relative_idx: dict[int, int] | None = None
+
     def __init__(self, num_frames: int = 5, *, with_state: bool = True):
         self.meta = SimpleNamespace(
             episodes=[{"dataset_from_index": 0, "dataset_to_index": num_frames}],
             stats={"observation.state": {}},
-            tasks=pd.DataFrame({"task_index": [0, 1]}, index=["another task", "pick up the cube"]),
-            features={IMAGE_KEY: {}, "task_index": {}, **({STATE_KEY: {}} if with_state else {})},
         )
-        self.frame_requests: list[tuple[int, list[str], list[int]]] = []
+        self.with_state = with_state
+        self.row_requests: list[int] = []
 
-    def get_frames(
-        self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
-    ) -> dict[str, torch.Tensor]:
-        assert set(keys) <= self.meta.features.keys()
-        self.frame_requests.append((episode_index, list(keys), list(frame_indices)))
-        return {
-            key: torch.stack(
-                [
-                    torch.tensor(1)
-                    if key == "task_index"
-                    else torch.full((3, 2, 2) if key == IMAGE_KEY else (2,), float(position))
-                    for position in frame_indices
-                ]
-            )
-            for key in keys
-        }
+    def __getitem__(self, position: int):
+        self.row_requests.append(position)
+        sample = {IMAGE_KEY: torch.full((3, 2, 2), float(position)), "task": "pick up the cube"}
+        if self.with_state:
+            sample[STATE_KEY] = torch.full((2,), float(position))
+        return sample
 
 
 @pytest.fixture
@@ -155,8 +143,8 @@ def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder, with_s
     assert [call["index"] for call in encoder.calls] == [[0, 1], [2, 3], [4]]
     assert encoder.calls[0]["task"] == "pick up the cube"
     assert encoder.received == {"dataset_stats": {"observation.state": {}}, "dataset_meta": None}
-    keys = [IMAGE_KEY, STATE_KEY] if with_state else [IMAGE_KEY]
-    assert dataset.frame_requests == [(0, ["task_index"], [0]), (0, keys, list(range(5)))]
+    # Each frame is read once, for both the image and the state.
+    assert dataset.row_requests == list(range(5))
     assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL}
     assert scorer.descriptors[SPARSE_PROGRESS_SIGNAL].greater_is_better is True
     assert scorer.name == "sarm"
