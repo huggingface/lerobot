@@ -1,4 +1,169 @@
 # 4. Check your data
 
-> [!NOTE]
-> This page is being written as part of the docs redesign. It will cover how to watch your episodes, replay them on the robot, and remove the bad ones before training.
+**Goal:** watch your episodes, replay one on the robot, and remove the bad ones before you train. **Time:** about 15 minutes. **You need:** the dataset you recorded in [step 3](./record_dataset), and its full name.
+
+> [!TIP]
+> **Key idea:** the policy copies everything in your [dataset](./glossary#dataset), mistakes included. A few minutes spent removing bad episodes saves hours of training a policy that hesitates or fumbles.
+
+## Step 1: Watch your episodes in the browser
+
+Open your dataset in the [LeRobot Dataset Visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset). This prints the link to its first episode:
+
+```bash
+echo "https://huggingface.co/spaces/lerobot/visualize_dataset?path=/${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS/episode_0"
+```
+
+<div class="flex justify-center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-episode-v2.webp"
+    alt="The Dataset Visualizer: the list of episodes on the left, the camera videos in the middle, and the joint charts below"
+    width="720"
+  />
+</div>
+
+Click through the episodes in the list on the left (or use <kbd>↑</kbd> and <kbd>↓</kbd>), and note the number of every episode where:
+
+- the task failed, or you made a mistake and corrected it,
+- you hesitated or paused for a long time,
+- the object or the gripper is out of view of the cameras,
+- a camera image is dark, blurry or frozen.
+
+The charts below the videos show every joint over time: `observation.state` is where the robot was, `action` where it was told to go. Sudden spikes or flat lines where the arm should be moving are also worth a closer look.
+
+If your dataset is private, sign in to the visualizer first. See [Explore a dataset in the browser](./using_dataset_tools#explore-a-dataset-in-the-browser) for everything it can do.
+
+## Step 2: Replay an episode on the robot
+
+Replaying sends the recorded actions of one episode back to the robot, so it repeats your movements on its own. It's a quick check that the recording captured what you did.
+
+Put the object back in its starting position, then run:
+
+<!-- prettier-ignore-start -->
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**SO-101:**
+
+```bash
+lerobot-replay \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower \
+    --dataset.repo_id=${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS \
+    --dataset.episode=0
+```
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Other robots:**
+
+```bash
+lerobot-replay \
+    --robot.type=YOUR_ROBOT_TYPE \
+    --robot.port=YOUR_ROBOT_PORT \
+    --robot.id=my_follower \
+    --dataset.repo_id=${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS \
+    --dataset.episode=0
+```
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+The robot should move the same way you did in episode 0. It replays the movements blindly, without looking at the cameras, so it may miss the object if it's not exactly where it was: that's expected. A trained policy will use the cameras to find it.
+
+## Step 3: Remove the bad episodes
+
+Remove the episodes you noted in Step 1. This saves a cleaned copy of the dataset under a new name and uploads it, and leaves the original untouched. Episode numbers start at 0. For example, to remove episodes 3, 17 and 41:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id ${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS \
+    --new_repo_id ${HF_USER}/my_first_dataset_clean \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[3, 17, 41]" \
+    --push_to_hub true
+```
+
+From now on, train on the cleaned dataset, `${HF_USER}/my_first_dataset_clean`. If all your episodes were good, skip this step and keep using the original name.
+
+> [!TIP]
+> Removed more than about ten episodes? Record a few more with `--resume=true` (see "Add more episodes" in [step 3](./record_dataset)) so you still have around 50 good ones.
+
+## Check it worked
+
+- You watched every episode, and the ones you kept show the task done cleanly, with the object visible.
+- The replayed episode looked like your recording.
+- If you removed episodes, the cleaned dataset's page on the Hub shows the expected number of episodes.
+
+<details>
+<summary>If something goes wrong</summary>
+
+- **The visualizer can't find the dataset:** check the full name, with its date and time (see [step 3](./record_dataset#step-5-find-your-datasets-full-name)). If the dataset is private, sign in to the visualizer. If you recorded with `--dataset.push_to_hub=false`, it isn't on the Hub: watch it locally instead (see below).
+- **The replay moves differently from your recording:** the robot may not be using the calibration you recorded with. Use the same `--robot.id` as when you recorded.
+
+</details>
+
+<details>
+<summary>Go further</summary>
+
+**Watch a dataset on your computer**, without the Hub. This opens the episode in the Rerun viewer:
+
+```bash
+lerobot-dataset-viz \
+    --repo-id ${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS \
+    --episode-index 0
+```
+
+**Other ways to edit a dataset:** merge several datasets, split one into training and validation sets, change the task text, and more. See [Edit, merge and split datasets](./using_dataset_tools).
+
+**What's inside a dataset:** how episodes, videos and joint data are stored. See [What's in a LeRobot dataset](./datasets_explained).
+
+**Replay from Python:**
+
+<!-- prettier-ignore-start -->
+```python
+import time
+
+from lerobot.datasets import LeRobotDataset
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+from lerobot.utils.robot_utils import precise_sleep
+
+episode_idx = 0
+
+robot = SO101Follower(SO101FollowerConfig(port="/dev/ttyACM0", id="my_follower"))
+robot.connect()
+
+dataset = LeRobotDataset("YOUR_HF_USERNAME/my_first_dataset_YYYYMMDD_HHMMSS", episodes=[episode_idx])
+actions = dataset.select_columns("action")
+
+for idx in range(dataset.num_frames):
+    t0 = time.perf_counter()
+    action = {
+        name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
+    }
+    robot.send_action(action)
+    precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
+
+robot.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</details>
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**Next (SO-101):** [5. Train a policy →](./train_policy)
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Next (other robots):** [5. Train a policy →](./train_policy?robot=Other%20robots)
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->

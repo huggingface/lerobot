@@ -1,4 +1,280 @@
 # 3. Record a dataset
 
+**Goal:** record about 50 [episodes](./glossary#episode) of one task. **Time:** about an hour. **You need:** your robot, leader arm and cameras from [step 2](./teleoperate), and a free [Hugging Face account](https://huggingface.co/join).
+
+> [!TIP]
+> **Key idea:** a policy learns only from what you show it. Fifty calm, consistent episodes of a simple task teach it more than two hundred rushed or varied ones.
+
+## Step 1: Choose a simple first task
+
+Pick a task that takes 20 to 40 seconds, with one object that starts in roughly the same place each time. For example: _pick up the cube and put it in the box_.
+
+- **Write the task as a short instruction**, like `Pick up the cube and put it in the box`. It's saved with every episode, and policies that read text use it as their instruction.
+- **Practice 5 to 10 times without recording.** Settle on one way of doing the task (the same grasp, the same path, the same speed) and keep to it. Hesitant or inconsistent episodes teach the policy to hesitate.
+- **Check the cameras:** could you do the task by looking only at the camera images? If not, fix the cameras first (see [Place your cameras](./teleoperate#step-3-place-your-cameras)).
+
+## Step 2: Log in to Hugging Face
+
+LeRobot uploads your dataset to the [Hugging Face Hub](./glossary#hugging-face-hub) when recording ends, so you can watch it, share it and train on it from anywhere. Log in with a [token](https://huggingface.co/settings/tokens) that has **write** access, and save your username in `HF_USER`, which the commands below use:
+
+```bash
+hf auth login
+HF_USER=$(NO_COLOR=1 hf auth whoami | awk -F': *' 'NR==1 {print $2}')
+echo $HF_USER
+```
+
+The last line should print your Hugging Face username. `HF_USER` only lasts until you close the terminal: run the last two lines again in a new one.
+
+## Step 3: Start recording
+
+<!-- prettier-ignore-start -->
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**SO-101:** use your ports, and the same camera setup as in step 2.
+
+```bash
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader \
+    --display_data=true \
+    --dataset.repo_id=${HF_USER}/my_first_dataset \
+    --dataset.single_task="Pick up the cube and put it in the box" \
+    --dataset.num_episodes=50 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10 \
+    --dataset.streaming_encoding=true
+```
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Other robots:** use your robot's settings from [step 1](./setup_your_robot#your-robots-settings), and the same camera setup as in step 2.
+
+```bash
+lerobot-record \
+    --robot.type=YOUR_ROBOT_TYPE \
+    --robot.port=YOUR_ROBOT_PORT \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=YOUR_TELEOP_TYPE \
+    --teleop.port=YOUR_TELEOP_PORT \
+    --teleop.id=my_leader \
+    --display_data=true \
+    --dataset.repo_id=${HF_USER}/my_first_dataset \
+    --dataset.single_task="Pick up the cube and put it in the box" \
+    --dataset.num_episodes=50 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10 \
+    --dataset.streaming_encoding=true
+```
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+What the options mean:
+
+- `--dataset.repo_id`: where the dataset is saved on the Hub, `your-username/dataset-name`.
+- `--dataset.single_task`: the task instruction from Step 1.
+- `--dataset.num_episodes`, `--dataset.episode_time_s`, `--dataset.reset_time_s`: how many episodes to record, how long each one lasts at most (in seconds), and how long you get between episodes to put things back.
+- `--dataset.streaming_encoding=true`: saves the camera videos while you record, so you don't wait at the end of each episode.
+
+> [!TIP]
+> **Do a test run first.** Add `--dataset.num_episodes=2 --dataset.push_to_hub=false` to the command to record two episodes without uploading them. Once everything works, run the full command.
+
+## Step 4: Record your episodes
+
+Each episode goes like this:
+
+1. **Recording** (up to 30 s): do the task with the leader arm. When you're done, press <kbd>→</kbd> to end the episode early.
+2. **Reset** (10 s): put the object back in its starting position. The robot still follows the leader arm, but nothing is recorded. Press <kbd>→</kbd> to skip the rest of the reset.
+
+LeRobot announces each episode out loud. Use the keyboard to control the session:
+
+| Key                         | What it does                                                         |
+| --------------------------- | -------------------------------------------------------------------- |
+| <kbd>→</kbd> or <kbd>n</kbd> | End the current episode (or reset) early and move on.                |
+| <kbd>←</kbd> or <kbd>r</kbd> | Throw away the current episode and record it again.                  |
+| <kbd>Esc</kbd> or <kbd>q</kbd> | Stop recording, save the videos and upload the dataset.            |
+
+Made a mistake? Press <kbd>←</kbd> and do the episode again: an episode with a mistake teaches the policy that mistake.
+
+While you record:
+
+- **Keep everything the same:** the cameras, the lighting, the way you do the task. Change only where the object starts, a little, so the policy learns to find it. For example, record 10 episodes at each of 5 starting positions.
+- **Add variety later.** Once a first policy works, record more with one new kind of variation at a time: new positions, then new lighting, then new objects.
+- **Take breaks.** Tired episodes are sloppy episodes.
+
+## Step 5: Find your dataset's full name
+
+`lerobot-record` adds the date and time to the end of your dataset's name, so every recording gets its own: `my_first_dataset` becomes, for example, `my_first_dataset_20261113_142530`. You need this full name in the next steps. Find it on [your Hugging Face profile](https://huggingface.co/datasets), or list your local datasets:
+
+```bash
+ls ~/.cache/huggingface/lerobot/${HF_USER}
+```
+
+The following steps write it as `my_first_dataset_YYYYMMDD_HHMMSS`: replace that with your dataset's full name.
+
+## Check it worked
+
+- The dataset page `https://huggingface.co/datasets/YOUR_HF_USERNAME/my_first_dataset_YYYYMMDD_HHMMSS` exists and lists 50 episodes.
+- At the end, LeRobot printed a **Cadence summary**: its `effective cadence` should be close to 30 Hz. If it's much lower, see [Control loop is running slower than the target FPS](./troubleshooting#control-loop-is-running-slower-than-the-target-fps).
+
 > [!NOTE]
-> This page is being written as part of the docs redesign. It will cover how to record your first episodes of a task, how many you need, and tips that make the policy learn better.
+> Datasets are **public** by default, so others can learn from them too. Add `--dataset.private=true` to the command to upload a private dataset instead, or `--dataset.push_to_hub=false` to keep it only on your computer.
+
+<details>
+<summary>If something goes wrong</summary>
+
+- **The keyboard keys do nothing:** on macOS, give your terminal app Accessibility permission. On Linux, run the command from an interactive terminal and keep it focused. See [The keyboard controls don't work](./troubleshooting#the-keyboard-controls-dont-work).
+- **The upload fails:** log in again with `hf auth login`, using a token with **write** access.
+- **The recording stopped before all 50 episodes:** you can add the missing ones, see "Add more episodes" below.
+
+</details>
+
+<details>
+<summary>Go further</summary>
+
+**Add more episodes to a dataset.** Run the same command again with `--resume=true`, the dataset's full name in `--dataset.repo_id` (with its date and time), and `--dataset.num_episodes` set to the number of episodes **to add**, not the total.
+
+**Add tags** to help others find your dataset on the Hub, for example `--dataset.tags='["so101","tutorial"]'`. Datasets recorded with LeRobot are always tagged `LeRobot`.
+
+**Upload a dataset later**, if you recorded with `--dataset.push_to_hub=false`:
+
+```bash
+hf upload ${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS ~/.cache/huggingface/lerobot/${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS --repo-type dataset
+```
+
+**Video settings.** See [Video size and quality settings](./video_encoding_parameters) and [Encode video while recording](./streaming_video_encoding).
+
+**Read the cadence report.** A frame's time is derived from its position in the episode, so a session that really ran at 25 Hz still produces a dataset that says 30 Hz, with movements that look faster than they were. The summary shows how much time each part of the loop takes (`observe` is mostly reading the cameras), and the **pacing headroom**: how much spare time is left per frame. Near zero means the loop is at its limit.
+
+**Record from Python.** The same recording loop, in code:
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.processor import make_default_processors
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+from lerobot.scripts.lerobot_record import record_loop
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+from lerobot.utils.feature_utils import hw_to_dataset_features
+from lerobot.utils.keyboard_input import init_keyboard_listener
+from lerobot.utils.utils import log_say
+from lerobot.utils.visualization_utils import init_visualization
+
+NUM_EPISODES = 5
+FPS = 30
+EPISODE_TIME_SEC = 30
+RESET_TIME_SEC = 10
+TASK_DESCRIPTION = "Pick up the cube and put it in the box"
+
+
+def main():
+    robot = SO101Follower(SO101FollowerConfig(
+        port="/dev/ttyACM0",
+        id="my_follower",
+        cameras={
+            "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+            "wrist": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30),
+        },
+    ))
+    teleop = SO101Leader(SO101LeaderConfig(port="/dev/ttyACM1", id="my_leader"))
+
+    # The dataset stores the robot's actions and observations (joint positions and camera images)
+    action_features = hw_to_dataset_features(robot.action_features, "action")
+    obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+    dataset = LeRobotDataset.create(
+        repo_id="YOUR_HF_USERNAME/my_first_dataset",
+        fps=FPS,
+        features={**action_features, **obs_features},
+        robot_type=robot.name,
+        use_videos=True,
+        image_writer_threads=4,
+    )
+
+    _, events = init_keyboard_listener()
+    init_visualization("rerun", session_name="recording")
+    robot.connect()
+    teleop.connect()
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+
+    episode_idx = 0
+    while episode_idx < NUM_EPISODES and not events["stop_recording"]:
+        log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=FPS,
+            teleop_action_processor=teleop_action_processor,
+            robot_action_processor=robot_action_processor,
+            robot_observation_processor=robot_observation_processor,
+            teleop=teleop,
+            dataset=dataset,
+            control_time_s=EPISODE_TIME_SEC,
+            single_task=TASK_DESCRIPTION,
+            display_data=True,
+        )
+
+        # Reset phase: the robot follows the leader arm, but nothing is recorded
+        if not events["stop_recording"] and (episode_idx < NUM_EPISODES - 1 or events["rerecord_episode"]):
+            log_say("Reset the environment")
+            record_loop(
+                robot=robot,
+                events=events,
+                fps=FPS,
+                teleop_action_processor=teleop_action_processor,
+                robot_action_processor=robot_action_processor,
+                robot_observation_processor=robot_observation_processor,
+                teleop=teleop,
+                control_time_s=RESET_TIME_SEC,
+                single_task=TASK_DESCRIPTION,
+                display_data=True,
+            )
+
+        if events["rerecord_episode"]:
+            log_say("Re-recording episode")
+            events["rerecord_episode"] = False
+            events["exit_early"] = False
+            dataset.clear_episode_buffer()
+            continue
+
+        dataset.save_episode()
+        episode_idx += 1
+
+    log_say("Stop recording")
+    dataset.finalize()
+    robot.disconnect()
+    teleop.disconnect()
+    dataset.push_to_hub()
+
+
+if __name__ == "__main__":
+    main()
+```
+<!-- prettier-ignore-end -->
+
+</details>
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**Next (SO-101):** [4. Check your data →](./check_dataset)
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Next (other robots):** [4. Check your data →](./check_dataset?robot=Other%20robots)
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
