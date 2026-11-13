@@ -41,10 +41,15 @@ class EvalPipelineConfig:
     tf32: bool | None = True
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
-    # Explicit consent to execute remote code from the Hub (required for hub environments).
+    # Removed: the env gives its own consent, with --env.trust_remote_code. Kept to say so when passed.
     trust_remote_code: bool = False
 
     def __post_init__(self) -> None:
+        if self.trust_remote_code:
+            raise ValueError(
+                "lerobot-eval --trust_remote_code was removed: pass --env.trust_remote_code=true, the consent "
+                "of the EnvHub environment that runs the code"
+            )
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
         if policy_path:

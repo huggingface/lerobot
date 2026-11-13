@@ -190,3 +190,11 @@ def test_rollout_ends_at_the_step_cap_below_the_env_limit():
         env.close()
     assert result[ACTION].shape[1] == 3
     assert result["done"][0].tolist() == [False, False, True]
+
+
+def test_eval_consent_is_the_env_own():
+    from lerobot.configs.eval import EvalPipelineConfig
+    from lerobot.envs.configs import PushtEnvConfig
+
+    with pytest.raises(ValueError, match="--env.trust_remote_code=true"):
+        EvalPipelineConfig(env=PushtEnvConfig(), trust_remote_code=True)

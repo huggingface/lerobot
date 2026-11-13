@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 from lerobot.envs import EnvClientConfig
+from lerobot.envs.factory import make_task_env
 from lerobot.envs.utils import validate_checkpoint
 from lerobot.processor import make_default_processors
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
@@ -593,8 +594,12 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
         output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
     )
     validate_checkpoint(robot.descriptor, checkpoint_config, {})
-    # Native benchmark camera names remain unchanged.
-    assert "observation.image" in env.features
+    # The simulator keeps its native camera name; the robot records it under observation.images.
+    simulator = make_task_env(env)
+    try:
+        assert "observation.image" in {feature.name for feature in simulator.descriptor.features}
+    finally:
+        simulator.close()
     legacy_config = SimpleNamespace(
         input_features={"observation.image": checkpoint_config.input_features["observation.images.image"]},
         output_features=checkpoint_config.output_features,
