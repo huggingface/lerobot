@@ -684,3 +684,105 @@ def test_async_iterator_multiple_iterations():
 
     # Ensure iterator can be disposed without blocking
     del iterator
+
+
+def _add_scalar_transition(buffer: ReplayBuffer, value: float, next_value: float, **flags) -> None:
+    buffer.add(
+        {OBS_STATE: torch.tensor([[value]])},
+        torch.zeros(1, 1),
+        0.0,
+        {OBS_STATE: torch.tensor([[next_value]])},
+        flags.get("done", False),
+        flags.get("truncated", False),
+    )
+
+
+def _sampled_next_states(buffer: ReplayBuffer, num_batches: int = 50) -> dict[float, set[float]]:
+    """Map each sampled state value to the next_state values it was sampled with."""
+    pairs: dict[float, set[float]] = {}
+    for _ in range(num_batches):
+        batch = buffer.sample(buffer.size)
+        states = batch["state"][OBS_STATE].flatten().tolist()
+        next_states = batch["next_state"][OBS_STATE].flatten().tolist()
+        for state, next_state in zip(states, next_states, strict=True):
+            pairs.setdefault(state, set()).add(next_state)
+    return pairs
+
+
+def _scalar_buffer(capacity: int = 20) -> ReplayBuffer:
+    return ReplayBuffer(capacity, "cpu", [OBS_STATE], optimize_memory=True, use_drq=False)
+
+
+def test_optimize_memory_next_state_of_truncated_episode_is_not_next_episode_reset():
+    buffer = _scalar_buffer()
+    _add_scalar_transition(buffer, 0.0, 1.0)
+    _add_scalar_transition(buffer, 1.0, 2.0, truncated=True)
+    _add_scalar_transition(buffer, 100.0, 101.0)
+    _add_scalar_transition(buffer, 101.0, 102.0)
+
+    pairs = _sampled_next_states(buffer)
+
+    assert pairs[1.0] == {2.0}
+    assert pairs[0.0] == {1.0}
+    assert pairs[100.0] == {101.0}
+
+
+def test_optimize_memory_next_state_of_non_consecutive_transitions():
+    # The learner only adds intervention transitions to the offline buffer, leaving gaps between them.
+    buffer = _scalar_buffer()
+    _add_scalar_transition(buffer, 0.0, 1.0)
+    _add_scalar_transition(buffer, 50.0, 51.0)
+    _add_scalar_transition(buffer, 51.0, 52.0)
+
+    assert _sampled_next_states(buffer) == {0.0: {1.0}, 50.0: {51.0}}
+
+
+def test_optimize_memory_only_stores_next_state_at_boundaries():
+    buffer = _scalar_buffer()
+    for value in range(5):
+        _add_scalar_transition(buffer, float(value), float(value + 1))
+    assert buffer._detached_next_states == {}
+
+    _add_scalar_transition(buffer, 100.0, 101.0)
+    assert list(buffer._detached_next_states) == [4]
+
+
+def test_optimize_memory_overwritten_slot_drops_its_stored_next_state():
+    buffer = _scalar_buffer(capacity=3)
+    _add_scalar_transition(buffer, 0.0, 1.0)
+    _add_scalar_transition(buffer, 10.0, 11.0)  # Slot 0 stores next_state 1.0.
+    assert list(buffer._detached_next_states) == [0]
+
+    _add_scalar_transition(buffer, 11.0, 12.0)
+    _add_scalar_transition(buffer, 12.0, 13.0)  # Wraps around and overwrites slot 0.
+    assert buffer._detached_next_states == {}
+
+
+def test_optimize_memory_next_state_with_images():
+    buffer = create_empty_replay_buffer(optimize_memory=True)
+    state, action = create_dummy_state(), create_dummy_action()
+    end_of_episode = create_dummy_state()
+    buffer.add(state, action, 1.0, end_of_episode, False, True)
+    buffer.add(create_dummy_state(), action, 1.0, create_dummy_state(), False, False)
+    buffer.add(create_dummy_state(), action, 1.0, create_dummy_state(), False, False)
+
+    sampled_first_transition = False
+    for _ in range(50):
+        batch = buffer.sample(2)
+        for i in range(2):
+            if torch.equal(batch["state"][OBS_IMAGE][i], state[OBS_IMAGE]):
+                sampled_first_transition = True
+                assert torch.equal(batch["next_state"][OBS_IMAGE][i], end_of_episode[OBS_IMAGE])
+                assert torch.equal(batch["next_state"][OBS_STATE][i], end_of_episode[OBS_STATE])
+    assert sampled_first_transition
+
+
+def test_optimize_memory_stored_next_state_does_not_alias_caller_tensor():
+    buffer = _scalar_buffer()
+    next_state = {OBS_STATE: torch.tensor([[1.0]])}
+    buffer.add({OBS_STATE: torch.tensor([[0.0]])}, torch.zeros(1, 1), 0.0, next_state, False, True)
+    next_state[OBS_STATE].fill_(-1.0)
+    _add_scalar_transition(buffer, 100.0, 101.0)
+    _add_scalar_transition(buffer, 101.0, 102.0)
+
+    assert _sampled_next_states(buffer)[0.0] == {1.0}
