@@ -1,0 +1,191 @@
+# 2. Teleoperate and add cameras
+
+**Goal:** control your robot with the leader arm, then add cameras and see what they see. **Time:** about 30 minutes. **You need:** your calibrated robot and leader arm from [step 1](./setup_your_robot), and one or two USB cameras.
+
+> [!TIP]
+> **Key idea:** to [teleoperate](./glossary#teleoperation) is to control the robot yourself, live: you move the leader arm and the follower copies it. The cameras are the policy's eyes: later, it will only know what they show.
+
+## Step 1: Teleoperate your robot
+
+Put the follower arm in a safe position, with nothing in its way, and run:
+
+<!-- prettier-ignore-start -->
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**SO-101:** use your ports and the IDs from step 1.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader
+```
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Other robots:** replace each `YOUR_...` value with your robot's settings from [step 1](./setup_your_robot#your-robots-settings), and use the IDs you calibrated with.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=YOUR_ROBOT_TYPE \
+    --robot.port=YOUR_ROBOT_PORT \
+    --robot.id=my_follower \
+    --teleop.type=YOUR_TELEOP_TYPE \
+    --teleop.port=YOUR_TELEOP_PORT \
+    --teleop.id=my_leader
+```
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+Move the leader arm slowly: the follower copies every movement, gripper included. Take a few minutes to get used to it, for example by picking up an object. You'll do the same thing many times when you record.
+
+Press <kbd>Ctrl</kbd> + <kbd>C</kbd> to stop.
+
+> [!WARNING]
+> When you stop, the follower's motors turn off and the arm goes limp. Hold it, or move it to a resting position with the leader arm, before you stop.
+
+If an arm isn't calibrated yet, `lerobot-teleoperate` runs the calibration first. If it asks you to calibrate an arm you already calibrated, the ID doesn't match: use the exact same ID as in step 1.
+
+## Step 2: Find your cameras
+
+Plug in your cameras and run:
+
+```bash
+lerobot-find-cameras opencv
+```
+
+It lists every camera with its index (`Id: 0`, `Id: 1`, …) and saves a test picture from each one in `outputs/captured_images`. Open the pictures to see which index is which camera.
+
+> [!NOTE]
+> Camera indexes can change when you restart your computer or replug a camera. If a camera suddenly shows the wrong view or won't open, run `lerobot-find-cameras opencv` again.
+
+## Step 3: Place your cameras
+
+The camera images are what your policy learns from, so a good camera setup matters more than a high resolution. Most setups use two cameras: one **top** camera that sees the whole workspace, and one **wrist** camera on the robot's gripper.
+
+- **Light the scene evenly.** Use diffuse, consistent light and avoid direct sunlight, strong reflections and moving shadows. Lighting that differs between recording and running the policy can make it fail.
+- **Fix the cameras in place.** Mount them rigidly and don't move them between recording sessions, or between recording and running the policy.
+- **Frame the task.** The object, the gripper and the target should be visible in at least one camera. A good test: could you do the task yourself by only looking at the camera images?
+- **Keep the resolution modest.** 640×480 at 30 frames per second is enough for most tasks, and keeps recording and training fast.
+
+## Step 4: Teleoperate with cameras
+
+Run teleoperation again, this time with your cameras. Each camera gets a name (here `top` and `wrist`) and its index from Step 2. `--display_data=true` opens a window that shows the camera images and the position of every joint, live:
+
+<!-- prettier-ignore-start -->
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**SO-101:**
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader \
+    --display_data=true
+```
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Other robots:**
+
+```bash
+lerobot-teleoperate \
+    --robot.type=YOUR_ROBOT_TYPE \
+    --robot.port=YOUR_ROBOT_PORT \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=YOUR_TELEOP_TYPE \
+    --teleop.port=YOUR_TELEOP_PORT \
+    --teleop.id=my_leader \
+    --display_data=true
+```
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+> [!IMPORTANT]
+> Keep the same camera names and positions for the rest of the tutorial. The names are saved in your dataset (`observation.images.top`, `observation.images.wrist`), and your trained policy will expect exactly these cameras when it runs.
+
+## Check it worked
+
+- The follower arm copies the leader arm smoothly, gripper included.
+- The window opened by `--display_data=true` shows both camera views, and the joint values change as you move the leader arm.
+- In the camera views, you can see the object, the gripper and the target.
+
+<details>
+<summary>If something goes wrong</summary>
+
+- **The follower moves in the wrong direction, or stops short of the leader:** calibrate both arms again ([step 1](./setup_your_robot#step-4-calibrate-both-arms)). See also [Troubleshooting](./troubleshooting#the-follower-doesnt-move-like-the-leader).
+- **`Failed to open OpenCVCamera(0)`:** the index changed, or another app uses the camera. See [Troubleshooting](./troubleshooting#failed-to-open-a-camera).
+- **The camera view is choppy, or `failed to set fps`:** use a resolution and frame rate that `lerobot-find-cameras opencv` lists for that camera, and plug the cameras into different USB ports.
+
+</details>
+
+<details>
+<summary>Go further</summary>
+
+- **Other teleoperation devices:** keyboard, gamepad, phone or VR headset, depending on the robot. See [Teleoperation devices](./teleoperators).
+- **Depth cameras and other camera types:** Intel RealSense, network cameras and more are covered in [Cameras](./cameras).
+- **Foxglove instead of Rerun:** add `--display_mode=foxglove` and connect the Foxglove app to `ws://127.0.0.1:8765`.
+- **Teleoperate from Python:** the same loop in a few lines of code.
+
+<!-- prettier-ignore-start -->
+```python
+import time
+
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+
+robot = SO101Follower(SO101FollowerConfig(
+    port="/dev/ttyACM0",
+    id="my_follower",
+    cameras={
+        "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+        "wrist": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30),
+    },
+))
+leader = SO101Leader(SO101LeaderConfig(port="/dev/ttyACM1", id="my_leader"))
+robot.connect()
+leader.connect()
+
+while True:
+    action = leader.get_action()        # where the leader arm is
+    robot.send_action(action)           # the follower goes there
+    observation = robot.get_observation()  # camera images and joint positions
+    time.sleep(1 / 30)                     # about 30 times per second
+```
+<!-- prettier-ignore-end -->
+
+</details>
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**Next (SO-101):** [3. Record a dataset →](./record_dataset)
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Next (other robots):** [3. Record a dataset →](./record_dataset?robot=Other%20robots)
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->

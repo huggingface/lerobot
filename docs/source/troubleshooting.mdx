@@ -1,0 +1,169 @@
+# Troubleshooting & FAQ
+
+Fixes for the problems people run into most often, grouped by what you were doing. Got an error message? Search this page for a few words of it (<kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>F</kbd>).
+
+Still stuck? Ask on [Discord](https://discord.gg/s3KuuzsPFb) or [open an issue](https://github.com/huggingface/lerobot/issues), and include the output of `lerobot-info` and the full error. Most problems depend on the LeRobot version, the operating system and the robot.
+
+## Installation
+
+### Video decoding errors (`ffmpeg`, `torchcodec`)
+
+```text
+RuntimeError: Could not load libtorchcodec.
+```
+
+LeRobot reads videos with TorchCodec, which needs `ffmpeg`. Install it as shown in [Install `ffmpeg`](./installation#step-2-install-ffmpeg-for-video). If it is installed but the error stays, its version may not match TorchCodec: in a conda environment, install `ffmpeg` 7.1.1 with `conda install ffmpeg=7.1.1 -c conda-forge`.
+
+### Build errors during `pip install`
+
+Errors mentioning `cmake`, `av` or missing headers usually mean system build tools are missing. See [Installation troubleshooting](./installation#troubleshooting).
+
+### Training is slow, or PyTorch doesn't use the GPU
+
+Run `lerobot-info` and check `Is PyTorch built with CUDA support?`. If it says `False` on a Linux machine with an NVIDIA GPU, your driver is probably older than 580.65, which the default PyTorch build needs: see [PyTorch CUDA variant](./installation#pytorch-cuda-variant-linux-only). On a Mac with Apple Silicon, add `--policy.device=mps` (macOS 15 or newer).
+
+## Connecting to the robot
+
+### Could not connect on port
+
+```text
+ConnectionError: Could not connect on port '/dev/ttyACM0'. Make sure you are using the correct port.
+```
+
+The port name is wrong, or it changed: ports often change when you unplug and replug a cable, or plug into another USB socket.
+
+1. Run `lerobot-find-port` and unplug the arm's cable when it asks you to. It prints the arm's port.
+2. Do it for each arm: the follower and the leader each have their own port.
+3. On Linux, if you get `Permission denied`, give yourself access to the port: `sudo chmod 666 /dev/ttyACM0` (replace with your port).
+
+### Missing motor IDs, or motors with incorrect model numbers
+
+```text
+RuntimeError: SerialMotorsBus motor check failed on port '/dev/ttyACM0':
+Missing motor IDs:
+```
+
+LeRobot can't find every motor it expects on this arm. In order of likelihood:
+
+- **The arm isn't powered.** The USB cable only carries data: the motors also need their power supply plugged in.
+- **A cable is loose.** Each motor is connected to the next with a 3-pin cable. Check that every one is fully clicked in, and that the chain is connected to the controller board.
+- **The motor IDs were never set.** Every motor needs its own ID before assembly: see the motor setup step of your robot's page, for example [SO-101](./so101#configure-the-motors).
+- **You used the other arm's port**, or the wrong `--robot.type` / `--teleop.type`. This also gives `Motors with incorrect model numbers`.
+
+### Failed to sync read, or no status packet
+
+```text
+ConnectionError: Failed to sync read 'Present_Position' from motor IDs [1, 2, 3, 4, 5, 6] after 1 tries.
+```
+
+On LeRobot 0.6 and older, the same problem shows as `There is no status packet!` or `Incorrect status packet!`.
+
+The computer lost contact with one or more motors, which is almost always a hardware problem rather than a software one. On an SO-100 or SO-101, look at the red LEDs on the motors:
+
+- **All steady red:** the wiring is fine. Check that the port is right and that no other program uses it.
+- **Some motors are dark, or the chain stops halfway:** a cable is loose, or the controller board has no power. Reseat the 3-pin cables.
+- **LEDs blinking:** the motor is in an error state, usually because a joint was forced past its limit, or because of the **wrong power supply**. The SO-100 and SO-101 come in two versions, a 5 V / 7.4 V one and a 12 V one, and their power supplies are not interchangeable. Unplug the power, check which version your motors are, and plug the right supply back in.
+
+## Calibration
+
+### "Mismatch between calibration values … or no calibration file found"
+
+```text
+Mismatch between calibration values in the motor and the calibration file or no calibration file found
+```
+
+LeRobot couldn't find a calibration for this arm, so it starts the calibration again. If you already calibrated the arm, you probably used a different ID: the calibration is saved under the `--robot.id` (or `--teleop.id`) you gave, in `~/.cache/huggingface/lerobot/calibration/`. Use exactly the same ID in every command.
+
+### The follower doesn't move like the leader
+
+If a joint moves in the wrong direction, jumps, or stops short of where the leader is, the two arms' calibrations don't match. Calibrate both arms again, following your robot's calibration steps (for example [SO-101](./so101#calibrate)): at the first step, put every joint in the **middle** of its range before pressing Enter, then move each joint through its **full** range.
+
+### "Magnitude exceeds 2047" (LeRobot 0.6 and older)
+
+This error came up during calibration when a joint was far from the middle of its range at the first step. Calibrate again with every joint in the middle of its range, or upgrade to the latest LeRobot, which no longer has this limit.
+
+## Cameras
+
+### Failed to open a camera
+
+```text
+ConnectionError: Failed to open OpenCVCamera(0). Run `lerobot-find-cameras opencv` to find available cameras.
+```
+
+The camera index changed, or another program is using the camera. Close any app that might use it (video calls, the camera app), then run `lerobot-find-cameras opencv`: it lists your cameras and saves a test picture from each one, so you can see which index is which.
+
+### Failed to capture frames, or failed to set the fps
+
+```text
+ConnectionError: OpenCVCamera(0) failed to capture frames during warmup.
+RuntimeError: OpenCVCamera(0) failed to set fps=30 (actual_fps=...).
+```
+
+The camera doesn't support the resolution or frame rate you asked for, or the USB connection can't carry all your cameras at once. Use a resolution and frame rate listed by `lerobot-find-cameras opencv`, and plug the cameras into different USB ports rather than one hub.
+
+### Images are dark, blurry or badly framed
+
+The policy sees the world only through the cameras, so this matters more than resolution. See [Place your cameras](./teleoperate#step-3-place-your-cameras).
+
+## Recording
+
+### The keyboard controls don't work
+
+```text
+pynput keyboard listener is not trusted (missing macOS Accessibility / Input Monitoring permission); falling back to terminal keyboard input.
+```
+
+On macOS, allow your terminal app in **System Settings → Privacy & Security → Accessibility** (and **Input Monitoring**), then restart the terminal. Until then, LeRobot reads the keys from the terminal itself: keep the terminal window focused while you record.
+
+On Linux with Wayland or without a display, LeRobot also falls back to reading keys from the terminal. If it says `Keyboard controls unavailable`, run the command from an interactive terminal, not from a script or an IDE's run button.
+
+### Control loop is running slower than the target FPS
+
+```text
+Control loop is running slower (21.3 Hz) than the target FPS (30 Hz).
+```
+
+LeRobot can't keep up with the frame rate you asked for. Usually the cameras deliver frames more slowly than expected, or the computer is busy saving video. Try fewer cameras, a lower camera resolution, or [encoding the video while recording](./streaming_video_encoding).
+
+### I can't find my dataset: the name has a date added
+
+`lerobot-record` adds the date and time to the end of your dataset name, so `my_dataset` is saved as, for example, `my_dataset_20261113_142530`. Find the full name on your Hugging Face profile, or with `ls ~/.cache/huggingface/lerobot/`, and use it when you train. Add `--dataset.no_stamp=true` to keep the exact name you chose.
+
+### Dataset names starting with `eval_` or `rollout_`
+
+```text
+ValueError: Dataset names starting with 'eval_' are reserved for policy evaluation.
+ValueError: Dataset names for rollout must start with 'rollout_'.
+```
+
+`lerobot-record` is for recording your own episodes, and refuses names starting with `eval_`. To record a trained policy while it runs, use `lerobot-rollout`, whose dataset names must start with `rollout_`. See [6. Run it on your robot](./run_policy).
+
+### I don't want my dataset to be public
+
+By default, `lerobot-record` uploads your dataset to the Hugging Face Hub when recording ends, as a public dataset unless your organization makes new datasets private. Add `--dataset.private=true` to upload it as private, or `--dataset.push_to_hub=false` to keep it only on your computer.
+
+### The upload to the Hub fails
+
+Log in first with `hf auth login`, using a token with **write** access from your [Hugging Face settings](https://huggingface.co/settings/tokens).
+
+## Training
+
+### CUDA out of memory
+
+```text
+torch.OutOfMemoryError: CUDA out of memory.
+```
+
+The policy and batch don't fit in your GPU's memory. Lower the batch size (for example `--batch_size=4`), or choose a smaller policy. [Which GPU do I need?](./hardware_guide) lists how much memory each policy needs, and large policies can be [fine-tuned with LoRA](./peft_training) on smaller GPUs.
+
+## Running a policy
+
+### The robot barely moves, shakes, or ignores the object
+
+The policy runs, but it doesn't do the task. Check these first, in this order:
+
+1. **Same setup as when you recorded:** the same `--robot.id`, the same camera names, the same camera positions and the same lighting. A policy only knows the world it saw during recording.
+2. **Enough good episodes:** around 50 consistent episodes of one task is a good start, recorded the same way each time.
+3. **Long enough training:** see how long to train in [Which GPU do I need?](./hardware_guide#training-time).
+
+[7. Make it work better](./improve_policy) goes through the next steps.

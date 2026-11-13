@@ -1,0 +1,82 @@
+# Try LeRobot without a robot
+
+**Goal:** see real robot data and watch a trained policy at work, before you buy or build anything. **Time:** about 15 minutes. **You need:** a computer with Python. A GPU is not required.
+
+> [!TIP]
+> **Key idea:** a robot learns from recorded [episodes](./glossary#episode), and a trained [policy](./glossary#policy) uses what it learned to control the robot. Here you look at both, without any hardware. New to these words? Read [How robot learning works](./how_it_works) first.
+
+## 1. Look at a robot dataset in your browser
+
+Open [`lerobot/svla_so101_pickplace`](https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0) in the LeRobot Dataset Visualizer. It holds 50 episodes of an SO-101 arm picking up an object and placing it.
+
+<div class="flex justify-center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-episode-v2.webp"
+    alt="The Dataset Visualizer playing an SO-101 episode: two camera views above, joint charts below"
+    width="720"
+  />
+</div>
+
+Press play and look at three things:
+
+- **The cameras:** this is everything a policy trained on this dataset would see.
+- **The `observation.state` chart:** the position of each of the arm's six joints over time.
+- **The `action` chart:** the position the arm was told to go to, at each moment. It closely follows the state, a little ahead of it.
+
+Use the list on the left to switch episodes. Every [dataset tagged LeRobot](https://huggingface.co/datasets?other=LeRobot) on the Hugging Face Hub opens the same way, and so will yours.
+
+## 2. Install LeRobot
+
+```bash
+pip install 'lerobot[dataset,pusht,diffusion,evaluation]'
+```
+
+This installs LeRobot with what this page needs: dataset loading, the PushT simulation, the Diffusion Policy, and the evaluation tools. If anything goes wrong, see [Install LeRobot](./installation) for the full instructions, including setting up a Python environment.
+
+## 3. Load the dataset in Python
+
+Run this in Python. It downloads the dataset (about 90 MB) and prints what's inside:
+
+```python
+from lerobot.datasets import LeRobotDataset
+
+dataset = LeRobotDataset("lerobot/svla_so101_pickplace")
+print(f"{dataset.num_episodes} episodes, {dataset.num_frames} frames, {dataset.fps} frames per second")
+
+frame = dataset[0]
+for name, value in frame.items():
+    print(name, getattr(value, "shape", value))
+```
+
+Each item of the dataset is one [frame](./glossary#frame): the camera images (`observation.images.up` and `observation.images.side`), the joint positions (`observation.state`) and the [action](./glossary#action), plus its position in the episode. This is exactly what a policy learns from. [Use datasets in Python](./lerobot-dataset-v3) shows what else you can do with it.
+
+## 4. Watch a trained policy in simulation
+
+PushT is a simple simulated task: a small circle has to push a T-shaped block onto a target. `lerobot/diffusion_pusht` is a policy already trained on it. Run it for 10 episodes:
+
+<!-- TODO(docs redesign): lerobot/diffusion_pusht predates the 0.7 processor format, so this command fails until the
+Hub repo gets migrated processor files (python -m lerobot.processor.migrate_policy_normalization). The whole
+example may be replaced later. Must be fixed before the redesign is merged. -->
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/diffusion_pusht \
+  --env.type=pusht \
+  --eval.n_episodes=10
+```
+
+The policy is downloaded from the Hub and runs on your GPU if you have one, otherwise on the CPU, which takes a few minutes. When it finishes, the last lines show the **success rate**: how many of the 10 episodes ended with the block on its target.
+
+LeRobot also saves a video of each episode. The output folder is printed near the top of the output (`Output dir:`), for example `outputs/eval/2026-11-13/10-24-51_pusht_diffusion`: open the `videos` folder inside it to watch the policy push the block.
+
+## Check it worked
+
+- The visualizer played the SO-101 episodes, with the joint charts moving along.
+- Python printed `50 episodes` and the contents of one frame.
+- `lerobot-eval` printed a success rate, and the `videos` folder has short clips of the PushT simulation.
+
+## Next steps
+
+- **You have a robot:** [teach your robot a task](./il_robots), step by step.
+- **You want a robot:** [choose a robot](./robots).
+- **You want to keep going without one:** [train and evaluate a policy in simulation](./train_in_sim).

@@ -1,0 +1,149 @@
+# 1. Set up your robot
+
+**Goal:** a robot and a leader arm that are connected to your computer and calibrated. **Time:** from 15 minutes for a ready-made robot to an afternoon for a kit you build yourself. **You need:** your robot, its leader arm or another [teleoperation device](./teleoperators), their power supplies and USB cables, and LeRobot [installed](./installation).
+
+> [!TIP]
+> **Key idea:** [calibration](./glossary#calibration) teaches LeRobot the range of every joint, so the follower arm copies the leader arm exactly. It's saved under a name you choose, the arm's [ID](./glossary#id), and every later command uses that same ID to find it.
+
+The commands in this tutorial are shown for the **SO-101**. If you have another robot, choose the **Other robots** tab: it shows the same command with placeholders, which you fill in from [Your robot's settings](#your-robots-settings) below.
+
+## Step 1: Build or unbox your robot
+
+Follow the guide for your robot, linked in the [table below](#your-robots-settings). For the SO-101, the [SO-101 guide](./so101) covers the parts, the 3D-printed pieces and the assembly, with a video for each joint.
+
+> [!WARNING]
+> Kits you assemble yourself (SO-101, SO-100, Koch, LeKiwi) need their **motor IDs** set before or during assembly: every motor shares the same cable, so each one needs its own number. Your robot's guide shows how, with `lerobot-setup-motors`. Ready-made robots come with their motors already set up.
+
+## Step 2: Install your robot's extra
+
+Each robot needs a few extra Python packages. Install them with the extra from the [table below](#your-robots-settings), for example:
+
+```bash
+pip install 'lerobot[core_scripts,training,feetech]'
+```
+
+## Step 3: Find the ports
+
+Plug both arms into your computer and into their power supplies. Then find the port of each arm:
+
+```bash
+lerobot-find-port
+```
+
+The command asks you to unplug the arm's USB cable, and prints the port that disappeared, for example `/dev/ttyACM0` on Linux or `/dev/tty.usbmodem58760431541` on macOS. Run it once for the follower arm and once for the leader arm, and write both ports down.
+
+On Linux, give yourself access to the ports (replace them with yours):
+
+```bash
+sudo chmod 666 /dev/ttyACM0 /dev/ttyACM1
+```
+
+## Step 4: Calibrate both arms
+
+Calibrate the follower arm first, then the leader arm. Each command asks you to:
+
+1. Move the arm so that every joint is in the **middle** of its range, then press Enter.
+2. Move every joint slowly through its **full** range, then press Enter.
+
+The [SO-101 calibration video](./so101#calibration-video) shows both moves.
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**SO-101:** use the ports you found in Step 3.
+
+```bash
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower
+```
+
+```bash
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader
+```
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Other robots:** replace each `YOUR_...` value with your robot's settings from the [table below](#your-robots-settings), and the ports with the ones you found in Step 3.
+
+```bash
+lerobot-calibrate \
+    --robot.type=YOUR_ROBOT_TYPE \
+    --robot.port=YOUR_ROBOT_PORT \
+    --robot.id=my_follower
+```
+
+```bash
+lerobot-calibrate \
+    --teleop.type=YOUR_TELEOP_TYPE \
+    --teleop.port=YOUR_TELEOP_PORT \
+    --teleop.id=my_leader
+```
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
+The calibrations are saved in `~/.cache/huggingface/lerobot/calibration/` under the IDs `my_follower` and `my_leader`. Every following step uses these two IDs. If you already calibrated your arms with other IDs, for example while following your robot's guide, keep using those instead.
+
+## Check it worked
+
+- Both `lerobot-calibrate` commands finished without an error.
+- `ls ~/.cache/huggingface/lerobot/calibration/robots/ ~/.cache/huggingface/lerobot/calibration/teleoperators/` shows a folder for your robot and one for your leader arm, each with a `.json` file named after its ID.
+
+<details>
+<summary>If something goes wrong</summary>
+
+- **`Could not connect on port`:** the port is wrong or changed. Run `lerobot-find-port` again. See [Troubleshooting](./troubleshooting#could-not-connect-on-port).
+- **`Missing motor IDs`:** the arm has no power, a cable is loose, or the motor IDs were never set. See [Troubleshooting](./troubleshooting#missing-motor-ids-or-motors-with-incorrect-model-numbers).
+- **A joint won't move through its full range:** check that it isn't blocked by a cable, and that the arm is clamped to the table.
+
+</details>
+
+## Your robot's settings
+
+The values to use in the **Other robots** tabs, for every robot LeRobot supports out of the box. Ports look like `/dev/ttyACM0` (Linux) or `/dev/tty.usbmodem…` (macOS) for USB robots, and like `can0` for robots that use a CAN adapter.
+
+| Robot                      | `YOUR_ROBOT_TYPE`     | `YOUR_TELEOP_TYPE` | Extra to install | Notes                                                                                                                                                                                                                                 |
+| -------------------------- | --------------------- | ------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [SO-101](./so101)          | `so101_follower`      | `so101_leader`     | `feetech`        | Build it yourself from a kit. Set the motor IDs during assembly.                                                                                                                                                                      |
+| [SO-100](./so100)          | `so100_follower`      | `so100_leader`     | `feetech`        | Build it yourself from a kit. Set the motor IDs during assembly.                                                                                                                                                                      |
+| [Koch v1.1](./koch)        | `koch_follower`       | `koch_leader`      | `dynamixel`      | Build it yourself. Set the motor IDs during assembly.                                                                                                                                                                                 |
+| [OMX](./omx)               | `omx_follower`        | `omx_leader`       | `dynamixel`      | Ordered from ROBOTIS and assembled with its guide. The motors come set up and calibrated from the factory: skip Step 4. On Linux, the ports are `/dev/omx_follower` and `/dev/omx_leader` once you add the udev rules from its guide. |
+| [reBot B601](./rebot_b601) | `rebot_b601_follower` | `rebot_102_leader` | `rebot`          | From Seeed Studio: get and assemble it with the Seeed wiki linked in its guide. For the RobStride (RS) version, add `--robot.motor_family=rs` and use a CAN port (`can0`).                                                            |
+| [OpenArm](./openarm)       | `openarm_follower`    | `openarm_leader`   | `damiao`         | Linux only. Uses CAN ports (`can0`, `can1`): set them up with `lerobot-setup-can` first.                                                                                                                                              |
+| [YAM](./yam)               | `yam_follower`        | none in LeRobot    | `yam`            | Linux only, CAN port. No leader arm is included: see the YAM guide for control options.                                                                                                                                               |
+
+Some robots work differently from this tutorial, and their guides show the commands to use at each step:
+
+| Robot                                          | How it differs                                                                                                                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [LeKiwi](./lekiwi)                             | A mobile robot with a Raspberry Pi on board: you run a small program on the Pi and control it over the network.                                                          |
+| [EarthRover Mini Plus](./earthrover_mini_plus) | Driven with the keyboard through the Frodobots SDK. No calibration.                                                                                                      |
+| [Unitree G1](./unitree_g1)                     | A humanoid controlled over the network, with a gamepad or an exoskeleton. No robot calibration.                                                                          |
+| Two-arm setups                                 | Two-arm versions (`bi_so_follower`, `bi_openarm_follower`, `bi_rebot_b601_follower`, `bi_yam_follower`) take a port for each arm. See the guide of the single-arm robot. |
+
+Your robot isn't listed? Check the [community robots](./third_party_robots), or [add your own robot](./integrate_hardware).
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="robot">
+<hfoption id="SO-101">
+
+**Next (SO-101):** [2. Teleoperate and add cameras →](./teleoperate)
+
+</hfoption>
+<hfoption id="Other robots">
+
+**Next (other robots):** [2. Teleoperate and add cameras →](./teleoperate?robot=Other%20robots)
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->

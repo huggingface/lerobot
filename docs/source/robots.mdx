@@ -1,0 +1,90 @@
+# Choose a robot
+
+LeRobot works with many robots, from small arms you build yourself to humanoids. **For your first robot, we recommend the SO-101:** it's low-cost and open-source, it's the robot most LeRobot users have (so most shared datasets and community help are for it), and every example in these docs uses it.
+
+Not ready to get a robot? [Try LeRobot without one](./quickstart) first, or learn in [simulation](./simulation_overview).
+
+## Good first robots
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./so101"
+  >
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp"
+      alt="The SO-101 robot arm"
+    />
+    <div class="text-lg font-semibold mt-2 mb-1">SO-101</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      The recommended first robot. A low-cost arm you build from a kit or
+      3D-printed parts, with a leader arm to control it.
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./omx"
+  >
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/omx_mainimage.png"
+      alt="The OMX robot arm from ROBOTIS"
+    />
+    <div class="text-lg font-semibold mt-2 mb-1">OMX</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      A compact arm from ROBOTIS whose motors come set up and calibrated, so
+      there is no motor setup to do.
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./lekiwi"
+  >
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/1740517739083.jpeg"
+      alt="The LeKiwi mobile robot: a robot arm on a three-wheeled base"
+    />
+    <div class="text-lg font-semibold mt-2 mb-1">LeKiwi</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      An SO-100 or SO-101 arm on a three-wheeled base, to learn tasks that need
+      moving around. You build it yourself.
+    </p>
+  </a>
+</div>
+
+## What to look at
+
+- **Build or buy.** Kits you assemble yourself cost less, and you learn how the robot works, but take an afternoon or more. Ready-made robots work out of the box.
+- **A leader arm.** To record episodes, you need a way to control the robot: most arms come with a matching leader arm, which is the easiest way.
+- **How it connects.** Robots that connect over USB work on Linux, macOS and Windows. Robots that use a CAN adapter work only on Linux and need a bit more setup.
+- **One arm or two.** Two arms (a bimanual setup) can do more tasks, but cost twice as much and need more data.
+
+## Robot arms
+
+| Robot                      | What it is                                                            | How to get it                                                                                                                           | Leader arm          | Connection                            |
+| -------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------- |
+| [SO-101](./so101)          | Low-cost, open-source arm with 5 joints and a gripper                 | Build it: buy a kit, or 3D-print the parts from the [SO-ARM100 repository](https://github.com/TheRobotStudio/SO-ARM100)                 | Yes                 | USB                                   |
+| [SO-100](./so100)          | The previous version of the SO-101                                    | Build it ([bill of materials](https://github.com/TheRobotStudio/SO-ARM100/blob/main/SO100.md)). For a new build, choose the SO-101.     | Yes                 | USB                                   |
+| [Koch v1.1](./koch)        | Open-source arm with Dynamixel motors                                 | Build it ([Koch v1.1 repository](https://github.com/jess-moss/koch-v1-1))                                                               | Yes                 | USB                                   |
+| [OMX](./omx)               | Compact arm from ROBOTIS, motors set up and calibrated at the factory | Order it from ROBOTIS and assemble it with their [assembly guide](https://ai.robotis.com/omx/assembly_guide_omx.html)                   | Yes                 | USB                                   |
+| [reBot B601](./rebot_b601) | Open-source arm from Seeed Studio, with 6 joints and a gripper        | From Seeed Studio, see the [Seeed wiki](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/)                                        | Yes (reBot Arm 102) | USB, or CAN for the RobStride version |
+| [OpenArm](./openarm)       | Arm with 7 joints, usually used in pairs                              | Assembled or as a kit, from the manufacturers listed on [openarm.dev](https://openarm.dev). About $6,500 for a complete two-arm system. | Yes                 | CAN (Linux only)                      |
+| [YAM](./yam)               | Arm with 6 joints from I2RT                                           | From [I2RT](https://i2rt.com/)                                                                                                          | Not in LeRobot yet  | CAN (Linux only)                      |
+
+## Mobile and humanoid robots
+
+| Robot                                          | What it is                                                           | How to get it                                                              | Controlled with         | Connection      |
+| ---------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------- | --------------- |
+| [LeKiwi](./lekiwi)                             | An SO-100 or SO-101 arm on a three-wheeled base, with a Raspberry Pi | Build it ([LeKiwi repository](https://github.com/SIGRobotics-UIUC/LeKiwi)) | Leader arm and keyboard | Network (Wi-Fi) |
+| [EarthRover Mini Plus](./earthrover_mini_plus) | A small outdoor rover from Frodobots                                 | Buy it from Frodobots                                                      | Keyboard                | Frodobots SDK   |
+| [Unitree G1](./unitree_g1)                     | A humanoid robot                                                     | Buy it from Unitree                                                        | Exoskeleton or gamepad  | Ethernet        |
+
+**More robots:** [Reachy 2](./reachy2) (Pollen Robotics) and [Hope Jr](./hope_jr) (TheRobotStudio) also work with LeRobot.
+
+## Don't see your robot?
+
+- **The community** has added many more robots, controllers and sensors as plugins: see [Community robots and controllers](./third_party_robots).
+- **Have your own robot?** LeRobot can drive it once you write a small Python class for it: see [Add your own robot](./integrate_hardware).
+
+## Next steps
+
+Got your robot? Start the tutorial with [1. Set up your robot](./setup_your_robot).

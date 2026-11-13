@@ -1,0 +1,50 @@
+# 7. Make it work better
+
+**Goal:** find out why your policy fails, and fix it. **Time:** a few rounds of recording and training. **You need:** your success rate and the recorded rollout episodes from [step 6](./run_policy).
+
+> [!TIP]
+> **Key idea:** most failures come from the data, not from the policy. Fix the setup and the data first; switch to a bigger policy last.
+
+## Step 1: Watch how it fails
+
+Open your rollout dataset, `rollout_my_first_policy_YYYYMMDD_HHMMSS`, in the [visualizer](./check_dataset#step-1-watch-your-episodes-in-the-browser) and watch the failed episodes. Note **where** each one goes wrong: reaching for the object, grasping it, carrying it, or placing it. Failures that always happen at the same moment point to the same cause.
+
+## Step 2: Find the cause
+
+| What you see                                                                            | Likely cause                                                                       | What to do                                                                                                                                                                                        |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The robot barely moves, or moves somewhere unrelated to the task                        | Something differs from when you recorded                                           | Use the same robot ID, camera names, camera positions, lighting and task text as in your recording. See [Troubleshooting](./troubleshooting#the-robot-barely-moves-shakes-or-ignores-the-object). |
+| It ignores the object, or reaches to the wrong place                                    | The cameras don't show the object well, or the object is somewhere it never saw it | Check [your camera setup](./teleoperate#step-3-place-your-cameras). Put the object only where you recorded it, or record episodes at the new positions.                                           |
+| It fails at the same stage every time, for example the grasp                            | Too few good examples of that stage                                                | Record 10 to 20 more episodes that do that stage carefully.                                                                                                                                       |
+| It shakes, hesitates, or goes back and forth                                            | Your episodes don't all do the task the same way                                   | Remove the most different episodes, and record new ones with one consistent way of doing the task.                                                                                                |
+| It works where you recorded, but not in new positions                                   | Not enough variety in the dataset                                                  | Record more episodes at more positions. Add one kind of variation at a time.                                                                                                                      |
+| It's nearly right but imprecise, and the loss was still dropping at the end of training | Training was too short                                                             | Train longer, for example 50,000 steps instead of 30,000.                                                                                                                                         |
+
+## Step 3: Improve and repeat
+
+Each round goes back through the tutorial:
+
+1. **Record more episodes** into the dataset you train on (`my_first_dataset_clean` if you made one): run the recording command of [step 3](./record_dataset) again with `--resume=true`, that dataset's name in `--dataset.repo_id`, and the number of episodes to add in `--dataset.num_episodes`.
+2. **Check the new episodes** ([step 4](./check_dataset)).
+3. **Train again** on the bigger dataset ([step 5](./train_policy)). More episodes need more steps: one epoch is about 110 steps per episode of 30 seconds.
+4. **Measure the success rate again** ([step 6](./run_policy)), and compare it with the previous round.
+
+Change one thing per round, so you know what helped.
+
+## Correct the policy while it runs
+
+Once your policy mostly works but still fails in a few situations, you can teach it those situations directly. You run the policy, and when it's about to fail, you pause it and take over with the leader arm. Your corrections are recorded, and you train again on your original episodes plus the corrections. This is called [human-in-the-loop](./glossary#human-in-the-loop) data collection, or [DAgger](./glossary#dagger).
+
+It needs a leader arm with motors, such as the SO-100 or SO-101 leader arm, so that it can follow the robot while the policy runs. See [Correct a running policy](./hil_data_collection).
+
+## Try a bigger policy
+
+When your data is good and ACT stops improving, or when you want one policy for several tasks that follows text instructions, try a larger pretrained policy such as [SmolVLA](./smolvla). It starts from a policy already trained on many robots, so you [fine-tune](./glossary#fine-tune) it on your dataset instead of training from scratch. It needs a GPU with more memory: see [Choose a policy](./policies).
+
+## You did it
+
+You taught a robot a task: set it up, showed it what to do, trained a policy and ran it. From here:
+
+- **Teach it something new:** record a new task the same way, or several tasks in one dataset with a different task text for each.
+- **Share your work:** your dataset and policy are on the Hub. Post a video of your robot on [Discord](https://discord.gg/s3KuuzsPFb).
+- **Explore:** try [policies that follow text instructions](./policies), train in [simulation](./simulation_overview), or teach a robot by trial and error with [reinforcement learning](./rl_overview).

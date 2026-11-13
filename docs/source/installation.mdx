@@ -1,35 +1,47 @@
-# Installation
+# Install LeRobot
 
-This guide uses `conda` (via miniforge) to manage environments (recommended). If you prefer another environment manager (e.g. `uv`, `venv`), ensure you have Python >=3.12, then skip ahead to [Environment Setup](#step-2-environment-setup).
+Installing LeRobot takes three steps and about 10 minutes: create a Python environment, install `ffmpeg`, then install LeRobot with the extras for what you want to do.
 
-## Step 1 (`conda` only): Install [`miniforge`](https://conda-forge.org/download/)
+> [!TIP]
+> **Which version should I install?** The latest release from PyPI (Step 3), unless you want to contribute to LeRobot. These docs exist for every release: pick yours in the version menu at the top of the sidebar, because commands can change between versions. `lerobot-info` tells you which version you have.
 
-```bash
-wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
-bash Miniforge3-$(uname)-$(uname -m).sh
-```
+## Platform requirements
 
-## Step 2: Environment Setup
+- **Python 3.12 or newer.**
+- **macOS:** on Apple Silicon, PyTorch needs **macOS 14 or newer**, and GPU acceleration (MPS) **macOS 15 or newer**. On macOS 14, LeRobot runs on the CPU.
+- **Linux:** the default PyTorch wheels need an NVIDIA driver **580.65 or newer**. For older drivers, see [PyTorch CUDA variant](#pytorch-cuda-variant-linux-only).
+- **Windows:** works in PowerShell or in WSL (Windows Subsystem for Linux). In WSL, also install `evdev` (see Step 1).
 
-Create a virtual environment with Python 3.12:
+## Step 1: Create a Python environment
+
+A virtual environment keeps LeRobot and its dependencies separate from the rest of your system. We recommend `conda` (through miniforge); `uv` works too.
 
 <!-- prettier-ignore-start -->
+
 <hfoptions id="create_venv">
 <hfoption id="conda">
+
+Install [miniforge](https://conda-forge.org/download/), then create an environment with Python 3.12:
+
 ```bash
+curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh
 conda create -y -n lerobot python=3.12
 ```
+
 </hfoption>
 <hfoption id="uv (PyTorch >= 2.10 only)">
+
 ```bash
 uv python install 3.12
 uv venv --python 3.12
 ```
+
 </hfoption>
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-Then activate your virtual environment, you have to do this each time you open a shell to use lerobot:
+Then activate the environment. Do this each time you open a new terminal to use LeRobot:
 
 <!-- prettier-ignore-start -->
 
@@ -67,13 +79,9 @@ source .venv/bin/activate
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-### Platform requirements
+## Step 2: Install `ffmpeg` (for video)
 
-On Apple Silicon, PyTorch requires **macOS 14 or newer**, and MPS acceleration **macOS 15 or newer** (on macOS 14, LeRobot falls back to CPU). On Linux, the default PyTorch wheels need an NVIDIA driver of **580.65 or newer**; for older drivers, see [PyTorch CUDA variant](#pytorch-cuda-variant-linux-only).
-
-### Install `ffmpeg` (for video decoding)
-
-LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video decoding by default, which requires `ffmpeg`.
+LeRobot stores camera recordings as videos and uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) to read them, which requires `ffmpeg`.
 
 > [!NOTE]
 > **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64) or Linux armv7l. On these platforms, LeRobot automatically falls back to `pyav` — so you do not need to install `ffmpeg` and can skip to Step 3.
@@ -122,18 +130,65 @@ brew install ffmpeg
 
 ## Step 3: Install LeRobot 🤗
 
-The base `lerobot` install is intentionally **lightweight** — it includes only core ML dependencies (PyTorch, torchvision, numpy, opencv, einops, draccus, huggingface-hub, gymnasium, safetensors). Heavier dependencies are gated behind optional extras so you only install what you need.
+The base `lerobot` package is small on purpose. You add **extras**, named in square brackets, for what you want to do. Pick your line:
 
-### From Source
+| You want to                                  | Install                                                                                                                                        |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Follow the tutorial with an SO-100 or SO-101 | `pip install 'lerobot[core_scripts,training,feetech]'`                                                                                         |
+| Follow the tutorial with a Koch or OMX arm   | `pip install 'lerobot[core_scripts,training,dynamixel]'`                                                                                       |
+| Follow the tutorial with another robot       | `pip install 'lerobot[core_scripts,training]'`, plus your robot's extra from [Your robot's settings](./setup_your_robot)                       |
+| Try LeRobot without a robot                  | `pip install 'lerobot[dataset,pusht,diffusion,evaluation]'` (see [Try it without a robot](./quickstart))                                       |
+| Train a policy on a dataset from the Hub     | `pip install 'lerobot[training]'`, plus the policy's extra if its page lists one (for example `smolvla`)                                       |
+| Evaluate policies on a simulation benchmark  | `pip install 'lerobot[evaluation]'`, plus the benchmark's extra and the policy's extra (for example `'lerobot[evaluation,metaworld,smolvla]'`) |
+| Everything                                   | `pip install 'lerobot[all]'`                                                                                                                   |
 
-First, clone the repository and navigate into the directory:
+With `uv`, write `uv pip install` instead of `pip install`. You can add extras later by running `pip install` again with the new ones.
+
+<details>
+<summary>All extras</summary>
+
+**Feature extras:**
+
+| Extra      | What it adds                                | Typical use case                    |
+| ---------- | ------------------------------------------- | ----------------------------------- |
+| `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | Loading & creating datasets         |
+| `training` | `dataset` + `accelerate`, `trackio`         | Training policies                   |
+| `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
+| `viz`      | `rerun-sdk`, `foxglove-sdk`                 | Visualization during recording/eval |
+
+**Composite extras** combine feature extras for common commands:
+
+| Extra          | Includes                       | Typical use case                                        |
+| -------------- | ------------------------------ | ------------------------------------------------------- |
+| `core_scripts` | `dataset` + `hardware` + `viz` | `lerobot-record`, `lerobot-replay`, `lerobot-calibrate` |
+| `evaluation`   | `av`                           | `lerobot-eval` (add policy + env extras as needed)      |
+| `dataset_viz`  | `dataset` + `viz`              | `lerobot-dataset-viz`, `lerobot-imgtransform-viz`       |
+
+**Policy, simulation and hardware extras** add the dependencies of one policy, simulator or robot:
+
+```bash
+pip install 'lerobot[pi]'             # π₀, π₀.₅ and π₀-FAST
+pip install 'lerobot[smolvla]'        # SmolVLA
+pip install 'lerobot[diffusion]'      # Diffusion Policy (diffusers)
+pip install 'lerobot[aloha,pusht]'    # ALOHA and PushT simulations
+pip install 'lerobot[libero]'         # LIBERO (Linux only)
+pip install 'lerobot[metaworld]'      # Meta-World
+pip install 'lerobot[feetech]'        # Feetech motors: SO-100, SO-101, LeKiwi, Moss
+pip install 'lerobot[dynamixel]'      # Dynamixel motors: Koch, OMX
+```
+
+Feetech and Dynamixel motors both talk to your computer through [rustypot](https://github.com/pollen-robotics/rustypot). For the full list of extras, see `pyproject.toml`.
+
+</details>
+
+### Install from source (to contribute or use unreleased features)
+
+Clone the repository and install it in editable mode, so your changes to the code take effect right away:
 
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
-
-Then, install the library in editable mode. This is useful if you plan to contribute to the code.
 
 <!-- prettier-ignore-start -->
 <hfoptions id="install_lerobot_src">
@@ -154,64 +209,7 @@ uv pip install -e ".[all]"           # Everything (all policies, envs, hardware,
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-### Installation from PyPI
-
-**Core Library:**
-Install the base package with:
-
-<!-- prettier-ignore-start -->
-<hfoptions id="install_lerobot_pypi">
-<hfoption id="conda">
-```bash
-pip install lerobot
-```
-</hfoption>
-<hfoption id="uv">
-```bash
-uv pip install lerobot
-```
-</hfoption>
-</hfoptions>
-<!-- prettier-ignore-end -->
-
-_This installs only the core ML dependencies. You will need to add extras for most workflows._
-
-**Feature Extras:**
-LeRobot provides **feature-scoped extras** that map to common workflows. If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.
-
-| Extra      | What it adds                                | Typical use case                    |
-| ---------- | ------------------------------------------- | ----------------------------------- |
-| `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | Loading & creating datasets         |
-| `training` | `dataset` + `accelerate`, `trackio`         | Training policies                   |
-| `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
-| `viz`      | `rerun-sdk`, `foxglove-sdk`                 | Visualization during recording/eval |
-
-**Composite Extras** combine feature extras for common CLI scripts:
-
-| Extra          | Includes                       | Typical use case                                        |
-| -------------- | ------------------------------ | ------------------------------------------------------- |
-| `core_scripts` | `dataset` + `hardware` + `viz` | `lerobot-record`, `lerobot-replay`, `lerobot-calibrate` |
-| `evaluation`   | `av`                           | `lerobot-eval` (add policy + env extras as needed)      |
-| `dataset_viz`  | `dataset` + `viz`              | `lerobot-dataset-viz`, `lerobot-imgtransform-viz`       |
-
-```bash
-pip install 'lerobot[core_scripts]'          # Record, replay, calibrate
-pip install 'lerobot[training]'              # Train policies
-pip install 'lerobot[core_scripts,training]' # Record + train
-pip install 'lerobot[all]'                   # Everything
-```
-
-**Policy, environment, and hardware extras** are still available for specific dependencies:
-
-```bash
-pip install 'lerobot[pi]'             # Pi0/Pi0.5/Pi0-FAST policy deps
-pip install 'lerobot[smolvla]'        # SmolVLA policy deps
-pip install 'lerobot[diffusion]'      # Diffusion policy deps (diffusers)
-pip install 'lerobot[aloha,pusht]'    # Simulation environments
-pip install 'lerobot[feetech]'        # Feetech motor support
-```
-
-_Multiple extras can be combined (e.g., `.[core_scripts,pi,pusht]`). For a full list of available extras, refer to `pyproject.toml`._
+The same extras as above work here: `pip install -e ".[core_scripts,training,feetech]"`. To contribute, also add `dev` and `test`, and see the [contributing guide](./contributing).
 
 ### PyTorch CUDA variant (Linux only)
 
@@ -232,7 +230,15 @@ pip install lerobot              # from PyPI
 
 With `uv pip`, `--torch-backend` selects the index in one step, e.g. `uv pip install --torch-backend cu126 lerobot`. `uv sync` always installs the committed lock: to change the CUDA build there, add the index to `[tool.uv.index]` and `[tool.uv.sources]` in `pyproject.toml` and re-run `uv lock`.
 
-### Troubleshooting
+## Check it worked
+
+```bash
+lerobot-info
+```
+
+It prints your LeRobot version and the parts of your system it depends on: Python, PyTorch, your GPU, `ffmpeg`. Copy this output when you ask for help on [Discord](https://discord.gg/s3KuuzsPFb) or report a bug.
+
+## Troubleshooting
 
 If you encounter build errors, you may need to install additional system dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
 To install these for Linux run:
@@ -243,28 +249,9 @@ sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-de
 
 For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
-## Optional dependencies
+More problems and their fixes are in [Troubleshooting & FAQ](./troubleshooting).
 
-LeRobot provides optional extras for specific functionalities. Multiple extras can be combined (e.g., `.[aloha,feetech]`). For all available extras, refer to `pyproject.toml`. If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.
-
-### Simulations
-
-Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht)), [`libero`](./libero) (Linux only) or [`metaworld`](./metaworld).
-These automatically include the `dataset` extra.
-
-```bash
-pip install -e ".[aloha]" # or "[pusht]" for example
-```
-
-### Motor Control
-
-Install the extra for your motors: `dynamixel` for Koch v1.1, `feetech` for SO100/SO101/Moss. Both talk to the motors through [rustypot](https://github.com/pollen-robotics/rustypot).
-
-```bash
-pip install -e ".[feetech]" # or "[dynamixel]" for example
-```
-
-### Experiment Tracking
+## Experiment tracking
 
 [Trackio](https://huggingface.co/docs/trackio) is included in the `training` extra. Local runs need no account or login: they are stored in a local SQLite database under `~/.cache/huggingface/trackio`. Open the dashboard with:
 
@@ -278,7 +265,7 @@ Space privacy defaults to `None`: new Spaces are public unless the organization'
 
 Each run records the command that launched it and its console output (prints, logs, tracebacks), both shown on the run's page in the dashboard. On a Space they are as visible as the Space itself; pass `--trackio.capture_console=false` to keep the console output out of the run.
 
-#### Migrating from Weights & Biases
+### Migrating from Weights & Biases
 
 | W&B setting                     | Trackio setting                                                                                  |
 | ------------------------------- | ------------------------------------------------------------------------------------------------ |
@@ -293,7 +280,7 @@ Each run records the command that launched it and its console output (prints, lo
 
 ## Next steps
 
-- **Have a robot?** Assemble and calibrate it by following its page under **Robots** in the sidebar (for example [SO-101](./so101)), then record a dataset and train your first policy with the [imitation learning tutorial](./il_robots).
-- **No hardware yet?** Train and evaluate a policy in simulation with [LIBERO](./libero), or try the [Colab notebooks](./notebooks).
-- **Want to contribute?** Read the [contributing guide](./contributing).
-- Keep the [cheat sheet](./cheat-sheet) at hand: it lists every LeRobot command in one place.
+- **You have a robot:** start the [step-by-step tutorial](./il_robots).
+- **You don't have one yet:** [try LeRobot without a robot](./quickstart), or [choose a robot](./robots).
+- **You want to contribute:** read the [contributing guide](./contributing).
+- Keep the [cheat sheet](./cheat-sheet) at hand: it lists the main LeRobot commands in one place.
