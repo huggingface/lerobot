@@ -1,0 +1,90 @@
+# FlowDAgger: Adapting a Frozen Pi0.5 / SmolVLA from DAgger Corrections
+
+[FlowDAgger](https://microsoft.github.io/FlowDAgger/) ([paper](https://arxiv.org/abs/2607.08877)) is an alternative to fine-tuning a policy on [Human-In-the-Loop](./hil_data_collection) corrections. The base policy stays **frozen**. A small _noise policy_ learns which starting noise the flow-matching action head should denoise from, so that the frozen head produces the corrected behavior.
+
+In LeRobot it is available for **Pi0.5 (`pi05`)** and **SmolVLA (`smolvla`)**, on datasets recorded with `lerobot-rollout --strategy.type=dagger`.
+
+## How It Works
+
+A flow-matching policy produces an action chunk by integrating a learned velocity field from Gaussian noise `w` to the action `a = π(s, w)`. FlowDAgger makes three changes:
+
+1. **Action inversion.** Each recorded action chunk `a*` is mapped back to the noise `w*` that the frozen policy decodes into it. The ODE is integrated backwards, and each reverse Euler step is solved by fixed-point iteration (`--inversion.num_fixed_point_iters`, 5 by default). This costs `num_steps × iterations` action-expert calls and no backpropagation.
+2. **Noise policy.** An MLP `π_w(s)` maps the base policy's own pooled VLM prefix features (images, language and state) to the noise. It is trained by regression, `‖π_w(s) − w*‖²`.
+3. **Two buffers.** Every training batch has 50% intervention samples (the corrections) and 50% autonomous samples (frames where the policy was doing fine). The autonomous half keeps the adapted policy from drifting on states it already handled.
+
+At deployment, the noise policy output replaces the Gaussian draw: `a = π(s, π_w(s))`. The base checkpoint is never modified. The noise policy is a separate small folder of a few MB, and it is attached with `--policy.noise_policy_path`.
+
+## Workflow
+
+### Step 1: Collect DAgger data
+
+Run a DAgger session with your fine-tuned Pi0.5 or SmolVLA as described in [Human-In-the-Loop Data Collection](./hil_data_collection#step-2-collect-hil-data). Record autonomous frames too, because they feed the autonomous buffer:
+
+```bash
+lerobot-rollout --strategy.type=dagger \
+    --strategy.record_autonomous=true \
+    --policy.path=${HF_USER}/smolvla_my_task \
+    --dataset.repo_id=${HF_USER}/dagger_round1 \
+    --dataset.single_task="Pick the cube" \
+    ...  # robot, teleop, and inference flags
+```
+
+Corrections-only datasets (`record_autonomous=false`) also work. In that case the noise policy is trained on interventions alone.
+
+### Step 2: Train the noise policy
+
+```bash
+lerobot-train-flow-dagger \
+    --policy.path=${HF_USER}/smolvla_my_task \
+    --dataset.repo_ids="[${HF_USER}/dagger_round1_YYYYMMDD_HHMMSS]" \
+    --output_dir=outputs/flow_dagger/round1
+```
+
+The script runs in two stages:
+
+1. It loads the frozen base policy and its pretrained preprocessor, so actions are normalized with the base policy's own statistics. It then inverts every selected chunk. Inversion quality is logged per buffer (`recon_mse`, the squared error between the decoded inverted noise and the recorded chunk in normalized action space), and the results are cached under `<output_dir>/inversion_cache`.
+2. It trains the MLP on the cached features. This step doesn't need the VLM and takes seconds to minutes.
+
+The noise policy is written to `<output_dir>/noise_policy`. To push it to the Hub, add `--push_to_hub=true --repo_id=${HF_USER}/flow_dagger_round1`.
+
+### Step 3: Deploy and iterate
+
+```bash
+lerobot-rollout --strategy.type=dagger \
+    --strategy.record_autonomous=true \
+    --policy.path=${HF_USER}/smolvla_my_task \
+    --policy.noise_policy_path=outputs/flow_dagger/round1/noise_policy \
+    --dataset.repo_id=${HF_USER}/dagger_round2 \
+    ...
+```
+
+`--policy.noise_policy_path` works with every entry point that loads a policy, including `lerobot-rollout`, `lerobot-eval` and RTC inference. For the next round, aggregate all rounds collected so far. Earlier rounds are loaded from the inversion cache:
+
+```bash
+lerobot-train-flow-dagger \
+    --policy.path=${HF_USER}/smolvla_my_task \
+    --dataset.repo_ids="[${HF_USER}/dagger_round1_...,${HF_USER}/dagger_round2_...]" \
+    --output_dir=outputs/flow_dagger/round2 \
+    --inversion.cache_dir=outputs/flow_dagger/cache
+```
+
+Always invert against the **base** policy, as `--policy.path` does. The script ignores any `noise_policy_path` stored in the base config.
+
+## Sample Selection
+
+| Flag                                     | Default          | Meaning                                                                                                             |
+| ---------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `--inversion.min_valid_steps`            | `n_action_steps` | Frames whose chunk has fewer leading steps in the same segment (same episode, same intervention state) are skipped. |
+| `--inversion.exclude_pre_intervention_s` | `2.0`            | Autonomous frames this close before an intervention are dropped, because the policy was already drifting there.     |
+| `--inversion.autonomous_stride`          | `1`              | Keep every n-th autonomous frame (long sessions produce many more autonomous frames than corrections).              |
+| `--inversion.use_autonomous`             | `true`           | Set to `false` to train on interventions only.                                                                      |
+| `--train.intervention_fraction`          | `0.5`            | Share of each batch drawn from the intervention buffer.                                                             |
+
+Chunk steps that run past the end of a frame's segment are filled with the segment's last action before inversion. The frames that follow come from a different controller, after a pause of unknown length.
+
+## Notes and Limitations
+
+- The noise policy is deterministic, so the adapted policy no longer samples. Its output for a given observation is fixed.
+- Use the same `num_inference_steps` (pi05) or `num_steps` (smolvla) at deployment as during inversion. A mismatch triggers a warning.
+- Each noise policy is tied to one base checkpoint (type, `chunk_size` and `max_action_dim` are checked at load). It must be retrained whenever the base policy changes.
+- DAgger datasets carry no success labels. "Successful autonomous" frames are approximated by the frames that were not followed by an intervention within `exclude_pre_intervention_s`.

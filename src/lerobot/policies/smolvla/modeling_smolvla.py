@@ -54,6 +54,7 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 import math
 from collections import deque
+from collections.abc import Callable
 from typing import Any, Unpack
 
 import torch
@@ -68,6 +69,7 @@ from lerobot.utils.import_utils import require_package
 from ..common.flow_matching import (
     FlowConvention,
     euler_integrate,
+    invert_euler,
     make_flow_matching_inputs,
     sample_noise,
     sample_time_beta,
@@ -78,6 +80,7 @@ from ..common.vla_utils import (
     pad_vector,
     resize_with_pad,
 )
+from ..flow_dagger.noise_policy import NoisePolicy, NoisePolicyHolder, masked_mean_pool
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..rtc.modeling_rtc import RTCProcessor
 from ..utils import (
@@ -167,6 +170,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.config = config
         self.init_rtc_processor()
         self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
+        # FlowDAgger noise policy, loaded lazily from ``config.noise_policy_path`` and kept out
+        # of the module tree so it never ends up in this policy's state dict.
+        self._noise_policy_holder = NoisePolicyHolder()
         self.reset()
 
     def reset(self):
@@ -194,6 +200,54 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
+    def set_noise_policy(self, noise_policy: NoisePolicy | None) -> None:
+        """Attach a FlowDAgger noise policy in memory (overrides ``config.noise_policy_path``)."""
+        self._noise_policy_holder.set(noise_policy)
+
+    def get_noise_policy(self, device: torch.device | None = None) -> NoisePolicy | None:
+        """The FlowDAgger noise policy used to seed denoising, or None for Gaussian noise."""
+        if device is None:
+            device = next(self.model.parameters()).device
+        return self._noise_policy_holder.get(
+            self.config.noise_policy_path,
+            policy_type=self.config.type,
+            chunk_size=self.config.chunk_size,
+            max_action_dim=self.config.max_action_dim,
+            num_inference_steps=self.config.num_steps,
+            device=device,
+        )
+
+    @torch.no_grad()
+    def invert_action_chunk(
+        self, batch: dict[str, Tensor], *, num_fixed_point_iters: int = 5
+    ) -> tuple[Tensor, Tensor]:
+        """FlowDAgger: invert the (preprocessed) ``batch[ACTION]`` chunk to the base policy's noise.
+
+        Returns ``(noise, features)``: the noise ``(B, chunk_size, max_action_dim)`` that the
+        frozen model decodes into the padded action chunk, and the pooled prefix features
+        ``(B, D)`` the noise policy is conditioned on.
+        """
+        self.eval()
+        batch = dict(batch)
+        if self.config.adapt_to_pi_aloha:
+            # The Aloha helpers modify their input in place: clone so the caller's batch is untouched.
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE].clone())
+            batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION].clone())
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        actions = self.prepare_action(batch)
+        return self.model.invert_actions(
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            state,
+            actions,
+            num_fixed_point_iters=num_fixed_point_iters,
+        )
+
     def _get_action_chunk(
         self,
         batch: dict[str, Tensor],
@@ -215,8 +269,10 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
+        # FlowDAgger: seed denoising from the noise policy when one is configured.
+        noise_fn = self.get_noise_policy(state.device) if noise is None else None
         actions = self.model.sample_actions(
-            images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
+            images, img_masks, lang_tokens, lang_masks, state, noise=noise, noise_fn=noise_fn, **kwargs
         )
 
         # Unpad actions
@@ -781,31 +837,29 @@ class VLAFlowMatching(nn.Module):
         lang_masks,
         state,
         noise=None,
+        noise_fn: Callable[[Tensor], Tensor] | None = None,
         **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)
+
+        ``noise_fn`` (FlowDAgger) maps the pooled prefix features ``(B, D)`` to the starting
+        noise ``(B, chunk_size, max_action_dim)``. It is only used when ``noise`` is None.
+        """
         bsize = state.shape[0]
         device = state.device
 
+        prefix_out, prefix_pad_masks, past_key_values = self._compute_prefix(
+            images, img_masks, lang_tokens, lang_masks, state
+        )
+
+        if noise is None and noise_fn is not None:
+            noise = noise_fn(masked_mean_pool(prefix_out, prefix_pad_masks))
         if noise is None:
             actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
             noise = self.sample_noise(actions_shape, device)
         else:
             noise = noise.to(device=device, dtype=torch.float32)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, state=state
-        )
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-        # Compute image and language key value cache
-        _, past_key_values = self.vlm_with_expert.forward(
-            attention_mask=prefix_att_2d_masks,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=self.config.use_cache,
-        )
         num_steps = self.config.num_steps
 
         return euler_integrate(
@@ -823,6 +877,55 @@ class VLAFlowMatching(nn.Module):
             prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
             execution_horizon=kwargs.get("execution_horizon"),
         )
+
+    def _compute_prefix(self, images, img_masks, lang_tokens, lang_masks, state):
+        """Run the VLM over the prefix once: returns ``(prefix_out, prefix_pad_masks, kv_cache)``."""
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        # Compute image and language key value cache
+        (prefix_out, _), past_key_values = self.vlm_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=self.config.use_cache,
+        )
+        return prefix_out, prefix_pad_masks, past_key_values
+
+    @torch.no_grad()
+    def invert_actions(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        actions: Tensor,
+        num_fixed_point_iters: int = 5,
+    ) -> tuple[Tensor, Tensor]:
+        """FlowDAgger action inversion: the noise that ``sample_actions`` decodes into ``actions``.
+
+        ``actions`` is a normalised, padded chunk ``(B, chunk_size, max_action_dim)``. Returns
+        ``(noise, features)`` with ``features`` the pooled prefix hidden states ``(B, D)``.
+        """
+        prefix_out, prefix_pad_masks, past_key_values = self._compute_prefix(
+            images, img_masks, lang_tokens, lang_masks, state
+        )
+        noise = invert_euler(
+            lambda input_x_t, current_timestep: self.denoise_step(
+                x_t=input_x_t,
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
+                timestep=current_timestep,
+            ),
+            actions.to(dtype=torch.float32),
+            self.config.num_steps,
+            num_fixed_point_iters=num_fixed_point_iters,
+        )
+        return noise, masked_mean_pool(prefix_out, prefix_pad_masks)
 
     def denoise_step(
         self,
