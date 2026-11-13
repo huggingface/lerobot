@@ -1581,6 +1581,41 @@ def test_min_equals_max_maps_to_minus_one():
     out = normalizer(create_transition(observation=observation))
     assert torch.allclose(out[TransitionKey.OBSERVATION][OBS_STATE], torch.tensor([-1.0]))
 
+def test_constant_coordinate_finite_in_float16():
+    """Regression test for https://github.com/huggingface/lerobot/issues/4973:
+    normalizing a constant coordinate (std == 0 / min == max / identical quantiles) in
+    float16 must not produce NaN. The configured eps (1e-8) underflows to zero in
+    float16, so denominators are floored at the dtype's smallest normal value.
+    """
+    stats = {
+        OBS_STATE: {
+            "mean": np.array([1.0, 0.0]),
+            "std": np.array([0.0, 1.0]),
+            "min": np.array([1.0, 0.0]),
+            "max": np.array([1.0, 1.0]),
+            "q01": np.array([1.0, 0.0]),
+            "q99": np.array([1.0, 1.0]),
+            "q10": np.array([1.0, 0.0]),
+            "q90": np.array([1.0, 1.0]),
+        }
+    }
+    for mode in (
+        NormalizationMode.MEAN_STD,
+        NormalizationMode.MIN_MAX,
+        NormalizationMode.QUANTILES,
+        NormalizationMode.QUANTILE10,
+    ):
+        features = {OBS_STATE: PolicyFeature(FeatureType.STATE, (2,))}
+        norm_map = {FeatureType.STATE: mode}
+        normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+        observation = {OBS_STATE: torch.tensor([1.0, 0.5], dtype=torch.float16)}
+        out = normalizer(create_transition(observation=observation))[
+            TransitionKey.OBSERVATION
+        ][OBS_STATE]
+        assert out.dtype == torch.float16
+        assert torch.isfinite(out).all()
+
 
 def test_action_normalized_despite_normalize_observation_keys():
     """Action normalization is independent of normalize_observation_keys filter for observations."""
