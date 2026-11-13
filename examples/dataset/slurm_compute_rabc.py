@@ -23,8 +23,8 @@ sample_weighting.score_name=sarm and sample_weighting.signal_name=reward.sarm.sp
 
 Two subcommands, each a separate SLURM submission:
 
-  compute    – N workers, each scores a subset of episodes as the score `sarm-rank<N>`
-  aggregate  – 1 worker, merges the worker scores into `sarm`, optionally pushes it
+  compute    - N workers, each scores a subset of episodes as the score `sarm-rank<N>`
+  aggregate  - 1 worker, merges the worker scores into `sarm`, optionally pushes it
 
 Both subcommands read and write the same dataset root, so it must be a writable
 directory shared by all workers, with the dataset already downloaded.
