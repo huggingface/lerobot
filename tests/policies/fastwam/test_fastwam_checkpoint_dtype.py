@@ -34,6 +34,7 @@ from lerobot.policies.fastwam import modeling_fastwam
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.wan import LiteKVFusion
+from lerobot.policies.fastwam.wan.model import sinusoidal_embedding_1d
 
 DOT_FLAGS = {
     "action_expert_layers": 1,
@@ -162,6 +163,40 @@ def test_public_dtype_train_infer_and_checkpoint(offline_components, tmp_path, f
     assert torch.isfinite(action).all()
     torch.testing.assert_close(reloaded_action, action, rtol=0, atol=0)
     assert loaded.config.dtype == dtype
+
+
+def test_bfloat16_policy_trains_and_predicts_on_the_cpu_without_autocast(offline_components):
+    # No autocast: CUDA autocast covers no CPU tensor.
+    torch.manual_seed(1234)
+    policy = FastWAMPolicy(tiny_config(dtype=torch.bfloat16))
+    loss, _ = policy(training_batch())
+    loss.backward()
+    assert torch.isfinite(loss)
+    # The bfloat16 weights get their gradients through the float32 copies.
+    video = policy.model.video_expert
+    for module in (video.time_embedding, video.time_projection, video.head.head):
+        for parameter in module.parameters():
+            assert torch.isfinite(parameter.grad).all() and parameter.grad.abs().sum() > 0
+    policy.eval()
+    batch = training_batch()
+    del batch["action"]
+    with torch.no_grad():
+        action = policy.predict_action_chunk(batch, noise=torch.randn(1, 8, 3))
+    assert action.shape == (1, 8, 3)
+    assert torch.isfinite(action).all()
+    # The time embedding stays in float32, from the bfloat16 weights cast up, as under CUDA autocast.
+    with torch.no_grad():
+        state = video.pre_dit(
+            x=torch.randn(1, 4, 2, 8, 16),
+            timestep=torch.tensor([500.0]),
+            context=torch.randn(1, 4, 8),
+            fuse_vae_embedding_in_latents=True,
+        )
+        # The first latent frame's tokens get timestep 0, the second frame's the given one.
+        position = sinusoidal_embedding_1d(video.freq_dim, torch.tensor([0.0, 500.0])).float()
+        expected = deepcopy(video.time_embedding).float()(position)
+    assert state["t"].dtype == torch.float32
+    torch.testing.assert_close(state["t"][0, [0, -1]], expected)
 
 
 def test_cli_backbone_conversion_loads_weights_and_trains(offline_components, tmp_path, monkeypatch):
