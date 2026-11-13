@@ -23,6 +23,10 @@ It is designed as a **Vision-Language-Action model with open-world generalizatio
 from the current robot state instead of absolute joint positions. This mirrors the
 relative-action transform in OpenPI (`DeltaActions`) and can improve performance.
 
+With `use_relative_actions=false`, the policy learns the dataset's action convention. This does not imply absolute joint targets: `lerobot/pi05_libero` and `lerobot/pi05_libero_finetuned_v044` predict per-step LIBERO controller deltas. Evaluate them with the flag disabled and the environment's default `control_mode="relative"`. Their unnormalized outputs already match the delta controller.
+
+The relative-action transform below instead uses one state at the start of the chunk as the reference for all selected actions in that chunk. It requires matching state/action coordinates, training, and normalization statistics. Keep the checkpoint's saved processors and training setting at inference; enabling the transform only at evaluation changes the action convention.
+
 ### How it works
 
 1. **During preprocessing**, absolute actions are converted to relative offsets:
