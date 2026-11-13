@@ -44,6 +44,8 @@ class PI0Config(PreTrainedConfig):
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10  # Number of denoising steps during inference
+    # None preserves Euler sampling; a path selects a separately fitted readout.
+    gaussian_readout_path: str | None = None
     time_sampling_beta_alpha: float = 1.5
     time_sampling_beta_beta: float = 1.0
     time_sampling_scale: float = 0.999
