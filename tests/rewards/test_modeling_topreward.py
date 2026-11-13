@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -177,9 +178,32 @@ def test_topreward_compute_log_probability_returns_one_scalar_per_sample(monkeyp
     assert model.model._param.grad is not None
 
 
-def test_topreward_config_rejects_finite_success_threshold():
-    with pytest.raises(ValueError, match="compute_log_probability"):
-        TOPRewardConfig(device="cpu", success_threshold=0.0)
+@skip_if_package_missing("transformers")
+def test_topreward_compute_log_probability_scores_the_final_target_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
+
+    _patch_build(monkeypatch)
+    model = TOPRewardModel(TOPRewardConfig(device="cpu"))
+    probabilities = torch.tensor(
+        [
+            [[0.1, 0.2, 0.7], [0.2, 0.3, 0.5], [0.8, 0.1, 0.1]],
+            [[0.2, 0.3, 0.5], [0.1, 0.8, 0.1], [0.1, 0.2, 0.7]],
+        ]
+    )
+
+    def forward(*, logits_to_keep: int, **kwargs: object) -> SimpleNamespace:  # noqa: ARG001
+        assert logits_to_keep == 2
+        return SimpleNamespace(logits=probabilities.log()[:, -logits_to_keep:, :])
+
+    monkeypatch.setattr(model.model, "forward", forward)
+    input_ids = torch.tensor([[0, 1, 2], [2, 0, 1]])
+    batch = _make_batch(input_ids, labels=_terminal_labels(input_ids))
+
+    actual = model.compute_log_probability(batch)
+
+    torch.testing.assert_close(actual, torch.tensor([0.5, 0.8]).log())
 
 
 @skip_if_package_missing("transformers")
@@ -247,10 +271,14 @@ def test_topreward_save_pretrained_writes_only_config_json(monkeypatch, tmp_path
 
     assert (tmp_path / CONFIG_NAME).exists()
     assert not (tmp_path / SAFETENSORS_SINGLE_FILE).exists()
+    assert "success_threshold" not in json.loads((tmp_path / CONFIG_NAME).read_text())
 
 
 @skip_if_package_missing("transformers")
-def test_topreward_from_pretrained_local_dir_roundtrips_config(monkeypatch, tmp_path):
+@pytest.mark.parametrize("cli_overrides", [None, ["--fps=6.0"]])
+def test_topreward_from_pretrained_local_dir_roundtrips_config(
+    monkeypatch, tmp_path, cli_overrides: list[str] | None
+):
     from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
     _patch_build(monkeypatch)
@@ -263,11 +291,12 @@ def test_topreward_from_pretrained_local_dir_roundtrips_config(monkeypatch, tmp_
     )
     TOPRewardModel(cfg).save_pretrained(str(tmp_path))
 
-    reloaded = TOPRewardModel.from_pretrained(str(tmp_path))
+    kwargs = {} if cli_overrides is None else {"cli_overrides": cli_overrides}
+    reloaded = TOPRewardModel.from_pretrained(str(tmp_path), **kwargs)
 
     assert isinstance(reloaded.config, TOPRewardConfig)
     assert reloaded.config.vlm_name == "Qwen/Qwen3-VL-8B-Instruct"
-    assert reloaded.config.fps == 4.0
+    assert reloaded.config.fps == (4.0 if cli_overrides is None else 6.0)
     assert reloaded.config.image_key == "observation.images.front"
     assert reloaded.config.add_chat_template is True
 

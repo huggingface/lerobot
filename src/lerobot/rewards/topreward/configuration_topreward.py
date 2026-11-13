@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
@@ -41,9 +40,10 @@ class TOPRewardConfig(RewardModelConfig):
     TOPReward is **zero-shot**: it has no learnable parameters of its own.
     The "model" is a generic vision-language model (default
     ``Qwen/Qwen3-VL-8B-Instruct``) used with a fixed prompt to extract
-    token log-probabilities as a reward signal. There is therefore no
-    fine-tuned checkpoint to host: ``pretrained_path`` is unused at
-    runtime — the model identity is :attr:`vlm_name` (an HF Hub id).
+    token log-probabilities as a reward signal. There are therefore no
+    fine-tuned weights to host: ``pretrained_path`` may identify a saved
+    configuration, while :attr:`vlm_name` identifies the VLM weights
+    (an HF Hub id).
 
     Args:
         vlm_name: Hugging Face Hub id of the underlying VLM. Must be a
@@ -64,13 +64,10 @@ class TOPRewardConfig(RewardModelConfig):
             before the suffix template.
         prompt_suffix_template: Suffix appended after ``prompt_prefix``.
             Must contain ``{instruction}``; the VLM scores the
-            log-likelihood of the tokens that follow the prefix.
+            log-probability of the final target token.
         add_chat_template: If ``True``, wrap the full prompt with the
             tokenizer's chat template before tokenisation (matches
             upstream ``add_chat_template=True``).
-        success_threshold: Kept so existing configs load; must stay
-            ``-inf``. ``compute_log_probability`` returns the raw value, so
-            apply a threshold to it yourself.
         max_input_length: Hard limit on the total tokenized input length;
             samples that exceed it raise a ``ValueError``.
     """
@@ -94,7 +91,6 @@ class TOPRewardConfig(RewardModelConfig):
     prompt_suffix_template: str = DEFAULT_PROMPT_SUFFIX_TEMPLATE
     add_chat_template: bool = False
 
-    success_threshold: float = float("-inf")
     max_input_length: int = 32768
 
     license: str | None = "mit"  # matches upstream TOPReward
@@ -124,12 +120,6 @@ class TOPRewardConfig(RewardModelConfig):
             )
         if self.max_input_length <= 0:
             raise ValueError(f"max_input_length must be > 0, got {self.max_input_length}")
-        if math.isfinite(self.success_threshold):
-            raise ValueError(
-                f"success_threshold={self.success_threshold} is no longer supported: "
-                "`compute_log_probability()` returns the raw log-probability. Remove `success_threshold` "
-                "from the config, and compare the log-probability with your threshold instead."
-            )
 
         if self.image_key not in self.input_features:
             self.input_features[self.image_key] = PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL)

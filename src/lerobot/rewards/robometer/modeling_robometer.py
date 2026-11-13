@@ -225,9 +225,6 @@ class RobometerRewardModel(PreTrainedRewardModel):
     def predict_progress(self, batch: Mapping[str, Any]) -> RobometerOutput:
         """Predict task progress and success probability for every frame.
 
-        It changes neither the model mode nor gradients: for inference, call it in `eval()` mode under
-        `torch.inference_mode()`.
-
         Args:
             batch (`Mapping[str, Any]`):
                 Output of the RoboMeter preprocessor.

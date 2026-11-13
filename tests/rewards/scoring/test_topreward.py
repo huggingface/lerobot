@@ -157,6 +157,7 @@ class _FakeModel:
         return self
 
     def compute_log_probability(self, batch):
+        assert not torch.is_grad_enabled()
         # Longer prefixes get higher log-probabilities: -4, -2 and 0 for lengths 1, 3 and 5.
         return torch.tensor([float(batch["observation.prefix_length"]) - 5.0])
 

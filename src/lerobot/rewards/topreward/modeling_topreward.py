@@ -112,9 +112,6 @@ class TOPRewardModel(PreTrainedRewardModel):
     def compute_log_probability(self, batch: Mapping[str, Any]) -> Tensor:
         """Compute `log P(target token | video, prompt)` for each sample.
 
-        It changes neither the model mode nor gradients: for inference, call it in `eval()` mode under
-        `torch.inference_mode()`.
-
         Args:
             batch (`Mapping[str, Any]`):
                 Output of the TOPReward preprocessor.
@@ -133,6 +130,7 @@ class TOPRewardModel(PreTrainedRewardModel):
             inputs[key] = batch[batch_key]
 
         labels = inputs.pop("labels")
+        # Keep the final two positions: the first predicts the final target token.
         inputs["logits_to_keep"] = 2
 
         outputs = self.model(**inputs)
@@ -161,6 +159,7 @@ class TOPRewardModel(PreTrainedRewardModel):
     ) -> T:
         """Load a TOPReward configuration and instantiate the wrapped VLM."""
         if config is None:
+            cli_overrides = kwargs.pop("cli_overrides", [])
             config = RewardModelConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
                 force_download=force_download,
@@ -170,6 +169,7 @@ class TOPRewardModel(PreTrainedRewardModel):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                cli_overrides=cli_overrides,
                 **kwargs,
             )
         if not isinstance(config, TOPRewardConfig):

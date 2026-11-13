@@ -118,6 +118,7 @@ def test_make_robometer_frame_scorer_builds_processor_without_frame_cap(monkeypa
 @pytest.mark.parametrize("task_key", ["task", "missing_task", "instruction"])
 def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     image_key = "observation.images.top"
+    grad_modes: list[bool] = []
 
     class FakeDataset:
         def __init__(self) -> None:
@@ -161,6 +162,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
             return self
 
         def predict_progress(self, batch):
+            grad_modes.append(torch.is_grad_enabled())
             progress = batch["observation.encoded"].float() / 2.0
             return RobometerOutput(
                 progress=progress,
@@ -173,6 +175,8 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     scorer = RobometerFrameScorer(model, preprocessor, batch_size=2, num_subsampled_frames=2)
 
     result = scorer.score_episode(dataset, episode_index=0)
+
+    assert grad_modes == [False, False]
 
     np.testing.assert_array_equal(result.frame_indices, np.asarray([0, 1, 2]))
     np.testing.assert_array_equal(result.signals[PROGRESS_SIGNAL], np.asarray([0.0, 0.5, 1.0]))

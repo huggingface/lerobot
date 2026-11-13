@@ -103,6 +103,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin):
         deactivated). To train it, you should first set it back in training mode with `reward.train()`.
         """
         if config is None:
+            cli_overrides = kwargs.pop("cli_overrides", [])
             config = RewardModelConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
                 force_download=force_download,
@@ -112,6 +113,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                cli_overrides=cli_overrides,
                 **kwargs,
             )
         model_id = str(pretrained_name_or_path)

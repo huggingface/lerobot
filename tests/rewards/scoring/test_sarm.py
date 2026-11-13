@@ -82,6 +82,7 @@ class _FakeModel:
         return self
 
     def predict_progress(self, batch, *, head_mode):
+        assert not torch.is_grad_enabled()
         self.heads_seen.append(head_mode)
         window_ids = batch["video_features"].float()
         if self.fail_on is not None and (window_ids[:, 2] == self.fail_on).any():

@@ -71,9 +71,7 @@ In LeRobot datasets, the preprocessor reads:
 
 The model does not select a frame or convert probabilities into binary success. Consumers make those decisions explicitly.
 
-Older RoboMeter configurations may contain `reward_output` and `success_threshold`. LeRobot still accepts these fields so existing checkpoints load, but `predict_progress()` does not use them, and `reward_output="success"` raises an error: compare `success_probability` with a threshold instead, as below.
-
-### Migrating from the scalar API
+### Select progress or success
 
 ```python
 import torch

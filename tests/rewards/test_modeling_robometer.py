@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -271,14 +272,6 @@ def test_robometer_predict_progress_decodes_discrete_logits(monkeypatch):
 
 
 @skip_if_package_missing("transformers")
-def test_robometer_config_rejects_success_reward_output(monkeypatch):
-    _patch_build(monkeypatch)
-
-    with pytest.raises(ValueError, match="success_probability"):
-        RobometerConfig(device="cpu", reward_output="success")
-
-
-@skip_if_package_missing("transformers")
 def test_robometer_predict_progress_does_not_mutate_input(monkeypatch):
     from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
 
@@ -335,7 +328,6 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
         # Knobs the user might tweak — must survive the round-trip.
         image_key="observation.images.cam_top",
         task_key="task",
-        success_threshold=0.7,
         progress_loss_type="l2",
     )
     model = RobometerRewardModel(cfg)
@@ -345,6 +337,11 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
     assert (tmp_path / CONFIG_NAME).exists()
     assert (tmp_path / SAFETENSORS_SINGLE_FILE).exists()
     assert not (tmp_path / "config.yaml").exists()  # we want HF-style, not Hydra
+
+    config_path = tmp_path / CONFIG_NAME
+    saved_config = json.loads(config_path.read_text())
+    assert "reward_output" not in saved_config
+    assert "success_threshold" not in saved_config
 
     # All three heads must be present in the saved safetensors. The preference
     # head is unused at inference but the published checkpoint expects its
@@ -363,7 +360,6 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
 
     assert reloaded.config.image_key == "observation.images.cam_top"
     assert reloaded.config.task_key == "task"
-    assert reloaded.config.success_threshold == 0.7
     assert reloaded.config.progress_loss_type == "l2"  # came back from config.json
 
     # A successful load must restore values, not merely recreate keys. Compare
