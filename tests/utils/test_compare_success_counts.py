@@ -1,0 +1,59 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Comparing two success counts: Newcombe interval on the difference, and the regression verdict."""
+
+import math
+
+import pytest
+
+from lerobot.utils.eval_stats import compare_success_counts
+
+
+def test_compare_flags_a_regression_when_the_whole_interval_clears_the_floor():
+    # 95/100 -> 60/100: drop of 35 pp, interval far below -5 pp.
+    c = compare_success_counts(95, 100, 60, 100, min_drop_pp=5.0)
+    assert c["verdict"] == "REGRESSED"
+    assert c["delta_pp"] == pytest.approx(-35.0)
+    assert c["ci95_pp"][1] < -5.0
+    assert c["p_value"] < 0.001
+
+
+def test_compare_calls_a_visible_drop_suspect_when_noise_could_explain_it():
+    # 92/100 -> 82/100: -10 pp, but the interval reaches above -5 pp.
+    c = compare_success_counts(92, 100, 82, 100, min_drop_pp=5.0)
+    assert c["verdict"] == "SUSPECT"
+    assert c["ci95_pp"][1] > -5.0
+
+
+def test_compare_holds_small_changes():
+    c = compare_success_counts(85, 100, 83, 100, min_drop_pp=5.0)
+    assert c["verdict"] == "HELD"
+
+
+def test_compare_reports_an_improvement_only_when_the_interval_clears_zero():
+    assert compare_success_counts(37, 100, 77, 100)["verdict"] == "IMPROVED"
+    assert compare_success_counts(70, 100, 74, 100)["verdict"] == "HELD"
+
+
+def test_compare_refuses_to_judge_below_min_episodes():
+    c = compare_success_counts(9, 9, 5, 9, min_episodes=10)
+    assert c["verdict"] == "UNDERPOWERED"
+    assert math.isnan(c["p_value"]) or c["p_value"] >= 0.0
+
+
+def test_compare_reports_the_drop_it_could_have_called():
+    c = compare_success_counts(90, 100, 90, 100, min_drop_pp=5.0)
+    # With no change, the smallest callable drop is the floor plus the interval half-width.
+    assert c["resolvable_drop_pp"] > 5.0
+    assert c["resolvable_drop_pp"] == pytest.approx(5.0 + (c["ci95_pp"][1] - c["delta_pp"]), abs=1e-6)
