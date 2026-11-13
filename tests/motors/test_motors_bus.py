@@ -503,7 +503,7 @@ def test_record_calibration(arm, monkeypatch):
     assert calibration == {
         "dummy_1": MotorCalibration(id=1, drive_mode=0, homing_offset=-89, range_min=100, range_max=900),
         "dummy_2": MotorCalibration(id=2, drive_mode=0, homing_offset=211, range_min=0, range_max=1023),
-        "dummy_3": MotorCalibration(id=3, drive_mode=1, homing_offset=111, range_min=200, range_max=700),
+        "dummy_3": MotorCalibration(id=3, drive_mode=1, homing_offset=-111, range_min=200, range_max=700),
     }
 
 
