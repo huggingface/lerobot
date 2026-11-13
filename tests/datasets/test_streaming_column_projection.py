@@ -21,6 +21,7 @@ import datasets
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.utils.constants import DEFAULT_FEATURES
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 pytestmark = pytest.mark.dataset
@@ -103,3 +104,25 @@ def test_temporal_reads_decode_only_requested_images(
                 assert value == wanted[key], key
     images_per_anchor = len(reference.meta.camera_keys) * (4 if image_window else 1)
     assert calls == len(actual) * images_per_anchor
+
+
+def test_feature_projection_reuses_full_sidecar_and_reads_selected_columns(
+    tmp_path: Path, lerobot_dataset_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "dataset"
+    reference = lerobot_dataset_factory(root=root, total_episodes=2, total_frames=10, video_backend="pyav")
+    kwargs: dict[str, Any] = {"root": root, "shuffle": False, "video_backend": "pyav", "decode_threads": 1}
+    full = StreamingLeRobotDataset(DUMMY_REPO_ID, **kwargs)
+    # The full sidecar must serve the selection; building one would also read the dropped camera.
+    monkeypatch.setattr(
+        "lerobot.datasets.streaming_sidecar.build_mp4_sidecar",
+        lambda *args, **kwargs: pytest.fail("a projected dataset must reuse the full sidecar"),
+    )
+
+    projected = StreamingLeRobotDataset(DUMMY_REPO_ID, features=["action", "laptop"], **kwargs)
+
+    assert projected._sidecar_path == full._sidecar_path
+    assert set(projected._projected_columns) == {"action", *DEFAULT_FEATURES}
+    item = next(iter(projected))
+    assert "phone" not in item and "state" not in item and "laptop" in item
+    assert torch.equal(item["action"], reference[int(item["index"])]["action"])

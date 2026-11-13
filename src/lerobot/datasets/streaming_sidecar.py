@@ -21,7 +21,12 @@ from huggingface_hub import HfApi
 
 from lerobot.streaming.location import LocationKind, StorageLocation, hf_dataset_uri
 from lerobot.streaming.manifest import EpisodeVideoManifest, video_file_groups
-from lerobot.streaming.sidecar import SidecarSpec, ensure_mp4_sidecar, sidecar_cache_path
+from lerobot.streaming.sidecar import (
+    SidecarSpec,
+    ensure_mp4_sidecar,
+    sidecar_cache_path,
+    sidecar_file_prefix,
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 from .dataset_metadata import LeRobotDatasetMetadata
@@ -177,8 +182,8 @@ def build_mp4_sidecar(
     )
 
 
-def published_sidecar_url(spec: SidecarSpec, cache_root: str | Path = DEFAULT_SIDECAR_CACHE) -> str:
-    """Locate indexes separately from immutable repository payloads, or inside a bucket."""
+def _published_sidecar_location(spec: SidecarSpec) -> tuple[str, SidecarSpec]:
+    """Return the publication directory for ``spec`` and the spec whose name published files carry."""
     location = StorageLocation.parse(spec.data_root)
     root = location.uri
     if location.kind is LocationKind.HF_DATASET:
@@ -190,7 +195,13 @@ def published_sidecar_url(spec: SidecarSpec, cache_root: str | Path = DEFAULT_SI
         spec = replace(spec, revision=commit)
         suffix = f"/{location.path_in_repo}" if location.path_in_repo else ""
         root = f"{hf_dataset_uri(location.repo_id, SIDECAR_REPO_BRANCH)}{suffix}"
-    return f"{root}/meta/mp4-sidecars/{sidecar_cache_path(cache_root, spec).name}"
+    return f"{root}/meta/mp4-sidecars", spec
+
+
+def published_sidecar_url(spec: SidecarSpec, cache_root: str | Path = DEFAULT_SIDECAR_CACHE) -> str:
+    """Locate indexes separately from immutable repository payloads, or inside a bucket."""
+    directory, published = _published_sidecar_location(spec)
+    return f"{directory}/{sidecar_cache_path(cache_root, published).name}"
 
 
 def download_published_sidecar(
@@ -200,18 +211,39 @@ def download_published_sidecar(
     cache_root: str | Path = DEFAULT_SIDECAR_CACHE,
     token: str | bool | None = None,
 ) -> bool:
-    """Copy a published sidecar for later validation, returning False when absent."""
+    """Copy a published sidecar that satisfies ``spec``, returning False when there is none.
+
+    The published name of ``spec`` is tried first. Where that name carries source fingerprints
+    (buckets, generic fsspec roots) a camera selection is named differently from the published
+    full-dataset sidecar, so the publication directory is then scanned for a sidecar of the same
+    revision that satisfies ``spec``. Publication is optional: a missing directory is not an error.
+    """
     location = StorageLocation.parse(spec.data_root)
     if location.kind is LocationKind.LOCAL and location.local_path.is_dir():
         return False
-    source_url = published_sidecar_url(spec, cache_root)
-    storage_options = StorageLocation.parse(source_url).storage_options(token)
-    filesystem, source = fsspec.core.url_to_fs(source_url, **storage_options)
-    if not filesystem.exists(source):
-        return False
-    with filesystem.open(source, "rb") as remote, destination.open("wb") as local:
-        shutil.copyfileobj(remote, local)
-    return True
+    directory, published = _published_sidecar_location(spec)
+    storage_options = StorageLocation.parse(directory).storage_options(token)
+    filesystem, directory_path = fsspec.core.url_to_fs(directory, **storage_options)
+    exact = f"{directory_path}/{sidecar_cache_path(cache_root, published).name}"
+    if filesystem.exists(exact):
+        candidates = [exact]
+    elif not published.source_fingerprints:
+        return False  # the name does not depend on the selection: nothing else can satisfy it
+    else:
+        # Publication is optional: a missing, unreadable or unlistable directory is no match.
+        try:
+            listed = filesystem.ls(directory_path, detail=False)
+        except (OSError, NotImplementedError):
+            return False
+        prefix = sidecar_file_prefix(published)
+        candidates = sorted(p for p in listed if Path(p).name.startswith(prefix) and p.endswith(".npz"))
+    for candidate in candidates:
+        with filesystem.open(candidate, "rb") as remote, destination.open("wb") as local:
+            shutil.copyfileobj(remote, local)
+        # Identity only: ``ensure_mp4_sidecar`` reads the arrays once, when it validates and installs.
+        if EpisodeVideoManifest.validate_file_sidecar(destination, spec, arrays=False):
+            return True
+    return False
 
 
 def ensure_dataset_mp4_sidecar(
@@ -259,6 +291,7 @@ def ensure_dataset_mp4_sidecar(
         spec.revision,
         len(spec.source_files),
     )
+    all_cameras = {key for key, ft in meta.full_features.items() if ft["dtype"] == "video"}
     return ensure_mp4_sidecar(
         spec,
         cache_root,
@@ -276,4 +309,5 @@ def ensure_dataset_mp4_sidecar(
             token=token,
         ),
         lock_timeout_s=lock_timeout_s,
+        partial=set(meta.video_keys) != all_cameras,
     )

@@ -44,6 +44,9 @@ class DatasetConfig:
     episodes: list[int] | None = None
     # Episode indices to drop (e.g. corrupt or heterogeneous ones). Applied on top of `episodes`.
     exclude_episodes: list[int] | None = None
+    # Dataset feature keys to load (names from meta/info.json, before `rename_map`). None loads all.
+    # Bookkeeping columns (timestamp, frame_index, episode_index, index, task_index) are always kept.
+    features: list[str] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     revision: str | None = None
     use_imagenet_stats: bool = True
@@ -141,6 +144,12 @@ class DatasetConfig:
             if len(self.episodes) != len(set(self.episodes)):
                 duplicates = sorted({ep for ep in self.episodes if self.episodes.count(ep) > 1})
                 raise ValueError(f"Episode indices contain duplicates: {duplicates}")
+        if self.features is not None:
+            if not self.features:
+                raise ValueError("features must name at least one feature; use None to load every feature")
+            if len(self.features) != len(set(self.features)):
+                repeated = sorted({key for key in self.features if self.features.count(key) > 1})
+                raise ValueError(f"features contains duplicates: {repeated}")
         if self.exclude_episodes is not None:
             negative_episodes = [episode for episode in self.exclude_episodes if episode < 0]
             if negative_episodes:
