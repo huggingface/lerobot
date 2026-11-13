@@ -22,7 +22,7 @@ sharing a bus, what the SCS lacks, the acceleration registers, the firmware chec
 a drive mode applied in software, and the Phase register quirk of the sts3215.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -325,21 +325,22 @@ def test_configure_motors_skips_phase_for_non_sts3215():
 def test_record_ranges_of_motion(dummy_motors):
     sweeps = [
         {"dummy_1": 351, "dummy_2": 28, "dummy_3": 4002},
-        {"dummy_1": 42, "dummy_2": 3600, "dummy_3": 2999},
+        {"dummy_1": 42, "dummy_2": 1800, "dummy_3": 2999},
+        {"dummy_1": 700, "dummy_2": 3600, "dummy_3": 1400},
         {"dummy_1": 1337, "dummy_2": 2444, "dummy_3": 146},
     ]
     bus = make_bus(dummy_motors)
 
     with (
-        patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]),
+        patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, False, True]),
         patch("lerobot.motors.motors_bus.time.sleep") as mock_sleep,
         patch.object(bus, "sync_read", side_effect=sweeps) as mock_sync_read,
     ):
         mins, maxes = bus.record_ranges_of_motion(display_values=False)
 
-    assert mock_sync_read.call_count == 3
+    assert mock_sync_read.call_count == 4
     assert all(call.kwargs["num_retry"] == 5 for call in mock_sync_read.call_args_list)
-    mock_sleep.assert_called_once_with(0.02)
+    assert mock_sleep.call_args_list == [call(0.02), call(0.02)]
     assert mins == {"dummy_1": 42, "dummy_2": 28, "dummy_3": 146}
     assert maxes == {"dummy_1": 1337, "dummy_2": 3600, "dummy_3": 4002}
 
