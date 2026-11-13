@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 import draccus
 import pytest
+from huggingface_hub.errors import RepositoryNotFoundError
 from huggingface_hub.utils import httpx
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
@@ -159,6 +160,29 @@ def test_build_resume_job_local_checkpoint_requires_resolved_checkpoint_path(mon
         _build_resume_job(cfg, "alice")
 
 
+def test_build_resume_job_forwards_resolved_trackio_space(monkeypatch):
+    """The pod resumes into the Space submit_to_hf resolved, once, whatever the CLI or checkpoint said."""
+    monkeypatch.setattr("lerobot.configs.parser.parse_arg", lambda *a, **k: "alice/ckpt")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "lerobot-train",
+            "--resume=true",
+            "--config_path=alice/ckpt",
+            "--trackio.space_id=a/b",
+            "--trackio.private=false",
+        ],
+    )
+    cfg = SimpleNamespace(
+        trackio=SimpleNamespace(enable=True, space_id="alice/lerobot-trackio", private=True)
+    )
+    _, command = _build_resume_job(cfg, "alice")
+    assert [arg for arg in command if arg.startswith("--trackio.space_id")] == [
+        "--trackio.space_id=alice/lerobot-trackio"
+    ]
+    assert [arg for arg in command if arg.startswith("--trackio.private")] == ["--trackio.private=true"]
+
+
 def test_submit_resume_dispatches_to_build_resume_job(monkeypatch):
     """`--resume` takes the resume branch: no fresh repo or config staging, the checkpoint's repo is used."""
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
@@ -212,6 +236,7 @@ def test_submit_resume_dispatches_to_build_resume_job(monkeypatch):
     # _build_resume_job's job here, so skip it (as test_submit_rejects_reward_model_training does).
     monkeypatch.setattr(cfg, "validate", lambda: None)
 
+    cfg.trackio.enable = False
     submit_to_hf(cfg)
 
     assert resume_calls == [(cfg, "alice")]
@@ -367,6 +392,7 @@ def test_submit_passes_validation_and_submits(monkeypatch):
     )
 
     # Must NOT raise (pre-fix this raised ValueError about missing repo_id)
+    cfg.trackio.enable = False
     submit_to_hf(cfg)
 
     assert len(run_job_calls) == 1, "run_job should have been called exactly once"
@@ -441,6 +467,7 @@ def test_submit_returns_when_job_completes(monkeypatch):
     )
     # Runs in the pytest main thread (signal handler install requires it); the
     # @timeout marker fails the test instead of hanging if it regresses.
+    cfg.trackio.enable = False
     submit_to_hf(cfg)
 
 
@@ -488,13 +515,30 @@ def test_submit_returns_on_model_pushed_marker(monkeypatch):
         ],
     )
     # Must return via the model-pushed marker despite the perpetual RUNNING stage.
+    cfg.trackio.enable = False
     submit_to_hf(cfg)
 
 
-def test_submit_raises_when_trackio_enabled_without_space_id(monkeypatch):
-    """trackio.enable without a Space fails fast, before submitting: the pod's local database is lost."""
+@pytest.mark.parametrize(
+    ("space_args", "env_space", "expected_space", "expected_private"),
+    [
+        (["--trackio.space_id", "u/s"], "env/s", "u/s", None),
+        ([], "env/s", "env/s", None),
+        ([], None, "alice/lerobot-trackio", True),
+        (["--trackio.private=false"], None, "alice/lerobot-trackio", False),
+    ],
+)
+def test_submit_stages_trackio_space_and_forwards_only_hf_token(
+    monkeypatch, tmp_path, space_args, env_space, expected_space, expected_private
+):
+    """The staged config carries a Space (explicit, else TRACKIO_SPACE_ID, else the user's default one,
+    since the pod's local database is lost) and the pod gets only HF_TOKEN."""
 
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
+    if env_space is None:
+        monkeypatch.delenv("TRACKIO_SPACE_ID", raising=False)
+    else:
+        monkeypatch.setenv("TRACKIO_SPACE_ID", env_space)
 
     class FakeHfApi:
         def __init__(self, token=None):
@@ -503,36 +547,11 @@ def test_submit_raises_when_trackio_enabled_without_space_id(monkeypatch):
         def whoami(self, token=None):
             return {"name": "alice"}
 
-    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
-
-    cfg = draccus.parse(
-        TrainPipelineConfig,
-        args=[
-            "--dataset.repo_id",
-            "u/d",
-            "--policy.type",
-            "act",
-            "--job.target",
-            "a10g-small",
-            "--trackio.enable",
-            "true",
-        ],
-    )
-    with pytest.raises(ValueError, match="space_id"):
-        submit_to_hf(cfg)
-
-
-def test_submit_with_trackio_space_id_stages_config_and_forwards_only_hf_token(monkeypatch, tmp_path):
-    """With a Space set, the staged config carries the trackio section and the pod gets only HF_TOKEN."""
-
-    monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
-
-    class FakeHfApi:
-        def __init__(self, token=None):
-            pass
-
-        def whoami(self, token=None):
-            return {"name": "alice"}
+        def space_info(self, repo_id):
+            raise RepositoryNotFoundError(
+                "Space does not exist",
+                response=httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co")),
+            )
 
     monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
     monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", lambda *a, **kw: None)
@@ -564,10 +583,7 @@ def test_submit_with_trackio_space_id_stages_config_and_forwards_only_hf_token(m
             "a10g-small",
             "--job.detach",
             "true",
-            "--trackio.enable",
-            "true",
-            "--trackio.space_id",
-            "u/s",
+            *space_args,
         ],
     )
     submit_to_hf(cfg)
@@ -576,7 +592,21 @@ def test_submit_with_trackio_space_id_stages_config_and_forwards_only_hf_token(m
     # The Hub token alone authenticates both the dataset pull and the trackio Space sync.
     assert run_job_calls[0]["secrets"] == {"HF_TOKEN": "tok"}
     assert staged["trackio"]["enable"] is True
-    assert staged["trackio"]["space_id"] == "u/s"
+    assert staged["trackio"]["space_id"] == expected_space
+    assert staged["trackio"]["private"] is expected_private
+
+
+def test_submit_rejects_public_default_trackio_space(monkeypatch):
+    monkeypatch.delenv("TRACKIO_SPACE_ID", raising=False)
+    monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
+    api = SimpleNamespace(
+        whoami=lambda **kwargs: {"name": "alice"},
+        space_info=lambda repo_id: SimpleNamespace(private=False),
+    )
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", lambda **kwargs: api)
+
+    with pytest.raises(ValueError, match="default Trackio Space .* is public"):
+        submit_to_hf(_minimal_cfg())
 
 
 @pytest.mark.timeout(15)
@@ -613,5 +643,6 @@ def test_submit_raises_when_job_ends_in_error(monkeypatch):
         TrainPipelineConfig,
         args=["--dataset.repo_id", "u/d", "--policy.type", "act", "--job.target", "a10g-small"],
     )
+    cfg.trackio.enable = False
     with pytest.raises(RuntimeError, match=r"stage=ERROR \(Job timeout\)"):
         submit_to_hf(cfg)

@@ -29,7 +29,12 @@ from unittest.mock import MagicMock, call, sentinel
 import draccus
 import pytest
 
-from lerobot.common.trackio_utils import TrackioLogger, cfg_to_group, get_safe_artifact_name
+from lerobot.common.trackio_utils import (
+    TrackioLogger,
+    cfg_to_group,
+    get_safe_artifact_name,
+    make_trackio_logger,
+)
 from lerobot.configs.default import TrackioConfig
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.policies.act.configuration_act import ACTConfig  # noqa: F401  (registers `--policy.type=act`)
@@ -121,6 +126,28 @@ def test_cfg_to_group(tmp_path, overrides, expected):
 )
 def test_get_safe_artifact_name(name, expected):
     assert get_safe_artifact_name(name) == expected
+
+
+def test_make_trackio_logger_enabled_by_default(trackio, tmp_path, monkeypatch):
+    monkeypatch.setattr("lerobot.common.trackio_utils._trackio_available", True)
+
+    assert isinstance(make_trackio_logger(make_cfg(tmp_path)), TrackioLogger)
+    trackio.init.assert_called_once()
+
+
+def test_make_trackio_logger_disabled(trackio, tmp_path, monkeypatch):
+    monkeypatch.setattr("lerobot.common.trackio_utils._trackio_available", True)
+
+    assert make_trackio_logger(make_cfg(tmp_path, trackio=TrackioConfig(enable=False))) is None
+    trackio.init.assert_not_called()
+
+
+def test_make_trackio_logger_missing_package(trackio, tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr("lerobot.common.trackio_utils._trackio_available", False)
+
+    assert make_trackio_logger(make_cfg(tmp_path)) is None
+    trackio.init.assert_not_called()
+    assert "Trackio is not installed" in caplog.text
 
 
 # --- TrackioLogger.__init__ ---

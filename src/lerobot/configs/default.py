@@ -158,18 +158,21 @@ TRACKIO_RESUME_MODES = frozenset({"allow", "must", "never"})
 class TrackioConfig:
     """Training run tracking with Trackio (https://huggingface.co/docs/trackio).
 
-    Runs are stored in a local SQLite database under `~/.cache/huggingface/trackio` and viewed with
-    `trackio show --project <project>`. Set `space_id` to sync the run to a Hugging Face Space instead.
+    On by default. Runs are stored in a local SQLite database under `~/.cache/huggingface/trackio` and
+    viewed with `trackio show --project <project>`. Set `space_id` to sync the run live to a Hugging Face
+    Space instead; remote jobs (--job.target) default to `<user>/lerobot-trackio`.
     """
 
-    enable: bool = False
+    enable: bool = True
     # Opt in with False to duplicate checkpoint weights in Trackio; Hub uploads are configured separately.
     disable_artifact: bool = True
     project: str = "lerobot"
     # Hugging Face Space (`user/space`) to log to instead of the local database; created if missing.
-    # Required for remote jobs (--job.target), whose local database vanishes with the pod.
+    # Remote jobs (--job.target), whose local database vanishes with the pod, default to
+    # `$TRACKIO_SPACE_ID` or `<user>/lerobot-trackio`.
     space_id: str | None = None
     # Whether a newly created Space is private. Ignored if the Space already exists.
+    # Defaults to True for an automatically selected <user>/lerobot-trackio job Space.
     private: bool | None = None
     # Run name. Defaults to "<job_name>-<short id>", persisted in the checkpoint so resuming reattaches to it.
     run_name: str | None = None
