@@ -17,6 +17,7 @@
 import multiprocessing
 import os
 import signal
+import sys
 import threading
 from unittest.mock import patch
 
@@ -30,13 +31,32 @@ pytestmark = pytest.mark.dataset
 
 
 # Fixture to reset shutdown_event_counter and original signal handlers before and after each test
+_SIGNAL_NAMES = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
+
+
+def _send_signal_to_self(sig) -> None:
+    """Deliver ``sig`` to the current process, portably.
+
+    ``os.kill(pid, sig)`` cannot be used on Windows: only ``CTRL_C_EVENT`` /
+    ``CTRL_BREAK_EVENT`` are delivered, anything else goes through
+    ``TerminateProcess`` and would kill the test run instead of invoking the handler.
+    ``signal.raise_signal`` goes through the C runtime and does reach the handler there.
+    """
+    if sys.platform == "win32":
+        signal.raise_signal(sig)
+    else:
+        os.kill(os.getpid(), sig)
+
+
 @pytest.fixture(autouse=True)
 def reset_globals_and_handlers():
-    # Store original signal handlers
+    # Store original signal handlers. Resolving the names with `getattr` keeps this
+    # runnable where a signal does not exist (SIGHUP/SIGQUIT on Windows): referencing
+    # `signal.SIGHUP` itself raises AttributeError before the `hasattr` filter can run.
     original_handlers = {
-        sig: signal.getsignal(sig)
-        for sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT]
-        if hasattr(signal, sig.name)
+        getattr(signal, name): signal.getsignal(getattr(signal, name))
+        for name in _SIGNAL_NAMES
+        if hasattr(signal, name)
     }
 
     yield
@@ -68,13 +88,15 @@ def test_setup_process_handlers_event_with_processes():
     [
         signal.SIGINT,
         signal.SIGTERM,
-        # SIGHUP and SIGQUIT are not reliably available on all platforms (e.g. Windows)
+        # SIGHUP and SIGQUIT are not reliably available on all platforms (e.g. Windows).
+        # `getattr` keeps this list importable there: `signal.SIGHUP` itself would raise
+        # AttributeError at collection time, before the skipif mark can do its job.
         pytest.param(
-            signal.SIGHUP,
+            getattr(signal, "SIGHUP", None),
             marks=pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="SIGHUP not available"),
         ),
         pytest.param(
-            signal.SIGQUIT,
+            getattr(signal, "SIGQUIT", None),
             marks=pytest.mark.skipif(not hasattr(signal, "SIGQUIT"), reason="SIGQUIT not available"),
         ),
     ],
@@ -86,7 +108,7 @@ def test_signal_handler_sets_event(use_threads, sig):
 
     assert handler.counter == 0
 
-    os.kill(os.getpid(), sig)
+    _send_signal_to_self(sig)
 
     # In some environments, the signal might take a moment to be handled.
     shutdown_event.wait(timeout=1.0)
@@ -103,12 +125,12 @@ def test_force_shutdown_on_second_signal(mock_sys_exit, use_threads):
     """Test that a second signal triggers a force shutdown."""
     handler = ProcessSignalHandler(use_threads=use_threads)
 
-    os.kill(os.getpid(), signal.SIGINT)
+    _send_signal_to_self(signal.SIGINT)
     # Give a moment for the first signal to be processed
     import time
 
     time.sleep(0.1)
-    os.kill(os.getpid(), signal.SIGINT)
+    _send_signal_to_self(signal.SIGINT)
 
     time.sleep(0.1)
 
