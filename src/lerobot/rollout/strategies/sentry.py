@@ -202,9 +202,9 @@ class SentryStrategy(RolloutStrategy):
         """``save_episode`` under the push lock; a failure poisons the dataset and re-raises.
 
         A failed ``save_episode`` is *not* recoverable by discarding the buffer:
-        rows and counters are committed before the failure-prone steps (video
-        encode, metadata commit), so the next segment would reuse the same episode
-        index.  Hence the poison latch, which refuses further segments and pushes.
+        videos, rows and counters can already be committed when a later step
+        (data write, metadata commit) fails, so the next segment would reuse the
+        same episode index.  Hence the poison latch, which refuses further segments and pushes.
         """
         self._warn_if_push_in_flight()
         try:
