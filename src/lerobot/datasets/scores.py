@@ -31,7 +31,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -40,11 +40,13 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from huggingface_hub import HfApi
+from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.__version__ import __version__
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.io_utils import load_json, write_json
 
+from .dataset_metadata import CODEBASE_VERSION
 from .storage import DEFAULT_STORAGE_FORMAT
 from .utils import SCORES_DIR, resolve_episode_indices
 
@@ -483,17 +485,21 @@ def merge_scores(
 
 
 def push_scores_to_hub(dataset: LeRobotDataset, name: str) -> None:
-    """Upload the named scores to the dataset repository on the Hub."""
+    """Upload named scores and update the dataset version tag."""
     local_path = _scores_path(dataset, name)
     if not local_path.is_file():
         raise FileNotFoundError(f"Scores {name!r} do not exist")
 
     path_in_repo = f"{SCORES_DIR}/{local_path.name}"
-    HfApi().upload_file(
+    hub_api = HfApi()
+    commit = hub_api.upload_file(
         path_or_fileobj=local_path,
         path_in_repo=path_in_repo,
         repo_id=dataset.repo_id,
         repo_type="dataset",
         commit_message=f"Upload scores {name}",
     )
+    with suppress(RevisionNotFoundError):
+        hub_api.delete_tag(dataset.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+    hub_api.create_tag(dataset.repo_id, tag=CODEBASE_VERSION, revision=commit.oid, repo_type="dataset")
     logger.info("Uploaded scores %s to hf://datasets/%s/%s", name, dataset.repo_id, path_in_repo)

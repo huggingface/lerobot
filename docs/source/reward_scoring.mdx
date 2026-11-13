@@ -56,6 +56,8 @@ Scoring requires a writable local LeRobot dataset root, not the Hub cache LeRobo
 
 Pass `--push_to_hub=true` to upload the completed score file to the dataset repository. The score store owns its Hub location and local staging data.
 
+Like a full dataset upload, score upload updates the dataset's codebase-version tag to the uploaded commit so default downloads include the scores.
+
 For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model.pretrained_revision`. The requested revisions are stored in provenance and must match when resuming.
 
 The command is resumable by default. A retry skips completed episodes only when the dataset revision, model revision, scorer options, episode selection, and schema are unchanged. Completed parts are combined into the final score in episode order, with one Parquet row group per episode. Published scores are immutable; choose another name or pass `--overwrite=true` to replace one atomically.

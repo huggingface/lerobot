@@ -16,6 +16,7 @@ import json
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -23,8 +24,11 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 import datasets
+from httpx import Request, Response
+from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
 from lerobot.datasets.scores import (
     ScoreWriter,
     add_scores,
@@ -163,24 +167,49 @@ def test_scores_accept_repeated_frames_and_string_columns(tmp_path):
     assert list(table["text"]) == ["a", "b", "c"]
 
 
-def test_scores_upload_uses_owned_hub_location(monkeypatch, tmp_path):
+@pytest.mark.parametrize("tag_exists", [True, False])
+def test_scores_upload_uses_owned_hub_location(monkeypatch, tmp_path, tag_exists):
     import lerobot.datasets.scores as scores
 
     dataset = FakeDataset(tmp_path / "dataset", [1])
     add_scores(dataset, "test", dense(dataset), info=INFO)
-    captured: dict[str, Any] = {}
-    monkeypatch.setattr(
-        scores,
-        "HfApi",
-        lambda: SimpleNamespace(upload_file=lambda **kwargs: captured.update(kwargs)),
-    )
+    api = Mock(spec=scores.HfApi)
+    api.upload_file.return_value = SimpleNamespace(oid="uploaded-commit")
+    if not tag_exists:
+        api.delete_tag.side_effect = RevisionNotFoundError(
+            "No version tag yet", response=Response(404, request=Request("DELETE", "https://huggingface.co"))
+        )
+    monkeypatch.setattr(scores, "HfApi", lambda: api)
 
     push_scores_to_hub(dataset, "test")
 
+    api.upload_file.assert_called_once()
+    captured = api.upload_file.call_args.kwargs
     assert captured["path_or_fileobj"] == dataset.root / "scores" / "test.parquet"
     assert captured["path_in_repo"] == "scores/test.parquet"
     assert captured["repo_id"] == dataset.repo_id
     assert captured["repo_type"] == "dataset"
+    assert [call[0] for call in api.method_calls] == ["upload_file", "delete_tag", "create_tag"]
+    api.delete_tag.assert_called_once_with(dataset.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+    api.create_tag.assert_called_once_with(
+        dataset.repo_id, tag=CODEBASE_VERSION, revision="uploaded-commit", repo_type="dataset"
+    )
+
+
+def test_scores_upload_failure_leaves_version_tag_unchanged(monkeypatch, tmp_path):
+    import lerobot.datasets.scores as scores
+
+    dataset = FakeDataset(tmp_path / "dataset", [1])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    api = Mock(spec=scores.HfApi)
+    api.upload_file.side_effect = OSError("Upload failed")
+    monkeypatch.setattr(scores, "HfApi", lambda: api)
+
+    with pytest.raises(OSError, match="Upload failed"):
+        push_scores_to_hub(dataset, "test")
+
+    api.delete_tag.assert_not_called()
+    api.create_tag.assert_not_called()
 
 
 def test_scores_resume_skips_atomic_completed_parts(tmp_path):
