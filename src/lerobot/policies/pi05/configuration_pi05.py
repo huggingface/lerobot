@@ -101,6 +101,10 @@ class PI05Config(PreTrainedConfig):
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
     compile_model: bool = False  # Whether to use torch.compile for model optimization
     compile_mode: str = "max-autotune"  # Torch compile mode
+    # Capture the denoise step in a CUDA graph per batch size and replay it on each Euler step:
+    # most of compile_model's inference speedup without its warmup. CUDA only; guided RTC, trained
+    # RTC with a hard prefix, and a subclass with its own denoise_step run eagerly.
+    denoise_cuda_graph: bool = False
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
     # Finetuning settings
@@ -144,6 +148,12 @@ class PI05Config(PreTrainedConfig):
 
         if self.dtype not in [torch.bfloat16, torch.float32]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        if self.denoise_cuda_graph and self.compile_model:
+            raise ValueError(
+                "denoise_cuda_graph and compile_model are alternatives (torch.compile captures its own "
+                "CUDA graphs); set compile_model=false to use denoise_cuda_graph"
+            )
 
         if self.memory_frames < 1:
             raise ValueError("memory_frames must be at least 1")
