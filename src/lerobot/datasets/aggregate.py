@@ -186,7 +186,6 @@ def update_data_df(
 def update_meta_data(
     df: pd.DataFrame,
     dst_meta: LeRobotDatasetMetadata,
-    meta_idx: IndexState,
     data_idx: IndexState,
     videos_idx: VideoIndexState,
 ) -> pd.DataFrame:
@@ -201,16 +200,12 @@ def update_meta_data(
     Args:
         df: DataFrame containing the metadata to be updated.
         dst_meta: Destination dataset metadata.
-        meta_idx: Dictionary containing current metadata chunk and file indices.
         data_idx: Dictionary containing current data chunk and file indices.
         videos_idx: Dictionary containing current video indices and timestamps.
 
     Returns:
         pd.DataFrame: Updated DataFrame with adjusted indices and timestamps.
     """
-
-    df["meta/episodes/chunk_index"] = df["meta/episodes/chunk_index"] + meta_idx["chunk"]
-    df["meta/episodes/file_index"] = df["meta/episodes/file_index"] + meta_idx["file"]
 
     # Update data file indices using source-to-destination mapping
     # This is critical for handling datasets that are already results of a merge
@@ -690,7 +685,6 @@ def aggregate_metadata(
         df = update_meta_data(
             df,
             dst_meta,
-            meta_idx,
             data_idx,
             videos_idx,
         )
@@ -704,6 +698,7 @@ def aggregate_metadata(
             DEFAULT_EPISODES_PATH,
             contains_images=False,
             aggr_root=dst_meta.root,
+            file_index_columns=("meta/episodes/chunk_index", "meta/episodes/file_index"),
         )
 
     # Increment latest_duration by the total duration added from this source dataset
@@ -725,6 +720,7 @@ def append_or_create_parquet_file(
     hf_features: datasets.Features | None = None,
     concatenate: bool = True,
     one_row_group_per_episode: bool = False,
+    file_index_columns: tuple[str, str] | None = None,
 ) -> tuple[IndexState, ChunkFile]:
     """Appends data to an existing parquet file or creates a new one based on size constraints.
 
@@ -744,6 +740,8 @@ def append_or_create_parquet_file(
         concatenate: When False, always rotate to a new file instead of appending to the current one.
         one_row_group_per_episode: True for DATA parquet (emit one row group per episode); False for
             the episodes-metadata parquet (already one row per episode).
+        file_index_columns: Optional (chunk, file) columns of ``df`` to set, in place, to the destination
+            file's indices, for rows that record which file they are stored in (episodes metadata).
 
     Returns:
         tuple: (updated_idx, (dst_chunk, dst_file)) where updated_idx is the index dict
@@ -757,6 +755,8 @@ def append_or_create_parquet_file(
 
     dst_chunk, dst_file = idx["chunk"], idx["file"]
     dst_path = aggr_root / default_path.format(chunk_index=dst_chunk, file_index=dst_file)
+    if file_index_columns is not None:
+        df[list(file_index_columns)] = [dst_chunk, dst_file]
 
     if not dst_path.exists():
         dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -774,6 +774,8 @@ def append_or_create_parquet_file(
     if not concatenate or dst_size + src_size >= max_mb:
         idx["chunk"], idx["file"] = update_chunk_file_indices(idx["chunk"], idx["file"], chunk_size)
         dst_chunk, dst_file = idx["chunk"], idx["file"]
+        if file_index_columns is not None:
+            df[list(file_index_columns)] = [dst_chunk, dst_file]
         new_path = aggr_root / default_path.format(chunk_index=dst_chunk, file_index=dst_file)
         new_path.parent.mkdir(parents=True, exist_ok=True)
         final_df = df
