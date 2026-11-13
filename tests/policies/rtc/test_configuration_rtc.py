@@ -18,7 +18,7 @@
 
 import pytest
 
-from lerobot.configs.types import RTCAttentionSchedule
+from lerobot.configs.types import RTCAttentionSchedule, RTCGuidanceJacobian
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 # ====================== Initialization Tests ======================
@@ -73,3 +73,19 @@ def test_rtc_config_partial_initialization():
     assert config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR
     assert config.execution_horizon == 10
     assert config.debug is False
+
+
+def test_rtc_config_guidance_jacobian_default():
+    config = RTCConfig()
+    assert config.guidance_jacobian == "identity"
+    assert config.guidance_jacobian is RTCGuidanceJacobian.IDENTITY
+
+
+def test_rtc_config_guidance_jacobian_accepts_string_and_enum():
+    assert RTCConfig(guidance_jacobian="vjp").guidance_jacobian is RTCGuidanceJacobian.VJP
+    assert RTCConfig(guidance_jacobian=RTCGuidanceJacobian.VJP).guidance_jacobian is RTCGuidanceJacobian.VJP
+
+
+def test_rtc_config_rejects_unknown_guidance_jacobian():
+    with pytest.raises(ValueError, match="guidance_jacobian"):
+        RTCConfig(guidance_jacobian="hessian")
