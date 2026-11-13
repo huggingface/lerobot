@@ -89,6 +89,7 @@ class TinyG05Backend(nn.Module):
         self.action_tokenizer = None
         self.last_samples = None
         self.last_runtime_predict_cot = None
+        self.last_noise = None
 
     def materialize_runtime_buffers(self, device):
         pass
@@ -102,8 +103,9 @@ class TinyG05Backend(nn.Module):
     def get_optim_param_groups(self, lr, weight_decay, **kwargs):
         return [{"params": [p for p in self.parameters() if p.requires_grad]}]
 
-    def predict_action(self, batch):
+    def predict_action(self, batch, *, noise=None):
         self.last_samples = batch["samples"]
+        self.last_noise = noise
         self.last_runtime_predict_cot = batch[G05_RUNTIME_PREDICT_COT]
         state = batch[OBS_STATE]
         if state.ndim == 2:
@@ -1436,6 +1438,36 @@ def test_forward_backward_update_and_save_reload(tmp_path: Path):
     expected = policy.predict_action_chunk(_prepared_policy_batch(policy, task="save"))
     actual = reloaded.predict_action_chunk(_prepared_policy_batch(reloaded, task="save"))
     torch.testing.assert_close(actual, expected)
+
+
+def test_explicit_noise_starts_the_flow_without_random_draws():
+    backend = G05NativeBackend.__new__(G05NativeBackend)
+    nn.Module.__init__(backend)
+    backend.model_config = {"fm": {"horizon_steps": 4, "action_dim": 3, "num_inference_steps": 2}}
+    backend._velocity = lambda action, timesteps, **kwargs: torch.ones_like(action)
+    infer = partial(
+        backend._infer_flow,
+        vlm_cache=None,
+        token_types=torch.zeros(1, 3),
+        positions=None,
+        action_dim_is_pad=torch.tensor([[False, False, True]]),
+        dtype=torch.float32,
+    )
+    torch.manual_seed(0)
+    drawn = infer()
+    torch.manual_seed(0)
+    noise = torch.randn(1, 4, 3)
+    original = noise.clone()
+    before = torch.get_rng_state()
+
+    # The default draw passed explicitly gives the same chunk, without touching the RNG or the caller's tensor.
+    torch.testing.assert_close(infer(noise=noise), drawn, atol=0, rtol=0)
+    assert torch.equal(before, torch.get_rng_state())
+    torch.testing.assert_close(noise, original, atol=0, rtol=0)
+
+    policy = G05Policy(_config(), backend=TinyG05Backend())
+    policy.select_action(_prepared_policy_batch(policy), noise=noise)
+    assert policy.backend.last_noise is noise
 
 
 def test_model_card_uses_the_g05_licence(monkeypatch):

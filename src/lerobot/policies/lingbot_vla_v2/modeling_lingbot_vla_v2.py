@@ -1128,6 +1128,9 @@ class FlowMatchingV2(FlowMatchingV1):
                 self.config.max_action_dim,
             )
             noise = torch.randn(actions_shape, device=device, dtype=dtype)
+        else:
+            # Copied: the eager denoise loop below updates x_t in place.
+            noise = noise.to(device=device, dtype=dtype).clone()
 
         if self.config.use_cudagraph_prefix or self.config.use_cudagraph_prefix_full:
             # CUDA-graphed prefix (see config docs). Falls back to the
@@ -2245,6 +2248,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
     def predict_action_chunk(
         self,
         batch: dict,
+        *,
         noise: Tensor | None = None,
         inference_delay: int = 0,
         prev_chunk_left_over: Tensor | None = None,
@@ -2254,6 +2258,9 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         The output stays in the normalized canonical space; the policy postprocessor
         inverts the slot mapping, unnormalizes, and re-absolutizes the actions (see
         ``processor_lingbot_vla_v2``).
+
+        ``noise`` is the optional starting sample of the flow, shape
+        ``(batch_size, chunk_size, max_action_dim)``. When it is None, standard normal noise is drawn.
 
         RTC args (from the rollout RTC engine): ``prev_chunk_left_over`` is the
         normalized leftover prefix of the previous chunk (already truncated to the
@@ -2276,7 +2283,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict, noise: Tensor | None = None) -> Tensor:
+    def select_action(self, batch: dict, *, noise: Tensor | None = None) -> Tensor:
         """Select a single action for environment execution, buffering chunks in a queue."""
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
