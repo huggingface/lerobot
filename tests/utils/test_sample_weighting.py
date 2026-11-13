@@ -16,13 +16,18 @@
 
 """Tests for the sample weighting infrastructure."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
-import datasets
 import pytest
 import torch
 
-from lerobot.datasets import SignalDescriptor
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+import datasets
+
+from lerobot.datasets.multi_dataset import MultiLeRobotDataset
+from lerobot.rewards.scoring import SignalDescriptor
 from lerobot.utils.sample_weighting import (
     SampleWeighter,
     SampleWeightingConfig,
@@ -37,24 +42,40 @@ pytestmark = pytest.mark.dataset
 # =============================================================================
 
 
-class FakeScoreDataset:
-    def __init__(self, scores: datasets.Dataset, descriptors) -> None:
-        self.scores = scores
+class FakeAnnotationDataset:
+    def __init__(self, annotations: datasets.Dataset, descriptors: dict[str, SignalDescriptor]) -> None:
+        self.annotations = annotations
         self.descriptors = descriptors
-        self.read_names: list[str] = []
+        episode_indices = annotations["episode_index"]
+        episodes = []
+        for episode_index in range(max(episode_indices) + 1):
+            indices = [
+                index
+                for index, episode in zip(annotations["index"], episode_indices, strict=True)
+                if episode == episode_index
+            ]
+            episodes.append({"dataset_from_index": min(indices), "dataset_to_index": max(indices) + 1})
+        self.meta = SimpleNamespace(
+            total_frames=max(annotations["index"]) + 1,
+            total_episodes=max(episode_indices) + 1,
+            episodes=episodes,
+        )
 
-    def read_score(self, name: str) -> datasets.Dataset:
-        self.read_names.append(name)
-        return self.scores
 
-    def get_score_descriptors(self, name: str):
-        assert name in self.read_names
-        return self.descriptors
+@pytest.fixture(autouse=True)
+def annotation_loaders(monkeypatch):
+    from lerobot.rewards.sarm import rabc
+
+    descriptors = Mock(side_effect=lambda dataset, name: dataset.descriptors)
+    annotations = Mock(side_effect=lambda dataset, name, columns: dataset.annotations.select_columns(columns))
+    monkeypatch.setattr(rabc, "load_signal_descriptors", descriptors)
+    monkeypatch.setattr(rabc, "load_annotations", annotations)
+    return descriptors, annotations
 
 
 @pytest.fixture
-def sample_score_dataset():
-    return FakeScoreDataset(
+def sample_annotation_dataset():
+    return FakeAnnotationDataset(
         datasets.Dataset.from_dict(
             {
                 "index": list(range(20)),
@@ -66,7 +87,7 @@ def sample_score_dataset():
         {
             "progress_sparse": SignalDescriptor(
                 description="Legacy sparse progress.",
-                direction="higher",
+                greater_is_better=True,
             )
         },
     )
@@ -81,7 +102,7 @@ def test_config_default_values():
     """Test default configuration values."""
     config = SampleWeightingConfig()
     assert config.type == "rabc"
-    assert config.score_name is None
+    assert config.annotation_name is None
     assert config.signal_name is None
     assert config.kappa == 0.01
     assert config.epsilon == 1e-6
@@ -92,14 +113,14 @@ def test_config_custom_values():
     """Test configuration with custom values."""
     config = SampleWeightingConfig(
         type="rabc",
-        score_name="robometer",
+        annotation_name="robometer",
         signal_name="reward.robometer.progress",
         kappa=0.05,
         epsilon=1e-8,
         extra_params={"fallback_weight": 0.5},
     )
     assert config.type == "rabc"
-    assert config.score_name == "robometer"
+    assert config.annotation_name == "robometer"
     assert config.signal_name == "reward.robometer.progress"
     assert config.kappa == 0.05
     assert config.epsilon == 1e-8
@@ -242,7 +263,7 @@ def test_factory_rabc_requires_chunk_size():
     """Test that RABC weighter requires chunk_size in policy config."""
     config = SampleWeightingConfig(
         type="rabc",
-        score_name="sarm",
+        annotation_name="sarm",
         signal_name="progress_sparse",
     )
     policy = Mock()
@@ -254,10 +275,10 @@ def test_factory_rabc_requires_chunk_size():
         make_sample_weighter(config, policy, device)
 
 
-def test_factory_rabc_requires_dataset_score_api():
+def test_factory_rabc_requires_dataset():
     config = SampleWeightingConfig(
         type="rabc",
-        score_name="sarm",
+        annotation_name="sarm",
         signal_name="progress_sparse",
     )
     policy = Mock()
@@ -265,22 +286,35 @@ def test_factory_rabc_requires_dataset_score_api():
     policy.config.chunk_size = 50
     device = torch.device("cpu")
 
-    with pytest.raises(ValueError, match="can read scores.*got NoneType"):
+    with pytest.raises(ValueError, match="requires a dataset"):
         make_sample_weighter(config, policy, device)
 
 
-def test_factory_rabc_requires_score_and_signal_names(sample_score_dataset):
+def test_factory_rabc_rejects_multi_dataset_before_loading_annotations(annotation_loaders):
+    dataset = MultiLeRobotDataset.__new__(MultiLeRobotDataset)
+    config = SampleWeightingConfig(annotation_name="sarm", signal_name="progress")
+    policy = Mock()
+    policy.config.chunk_size = 5
+
+    with pytest.raises(ValueError, match="does not support MultiLeRobotDataset"):
+        make_sample_weighter(config, policy, torch.device("cpu"), dataset=dataset)
+
+    for loader in annotation_loaders:
+        loader.assert_not_called()
+
+
+def test_factory_rabc_requires_annotation_and_signal_names(sample_annotation_dataset):
     config = SampleWeightingConfig(type="rabc")
     policy = Mock()
     policy.config = Mock()
     policy.config.chunk_size = 5
 
-    with pytest.raises(ValueError, match="score_name.*signal_name"):
+    with pytest.raises(ValueError, match="annotation_name.*signal_name"):
         make_sample_weighter(
             config,
             policy,
             torch.device("cpu"),
-            dataset=sample_score_dataset,
+            dataset=sample_annotation_dataset,
         )
 
 
@@ -289,26 +323,26 @@ def test_factory_rabc_requires_score_and_signal_names(sample_score_dataset):
 # =============================================================================
 
 
-def test_rabc_weights_is_sample_weighter(sample_score_dataset):
+def test_rabc_weights_is_sample_weighter(sample_annotation_dataset):
     """Test that RABCWeights inherits from SampleWeighter."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
-        dataset=sample_score_dataset,
-        score_name="sarm",
+        dataset=sample_annotation_dataset,
+        annotation_name="sarm",
         signal_name="progress_sparse",
         chunk_size=5,
     )
     assert isinstance(weighter, SampleWeighter)
 
 
-def test_rabc_compute_batch_weights(sample_score_dataset):
+def test_rabc_compute_batch_weights(sample_annotation_dataset, annotation_loaders):
     """Test RABCWeights.compute_batch_weights returns correct structure."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
-        dataset=sample_score_dataset,
-        score_name="sarm",
+        dataset=sample_annotation_dataset,
+        annotation_name="sarm",
         signal_name="progress_sparse",
         chunk_size=5,
         device=torch.device("cpu"),
@@ -321,15 +355,36 @@ def test_rabc_compute_batch_weights(sample_score_dataset):
     assert weights.shape == (4,)
     assert isinstance(stats, dict)
     assert "mean_weight" in stats
+    descriptors, annotations = annotation_loaders
+    descriptors.assert_called_once_with(sample_annotation_dataset, "sarm")
+    annotations.assert_called_once_with(
+        sample_annotation_dataset, "sarm", columns=["index", "episode_index", "progress_sparse"]
+    )
 
 
-def test_rabc_get_stats(sample_score_dataset):
+def test_rabc_deltas_stop_at_episode_boundaries(sample_annotation_dataset):
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    weighter = RABCWeights(
+        dataset=sample_annotation_dataset,
+        annotation_name="sarm",
+        signal_name="progress_sparse",
+        chunk_size=5,
+        device=torch.device("cpu"),
+    )
+
+    assert weighter._compute_delta(8) == pytest.approx(0.1)
+    assert weighter._compute_delta(9) == pytest.approx(0.0)
+    assert weighter._compute_delta(10) == pytest.approx(0.5)
+
+
+def test_rabc_get_stats(sample_annotation_dataset):
     """Test RABCWeights.get_stats returns expected structure."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
-        dataset=sample_score_dataset,
-        score_name="sarm",
+        dataset=sample_annotation_dataset,
+        annotation_name="sarm",
         signal_name="progress_sparse",
         chunk_size=5,
     )
@@ -340,7 +395,7 @@ def test_rabc_get_stats(sample_score_dataset):
     assert "num_frames" in stats
     assert "chunk_size" in stats
     assert stats["chunk_size"] == 5
-    assert stats["score_name"] == "sarm"
+    assert stats["annotation_name"] == "sarm"
     assert "delta_mean" in stats
     assert "delta_std" in stats
 
@@ -357,17 +412,17 @@ def test_rabc_accepts_namespaced_signal():
             "reward.robometer.progress": [0.0, 1.0],
         }
     )
-    dataset = FakeScoreDataset(
+    dataset = FakeAnnotationDataset(
         scores,
         {
             "reward.robometer.progress": SignalDescriptor(
-                description="RoboMeter progress.", direction="higher"
+                description="RoboMeter progress.", greater_is_better=True
             )
         },
     )
     weighter = RABCWeights(
         dataset=dataset,
-        score_name="robometer",
+        annotation_name="robometer",
         signal_name="reward.robometer.progress",
         chunk_size=1,
         device=torch.device("cpu"),
@@ -377,20 +432,21 @@ def test_rabc_accepts_namespaced_signal():
     assert weighter.get_stats()["signal_name"] == "reward.robometer.progress"
 
 
-def test_rabc_rejects_a_signal_missing_from_the_score(sample_score_dataset):
+def test_rabc_rejects_a_signal_missing_from_the_annotations(sample_annotation_dataset):
     from lerobot.rewards.sarm.rabc import RABCWeights
 
-    with pytest.raises(ValueError, match="not found in score 'sarm'"):
+    with pytest.raises(ValueError, match="not found in annotations 'sarm'"):
         RABCWeights(
-            dataset=sample_score_dataset,
-            score_name="sarm",
+            dataset=sample_annotation_dataset,
+            annotation_name="sarm",
             signal_name="reward.sarm.dense_progress",
             chunk_size=1,
             device=torch.device("cpu"),
         )
 
 
-def test_rabc_rejects_lower_is_better_signal():
+@pytest.mark.parametrize("greater_is_better", [False, None])
+def test_rabc_rejects_signals_without_higher_is_better(greater_is_better, annotation_loaders):
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     signal_name = "reward.example.remaining_time_s"
@@ -403,26 +459,31 @@ def test_rabc_rejects_lower_is_better_signal():
         }
     )
 
-    dataset = FakeScoreDataset(
+    dataset = FakeAnnotationDataset(
         scores,
-        {signal_name: SignalDescriptor(description="Predicted remaining time.", direction="lower")},
+        {
+            signal_name: SignalDescriptor(
+                description="Predicted remaining time.", greater_is_better=greater_is_better
+            )
+        },
     )
     with pytest.raises(ValueError, match="higher values indicate better progress"):
         RABCWeights(
             dataset=dataset,
-            score_name="remaining-time",
+            annotation_name="remaining-time",
             signal_name=signal_name,
             chunk_size=1,
         )
+    annotation_loaders[1].assert_not_called()
 
 
-def test_factory_creates_rabc_weighter(sample_score_dataset):
+def test_factory_creates_rabc_weighter(sample_annotation_dataset):
     """Test factory creates RABCWeights with valid config."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     config = SampleWeightingConfig(
         type="rabc",
-        score_name="sarm",
+        annotation_name="sarm",
         signal_name="progress_sparse",
         kappa=0.01,
     )
@@ -431,16 +492,16 @@ def test_factory_creates_rabc_weighter(sample_score_dataset):
     policy.config.chunk_size = 5
     device = torch.device("cpu")
 
-    weighter = make_sample_weighter(config, policy, device, dataset=sample_score_dataset)
+    weighter = make_sample_weighter(config, policy, device, dataset=sample_annotation_dataset)
 
     assert isinstance(weighter, RABCWeights)
     assert isinstance(weighter, SampleWeighter)
     assert weighter.signal_name == "progress_sparse"
 
 
-def test_factory_rejects_signal_name_in_extra_params(sample_score_dataset):
+def test_factory_rejects_signal_name_in_extra_params(sample_annotation_dataset):
     config = SampleWeightingConfig(
-        score_name="sarm",
+        annotation_name="sarm",
         signal_name="progress_sparse",
         extra_params={"signal_name": "progress_sparse"},
     )
@@ -452,17 +513,17 @@ def test_factory_rejects_signal_name_in_extra_params(sample_score_dataset):
             config,
             policy,
             torch.device("cpu"),
-            dataset=sample_score_dataset,
+            dataset=sample_annotation_dataset,
         )
 
 
-def test_rabc_weights_normalization(sample_score_dataset):
+def test_rabc_weights_normalization(sample_annotation_dataset):
     """Test that RABCWeights normalizes weights to sum to batch_size."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     weighter = RABCWeights(
-        dataset=sample_score_dataset,
-        score_name="sarm",
+        dataset=sample_annotation_dataset,
+        annotation_name="sarm",
         signal_name="progress_sparse",
         chunk_size=5,
         device=torch.device("cpu"),

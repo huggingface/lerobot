@@ -15,7 +15,7 @@
 # limitations under the License.
 import contextlib
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast, overload
 
@@ -32,8 +32,6 @@ from lerobot.utils.import_utils import get_safe_default_video_backend
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader, DatasetReader
 from .dataset_writer import DatasetWriter
-from .scores import FrameScorer, SignalDescriptor
-from .scores.storage import DatasetScoreStorage
 from .storage import (
     DEFAULT_STORAGE_FORMAT,
     dataset_location,
@@ -42,7 +40,7 @@ from .storage import (
     make_dataset_reader,
 )
 from .utils import (
-    SCORES_DIR,
+    ANNOTATIONS_DIR,
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
@@ -607,6 +605,37 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __getitems__(self, indices: list[int]) -> list[dict]:
         return self._ensure_reader().get_items(list(indices))
 
+    def get_frames(
+        self, episode_index: int, keys: Sequence[str], frame_indices: Sequence[int]
+    ) -> dict[str, torch.Tensor]:
+        """Read some features of some frames of one episode.
+
+        Unlike ``__getitem__``, only the requested features are read and decoded, and no delta
+        windows or image transforms are applied. Delegates to :meth:`DatasetReader.get_frames`.
+
+        Args:
+            episode_index: Global index of an episode selected by this dataset.
+            keys: Feature keys to read.
+            frame_indices: Frame positions inside the episode, starting at 0. They may be
+                unordered and repeated.
+
+        Returns:
+            One tensor per key, stacked along a leading dimension of length
+            ``len(frame_indices)``.
+
+        Raises:
+            RuntimeError: If the dataset is being recorded and not finalized.
+            NotImplementedError: If the dataset does not use the default storage format.
+            ValueError: If the episode is not selected, a key is not a feature, or a frame
+                position is outside the episode.
+        """
+        reader = self._ensure_reader()
+        if not isinstance(reader, DatasetReader):
+            raise NotImplementedError(
+                f"get_frames is not available for storage_format={self.meta.storage_format!r}."
+            )
+        return reader.get_frames(episode_index, keys, frame_indices)
+
     def select_columns(self, column_names: str | list[str]):
         """Select specific columns from the underlying dataset.
 
@@ -644,103 +673,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.reader is not None:
             self.reader.set_image_transforms(None)
         self.image_transforms = None
-
-    # ── Score-delegated methods ───────────────────────────────────────
-
-    @property
-    def score_storage(self) -> DatasetScoreStorage:
-        """Storage for score sidecars derived from this dataset."""
-        return DatasetScoreStorage(self)
-
-    def add_score(
-        self,
-        scorer: FrameScorer,
-        *,
-        name: str | None = None,
-        episodes: list[int] | None = None,
-        resume: bool = True,
-        overwrite: bool = False,
-    ) -> None:
-        """Score episodes and publish the signals as a named score.
-
-        Delegates to :meth:`DatasetScoreStorage.add`. Source data files are
-        not modified.
-
-        Args:
-            scorer: Model-specific scorer that returns signals for one episode.
-            name: Score name. Defaults to ``scorer.name``.
-            episodes: Global episode indices to score. Defaults to every episode
-                in this dataset view.
-            resume: If ``True``, skip episodes completed by an interrupted run
-                with the same dataset, scorer, and episode selection.
-            overwrite: If ``True``, replace an existing score once the new one
-                is complete.
-
-        Raises:
-            RuntimeError: If the dataset is being recorded and not finalized.
-            FileExistsError: If the score exists and ``overwrite`` is ``False``.
-        """
-        self._ensure_reader()
-        self.score_storage.add(
-            scorer,
-            name=name,
-            episodes=episodes,
-            resume=resume,
-            overwrite=overwrite,
-        )
-
-    def merge_scores(self, names: list[str], *, name: str, overwrite: bool = False) -> None:
-        """Merge scores of disjoint episodes into one named score.
-
-        Delegates to :meth:`DatasetScoreStorage.merge`. Useful when episodes were scored in
-        parallel, each worker with its own score name. The merged scores are kept.
-
-        Args:
-            names: Scores to merge. They must have the same signals and provenance and share no
-                episode.
-            name: Name of the merged score.
-            overwrite: If ``True``, replace an existing score with that name.
-
-        Raises:
-            FileExistsError: If the score exists and ``overwrite`` is ``False``.
-            ValueError: If the scores differ in signals or provenance, or share an episode.
-        """
-        self.score_storage.merge(names, name=name, overwrite=overwrite)
-
-    def read_score(self, name: str) -> datasets.Dataset:
-        """Read a named score as a Hugging Face dataset.
-
-        Delegates to :meth:`DatasetScoreStorage.read`.
-        """
-        return self.score_storage.read(name)
-
-    def get_score_descriptors(self, name: str) -> dict[str, SignalDescriptor]:
-        """Return how each signal in a named score should be interpreted.
-
-        Delegates to :meth:`DatasetScoreStorage.descriptors`.
-        """
-        return self.score_storage.descriptors(name)
-
-    def get_score_provenance(self, name: str) -> dict[str, Any]:
-        """Return the dataset, model, and scorer settings that produced a named score.
-
-        Delegates to :meth:`DatasetScoreStorage.provenance`.
-        """
-        return self.score_storage.provenance(name)
-
-    def list_scores(self) -> list[str]:
-        """List the names of scores published for this dataset.
-
-        Delegates to :meth:`DatasetScoreStorage.list`.
-        """
-        return self.score_storage.list()
-
-    def push_score_to_hub(self, name: str) -> None:
-        """Upload one named score to the dataset repository on the Hub.
-
-        Delegates to :meth:`DatasetScoreStorage.push_to_hub`.
-        """
-        self.score_storage.push_to_hub(name)
 
     # ── Hub methods (stay on facade) ──────────────────────────────────
 
@@ -783,7 +715,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 f"push_to_hub is not supported for storage_format={self.meta.storage_format!r}: "
                 "the data files are not managed by LeRobotDataset."
             )
-        ignore_patterns = ["images/"]
+        # Hidden entries under annotations/ are unpublished parts of an interrupted annotation run.
+        ignore_patterns = ["images/", f"{ANNOTATIONS_DIR}/.*"]
         if not push_videos:
             ignore_patterns.append("videos/")
 
@@ -831,7 +764,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         reader = cast(DatasetReader, self.reader)
         if self.episodes is not None:
             files = reader.get_episodes_file_paths()
-            files.append(f"{SCORES_DIR}/")
+            files.append(f"{ANNOTATIONS_DIR}/")
 
         if self._requested_root is None:
             self.meta.root = Path(

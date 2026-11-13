@@ -23,11 +23,12 @@ from typing import TYPE_CHECKING
 
 from lerobot.configs import parser
 from lerobot.configs.rewards import RewardModelConfig
-from lerobot.rewards import make_frame_scorer, make_reward_model
+from lerobot.rewards import make_frame_scorer, make_reward_model, score_dataset
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import LeRobotDataset
+    from lerobot.datasets.annotations import push_annotations_to_hub
 
 
 @dataclass
@@ -99,7 +100,8 @@ def run_score(cfg: ScoreConfig) -> None:
         download_videos=True,
     )
     score_name = cfg.name or scorer.name
-    dataset.add_score(
+    score_dataset(
+        dataset,
         scorer,
         name=score_name,
         episodes=cfg.episodes,
@@ -108,7 +110,7 @@ def run_score(cfg: ScoreConfig) -> None:
     )
 
     if cfg.push_to_hub:
-        dataset.push_score_to_hub(score_name)
+        push_annotations_to_hub(dataset, score_name)
 
 
 @parser.wrap()

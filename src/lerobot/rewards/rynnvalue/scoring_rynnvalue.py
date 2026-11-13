@@ -23,9 +23,9 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from lerobot.datasets.scores import FrameSignals, SignalDescriptor
 from lerobot.processor import PolicyProcessorPipeline
 
+from ..scoring import FrameSignals, SignalDescriptor
 from .modeling_rynnvalue import RynnValueRewardModel
 from .processor_rynnvalue import make_rynnvalue_pre_post_processors
 
@@ -42,7 +42,7 @@ RYNNVALUE_SIGNAL_DESCRIPTORS = {
             "this frame, linearly interpolated between the frames RynnValue ran on."
         ),
         unit="s",
-        direction="lower",
+        greater_is_better=False,
     ),
 }
 
@@ -86,6 +86,11 @@ class RynnValueFrameScorer:
         self.inference_fps = inference_fps
 
     @property
+    def descriptors(self) -> dict[str, SignalDescriptor]:
+        """Describe the remaining-time signal before scoring."""
+        return RYNNVALUE_SIGNAL_DESCRIPTORS
+
+    @property
     def provenance(self) -> dict[str, Any]:
         """Describe the model and the settings that change the signals."""
         config = self.model.config
@@ -117,11 +122,14 @@ class RynnValueFrameScorer:
         episode_end = int(episode["dataset_to_index"])
         num_frames = episode_end - episode_start
 
-        mapping = dataset.absolute_to_relative_idx
-        positions = [
-            index if mapping is None else mapping[index] for index in range(episode_start, episode_end)
-        ]
-        task = dataset[positions[0]].get(config.task_key)
+        task = None
+        if config.task_key == "task":
+            task_index = dataset.get_frames(episode_index, ["task_index"], [0])["task_index"][0]
+            task = str(dataset.meta.tasks.iloc[int(task_index)].name)
+        elif config.task_key in dataset.meta.features:
+            mapping = dataset.absolute_to_relative_idx
+            position = episode_start if mapping is None else mapping[episode_start]
+            task = dataset[position][config.task_key]
 
         anchors = select_anchor_indices(num_frames, float(dataset.fps), self.inference_fps)
         remaining_time: NDArray[np.float64] = np.empty(len(anchors), dtype=np.float64)
@@ -129,12 +137,11 @@ class RynnValueFrameScorer:
         self.model.eval()
         with torch.inference_mode():
             for i, anchor in enumerate(anchors):
-                frames = torch.stack(
-                    [
-                        dataset[positions[index]][config.image_key]
-                        for index in select_prefix_indices(int(anchor), config.max_frames)
-                    ]
-                )
+                frames = dataset.get_frames(
+                    episode_index,
+                    [config.image_key],
+                    select_prefix_indices(int(anchor), config.max_frames).tolist(),
+                )[config.image_key]
                 encoded = self.preprocessor({config.image_key: frames.unsqueeze(0), config.task_key: task})
                 remaining_time[i] = self.model.predict_remaining_time(encoded).remaining_time_s.item()
 
@@ -145,7 +152,6 @@ class RynnValueFrameScorer:
                     np.float32
                 )
             },
-            descriptors=RYNNVALUE_SIGNAL_DESCRIPTORS,
         )
 
 

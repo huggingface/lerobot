@@ -42,25 +42,19 @@ def test_score_config_loads_reward_model_from_path(monkeypatch):
     assert cfg.scorer_options == {"num_samples": 4, "head_mode": "dense", "inference_fps": 0.5}
 
 
-def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
+def test_run_score_uses_reward_scoring_api(monkeypatch, tmp_path):
     pytest.importorskip("datasets")
     pytest.importorskip("av")
 
     reward_config = object()
     fake_model = object()
+    fake_dataset = object()
     fake_scorer = SimpleNamespace(name="robometer")
     captured: dict[str, object] = {}
 
-    class FakeDataset:
-        def add_score(self, scorer, **kwargs) -> None:
-            captured["add_score"] = (scorer, kwargs)
-
-        def push_score_to_hub(self, name: str) -> None:
-            captured["push_score_to_hub"] = name
-
     def fake_dataset_class(repo_id, **kwargs):
         captured["dataset_load"] = (repo_id, kwargs)
-        return FakeDataset()
+        return fake_dataset
 
     monkeypatch.setattr(lerobot_score, "LeRobotDataset", fake_dataset_class)
     monkeypatch.setattr(
@@ -70,6 +64,16 @@ def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
         lerobot_score,
         "make_frame_scorer",
         lambda model, **kwargs: captured.update(make_scorer=(model, kwargs)) or fake_scorer,
+    )
+    monkeypatch.setattr(
+        lerobot_score,
+        "score_dataset",
+        lambda dataset, scorer, **kwargs: captured.update(score_dataset=(dataset, scorer, kwargs)),
+    )
+    monkeypatch.setattr(
+        lerobot_score,
+        "push_annotations_to_hub",
+        lambda dataset, name: captured.update(push_annotations_to_hub=(dataset, name)),
     )
 
     cfg = ScoreConfig(
@@ -96,11 +100,12 @@ def test_run_score_uses_dataset_score_api(monkeypatch, tmp_path):
             "download_videos": True,
         },
     )
-    assert captured["add_score"] == (
+    assert captured["score_dataset"] == (
+        fake_dataset,
         fake_scorer,
         {"name": "robometer-4b", "episodes": [1], "resume": True, "overwrite": False},
     )
-    assert captured["push_score_to_hub"] == "robometer-4b"
+    assert captured["push_annotations_to_hub"] == (fake_dataset, "robometer-4b")
 
 
 def test_run_score_requires_a_reward_model():

@@ -226,3 +226,14 @@ def test_encoder_requires_task_or_default(monkeypatch):
     }
     with pytest.raises(KeyError, match="task"):
         encoder(transition)
+
+
+@pytest.mark.parametrize("task", ["custom instruction", None])
+def test_processor_preserves_custom_task_and_default(monkeypatch, task):
+    fake = _patch_processor(monkeypatch)
+    config = RynnValueConfig(device="cpu", task_key="instruction", default_task="fallback")
+    preprocessor, _ = make_rynnvalue_pre_post_processors(config)
+
+    preprocessor({config.image_key: torch.zeros(1, 2, 3, 8, 8), "instruction": task})
+
+    assert fake.calls[0]["instruction"] == (task if task is not None else "fallback")

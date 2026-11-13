@@ -21,13 +21,20 @@ from .factory import (
     make_reward_pre_post_processors as make_reward_pre_post_processors,
 )
 from .prediction import (
-    ProgressPrediction as ProgressPrediction,
-    RemainingTimePrediction as RemainingTimePrediction,
+    ProgressOutput as ProgressOutput,
+    RemainingTimeOutput as RemainingTimeOutput,
 )
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
 from .rynnvalue.configuration_rynnvalue import RynnValueConfig as RynnValueConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
+from .scoring import (
+    FrameScorer as FrameScorer,
+    FrameSignals as FrameSignals,
+    SignalDescriptor as SignalDescriptor,
+    load_signal_descriptors as load_signal_descriptors,
+    score_dataset as score_dataset,
+)
 from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfig
 
 __all__ = [
@@ -39,9 +46,15 @@ __all__ = [
     "TOPRewardConfig",
     # Base class
     "PreTrainedRewardModel",
-    # Predictions
-    "ProgressPrediction",
-    "RemainingTimePrediction",
+    # Outputs
+    "ProgressOutput",
+    "RemainingTimeOutput",
+    # Dataset scoring
+    "FrameScorer",
+    "FrameSignals",
+    "SignalDescriptor",
+    "load_signal_descriptors",
+    "score_dataset",
     # Factory functions
     "get_reward_model_class",
     "make_frame_scorer",

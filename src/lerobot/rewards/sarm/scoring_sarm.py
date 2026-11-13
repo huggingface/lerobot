@@ -23,10 +23,10 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from lerobot.datasets.scores import FrameSignals, SignalDescriptor
 from lerobot.datasets.utils import delta_window
 from lerobot.processor import PolicyProcessorPipeline
 
+from ..scoring import FrameSignals, SignalDescriptor
 from .modeling_sarm import SARMRewardModel
 from .processor_sarm import make_sarm_pre_post_processors
 from .sarm_utils import interpolate_progress
@@ -41,7 +41,7 @@ _HEAD_SIGNALS = {"sparse": SPARSE_PROGRESS_SIGNAL, "dense": DENSE_PROGRESS_SIGNA
 SARM_SIGNAL_DESCRIPTORS = {
     signal: SignalDescriptor(
         description=f"SARM task progress from its {head} head, predicted from the window of frames around this frame.",
-        direction="higher",
+        greater_is_better=True,
         bounds=(0.0, 1.0),
         allow_nan=True,
     )
@@ -109,6 +109,11 @@ class SARMFrameScorer:
             },
         }
 
+    @property
+    def descriptors(self) -> dict[str, SignalDescriptor]:
+        """Describe the progress signals for the selected heads."""
+        return {_HEAD_SIGNALS[head]: SARM_SIGNAL_DESCRIPTORS[_HEAD_SIGNALS[head]] for head in self.heads}
+
     def _get_preprocessor(
         self, dataset: LeRobotDataset
     ) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
@@ -132,18 +137,14 @@ class SARMFrameScorer:
         episode_end = int(episode["dataset_to_index"])
         num_frames = episode_end - episode_start
 
-        mapping = dataset.absolute_to_relative_idx
-        positions = [
-            index if mapping is None else mapping[index] for index in range(episode_start, episode_end)
-        ]
-        first_sample = dataset[positions[0]]
-        task = first_sample.get("task", "perform the task")
-        frames = torch.stack([dataset[position][config.image_key] for position in positions])
-        states = (
-            torch.stack([dataset[position][config.state_key] for position in positions])
-            if config.state_key in first_sample
-            else None
-        )
+        task_index = dataset.get_frames(episode_index, ["task_index"], [0])["task_index"][0]
+        task = str(dataset.meta.tasks.iloc[int(task_index)].name)
+        keys = [config.image_key]
+        if config.state_key in dataset.meta.features:
+            keys.append(config.state_key)
+        episode_frames = dataset.get_frames(episode_index, keys, list(range(num_frames)))
+        frames = episode_frames[config.image_key]
+        states = episode_frames.get(config.state_key)
 
         query_frames = list(range(0, num_frames, self.stride))
         if query_frames[-1] != num_frames - 1:
@@ -196,7 +197,6 @@ class SARMFrameScorer:
         return FrameSignals(
             frame_indices=all_frames.astype(np.int64),
             signals=signals,
-            descriptors={signal: SARM_SIGNAL_DESCRIPTORS[signal] for signal in signals},
         )
 
 

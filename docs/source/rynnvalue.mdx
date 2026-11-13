@@ -79,7 +79,7 @@ The released checkpoints have metadata prompting enabled. Provide at least one r
 
 When a trajectory contains more than `max_frames` frames, the processor uniformly samples the full history while retaining its first and last frames. The default is eight frames.
 
-`predict_remaining_time()` returns a `lerobot.rewards.RemainingTimePrediction` with one value per trajectory:
+`predict_remaining_time()` returns a `lerobot.rewards.RemainingTimeOutput` with one value per trajectory:
 
 - `prediction.remaining_time_s` contains `v_end`, the final queried frame's predicted remaining time.
 - The tensor stays on the model device.
@@ -124,15 +124,19 @@ uv run lerobot-score \
     --reward_model.camera_description="a fixed third-person camera"
 ```
 
-RynnValue runs on the trajectory prefix ending at about one frame per second of the dataset, set with `--inference_fps` (default 1), each with at most `max_frames` evenly spaced frames, set with `--reward_model.max_frames` (default 8). The scorer interpolates linearly between the frames RynnValue runs on and writes the dataset score `rynnvalue` with one signal, `reward.rynnvalue.remaining_time_s`, in seconds, lower is better. RA-BC needs a higher-is-better progress signal, so it can't weight samples with this score.
+RynnValue runs on the trajectory prefix ending at about one frame per second of the dataset, set with `--inference_fps` (default 1), each with at most `max_frames` evenly spaced frames, set with `--reward_model.max_frames` (default 8). Each prefix is read in one `get_frames()` call. The scorer interpolates linearly between anchors and writes `annotations/rynnvalue.parquet` with one signal, `reward.rynnvalue.remaining_time_s`, in seconds. Its descriptor declares `greater_is_better=False`. RA-BC requires a higher-is-better progress signal, so remaining time cannot be used directly for RA-BC weighting.
 
-From Python, build the scorer and add the score to the dataset:
+From Python, score the dataset and load its annotation table:
 
 ```python
+from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.annotations import load_annotations
+from lerobot.rewards import score_dataset
 from lerobot.rewards.rynnvalue.scoring_rynnvalue import make_rynnvalue_frame_scorer
 
-dataset.add_score(make_rynnvalue_frame_scorer(model))
-scores = dataset.read_score("rynnvalue")
+dataset = LeRobotDataset("user/my_dataset", root="/path/to/local/dataset")
+score_dataset(dataset, make_rynnvalue_frame_scorer(model))
+scores = load_annotations(dataset, "rynnvalue")
 ```
 
 ## Reward shaping

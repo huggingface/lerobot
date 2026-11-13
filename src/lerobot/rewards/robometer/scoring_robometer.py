@@ -23,9 +23,9 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from lerobot.datasets.scores import FrameSignals, SignalDescriptor
 from lerobot.processor import PolicyProcessorPipeline
 
+from ..scoring import FrameSignals, SignalDescriptor
 from .modeling_robometer import RobometerRewardModel
 from .processor_robometer import make_robometer_pre_post_processors
 
@@ -39,12 +39,12 @@ SUCCESS_PROBABILITY_SIGNAL = "reward.robometer.success_probability"
 ROBOMETER_SIGNAL_DESCRIPTORS = {
     PROGRESS_SIGNAL: SignalDescriptor(
         description="RoboMeter task progress for the trajectory prefix ending at this frame.",
-        direction="higher",
+        greater_is_better=True,
         bounds=(0.0, 1.0),
     ),
     SUCCESS_PROBABILITY_SIGNAL: SignalDescriptor(
         description="RoboMeter success probability for the trajectory prefix ending at this frame.",
-        direction="higher",
+        greater_is_better=True,
         bounds=(0.0, 1.0),
     ),
 }
@@ -84,6 +84,11 @@ class RobometerFrameScorer:
         self.num_subsampled_frames = num_subsampled_frames
 
     @property
+    def descriptors(self) -> dict[str, SignalDescriptor]:
+        """Describe the per-frame progress and success signals."""
+        return ROBOMETER_SIGNAL_DESCRIPTORS
+
+    @property
     def provenance(self) -> dict[str, Any]:
         """Describe the checkpoint and the settings that change the signals."""
         config = self.model.config
@@ -109,12 +114,18 @@ class RobometerFrameScorer:
         episode_end = int(episode["dataset_to_index"])
         num_frames = episode_end - episode_start
 
-        mapping = dataset.absolute_to_relative_idx
-        positions = [
-            index if mapping is None else mapping[index] for index in range(episode_start, episode_end)
+        task = None
+        if config.task_key == "task":
+            task_index = dataset.get_frames(episode_index, ["task_index"], [0])["task_index"][0]
+            task = str(dataset.meta.tasks.iloc[int(task_index)].name)
+        elif config.task_key in dataset.meta.features:
+            mapping = dataset.absolute_to_relative_idx
+            position = episode_start if mapping is None else mapping[episode_start]
+            task = dataset[position][config.task_key]
+        frame_indices = list(range(num_frames))
+        episode_frames = dataset.get_frames(episode_index, [config.image_key], frame_indices)[
+            config.image_key
         ]
-        task = dataset[positions[0]].get(config.task_key)
-        episode_frames = torch.stack([dataset[position][config.image_key] for position in positions])
 
         subsample_indices = build_subsample_indices(num_frames, self.num_subsampled_frames)
         progress: NDArray[np.float32] = np.empty(num_frames, dtype=np.float32)
@@ -139,7 +150,6 @@ class RobometerFrameScorer:
                 PROGRESS_SIGNAL: progress,
                 SUCCESS_PROBABILITY_SIGNAL: success_probability,
             },
-            descriptors=ROBOMETER_SIGNAL_DESCRIPTORS,
         )
 
 

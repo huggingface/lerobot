@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -31,6 +32,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    batch_to_transition,
     policy_action_to_transition,
 )
 from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_PREFIX, RynnValueConfig
@@ -215,6 +217,7 @@ def make_rynnvalue_pre_post_processors(
 ]:
     del dataset_stats
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+        to_transition=partial(batch_to_transition, complementary_keys=(config.task_key,)),
         steps=[
             AddBatchDimensionProcessorStep(),
             RynnValueEncoderProcessorStep(

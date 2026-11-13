@@ -27,7 +27,7 @@ from lerobot.rewards.robometer import RobometerConfig
 from lerobot.rewards.robometer.configuration_robometer import ROBOMETER_SPECIAL_TOKENS
 from lerobot.rewards.robometer.modeling_robometer import (
     ROBOMETER_FEATURE_PREFIX,
-    RobometerPrediction,
+    RobometerOutput,
     convert_bins_to_continuous,
 )
 from tests.utils import skip_if_package_missing
@@ -230,7 +230,7 @@ def test_robometer_predict_progress_returns_typed_frame_signals(monkeypatch):
     batch = _make_batch({"input_ids": torch.zeros(2, 2, dtype=torch.long)})
     prediction = model.predict_progress(batch)
 
-    assert isinstance(prediction, RobometerPrediction)
+    assert isinstance(prediction, RobometerOutput)
     assert prediction.progress.shape == (2, 2)
     assert prediction.success_probability.shape == (2, 2)
     assert prediction.progress.dtype == torch.float32

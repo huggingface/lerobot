@@ -24,7 +24,7 @@ pytest.importorskip("transformers")
 from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE  # noqa: E402
 
 from lerobot.configs.rewards import RewardModelConfig  # noqa: E402
-from lerobot.rewards import RemainingTimePrediction  # noqa: E402
+from lerobot.rewards import RemainingTimeOutput  # noqa: E402
 from lerobot.rewards.factory import (  # noqa: E402
     get_reward_model_class,
     make_reward_model,
@@ -234,7 +234,7 @@ def test_predict_remaining_time_returns_native_seconds(monkeypatch):
     _patch_checkpoint_load(monkeypatch)
     model = RynnValueRewardModel(RynnValueConfig(device="cpu"))
     prediction = model.predict_remaining_time(_encoded_batch())
-    assert isinstance(prediction, RemainingTimePrediction)
+    assert isinstance(prediction, RemainingTimeOutput)
     assert torch.equal(prediction.remaining_time_s, torch.tensor([2.0, 1.0]))
     assert model.is_trainable is False
     with pytest.raises(NotImplementedError, match="predict_remaining_time"):

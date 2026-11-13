@@ -84,6 +84,7 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 - **`meta/episodes/`**: per‑episode records (lengths, tasks, offsets) stored as **chunked Parquet** for scalability.
 - **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
 - **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
+- **`annotations/`** (optional): named Parquet tables that add columns to some frames without modifying `data/`. See [Annotate a dataset](#annotate-a-dataset).
 
 ## Load a dataset for training
 
@@ -131,6 +132,45 @@ for batch in data_loader:
     images = batch["observation.images.front_left"].to(device)
     # model.forward(batch)
 ```
+
+## Annotate a dataset
+
+`dataset.get_frames()` reads some features of some frames of one episode. Unlike `dataset[i]`, it
+reads only the requested features, decodes each video once for all requested frames, and applies
+no delta windows or image transforms:
+
+```python
+frames = dataset.get_frames(episode_index=0, keys=["observation.images.front_left"], frame_indices=[0, 10, 20])
+print(frames["observation.images.front_left"].shape)  # [3, C, H, W]
+```
+
+`lerobot.datasets.annotations` stores named tables of values computed for some frames, such as
+model predictions, in `annotations/<name>.parquet`. The `data/` files are not modified. Rows join
+the dataset on `(episode_index, frame_index)`, and a frame may have several rows. `add_annotations`
+calls your function once per episode and publishes the table when every episode is written. An
+interrupted run resumes from the episodes already written.
+
+```python
+import numpy as np
+from lerobot.datasets.annotations import add_annotations, load_annotations, push_annotations_to_hub
+
+
+def brightness(episode_index):
+    length = dataset.meta.episodes[episode_index]["length"]
+    frame_indices = np.arange(length)
+    images = dataset.get_frames(episode_index, ["observation.images.front_left"], frame_indices)
+    return frame_indices, {"brightness": images["observation.images.front_left"].mean(dim=(1, 2, 3)).numpy()}
+
+
+add_annotations(dataset, "brightness", brightness, info={"description": "Mean pixel value."})
+table = load_annotations(dataset, "brightness")  # a datasets.Dataset
+push_annotations_to_hub(dataset, "brightness")
+```
+
+`info` is a JSON-serializable dict stored with the table and returned by `load_annotations_info`.
+`AnnotationWriter` gives the same writes without the loop, and `merge_annotations` combines tables
+written in parallel for disjoint episodes. Annotations can only be written to a local dataset in the
+default storage format.
 
 ## Stream a dataset during training
 

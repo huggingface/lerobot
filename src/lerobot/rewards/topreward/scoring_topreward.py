@@ -23,9 +23,9 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from lerobot.datasets.scores import FrameSignals, SignalDescriptor
 from lerobot.processor import PolicyProcessorPipeline
 
+from ..scoring import FrameSignals, SignalDescriptor
 from .modeling_topreward import TOPRewardModel
 from .processor_topreward import make_topreward_pre_post_processors
 
@@ -41,7 +41,7 @@ TOPREWARD_SIGNAL_DESCRIPTORS = {
             "TOPReward log-probability of the task for the trajectory prefix ending at this frame, "
             "min-max normalized per episode."
         ),
-        direction="higher",
+        greater_is_better=True,
         bounds=(0.0, 1.0),
     ),
 }
@@ -83,6 +83,11 @@ class TOPRewardFrameScorer:
         self.num_samples = num_samples
 
     @property
+    def descriptors(self) -> dict[str, SignalDescriptor]:
+        """Describe the per-frame normalized progress signal."""
+        return TOPREWARD_SIGNAL_DESCRIPTORS
+
+    @property
     def provenance(self) -> dict[str, Any]:
         """Describe the model and the settings that change the signals."""
         config = self.model.config
@@ -113,12 +118,18 @@ class TOPRewardFrameScorer:
         episode_end = int(episode["dataset_to_index"])
         num_frames = episode_end - episode_start
 
-        mapping = dataset.absolute_to_relative_idx
-        positions = [
-            index if mapping is None else mapping[index] for index in range(episode_start, episode_end)
+        task = None
+        if config.task_key == "task":
+            task_index = dataset.get_frames(episode_index, ["task_index"], [0])["task_index"][0]
+            task = str(dataset.meta.tasks.iloc[int(task_index)].name)
+        elif config.task_key in dataset.meta.features:
+            mapping = dataset.absolute_to_relative_idx
+            position = episode_start if mapping is None else mapping[episode_start]
+            task = dataset[position][config.task_key]
+        frame_indices = list(range(num_frames))
+        episode_frames = dataset.get_frames(episode_index, [config.image_key], frame_indices)[
+            config.image_key
         ]
-        task = dataset[positions[0]].get(config.task_key)
-        episode_frames = torch.stack([dataset[position][config.image_key] for position in positions])
 
         prefix_lengths = build_prefix_lengths(num_frames, self.num_samples)
         log_probabilities: NDArray[np.float64] = np.empty(len(prefix_lengths), dtype=np.float64)
@@ -138,7 +149,6 @@ class TOPRewardFrameScorer:
         return FrameSignals(
             frame_indices=np.arange(num_frames, dtype=np.int64),
             signals={PROGRESS_SIGNAL: progress.astype(np.float32)},
-            descriptors=TOPREWARD_SIGNAL_DESCRIPTORS,
         )
 
 

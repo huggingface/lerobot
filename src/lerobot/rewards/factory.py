@@ -32,7 +32,7 @@ from .sarm.configuration_sarm import SARMConfig
 from .topreward.configuration_topreward import TOPRewardConfig
 
 if TYPE_CHECKING:
-    from lerobot.datasets.scores import FrameScorer
+    from .scoring import FrameScorer
 
 
 def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
@@ -168,7 +168,7 @@ def make_frame_scorer(model: PreTrainedRewardModel, **kwargs: Any) -> "FrameScor
             (e.g., ``batch_size``).
 
     Returns:
-        A frame scorer that can be passed to ``LeRobotDataset.add_score()``.
+        A frame scorer that can be passed to :func:`lerobot.rewards.scoring.score_dataset`.
 
     Raises:
         ValueError: If no frame scorer is implemented for the model's type.
