@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
 
@@ -57,6 +58,12 @@ class RealSenseCameraConfig(CameraConfig):
             white balance is disabled and this fixed value is used. Valid ranges are
             camera-model specific and reported if the value is rejected. Defaults to None
             (leave unchanged).
+        json_config_path: Path to a RealSense JSON configuration file (for example, one exported
+            from the RealSense Viewer) loaded through the advanced-mode API before the pipeline
+            starts. Only supported on RS400-series devices (e.g. D405, D435, D455). If advanced
+            mode is disabled on the device it is enabled first, which makes the camera reset and
+            re-enumerate. Settings in the file are applied before `exposure`, `gain` and
+            `white_balance`, which therefore take precedence. Defaults to None (not used).
 
     Note:
         - Either name or serial_number must be specified.
@@ -75,10 +82,13 @@ class RealSenseCameraConfig(CameraConfig):
     exposure: int | None = None
     gain: int | None = None
     white_balance: int | None = None
+    json_config_path: Path | None = None
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
         self.rotation = Cv2Rotation(self.rotation)
+        if self.json_config_path is not None:
+            self.json_config_path = Path(self.json_config_path).expanduser()
 
         if not self.use_rgb and not self.use_depth:
             raise ValueError("At least one of `use_rgb` or `use_depth` must be enabled.")

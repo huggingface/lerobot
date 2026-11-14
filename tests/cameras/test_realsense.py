@@ -668,3 +668,98 @@ def test_read_loop_does_not_publish_after_stop_requested():
     assert camera.latest_color_frame is None
     assert camera.latest_timestamp is None
     assert not camera.new_frame_event.is_set()
+
+
+def _make_advanced_mode_device(serial="042", supported=True):
+    device = MagicMock()
+    device.get_info.return_value = serial
+    device.is_advanced_mode_device.return_value = supported
+    return device
+
+
+def test_json_config_path_is_expanded_to_path():
+    config = RealSenseCameraConfig(serial_number_or_name="042", json_config_path="~/cfg.json")
+    assert config.json_config_path == Path("~/cfg.json").expanduser()
+
+
+def test_load_json_config_skipped_when_none():
+    camera = RealSenseCamera(RealSenseCameraConfig(serial_number_or_name="042"))
+    with patch.object(camera, "_find_device") as mock_find:
+        camera._load_json_config()
+        mock_find.assert_not_called()
+
+
+def test_load_json_config_missing_file_raises(tmp_path):
+    config = RealSenseCameraConfig(serial_number_or_name="042", json_config_path=tmp_path / "missing.json")
+    camera = RealSenseCamera(config)
+    with pytest.raises(FileNotFoundError, match="missing.json"):
+        camera._load_json_config()
+
+
+def test_load_json_config_unsupported_device_raises(tmp_path):
+    json_file = tmp_path / "cfg.json"
+    json_file.write_text("{}")
+    camera = RealSenseCamera(RealSenseCameraConfig(serial_number_or_name="042", json_config_path=json_file))
+    with (
+        patch.object(camera, "_find_device", return_value=_make_advanced_mode_device(supported=False)),
+        pytest.raises(ValueError, match="advanced mode"),
+    ):
+        camera._load_json_config()
+
+
+def test_load_json_config_loads_when_advanced_mode_enabled(tmp_path):
+    json_file = tmp_path / "cfg.json"
+    json_file.write_text('{"param-visualpreset": "1"}')
+    camera = RealSenseCamera(RealSenseCameraConfig(serial_number_or_name="042", json_config_path=json_file))
+    advanced_mode = MagicMock()
+    advanced_mode.is_enabled.return_value = True
+
+    with (
+        patch.object(camera, "_find_device", return_value=_make_advanced_mode_device()),
+        patch(
+            "lerobot.cameras.realsense.camera_realsense.rs.rs400_advanced_mode", return_value=advanced_mode
+        ),
+    ):
+        camera._load_json_config()
+
+    advanced_mode.toggle_advanced_mode.assert_not_called()
+    advanced_mode.load_json.assert_called_once_with('{"param-visualpreset": "1"}')
+
+
+def test_load_json_config_enables_advanced_mode_and_waits_for_reset(tmp_path):
+    json_file = tmp_path / "cfg.json"
+    json_file.write_text("{}")
+    camera = RealSenseCamera(RealSenseCameraConfig(serial_number_or_name="042", json_config_path=json_file))
+    advanced_mode = MagicMock()
+    advanced_mode.is_enabled.return_value = False
+    device = _make_advanced_mode_device()
+
+    with (
+        patch.object(camera, "_find_device", side_effect=[device, None, device]),
+        patch(
+            "lerobot.cameras.realsense.camera_realsense.rs.rs400_advanced_mode", return_value=advanced_mode
+        ),
+        patch("lerobot.cameras.realsense.camera_realsense.time.sleep"),
+    ):
+        camera._load_json_config()
+
+    advanced_mode.toggle_advanced_mode.assert_called_once_with(True)
+    advanced_mode.load_json.assert_called_once_with("{}")
+
+
+def test_load_json_config_invalid_json_raises_value_error(tmp_path):
+    json_file = tmp_path / "cfg.json"
+    json_file.write_text("not json")
+    camera = RealSenseCamera(RealSenseCameraConfig(serial_number_or_name="042", json_config_path=json_file))
+    advanced_mode = MagicMock()
+    advanced_mode.is_enabled.return_value = True
+    advanced_mode.load_json.side_effect = RuntimeError("bad json")
+
+    with (
+        patch.object(camera, "_find_device", return_value=_make_advanced_mode_device()),
+        patch(
+            "lerobot.cameras.realsense.camera_realsense.rs.rs400_advanced_mode", return_value=advanced_mode
+        ),
+        pytest.raises(ValueError, match="bad json"),
+    ):
+        camera._load_json_config()

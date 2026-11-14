@@ -176,6 +176,14 @@ require `use_rgb=True`.
 Manual color controls require a dedicated RGB module. Cameras without one, such as the RealSense
 D405, do not support them and raise an error at connection time.
 
+For full control over the sensor (presets, depth tuning, etc.), you can also pass the path to a
+RealSense JSON configuration file, for example one exported from the RealSense Viewer, with
+`json_config_path="/path/to/config.json"`. It is loaded through the advanced-mode API before the
+stream starts and is only supported on RS400-series cameras (D405, D435, D455, ...). If advanced
+mode is off, it is enabled automatically, which resets the camera and delays the first connection
+by a few seconds. `exposure`, `gain` and `white_balance` are applied after the file and take
+precedence.
+
 </hfoption>
 </hfoptions>
 

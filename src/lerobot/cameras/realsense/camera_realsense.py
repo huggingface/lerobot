@@ -113,6 +113,7 @@ class RealSenseCamera(Camera):
     # retried with a plain pipeline stop/start, which is usually enough to recover the
     # stream; a USB hardware reset is performed before the final attempt as a last resort.
     _MAX_CONNECT_ATTEMPTS = 3
+    _ADVANCED_MODE_TIMEOUT_S = 15.0
 
     def __init__(self, config: RealSenseCameraConfig):
         """
@@ -189,6 +190,59 @@ class RealSenseCamera(Camera):
                 return
         logger.warning(f"{self} device not found for hardware reset, skipping.")
 
+    def _find_device(self) -> "rs.device | None":
+        """Returns the connected RealSense device matching `self.serial_number`, if any."""
+        for device in rs.context().query_devices():
+            if device.get_info(rs.camera_info.serial_number) == self.serial_number:
+                return device
+        return None
+
+    def _load_json_config(self) -> None:
+        """Loads the RealSense JSON configuration file (if configured) onto the device.
+
+        Must run before the pipeline is started. Advanced mode is enabled first when needed,
+        which resets the device, so it is looked up again until it re-enumerates.
+
+        Raises:
+            FileNotFoundError: If the configured JSON file does not exist.
+            ConnectionError: If the device cannot be found or does not re-enumerate in time.
+            ValueError: If the device does not support advanced mode or rejects the JSON.
+        """
+        json_path = self.config.json_config_path
+        if json_path is None:
+            return
+
+        if not json_path.is_file():
+            raise FileNotFoundError(f"{self}: RealSense JSON config file not found: {json_path}")
+        json_text = json_path.read_text()
+
+        device = self._find_device()
+        if device is None:
+            raise ConnectionError(f"{self}: device not found, cannot load JSON config.")
+        if not device.is_advanced_mode_device():
+            raise ValueError(
+                f"{self}: JSON config requires an RS400-series device with advanced mode support."
+            )
+
+        advanced_mode = rs.rs400_advanced_mode(device)
+        if not advanced_mode.is_enabled():
+            logger.info(f"{self} enabling advanced mode (the camera will reset).")
+            advanced_mode.toggle_advanced_mode(True)
+            deadline = time.monotonic() + self._ADVANCED_MODE_TIMEOUT_S
+            device = None
+            while device is None and time.monotonic() < deadline:
+                time.sleep(1.0)
+                device = self._find_device()
+            if device is None:
+                raise ConnectionError(f"{self}: device did not re-enumerate after enabling advanced mode.")
+            advanced_mode = rs.rs400_advanced_mode(device)
+
+        try:
+            advanced_mode.load_json(json_text)
+        except RuntimeError as e:
+            raise ValueError(f"{self}: failed to load JSON config from {json_path}: {e}") from e
+        logger.info(f"{self} loaded JSON config from {json_path}.")
+
     def _open_pipeline(self) -> None:
         """Initializes the RealSense pipeline, starts it, and starts the background read thread.
 
@@ -198,6 +252,8 @@ class RealSenseCamera(Camera):
             ConnectionError: If the camera is found but fails to start the pipeline or no RealSense devices are detected at all.
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
+        self._load_json_config()
+
         rs_pipeline = rs.pipeline()
         rs_config = rs.config()
         self._configure_rs_pipeline_config(rs_config)
