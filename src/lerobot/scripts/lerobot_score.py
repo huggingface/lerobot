@@ -1,0 +1,164 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+r"""Score a LeRobot dataset and save frame-aligned signals under ``scores/<name>.parquet``.
+
+Use a writable local dataset root. Replace the dataset ID and paths below with your own.
+
+Examples:
+    Score with a pretrained RoboMeter checkpoint:
+
+        uv run lerobot-score \
+            --dataset_repo_id=user/dataset \
+            --dataset_root=/path/to/local/dataset \
+            --reward_model.path=lerobot/Robometer-4B \
+            --reward_model.device=cuda
+
+    Score with a trained SARM checkpoint, evaluating every fifth frame and interpolating:
+
+        uv run lerobot-score \
+            --dataset_repo_id=user/dataset \
+            --dataset_root=/path/to/local/dataset \
+            --reward_model.path=/path/to/sarm-checkpoint \
+            --reward_model.device=cuda \
+            --head_mode=sparse \
+            --stride=5
+
+    Score with zero-shot TOPReward:
+
+        uv run lerobot-score \
+            --dataset_repo_id=user/dataset \
+            --dataset_root=/path/to/local/dataset \
+            --reward_model.type=topreward \
+            --reward_model.device=cuda \
+            --num_samples=15
+
+The score name defaults to the model type; override it with ``--name=my-run``.
+Set ``--reward_model.image_key`` if your camera differs from the checkpoint's configured key.
+Rerun the same command to resume an interrupted run. To discard staged work and replace
+existing scores, add ``--overwrite=true --resume=false``. Add ``--push_to_hub=true`` to
+upload the completed scores to the dataset repository.
+"""
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from lerobot.configs import parser
+from lerobot.configs.rewards import RewardModelConfig
+from lerobot.rewards import make_frame_scorer, make_reward_model, score_dataset
+from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
+from lerobot.utils.utils import init_logging
+
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import LeRobotDataset
+    from lerobot.datasets.scores import push_scores_to_hub
+
+
+@dataclass
+class ScoreConfig:
+    """Configuration for ``lerobot-score``."""
+
+    dataset_repo_id: str
+    # Loaded with --reward_model.path=..., or built with --reward_model.type=... for zero-shot models.
+    reward_model: RewardModelConfig | None = None
+    dataset_root: Path | None = None
+    dataset_revision: str | None = None
+    name: str | None = None
+    episodes: list[int] | None = None
+    # Scorer options: only the ones set are passed, so each scorer keeps its own defaults.
+    batch_size: int | None = None
+    num_subsampled_frames: int | None = None
+    num_samples: int | None = None
+    stride: int | None = None
+    head_mode: str | None = None
+    resume: bool = True
+    overwrite: bool = False
+    push_to_hub: bool = False
+
+    def __post_init__(self) -> None:
+        reward_model_path = parser.get_path_arg("reward_model")
+        if reward_model_path:
+            yaml_overrides = parser.get_yaml_overrides("reward_model")
+            cli_overrides = parser.get_cli_overrides("reward_model") or []
+            self.reward_model = RewardModelConfig.from_pretrained(
+                reward_model_path,
+                revision=parser.get_pretrained_revision("reward_model"),
+                cli_overrides=yaml_overrides + cli_overrides,
+            )
+
+    @classmethod
+    def __get_path_fields__(cls) -> list[str]:
+        """Keys for draccus pretrained-path loading."""
+        return ["reward_model"]
+
+    @property
+    def scorer_options(self) -> dict[str, int | str]:
+        options = {
+            "batch_size": self.batch_size,
+            "num_subsampled_frames": self.num_subsampled_frames,
+            "num_samples": self.num_samples,
+            "stride": self.stride,
+            "head_mode": self.head_mode,
+        }
+        return {name: value for name, value in options.items() if value is not None}
+
+
+def run_score(cfg: ScoreConfig) -> None:
+    """Load the model and dataset, then publish a score sidecar."""
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
+    if cfg.reward_model is None:
+        raise ValueError(
+            "lerobot-score needs a reward model: pass --reward_model.path=... or --reward_model.type=..."
+        )
+
+    model = make_reward_model(cfg.reward_model)
+    scorer = make_frame_scorer(model, **cfg.scorer_options)
+
+    dataset = LeRobotDataset(
+        cfg.dataset_repo_id,
+        root=cfg.dataset_root,
+        revision=cfg.dataset_revision,
+        episodes=cfg.episodes,
+        download_videos=True,
+    )
+    score_name = scorer.name if cfg.name is None else cfg.name
+    score_dataset(
+        dataset,
+        scorer,
+        name=score_name,
+        episodes=cfg.episodes,
+        resume=cfg.resume,
+        overwrite=cfg.overwrite,
+    )
+
+    if cfg.push_to_hub:
+        push_scores_to_hub(dataset, score_name)
+
+
+@parser.wrap()
+def score_cli(cfg: ScoreConfig) -> None:
+    init_logging()
+    run_score(cfg)
+
+
+def main() -> None:
+    score_cli()  # type: ignore[call-arg]
+
+
+if __name__ == "__main__":
+    main()

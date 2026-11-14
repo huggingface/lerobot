@@ -1,0 +1,142 @@
+# Offline Reward-Model Scoring
+
+LeRobot's offline scoring workflow runs a reward model over dataset episodes and writes frame-aligned signals to a named Parquet file, `scores/<name>.parquet`. Each file joins back to source frames through `(episode_index, frame_index)` and includes an `index` column for the source-global frame index. The source frames are unchanged, and filtering remains a downstream decision.
+
+```text
+  LeRobotDataset                  reward model
+        │                              │
+        └──────────────┬───────────────┘
+                       ▼
+             ┌───────────────────┐
+             │ model-specific    │
+             │ frame scorer      │
+             └─────────┬─────────┘
+                       │ FrameSignals for one episode
+                       ▼
+             ┌───────────────────┐
+             │ rewards           │
+             │ score_dataset()   │
+             └─────────┬─────────┘
+                       │
+                       ▼
+             ┌───────────────────┐
+             │ datasets          │
+             │ score store       │
+             └─────────┬─────────┘
+                       │
+                       ▼
+       annotation / filtering / weighting / evaluation
+```
+
+The model-specific scorer owns sampling, preprocessing, and conversion from native predictions to `FrameSignals`. `lerobot.rewards.score_dataset()` validates signals and supplies their descriptors and provenance to the generic score store. `lerobot.datasets.scores` owns persistence, resume, merging, reading, discovery, and upload.
+
+## Score a Dataset
+
+The scoring command supports RoboMeter, SARM and TOPReward. Load a checkpoint with `--reward_model.path`, or build a zero-shot model from its type with `--reward_model.type`; other `--reward_model.<field>` flags override its config:
+
+```bash
+uv run lerobot-score \
+    --dataset_repo_id=lerobot/libero_10_image \
+    --dataset_root=/path/to/local/dataset \
+    --reward_model.path=lerobot/Robometer-4B \
+    --reward_model.device=cuda
+
+uv run lerobot-score \
+    --dataset_repo_id=lerobot/libero_10_image \
+    --dataset_root=/path/to/local/dataset \
+    --reward_model.type=topreward \
+    --reward_model.device=cuda
+```
+
+Scorer options are only passed to the scorer when set: `--batch_size` and `--num_subsampled_frames` for RoboMeter, `--num_samples` for TOPReward, `--head_mode`, `--stride` and `--batch_size` for SARM.
+
+By default, the score is named after the scorer, such as `robometer`. Use `--name=robometer-4b` to keep results from a specific model or configuration and `--episodes='[0,1]'` to score, and download, only those episodes.
+
+Scoring requires a writable local LeRobot dataset root, not the Hub cache LeRobot downloads to by default. Pass `--dataset_root=/path/to/dataset`; a Hub dataset is downloaded there if it isn't yet.
+
+Pass `--push_to_hub=true` to upload the completed score file to the dataset repository. The score store owns its Hub location and local staging data.
+
+Like a full dataset upload, score upload updates the dataset's codebase-version tag to the uploaded commit so default downloads include the scores.
+
+For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model.pretrained_revision`. The requested revisions are stored in provenance and must match when resuming.
+
+The command is resumable by default. A retry skips completed episodes only when the dataset revision, model revision, scorer options, episode selection, and schema are unchanged. Completed parts are combined into the final score in episode order, with one Parquet row group per episode. Published scores are immutable; choose another name or pass `--overwrite=true` to replace one atomically.
+
+To resume an interrupted replacement, retry with `--overwrite=true`; the published scores stay available until their replacement is complete. To discard staged work and start again, pass `--overwrite=true --resume=false`. A changed run configuration requires this explicit restart or a new name.
+
+To score a large dataset in parallel, give each worker its own episodes and score name, then merge the results under one name:
+
+```python
+from lerobot.datasets.scores import merge_scores
+from lerobot.rewards import score_dataset
+
+score_dataset(dataset, scorer, name=f"sarm-rank{rank}", episodes=my_episodes)  # on each worker
+merge_scores(dataset, [f"sarm-rank{rank}" for rank in range(world_size)], name="sarm")  # once at the end
+```
+
+`merge_scores()` requires matching dataset identity, column types, and score info in every file, and rejects episodes written twice.
+
+## Python API
+
+```python
+from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.scores import (
+    list_scores,
+    load_scores,
+    load_scores_info,
+    push_scores_to_hub,
+)
+from lerobot.rewards import load_signal_descriptors, score_dataset
+from lerobot.rewards.robometer import RobometerRewardModel
+from lerobot.rewards.robometer.scoring_robometer import make_robometer_frame_scorer
+
+dataset = LeRobotDataset("user/my_dataset", root="/path/to/local/dataset")
+model = RobometerRewardModel.from_pretrained("lerobot/Robometer-4B")
+scorer = make_robometer_frame_scorer(model)
+
+score_dataset(
+    dataset,
+    scorer,
+    name="robometer-4b",
+    episodes=[0, 1],
+)
+
+scores = load_scores(dataset, "robometer-4b")
+print(scores.column_names)
+print(scores[0]["reward.robometer.progress"])
+
+descriptors = load_signal_descriptors(dataset, "robometer-4b")
+provenance = load_scores_info(dataset, "robometer-4b")["provenance"]
+available = list_scores(dataset)
+
+# Read just the columns a consumer needs.
+progress = load_scores(
+    dataset, "robometer-4b", columns=["index", "episode_index", "reward.robometer.progress"]
+)
+
+# Upload the completed scores when ready to share them.
+push_scores_to_hub(dataset, "robometer-4b")
+```
+
+Applications that load reward models dynamically can use `lerobot.rewards.make_frame_scorer()` instead. The CLI and both programmatic factories follow the same path: construct a model-specific frame scorer, then call `score_dataset()`.
+
+A scorer exposes its descriptors up front through `scorer.descriptors` and returns one `FrameSignals` object per episode. Frame indices may be dense or sparse, but must be episode-local, unique, strictly increasing, and aligned with one-dimensional numeric signal arrays.
+
+## Output Contract
+
+Every new sidecar contains:
+
+- `index`, `episode_index`, and `frame_index` identity columns;
+- namespaced signal columns such as `reward.robometer.progress`;
+- semantic descriptors: a description, `greater_is_better` (`True`, `False`, or `None`), optional unit and bounds, plus whether NaN is allowed;
+- provenance for the dataset, model, scorer options, and LeRobot version.
+
+`bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run. The first storage version validates structure and alignment; descriptor bounds and `allow_nan` remain metadata for consumers.
+
+`load_scores()` returns a Hugging Face `datasets.Dataset`; its optional `columns` argument selects exactly the requested columns. Descriptors and scorer provenance are stored in the score file's info, and `load_signal_descriptors()` restores the typed descriptors. The store records dataset identity and LeRobot version separately. Metadata is encoded once in the Parquet schema rather than repeated on every frame row.
+
+For RA-BC training, select the scores and a progress signal with `--sample_weighting.score_name=robometer-4b` and `--sample_weighting.signal_name=reward.robometer.progress`. RA-BC requires `greater_is_better=True`.
+
+## Scope
+
+Offline scoring is for annotation, inspection, filtering, and later relabeling. It is not used inside the environment control loop. Online RL will call the same native model APIs through a transition-time consumer, without Parquet IO or sidecar merging.

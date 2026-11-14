@@ -23,12 +23,12 @@ Example usage:
     # In training config
     sample_weighting:
         type: rabc
-        progress_path: hf://datasets/my-dataset/sarm_progress.parquet
-        head_mode: sparse
+        score_name: robometer
+        signal_name: reward.robometer.progress
         kappa: 0.01
 
     # In training script
-    sample_weighter = make_sample_weighter(cfg.sample_weighting, policy, device, dataset_root=cfg.dataset.root, dataset_repo_id=cfg.dataset.repo_id)
+    sample_weighter = make_sample_weighter(cfg.sample_weighting, policy, device, dataset=dataset)
     ...
     weights, stats = sample_weighter.compute_batch_weights(batch)
 """
@@ -37,12 +37,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
 
 if TYPE_CHECKING:
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.policies.pretrained import PreTrainedPolicy
 
 
@@ -84,16 +84,16 @@ class SampleWeightingConfig:
 
     Attributes:
         type: Weighting strategy type ("rabc", "uniform", etc.)
-        progress_path: Path to precomputed progress values (for RABC)
-        head_mode: Which model head to use for progress ("sparse" or "dense")
+        score_name: Name of the dataset scores used by RA-BC
+        signal_name: Progress signal selected from the sidecar
         kappa: Hard threshold for high-quality samples (RABC-specific)
         epsilon: Small constant for numerical stability
         extra_params: Additional type-specific parameters passed to the weighter
     """
 
     type: str = "rabc"
-    progress_path: str | None = None
-    head_mode: str = "sparse"
+    score_name: str | None = None
+    signal_name: str | None = None
     kappa: float = 0.01
     epsilon: float = 1e-6
     # Additional type-specific params can be added here or passed via extra_params
@@ -104,8 +104,7 @@ def make_sample_weighter(
     config: SampleWeightingConfig | None,
     policy: PreTrainedPolicy,
     device: torch.device,
-    dataset_root: str | None = None,
-    dataset_repo_id: str | None = None,
+    dataset: LeRobotDataset | None = None,
 ) -> SampleWeighter | None:
     """
     Factory function to create a SampleWeighter from config.
@@ -116,14 +115,13 @@ def make_sample_weighter(
         config: Sample weighting configuration, or None to disable weighting.
         policy: The policy being trained (used to extract chunk_size, etc.)
         device: Device to place weight tensors on.
-        dataset_root: Local path to dataset root (for auto-detecting progress_path).
-        dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
+        dataset: Dataset containing the reward scores.
     """
     if config is None:
         return None
 
     if config.type == "rabc":
-        return _make_rabc_weighter(config, policy, device, dataset_root, dataset_repo_id)
+        return _make_rabc_weighter(config, policy, device, dataset)
 
     if config.type == "uniform":
         # No-op weighter that returns uniform weights
@@ -136,8 +134,7 @@ def _make_rabc_weighter(
     config: SampleWeightingConfig,
     policy: PreTrainedPolicy,
     device: torch.device,
-    dataset_root: str | None = None,
-    dataset_repo_id: str | None = None,
+    dataset: LeRobotDataset | None = None,
 ) -> SampleWeighter:
     """Create RABC weighter with policy-specific initialization.
 
@@ -145,8 +142,7 @@ def _make_rabc_weighter(
         config: Sample weighting configuration.
         policy: The policy being trained (used to extract chunk_size).
         device: Device to place weight tensors on.
-        dataset_root: Local path to dataset root (for auto-detecting progress_path).
-        dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
+        dataset: Dataset containing the reward scores.
     """
     # Import here to avoid circular imports and keep RABC code in SARM module
     from lerobot.rewards.sarm.rabc import RABCWeights
@@ -159,25 +155,25 @@ def _make_rabc_weighter(
             "This is typically set for action-chunking policies like ACT, Diffusion, PI0, etc."
         )
 
-    # Determine progress_path: use explicit config or auto-detect from dataset
-    progress_path = config.progress_path
-    if progress_path is None:
-        if dataset_root:
-            progress_path = str(Path(dataset_root) / "sarm_progress.parquet")
-        elif dataset_repo_id:
-            progress_path = f"hf://datasets/{dataset_repo_id}/sarm_progress.parquet"
-        else:
-            raise ValueError(
-                "RABC sample weighting requires 'progress_path' to be set, "
-                "or dataset_root/dataset_repo_id for auto-detection. "
-                "Generate progress values using: "
-                "python -m lerobot.rewards.sarm.compute_rabc_weights --help"
-            )
+    if dataset is None:
+        raise ValueError("RA-BC sample weighting requires a dataset containing reward scores")
+
+    # Dataset factories import training configs, so keep this type import out of module initialization.
+    from lerobot.datasets.multi_dataset import MultiLeRobotDataset
+
+    if isinstance(dataset, MultiLeRobotDataset):
+        raise ValueError(
+            "RA-BC sample weighting does not support MultiLeRobotDataset; "
+            "use a single dataset with its own reward scores"
+        )
+    if config.score_name is None or config.signal_name is None:
+        raise ValueError("RA-BC sample weighting requires both 'score_name' and 'signal_name'")
 
     return RABCWeights(
-        progress_path=progress_path,
+        dataset=dataset,
+        score_name=config.score_name,
+        signal_name=config.signal_name,
         chunk_size=chunk_size,
-        head_mode=config.head_mode,
         kappa=config.kappa,
         epsilon=config.epsilon,
         device=device,

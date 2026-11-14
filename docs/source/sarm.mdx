@@ -60,7 +60,7 @@ At minimum, each training sample needs:
 
 ### Programmatic inference
 
-Pass the SARM processor's output to `predict_progress()`, with the model in evaluation mode:
+Pass the SARM processor's output to `predict_progress()` to get per-frame progress. Run the model in evaluation mode:
 
 ```python
 import torch
@@ -68,6 +68,7 @@ import torch
 reward_model.eval()
 with torch.inference_mode():
     prediction = reward_model.predict_progress(processed_batch, head_mode="sparse")
+    progress = prediction.progress
 ```
 
 ---
@@ -353,16 +354,15 @@ Add `accelerate launch --multi_gpu --num_processes=4` to use multiple GPUs for t
 
 ## Step 4: Visualize Predictions
 
-Use `compute_rabc_weights.py` with `--visualize-only` to visualize model predictions (and, if available, annotation-derived targets) without writing a parquet file.
+The script plots predictions and annotation targets when available, without writing dataset scores. Run it from the repository root:
 
 <hfoptions id="viz_mode">
 <hfoption id="single_stage">
 
 ```bash
-python -m lerobot.rewards.sarm.compute_rabc_weights \
+uv run examples/rewards/visualize_sarm.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
-  --visualize-only \
   --num-visualizations 5 \
   --head-mode sparse \
   --output-dir ./sarm_viz
@@ -372,10 +372,9 @@ python -m lerobot.rewards.sarm.compute_rabc_weights \
 <hfoption id="dense_only">
 
 ```bash
-python -m lerobot.rewards.sarm.compute_rabc_weights \
+uv run examples/rewards/visualize_sarm.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
-  --visualize-only \
   --num-visualizations 5 \
   --head-mode dense \
   --output-dir ./sarm_viz
@@ -385,10 +384,9 @@ python -m lerobot.rewards.sarm.compute_rabc_weights \
 <hfoption id="dual">
 
 ```bash
-python -m lerobot.rewards.sarm.compute_rabc_weights \
+uv run examples/rewards/visualize_sarm.py \
   --dataset-repo-id your-username/your-dataset \
   --reward-model-path your-username/sarm-model \
-  --visualize-only \
   --num-visualizations 5 \
   --head-mode both \
   --output-dir ./sarm_viz
@@ -407,7 +405,6 @@ The visualization shows:
 
 | Argument               | Description                                               |
 | ---------------------- | --------------------------------------------------------- |
-| `--visualize-only`     | Only visualize predictions (no RABC computation)          |
 | `--num-visualizations` | Number of episodes to visualize (default: 5)              |
 | `--head-mode`          | SARM head to use: `sparse`, `dense`, or `both`            |
 | `--stride`             | Compute every N frames, interpolate the rest (default: 1) |
@@ -438,53 +435,52 @@ The weighting follows **Equations 8-9** from the paper:
 
 ### Step 5a: Compute SARM Progress Values
 
-First, run the SARM model on all frames in your dataset to compute progress values:
+Use [`lerobot-score`](./reward_scoring) to compute progress for each frame:
 
 ```bash
-python -m lerobot.rewards.sarm.compute_rabc_weights \
-  --dataset-repo-id your-username/your-dataset \
-  --reward-model-path your-username/sarm-model \
-  --head-mode sparse \
-  --num-visualizations 5 \
-  --push-to-hub
+uv run lerobot-score \
+  --dataset_repo_id=your-username/your-dataset \
+  --dataset_root=/path/to/local/dataset \
+  --reward_model.path=your-username/sarm-model \
+  --reward_model.device=cuda \
+  --head_mode=sparse \
+  --push_to_hub=true
 ```
 
-This script:
+SARM predicts progress from a window around each frame. The scorer saves the center prediction to `scores/sarm.parquet` in the dataset directory.
 
-- Processes all frames and computes progress values
-- Saves progress values to a parquet file next to the dataset on disk (defaults to `<dataset_root>/sarm_progress.parquet`)
-- Generates visualizations of the first N episodes (default: 5)
+**Scorer options:**
 
-**Arguments:**
+| Argument       | Description                                     | Default  |
+| -------------- | ----------------------------------------------- | -------- |
+| `--head_mode`  | SARM head to use: `sparse`, `dense`, or `both`  | `sparse` |
+| `--stride`     | Compute every N frames and interpolate the rest | `1`      |
+| `--batch_size` | Number of frames scored together                | `32`     |
 
-| Argument               | Description                                                    | Default    |
-| ---------------------- | -------------------------------------------------------------- | ---------- |
-| `--reward-model-path`  | Path to trained SARM model                                     | (required) |
-| `--head-mode`          | SARM head to use: `sparse`, `dense`, or `both`                 | `sparse`   |
-| `--device`             | Device for inference                                           | `cuda`     |
-| `--visualize-only`     | Only visualize predictions (no RA-BC computation)              | `false`    |
-| `--num-visualizations` | Number of episodes to visualize (default: 5, set to 0 to skip) | `5`        |
+The score contains the signals selected by `--head_mode`:
 
-**Output format** (`sarm_progress.parquet`):
+| Signal                        | Description                                         |
+| ----------------------------- | --------------------------------------------------- |
+| `reward.sarm.sparse_progress` | Sparse head progress value [0, 1]                   |
+| `reward.sarm.dense_progress`  | Dense head progress value [0, 1] (dual-head models) |
 
-| Column            | Description                                    |
-| ----------------- | ---------------------------------------------- |
-| `index`           | Global frame index in dataset                  |
-| `episode_index`   | Episode number                                 |
-| `frame_index`     | Local frame index within episode               |
-| `progress_sparse` | Sparse head progress value [0, 1]              |
-| `progress_dense`  | Dense head progress value [0, 1] (if computed) |
+Failed predictions are marked as NaN. With `--stride > 1`, interpolation fills gaps when valid predictions are available.
+
+> [!NOTE]
+> RA-BC reads dataset scores. It cannot read `sarm_progress.parquet` files from `compute_rabc_weights.py`. Recompute progress with `lerobot-score`.
 
 ### Step 5b: Train Policy with RA-BC
 
-Once you have the progress file, train your policy with RA-BC weighting. The progress file is auto-detected from the dataset path (`sarm_progress.parquet`) if not explicitly provided. Currently PI0, PI0.5, SmolVLA and FastWAM are supported with RA-BC:
+Train your policy with RA-BC using the same dataset directory as in Step 5a. PI0, PI0.5, SmolVLA and FastWAM support RA-BC:
 
 ```bash
 lerobot-train \
   --dataset.repo_id=your-username/your-dataset \
+  --dataset.root=/path/to/local/dataset \
   --policy.type=pi0 \
   --sample_weighting.type=rabc \
-  --sample_weighting.head_mode=sparse \
+  --sample_weighting.score_name=sarm \
+  --sample_weighting.signal_name=reward.sarm.sparse_progress \
   --sample_weighting.kappa=0.01 \
   --output_dir=outputs/train/policy_rabc \
   --batch_size=32 \
@@ -493,20 +489,20 @@ lerobot-train \
 
 The training script automatically:
 
-- Loads the precomputed progress values from the parquet file
+- Loads precomputed progress from the selected score file
 - Uses the policy's `chunk_size` to compute progress deltas (Δ)
 - Computes sample weights based on progress improvement
 - Applies weighted loss during training
 
 **RA-BC Arguments:**
 
-| Argument                           | Description                                            | Default                 |
-| ---------------------------------- | ------------------------------------------------------ | ----------------------- |
-| `--sample_weighting.type`          | Weighting strategy type (`rabc` or `uniform`)          | `rabc`                  |
-| `--sample_weighting.progress_path` | Path to progress parquet file                          | `sarm_progress.parquet` |
-| `--sample_weighting.head_mode`     | Which SARM head's progress to use: `sparse` or `dense` | `sparse`                |
-| `--sample_weighting.kappa`         | Threshold κ for high-quality samples                   | `0.01`                  |
-| `--sample_weighting.epsilon`       | Small constant for numerical stability                 | `1e-6`                  |
+| Argument                         | Description                                            | Default |
+| -------------------------------- | ------------------------------------------------------ | ------- |
+| `--sample_weighting.type`        | Weighting strategy type (`rabc` or `uniform`)          | `rabc`  |
+| `--sample_weighting.score_name`  | Score name, such as `sarm`                             | —       |
+| `--sample_weighting.signal_name` | Progress signal, such as `reward.sarm.sparse_progress` | —       |
+| `--sample_weighting.kappa`       | Threshold κ for high-quality samples                   | `0.01`  |
+| `--sample_weighting.epsilon`     | Small constant for numerical stability                 | `1e-6`  |
 
 ### Tuning RA-BC Kappa
 
@@ -562,8 +558,11 @@ accelerate launch \
   --num_processes=4 \
   src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=your-username/your-dataset \
+  --dataset.root=/path/to/local/dataset \
   --policy.type=pi0 \
   --sample_weighting.type=rabc \
+  --sample_weighting.score_name=sarm \
+  --sample_weighting.signal_name=reward.sarm.sparse_progress \
   --sample_weighting.kappa=0.01 \
   --output_dir=outputs/train/policy_rabc \
   --batch_size=32 \
