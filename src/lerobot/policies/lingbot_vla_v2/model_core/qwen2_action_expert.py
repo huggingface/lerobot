@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import contextmanager
+
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
@@ -36,6 +38,8 @@ from transformers.models.qwen2.modeling_qwen2 import (  # noqa: E402
     Qwen2RotaryEmbedding,
 )
 from transformers.processing_utils import Unpack  # noqa: E402
+
+from lerobot.policies.common.qwen_vision import is_exporting  # noqa: E402
 
 # from transformers.models.mistral.modeling_mistral import MistralMLP
 
@@ -66,6 +70,9 @@ class Qwen2FusedExperts(nn.Module):
     The forward() method runs the full fused_moe computation. This is critical
     for FSDP2: calling self.experts(...) triggers FSDP2's forward pre-hook to
     unshard the expert params on ep_fsdp_mesh BEFORE they are used by kernels.
+
+    `_traced_packed_weights` holds the packed weights traced once by `packed_expert_weights`, only while
+    `torch.export` traces one of its blocks; it is None otherwise.
     """
 
     def __init__(self, num_experts, hidden_size, intermediate_size, initializer_range=0.02):
@@ -79,6 +86,7 @@ class Qwen2FusedExperts(nn.Module):
         self.register_buffer("_gate_up_proj_cache", None, persistent=False)
         self.register_buffer("_sparse_wd_cache", None, persistent=False)
         self._sparse_cache_key = None
+        self._traced_packed_weights = None
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -105,7 +113,19 @@ class Qwen2FusedExperts(nn.Module):
         Cached inference-only, keyed on parameter versions (in-place updates such as
         optimizer.step or load_state_dict bump ``_version``); rebuilt each call under
         autograd so gradients flow into the Parameters.
+
+        Under torch.export the cache is neither read nor filled: the weights are packed from the
+        Parameters in the cache's layout, so the program matches eager exactly and a lowering that
+        folds constants, such as ExecuTorch's ``constant_prop_pass``, stores the packed weights.
+        Inside ``packed_expert_weights`` that packing is traced once, so it stores one copy.
         """
+        if is_exporting():
+            if self._traced_packed_weights is not None:
+                return self._traced_packed_weights
+            return (
+                torch.cat([self.gate_proj, self.up_proj], dim=1).transpose(1, 2).contiguous(),
+                self.down_proj.transpose(1, 2).contiguous(),
+            )
         if torch.is_grad_enabled():
             return (
                 torch.cat([self.gate_proj, self.up_proj], dim=1).transpose(1, 2),
@@ -145,9 +165,10 @@ class Qwen2FusedExperts(nn.Module):
         sorted_token = flat_token[order]
         # Capture-safe expert histogram: torch.bincount internally does
         # input.max().item() (a host sync) to size its output, which aborts
-        # CUDA-graph capture; scatter_add_ has no host round-trip.
-        counts = torch.zeros(e, dtype=torch.long, device=hidden_states.device)
-        counts.scatter_add_(0, flat_expert, torch.ones_like(flat_expert))
+        # CUDA-graph capture; scatter_add_ has no host round-trip. The counts are int32
+        # because some ExecuTorch backends, such as MLX, have no int64 scatter-add.
+        counts = torch.zeros(e, dtype=torch.int32, device=hidden_states.device)
+        counts.scatter_add_(0, flat_expert, torch.ones_like(flat_expert, dtype=torch.int32))
         starts = torch.cumsum(counts, 0) - counts
         slot = torch.arange(t * top_k, device=hidden_states.device) - starts[sorted_expert]
 
@@ -170,6 +191,28 @@ class Qwen2FusedExperts(nn.Module):
         Must be called via self.experts(...) so FSDP2 unshards params first.
         """
         return self._sparse_forward(routing_weights, selected_experts, hidden_states)
+
+
+@contextmanager
+def packed_expert_weights(model: nn.Module):
+    """Under torch.export, pack the weights of every `Qwen2FusedExperts` in `model` once for the whole block.
+
+    Each denoise step would otherwise trace its own packing, and a lowering that folds constants would store one
+    packed copy of the expert weights per step. Outside an export this does nothing.
+    """
+    if not is_exporting():
+        yield
+        return
+    experts = [module for module in model.modules() if isinstance(module, Qwen2FusedExperts)]
+    # A nested block keeps the outer block's packing, and leaves it in place when it exits.
+    previous = [module._traced_packed_weights for module in experts]
+    try:
+        for module in experts:
+            module._traced_packed_weights = module._sparse_packed_weights()
+        yield
+    finally:
+        for module, packed in zip(experts, previous, strict=True):
+            module._traced_packed_weights = packed
 
 
 class FixQwen2RMSNorm(nn.Module):

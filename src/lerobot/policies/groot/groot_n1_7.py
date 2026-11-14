@@ -36,6 +36,8 @@ from ..common.flow_matching import (
     sample_beta,
     sample_noise,
 )
+from ..common.qwen3_vision import Qwen3VisionGrid, qwen3_vl_forward
+from ..common.qwen_vision import is_exporting, qwen_image_rope_index
 from .action_head.cross_attention_dit import AlternateVLDiT, DiT, SelfAttentionTransformer
 from .configuration_groot import N1_7_DEFAULT_IMAGE_CROP_SIZE, N1_7_DEFAULT_IMAGE_TARGET_SIZE
 
@@ -49,6 +51,7 @@ if TYPE_CHECKING or _transformers_available:
         Qwen3VLForConditionalGeneration,
     )
     from transformers.feature_extraction_utils import BatchFeature
+    from transformers.utils.generic import is_flash_attention_requested
 else:
     AutoConfig = None
     AutoModel = None
@@ -57,6 +60,7 @@ else:
     BatchFeature = None
     Qwen3VLConfig = None
     Qwen3VLForConditionalGeneration = None
+    is_flash_attention_requested = None
 
 try:
     import tree
@@ -418,7 +422,9 @@ class Qwen3Backbone(nn.Module):
 
         model_input["position_ids"] = position_ids
 
-    def _last_decoder_layer_output(self, model_input: dict[str, torch.Tensor]) -> torch.Tensor:
+    def _last_decoder_layer_output(
+        self, model_input: dict[str, torch.Tensor], grid: Qwen3VisionGrid | None
+    ) -> torch.Tensor:
         """Return the pre-final-norm decoder output consumed by the N1.7 action head.
 
         Older Transformers releases exposed this tensor as ``hidden_states[-1]``.
@@ -439,21 +445,63 @@ class Qwen3Backbone(nn.Module):
 
         hook = self.language_model.layers[-1].register_forward_hook(capture_output)
         try:
+            if grid is not None:
+                self._qwen_on_fixed_grid(model_input, grid)
+                return captured["features"]
             outputs = self.model(**model_input, output_hidden_states=True)
         finally:
             hook.remove()
 
         return captured.get("features", outputs.hidden_states[-1])
 
-    def forward(self, vl_input: BatchFeature) -> BatchFeature:
+    def _qwen_on_fixed_grid(self, model_input: dict[str, torch.Tensor], grid: Qwen3VisionGrid) -> None:
+        """Run `Qwen3VLModel` on `grid`, traceable by `torch.export`.
+
+        Like the stock call, it hands its result to the caller's last-layer hook.
+        """
+        if model_input.get("pixel_values_videos") is not None:
+            raise ValueError("vision_grid supports image inputs only.")
+        qwen = getattr(self.model, "model", self.model)
+        input_ids = model_input["input_ids"]
+        position_ids = qwen_image_rope_index(
+            input_ids, model_input["attention_mask"], grid.grid_thw, self.model.config
+        )
+        qwen3_vl_forward(
+            qwen,
+            qwen.get_input_embeddings()(input_ids),
+            model_input["attention_mask"],
+            model_input["pixel_values"],
+            model_input["image_grid_thw"],
+            grid,
+            image_mask=input_ids == qwen.config.image_token_id,
+            # The text positions first, as `_ensure_legacy_qwen3_position_ids` builds them.
+            position_ids=torch.cat([position_ids[:1], position_ids], dim=0),
+        )
+
+    def forward(self, vl_input: BatchFeature, vision_grid: Qwen3VisionGrid | None = None) -> BatchFeature:
+        """`vision_grid`, `Qwen3VisionGrid.build(self.visual, image_grid_thw)`, runs the Qwen3-VL model without
+        reading `image_grid_thw` on the host, as `torch.export` needs."""
         self.set_frozen_modules_to_eval_mode()
         keys_to_use = ["input_ids", "attention_mask", "pixel_values", "image_grid_thw"]
         optional_keys = ["mm_token_type_ids", "pixel_values_videos", "video_grid_thw"]
         model_input = {key: vl_input[key] for key in keys_to_use}
         model_input.update({key: vl_input[key] for key in optional_keys if key in vl_input})
-        self._ensure_mm_token_type_ids(model_input)
-        self._ensure_legacy_qwen3_position_ids(model_input)
-        features = self._last_decoder_layer_output(model_input)
+        if vision_grid is not None:
+            if is_exporting() and is_flash_attention_requested(self.language_model.config):
+                raise ValueError(
+                    "Exporting the GR00T N1.7 backbone needs SDPA attention (use_flash_attention=False): "
+                    "transformers' flash attention unpads the rows by the attention mask values, which "
+                    "torch.export cannot trace."
+                )
+        elif is_exporting():
+            raise ValueError(
+                "Exporting GR00T N1.7 needs a vision_grid, which only the backbone takes: export the backbone "
+                "with a grid."
+            )
+        else:
+            self._ensure_mm_token_type_ids(model_input)
+            self._ensure_legacy_qwen3_position_ids(model_input)
+        features = self._last_decoder_layer_output(model_input, vision_grid)
         image_mask = model_input["input_ids"] == self.model.config.image_token_id
         attention_mask = model_input["attention_mask"] == 1
         return BatchFeature(
