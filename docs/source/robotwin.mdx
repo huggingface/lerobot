@@ -1,5 +1,13 @@
 # RoboTwin 2.0
 
+<Tip>
+  The commands below run the simulator locally. To keep its dependencies away
+  from your policy's, serve it instead with `lerobot-env-server
+  --config_path=docker/sim/configs/robotwin.yaml --sim.task=<task> --docker=true`, where `<task>`
+  is the command's `--env.task`, and add `--env.server.endpoint=tcp/127.0.0.1:7448` to
+  the command. A server runs the task it was started with (see [Simulation: local or served](./simulation)).
+</Tip>
+
 RoboTwin 2.0 is a **large-scale dual-arm manipulation benchmark** built on the SAPIEN physics engine. It provides a standardized evaluation protocol for bimanual robotic policies across 50 tasks (as of upstream `main`) with strong domain randomization (clutter, lighting, background, tabletop height, and language instructions).
 
 - Paper: [RoboTwin 2.0: A Scalable Data Generator and Benchmark with Strong Domain Randomization for Robust Bimanual Robotic Manipulation](https://arxiv.org/abs/2506.18088)
@@ -23,7 +31,7 @@ RoboTwin 2.0 is a **large-scale dual-arm manipulation benchmark** built on the S
 
 ## Available tasks
 
-RoboTwin 2.0 ships 50 dual-arm manipulation tasks in its upstream `envs/` directory. The canonical list is the `ROBOTWIN_TASKS` tuple in `src/lerobot/envs/robotwin.py`, mirrored verbatim from the upstream repo. Example tasks:
+RoboTwin 2.0 ships 50 dual-arm manipulation tasks in its upstream `envs/` directory. The canonical list is the `ROBOTWIN_TASKS` tuple in `src/lerobot/sim/integrations/robotwin.py`, mirrored verbatim from the upstream repo. Example tasks:
 
 | Task                     | CLI name                 | Category          |
 | ------------------------ | ------------------------ | ----------------- |
@@ -68,57 +76,26 @@ ds = load_dataset("lerobot/robotwin_unified", split="train")
 
 ## Installation
 
-RoboTwin 2.0 requires **Linux** with an NVIDIA GPU (CUDA 12.1 recommended). Installation takes approximately 20 minutes.
+RoboTwin 2.0 requires **Linux** with an NVIDIA GPU (SAPIEN renders with Vulkan). Its planners, CuRobo and pytorch3d, compile CUDA code against torch 2.7.1, which does not match LeRobot's torch, so RoboTwin runs in its own environment behind `lerobot-env-server` and the policy side only needs LeRobot.
 
-### 1. Create a conda environment
-
-```bash
-conda create -n robotwin python=3.12 -y
-conda activate robotwin
-```
-
-### 2. Install LeRobot
+### Served image (recommended)
 
 ```bash
-git clone https://github.com/huggingface/lerobot.git
-cd lerobot
-pip install -e "."
+lerobot-env-server --config_path=docker/sim/configs/robotwin.yaml --sim.task=beat_block_hammer --docker=true
 ```
 
-### 3. Install RoboTwin 2.0
+The first run builds the `robotwin_native` stage of `docker/Dockerfile.sim` (about 20 minutes, mostly pytorch3d and CuRobo). On a small machine, build the image yourself first with bounded memory; the server then reuses it:
 
 ```bash
-git clone https://github.com/RoboTwin-Platform/RoboTwin.git
-cd RoboTwin
-bash script/_install.sh
-bash script/_download_assets.sh
+docker build -f docker/Dockerfile.sim --build-arg SIM=robotwin \
+  --build-arg MAX_JOBS=1 --build-arg CUROBO_CUDA_ARCHS=8.6 -t lerobot-sim-robotwin:local .
 ```
 
-The install script handles all Python dependencies including SAPIEN, CuRobo, mplib, and pytorch3d.
+where `8.6` is your GPU's compute capability. Add `--env.server.endpoint=tcp/127.0.0.1:7448` to the evaluation commands below.
 
-<Tip warning={true}>
-If the automated install fails, install manually:
+### Native environment
 
-```bash
-pip install -r requirements.txt
-pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
-cd envs && git clone https://github.com/NVlabs/curobo.git && cd curobo
-pip install -e . --no-build-isolation
-```
-
-Then apply the required mplib fix: in `mplib/planner.py` line 807, remove `or collide` from the conditional.
-
-</Tip>
-
-### 4. Add RoboTwin to PYTHONPATH
-
-The RoboTwin task modules must be importable by LeRobot. From within the `RoboTwin/` directory:
-
-```bash
-export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-```
-
-Add this to your shell profile to make it permanent.
+To run the server without Docker, reproduce the `robotwin_native` stage of `docker/Dockerfile.sim` in a separate virtual environment, which is the tested recipe: the CUDA 12.8 `nvcc`, torch 2.7.1, the pinned RoboTwin commit and assets, CuRobo v0.7.8, and RoboTwin's mplib and SAPIEN patches. Then install LeRobot with `--no-deps` plus `docker/sim/requirements.txt`, and drop `--docker=true` from the command above (see [Simulation: local or served](./simulation)).
 
 ## Evaluation
 

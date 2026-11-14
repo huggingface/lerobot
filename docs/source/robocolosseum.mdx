@@ -1,0 +1,259 @@
+# RoboColosseum
+
+[RoboColosseum](https://robocolosseum.ai/) is a distributed real-world benchmark for evaluating general-purpose robot policies on physical robots deployed in the wild. Evaluations run on standardized setups: Unitree G1 humanoids, bimanual YAM, Franka arms in the DROID setup, and SO-101. Every evaluation run, failures included, is published on the [Hugging Face Hub](https://huggingface.co/RoboColosseum) in LeRobot format.
+
+This page covers how to prepare a LeRobot policy for its two evaluation tracks and how to connect it to RoboColosseum's robots. To have a policy evaluated, apply on the RoboColosseum website.
+
+- Paper: [RoboColosseum: Evaluating Physical Intelligence at Scale In-The-Wild](https://arxiv.org/abs/2611.02497)
+- GitHub: [RoboColosseum/RoboColosseum](https://github.com/RoboColosseum/RoboColosseum)
+- Project website: [robocolosseum.ai](https://robocolosseum.ai/)
+- Leaderboard: [robocolosseum.ai/leaderboard](https://robocolosseum.ai/leaderboard)
+- Dataset: [RoboColosseum Datasets collection](https://huggingface.co/collections/RoboColosseum/robocolosseum-datasets)
+
+![RoboColosseum benchmark overview](https://arxiv.org/html/2611.02497v1/images/main_fig/robocolosseum-figure-1-v10.png)
+
+## Overview
+
+| Property        | Value                                                                                                                                                    |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Embodiments     | SO-101, Franka (DROID), Bimanual YAM, Unitree G1                                                                                                         |
+| Fine-tune Track | 20 tasks, 5 per embodiment. Every policy is fine-tuned on the same 100 demonstrations of a task, then makes 25 attempts.                                 |
+| Open Track      | Two anonymized policies attempt the same new instruction in the same scene; the evaluator picks the better run or calls a tie. The checkpoint is frozen. |
+| Evaluation      | On RoboColosseum's physical robots                                                                                                                       |
+
+## Physical setup
+
+![RoboColosseum robot platforms: Bimanual YAM, SO-101, Franka in the DROID configuration and Unitree G1](https://arxiv.org/html/2611.02497v1/images/main_fig/hardware.png)
+
+Every site uses the same hardware configuration for an embodiment. From left to right in the figure: Bimanual YAM, SO-101, Franka in the DROID configuration and Unitree G1. Camera names are the `observation.images.*` keys in the Fine-tune Track datasets.
+
+| Embodiment     | Robot                                                                                                       | Cameras                                                                                                 |
+| -------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| SO-101         | SO-101 follower arm on a height-adjustable mobile table                                                     | `front`: Intel RealSense D435 on an articulated arm; `wrist`: wrist camera                              |
+| Franka (DROID) | Franka Panda 7-DoF arm with a Robotiq 2F-85 gripper on a portable standing desk, in the DROID configuration | `left_image`, `right_image`: two adjustable ZED 2 stereo cameras; `wrist`: ZED Mini wrist stereo camera |
+| Bimanual YAM   | Two YAM arms from the MolmoAct2 YAM kit on a height-adjustable mobile table                                 | `top`: Intel RealSense D435 on a pole; `left`, `right`: Intel RealSense D405 wrist cameras              |
+| Unitree G1     | Unitree G1 humanoid with Unitree Dex-1 parallel grippers                                                    | `head`: stereo head camera; `left_wrist`, `right_wrist`: Intel RealSense D405 wrist cameras             |
+
+The SO-101 and Bimanual YAM stations also carry a laptop with an RTX 5090 GPU and a 700 W portable power station. Policy inference runs locally on that laptop or remotely through a server-hosted endpoint.
+
+## Available tasks
+
+The Fine-tune Track has 20 tasks, 5 per embodiment. Each task is a separate LeRobot `v3.0` dataset on the Hub, recorded with 100 episodes:
+
+| Task                                                                                                               | Embodiment     | Instruction                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------ | -------------- | ------------------------------------------------------------------------------------------------------ |
+| [`so101-cube-drawer`](https://huggingface.co/datasets/RoboColosseum/so101-cube-drawer)                             | SO-101         | Put the blue cube on the table into the open drawer, then close the drawer.                            |
+| [`so101-remove-screwdriver`](https://huggingface.co/datasets/RoboColosseum/so101-remove-screwdriver)               | SO-101         | Take the black screwdriver out of the box and place it on the table.                                   |
+| [`so101-stack-bowls`](https://huggingface.co/datasets/RoboColosseum/so101-stack-bowls)                             | SO-101         | Pick up the white plastic bowl on the right and stack it on top of the white plastic bowl on the left. |
+| [`so101-stack-cubes`](https://huggingface.co/datasets/RoboColosseum/so101-stack-cubes)                             | SO-101         | Stack the blue cube on the red cube, then stack the white cube on the blue cube.                       |
+| [`so101-upright-bottle`](https://huggingface.co/datasets/RoboColosseum/so101-upright-bottle)                       | SO-101         | Pick up the fallen juice bottle and stand it upright on the table.                                     |
+| [`droid-close-laptop`](https://huggingface.co/datasets/RoboColosseum/droid-close-laptop)                           | Franka (DROID) | close laptop                                                                                           |
+| [`droid-mug-on-coaster`](https://huggingface.co/datasets/RoboColosseum/droid-mug-on-coaster)                       | Franka (DROID) | mug on coaster                                                                                         |
+| [`droid-open-drawer`](https://huggingface.co/datasets/RoboColosseum/droid-open-drawer)                             | Franka (DROID) | open drawer                                                                                            |
+| [`droid-put-marker-pen`](https://huggingface.co/datasets/RoboColosseum/droid-put-marker-pen)                       | Franka (DROID) | Put the marker into the pen holder                                                                     |
+| [`droid-towel-in-basket`](https://huggingface.co/datasets/RoboColosseum/droid-towel-in-basket)                     | Franka (DROID) | towel in basket                                                                                        |
+| [`yam-cups`](https://huggingface.co/datasets/RoboColosseum/yam-cups)                                               | Bimanual YAM   | Stack the cups.                                                                                        |
+| [`yam-drawer`](https://huggingface.co/datasets/RoboColosseum/yam-drawer)                                           | Bimanual YAM   | Put the cup into the drawer.                                                                           |
+| [`yam-dustpan`](https://huggingface.co/datasets/RoboColosseum/yam-dustpan)                                         | Bimanual YAM   | Clean the table.                                                                                       |
+| [`yam-microwave`](https://huggingface.co/datasets/RoboColosseum/yam-microwave)                                     | Bimanual YAM   | Open the microwave and take out the bowl.                                                              |
+| [`yam-tray`](https://huggingface.co/datasets/RoboColosseum/yam-tray)                                               | Bimanual YAM   | Clean the table.                                                                                       |
+| [`g1-carry-box`](https://huggingface.co/datasets/RoboColosseum/g1-carry-box)                                       | Unitree G1     | carrying box                                                                                           |
+| [`g1-fold-towel`](https://huggingface.co/datasets/RoboColosseum/g1-fold-towel)                                     | Unitree G1     | fold towel                                                                                             |
+| [`g1-hang-keys`](https://huggingface.co/datasets/RoboColosseum/g1-hang-keys)                                       | Unitree G1     | hang keys                                                                                              |
+| [`g1-load-clothes-washing-machine`](https://huggingface.co/datasets/RoboColosseum/g1-load-clothes-washing-machine) | Unitree G1     | load clothes washing machine                                                                           |
+| [`g1-plate-into-rack`](https://huggingface.co/datasets/RoboColosseum/g1-plate-into-rack)                           | Unitree G1     | plate into rack                                                                                        |
+
+Open Track instructions are written by an evaluator on the spot.
+
+## Dataset
+
+Download all 20 Fine-tune Track datasets into `./data/RoboColosseum`, one folder per task. The full set is about 35 GB: SO-101 1.4 GB, Franka 4.6 GB, Bimanual YAM 5.9 GB and Unitree G1 22.7 GB.
+
+```bash
+for task in so101-cube-drawer so101-remove-screwdriver so101-stack-bowls so101-stack-cubes so101-upright-bottle \
+            droid-close-laptop droid-mug-on-coaster droid-open-drawer droid-put-marker-pen droid-towel-in-basket \
+            yam-cups yam-drawer yam-dustpan yam-microwave yam-tray \
+            g1-carry-box g1-fold-towel g1-hang-keys g1-load-clothes-washing-machine g1-plate-into-rack; do
+  hf download "RoboColosseum/${task}" --repo-type dataset --local-dir "./data/RoboColosseum/${task}"
+done
+```
+
+To download only some tasks, keep just those names in the list. Each folder is a self-contained LeRobot dataset. Load one by passing its folder as `root`:
+
+```python
+from lerobot.datasets import LeRobotDataset
+
+dataset = LeRobotDataset(
+    "RoboColosseum/so101-stack-bowls",
+    root="./data/RoboColosseum/so101-stack-bowls",
+)
+```
+
+Without `root`, the dataset is downloaded from the Hub on first use.
+
+## Installation
+
+Install the Policy Server on the machine that runs your model:
+
+```bash
+git clone https://github.com/RoboColosseum/robocolosseum-policy-server.git
+cd robocolosseum-policy-server
+uv sync --extra demo
+```
+
+Robot sites install the Robot Client on the computer connected to the robot, where `<robot_type>` is `so101`, `franka` or `yam`:
+
+```bash
+git clone https://github.com/RoboColosseum/robocolosseum-client.git
+cd robocolosseum-client
+uv sync --extra <robot_type>
+```
+
+<Tip>
+  Both need Python 3.10 or newer and [uv](https://docs.astral.sh/uv/). The Robot
+  Client also needs FFmpeg to export recordings. On SO-101, the Robot Client
+  drives the arm with LeRobot's `so101_follower` driver, which needs Python
+  3.12: follow the Client's [SO-101
+  guide](https://github.com/RoboColosseum/robocolosseum-client/blob/main/docs/so101.md)
+  instead.
+</Tip>
+
+## Evaluation
+
+Evaluations run on RoboColosseum's robots. After you [apply](https://robocolosseum.ai/#apply), the RoboColosseum team connects your policy in one of two ways: you host a Policy Server on your own inference machine, or you hand over a checkpoint that they serve on a machine next to the robot.
+
+Open Track trials use two programs:
+
+| Component     | Runs on                | What it does                                                     | Repository                                                                                  |
+| ------------- | ---------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Policy Server | Your inference machine | Receives robot observations, runs your model and returns actions | [robocolosseum-policy-server](https://github.com/RoboColosseum/robocolosseum-policy-server) |
+| Robot Client  | The robot's computer   | Controls the robot, executes actions and records the trial       | [robocolosseum-client](https://github.com/RoboColosseum/robocolosseum-client)               |
+
+### Serve your policy
+
+In the Policy Server checkout, create the configuration and set the Router URL and Policy Server token you receive from the RoboColosseum team:
+
+```bash
+cp configs/policy.yaml.example configs/policy.yaml
+```
+
+```yaml
+url: wss://router.example.com:8443
+token: pol_replace_with_token_from_router_ui
+```
+
+Check the connection without sending actions. When the Router matches a Robot Client to your server, the task instruction, joint and gripper state and camera images are shown (the images open in OpenCV windows, so this needs a graphical display):
+
+```bash
+uv run --extra demo python examples/test_policy.py --no-enable-action
+```
+
+Then connect your model with the Policy Server SDK. Save this as `serve_policy.py` in the repository root:
+
+```python
+from colosseum_policy_server import ColosseumPolicySDK
+from your_policy import load_model  # Replace with your own model loader.
+
+
+def main():
+    model = load_model()
+
+    with ColosseumPolicySDK.from_yaml("configs/policy.yaml") as sdk:
+        print("Connected to Router. Waiting for observations...", flush=True)
+        while True:
+            obs = sdk.get_obs()
+            actions = model.infer(obs)
+            sdk.send_action(actions, observation=obs)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+`model.infer(obs)` converts the observation (`obs.instruction`, `obs.state.head_image`, `obs.state.left_image`, `obs.state.right_image`, `obs.state.joints`, `obs.state.gripper`) to your model's inputs, and returns a NumPy array of shape `(horizon, action_dim)` in the action space agreed with the Client. By default this is `joint_position` at 15 Hz with at most 16 steps per chunk. Start the server and keep it running while evaluators use your policy:
+
+```bash
+uv run python serve_policy.py
+```
+
+### Set up a robot
+
+In the Robot Client checkout, create the configuration and edit it for your robot:
+
+```bash
+cp configs/robot.yaml.example configs/robot.yaml
+```
+
+Then start the Client:
+
+```bash
+.venv/bin/colosseum-robot configs/robot.yaml
+```
+
+Follow the prompts to enter an instruction or select a task, run the trial and submit the evaluation. Each trial is recorded and exported in LeRobot format.
+
+### Fine-tune Track evaluation code
+
+The fine-tuning and evaluation code used for each embodiment in the Fine-tune Track is public: [SO-101](https://github.com/RoboColosseum/robocolosseum-finetune-so101), [Franka (DROID)](https://github.com/RoboColosseum/robocolosseum-finetune-franka), [Bimanual YAM](https://github.com/RoboColosseum/robocolosseum-finetune-yam) and [Unitree G1](https://github.com/RoboColosseum/robocolosseum-finetune-g1).
+
+## Training
+
+### Fine-tune Track
+
+Train on a downloaded task dataset with `--dataset.root`:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=RoboColosseum/so101-stack-bowls \
+  --dataset.root=./data/RoboColosseum/so101-stack-bowls \
+  --policy.type=<policy_type> \
+  --policy.repo_id=${HF_USER}/<policy_type>_robocolosseum_so101-stack-bowls \
+  --output_dir=./outputs/<policy_type>_robocolosseum_so101-stack-bowls
+```
+
+The exact policy configuration, camera mapping, action representation and training recipe depend on the policy being adapted. If your policy expects different camera names, map them with [`--rename_map`](./rename_map).
+
+Note: the G0.5 and LingBot-VLA 2.0 baselines were fine-tuned with their original code, [GalaxeaVLA @ `89f2322`](https://github.com/OpenGalaxea/GalaxeaVLA/tree/89f2322b4ad016e192437adc1a2c253b05bab246) and [lingbot-vla-v2 @ `be969b8`](https://github.com/robbyant/lingbot-vla-v2/tree/be969b8fd117fb70550c5d4bf4bc328211b5b1b6).
+
+### Open Track
+
+The Open Track evaluates a frozen checkpoint on real-world tasks. No training is performed on RoboColosseum Open Track evaluation data.
+
+If your policy does not yet support the target embodiment, first adapt it on public robot data for that embodiment, then freeze the resulting checkpoint before evaluation. Recommended public bootstrap datasets:
+
+| Target embodiment | Public bootstrap data                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| SO-100 / SO-101   | [`allenai/MolmoAct2-SO100_101-Dataset`](https://huggingface.co/datasets/allenai/MolmoAct2-SO100_101-Dataset)     |
+| Franka (DROID)    | [DROID](https://droid-dataset.github.io/)                                                                        |
+| Bimanual YAM      | [`allenai/MolmoAct2-BimanualYAM-Dataset`](https://huggingface.co/datasets/allenai/MolmoAct2-BimanualYAM-Dataset) |
+
+`allenai/MolmoAct2-SO100_101-Dataset` lists the SO-100 and SO-101 LeRobot datasets used to train MolmoAct2, with per-episode language annotations. Download the list of source repositories with:
+
+```bash
+hf download allenai/MolmoAct2-SO100_101-Dataset repo_list.json \
+  --repo-type dataset \
+  --local-dir ./data/molmoact2_so100_101
+```
+
+Each entry in `repo_list.json` is a Hub dataset ID prefixed with `lerobot:` (for example `lerobot:<user>/<dataset>`). Select compatible SO-100 / SO-101 datasets from the list and train on those. Many of them use the LeRobot `v2.1` format: convert them to `v3.0` before loading (see [Using LeRobotDataset](./lerobot-dataset-v3)).
+
+DROID is released in the RLDS format. Convert it to a LeRobot dataset by following the DROID example in [Porting Large Datasets](./porting_datasets_v3), then train on the converted dataset with `lerobot-train`.
+
+The Bimanual YAM dataset works with `lerobot-train` directly:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=allenai/MolmoAct2-BimanualYAM-Dataset \
+  --policy.type=<policy_type> \
+  --policy.repo_id=${HF_USER}/<policy_type>_bimanual_yam \
+  --output_dir=./outputs/<policy_type>_bimanual_yam
+```
+
+The bootstrap stage only makes the policy compatible with the target embodiment. The checkpoint submitted to the Open Track stays frozen during evaluation.
+
+## Leaderboard submission
+
+Scores are published on the [RoboColosseum leaderboard](https://robocolosseum.ai/leaderboard). To have a policy evaluated, [apply](https://robocolosseum.ai/#apply) on the RoboColosseum website. The protocol for each track:
+
+- **Fine-tune Track:** every policy is fine-tuned on the same 100 demonstrations of a task, then makes 25 attempts. Full successes and milestone progress are reported.
+- **Open Track:** evaluators see two anonymized policies attempt the same instruction on the same robot and scene, and pick the better run or call a tie. Ratings are fitted from all comparisons on that robot and shown with their uncertainty.

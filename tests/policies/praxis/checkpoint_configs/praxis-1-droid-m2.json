@@ -1,0 +1,311 @@
+{
+  "format_version": 2,
+  "model_type": "praxis",
+  "embodiment": "single_arm",
+  "torch_dtype": "bfloat16",
+  "fp32_tensors": [
+    "*.ffn.expert_bias"
+  ],
+  "backbone": {
+    "dim": 3072,
+    "timestep_dim": 128,
+    "num_registers": 4,
+    "modulation_dtype": "mixed",
+    "norm_eps": 1e-06,
+    "norm_compute_dtype": "float32",
+    "attention": {
+      "num_heads": 24,
+      "num_kv_heads": 8,
+      "head_dim": 128,
+      "gated": true,
+      "qk_norm_eps": 1e-06,
+      "qk_norm_compute_dtype": "float32",
+      "rope_after_norm": false,
+      "flex_block_size": 128,
+      "backend": "flash"
+    },
+    "rope": {
+      "base": 26000000,
+      "dim": 128,
+      "effective_dim": 64,
+      "max_seq_len": 90000000,
+      "efficient_cache_max": 1000000,
+      "max_intra": 360,
+      "max_inter": 129600,
+      "chunked_video_layout": true,
+      "n_chunks": null,
+      "time_scale": 1.0,
+      "n_tiles": null,
+      "ref_placement": "group"
+    },
+    "moe": {
+      "num_experts": 129,
+      "num_routed_experts": 128,
+      "shared_expert": true,
+      "top_k": 9,
+      "top_k_routed": 8,
+      "expert_hidden": 1280,
+      "router_activation": "sigmoid",
+      "router_dtype": "float32",
+      "routed_scaling_factor": 2.5,
+      "no_expert_slots": false,
+      "routed_weight_layout": "expert_first",
+      "dispatch_chunk_size": 16384
+    },
+    "dense_ffn_hidden": 11520,
+    "encoder": {
+      "depth": 14,
+      "dense_blocks": [
+        0,
+        1
+      ],
+      "tap_blocks": [
+        0,
+        2,
+        4,
+        6,
+        7,
+        9,
+        11,
+        13
+      ],
+      "input_projections": {
+        "TextEncodingTensor": {
+          "c_in": 2048,
+          "timestep_modulated": false
+        },
+        "VideoTensor": {
+          "c_in": 192,
+          "move_dim": true,
+          "timestep_modulated": true
+        }
+      },
+      "output_projections": {
+        "VideoTensor": {
+          "c_out": 3072,
+          "move_dim": true
+        }
+      },
+      "positive_zero_residual_add": true
+    },
+    "decoder": {
+      "depth": 6,
+      "dense_blocks": [
+        0
+      ],
+      "modulation_dim": 3072,
+      "unpatch_factor": [
+        1,
+        2,
+        2
+      ],
+      "input_projections": {
+        "VideoTensor": {
+          "c_in": 48,
+          "move_dim": true,
+          "timestep_modulated": true
+        }
+      },
+      "output_projections": {
+        "VideoTensor": {
+          "c_out": 48,
+          "move_dim": true
+        }
+      },
+      "positive_zero_residual_add": true
+    },
+    "layout": "chunk_causal"
+  },
+  "action_expert": {
+    "dim": 1024,
+    "num_layers": 16,
+    "num_heads": 16,
+    "head_dim": 64,
+    "trunk_dim": 3072,
+    "action_patch_dim": 40,
+    "proprio_patch_dim": 10,
+    "num_future_per_chunk": 8,
+    "max_chunks": 16,
+    "max_action_tokens": 64,
+    "tap_norm": true,
+    "clean_only_conditioning": false,
+    "rope_cross": false,
+    "rope_self": false,
+    "rope_base": 100.0,
+    "absolute_positions": true,
+    "action_pos_table": false,
+    "future_chunk_offset": "zero",
+    "rope": {
+      "kind": "trunk",
+      "dim": 64,
+      "effective_dim": 64,
+      "base": 26000000,
+      "table_size": 1000000,
+      "order": "before_norm"
+    },
+    "global_order": [
+      "register",
+      "anchor",
+      "text"
+    ],
+    "attention": "flex_dynamic",
+    "flex_kernel_options": {
+      "fwd_BLOCK_M": 32,
+      "fwd_BLOCK_N": 128,
+      "num_warps": 4,
+      "num_stages": 3
+    },
+    "head_plus_zero": true,
+    "layout_stamp": 20260924
+  },
+  "chunking": {
+    "n_chunks": 4,
+    "action_chunk": 24,
+    "action_frames_per_token": 4,
+    "latents_per_chunk": 6,
+    "past_frames": 15,
+    "future_frames": 24,
+    "window_frames": 93,
+    "chunk_geometry": [
+      [
+        0,
+        21
+      ],
+      [
+        21,
+        24
+      ],
+      [
+        45,
+        24
+      ],
+      [
+        69,
+        24
+      ]
+    ],
+    "grid_hz": 15.0,
+    "global_frame_anchor": true,
+    "contiguous_chunks": true,
+    "context_format": "vxt",
+    "proprio_frames": 1
+  },
+  "video": {
+    "height": 224,
+    "width": 832,
+    "views": [
+      "exterior",
+      "wrist"
+    ],
+    "canvas": "tiles",
+    "layout": "hstack",
+    "keep_aspect": true,
+    "antialias": true,
+    "tile_bounds_rows_cols": {
+      "exterior": [
+        0,
+        224,
+        0,
+        416
+      ],
+      "wrist": [
+        0,
+        224,
+        416,
+        832
+      ]
+    },
+    "vae": "Wan2.2",
+    "vae_encode_chunk_frames": 4,
+    "latent_channels": 48,
+    "vae_stride": [
+      4,
+      16,
+      16
+    ],
+    "patch_size": [
+      1,
+      2,
+      2
+    ],
+    "tile_height": 224,
+    "tile_width": 416,
+    "aspect_tol": 0.03,
+    "vae_encode_impl": "megakernel",
+    "vae_megakernel_chunk_frames": 16
+  },
+  "text_encoder": {
+    "model": "Qwen3.5-2B",
+    "hidden_layer": -3,
+    "pad_to_multiple_of": 32,
+    "trim_padding": true,
+    "hidden_dim": 2048,
+    "uncond": "blank_caption",
+    "blank_caption": " "
+  },
+  "action_space": {
+    "dim": 10,
+    "layout": "[xyz(3) rot6d(6) grip(1)]",
+    "pose_layout": "[xyz(3) quat_wxyz(4) grip(1)]"
+  },
+  "normalization": {
+    "domain": "droid",
+    "action_q01": [
+      -0.1485469937324524,
+      -0.19603200256824493,
+      -0.2031259983778,
+      0.6827049851417542,
+      -0.5835009813308716,
+      -0.3863309919834137,
+      -0.5673199892044067,
+      0.6868450045585632,
+      -0.39503800868988037,
+      0.0
+    ],
+    "action_q99": [
+      0.18577100336551666,
+      0.19784800708293915,
+      0.19871099293231964,
+      1.0,
+      0.5795639753341675,
+      0.4474309980869293,
+      0.5877500176429749,
+      1.0,
+      0.39563798904418945,
+      1.0
+    ],
+    "q99_normed_dims": [
+      0,
+      1,
+      2,
+      9
+    ],
+    "proprio_mean": [
+      0.5195770263671875,
+      -0.006078170146793127,
+      0.3168239891529083,
+      0.7413139939308167,
+      -0.04902319982647896,
+      0.08595360070466995,
+      -0.06293799728155136,
+      -0.7607250213623047,
+      0.008901899680495262,
+      0.39361199736595154
+    ],
+    "proprio_std": [
+      0.1195869967341423,
+      0.17830400168895721,
+      0.1687529981136322,
+      0.32760199904441833,
+      0.4835300147533417,
+      0.3154970109462738,
+      0.4926550090312958,
+      0.33570900559425354,
+      0.24869099259376526,
+      0.4135879874229431
+    ],
+    "action_formula": "clip(2 * (a - q01) / (q99 - q01 + 1e-8) - 1, -1, 1) on q99_normed_dims, identity on the other dims",
+    "proprio_formula": "(p - mean) / max(std, 1e-6) on all dims"
+  },
+  "pose_frame": "flange"
+}
