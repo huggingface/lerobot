@@ -25,7 +25,7 @@ import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD, TRUNCATED
 from lerobot.utils.transition import Transition
 
 
@@ -496,7 +496,7 @@ class ReplayBuffer:
                 reward=data["reward"],
                 next_state=data["next_state"],
                 done=data["done"],
-                truncated=False,  # NOTE: Truncation are not supported yet in lerobot dataset
+                truncated=data["truncated"],
                 complementary_info=data.get("complementary_info", None),
             )
 
@@ -529,9 +529,10 @@ class ReplayBuffer:
         act_info = guess_feature_info(t=sample_action, name=ACTION)
         features[ACTION] = act_info
 
-        # Add "reward" and "done"
+        # Add reward and the distinct termination/truncation flags.
         features[REWARD] = {"dtype": "float32", "shape": (1,)}
         features[DONE] = {"dtype": "bool", "shape": (1,)}
+        features[TRUNCATED] = {"dtype": "bool", "shape": (1,)}
 
         # Add state keys
         for key in self.states:
@@ -572,10 +573,11 @@ class ReplayBuffer:
             for key in self.states:
                 frame_dict[key] = self.states[key][actual_idx].cpu()
 
-            # Fill action, reward, done
+            # Fill action, reward, done, truncated
             frame_dict[ACTION] = self.actions[actual_idx].cpu()
             frame_dict[REWARD] = torch.tensor([self.rewards[actual_idx]], dtype=torch.float32).cpu()
             frame_dict[DONE] = torch.tensor([self.dones[actual_idx]], dtype=torch.bool).cpu()
+            frame_dict[TRUNCATED] = torch.tensor([self.truncateds[actual_idx]], dtype=torch.bool).cpu()
             frame_dict["task"] = task_name
 
             # Add complementary_info if available
@@ -646,6 +648,7 @@ class ReplayBuffer:
         # Check if the dataset has "next.done" key
         sample = dataset[0]
         has_done_key = DONE in sample
+        has_truncated_key = TRUNCATED in sample
 
         # Check for complementary_info keys
         complementary_info_keys = [key for key in sample if key.startswith("complementary_info.")]
@@ -669,11 +672,12 @@ class ReplayBuffer:
 
             # ----- 3) Reward and done -----
             reward = float(current_sample[REWARD].item())  # ensure float
+            truncated = bool(current_sample[TRUNCATED].item()) if has_truncated_key else False
 
             # Determine done flag - use next.done if available, otherwise infer from episode boundaries
             if has_done_key:
                 done = bool(current_sample[DONE].item())  # ensure bool
-            else:
+            elif not truncated:
                 # If this is the last frame or if next frame is in a different episode, mark as done
                 done = False
                 if i == num_frames - 1:
@@ -682,13 +686,14 @@ class ReplayBuffer:
                     next_sample = dataset[i + 1]
                     if next_sample["episode_index"] != current_sample["episode_index"]:
                         done = True
-
-            # TODO: (azouitine) Handle truncation (using the same value as done for now)
-            truncated = done
+            else:
+                # An explicit time limit is not an inferred terminal state.
+                done = False
 
             # ----- 4) Next state -----
             # If not done and the next sample is in the same episode, we pull the next sample's state.
-            # Otherwise (done=True or next sample crosses to a new episode), next_state = current_state.
+            # A truncated episode may have no recorded final observation. Use its last recorded state
+            # as a fallback instead of taking the first observation from another episode.
             next_state = current_state  # default
             if not done and (i < num_frames - 1):
                 next_sample = dataset[i + 1]
