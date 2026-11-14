@@ -3311,7 +3311,14 @@ dynamixel = [
     { name = "rustypot" },
 ]
 eo1 = [
+    { name = "av" },
+    { name = "datasets" },
+    { name = "jsonlines" },
+    { name = "pandas" },
+    { name = "pyarrow" },
     { name = "qwen-vl-utils" },
+    { name = "torchcodec", version = "0.17.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or sys_platform == 'win32'" },
+    { name = "torchcodec", version = "0.17.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "transformers" },
 ]
 evaluation = [
@@ -3329,21 +3336,42 @@ feetech = [
     { name = "rustypot" },
 ]
 fineart-vla = [
+    { name = "av" },
+    { name = "datasets" },
+    { name = "jsonlines" },
+    { name = "pandas" },
+    { name = "pyarrow" },
     { name = "scipy" },
     { name = "sentencepiece" },
+    { name = "torchcodec", version = "0.17.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or sys_platform == 'win32'" },
+    { name = "torchcodec", version = "0.17.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "transformers" },
 ]
 fineart-vla-kernels = [
+    { name = "av" },
+    { name = "datasets" },
+    { name = "jsonlines" },
     { name = "kernels" },
     { name = "liger-kernel", marker = "sys_platform == 'linux'" },
+    { name = "pandas" },
+    { name = "pyarrow" },
     { name = "scipy" },
     { name = "sentencepiece" },
+    { name = "torchcodec", version = "0.17.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or sys_platform == 'win32'" },
+    { name = "torchcodec", version = "0.17.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "transformers" },
 ]
 flux3 = [
     { name = "transformers" },
 ]
 g05 = [
+    { name = "av" },
+    { name = "datasets" },
+    { name = "jsonlines" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "torchcodec", version = "0.17.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or sys_platform == 'win32'" },
+    { name = "torchcodec", version = "0.17.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "transformers" },
 ]
 gamepad = [
@@ -3648,12 +3676,26 @@ vla-jepa = [
     { name = "transformers" },
 ]
 wall-oss-05 = [
+    { name = "av" },
+    { name = "datasets" },
+    { name = "jsonlines" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "torchcodec", version = "0.17.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or sys_platform == 'win32'" },
+    { name = "torchcodec", version = "0.17.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "transformers" },
 ]
 wallx = [
+    { name = "av" },
+    { name = "datasets" },
+    { name = "jsonlines" },
+    { name = "pandas" },
     { name = "peft" },
+    { name = "pyarrow" },
     { name = "qwen-vl-utils" },
     { name = "scipy" },
+    { name = "torchcodec", version = "0.17.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or sys_platform == 'win32'" },
+    { name = "torchcodec", version = "0.17.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "transformers" },
 ]
 xvla = [
@@ -3722,6 +3764,9 @@ requires-dist = [
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'annotations'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'core-scripts'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'dataset-viz'" },
+    { name = "lerobot", extras = ["dataset"], marker = "extra == 'eo1'" },
+    { name = "lerobot", extras = ["dataset"], marker = "extra == 'fineart-vla'" },
+    { name = "lerobot", extras = ["dataset"], marker = "extra == 'g05'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'groot'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'hilserl'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'lancedb'" },
@@ -3729,6 +3774,8 @@ requires-dist = [
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'metaworld'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'pusht'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'training'" },
+    { name = "lerobot", extras = ["dataset"], marker = "extra == 'wall-oss-05'" },
+    { name = "lerobot", extras = ["dataset"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["deepdiff-dep"], marker = "extra == 'hardware'" },
     { name = "lerobot", extras = ["dev"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'cosmos3'" },

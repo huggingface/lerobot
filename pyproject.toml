@@ -233,6 +233,7 @@ wallx = [
     "lerobot[peft-dep]",
     "lerobot[scipy-dep]",
     "lerobot[qwen-vl-utils-dep]",
+    "lerobot[dataset]", # NOTE: the processor builds its recipe render step from lerobot.datasets.recipe, which needs the dataset extra
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]", "lerobot[sentencepiece-dep]"]
 dm05 = ["lerobot[transformers-dep]"]
@@ -252,7 +253,11 @@ sarm = ["lerobot[transformers-dep]", "pydantic>=2.0.0,<3.0.0", "faker>=33.0.0,<3
 robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot[peft-dep]"]
 topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
-eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
+eo1 = [
+    "lerobot[transformers-dep]",
+    "lerobot[qwen-vl-utils-dep]",
+    "lerobot[dataset]", # NOTE: the processor builds its recipe render step from lerobot.datasets.recipe, which needs the dataset extra
+]
 longwam = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[sentencepiece-dep]"]
 fastwam = [
     "lerobot[transformers-dep]",
@@ -267,7 +272,10 @@ flux3 = [
 evo1 = ["lerobot[transformers-dep]"]
 # fineart_vla: PI0.5-based policy that also trains a language head. The optional
 # fused training kernels (Liger Triton kernels, FlashRT Hub kernels) need Linux + CUDA.
-fineart_vla = ["lerobot[pi]"]
+fineart_vla = [
+    "lerobot[pi]",
+    "lerobot[dataset]", # NOTE: the processor builds its recipe render step from lerobot.datasets.recipe, which needs the dataset extra
+]
 fineart_vla_kernels = [
     "lerobot[fineart_vla]",
     "liger-kernel>=0.8.0,<0.9.0; sys_platform == 'linux'",
@@ -278,8 +286,14 @@ hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
-wall_oss_05 = ["lerobot[transformers-dep]"]
-g05 = ["lerobot[transformers-dep]"]
+wall_oss_05 = [
+    "lerobot[transformers-dep]",
+    "lerobot[dataset]", # NOTE: the processor builds its recipe render step from lerobot.datasets.recipe, which needs the dataset extra
+]
+g05 = [
+    "lerobot[transformers-dep]",
+    "lerobot[dataset]", # NOTE: the processor builds its recipe render step from lerobot.datasets.recipe, which needs the dataset extra
+]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
