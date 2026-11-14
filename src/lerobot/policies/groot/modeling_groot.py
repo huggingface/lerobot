@@ -217,7 +217,6 @@ class GrootPolicy(PreTrainedPolicy):
                         revision=revision,
                         cache_dir=cache_dir,
                         force_download=False,  # Just check, don't force download
-                        proxies=proxies,
                         token=token,
                         local_files_only=local_files_only,
                     )

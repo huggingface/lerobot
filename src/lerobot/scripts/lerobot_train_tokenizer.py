@@ -595,7 +595,7 @@ def train_tokenizer(cfg: TokenizerTrainingConfig) -> None:
             logger.info(f"Successfully pushed tokenizer to: https://huggingface.co/{hub_repo_id}")
         except Exception as e:
             logger.error(f"Error pushing to hub: {e}")
-            logger.error("   Make sure you're logged in with `huggingface-cli login`")
+            logger.error("   Make sure you're logged in with `hf auth login`")
 
 
 def main():

@@ -296,14 +296,14 @@ X-VLA requires specific preprocessing and postprocessing steps for proper operat
 
 #### Example Custom Processor
 
-For LIBERO environments, a custom processor handles the specific observation format:
+For LIBERO environments, a custom processor turns the canonical observation into the input X-VLA was trained on:
 
 ```python
 from lerobot.policies.xvla.processor_xvla import LiberoProcessorStep
 
 processor = LiberoProcessorStep()
-# Handles robot_state dictionary, converts rotation matrices to 6D representation
-# Applies 180° image rotation for camera convention
+# Builds the 9D state from the canonical 8D state, with the end-effector rotation in 6D
+# Rotates the wrist camera back, since the LIBERO integration rotates every camera by 180°
 ```
 
 ### 4. Configuration Parameters

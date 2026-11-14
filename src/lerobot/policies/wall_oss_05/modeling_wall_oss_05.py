@@ -35,7 +35,7 @@ if TYPE_CHECKING or _transformers_available:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
         Qwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLRotaryEmbedding,
-        apply_multimodal_rotary_pos_emb,
+        apply_rotary_pos_emb,
         repeat_kv,
     )
 
@@ -189,14 +189,7 @@ class WallOSS05JointAttention(nn.Module):
         key = key.transpose(1, 2)
         value = value.transpose(1, 2)
         cosine, sine = position_embeddings
-        query, key = apply_multimodal_rotary_pos_emb(
-            query,
-            key,
-            cosine,
-            sine,
-            self.mrope_section,
-            unsqueeze_dim=1,
-        )
+        query, key = apply_rotary_pos_emb(query, key, cosine, sine, unsqueeze_dim=1)
         projection_dtype = self.qkv_proj_experts[0].weight.dtype
         query = query.to(projection_dtype)
         key = key.to(projection_dtype)

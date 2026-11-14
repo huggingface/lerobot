@@ -73,12 +73,16 @@
     title: VLA-JEPA
   - local: lawam
     title: LaWAM
+  - local: praxis
+    title: Praxis-1
   - local: eo1
     title: EO-1
   - local: lingbot_va
     title: LingBot-VA
   - local: lingbot_vla_v2
     title: LingBot-VLA 2.0
+  - local: g05
+    title: OpenGalaxea G0.5
   - local: fastwam
     title: FastWAM
   - local: longwam
@@ -99,6 +103,8 @@
     title: Wall-OSS-0.5
   - local: dm05
     title: DM05
+  - local: cosmos3
+    title: Cosmos3
   title: "Policies"
 - sections:
   - local: sarm
@@ -117,14 +123,16 @@
     title: Real-Time Chunking (RTC)
   title: "Inference"
 - sections:
+  - local: simulation
+    title: Simulation
   - local: envhub
-    title: Environments from the Hub
+    title: "EnvHub: Share a Simulator on the Hub"
+  - local: adding_benchmarks
+    title: Adding a Benchmark
   - local: envhub_leisaac
-    title: Control & Train Robots in Sim (LeIsaac)
+    title: LeIsaac (deprecated)
   title: "Simulation"
 - sections:
-  - local: adding_benchmarks
-    title: Adding a New Benchmark
   - local: libero
     title: LIBERO
   - local: libero_plus
@@ -137,12 +145,16 @@
     title: RoboCasa365
   - local: robocerebra
     title: RoboCerebra
+  - local: robolab
+    title: NVIDIA RoboLab
   - local: robomme
     title: RoboMME
   - local: envhub_isaaclab_arena
-    title: NVIDIA IsaacLab Arena Environments
+    title: NVIDIA IsaacLab Arena (deprecated)
   - local: vlabench
     title: VLABench
+  - local: robocolosseum
+    title: RoboColosseum
   title: "Benchmarks"
 - sections:
   - local: introduction_processors
@@ -181,6 +193,8 @@
     title: OpenArm
   - local: rebot_b601
     title: reBot B601
+  - local: yam
+    title: YAM
   - local: third_party_robots
     title: Third-Party Robots & Teleoperators
   title: "Robots"

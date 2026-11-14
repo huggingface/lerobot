@@ -39,7 +39,7 @@ from lerobot.processor import (
     transition_to_policy_action,
     transition_to_prediction,
 )
-from lerobot.utils import ActionInterpolator
+from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
 
 from .base import InferenceEngine

@@ -14,7 +14,44 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
+from lerobot.utils import ensure_bucket_file
 from lerobot.utils.hub import find_latest_hub_checkpoint
+
+
+def test_ensure_bucket_file_downloads_once(monkeypatch, tmp_path):
+    path = tmp_path / "cache" / "model.urdf"
+    data = b'<robot name="test" />'
+    download = MagicMock(side_effect=lambda _bucket, files, **_kwargs: files[0][1].write_bytes(data))
+    monkeypatch.setattr("lerobot.utils.hub.download_bucket_files", download)
+
+    assert ensure_bucket_file("org/assets", "robot/model.urdf", path, token=False) == path
+    bucket_id, files = download.call_args.args
+    assert bucket_id == "org/assets"
+    assert files[0][0] == "robot/model.urdf"
+    assert files[0][1] != path
+    assert files[0][1].parent == path.parent
+    assert download.call_args.kwargs == {"raise_on_missing_files": True, "token": False}
+    assert path.read_bytes() == data
+
+    assert ensure_bucket_file("org/assets", "robot/model.urdf", path, token=False) == path
+    download.assert_called_once()
+
+
+def test_ensure_bucket_file_cleans_up_failed_download(monkeypatch, tmp_path):
+    path = tmp_path / "cache" / "model.urdf"
+
+    def fail_download(_bucket, files, **_kwargs):
+        files[0][1].write_bytes(b"partial")
+        raise RuntimeError("download failed")
+
+    monkeypatch.setattr("lerobot.utils.hub.download_bucket_files", fail_download)
+
+    with pytest.raises(RuntimeError, match="download failed"):
+        ensure_bucket_file("org/assets", "robot/model.urdf", path)
+    assert not path.exists()
+    assert not any(path.parent.iterdir())
 
 
 def _patch_list_files(monkeypatch, files):
