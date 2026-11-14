@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
-import builtins
 import json
 import os
 import tempfile
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Self
 
 import draccus
 import torch
@@ -34,7 +33,6 @@ from lerobot.utils.hub import HubMixin
 
 from .types import FeatureType, PolicyFeature
 
-T = TypeVar("T", bound="PreTrainedConfig")
 logger = getLogger(__name__)
 
 
@@ -176,7 +174,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
@@ -187,7 +185,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         local_files_only: bool = False,
         revision: str | None = None,
         **policy_kwargs: Any,
-    ) -> T:
+    ) -> Self:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():

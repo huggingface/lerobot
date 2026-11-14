@@ -14,13 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import builtins
 import logging
 from collections import deque
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Unpack, cast
+from typing import TYPE_CHECKING, Any, Self, Unpack, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -72,7 +71,7 @@ from ..common.vla_utils import (
     prepare_attention_masks_4d,
     resize_with_pad_torch,
 )
-from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
+from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
 from .memory import encode_video_with_mem, sample_observation_history
@@ -1100,7 +1099,7 @@ class PI05Policy(PreTrainedPolicy):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
@@ -1113,7 +1112,7 @@ class PI05Policy(PreTrainedPolicy):
         revision: str | None = None,
         strict: bool = True,
         **kwargs,
-    ) -> T:
+    ) -> Self:
         """Load a native LeRobot checkpoint or convert the PI05 base checkpoint."""
         if cls.use_native_pretrained_loader:
             return super().from_pretrained(

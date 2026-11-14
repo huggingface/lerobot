@@ -13,14 +13,13 @@
 # limitations under the License.
 
 import abc
-import builtins
 import json
 import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Self
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -34,7 +33,6 @@ from lerobot.utils.hub import HubMixin
 
 from .types import PolicyFeature
 
-T = TypeVar("T", bound="RewardModelConfig")
 logger = logging.getLogger(__name__)
 
 
@@ -110,7 +108,7 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
@@ -121,7 +119,7 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         local_files_only: bool = False,
         revision: str | None = None,
         **reward_kwargs: Any,
-    ) -> T:
+    ) -> Self:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():

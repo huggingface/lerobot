@@ -22,14 +22,13 @@ possible without porting their code. Dataset loading and training
 orchestration are handled by LeRobot's standard training stack.
 """
 
-import builtins
 import dataclasses
 import logging
 import os
 from collections import deque
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, Self, Unpack
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -61,8 +60,6 @@ else:
     get_parameter_names = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T", bound="GrootPolicy")
 
 
 class GrootPolicy(PreTrainedPolicy):
@@ -158,7 +155,7 @@ class GrootPolicy(PreTrainedPolicy):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         config: GrootConfig | None = None,
@@ -171,7 +168,7 @@ class GrootPolicy(PreTrainedPolicy):
         revision: str | None = None,
         strict: bool = True,
         **kwargs,
-    ) -> T:
+    ) -> Self:
         """Load Groot policy from pretrained model.
 
         Handles two cases:

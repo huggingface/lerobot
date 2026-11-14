@@ -15,11 +15,10 @@
 from __future__ import annotations
 
 import abc
-import builtins
 import os
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Self
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -37,8 +36,6 @@ if TYPE_CHECKING:
     from torch import nn
 
     from ..data_sources.data_mixer import DataMixer
-
-T = TypeVar("T", bound="RLAlgorithm")
 
 
 class RLAlgorithm(HubMixin, abc.ABC):
@@ -149,7 +146,7 @@ class RLAlgorithm(HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         policy: nn.Module,
@@ -163,7 +160,7 @@ class RLAlgorithm(HubMixin, abc.ABC):
         revision: str | None = None,
         device: str | torch.device = "cpu",
         **algo_kwargs: Any,
-    ) -> T:
+    ) -> Self:
         """Build an algorithm and load its weights from ``pretrained_name_or_path``."""
         if config is None:
             config = cls.config_class.from_pretrained(

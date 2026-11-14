@@ -12,17 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import builtins
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import Any, TypeVar
+from typing import Any, Self
 
 from huggingface_hub import HfApi, download_bucket_files
 from huggingface_hub.utils import validate_hf_hub_args
 
 from .constants import CHECKPOINTS_DIR
-
-T = TypeVar("T", bound="HubMixin")
 
 
 def ensure_bucket_file(
@@ -168,7 +165,7 @@ class HubMixin:
     @classmethod
     @validate_hf_hub_args
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
@@ -179,7 +176,7 @@ class HubMixin:
         local_files_only: bool = False,
         revision: str | None = None,
         **kwargs,
-    ) -> T:
+    ) -> Self:
         """
         Download the object from the Huggingface Hub and instantiate it.
 
