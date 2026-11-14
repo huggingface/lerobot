@@ -50,7 +50,13 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
     -   Maps the `"agent_pos"` key to `"observation.state"`.
     -   Converts NumPy arrays to PyTorch tensors.
     -   Adds a batch dimension if one is not already present.
+
+    Attributes:
+        image_device: Device used for image processing. Images are transferred as
+            `uint8` before conversion and normalization. State tensors remain on CPU.
     """
+
+    image_device: str = "cpu"
 
     def _process_single_image(self, img: np.ndarray) -> Tensor:
         """
@@ -76,12 +82,17 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
             img_tensor = img_tensor.unsqueeze(0)
 
         # Validate image format
+        if img_tensor.ndim != 4:
+            raise ValueError(f"Expected channel-last images with 3 or 4 dimensions, got {img_tensor.shape}")
         _, h, w, c = img_tensor.shape
         if not (c < h and c < w):
             raise ValueError(f"Expected channel-last images, but got shape {img_tensor.shape}")
 
         if img_tensor.dtype != torch.uint8:
             raise ValueError(f"Expected torch.uint8 images, but got {img_tensor.dtype}")
+
+        # Transfer compact uint8 images before layout conversion and normalization.
+        img_tensor = img_tensor.to(device=self.image_device)
 
         # Convert to channel-first format
         img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous()
@@ -127,6 +138,10 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
 
     def observation(self, observation):
         return self._process_observation(observation)
+
+    def get_config(self) -> dict[str, str]:
+        """Returns the image processing device for serialization."""
+        return {"image_device": self.image_device}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
