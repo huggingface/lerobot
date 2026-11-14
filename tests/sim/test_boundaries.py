@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
+from lerobot.envs.factory import make_env
 from tests.fixtures.toy_env import ToyEnvConfig
 
 
@@ -69,7 +70,7 @@ def test_local_environment_does_not_import_deployment_code(monkeypatch) -> None:
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", import_without_deployment)
-    env = ToyEnvConfig().create_envs(n_envs=1)["reach"][0]
+    env = make_env(ToyEnvConfig(), n_envs=1)["reach"][0]
     try:
         env.reset(seed=3)
         env.step(np.array([[2.0, 0.0]], dtype=np.float32))

@@ -27,6 +27,7 @@ from gymnasium.wrappers.vector import RecordEpisodeStatistics
 
 from lerobot.env_server import EnvClient, RemoteVectorEnv
 from lerobot.envs import EnvClientConfig
+from lerobot.envs.factory import descriptor_features, make_env, make_task_env
 from lerobot.sim import SimConfig
 from lerobot.sim.integrations.utils import canonical_observation
 from lerobot.sim.local_vector_env import LocalVectorEnv, _ProcessEnv
@@ -46,11 +47,15 @@ def test_env_config_creates_vector_envs_locally_or_served(where, request):
     config = ToyEnvConfig(
         server=EnvClientConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
     )
-    env = config.create_envs(n_envs=2)["reach"][0]
+    env = make_env(config, n_envs=2)["reach"][0]
     try:
         assert isinstance(env, RemoteVectorEnv if where == "served" else LocalVectorEnv)
         # Canonical observation names, as the server describes them.
-        assert set(config.features) == {"observation.state", "observation.image", "action"}
+        assert set(descriptor_features(env.descriptor)) == {
+            "observation.state",
+            "observation.image",
+            "action",
+        }
         obs, _ = env.reset(seed=[1, 2])
         assert obs["observation.state"].shape == (2, 2)
         env.step(np.zeros((2, 2), np.float32))
@@ -61,7 +66,7 @@ def test_env_config_creates_vector_envs_locally_or_served(where, request):
 
 
 def test_a_finished_env_keeps_its_terminal_observation_with_zero_reward():
-    env = ToyEnvConfig().create_envs(n_envs=1)["reach"][0]
+    env = make_env(ToyEnvConfig(), n_envs=1)["reach"][0]
     try:
         _, info = env.reset(seed=3)
         assert info["elapsed_steps"].tolist() == [0]
@@ -140,7 +145,7 @@ def test_a_batched_simulator_that_autoresets_is_rejected():
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_misuse_is_rejected_locally_and_served(where, request):
     server = EnvClientConfig(request.getfixturevalue("sim_server")[1]) if where == "served" else None
-    env = ToyEnvConfig(server=server).create_env()
+    env = make_task_env(ToyEnvConfig(server=server))
     try:
         with pytest.raises(RuntimeError, match="Reset before stepping"):
             env.step(np.zeros((1, 2), np.float32))
@@ -157,7 +162,7 @@ def test_misuse_is_rejected_locally_and_served(where, request):
 def test_env_config_builds_each_simulator_once():
     # The environments built to read the description are the ones used, not built again.
     before = ToyEnv.builds
-    env = ToyEnvConfig().create_envs(n_envs=2)["reach"][0]
+    env = make_env(ToyEnvConfig(), n_envs=2)["reach"][0]
     try:
         env.reset(seed=[1, 2])
         env.step(np.zeros((2, 2), np.float32))
@@ -169,7 +174,7 @@ def test_env_config_builds_each_simulator_once():
 def test_a_named_task_builds_its_simulators_once():
     # A sim robot runs one named task: the environment built to read the description must be that task's.
     before = ToyEnv.builds
-    env = ToyEnvConfig(task_ids=(0, 3)).create_env(task_id=3)
+    env = make_task_env(ToyEnvConfig(task_ids=(0, 3)), task_id=3)
     try:
         env.reset(seed=1)
         assert env.task_id == 3 and ToyEnv.builds - before == 1
@@ -180,7 +185,7 @@ def test_a_named_task_builds_its_simulators_once():
 def test_other_tasks_build_their_simulators_on_first_use():
     # lerobot-eval creates every task's environment up front; each builds its simulator on its first reset.
     config = ToyEnvConfig()
-    first = config.create_env(n_envs=2)
+    first = make_task_env(config, n_envs=2)
     before = ToyEnv.builds
     env = LocalVectorEnv(config.sim_config(), 2, descriptor=first.descriptor)
     try:
@@ -194,13 +199,13 @@ def test_other_tasks_build_their_simulators_on_first_use():
 
 def test_a_filtered_suite_starts_with_its_first_task():
     # LIBERO's --env.task_ids may leave out task 0.
-    envs = ToyEnvConfig(task_ids=(3, 5)).create_envs(n_envs=1)["reach"]
+    envs = make_env(ToyEnvConfig(task_ids=(3, 5)), n_envs=1)["reach"]
     try:
         assert list(envs) == [3, 5] and envs[3].task_id == 3
     finally:
         for env in envs.values():
             env.close()
-    env = ToyEnvConfig(task_ids=(3, 5)).create_env()
+    env = make_task_env(ToyEnvConfig(task_ids=(3, 5)))
     try:
         assert env.task_id == 3
     finally:
@@ -223,7 +228,7 @@ def test_local_and_served_environments_agree_on_tasks():
 
 
 def test_batched_env_works_under_gymnasium_vector_wrappers():
-    env = RecordEpisodeStatistics(ToyEnvConfig().create_envs(n_envs=2)["reach"][0])
+    env = RecordEpisodeStatistics(make_env(ToyEnvConfig(), n_envs=2)["reach"][0])
     try:
         env.reset(seed=[1, 2])
         env.step(np.zeros((2, 2), np.float32))
