@@ -11,18 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
 import inspect
 import json
-import pkgutil
 import sys
 import tempfile
 from argparse import ArgumentError
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from functools import wraps
 from pathlib import Path
-from pkgutil import ModuleInfo
-from types import ModuleType
 from typing import Any, TypeVar, cast
 
 import draccus
@@ -36,12 +32,19 @@ from draccus.wrappers.field_wrapper import FieldWrapper
 from draccus.wrappers.suppressing_argparse import SuppressingArgumentParser
 from draccus.wrappers.wrapper import AggregateWrapper, Wrapper
 
+from lerobot.utils.import_utils import (
+    PLUGIN_DISCOVERY_SUFFIX,
+    PluginLoadError,
+    filter_arg,
+    load_plugin,
+    parse_plugin_args,
+)
 from lerobot.utils.utils import has_method
 
 F = TypeVar("F", bound=Callable[..., object])
 
 PATH_KEY = "path"
-PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
+
 
 # Storage for path args extracted from YAML/JSON config files, so that
 # get_path_arg() can find them even when they weren't passed via CLI.
@@ -131,90 +134,6 @@ def parse_arg(arg_name: str, args: Sequence[str] | None = None) -> str | None:
     return None
 
 
-def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, str]:
-    """Parse plugin-related arguments from command-line arguments.
-
-    This function extracts arguments from command-line arguments that match a specified suffix pattern.
-    It accepts arguments in the formats '--key=value' and '--key value' and returns them as a dictionary.
-
-    Args:
-        plugin_arg_suffix (str): The suffix to identify plugin-related arguments.
-        cli_args (Sequence[str]): A sequence of command-line arguments to parse.
-
-    Returns:
-        dict: A dictionary containing the parsed plugin arguments where:
-            - Keys are the argument names (with '--' prefix removed if present)
-            - Values are the corresponding argument values
-
-    Example:
-        >>> args = ["--env.discover_packages_path=my_package", "--other_arg=value"]
-        >>> parse_plugin_args("discover_packages_path", args)
-        {'env.discover_packages_path': 'my_package'}
-    """
-    plugin_args = {}
-    for index, arg in enumerate(args):
-        if not arg.startswith("--"):
-            continue
-
-        key, separator, value = arg[2:].partition("=")
-        if plugin_arg_suffix not in key:
-            continue
-        if not separator:
-            if index + 1 >= len(args) or args[index + 1].startswith("--"):
-                continue
-            value = args[index + 1]
-        plugin_args[key] = value
-    return plugin_args
-
-
-class PluginLoadError(Exception):
-    """Raised when a plugin fails to load."""
-
-
-def load_plugin(plugin_path: str) -> None:
-    """Load and initialize a plugin from a given Python package path.
-
-    This function attempts to load a plugin by importing its package and any submodules.
-    Plugin registration is expected to happen during package initialization, i.e. when
-    the package is imported the gym environment should be registered and the config classes
-    registered with their parents using the `register_subclass` decorator.
-
-    Args:
-        plugin_path (str): The Python package path to the plugin (e.g. "mypackage.plugins.myplugin")
-
-    Raises:
-        PluginLoadError: If the plugin cannot be loaded due to import errors or if the package path is invalid.
-
-    Examples:
-        >>> load_plugin("external_plugin.core")  # Loads plugin from external package
-
-    Notes:
-        - The plugin package should handle its own registration during import
-        - All submodules in the plugin package will be imported
-        - Implementation follows the plugin discovery pattern from Python packaging guidelines
-
-    See Also:
-        https://packaging.python.org/en/latest/guides/creating-and-discovering-plugins/
-    """
-    try:
-        package_module = importlib.import_module(plugin_path, __package__)
-    except (ImportError, ModuleNotFoundError) as e:
-        raise PluginLoadError(
-            f"Failed to load plugin '{plugin_path}'. Verify the path and installation: {str(e)}"
-        ) from e
-
-    def iter_namespace(ns_pkg: ModuleType) -> Iterable[ModuleInfo]:
-        return pkgutil.iter_modules(ns_pkg.__path__, ns_pkg.__name__ + ".")
-
-    try:
-        for _finder, pkg_name, _ispkg in iter_namespace(package_module):
-            importlib.import_module(pkg_name)
-    except ImportError as e:
-        raise PluginLoadError(
-            f"Failed to load plugin '{plugin_path}'. Verify the path and installation: {str(e)}"
-        ) from e
-
-
 def get_path_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
     result = parse_arg(f"{field_name}.{PATH_KEY}", args)
     if result is None:
@@ -293,27 +212,6 @@ def print_scoped_help(config_class: type, cli_args: Sequence[str]) -> None:
     )
     _register_scoped_actions(DataclassWrapper(config_class), parser, cli_args)
     parser.print_help()
-
-
-def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
-    if args is None:
-        return []
-    option = f"--{field_to_filter}"
-    filtered_args = []
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        if arg == option:
-            index += 1
-            if index < len(args) and not args[index].startswith("--"):
-                index += 1
-            continue
-        if arg.startswith(f"{option}="):
-            index += 1
-            continue
-        filtered_args.append(arg)
-        index += 1
-    return filtered_args
 
 
 def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | None = None) -> list[str]:

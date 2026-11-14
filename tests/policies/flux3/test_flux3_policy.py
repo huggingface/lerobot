@@ -735,6 +735,14 @@ def test_frozen_components_stay_unregistered_eval_and_follow_device_moves(monkey
     assert policy.frozen is frozen
 
 
+def test_checkpoint_loads_into_the_policy_where_it_was_built(fake_vae, tmp_path):
+    policy = Flux3Policy(droid_config())
+    policy.save_pretrained(tmp_path)
+    # The loader leaves the policy where it was built, whatever device it is given; `from_pretrained` moves it.
+    loaded = Flux3Policy._load_as_safetensor(policy, str(tmp_path / "model.safetensors"), "meta", True)
+    assert loaded.dit.emb_in["action"].weight.device.type == "cpu"
+
+
 def test_compile_model_wraps_the_inference_dit_forward_only(fake_vae, monkeypatch):
     compiled_fns = []
 

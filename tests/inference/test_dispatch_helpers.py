@@ -16,6 +16,7 @@
 
 from contextlib import contextmanager
 
+import numpy as np
 import pytest
 import torch
 
@@ -32,7 +33,7 @@ class GateEngine(InferenceEngine):
         super().__init__("task")
         self.permissions = list(permissions)  # consumed first, then ``allowed`` applies
         self.allowed = True
-        self.actions: list[torch.Tensor] = []
+        self.actions: list[torch.Tensor | np.ndarray] = []
         self.frames = []
         self.acknowledged = 0
         self.dispatched = 0
@@ -89,9 +90,13 @@ class Timer:
         self.starved += 1
 
 
-def test_permitted_ticks_pull_once_per_policy_action_and_send_each_interpolated_target():
+@pytest.mark.parametrize(
+    "convert", [torch.tensor, lambda a: np.array(a, dtype=np.float32)], ids=["tensor", "numpy"]
+)
+def test_permitted_ticks_pull_once_per_policy_action_and_send_each_interpolated_target(convert):
     engine = GateEngine()
-    engine.actions = [torch.tensor([3.0]), torch.tensor([6.0])]
+    engine.actions = [convert([3.0]), convert([6.0])]
+    action_type = type(engine.actions[0])
     interpolator = ActionInterpolator(multiplier=3)
     robot, timer = Robot(), Timer()
     frames_built = 0
@@ -106,6 +111,7 @@ def test_permitted_ticks_pull_once_per_policy_action_and_send_each_interpolated_
         for _ in range(4)
     ]
     assert [target.item() for target in targets] == [3.0, 4.0, 5.0, 6.0] == robot.sent
+    assert {type(target) for target in targets} == {action_type}, "targets keep the engine's action type"
     assert frames_built == 2, "the frame factory runs only when a new policy action is pulled"
     assert engine.frames == [{"built": 1}, {"built": 2}]
     assert engine.dispatched == 4 and engine.acknowledged == 0 and robot.holds == 0
@@ -174,3 +180,36 @@ def test_a_starved_tick_is_counted_and_sends_nothing():
     assert dispatch_tick(engine, ActionInterpolator(), None, send=robot.send, timer=timer) is None
     assert len(engine.frames) == 1 and timer.starved == 1 and timer.sections == ["infer"]
     assert robot.sent == [] and engine.acknowledged == 0 and engine.dispatched == 0
+
+
+def test_a_prediction_is_reported_only_for_an_action_that_converts(monkeypatch):
+    from lerobot.inference import dispatch
+
+    def refuse(step):
+        raise ValueError("no action")
+
+    monkeypatch.setattr(
+        dispatch, "transition_to_prediction", lambda step: {"language": {"subtask": ["pick"]}}
+    )
+    monkeypatch.setattr(dispatch, "transition_to_policy_action", refuse)
+    reported = []
+    with pytest.raises(ValueError, match="no action"):
+        dispatch._policy_action(torch.zeros(2), reported.append)
+    assert reported == []
+
+
+def test_a_prediction_is_not_reported_for_an_action_the_interpolator_refuses(monkeypatch):
+    from lerobot.inference import dispatch
+
+    monkeypatch.setattr(
+        dispatch, "transition_to_prediction", lambda step: {"language": {"subtask": ["pick"]}}
+    )
+    engine = GateEngine()
+    engine.actions = [torch.zeros(1)]
+    interpolator = ActionInterpolator(multiplier=1)
+    interpolator.add(np.zeros(1))  # a NumPy action, so the tensor that follows is refused
+    interpolator.get()
+    reported = []
+    with pytest.raises(TypeError):
+        dispatch.next_interpolated_action(engine, interpolator, None, on_prediction=reported.append)
+    assert reported == []

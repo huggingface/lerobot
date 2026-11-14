@@ -29,6 +29,7 @@ pytest.importorskip("diffusers", reason="lawam requires the `lawam` extra (diffu
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.factory import resolve_delta_timestamps
+from lerobot.policies import pretrained
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.lawam.configuration_lawam import (
     LaWAMConfig,
@@ -60,7 +61,6 @@ from lerobot.policies.lawam.vlas.qwen3vl import (
     remove_lm_head,
     unfreeze_last_n_llm_layers,
 )
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import NormalizerProcessorStep, TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -829,24 +829,23 @@ def test_saved_policy_uses_safetensors_without_torch_load(tmp_path, monkeypatch)
     assert torch.equal(loaded_policy.model.weight, policy.model.weight)
 
 
-def test_pretrained_load_stages_lawam_checkpoint_on_cpu(tmp_path, monkeypatch) -> None:
+def test_pretrained_load_maps_lawam_checkpoint_on_cpu_and_moves_once(tmp_path, monkeypatch) -> None:
     cfg = make_config()
     cfg.device = "cuda"
-    events = {}
+    events = {"moves": []}
 
-    def fake_load(cls, model, model_file, map_location, strict):
-        del cls, model_file, strict
-        events["load_device"] = map_location
-        events["parameter_device_during_load"] = next(model.parameters()).device.type
-        return model
+    def fake_load(model, model_file, *, strict, device):
+        del model_file, strict
+        events["load_device"] = device
+        return [], []
 
     def fake_to(self, device):
-        events["final_device"] = str(device)
+        events["moves"].append(str(device))
         if str(device).startswith("cpu"):
             return nn.Module.to(self, device)
         return self
 
-    monkeypatch.setattr(PreTrainedPolicy, "_load_checkpoint", classmethod(fake_load))
+    monkeypatch.setattr(pretrained, "load_model_as_safetensor", fake_load)
     (tmp_path / "model.safetensors").touch()
     monkeypatch.setattr(LaWAMPolicy, "to", fake_to)
     native_model = _FakeNativeLaWAM()
@@ -860,8 +859,7 @@ def test_pretrained_load_stages_lawam_checkpoint_on_cpu(tmp_path, monkeypatch) -
 
     assert events == {
         "load_device": "cpu",
-        "parameter_device_during_load": "cpu",
-        "final_device": "cuda",
+        "moves": ["cuda"],
     }
     assert cfg.device == "cuda"
     assert policy.config.device == "cuda"

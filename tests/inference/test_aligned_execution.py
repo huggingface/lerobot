@@ -323,3 +323,10 @@ def test_chunk_latency_includes_cold_start_without_changing_scheduling():
     clock.now += 0.1
     assert rt.latency.recent(clock()) == []
     assert rt.turnaround == pytest.approx(0.1)
+
+
+def test_latency_window_keeps_its_old_import_path():
+    from lerobot.inference.latency import LatencyWindow as OldPathLatencyWindow
+    from lerobot.utils.latency import LatencyWindow
+
+    assert OldPathLatencyWindow is LatencyWindow

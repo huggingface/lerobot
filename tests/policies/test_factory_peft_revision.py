@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -98,6 +99,7 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch,
         config=peft_config,
         revision="adapter-sha",
         is_trainable=True,
+        torch_device="cpu",
     )
 
 
@@ -220,3 +222,139 @@ def test_make_policy_loads_resume_weights_and_keeps_the_parent(monkeypatch):
     assert [str(path) for path in seen_while_building] == ["run/checkpoints/000002/pretrained_model"]
     assert cfg.pretrained_path == "user/base-policy"
     assert policy.config.pretrained_path == "user/base-policy"
+
+
+def test_load_pretrained_policy_passes_revision(monkeypatch):
+    policy_config = SimpleNamespace(
+        type="mock",
+        use_peft=False,
+        pretrained_path="user/policy",
+        pretrained_revision="policy-sha",
+    )
+    policy_class = MagicMock()
+    loaded_policy = MagicMock()
+    policy_class.from_pretrained.return_value = loaded_policy
+    monkeypatch.setattr(policy_factory, "get_policy_class", lambda _: policy_class)
+
+    policy = policy_factory.load_pretrained_policy(policy_config)
+
+    assert policy is loaded_policy
+    policy_class.from_pretrained.assert_called_once_with(
+        "user/policy",
+        config=policy_config,
+        revision="policy-sha",
+    )
+
+
+def test_load_pretrained_policy_without_a_checkpoint_names_the_flag():
+    policy_config = SimpleNamespace(
+        type="mock", use_peft=False, pretrained_path=None, pretrained_revision=None
+    )
+
+    with pytest.raises(ValueError, match="--policy.path"):
+        policy_factory.load_pretrained_policy(policy_config)
+
+
+def test_load_pretrained_policy_use_peft_on_base_model_loads_base(monkeypatch):
+    # A `use_peft=True` config pointing at a base model (no adapter_config.json) loads it normally.
+    policy_config = SimpleNamespace(
+        type="mock",
+        use_peft=True,
+        pretrained_path="user/base-policy",
+        pretrained_revision="base-sha",
+    )
+    policy_class = MagicMock()
+    monkeypatch.setattr(policy_factory, "get_policy_class", lambda _: policy_class)
+    adapter_check = MagicMock(return_value=False)
+    monkeypatch.setattr(policy_factory, "has_peft_adapter_config", adapter_check)
+
+    policy = policy_factory.load_pretrained_policy(policy_config)
+
+    # The adapter is looked for at the requested revision, where it may be the only one.
+    adapter_check.assert_called_once_with("user/base-policy", "base-sha")
+    assert policy is policy_class.from_pretrained.return_value
+    policy_class.from_pretrained.assert_called_once_with(
+        "user/base-policy",
+        config=policy_config,
+        revision="base-sha",
+    )
+
+
+def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(monkeypatch):
+    policy_config = SimpleNamespace(
+        type="mock",
+        use_peft=True,
+        # `PreTrainedConfig.from_pretrained` stores a `Path`; PEFT needs the repo id as a `str`.
+        pretrained_path=Path("user/adapter"),
+        pretrained_revision="adapter-sha",
+    )
+    policy_class = MagicMock()
+    base_policy = MagicMock()
+    policy_class.from_pretrained.return_value = base_policy
+    monkeypatch.setattr(policy_factory, "get_policy_class", lambda _: policy_class)
+    # "user/adapter" is a fake repo id: pin the adapter check instead of reaching the Hub.
+    adapter_check = MagicMock(return_value=True)
+    monkeypatch.setattr(policy_factory, "has_peft_adapter_config", adapter_check)
+
+    peft_config = SimpleNamespace(
+        base_model_name_or_path="user/base-policy",
+        revision="base-sha",
+    )
+    peft_config_from_pretrained = MagicMock(return_value=peft_config)
+    adapted_policy = MagicMock()
+    peft_model_from_pretrained = MagicMock(return_value=adapted_policy)
+    require_package = MagicMock()
+    monkeypatch.setattr(policy_factory, "require_package", require_package)
+    monkeypatch.setattr(
+        policy_factory,
+        "PeftConfig",
+        SimpleNamespace(from_pretrained=peft_config_from_pretrained),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        policy_factory,
+        "PeftModel",
+        SimpleNamespace(from_pretrained=peft_model_from_pretrained),
+        raising=False,
+    )
+
+    policy = policy_factory.load_pretrained_policy(policy_config)
+
+    assert policy is adapted_policy
+    adapter_check.assert_called_once_with(Path("user/adapter"), "adapter-sha")
+    require_package.assert_called_once_with("peft", extra="peft")
+    peft_config_from_pretrained.assert_called_once_with("user/adapter", revision="adapter-sha")
+    policy_class.from_pretrained.assert_called_once_with(
+        pretrained_name_or_path="user/base-policy",
+        config=policy_config,
+        revision="base-sha",
+    )
+    peft_model_from_pretrained.assert_called_once_with(
+        base_policy,
+        "user/adapter",
+        config=peft_config,
+        revision="adapter-sha",
+        torch_device="cpu",
+    )
+
+
+def test_load_pretrained_peft_policy_without_a_base_model_fails_before_building_it(monkeypatch):
+    policy_config = SimpleNamespace(
+        type="mock", use_peft=True, pretrained_path="user/adapter", pretrained_revision=None
+    )
+    policy_class = MagicMock()
+    monkeypatch.setattr(policy_factory, "get_policy_class", lambda _: policy_class)
+    monkeypatch.setattr(policy_factory, "has_peft_adapter_config", lambda *args: True)
+    monkeypatch.setattr(policy_factory, "require_package", MagicMock())
+    peft_config = SimpleNamespace(base_model_name_or_path=None, revision=None)
+    monkeypatch.setattr(
+        policy_factory,
+        "PeftConfig",
+        SimpleNamespace(from_pretrained=lambda *args, **kwargs: peft_config),
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="No pretrained model name found in adapter config"):
+        policy_factory.load_pretrained_policy(policy_config)
+
+    policy_class.from_pretrained.assert_not_called()

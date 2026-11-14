@@ -19,7 +19,7 @@ import time
 from queue import Queue
 from typing import TYPE_CHECKING, Any, cast
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.hardware_types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _pynput_available, require_package
 from lerobot.utils.keyboard_input import pynput_can_capture
