@@ -418,15 +418,8 @@ def _apply_groot_step_overrides(
     if not overrides:
         return
 
-    def _step_keys(step: ProcessorStep) -> set[str]:
-        keys = {type(step).__name__}
-        registry_name = getattr(type(step), "_registry_name", None)
-        if registry_name:
-            keys.add(registry_name)
-        return keys
-
     for override_key, step_overrides in overrides.items():
-        matched_steps = [step for step in pipeline.steps if override_key in _step_keys(step)]
+        matched_steps = pipeline.get_steps(override_key)
         if not matched_steps:
             available = [
                 getattr(type(step), "_registry_name", None) or type(step).__name__ for step in pipeline.steps
@@ -537,15 +530,12 @@ def _reconnect_groot_n1_7_pack_decode_steps(
     decoding reads its reference state from; the link itself is not serialized.
     """
 
-    pack_step = next(
-        (step for step in preprocessor.steps if isinstance(step, GrootN17PackInputsStep)),
-        None,
-    )
+    pack_step = preprocessor.get_step(GrootN17PackInputsStep)
     if pack_step is None:
         return
 
-    for step in postprocessor.steps:
-        if isinstance(step, GrootN17ActionDecodeStep) and step.pack_step is None:
+    for step in postprocessor.get_steps(GrootN17ActionDecodeStep):
+        if step.pack_step is None:
             step.pack_step = pack_step
 
 

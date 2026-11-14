@@ -315,16 +315,14 @@ def _refresh_evo1_normalization_steps(
     """
     normalization_features = _evo1_normalization_features(config)
     action_features = _evo1_action_features(config)
-    for step in preprocessor.steps:
-        if isinstance(step, NormalizerProcessorStep):
-            step.features = normalization_features
-            step.stats = _pad_evo1_stats(config, step.stats)
-            step.to(device=step.device, dtype=step.dtype)
-    for step in postprocessor.steps:
-        if isinstance(step, UnnormalizerProcessorStep):
-            step.features = action_features
-            step.stats = _pad_evo1_stats(config, step.stats)
-            step.to(device=step.device, dtype=step.dtype)
+    for normalizer in preprocessor.get_steps(NormalizerProcessorStep):
+        normalizer.features = normalization_features
+        normalizer.stats = _pad_evo1_stats(config, normalizer.stats)
+        normalizer.to(device=normalizer.device, dtype=normalizer.dtype)
+    for unnormalizer in postprocessor.get_steps(UnnormalizerProcessorStep):
+        unnormalizer.features = action_features
+        unnormalizer.stats = _pad_evo1_stats(config, unnormalizer.stats)
+        unnormalizer.to(device=unnormalizer.device, dtype=unnormalizer.dtype)
 
 
 def reconcile_evo1_processors(
@@ -355,19 +353,12 @@ def reconcile_evo1_processors(
         gripper_below_threshold_value=config.gripper_below_threshold_value,
         gripper_above_threshold_value=config.gripper_above_threshold_value,
     )
-    steps = list(postprocessor.steps)
-    action_step_idx = next(
-        (idx for idx, step in enumerate(steps) if isinstance(step, Evo1ActionProcessorStep)), None
-    )
-    if action_step_idx is None:
-        insert_idx = next(
-            (idx + 1 for idx, step in enumerate(steps) if isinstance(step, UnnormalizerProcessorStep)),
-            0,
-        )
-        steps.insert(insert_idx, action_step)
+    if postprocessor.has_step(Evo1ActionProcessorStep):
+        postprocessor.steps[postprocessor.index(Evo1ActionProcessorStep)] = action_step
+    elif postprocessor.has_step(UnnormalizerProcessorStep):
+        postprocessor.steps.insert(postprocessor.index(UnnormalizerProcessorStep) + 1, action_step)
     else:
-        steps[action_step_idx] = action_step
-    postprocessor.steps = steps
+        postprocessor.steps.insert(0, action_step)
 
     return preprocessor, postprocessor
 

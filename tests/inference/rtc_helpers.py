@@ -39,6 +39,12 @@ class Pipeline:
     def reset(self):
         pass
 
+    def get_steps(self, step_type):
+        return []
+
+    def get_step(self, step_type):
+        return None
+
 
 class ControlledPolicy:
     chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
