@@ -114,6 +114,16 @@ def test_image_prep_leaves_non_image_keys_untouched() -> None:
     assert torch.equal(out[OBS_STATE], state)
 
 
+def test_image_prep_preserves_dataset_padding_masks() -> None:
+    step = ImagePrepProcessorStep(resize_to=RESIZE)
+    mask = torch.tensor([[True, False], [False, False]])
+    observation = {IMG_KEY: torch.rand(BATCH_SIZE, 3, IMAGE_SIZE, IMAGE_SIZE), f"{IMG_KEY}_is_pad": mask}
+    output = step.observation(observation)
+    assert output[f"{IMG_KEY}_is_pad"] is mask
+    assert output[f"{IMG_KEY}_is_pad"].dtype == torch.bool
+    assert tuple(output[IMG_KEY].shape[-2:]) == RESIZE
+
+
 def test_image_prep_config_roundtrip_via_registry() -> None:
     step = ImagePrepProcessorStep(resize_to=RESIZE, expand_channels=True)
     cfg = step.get_config()
