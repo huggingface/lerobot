@@ -395,6 +395,50 @@ def test_add_features_with_values(sample_dataset, tmp_path, values, feature_shap
     assert tuple(sample_item["new_feature"].shape) == expected_item_shape
 
 
+@pytest.mark.parametrize("state_shape", [(1,), (2,)], ids=["scalar", "vector"])
+@pytest.mark.parametrize("use_frame_dict", [False, True], ids=["arguments", "frame-dict"])
+def test_add_features_callable_preserves_integer_indices(tmp_path, state_shape, use_frame_dict):
+    """Callbacks can use stored integer indices for ordinary sequence lookups."""
+    source = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        root=tmp_path / "source",
+        features={"observation.state": {"dtype": "float32", "shape": state_shape, "names": None}},
+        use_videos=False,
+        video_backend="pyav",
+    )
+    rewards = [[0.25, 0.5], [1.25, 1.5]]
+    for episode_idx in range(2):
+        for frame_idx in range(2):
+            source.add_frame(
+                {
+                    "observation.state": np.full(state_shape, episode_idx + frame_idx / 10, dtype=np.float32),
+                    "task": "test",
+                }
+            )
+        source.save_episode()
+    source.finalize()
+
+    def reward(frame_dict, episode_idx, frame_idx):
+        if use_frame_dict:
+            return rewards[frame_dict["episode_index"]][frame_dict["frame_index"]]
+        return rewards[episode_idx][frame_idx]
+
+    result = add_features(
+        source,
+        features={"reward": (reward, {"dtype": "float32", "shape": (1,), "names": None})},
+        output_dir=tmp_path / "result",
+    )
+
+    assert len(result) == 4
+    for index, item in enumerate(result):
+        episode_idx, frame_idx = divmod(index, 2)
+        assert item["reward"].item() == rewards[episode_idx][frame_idx]
+        assert item["episode_index"].item() == episode_idx
+        assert item["frame_index"].item() == frame_idx
+        torch.testing.assert_close(item["observation.state"], source[index]["observation.state"])
+
+
 def test_add_features_with_callable(sample_dataset, tmp_path):
     """Test adding a feature with a callable."""
 
