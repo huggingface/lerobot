@@ -301,7 +301,8 @@ def test_log_policy_standard_checkpoint(trackio, tmp_path):
             trackio=TrackioConfig(disable_artifact=False),
         )
     )
-    checkpoint_dir = make_checkpoint(tmp_path, "model.safetensors")
+    checkpoint_dir = make_checkpoint(tmp_path, "model.safetensors", "config.json")
+    pretrained_model_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
 
     logger.log_policy(checkpoint_dir)
 
@@ -310,7 +311,10 @@ def test_log_policy_standard_checkpoint(trackio, tmp_path):
     )
 
     artifact = trackio.Artifact.return_value
-    artifact.add_file.assert_called_once_with(checkpoint_dir / PRETRAINED_MODEL_DIR / "model.safetensors")
+    assert artifact.add_file.call_args_list == [
+        call(pretrained_model_dir / "model.safetensors"),
+        call(pretrained_model_dir / "config.json"),
+    ]
     trackio.log_artifact.assert_called_once_with(artifact)
 
 
@@ -533,3 +537,19 @@ def test_trackio_logger_end_to_end_with_real_package(tmp_path):
 
     console_logs = sorted((storage_dir / "media" / "e2e" / summary["run_name"]).glob("console-*.log"))
     assert "console capture marker" in "".join(log.read_text() for log in console_logs)
+
+
+def test_log_policy_uploads_sharded_checkpoint(trackio, tmp_path):
+    logger = TrackioLogger(make_cfg(tmp_path, trackio=TrackioConfig(disable_artifact=False)))
+    names = ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"]
+    checkpoint_dir = make_checkpoint(tmp_path, *names, "model.safetensors.index.json", "config.json")
+    model_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
+    (model_dir / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"a": names[0], "b": names[1], "c": names[0]}})
+    )
+    logger.log_policy(checkpoint_dir)
+    artifact = trackio.Artifact.return_value
+    assert artifact.add_file.call_args_list == [
+        call(model_dir / name) for name in ["model.safetensors.index.json", *names, "config.json"]
+    ]
+    trackio.log_artifact.assert_called_once_with(artifact)

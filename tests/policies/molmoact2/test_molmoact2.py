@@ -1613,6 +1613,8 @@ def test_molmoact2_norm_metadata_is_initialization_only(tmp_path, monkeypatch):
 
     molmoact2_modeling._apply_norm_tag_metadata(config)
     config._save_pretrained(checkpoint_path)
+    # Weight resolution checks for this file before calling the mocked loader.
+    (checkpoint_path / "model.safetensors").touch()
     stats_path.unlink()
     reloaded = PreTrainedConfig.from_pretrained(checkpoint_path)
 

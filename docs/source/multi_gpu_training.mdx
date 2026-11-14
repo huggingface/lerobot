@@ -94,6 +94,8 @@ FSDP shards the model in units (typically the repeated transformer block) and ga
 --accelerator.fsdp.min_num_params=1000000                  # or: wrap every submodule above 1M params
 ```
 
+FSDP can't split tied weights (e.g. a language head tied to the input embedding) across wrap units. torch 2.12 and newer stop at the first training step and name the parameter, while older versions silently untie them. Wrapping the repeated block class usually keeps them together in the root unit.
+
 If a policy doesn't declare `_fsdp_wrap_modules` and no `--accelerator.fsdp.wrap_modules` or `--accelerator.fsdp.min_num_params` is passed, the run fails at startup rather than silently wrapping only the root module (which would forfeit all sharding memory savings).
 
 Other sharding settings:
@@ -101,7 +103,7 @@ Other sharding settings:
 - `--accelerator.fsdp.reshard_after_forward`: whether to keep each unit's parameters resident after forward.
 - `--accelerator.fsdp.cpu_offload`: keeps parameters, gradients and optimizer states on CPU.
 - `--accelerator.fsdp.ignored_modules`: a regex of module paths to keep unsharded.
-- `--accelerator.fsdp.mixed_precision_policy.{param_dtype,reduce_dtype,output_dtype,cast_forward_inputs}`: the fields of PyTorch's `MixedPrecisionPolicy`, applied to every FSDP unit. Once any field is set, the policy is built from these fields alone and replaces the one derived from `--accelerator.mixed_precision`, so set `param_dtype` too. `float16` needs `--accelerator.mixed_precision=fp16`, which builds the loss scaler.
+- `--accelerator.fsdp.mixed_precision_policy.{param_dtype,reduce_dtype,output_dtype,cast_forward_inputs}`: the fields of PyTorch's `MixedPrecisionPolicy`, applied to every FSDP unit. Once any field is set, the policy is built from these fields alone and replaces the one derived from `--accelerator.mixed_precision`, so set `param_dtype` too. Before torch 2.15, an unset `reduce_dtype` follows `param_dtype`. From torch 2.15, it follows the parameters' own dtype (float32 under mixed precision). `float16` needs `--accelerator.mixed_precision=fp16`, which builds the loss scaler.
 
 ### HSDP
 

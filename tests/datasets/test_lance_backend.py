@@ -42,7 +42,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.factory import make_dataset, make_train_eval_datasets
 from lerobot.datasets.lance_backend import LanceDatasetReader, _EpisodeSubsetIndexMapping, lance_mp_context
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
@@ -715,6 +715,128 @@ def test_force_cache_sync_refreshes_remote_meta(video_dataset_roots):
     assert LeRobotDataset(DUMMY_REPO_ID, root=uri).meta.fps == 999  # cache reused as-is
     refreshed = LeRobotDataset(DUMMY_REPO_ID, root=uri, force_cache_sync=True)
     assert refreshed.meta.fps != 999  # re-materialized from the meta table
+
+
+def test_remote_metadata_cache_separates_endpoints(
+    tmp_path, monkeypatch, lerobot_dataset_factory, tasks_factory
+) -> None:
+    remote_root = "s3://shared-bucket/dataset"
+    roots = {}
+    for label in ("endpoint-a", "endpoint-b"):
+        tasks = tasks_factory(total_tasks=1)
+        tasks.index = [label]
+        src_root = tmp_path / label / "src"
+        lerobot_dataset_factory(
+            root=src_root,
+            total_episodes=3,
+            total_frames=90,
+            use_videos=False,
+            camera_features={},
+            tasks=tasks,
+        )
+        lance_root = tmp_path / label / "lance"
+        convert(lance_root, root=src_root)
+        roots[f"https://{label}.example.com"] = lance_root
+
+    connect = lancedb.connect
+
+    def connect_endpoint(uri, *, storage_options):
+        if uri != remote_root:
+            assert Path(uri) in roots.values()
+            return connect(uri, storage_options=storage_options)
+        assert uri == remote_root
+        return connect(str(roots[storage_options["aws_endpoint"]]))
+
+    monkeypatch.setattr(lancedb, "connect", connect_endpoint)
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    options_a = {"aws_endpoint": "https://endpoint-a.example.com", "aws_region": "us-east-1"}
+    rotated_options_a = {
+        **dict(reversed(options_a.items())),
+        "aws_secret_access_key": "rotated-secret",
+        "timeout": "60s",
+    }
+    datasets = []
+    try:
+        for label, options in (
+            ("endpoint-a", options_a),
+            ("endpoint-b", {**options_a, "aws_endpoint": "https://endpoint-b.example.com"}),
+            ("endpoint-a", rotated_options_a),
+        ):
+            dataset = LeRobotDataset(
+                DUMMY_REPO_ID,
+                root=remote_root,
+                storage_options=options,
+            )
+            datasets.append(dataset)
+            assert dataset[0]["task"] == label
+        assert datasets[0].root != datasets[1].root
+        assert datasets[0].root == datasets[2].root
+    finally:
+        for dataset in datasets:
+            dataset.reader.close()
+
+
+@pytest.mark.parametrize("revision_key", ["revision", "REVISION"])
+def test_storage_options_rejects_revision(revision_key):
+    with pytest.raises(ValueError, match="storage_options.*revision"):
+        lance_utils._storage_options(
+            "hf://datasets/user/repo", {revision_key: "branch-in-options"}, revision="main"
+        )
+
+    assert lance_utils._storage_options("hf://datasets/user/repo", {}, revision="main")["revision"] == "main"
+
+
+@pytest.mark.parametrize("entry_point", ["dataset", "train_eval"])
+def test_storage_options_remote_reads(dataset_roots, tmp_path, monkeypatch, entry_point: str) -> None:
+    src_root, lance_root = dataset_roots
+    remote_root = "s3://test-bucket/dataset"
+    storage_options = {"aws_endpoint": "https://s3.example.com", "aws_region": "us-east-1"}
+    expected_options = storage_options.copy()
+    connect = lancedb.connect
+
+    def connect_with_options(uri, **kwargs):
+        # Emulate a store that requires these options, while reading real local
+        # Lance tables. Missing options must fail even on the first metadata read.
+        assert uri in (remote_root, str(lance_root))
+        assert kwargs.get("storage_options") == expected_options
+        return connect(str(lance_root), **kwargs)
+
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.setattr(lancedb, "connect", connect_with_options)
+    if entry_point == "dataset":
+        datasets = [LeRobotDataset(DUMMY_REPO_ID, root=remote_root, storage_options=storage_options)]
+    else:
+        cfg = TrainPipelineConfig(
+            dataset=DatasetConfig(
+                repo_id=DUMMY_REPO_ID,
+                root=remote_root,
+                storage_options=storage_options,
+                eval_split=0.34,
+            ),
+            policy=make_policy_config("act"),
+        )
+        # This also exercises make_dataset before rebuilding the train and eval readers.
+        datasets = list(make_train_eval_datasets(cfg))
+
+    storage_options["aws_region"] = "changed-after-construction"
+    reference = LeRobotDataset(DUMMY_REPO_ID, root=src_root, delta_timestamps=datasets[0].delta_timestamps)
+    for dataset in datasets:
+        sample = dataset[0]
+        assert_items_equal(sample, reference[int(sample["index"])])
+
+        if entry_point == "dataset":
+            restored = pickle.loads(pickle.dumps(dataset))
+            assert_items_equal(restored[0], sample)
+            restored.reader.close()
+        dataset.reader.close()
+
+
+def test_default_storage_rejects_storage_options(dataset_roots):
+    src_root, _ = dataset_roots
+    with pytest.raises(ValueError, match="storage_options.*default"):
+        LeRobotDataset(DUMMY_REPO_ID, root=src_root, storage_options={"aws_region": "us-east-1"})
+
+    assert len(LeRobotDataset(DUMMY_REPO_ID, root=src_root, storage_options={})) == 90
 
 
 def test_pickle_and_dataloader(dataset_roots):

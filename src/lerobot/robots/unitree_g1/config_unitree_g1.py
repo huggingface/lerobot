@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from math import isfinite
 
 from lerobot.cameras import CameraConfig
-from lerobot.envs.configs import G1EndEffector, UnitreeG1MujocoEnv
+from lerobot.envs.configs import G1EndEffector, UnitreeG1MujocoEnvConfig
 
 from ..config import RobotConfig
 from .g1_embodiments import get_g1_embodiment
@@ -37,6 +37,9 @@ class UnitreeG1Config(RobotConfig):
     # Control loop timestep
     control_dt: float = 1.0 / 250.0  # 250Hz
 
+    # Joint target blend duration after connect/reset, in seconds. 0 disables.
+    ease_in_s: float = 2.0
+
     # Launch mujoco simulation
     is_simulation: bool = True
 
@@ -44,7 +47,7 @@ class UnitreeG1Config(RobotConfig):
     end_effector: G1EndEffector = G1EndEffector.DEX1
 
     # Loads the lerobot/unitree-g1-mujoco environment
-    sim_env: UnitreeG1MujocoEnv = field(init=False)
+    sim_env: UnitreeG1MujocoEnvConfig = field(init=False)
 
     # Where the sim's cameras are published, or its viewer instead when publishing is off.
     sim_publish_images: bool = True
@@ -88,9 +91,11 @@ class UnitreeG1Config(RobotConfig):
             if any(values[index] != 0 for index in inactive):
                 raise ValueError(f"{name} must be zero at inactive {self.embodiment} DDS slots")
         self.end_effector = G1EndEffector(self.end_effector)  # from Python it is still a string
-        self.sim_env = UnitreeG1MujocoEnv(
+        self.sim_env = UnitreeG1MujocoEnvConfig(
             publish_images=self.sim_publish_images,
             camera_port=self.sim_camera_port,
             onscreen=self.sim_onscreen,
             end_effector=self.end_effector,
+            # The robot's own simulation repository, trusted as it always was.
+            trust_remote_code=True,
         )

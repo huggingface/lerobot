@@ -1,0 +1,549 @@
+# Praxis-1
+
+`praxis` is the LeRobot adapter of [Praxis-1](https://runway.com/news/praxis-1-is-now-available), Runway's open-weight
+World Action Model for robots. Praxis-1 is a video-action model: a chunk-causal video diffusion
+backbone (a 27B-parameter mixture-of-experts transformer, about 3B active per token) denoises the
+next 1.6 s of video of the two rig cameras while an action expert, reading the backbone's hidden
+states, denoises the matching 24 Cartesian commands at 15 Hz. The Wan2.2 video autoencoder and the
+Qwen3.5-2B text encoder are frozen and come from their public weights. The released checkpoint,
+`praxis-1-droid`, drives a single-arm DROID rig: a Franka arm
+with an exterior camera and a wrist camera. An earlier, unreleased DROID checkpoint
+has the same architecture with other weights and another camera canvas; the checkpoint's `config.json`
+tells them apart (see "The checkpoints"). `praxis-1-yam`, the bimanual checkpoint for two YAM arms,
+ships in the same layout (see "The bimanual YAM checkpoint"). `praxis-1-base`, the video backbone and
+action-expert trunk without the heads of a rig, is the start of a fine-tune for a new single-arm rig
+(see "Fine-tune the base checkpoint").
+
+Resources:
+
+| Resource     | Link                                                                                           | Used for                                                              |
+| ------------ | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Announcement | [runway.com/news/praxis-1-is-now-available](https://runway.com/news/praxis-1-is-now-available) | Method overview                                                       |
+| Weights      | [Praxis-1 collection](https://huggingface.co/collections/runwayml/praxis-1)                    | `runwayml/praxis-1-droid-lerobot` and the other converted checkpoints |
+| Code         | [runwayml/praxis-1-oss](https://github.com/runwayml/praxis-1-oss)                              | Original inference, sim and train                                     |
+| Simulator    | [praxis-sim on PyPI](https://pypi.org/project/praxis-sim/)                                     | The MuJoCo rig and its evaluation suites                              |
+| Wan2.2 VAE   | [Wan-AI/Wan2.2-TI2V-5B](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B)                          | `Wan2.2_VAE.pth` (frozen)                                             |
+| Text encoder | [Qwen/Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B)                                      | Frozen                                                                |
+
+The model code lives in-tree under `lerobot/policies/praxis/praxis_core` (vendored from the praxis
+repository at commit 8dad1a4 plus the canvas rule of `praxis-1-droid`, import paths rewritten; the file headers
+name the upstream commits). The MuJoCo simulation is the `praxis-sim` package on PyPI (developed in
+the praxis repository's `packages/praxis-sim`, no torch); LeRobot has no environment for it.
+
+## Installation
+
+```bash
+pip install -e ".[praxis,dataset]"   # the policy; `lerobot-eval` and `lerobot-train` also need `dataset`
+```
+
+The converted checkpoints are on the Hub: `--policy.path=runwayml/praxis-1-droid-lerobot` loads the
+released single-arm checkpoint (54 GB, downloaded once).
+`runwayml/praxis-1-yam-lerobot` is the bimanual checkpoint.
+`runwayml/praxis-1-base-lerobot` is the base, which needs `init_heads.py` first.
+
+The policy runs on the versions LeRobot 0.7 locks (0.7.1 at the time of writing: torch 2.15.0 with
+CUDA 13.2, transformers 5.22.2, triton 3.9). The results below were measured on that stack (with
+transformers 5.22.1 and 5.22.2, which give the same commands) and on LeRobot 0.6's (torch 2.11.0 with
+CUDA 12.8, transformers 5.5.4); the commands are bitwise equal to the praxis repository's on each.
+
+Optional kernels of the checkpoint's validation setup. `flash-attn-4` gives the `flash` attention
+backend of the checkpoint config (flex attention with the FlashAttention-4 CuTe kernel); without it
+the policy uses the Triton kernel of flex attention. `flash-linear-attention` and `causal-conv1d`
+are the fast kernels of Qwen3.5's linear-attention layers; without them `transformers` runs its
+PyTorch implementation. All three change the last bits of the outputs, not the model:
+
+```bash
+pip install "flash-attn-4[cu13]==4.0.0b36"        # the CUDA 13 build for torch 2.15; "flash-attn-4==4.0.0b36" on a CUDA 12 torch
+pip install "flash-linear-attention==0.6.0"       # 0.5.0 does not run on triton 3.9
+CAUSAL_CONV1D_FORCE_BUILD=TRUE MAX_JOBS=16 pip install --no-build-isolation "causal-conv1d==1.6.1"   # compiles against torch; the praxis repository's setup
+```
+
+Inference needs one GPU with 80 GB of memory (the weights are 54 GB in bfloat16).
+
+On datacenter Blackwell GPUs (B200 and GB200 are SM100, B300 and GB300 are SM103; Jetson Thor,
+SM110, has the same FlashAttention-4 forward):
+
+- B300 and GB300 need a torch build for CUDA 12.9 or later, such as the torch 2.15.0+cu132 that
+  LeRobot 0.7 locks. The MoE experts call `torch._grouped_mm`, and the build of torch 2.11.0+cu128
+  (LeRobot 0.6) has no SM103 kernel for it: the first policy call fails with
+  `RuntimeError: cutlass cannot run, error 7`, as the praxis repository's pipeline does. The B200
+  runs on both stacks.
+- FlashAttention-4 takes block-sparse masks only in blocks of 256 tokens there (it raises
+  `ValueError: Block sparse tensorsforward have block size 128, which must be a multiple of 256`).
+  With the `flash` backend the policy builds the backbone masks in blocks of 256 tokens on these
+  GPUs instead of the checkpoint's `backbone.attention.flex_block_size` of 128. The block size only
+  groups the token pairs: the mask function still decides each pair. The praxis repository runs the
+  same with `"flex_block_size": 256` in the checkpoint's `config.json`. The `triton` backend keeps
+  the checkpoint's 128.
+
+On RTX Blackwell GPUs (compute capability 12.x; the RTX PRO 6000 Blackwell has the 96 GB the weights
+need), FlashAttention-4 has no block-sparse forward at any block size (with the checkpoint's
+128-token blocks it raises `Block sparsity requires sparse_block_size[1]=128 to match tile_n=64`),
+so the `flash` backend cannot run there. `attention_backend="auto"` selects `triton` on these GPUs,
+also with `flash-attn-4` installed, and `"flash"` raises a `ValueError` when the policy is built.
+The praxis repository fails on its first call with the checkpoint's `flash` and runs the same with
+`"backend": "triton"` in the checkpoint's `config.json`. The two backends differ in the last bits,
+so compare runs on these GPUs with `triton` runs elsewhere. Nothing else changes on an RTX PRO 6000:
+the torch builds of both stacks below ship SM120 kernels (`torch._grouped_mm` of the MoE included),
+and inference with `praxis-1-droid`'s settings peaks at about 62 GB.
+
+These rules follow FlashAttention-4's own checks. The parity results below were measured on a
+GB300, a B200 and an RTX PRO 6000 Blackwell.
+
+> [!WARNING]
+> `transformers` 5.4.0 to 5.5.4 (LeRobot 0.6; fixed in 5.6.0, and LeRobot 0.7 locks 5.22) load the Hub
+> checkpoint `Qwen/Qwen3.5-2B` with all 320 language-model tensors reported as missing (it renames the
+> stored `model.language_model.*` names before matching) and silently initializes them at random. The
+> policy's text encoder detects this and loads the tensors under their stored names, with a warning in
+> the log. A text encoder left random gives a policy that still moves but rarely succeeds (7 of 56 guard
+> episodes in our first run).
+
+## Inputs and outputs
+
+| Feature                             | Shape | Meaning                                                                                                                                                                                                                    |
+| ----------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `observation.images.exterior`       | RGB   | The fixed camera. Any size; the preprocessor makes the tile of the checkpoint (224 x 416 with the antialiased fit rule for `praxis-1-droid`, 256 x 416 for the earlier DROID checkpoint). Key set by `exterior_image_key`. |
+| `observation.images.wrist`          | RGB   | The wrist camera. Key set by `wrist_image_key`.                                                                                                                                                                            |
+| `observation.state`                 | (7,)  | `[x, y, z, roll, pitch, yaw, gripper]`: the Franka flange pose in the robot base frame (metres, extrinsic x-y-z Euler angles in radians, the DROID convention) and the gripper in [0, 1].                                  |
+| `task`                              | str   | The instruction, given to the text encoder verbatim.                                                                                                                                                                       |
+| `action`                            | (7,)  | The same seven values: the absolute target pose and gripper of the next 15 Hz tick.                                                                                                                                        |
+| `observation.scene_seed` (optional) | (1,)  | The scene seed of the episode. The sampler seed of chunk `k` is `seed + seed_stride * scene_seed + k`.                                                                                                                     |
+
+The policy keeps its own history: a ring buffer of the last 25 observations per environment of the
+batch (the executed chunk plus the current frame) feeds the next call as context, so
+`n_obs_steps` stays 1 and `select_action` must be called at every 15 Hz tick with the observation
+of that tick. The first call of a context window returns 21 commands, every later call 24. With
+`n_action_steps` below 24 every call is a cold start without context, as in praxis.
+`drop_queued_actions` (a new instruction mid-rollout, for example) also restarts the temporal
+context, since the model conditions on the whole previous chunk having been executed. A caller
+that executes whole chunks (`predict_action_chunk`) hands over the frames executed since its
+previous call as a stack, `(B, T, 3, H, W)` cameras with `(B, T, 7)` states, oldest first; the
+next chunk is then the one of a call-per-tick rollout. A chunk call with one frame starts the
+context again.
+
+### Processors
+
+The preprocessor prepares the inputs the way the praxis data and serve code do, as saved,
+inspectable steps:
+
+| Step                           | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PraxisTileViewsProcessorStep` | Each camera view becomes its tile of the canvas with the rule of the checkpoint (`video.antialias`). `praxis-1-droid`: centre crop to the native 720 x 1280 aspect, one antialiased bilinear resize to 234 x 416 (none for a view sent at that size), centre trim to 224 x 416. The earlier DROID checkpoint: centre crop to the tile aspect, one plain bilinear resize to 256 x 416. uint8 levels; a view already at the tile size passes through. |
+| `PraxisPoseProcessorStep`      | The DROID pose `[x, y, z, roll, pitch, yaw, gripper]` becomes the praxis pose8 `[x, y, z, qw, qx, qy, qz, gripper]` (state, and the actions of a training batch).                                                                                                                                                                                                                                                                                   |
+| `PraxisTokenizerProcessorStep` | The instruction becomes the token ids and attention mask of the Qwen3.5-2B text encoder (`observation.language.tokens`, `.attention_mask`), tokenized as the praxis text encoder tokenizes. The frozen encoder and its embedding cache stay in the policy.                                                                                                                                                                                          |
+| `PraxisCommandProcessorStep`   | (postprocessor) The policy's command, the praxis wire pose `[x, y, z, rotation 3 x 3]` and the gripper, becomes the DROID 7 values, on the CPU.                                                                                                                                                                                                                                                                                                     |
+
+Between them the policy sees tiles and pose8 rows and emits wire poses, exactly what the praxis
+`Session` consumes and produces. The q99 action normalization, the mean/std proprio normalization
+and the relative-action decode stay inside the session: they are anchored to the pose at the
+start of each executed chunk, which the session tracks over the rollout, and their statistics are
+the checkpoint's (`PraxisConfig.model_config["normalization"]`); the stock normalizer steps are
+identity. The policy also accepts the raw 7-value pose, raw camera frames and the `task` string, so
+it can be called without the pipeline: frames at the tile size are taken as tiles, other sizes go
+through the canvas rule of the checkpoint (the fit rule of `praxis-1-droid` is not idempotent, so a tile never
+goes through it twice), and a task without tokens is tokenized by the policy. The tiles stay on the
+device the pipeline puts them on until the autoencoder reads them, and the commands come back on
+the CPU: nothing crosses the device boundary twice.
+
+## The checkpoints
+
+| Checkpoint                                | Tiles                  | Resize                                         | Recommended sampler (`PraxisConfig` defaults for `praxis-1-droid`)                                                                         |
+| ----------------------------------------- | ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `praxis-1-droid` (released)               | 224 x 416              | antialiased fit rule (`video.antialias: true`) | 2 Euler steps, flow shift 12.5, text guidance 4.0 on the video and none on the actions (1.0), 1 context chunk                              |
+| YAM, `praxis-1-yam` (bimanual, released)  | 256 x 416, three tiles | YAM fit rule (`video.antialias: true`)         | 2 steps, flow shift 1.0, no text guidance, 1 context chunk (the converter writes them)                                                     |
+| Base, `praxis-1-base` (no heads)          | set by `init_heads.py` | set by `init_heads.py`                         | the fine-tune's choice; the DROID rig takes `praxis-1-droid`'s                                                                             |
+| The earlier DROID checkpoint (unreleased) | 256 x 416              | plain bilinear resize                          | 2 steps, shift 8.0, no text guidance, 3 context chunks (praxis); the results below used shift 1.0, action guidance 3.0 and 1 context chunk |
+
+The canvas comes from the checkpoint's `config.json` (`video.tile_height`, `video.antialias`) through the
+converter; the sampler settings are `PraxisConfig` fields, so a run of the earlier DROID checkpoint passes its own
+(`--policy.t_shift=8.0 --policy.cfg_video_scale=1.0 --policy.max_context_chunks=3`).
+
+## Convert the checkpoint
+
+A praxis checkpoint is a directory with `config.json`, 17 safetensors shards,
+`model.safetensors.index.json` and `SHA256SUMS`. Convert it to a LeRobot policy directory:
+
+```bash
+python examples/praxis/convert_checkpoint.py \
+    --checkpoint /path/to/praxis-1-droid --out outputs/praxis-1-droid --link
+```
+
+The rig comes from the checkpoint's `embodiment`: the bimanual checkpoint gets its three camera
+keys (`--camera-keys` to rename them) and the serve settings of its checkpoint.
+The base checkpoint gets a directory without processors that `init_heads.py` completes.
+`runwayml/praxis-1-droid-lerobot` and the other converted checkpoints are this script's output.
+
+`--link` symlinks the shards instead of copying 54 GB. The directory holds the LeRobot `config.json`,
+the shards, the index and its own `SHA256SUMS` (`sha256sum -c` passes in it) (LeRobot policies read and write sharded safetensors in the transformers
+layout; `PraxisPolicy.save_pretrained` writes 5 GB shards), and the two processor files. `--vae-id` and `--text-encoder-id` set where the frozen parts come from (Hub ids by default).
+
+## Results
+
+The closed-loop numbers below come from the MuJoCo rig of the praxis repository (the `praxis-sim`
+package: Franka + Robotiq 2F-85, 512 x 288 cameras, 15 Hz) and its fixed evaluation suites; the
+LeRobot seed of an episode is its scene seed. The environment that runs the suites through
+`lerobot-eval` is not part of LeRobot.
+
+While it samples, the policy pins the numerical settings praxis runs with (no cuDNN benchmark
+mode, float32 matmuls for the MoE router, TF32 allowed in cuDNN) and restores the host settings
+afterwards, so `--tf32`, `torch.backends.cudnn.benchmark` and the batch size do not change its
+outputs.
+
+The `droid_guard` suite (7 DROID tasks x 8 scenes, 56 episodes, sampler seed 0) with the earlier,
+unreleased DROID checkpoint (256 x 416 tiles) at the sampler settings of the praxis
+repository at the time (2 Euler steps, flow shift 1.0, action guidance 3.0, no video guidance, 1
+context chunk) and its `flash` attention backend, on one H100 80 GB (about 10 minutes).
+The same episodes were run five ways: the praxis repository's own runner in its own environment
+(torch 2.13, transformers 5.2.0, causal-conv1d), the same runner and `lerobot-eval` on LeRobot 0.6's
+stack (torch 2.11, transformers 5.5.4), and both again on the stack LeRobot 0.7 locks (torch 2.15
+with CUDA 13.2, triton 3.9, flash-linear-attention 0.6.0; transformers 5.16.1 at the time). Repeating
+the torch 2.15 runs with transformers 5.22.1 gives bitwise the same commands and the same 46/56 episode outcomes
+for both the praxis runner and `lerobot-eval`, and 5.22.2 (the version LeRobot 0.7.1 locks) gives the
+same commands for `praxis-1-droid` and the YAM checkpoint: the transformers version does not enter the numbers.
+
+| Task              | praxis runner, praxis env | praxis runner, torch 2.11 | `lerobot-eval`, torch 2.11 | praxis runner, torch 2.15 | `lerobot-eval`, torch 2.15 |
+| ----------------- | ------------------------: | ------------------------: | -------------------------: | ------------------------: | -------------------------: |
+| lift_cube         |                       7/8 |                       7/8 |                        6/8 |                       7/8 |                        8/8 |
+| cube_on_plate     |                       8/8 |                       8/8 |                        8/8 |                       8/8 |                        8/8 |
+| block_in_bowl     |                       8/8 |                       8/8 |                        8/8 |                       8/8 |                        8/8 |
+| block_out_of_bowl |                       7/8 |                       6/8 |                        7/8 |                       7/8 |                        6/8 |
+| move_block        |                       7/8 |                       7/8 |                        6/8 |                       7/8 |                        7/8 |
+| stack_block       |                       7/8 |                       8/8 |                        7/8 |                       8/8 |                        6/8 |
+| press_button      |                       1/8 |                       0/8 |                        3/8 |                       1/8 |                        3/8 |
+| **Total**         |            **45/56** 80 % |            **44/56** 79 % |             **45/56** 80 % |            **46/56** 82 % |             **46/56** 82 % |
+
+Paired over the 56 episodes (`praxis_sim.compare`), `lerobot-eval` minus the reference:
+
+| Comparison                                              | Difference | 95 % bootstrap interval | Won / lost | McNemar p |
+| ------------------------------------------------------- | ---------: | ----------------------- | ---------- | --------: |
+| torch 2.11: `lerobot-eval` vs praxis runner, praxis env |     +0.0 % | [-10.7 %, +10.7 %]      | 5 / 5      |      1.00 |
+| torch 2.11: `lerobot-eval` vs praxis runner, same stack |     +1.8 % | [-8.9 %, +12.5 %]       | 6 / 5      |      1.00 |
+| torch 2.15: `lerobot-eval` vs praxis runner, praxis env |     +1.8 % | [-10.7 %, +14.3 %]      | 6 / 5      |      1.00 |
+| torch 2.15: `lerobot-eval` vs praxis runner, same stack |     +0.0 % | [-10.7 %, +10.7 %]      | 4 / 4      |      1.00 |
+
+Every interval includes zero: the LeRobot policy and environment reproduce the praxis repository's
+results, and neither the software stack (kernels, transformers version) nor the harness changes
+them beyond the episode-to-episode noise. The praxis runner itself moves by the same amount between
+stacks (44 to 46 of 56). `press_button` is hard for this checkpoint in every setup.
+
+Given identical inputs the policy is bitwise equal to the praxis pipeline on both stacks (see below);
+between the two stacks the commands of identical inputs differ by up to 0.04 (flash) and 0.02
+(triton), which is what moves individual episodes.
+
+### `praxis-1-droid`, the released checkpoint
+
+The same 56 episodes with `praxis-1-droid` (224 x 416 antialiased tiles) at its
+recommended settings (2 Euler steps, flow shift 12.5, video guidance 4.0, no action guidance, 1
+context chunk) and the `flash` backend, on one H100 80 GB: the praxis repository's runner (its `main`
+with the current sampler, in the praxis environment: torch 2.13, transformers 5.2.0), `lerobot-eval`
+on LeRobot 0.6's stack (torch 2.11, transformers 5.5.4), and both the runner and `lerobot-eval` on
+the stack LeRobot 0.7 locks (torch 2.15 with CUDA 13.2, transformers 5.22.1).
+
+| Task              | praxis runner, praxis env | `lerobot-eval`, torch 2.11 | praxis runner, torch 2.15 | `lerobot-eval`, torch 2.15 |
+| ----------------- | ------------------------: | -------------------------: | ------------------------: | -------------------------: |
+| lift_cube         |                       7/8 |                        8/8 |                       8/8 |                        8/8 |
+| cube_on_plate     |                       8/8 |                        7/8 |                       8/8 |                        8/8 |
+| block_in_bowl     |                       8/8 |                        8/8 |                       8/8 |                        8/8 |
+| block_out_of_bowl |                       8/8 |                        8/8 |                       7/8 |                        8/8 |
+| move_block        |                       7/8 |                        8/8 |                       8/8 |                        8/8 |
+| stack_block       |                       8/8 |                        7/8 |                       8/8 |                        6/8 |
+| press_button      |                       8/8 |                        8/8 |                       7/8 |                        8/8 |
+| **Total**         |            **54/56** 96 % |             **54/56** 96 % |            **54/56** 96 % |             **54/56** 96 % |
+
+Paired over the 56 episodes, `lerobot-eval` minus the praxis runner is +0.0 points on both stacks
+(95 % bootstrap interval [-7.1 %, +7.1 %], won 2 / lost 2, McNemar p 1.00 each). The episodes that
+flip are not the same ones on the two stacks: the kernels of torch 2.15 move the commands by up to
+0.02, and a few borderline episodes follow. `praxis-1-droid` with its settings solves `press_button`, which
+the earlier DROID checkpoint with its settings mostly failed.
+
+## Parity with the praxis repository
+
+- On identical observations in one process, the LeRobot policy and the praxis `Session` give bitwise
+  equal text embeddings, VAE latents, proprio, sampled actions and commands (same loaded weights).
+  `tests/policies/praxis/test_praxis.py` repeats this check on a tiny random model on the CPU.
+- Across processes, the praxis pipeline run through the original `praxis` package and the LeRobot
+  policy give bitwise equal commands on the real checkpoint, on both the `flash` and the `triton`
+  backend (the two backends differ from each other by up to 0.055 in the commands), on LeRobot 0.6's
+  stack (torch 2.11.0+cu128, transformers 5.5.4, flash-attn-4 4.0.0b36) and on the stack LeRobot
+  0.7 locks (torch 2.15.0+cu132, transformers 5.22.1 and 5.22.2, triton 3.9, flash-attn-4 4.0.0b36). The
+  reference itself moves between the two stacks (by up to 0.019 on `flash`, 0.015 on `triton`); the
+  policy follows it bit for bit on each.
+- `praxis-1-droid`: the cross-process check against the praxis pipeline of the praxis repository's `main`
+  (with its current sampler) is bitwise equal on both backends and both stacks in eight ways of calling the policy:
+  through its saved processor pipelines (as `lerobot-eval` does), on raw frames and the 7-value pose
+  without the pipelines, with two environments in one batch (different instructions and scene
+  seeds), through `predict_action_chunk` (a cold start, and the next chunk given the executed frames
+  as a stack), with `n_action_steps=12` (a chunk every 12 commands, conditioned on the executed
+  frames), with action guidance on (`cfg_scale=3`), and over 70 commands with three context chunks
+  (depth 0 to 3). The check holds under `lerobot-eval`'s default TF32 and cuDNN benchmark flags: the
+  policy pins the praxis numerics while it samples and gives the host its flags back. The tile step
+  computes the canvas on the CPU whatever the device of the frames: the CUDA antialiased resize
+  rounds one level differently on about a third of the pixels, which moved the commands by up to
+  0.02 before the step did so.
+- Training: on the released weights, `PraxisPolicy.forward` and `praxis.train.objective` of the
+  praxis repository give the same loss (and video and action terms) bit for bit for the same window
+  and random draws, and the same gradients on all 200 tensors of the action expert. The reported
+  MoE balance metric varies by one or two float32 ulps between runs on either side (a
+  nondeterministic reduction in the balance statistic; it enters the loss with weight 1e-4).
+- GB300 (SM103, an aarch64 host): on the stack LeRobot 0.7 locks (torch 2.15.0+cu132, cuDNN
+  9.26, transformers 5.22.1, triton 3.9, flash-attn-4 4.0.0b36, flash-linear-attention 0.6.0), the
+  cross-process check against the praxis repository's `main` is bitwise equal on both backends (`flash` with
+  256-token mask blocks on both sides): for `praxis-1-droid` in seven ways of calling the policy (the saved
+  pipelines under `lerobot-eval`'s flags, raw 720 x 1280 frames, two environments in one batch,
+  `predict_action_chunk` with frame stacks, `n_action_steps=12`, `cfg_scale=3`, and 94 commands
+  with three context chunks), for `praxis-1-yam` through the pipelines, on raw frames and with two
+  environments, and for the DROID rig rebuilt from `praxis-1-base`. `forward` gives the praxis
+  objective's loss and the gradients of all 200 action-expert tensors bit for bit on the released
+  weights.
+- RTX PRO 6000 Blackwell (SM120, 96 GB, an x86_64 host), `triton` on both sides: on LeRobot 0.6's
+  stack (torch 2.11.0+cu128, cuDNN 9.19, transformers 5.5.4, triton 3.6, flash-linear-attention
+  0.5.0) and on the stack LeRobot 0.7 locks (torch 2.15.0+cu132, cuDNN 9.26, transformers 5.22.1,
+  triton 3.9, flash-linear-attention 0.6.0 and causal-conv1d 1.6.1, so Qwen3.5 runs their kernels),
+  both with `flash-attn-4` 4.0.0b36 installed, the cross-process check against the praxis repository's
+  `main` is bitwise equal in the ways of the GB300: `praxis-1-droid` in the seven (463 commands, context depths 0 to 3),
+  `praxis-1-yam` in the three, and the DROID rig rebuilt from `praxis-1-base` (its six head tensors
+  and its config equal those of the praxis repository's `init_heads`). `forward` gives the praxis
+  objective's loss and the gradients of all 200 action-expert tensors bit for bit on both stacks,
+  with the backbone frozen on both sides (its 54 GB of gradients do not fit next to the weights).
+  On LeRobot 0.6's stack the praxis side needs the Qwen3.5 fix of the warning above as well:
+  praxis-1 pins transformers 5.2.0, and under 5.5.4 its text encoder stays random. Closed loop on
+  `droid_guard` with `praxis-1-droid` on LeRobot 0.6's stack: `lerobot-eval` 53/56 (94.6 %), the praxis
+  runner 54/56 (96.4 %, as on the H100 and the GB300); paired, -1.8 points, 95 % interval
+  [-8.9, +5.4], won 2 / lost 3, McNemar p 1.00. A LoRA fine-tune through `lerobot-train` (r 16,
+  alpha 32, the default targets, one window per step) runs on the one GPU: 5.5M trainable
+  parameters, 1.1 s per step, 62 GB.
+- B200 (SM100, an x86_64 host): on LeRobot 0.6's stack (torch 2.11.0+cu128, cuDNN 9.19,
+  transformers 5.5.4, triton 3.6) and on the stack LeRobot 0.7 locks (torch 2.15.0+cu132, cuDNN
+  9.26, transformers 5.22.1, triton 3.9, flash-linear-attention 0.6.0), both with `flash-attn-4`
+  4.0.0b36, the cross-process check against the praxis repository's `main` is bitwise equal on both
+  backends (`flash` with 256-token mask blocks on both sides) in the ways of the GB300: `praxis-1-droid` in
+  the seven (463 commands per backend and stack, context depths 0 to 3), `praxis-1-yam` in the
+  three, and the DROID rig rebuilt from `praxis-1-base` (its six head tensors and its config equal
+  those of the praxis repository's `init_heads`). The two backends differ from each other by up to
+  0.19 in the commands. `forward` gives the praxis objective's loss, its video and action terms
+  and the gradients of all 200 action-expert tensors bit for bit on both backends and both stacks,
+  the backbone trained. A LoRA fine-tune through `lerobot-train` runs on the one GPU (1.2 s per
+  step, 62 GB), and the adapter and its merged checkpoint load in `lerobot-eval`.
+- Closed loop on the B200 (`droid_guard`, `praxis-1-droid`, `flash`): the praxis runner scores 54/56 on the
+  torch 2.15 stack and 55/56 on torch 2.11, `lerobot-eval` 53/56 and 51/56 (paired: -1.8 points,
+  95 % interval [-8.9, +5.4]; and -7.1 points, [-14.3, -1.8], won 0 / lost 4, McNemar p 0.125). Each
+  harness repeats itself episode for episode, so the gap is not noise between runs, and it is not
+  the policy either: `lerobot-eval` carries the state and the commands as the DROID 7 values in
+  float32 (`PraxisSimGymEnv`, the pose and command processor steps), while the praxis runner passes
+  the session's poses and commands as they are. The round trip moves a pose by about 1e-7, and
+  over an episode the difference grows into another trajectory. The praxis runner with its state
+  and commands sent through the same float32 conversion gives the `lerobot-eval` outcome in all 56
+  episodes, on both stacks.
+- Against the praxis repository's own environment (torch 2.13.0+cu130, transformers 5.2.0,
+  causal-conv1d) the outputs are not bitwise equal: the kernels differ, the Qwen3.5 embedding differs
+  by up to 0.125 in bfloat16, and the last bits of the actions follow. The repository-to-repository
+  check is therefore the paired closed-loop evaluation above.
+- The sim renders with 4x multisampling, and a handful of pixels per frame differ between renders of
+  the same scene, so two closed-loop episodes of the same policy diverge after the first chunk even
+  with identical weights. Paired episodes are compared statistically, not frame by frame.
+
+## The bimanual YAM checkpoint
+
+`praxis-1-yam` (`"embodiment": "bimanual"`, `runwayml/praxis-1-yam-lerobot`) drives two YAM arms
+with a top camera and two wrist cameras (16:10 ZED views, 1920 x 1200). The same model runs it; the
+checkpoint differs in the expert head widths (20 action values: `[xyz, rot6d, gripper]` per arm),
+the three-tile canvas and the normalization. The LeRobot adapter follows the praxis repository's
+`praxis/bimanual.py` (vendored as `praxis_core/bimanual.py`):
+
+| Key                                                                                              | Shape | Meaning                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `observation.images.top_left`, `observation.images.wrist_left`, `observation.images.wrist_right` | RGB   | The three views in canvas order (`camera_keys`). Any 16:10 size; the processor makes the 256 x 416 tiles with the YAM fit rule (the views fit a 416 px box together, then a 32 px trim). |
+| `observation.state`                                                                              | (14,) | `[x, y, z, roll, pitch, yaw, gripper]` of the left arm, then of the right arm, in the rig's world frame (`pose_frame: rig`, no flange turn). 16 values (pose8 per arm) pass through too. |
+| `action`                                                                                         | (14,) | The same 14 values: the absolute target of each arm for the next 15 Hz tick. `select_action` emits 26 values (the wire pose and gripper of each arm); the command step converts them.    |
+
+The checkpoint's serve settings (the praxis repository's `configs/serve_yam.yaml`: 2 Euler steps, flow shift 1.0, no
+text guidance, 1 context chunk, the bimanual rig has no control mode) are what the converter writes
+into the config, so `--policy.path=runwayml/praxis-1-yam-lerobot` runs them. Prompts go to the text
+encoder verbatim; the checkpoint was trained on captions such as "Pick up the pen from the center of
+the table, then place the pen in the bag", without a closing period.
+
+Parity: on the real checkpoint, the LeRobot policy and the praxis pipeline's `BimanualServeSession`
+give bitwise equal commands for the same three views, poses and instruction (22 ticks: the cold-start
+chunk and the first command of the depth-1 chunk) through the saved pipelines, on raw frames without
+them, and with two environments of different instructions in one batch. The tiny-model test repeats
+the check on the CPU against the praxis `Session`.
+
+Limits: there is no simulation of the YAM rig, so no closed-loop suite; `forward` (fine-tuning) is
+single-arm only, since the praxis repository has no bimanual training recipe yet.
+
+## Training
+
+`lerobot-train` fine-tunes the policy with the objective of the praxis repository (`praxis/train`):
+the joint flow-matching loss of the video and the actions, the text and proprio dropout, the MoE
+sequence-balance term and the routing-bias update after each optimizer step. Given the same window
+and random draws, `PraxisPolicy.forward` is bitwise equal to the praxis trainer's objective on the
+released checkpoint. A window is 93 consecutive frames (chunks of 21, 24, 24, 24) of both cameras
+with the observed and the commanded flange pose of every frame and the instruction; the policy
+declares it through `observation_delta_indices` / `action_delta_indices` (93 frames) and keeps the
+windows inside the episodes with `drop_n_last_frames` (93, so the sampler draws the recipe's window
+starts). The camera tiles follow the canvas rule of the checkpoint (`video.antialias`), as in the
+praxis data module. `forward` runs under the praxis numerics whatever the launcher sets: no autocast
+(the MoE router scores stay float32), no TF32 in float32 matmuls. The number of training windows
+seen is a buffer of the policy (`train_counter`): it seeds the draws, travels with the checkpoint
+and the adapter, and a resumed run continues the sequence; a held-out evaluation does not advance
+it.
+
+### Data
+
+The recipe trains on DROID. `lerobot/droid_1.0.1` holds the Cartesian pose as six plus one
+columns; the 7-D `observation.state.cartesian` and `action.cartesian` columns of
+[PR #11](https://huggingface.co/datasets/lerobot/droid_1.0.1/discussions/11) pre-assemble them
+(use `--dataset.revision=refs/pr/11` until it is merged). The dataset's own `observation.state`
+and `action` are joint-space; the rename map puts the Cartesian columns in their place (a renamed
+key replaces an existing one) and the two cameras under the keys the policy reads:
+
+```bash
+RENAME='{"observation.state.cartesian":"observation.state","action.cartesian":"action",
+"observation.images.exterior_1_left":"observation.images.exterior","observation.images.wrist_left":"observation.images.wrist"}'
+```
+
+`lerobot-train` applies the map to the raw batch and once more inside the processor pipeline, so
+it must not swap keys (mapping `observation.state` to another name would be undone).
+
+About half of the DROID episodes have no instruction and some are shorter than a window; the
+recipe leaves them out. `examples/praxis/select_droid_episodes.py` writes the list for
+`--dataset.episodes`:
+
+```bash
+python examples/praxis/select_droid_episodes.py --repo-id lerobot/droid_1.0.1 \
+    --revision refs/pr/11 --out droid_episodes.json
+```
+
+The Hub copy stores 180x320 videos; the checkpoint was trained on the 1280x720 DROID recordings.
+The tiles are upscales with less detail on the Hub copy, which is fine for a smoke test. For a
+faithful fine-tune, build a local copy with the raw videos as the praxis repository's
+`praxis/train/README.md` describes, and point `--dataset.root` at it.
+
+### Full fine-tune
+
+The weights are bfloat16; the optimizer preset `praxis_adamw` is AdamW with stochastic rounding
+(a plain AdamW rounds the 3e-6 updates away), the scheduler a linear warmup and a cosine decay
+to 3e-7, and every transformer block recomputes its forward in the backward pass
+(`activation_checkpointing`, on by default). Weights, gradients and optimizer moments take 8 bytes
+per parameter, 218 GB for the 27.2B, divided over the GPUs by FSDP: a full fine-tune needs at
+least 4 x 80 GB. The praxis recipe is 96 windows per step for 1,200 steps; on 8 GPUs that is
+`--batch_size=1 --accelerator.gradient_accumulation.steps=12`. `lerobot-train` counts micro-batches
+(one loop step is one batch on every GPU) and steps the scheduler per micro-batch, so the 1,200
+updates are `--steps=14400`, with the warmup and the decay in micro-steps.
+
+```bash
+torchrun --nproc-per-node=8 $(which lerobot-train) \
+    --dataset.repo_id=lerobot/droid_1.0.1 --dataset.revision=refs/pr/11 \
+    --dataset.episodes="$(cat droid_episodes.json)" --rename_map="$RENAME" \
+    --policy.path=runwayml/praxis-1-droid-lerobot --policy.device=cuda --policy.push_to_hub=false \
+    --parallelism.dp_shard=8 --accelerator.fsdp.mixed_precision_policy.reduce_dtype=float32 \
+    --batch_size=1 --accelerator.gradient_accumulation.steps=12 --steps=14400 \
+    --policy.scheduler_warmup_steps=600 --policy.scheduler_decay_steps=14400 \
+    --num_workers=8 --save_freq=100 --output_dir=outputs/train/praxis_droid
+```
+
+One save holds the 54 GB sharded model (`pretrained_model/`, loadable by `PraxisPolicy.from_pretrained`
+and `lerobot-eval`) and about 108 GB of optimizer state. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+avoids allocator fragmentation, as in the praxis trainer.
+
+Measured on 8 x H100 80 GB with `praxis-1-droid`, one window per GPU and `--dataset.episodes` of 256 DROID
+episodes (the Hub videos), 1,000 optimizer steps: 3.7 s per step after the first (which compiles the
+kernels), 48.5 GB of GPU memory per rank, the data loader keeping up with 8 workers per rank. The
+loss goes from 0.216 over the first hundred steps to 0.190 over the last hundred (video 0.191 to
+0.171, action 0.025 to 0.019). A checkpoint saves the sharded model and the optimizer state in
+about two minutes through FSDP. The fine-tuned checkpoint scores 50 of 56 on `droid_guard` against
+54 for the base: the Hub videos are 180x320 upscales, so a fine-tune on them moves the policy away
+from the 1280x720 recordings it was trained on.
+
+### LoRA
+
+Adapters through PEFT (`pip install -e ".[peft]"`). The default targets are the praxis `expert`
+group, the attention and MLP projections of the action expert (`PraxisPolicy.PEFT_TARGETS`); the
+backbone attention output projections are the second group, passed with `--peft.target_modules`.
+The MoE expert weights are not linear layers and take no adapters. With the base weights frozen a
+LoRA run fits on fewer GPUs:
+
+```bash
+torchrun --nproc-per-node=4 $(which lerobot-train) ... --parallelism.dp_shard=4 \
+    --peft.r=16 --peft.lora_alpha=32 --output_dir=outputs/train/praxis_lora
+```
+
+Leave `--peft.full_training_modules` unset: the policy's default `modules_to_save` is the training
+counter, which the adapter has to carry (the configuration refuses an adapter without it); the only
+other modules it accepts are the three head modules of the rig, for a fine-tune from the base
+checkpoint (below). The MoE routing biases belong to the base and stay fixed under PEFT. Measured with r 16, alpha 32 and the
+default targets on 4 x H100 (`--parallelism.dp_shard=4`): 5.5M trainable parameters, 2.3 s per step
+with one window per GPU, 30 GB of GPU memory per rank, a 22 MB adapter; `--parallelism.dp_replicate`
+with `dp_shard` (HSDP) works as well. The total loss stays near 0.22 over 500 steps because the
+frozen backbone owns the video term; the action term goes from 0.026 to 0.022. The adapter of that
+run scores 52 of 56 on `droid_guard`, loaded on top of the base by `lerobot-eval`.
+
+The checkpoint holds the adapter (`adapter_config.json`, `adapter_model.safetensors`); `lerobot-eval`
+loads it on top of the base through `--policy.path`. To get a plain checkpoint for the sim, the
+server and `from_pretrained`, fold the adapter into the weights:
+
+```bash
+python examples/praxis/merge_praxis_adapter.py --base runwayml/praxis-1-droid-lerobot \
+    --adapter outputs/train/praxis_lora/checkpoints/last/pretrained_model --out outputs/praxis-1-droid-lora
+```
+
+### Differences from the praxis trainer
+
+The objective, the window recipe, the optimizer and the schedule are the praxis ones. The data
+comes from `LeRobotDataset` instead of the praxis file reader, the random draws are seeded from
+the LeRobot seed, the call count, the rank and the batch position (so losses are reproducible but
+not step-for-step those of a praxis run), and checkpoints are LeRobot checkpoints. Not ported:
+the overfit mode with fixed draws and `no_sync`.
+
+### Fine-tune the base checkpoint
+
+`praxis-1-base` (`"embodiment": "base"`, `runwayml/praxis-1-base-lerobot`) is the video backbone and
+the action-expert trunk at the end of pre-training, without the six head tensors of a rig
+(`action_encoder.w1`, `embed_proprio`, `head`, weights and biases) and without optimizer state. It
+does not load as a policy; two scripts turn it into the start of a fine-tune for your single-arm
+rig, the LeRobot form of the praxis repository's `compute_norm_stats.py` and `init_heads.py`:
+
+```bash
+# the normalization statistics of your data: 1 % / 99 % quantiles of the relative actions and the
+# mean and std of the proprio over random training windows (no video is read)
+python examples/praxis/compute_norm_stats.py --repo-id lerobot/droid_1.0.1 --revision refs/pr/11 \
+    --state-key observation.state.cartesian --action-key action.cartesian \
+    --episodes droid_episodes.json --n-windows 2000 --out stats.json
+# the base plus six new head tensors (`--seed`) and the rig fields: a policy directory that loads
+python examples/praxis/init_heads.py --base runwayml/praxis-1-base-lerobot --out outputs/praxis-1-myrig \
+    --stats stats.json --tile-height 224 --tile-width 416 --antialias --link
+# then the full fine-tune command above with --policy.path=outputs/praxis-1-myrig, or LoRA with the
+# six new head tensors trained in full next to the adapters:
+torchrun --nproc-per-node=4 $(which lerobot-train) ... --policy.path=outputs/praxis-1-myrig \
+    --parallelism.dp_shard=4 --peft.r=16 --peft.lora_alpha=32 \
+    --peft.full_training_modules='["train_counter","action_expert.action_encoder.w1","action_expert.embed_proprio","action_expert.head"]'
+```
+
+The state and action columns hold the DROID pose and gripper `[x, y, z, roll, pitch, yaw, gripper]`
+per frame (the dataset's own columns, or a rename map). `--stats-from <single-arm checkpoint>`
+copies an existing normalization block instead (the DROID rig). The DROID rig rebuilt from the base
+and the released checkpoint's statistics has exactly the config of `praxis-1-droid`, and the head tensors are those
+of the praxis repository's `init_heads.py` for the same seed, bit for bit. On the DROID subset of the
+runs above, `compute_norm_stats.py` reproduces the checkpoint's statistics within 0.01 m on the xyz
+quantiles with the gripper pinned to 0 and 1. The praxis repository's own base fine-tune
+(`configs/finetune_base.yaml`, a day on 8 GPUs) reaches 62.5 % on `droid_guard` from this base,
+against 91 % for `praxis-1-droid` trained with about 40 times the windows: the base is a tutorial
+start for a new rig, not a replacement of the released checkpoint. The full fine-tune trains every
+weight at `optimizer_lr`; under LoRA the adapters and the six head tensors train (`PraxisPolicy.PEFT_HEAD_MODULES`
+are the only modules besides the counter that `full_training_modules` accepts) and the rest of the
+trunk stays frozen; the praxis recipe's head-only warm-up steps and head learning-rate scale are not
+ported.
+
+## Known limits
+
+- Two rigs: the single-arm DROID checkpoint (`embodiment: single_arm`) and the bimanual YAM one
+  (`bimanual`). Fine-tuning and the simulation are single-arm.
+- Praxis outputs Cartesian pose targets for an arm with an impedance controller; LeRobot's robot
+  classes do not include a Franka, so real-robot use goes through a client that executes
+  Cartesian targets.
+- A `select_action` batch runs its environments sequentially (one model call per environment).
+- Remote serving is not supported. The default chunk runner (`lerobot/inference/policy_runner.py`)
+  refuses a policy that conditions on past observations, and Praxis conditions on the frames of the
+  executed chunks (`current_observation_only=False` in `chunk_inference_spec`); the tile step also
+  resizes the camera frames to the checkpoint's canvas, so they would not match the shapes that
+  `validate_chunk_input_features` checks. Run the policy in-process (`lerobot-eval`, a robot client).

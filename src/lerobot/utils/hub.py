@@ -14,15 +14,60 @@
 
 import builtins
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any, TypeVar
 
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, download_bucket_files
 from huggingface_hub.utils import validate_hf_hub_args
 
 from .constants import CHECKPOINTS_DIR
 
 T = TypeVar("T", bound="HubMixin")
+
+
+def ensure_bucket_file(
+    bucket_id: str,
+    remote_path: str,
+    local_path: str | Path,
+    *,
+    token: str | bool | None = None,
+) -> Path:
+    """Return the cached copy of a bucket file, downloading it first if it's missing.
+
+    The download is renamed into place once complete, so a failed download leaves no partial file. A cached
+    file is never refreshed; delete it to download a newer version.
+
+    Args:
+        bucket_id (`str`):
+            Bucket ID, e.g. `lerobot/robot-urdfs`.
+        remote_path (`str`):
+            Path of the file in the bucket.
+        local_path (`str` or `Path`):
+            Where the file is cached.
+        token (`str` or `bool`, *optional*):
+            Hub token. `False` downloads anonymously.
+
+    Returns:
+        `Path`: Path of the cached file.
+    """
+    path = Path(local_path)
+    if path.is_file():
+        return path
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(dir=path.parent, suffix=".tmp", delete=False) as temporary:
+        temporary_path = Path(temporary.name)
+    try:
+        download_bucket_files(
+            bucket_id,
+            [(remote_path, temporary_path)],
+            raise_on_missing_files=True,
+            token=token,
+        )
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return path
 
 
 # Sharded-training resume artifacts (torch DCP shard dirs + shard files). Published model repos
@@ -43,7 +88,7 @@ def find_latest_hub_checkpoint(
     Args:
         repo_id (str): The Hub model repo to inspect.
         token (str | bool | None): Hub authentication token. Defaults to None (the token
-            cached by `huggingface-cli login`).
+            cached by `hf auth login`).
         revision (str | None): Repo revision to list. Defaults to None (the default branch).
 
     Returns:
@@ -149,11 +194,13 @@ class HubMixin:
             force_download (`bool`, *optional*, defaults to `False`):
                 Whether to force (re-)downloading the files from the Hub, overriding the existing cache.
             proxies (`Dict[str, str]`, *optional*):
-                A dictionary of proxy servers to use by protocol or endpoint, e.g., `{'http': 'foo.bar:3128',
-                'http://hostname': 'foo.bar:4012'}`. The proxies are used on every request.
+                Kept for backward compatibility and ignored. Configure proxies with the
+                `HTTP_PROXY` and `HTTPS_PROXY` environment variables instead.
+            resume_download (`bool`, *optional*):
+                Kept for backward compatibility and ignored. Downloads always resume when possible.
             token (`str` or `bool`, *optional*):
                 The token to use as HTTP bearer authorization for remote files. By default, it will use the token
-                cached when running `huggingface-cli login`.
+                cached when running `hf auth login`.
             cache_dir (`str`, `Path`, *optional*):
                 Path to the folder where cached files are stored.
             local_files_only (`bool`, *optional*, defaults to `False`):
@@ -199,7 +246,7 @@ class HubMixin:
                 If `None` (default), the repo will be public unless the organization's default is private.
             token (`str`, *optional*):
                 The token to use as HTTP bearer authorization for remote files. By default, it will use the token
-                cached when running `huggingface-cli login`.
+                cached when running `hf auth login`.
             branch (`str`, *optional*):
                 The git branch on which to push the model. This defaults to `"main"`.
             create_pr (`boolean`, *optional*):

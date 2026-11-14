@@ -78,10 +78,32 @@ class DatasetConfig:
     video_decoder_cache_size: int | None = None
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
+    # Storage connection options (string keys and values) for Lance dataset backends.
+    # Configs are logged and saved; credential-like entries are removed in __post_init__.
+    storage_options: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
+        if self.streaming and self.storage_options is not None:
+            raise ValueError("dataset.storage_options is not supported with dataset.streaming=true.")
+        if self.storage_options and any(key.lower() == "revision" for key in self.storage_options):
+            raise ValueError(
+                "dataset.storage_options must not contain 'revision'; use dataset.revision instead."
+            )
+        if self.storage_options:
+            credential_keys = sorted(
+                key for key in self.storage_options if "token" in key.lower() or "key" in key.lower()
+            )
+            if credential_keys:
+                logger.warning(
+                    "Removing credential-like entries from dataset.storage_options (%s) because training "
+                    "configs are saved to disk. Provide these credentials through environment variables instead.",
+                    ", ".join(credential_keys),
+                )
+                self.storage_options = {
+                    key: value for key, value in self.storage_options.items() if key not in credential_keys
+                }
         if self.eval_split != 0.0 and self.streaming:
             raise ValueError(
                 "eval_split requires map-style datasets and is not supported with dataset.streaming=true."
@@ -181,10 +203,15 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
+    # Cap each episode at this many steps (the env's own limit still applies when lower).
+    # For quick end-to-end checks such as CI; success rates from capped episodes are not meaningful.
+    max_episode_steps: int | None = None
 
     def __post_init__(self) -> None:
         if self.recording_repo_id is not None and not self.recording:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
+        if self.max_episode_steps is not None and self.max_episode_steps < 1:
+            raise ValueError(f"eval.max_episode_steps must be at least 1, got {self.max_episode_steps}.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:

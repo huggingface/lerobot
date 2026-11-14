@@ -234,7 +234,9 @@ def load_openpi_reference_state_dict(repo_id: str) -> dict[str, torch.Tensor]:
 
 
 def fix_reference_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    fixed_state_dict = dict(state_dict)
+    fixed_state_dict = {
+        key.replace("vision_tower.vision_model.", "vision_tower."): value for key, value in state_dict.items()
+    }
     lm_head_key = "paligemma_with_expert.paligemma.lm_head.weight"
     embed_tokens_key = "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
     if lm_head_key in fixed_state_dict and embed_tokens_key not in fixed_state_dict:

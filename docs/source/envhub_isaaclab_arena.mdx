@@ -1,5 +1,12 @@
 # NVIDIA IsaacLab Arena & LeRobot
 
+<Tip warning={true}>
+  **Deprecated.** This page was written for LeRobot 0.4 and Isaac Sim 5.1, which
+  requires Python 3.11, while LeRobot requires Python 3.12 or newer since 0.5.
+  It also predates [EnvHub](./envhub) environments that can be served and driven
+  as a sim robot. An updated version is in progress.
+</Tip>
+
 LeRobot EnvHub now supports **GPU-accelerated simulation** with IsaacLab Arena for policy evaluation at scale.
 Train and evaluate imitation learning policies with high-fidelity simulation — all integrated into the LeRobot ecosystem.
 
@@ -206,9 +213,9 @@ Sample IsaacLab Arena datasets are available on HuggingFace Hub for experimentat
 ### Full Configuration Options
 
 ```python
-from lerobot.envs.configs import IsaaclabArenaEnv
+from lerobot.envs.configs import IsaaclabArenaEnvConfig
 
-config = IsaaclabArenaEnv(
+config = IsaaclabArenaEnvConfig(
     # Environment selection
     environment="gr1_microwave",      # Task environment
     embodiment="gr1_pink",            # Robot embodiment
@@ -312,7 +319,7 @@ git clone https://huggingface.co/nvidia/isaaclab-arena-envs
 ```
 
 Modify the `example_envs.yaml` file based on your new environment.
-[Upload](./envhub#step-3-upload-to-the-hub) your modified repo to HuggingFace EnvHub.
+[Upload](./envhub#publish) your modified repo to HuggingFace EnvHub.
 
 <Tip>
   Your IsaacLab Arena environment code must be locally available during

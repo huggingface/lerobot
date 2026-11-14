@@ -674,7 +674,8 @@ class EO1VisionFlowMatchingModel(nn.Module):
             inputs_embeds[:, act_slice] = action_time_embs.to(inputs_embeds.dtype)
 
             # Keep the prefix KV cache invariant across denoising steps.
-            past_key_values.crop(act_start)
+            for layer in past_key_values.layers:
+                layer.crop(act_start - layer.get_seq_length())
             outputs = self.vlm_backbone.model(
                 attention_mask=attention_mask[:, :act_end],
                 past_key_values=past_key_values,
