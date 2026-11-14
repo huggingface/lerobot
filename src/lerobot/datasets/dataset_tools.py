@@ -1241,6 +1241,24 @@ def _copy_episodes_metadata_and_stats(
     dst_episodes_dir = dst_meta.root / "meta/episodes"
     if episodes_dir.exists():
         shutil.copytree(episodes_dir, dst_episodes_dir, dirs_exist_ok=True)
+        # Drop columns belonging to features removed from the destination schema, so the
+        # copied per-episode metadata does not retain stale stats/video columns for removed
+        # features (e.g. image stats that later fail shape validation in aggregate_stats).
+        removed_features = set(src_dataset.meta.features.keys()) - set(dst_meta.features.keys())
+        if removed_features:
+            for path in dst_episodes_dir.glob("*/*.parquet"):
+                df = pd.read_parquet(path)
+                drop = [
+                    column
+                    for column in df.columns
+                    if any(
+                        column.startswith(f"stats/{name}/") or column.startswith(f"videos/{name}/")
+                        for name in removed_features
+                    )
+                ]
+                if drop:
+                    df = df.drop(columns=drop)
+                    df.to_parquet(path, index=False)
 
     dst_meta.info.total_episodes = src_dataset.meta.total_episodes
     dst_meta.info.total_frames = src_dataset.meta.total_frames
