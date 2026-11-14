@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+import platform
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Self
 
@@ -240,8 +241,26 @@ class VideoEncoderConfig:
                 set_if("threads", encoder_threads)
                 set_if("row-mt", 1)
         elif self.vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
-            if self.crf is not None:
-                set_if("q:v", max(1, min(100, 100 - self.crf * 2)))
+            # Constant quality requires hardware encoding on Apple Silicon.
+            may_use_software = any(
+                str(self.extra_options.get(key)).lower()
+                not in {"none", "0", "false", "n", "no", "disable", "disabled", "off"}
+                for key in ("allow_sw", "require_sw")
+            )
+            # Explicit flags can select a mode incompatible with qscale (e.g. low_delay).
+            has_custom_rate_control = any(
+                self.extra_options.get(key) is not None
+                for key in ("b", "ab", "constant_bit_rate", "flags", "global_quality")
+            )
+            if (
+                self.crf is not None
+                and platform.machine() == "arm64"
+                and not may_use_software
+                and not has_custom_rate_control
+            ):
+                quality = round(max(1, min(100, 100 - self.crf)))
+                set_if("flags", "+qscale")
+                set_if("global_quality", quality * 118)  # FFmpeg's FF_QP2LAMBDA
         elif self.vcodec in ("h264_nvenc", "hevc_nvenc"):
             set_if("rc", 0)
             set_if("qp", self.crf)
