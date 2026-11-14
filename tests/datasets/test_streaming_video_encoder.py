@@ -417,6 +417,47 @@ class TestStreamingVideoEncoder:
         assert encoder._encoder_threads is None
         encoder.close()
 
+    @pytest.mark.parametrize("accepted_frames", [0, 1, 3])
+    def test_stats_count_excludes_dropped_frames(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, accepted_frames: int
+    ) -> None:
+        key = f"{OBS_IMAGES}.cam"
+        encoder = StreamingVideoEncoder(
+            fps=10,
+            rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", crf=0, g=2),
+            encoder_threads=1,
+        )
+        encoder.start_episode([key], tmp_path)
+        frame_queue = encoder._frame_queues[key]
+        original_put = frame_queue.put
+
+        def reject_white_frame(
+            frame: np.ndarray | None, block: bool = True, timeout: float | None = None
+        ) -> None:
+            if frame is not None and frame[0, 0, 0] == 255:
+                raise queue.Full
+            original_put(frame, block=block, timeout=timeout)
+
+        monkeypatch.setattr(frame_queue, "put", reject_white_frame)
+        for value in range(accepted_frames):
+            encoder.feed_frame(key, np.full((32, 48, 3), value * 10, dtype=np.uint8))
+        encoder.feed_frame(key, np.full((32, 48, 3), 255, dtype=np.uint8))
+        path, stats = encoder.finish_episode()[key]
+        assert encoder._dropped_frames[key] == 1
+        encoder.close()
+
+        if accepted_frames:
+            with av.open(str(path)) as container:
+                assert sum(1 for _ in container.decode(video=0)) == accepted_frames
+        else:
+            assert not path.exists()
+        if accepted_frames < 2:
+            assert stats is None  # Preserve the existing no-statistics behavior for short streams.
+        else:
+            np.testing.assert_array_equal(stats["count"], [accepted_frames])
+            np.testing.assert_allclose(stats["mean"], 10)
+            np.testing.assert_allclose(stats["std"], np.std([0, 10, 20]))
+
     def test_graceful_frame_dropping(self, tmp_path):
         """Test that full queue drops frames instead of crashing."""
         video_keys = [f"{OBS_IMAGES}.cam"]
