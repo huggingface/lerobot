@@ -917,6 +917,8 @@ class _CameraEncoderThread(threading.Thread):
             # Get stats and put on result queue
             if frame_count >= 2:
                 stats = stats_tracker.get_statistics()
+                # Match image/video episode statistics: aggregate by frames, not sampled pixels.
+                stats["count"] = np.array([frame_count])
                 self.result_queue.put(("ok", stats))
             else:
                 self.result_queue.put(("ok", None))

@@ -18,6 +18,7 @@
 
 import queue
 import threading
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -26,7 +27,9 @@ pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 
 import av  # noqa: E402
 
-from lerobot.configs import RGBEncoderConfig
+from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
+from lerobot.datasets.io_utils import load_nested_dataset, load_stats
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pyav_utils import get_codec
 from lerobot.datasets.video_utils import (
     StreamingVideoEncoder,
@@ -451,6 +454,70 @@ class TestStreamingVideoEncoder:
 
 
 class TestStreamingEncoderIntegration:
+    @pytest.mark.parametrize("modes", [(False, True), (True, False), (False, False), (True, True)])
+    def test_resumed_encoding_modes_preserve_frame_weights(
+        self, tmp_path: Path, modes: tuple[bool, bool]
+    ) -> None:
+        rgb_key, depth_key = "observation.images.rgb", "observation.images.depth"
+        root = tmp_path / "dataset"
+        encoders = {
+            "rgb_encoder": RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", crf=0, g=2),
+            "depth_encoder": DepthEncoderConfig(vcodec="hevc", pix_fmt="gray12le", crf=0, g=2),
+            "encoder_threads": 1,
+        }
+        dataset = LeRobotDataset.create(
+            "test/streaming-stats",
+            root=root,
+            fps=10,
+            use_videos=True,
+            streaming_encoding=modes[0],
+            features={
+                "state": {"dtype": "float32", "shape": (2,), "names": None},
+                rgb_key: {
+                    "dtype": "video",
+                    "shape": (32, 48, 3),
+                    "names": ["height", "width", "channels"],
+                },
+                depth_key: {
+                    "dtype": "video",
+                    "shape": (32, 48, 1),
+                    "names": ["height", "width", "channels"],
+                    "info": {"is_depth_map": True},
+                },
+            },
+            **encoders,
+        )
+        for episode, length in enumerate((3, 5)):
+            if episode:
+                dataset = LeRobotDataset.resume(
+                    dataset.repo_id, root=root, streaming_encoding=modes[episode], **encoders
+                )
+            for frame in range(length):
+                dataset.add_frame(
+                    {
+                        "state": np.array([episode, frame], dtype=np.float32),
+                        rgb_key: np.full((32, 48, 3), episode * 255, dtype=np.uint8),
+                        depth_key: np.full((32, 48, 1), 1 + episode * 2, dtype=np.float32),
+                        "task": "move",
+                    }
+                )
+            dataset.save_episode()
+            dataset.finalize()
+
+        stats = load_stats(root)
+        assert stats is not None
+        # Three black/1 m frames and five white/3 m frames, regardless of encoding mode.
+        np.testing.assert_allclose(stats[rgb_key]["mean"], 5 / 8)
+        np.testing.assert_allclose(stats[rgb_key]["std"], np.sqrt(15) / 8)
+        np.testing.assert_allclose(stats[depth_key]["mean"], 2.25)
+        np.testing.assert_allclose(stats[depth_key]["std"], np.sqrt(15) / 4)
+        np.testing.assert_allclose(stats["state"]["mean"], [5 / 8, 13 / 8])
+        for key in (rgb_key, depth_key, "state"):
+            np.testing.assert_array_equal(stats[key]["count"], [8])
+        episodes = load_nested_dataset(root / "meta" / "episodes").to_list()
+        for key in (rgb_key, depth_key):
+            assert [row[f"stats/{key}/count"][0] for row in episodes] == [3, 5]
+
     def test_add_frame_save_episode_streaming(self, tmp_path):
         """Full integration test: add_frame -> save_episode with streaming encoding."""
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
