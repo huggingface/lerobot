@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
+import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import partial
@@ -27,10 +29,85 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
-from libero.libero import benchmark, get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
 
-from .utils import RobotObservation, canonical_observation as _canonical_observation, parse_camera_names
+
+def _apply_robosuite_windows_compat() -> None:
+    """Make robosuite 1.4.0 importable on native Windows before the first ``import robosuite``.
+
+    LIBERO pins robosuite 1.4.0, which has three Windows-only failures: it loads a private
+    ``robosuite/utils/mujoco.dll`` that the wheel never ships, forces ``MUJOCO_GL=egl`` (an
+    X11/Linux rendering backend), and writes to a hard-coded ``/tmp/robosuite.log``. robosuite
+    1.5 fixes these upstream but LIBERO has not upgraded. This shim replicates the 1.5 behavior
+    and is a no-op on non-Windows.
+
+    The ``ctypes.WinDLL`` redirect is installed for the lifetime of the process (not only the
+    initial ``import robosuite``), because robosuite 1.4.0 can also load its private
+    ``mujoco.dll`` lazily during first env construction, first render, or a later submodule
+    import. The redirect rewrites only one exact canonicalized path and is a no-op for any
+    other DLL load, so the process-global side effect is scoped as narrowly as possible.
+    """
+    import ctypes
+    import importlib.util
+
+    if sys.platform != "win32":
+        return
+    if "robosuite" in sys.modules:
+        warnings.warn(
+            "robosuite was already imported before the LIBERO Windows compatibility shim "
+            "ran; the DLL redirect and robosuite.macros patches have NOT been applied. "
+            "Import 'lerobot.sim.integrations.libero' before any 'robosuite' import on "
+            "Windows, or robosuite 1.4.0 may fail at env construction or rendering.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return
+
+    import mujoco
+
+    real_dll = os.path.join(os.path.dirname(mujoco.__file__), "mujoco.dll")
+    rs_spec = importlib.util.find_spec("robosuite")
+    if rs_spec is None or rs_spec.origin is None:
+        return
+    rs_dir = os.path.dirname(rs_spec.origin)
+
+    macros_spec = importlib.util.spec_from_file_location(
+        "robosuite.macros", os.path.join(rs_dir, "macros.py")
+    )
+    if macros_spec is None or macros_spec.loader is None:
+        return
+    macros = importlib.util.module_from_spec(macros_spec)
+    macros_spec.loader.exec_module(macros)
+    macros.MUJOCO_GPU_RENDERING = False  # type: ignore[attr-defined]
+    macros.FILE_LOGGING_LEVEL = None  # type: ignore[attr-defined]
+    sys.modules["robosuite.macros"] = macros
+
+    wanted = os.path.normcase(os.path.join(rs_dir, "utils", "mujoco.dll"))
+    orig_windll = ctypes.WinDLL
+
+    class _RedirectedWinDLL(orig_windll):  # type: ignore[valid-type, misc]
+        def __init__(self, name, *a, **k):
+            if isinstance(name, str) and os.path.normcase(name) == wanted:
+                name = real_dll
+            super().__init__(name, *a, **k)
+
+    # Install the redirect for the process lifetime. robosuite 1.4.0 can lazily load the
+    # private mujoco.dll after import time (env construction, rendering, lazy submodule
+    # loads); a transient redirect would miss those paths and crash. The subclass only
+    # rewrites the one canonicalized robosuite path; all other WinDLL loads are unaffected.
+    ctypes.WinDLL = _RedirectedWinDLL  # type: ignore[misc]
+    import robosuite  # noqa: F401
+
+
+_apply_robosuite_windows_compat()
+
+from libero.libero import benchmark, get_libero_path  # noqa: E402
+from libero.libero.envs import OffScreenRenderEnv  # noqa: E402
+
+from .utils import (  # noqa: E402
+    RobotObservation,
+    canonical_observation as _canonical_observation,
+    parse_camera_names,
+)
 
 __all__ = ["canonical_observation", "conventions", "env_fns"]
 
