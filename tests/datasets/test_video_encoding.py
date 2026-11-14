@@ -17,6 +17,7 @@
 """Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``lerobot.configs.video.VideoEncoderConfig`` config class."""
 
 import json
+import shutil
 from fractions import Fraction
 from pathlib import Path
 
@@ -582,6 +583,25 @@ class TestReencodeVideo:
 
 
 class TestConcatenateVideoFiles:
+    @pytest.mark.parametrize("directory", ["with spaces", "writer's clips", "録画 café", "'quoted'"])
+    def test_special_characters_in_paths(self, tmp_path, directory):
+        clip_dir = tmp_path / directory
+        clip_dir.mkdir()
+        inputs = [clip_dir / "first's clip.mp4", clip_dir / "second clip.mp4"]
+        shutil.copyfile(TEST_ARTIFACTS_DIR / "clip_6frames.mp4", inputs[0])
+        shutil.copyfile(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", inputs[1])
+
+        out = tmp_path / "out.mp4"
+        concatenate_video_files(inputs, out)
+
+        with av.open(str(out)) as container:
+            frames = list(container.decode(video=0))
+        assert len(frames) == 10
+        for input_path, output_index in zip(inputs, [0, 6], strict=True):
+            with av.open(str(input_path)) as container:
+                expected = next(container.decode(video=0)).to_ndarray(format="rgb24")
+            np.testing.assert_array_equal(frames[output_index].to_ndarray(format="rgb24"), expected)
+
     def test_two_clips_frame_count(self, tmp_path):
         """Output frame count equals the sum of the two input frame counts."""
         out = tmp_path / "out.mp4"

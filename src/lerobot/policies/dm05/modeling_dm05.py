@@ -168,7 +168,6 @@ def _resolve_processor_source(
         revision=revision,
         cache_dir=cache_dir,
         force_download=force_download,
-        proxies=proxies,
         token=token,
         local_files_only=local_files_only,
     )

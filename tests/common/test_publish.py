@@ -19,10 +19,9 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 
-import httpx
 import pytest
 import torch
-from huggingface_hub.utils import validate_repo_id
+from huggingface_hub.utils import httpx, validate_repo_id
 from safetensors.torch import load_file
 
 import lerobot.common.train_utils as train_utils

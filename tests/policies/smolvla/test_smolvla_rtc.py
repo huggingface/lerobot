@@ -16,7 +16,6 @@
 
 """Test SmolVLA policy with Real-Time Chunking (RTC) enabled during inference."""
 
-import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature, RTCAttentionSchedule
@@ -91,7 +90,6 @@ def test_smolvla_rtc_initialization_without_rtc_config():
 
 @skip_if_package_missing("transformers")
 @require_cuda
-@pytest.mark.skipif(True, reason="Requires pretrained SmolVLA model weights")
 def test_smolvla_rtc_inference_with_prev_chunk():
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy  # noqa: F401
 
@@ -125,7 +123,7 @@ def test_smolvla_rtc_inference_with_prev_chunk():
     }
 
     # Instantiate policy and create preprocessor
-    policy = SmolVLAPolicy(config)
+    policy = SmolVLAPolicy(config).to(config.device)
     policy.eval()
     preprocessor, _ = make_pre_post_processors(
         policy_cfg=config, pretrained_path=None, dataset_stats=dataset_stats
@@ -174,7 +172,6 @@ def test_smolvla_rtc_inference_with_prev_chunk():
 
 @skip_if_package_missing("transformers")
 @require_cuda
-@pytest.mark.skipif(True, reason="Requires pretrained SmolVLA model weights")
 def test_smolvla_rtc_inference_without_prev_chunk():
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy  # noqa: F401
 
@@ -208,7 +205,7 @@ def test_smolvla_rtc_inference_without_prev_chunk():
     }
 
     # Instantiate policy and create preprocessor
-    policy = SmolVLAPolicy(config)
+    policy = SmolVLAPolicy(config).to(config.device)
     policy.eval()
     preprocessor, _ = make_pre_post_processors(
         policy_cfg=config, pretrained_path=None, dataset_stats=dataset_stats
@@ -248,7 +245,6 @@ def test_smolvla_rtc_inference_without_prev_chunk():
 
 @skip_if_package_missing("transformers")
 @require_cuda
-@pytest.mark.skipif(True, reason="Requires pretrained SmolVLA model weights")
 def test_smolvla_rtc_validation_rules():
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy  # noqa: F401
 
@@ -282,7 +278,7 @@ def test_smolvla_rtc_validation_rules():
     }
 
     # Instantiate policy and create preprocessor
-    policy = SmolVLAPolicy(config)
+    policy = SmolVLAPolicy(config).to(config.device)
     policy.eval()
     preprocessor, _ = make_pre_post_processors(
         policy_cfg=config, pretrained_path=None, dataset_stats=dataset_stats
