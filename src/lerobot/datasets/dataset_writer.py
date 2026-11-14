@@ -54,7 +54,7 @@ from .io_utils import (
     load_episodes,
     write_info,
 )
-from .servo_settings import SERVO_SETTINGS_COLUMN
+from .robot_settings import ROBOT_SETTINGS_COLUMN
 from .utils import (
     DEFAULT_DEPTH_PATH,
     DEFAULT_EPISODES_PATH,
@@ -153,7 +153,6 @@ class DatasetWriter:
         self._episodes_since_last_encoding: int = 0
         self._recorded_frames: int = initial_frames
         self._finalized = False
-        self.pending_servo_settings: str | None = None
 
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self._meta.total_episodes if episode_index is None else episode_index
@@ -274,6 +273,7 @@ class DatasetWriter:
         self,
         episode_data: dict | None = None,
         parallel_encoding: bool = True,
+        robot_settings: str | None = None,
     ) -> None:
         """Save the current episode in self.episode_buffer to disk."""
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
@@ -378,9 +378,8 @@ class DatasetWriter:
 
         # `meta.save_episode` need to be executed after encoding the videos.
         # The value was read at the episode boundary, before the control loop.
-        if self.pending_servo_settings is not None:
-            ep_metadata[SERVO_SETTINGS_COLUMN] = self.pending_servo_settings
-            self.pending_servo_settings = None
+        if robot_settings is not None:
+            ep_metadata[ROBOT_SETTINGS_COLUMN] = robot_settings
         self._meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
 
         if has_video_keys and use_batched_encoding:

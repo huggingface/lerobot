@@ -147,7 +147,7 @@ lerobot-edit-dataset \
 
 There are no constraints on the split names, they can be determined by the user. Resulting datasets are saved under the repo id with the split name appended, e.g. `lerobot/pusht_train`, `lerobot/pusht_task1`, `lerobot/pusht_task2`.
 
-Delete and split copy the per-episode `servo_settings` column.
+Delete and split copy the per-episode `robot_settings` column.
 
 #### Merge Datasets
 
@@ -161,9 +161,9 @@ lerobot-edit-dataset \
     --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 ```
 
-A new recording stores servo settings on each episode, in a `servo_settings` column of `meta/episodes`. The column holds the servo model, the calibration, and the setting registers the code can read, including acceleration. Position, speed, load, voltage, temperature and current are not stored. The registers are read at the start of the episode, not in the control loop. There is no dataset-wide calibration key in `meta/info.json`. Merge keeps the column when any source has it, and leaves it empty on episodes that had none. A resume of a dataset recorded without the column keeps that format, writes no servo settings, and logs one warning. Start a new dataset to record them.
+A new recording from a robot that reports settings stores them on each episode, in a `robot_settings` column of `meta/episodes`. The column is a string of JSON: the robot type, the robot id, and for each motor the model, the calibration, and the setting registers. The SO-100 and SO-101 followers report the STS3215 settings, including acceleration and P, I, and D. Other robots can use the same hook later. Position, speed, load, voltage, temperature, current, goal commands, and the torque switch are not stored. The read is at the start of the episode, not in the control loop. Merge keeps the column only when every source has it. Otherwise it drops the column and logs one warning. A resume of a dataset recorded without the column keeps that format and logs one warning. Start a new dataset to record settings.
 
-Feature edits and image-to-video conversion also copy the key from their single source. In-place edits (modify tasks, recompute stats, re-encode videos) leave it as it stands.
+Feature edits and image-to-video conversion copy the column from their single source. In-place edits (modify tasks, recompute stats, re-encode videos) leave it as it stands.
 
 #### Remove Features
 

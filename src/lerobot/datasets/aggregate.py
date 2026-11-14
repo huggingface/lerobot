@@ -40,7 +40,7 @@ from .io_utils import (
     write_stats,
     write_tasks,
 )
-from .servo_settings import SERVO_SETTINGS_COLUMN, episodes_have_servo_settings
+from .robot_settings import ROBOT_SETTINGS_COLUMN, episodes_have_robot_settings
 from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -415,17 +415,15 @@ def aggregate_datasets(
         video_files_size_in_mb=video_files_size_in_mb,
     )
 
-    sources_with_settings = [meta.repo_id for meta in all_metadata if episodes_have_servo_settings(meta)]
+    sources_with_episodes = [meta for meta in all_metadata if meta.total_episodes > 0]
     sources_without_settings = [
-        meta.repo_id
-        for meta in all_metadata
-        if meta.total_episodes > 0 and not episodes_have_servo_settings(meta)
+        meta.repo_id for meta in sources_with_episodes if not episodes_have_robot_settings(meta)
     ]
-    keep_servo_settings = bool(sources_with_settings)
-    if sources_with_settings and sources_without_settings:
+    keep_robot_settings = bool(sources_with_episodes) and not sources_without_settings
+    if sources_without_settings and len(sources_without_settings) < len(sources_with_episodes):
         logger.warning(
-            "Keeping servo_settings for episodes that have it. "
-            f"{', '.join(sources_without_settings)} have none, so those episodes are left empty."
+            "Dropping robot_settings because not every dataset has it. "
+            f"{', '.join(sources_without_settings)} have none."
         )
 
     logger.info("Find all tasks")
@@ -456,7 +454,7 @@ def aggregate_datasets(
             meta_idx,
             data_idx,
             videos_idx,
-            keep_servo_settings=keep_servo_settings,
+            keep_robot_settings=keep_robot_settings,
         )
 
         # Clear the src_to_dst mapping after processing each source dataset
@@ -679,7 +677,7 @@ def aggregate_metadata(
     meta_idx: IndexState,
     data_idx: IndexState,
     videos_idx: VideoIndexState,
-    keep_servo_settings: bool = False,
+    keep_robot_settings: bool = False,
 ) -> IndexState:
     """Aggregates metadata from a source dataset into the destination dataset.
 
@@ -709,9 +707,8 @@ def aggregate_metadata(
     for chunk_idx, file_idx in chunk_file_ids:
         src_path = src_meta.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         df = pd.read_parquet(src_path)
-        if keep_servo_settings and SERVO_SETTINGS_COLUMN not in df.columns:
-            df = df.copy()
-            df[SERVO_SETTINGS_COLUMN] = None
+        if not keep_robot_settings and ROBOT_SETTINGS_COLUMN in df.columns:
+            df = df.drop(columns=[ROBOT_SETTINGS_COLUMN])
         df = update_meta_data(
             df,
             dst_meta,

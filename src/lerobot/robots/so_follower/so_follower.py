@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import logging
 import time
 from functools import cached_property
@@ -28,6 +29,66 @@ from ..utils import ensure_safe_goal_position
 from .config_so_follower import SOFollowerRobotConfig
 
 logger = logging.getLogger(__name__)
+
+# STS3215 setting registers, by the names the bus already accepts.
+# No live readings, no goal commands, and no torque switch.
+_STS3215_SETTING_REGISTERS = (
+    "id",
+    "baud_rate",
+    "return_delay_time",
+    "response_status_level",
+    "min_position_limit",
+    "max_position_limit",
+    "max_temperature_limit",
+    "max_voltage_limit",
+    "min_voltage_limit",
+    "max_torque_limit",
+    "phase",
+    "unloading_condition",
+    "led_alarm_condition",
+    "p_coefficient",
+    "i_coefficient",
+    "d_coefficient",
+    "minimum_startup_force",
+    "cw_dead_zone",
+    "ccw_dead_zone",
+    "protection_current",
+    "angular_resolution",
+    "homing_offset",
+    "operating_mode",
+    "protective_torque",
+    "protection_time",
+    "overload_torque",
+    "speed_closed_loop_p_coefficient",
+    "over_current_protection_time",
+    "velocity_closed_loop_i_coefficient",
+    "acceleration",
+    "torque_limit",
+    "lock",
+    "moving_velocity_threshold",
+    "dts",
+    "velocity_unit_factor",
+    "hts",
+    "maximum_velocity_limit",
+    "maximum_acceleration",
+    "acceleration_multiplier",
+)
+_CALIBRATION_KEYS = ("id", "drive_mode", "homing_offset", "range_min", "range_max")
+
+
+def _read_register(bus, register: str, names: list[str]):
+    """One setting register for these motors, or None when the read fails."""
+    try:
+        return bus.sync_read(register, names, normalize=False)
+    except Exception:
+        return None
+
+
+def _as_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 _HOMING_POSITION_DIAGRAM = r"""
        ╭─────┬────────────────────┬──────╮ ◉╲═════╗   ← moveable claw
@@ -219,6 +280,41 @@ class SOFollower(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
+
+    def read_settings(self) -> dict | None:
+        """Robot type, id, and each STS3215 motor's calibration and setting registers."""
+        motors: dict[str, dict] = {}
+        bus = self.bus
+        for name, motor in bus.motors.items():
+            entry: dict = {"model": motor.model}
+            calibration = self.calibration.get(name) if isinstance(self.calibration, dict) else None
+            if calibration is not None:
+                with contextlib.suppress(AttributeError, KeyError, TypeError, ValueError):
+                    entry["calibration"] = {
+                        key: int(
+                            calibration[key] if isinstance(calibration, dict) else getattr(calibration, key)
+                        )
+                        for key in _CALIBRATION_KEYS
+                    }
+            motors[name] = entry
+        sts_names = [name for name, motor in bus.motors.items() if motor.model == "sts3215"]
+        if sts_names:
+            for register in _STS3215_SETTING_REGISTERS:
+                values = _read_register(bus, register, sts_names)
+                if not isinstance(values, dict):
+                    continue
+                for name, value in values.items():
+                    if name not in motors:
+                        continue
+                    stored = _as_int(value)
+                    if stored is None:
+                        continue
+                    motors[name].setdefault("registers", {})[register] = stored
+        return {
+            "robot_type": getattr(self.config, "type", self.robot_type),
+            "robot_id": self.id,
+            "motors": motors,
+        }
 
 
 SO100Follower = SOFollower

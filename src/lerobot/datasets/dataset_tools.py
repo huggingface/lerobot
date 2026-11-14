@@ -68,7 +68,7 @@ from .io_utils import (
     write_tasks,
 )
 from .lerobot_dataset import LeRobotDataset
-from .servo_settings import SERVO_SETTINGS_COLUMN
+from .robot_settings import ROBOT_SETTINGS_COLUMN
 from .utils import (
     DATA_DIR,
     DEFAULT_CHUNK_SIZE,
@@ -1065,11 +1065,11 @@ def _copy_and_reindex_episodes_metadata(
             "tasks": src_episode["tasks"],
             "length": src_episode["length"],
         }
-        if SERVO_SETTINGS_COLUMN in src_episode_full:
-            value = src_episode_full[SERVO_SETTINGS_COLUMN]
+        if ROBOT_SETTINGS_COLUMN in src_episode_full:
+            value = src_episode_full[ROBOT_SETTINGS_COLUMN]
             if not isinstance(value, str):
                 value = None
-            episode_dict[SERVO_SETTINGS_COLUMN] = value
+            episode_dict[ROBOT_SETTINGS_COLUMN] = value
         episode_dict.update(episode_meta)
         episode_dict.update(flatten_dict({"stats": episode_stats}))
         dst_meta._save_episode_metadata(episode_dict)
@@ -1963,6 +1963,9 @@ def convert_image_to_video_dataset(
             if "data/chunk_index" in src_episode:
                 ep_meta["data/chunk_index"] = src_episode["data/chunk_index"]
                 ep_meta["data/file_index"] = src_episode["data/file_index"]
+            if ROBOT_SETTINGS_COLUMN in dataset.meta.episodes.column_names:
+                value = src_episode[ROBOT_SETTINGS_COLUMN]
+                ep_meta[ROBOT_SETTINGS_COLUMN] = value if isinstance(value, str) else None
             all_episode_metadata[ep_idx] = ep_meta
             cumulative_frame_idx += ep_length
 
@@ -2056,6 +2059,16 @@ def convert_image_to_video_dataset(
         episodes_df = pd.DataFrame(list(all_episode_metadata.values()))
         episodes_path = new_meta.root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
         episodes_path.parent.mkdir(parents=True, exist_ok=True)
+        if ROBOT_SETTINGS_COLUMN in episodes_df.columns:
+            import pyarrow as pa
+
+            values = [
+                value if isinstance(value, str) else None
+                for value in episodes_df[ROBOT_SETTINGS_COLUMN].tolist()
+            ]
+            episodes_df[ROBOT_SETTINGS_COLUMN] = pd.Series(
+                values, dtype=pd.ArrowDtype(pa.string()), index=episodes_df.index
+            )
         episodes_df.to_parquet(episodes_path, index=False)
 
         # Update metadata info

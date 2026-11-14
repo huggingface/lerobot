@@ -109,7 +109,7 @@ from lerobot.datasets import (
     create_initial_features,
     safe_stop_image_writer,
 )
-from lerobot.datasets.servo_settings import dataset_records_servo_settings, servo_settings_json
+from lerobot.datasets.robot_settings import episodes_have_robot_settings, settings_text
 from lerobot.processor import (
     RobotAction,
     RobotObservation,
@@ -443,7 +443,8 @@ def record(
     dataset = None
     listener = None
     recorded_episodes = 0
-    record_settings = False
+    # None until the first episode of a new dataset decides. False keeps an old dataset unchanged.
+    record_settings: bool | None = None
     # One timer for the whole session, so its statistics describe the recording rather
     # than one episode's slice of it.  The reset phases below deliberately run on their
     # own private timers: they write no frames, so folding their ticks in would dilute
@@ -501,15 +502,14 @@ def record(
             teleop.connect()
         robot.connect()
 
-        # Servo settings for each episode are read at the episode boundary below, not here
-        # and not inside the control loop. A dataset recorded without that column keeps
-        # its format and logs one warning.
-        if dataset is not None:
-            record_settings = dataset_records_servo_settings(dataset)
+        # Robot settings are read at the episode boundary below, not inside the control loop.
+        # An old dataset has no column and is left that way.
+        if dataset is not None and dataset.num_episodes > 0:
+            record_settings = episodes_have_robot_settings(dataset.meta)
             if not record_settings:
                 logging.warning(
-                    "Not recording servo settings: this dataset has episodes and no "
-                    "servo_settings column. Start a new dataset to record them."
+                    "Not recording robot settings: this dataset has episodes and no "
+                    "robot_settings column. Start a new dataset to record them."
                 )
 
         listener, events = init_keyboard_listener()
@@ -524,9 +524,14 @@ def record(
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 episode_index = dataset.num_episodes
                 start_episode(robot)
-                # Episode boundary, before the control loop. One read of the setting registers.
-                if record_settings and dataset.writer is not None:
-                    dataset.writer.pending_servo_settings = servo_settings_json(robot)
+                # Episode boundary, before the control loop. One read.
+                episode_settings = None
+                if record_settings is not False:
+                    episode_settings = settings_text(robot)
+                    if record_settings is None:
+                        record_settings = episode_settings is not None
+                    elif episode_settings is None:
+                        episode_settings = '{"error":"robot returned no settings"}'
                 log_say(f"Recording episode {episode_index}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -576,7 +581,7 @@ def record(
                     timer.restart()
                     continue
 
-                dataset.save_episode()
+                dataset.save_episode(robot_settings=episode_settings if record_settings else None)
                 recorded_episodes += 1
                 # Close the window on the episode just saved.  The digest is emitted on
                 # the next episode's first tick, so the reset phase, `save_episode` and

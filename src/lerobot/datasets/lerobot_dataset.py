@@ -512,7 +512,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         self._require_writer("add_frame").add_frame(frame)
 
-    def save_episode(self, episode_data: dict | None = None, parallel_encoding: bool = True) -> None:
+    def save_episode(
+        self,
+        episode_data: dict | None = None,
+        parallel_encoding: bool = True,
+        robot_settings: str | None = None,
+    ) -> None:
         """Save the current episode buffer to disk.
 
         Delegates to :meth:`DatasetWriter.save_episode`. Encodes videos, writes
@@ -523,11 +528,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 internal episode buffer populated by :meth:`add_frame`.
             parallel_encoding: If ``True`` and multiple cameras exist, encode
                 videos in parallel using a process pool.
+            robot_settings: JSON text recorded once for this episode, when this
+                dataset stores robot settings. ``None`` leaves the column out.
 
         Raises:
             RuntimeError: If the dataset is read-only (no writer).
         """
-        self._require_writer("save_episode").save_episode(episode_data, parallel_encoding)
+        self._require_writer("save_episode").save_episode(
+            episode_data, parallel_encoding, robot_settings=robot_settings
+        )
 
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
         """Discard the current episode buffer without saving.
