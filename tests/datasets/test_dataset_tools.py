@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 
@@ -657,6 +658,38 @@ def test_remove_camera_feature(sample_dataset, tmp_path):
 
     sample_item = dataset_without_camera[0]
     assert camera_to_remove not in sample_item
+
+
+def test_remove_camera_feature_no_stale_episode_columns(sample_dataset, tmp_path):
+    """Regression test for #5138: removing a camera feature must not leave stale stats/video
+    columns in per-episode metadata files (which break downstream delete_episodes / split_dataset)."""
+    camera_keys = sample_dataset.meta.camera_keys
+    if not camera_keys:
+        pytest.skip("No camera keys in dataset")
+    camera_to_remove = camera_keys[0]
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "without_camera")
+
+        dataset_without_camera = remove_feature(
+            sample_dataset,
+            feature_names=camera_to_remove,
+            output_dir=tmp_path / "without_camera",
+        )
+
+    assert camera_to_remove not in dataset_without_camera.meta.features
+
+    for path in (dataset_without_camera.root / "meta" / "episodes").glob("*/*.parquet"):
+        columns = pd.read_parquet(path).columns
+        assert not any(
+            column.startswith(f"stats/{camera_to_remove}/")
+            or column.startswith(f"videos/{camera_to_remove}/")
+            for column in columns
+        ), f"stale columns for removed feature remain in {path}"
 
 
 def test_complex_workflow_integration(sample_dataset, tmp_path):
