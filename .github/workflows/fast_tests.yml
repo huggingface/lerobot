@@ -129,3 +129,35 @@ jobs:
 
       - name: "Tier 4 — Test: viz"
         run: uv run pytest tests -vv --maxfail=10 -m viz
+
+      # These base-marked cases need remote transport, which the isolated tiers omit.
+      - name: Install signal regression dependencies
+        run: uv sync --locked --extra test --extra dataset --extra remote
+
+      - name: Test env-server signal shutdown (no skips)
+        timeout-minutes: 5
+        env:
+          LEROBOT_TEST_DEVICE: cpu
+        run: |
+          uv run --no-sync pytest tests/scripts/test_lerobot_env_server.py::test_the_server_runs_in_its_own_process_and_stops_on_signal -vv -ra --junitxml="$RUNNER_TEMP/env-server-signals.xml"
+          uv run --no-sync python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          cases = list(ET.parse(Path(os.environ["RUNNER_TEMP"]) / "env-server-signals.xml").iter("testcase"))
+          expected = {
+              f"test_the_server_runs_in_its_own_process_and_stops_on_signal[{delivery}-{signum}]"
+              for delivery in ("ordinary", "wait-lock-held")
+              for signum in ("sigterm", "sigint")
+          }
+          if len(cases) != len(expected) or {case.get("name") for case in cases} != expected:
+              raise SystemExit(f"Expected all four signal cases; got {[case.attrib for case in cases]}")
+          unsuccessful = [
+              case.attrib for case in cases
+              if any(case.find(status) is not None for status in ("skipped", "failure", "error"))
+          ]
+          if unsuccessful:
+              raise SystemExit(f"Signal cases must execute and pass: {unsuccessful}")
+          print("All four env-server signal cases executed and passed.")
+          PY
