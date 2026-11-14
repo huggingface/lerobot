@@ -356,7 +356,7 @@ These declarations reflect the driver command contract, not physical validation 
 
 When you do record them, return a JSON-ready dict:
 
-- `robot_type`: the robot type.
+- `robot_type`: this robot's type name. The SO followers return `so_follower`, the implementation both arms share.
 - `robot_id`: the config id, the same id that names the calibration file.
 - `motors`: one entry per motor, with `model`, `calibration`, and `registers`. `registers` maps each setting name to a raw integer.
 

@@ -60,7 +60,8 @@ class Robot(abc.ABC):
         """JSON-ready setup of this robot, read once at the start of an episode.
 
         Return None to record nothing. That is the default. A robot that records
-        settings returns a dict with ``robot_type``, ``robot_id``, and ``motors``.
+        settings returns a dict with ``robot_type`` (this robot's type name),
+        ``robot_id``, and ``motors``.
         Each motor has ``model``, ``calibration``, and ``registers`` (setting names
         to raw integers). Leave out live readings and commands: position, speed,
         load, voltage, temperature, current, goal values, and the torque switch.

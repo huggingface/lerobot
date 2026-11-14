@@ -503,12 +503,12 @@ def record(
         robot.connect()
 
         # Robot settings are read at the episode boundary below, not inside the control loop.
-        # An old dataset has no column and is left that way.
-        if dataset is not None and dataset.num_episodes > 0:
+        # Resume keeps the dataset's existing format, including an empty dataset.
+        if cfg.resume:
             record_settings = episodes_have_robot_settings(dataset.meta)
             if not record_settings:
                 logging.warning(
-                    "Not recording robot settings: this dataset has episodes and no "
+                    "Not recording robot settings: this dataset has no "
                     "robot_settings column. Start a new dataset to record them."
                 )
 

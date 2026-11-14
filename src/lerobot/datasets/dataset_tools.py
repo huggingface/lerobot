@@ -1066,10 +1066,7 @@ def _copy_and_reindex_episodes_metadata(
             "length": src_episode["length"],
         }
         if ROBOT_SETTINGS_COLUMN in src_episode_full:
-            value = src_episode_full[ROBOT_SETTINGS_COLUMN]
-            if not isinstance(value, str):
-                value = None
-            episode_dict[ROBOT_SETTINGS_COLUMN] = value
+            episode_dict[ROBOT_SETTINGS_COLUMN] = src_episode_full[ROBOT_SETTINGS_COLUMN]
         episode_dict.update(episode_meta)
         episode_dict.update(flatten_dict({"stats": episode_stats}))
         dst_meta._save_episode_metadata(episode_dict)
@@ -1964,8 +1961,7 @@ def convert_image_to_video_dataset(
                 ep_meta["data/chunk_index"] = src_episode["data/chunk_index"]
                 ep_meta["data/file_index"] = src_episode["data/file_index"]
             if ROBOT_SETTINGS_COLUMN in dataset.meta.episodes.column_names:
-                value = src_episode[ROBOT_SETTINGS_COLUMN]
-                ep_meta[ROBOT_SETTINGS_COLUMN] = value if isinstance(value, str) else None
+                ep_meta[ROBOT_SETTINGS_COLUMN] = src_episode[ROBOT_SETTINGS_COLUMN]
             all_episode_metadata[ep_idx] = ep_meta
             cumulative_frame_idx += ep_length
 
@@ -2062,12 +2058,8 @@ def convert_image_to_video_dataset(
         if ROBOT_SETTINGS_COLUMN in episodes_df.columns:
             import pyarrow as pa
 
-            values = [
-                value if isinstance(value, str) else None
-                for value in episodes_df[ROBOT_SETTINGS_COLUMN].tolist()
-            ]
-            episodes_df[ROBOT_SETTINGS_COLUMN] = pd.Series(
-                values, dtype=pd.ArrowDtype(pa.string()), index=episodes_df.index
+            episodes_df[ROBOT_SETTINGS_COLUMN] = episodes_df[ROBOT_SETTINGS_COLUMN].astype(
+                pd.ArrowDtype(pa.string())
             )
         episodes_df.to_parquet(episodes_path, index=False)
 

@@ -21,12 +21,28 @@ It is one JSON string per episode, stored as an Arrow string.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    import pyarrow as pa
+
+    from lerobot.robots.robot import Robot
 
 ROBOT_SETTINGS_COLUMN = "robot_settings"
 
 
-def episodes_have_robot_settings(meta: Any) -> bool:
+class _ColumnTable(Protocol):
+    column_names: list[str]
+
+
+class _SettingsMetadata(Protocol):
+    episodes: _ColumnTable | None
+
+    @property
+    def total_episodes(self) -> int: ...
+
+
+def episodes_have_robot_settings(meta: _SettingsMetadata) -> bool:
     """True when this metadata already has the column and at least one episode."""
     episodes = meta.episodes
     if episodes is None or meta.total_episodes == 0:
@@ -34,7 +50,7 @@ def episodes_have_robot_settings(meta: Any) -> bool:
     return ROBOT_SETTINGS_COLUMN in episodes.column_names
 
 
-def settings_text(robot: Any) -> str | None:
+def settings_text(robot: Robot) -> str | None:
     """JSON for one episode, or None when this robot does not record settings.
 
     A failed read still returns text, so the column does not change type.
@@ -48,15 +64,13 @@ def settings_text(robot: Any) -> str | None:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-def cast_robot_settings_table(table: Any) -> Any:
-    """Store ``robot_settings`` as a nullable string, including an all-null batch."""
-    if ROBOT_SETTINGS_COLUMN not in getattr(table, "column_names", ()):
+def cast_robot_settings_table(table: pa.Table) -> pa.Table:
+    """Store ``robot_settings`` as an Arrow string."""
+    if ROBOT_SETTINGS_COLUMN not in table.column_names:
         return table
     import pyarrow as pa
 
-    values = []
-    for value in table.column(ROBOT_SETTINGS_COLUMN).to_pylist():
-        values.append(value if isinstance(value, str) else None)
-    array = pa.array(values, type=pa.string())
     index = table.schema.get_field_index(ROBOT_SETTINGS_COLUMN)
-    return table.set_column(index, ROBOT_SETTINGS_COLUMN, array)
+    return table.set_column(
+        index, ROBOT_SETTINGS_COLUMN, table.column(ROBOT_SETTINGS_COLUMN).cast(pa.string())
+    )

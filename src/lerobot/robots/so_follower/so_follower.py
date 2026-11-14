@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
 import logging
 import time
 from functools import cached_property
@@ -81,13 +80,6 @@ def _read_register(bus, register: str, names: list[str]):
     try:
         return bus.sync_read(register, names, normalize=False)
     except Exception:
-        return None
-
-
-def _as_int(value) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
         return None
 
 
@@ -287,31 +279,24 @@ class SOFollower(Robot):
         bus = self.bus
         for name, motor in bus.motors.items():
             entry: dict = {"model": motor.model}
-            calibration = self.calibration.get(name) if isinstance(self.calibration, dict) else None
+            calibration = self.calibration.get(name)
             if calibration is not None:
-                with contextlib.suppress(AttributeError, KeyError, TypeError, ValueError):
-                    entry["calibration"] = {
-                        key: int(
-                            calibration[key] if isinstance(calibration, dict) else getattr(calibration, key)
-                        )
-                        for key in _CALIBRATION_KEYS
-                    }
+                entry["calibration"] = {key: int(getattr(calibration, key)) for key in _CALIBRATION_KEYS}
             motors[name] = entry
         sts_names = [name for name, motor in bus.motors.items() if motor.model == "sts3215"]
+        failed: list[str] = []
         if sts_names:
             for register in _STS3215_SETTING_REGISTERS:
                 values = _read_register(bus, register, sts_names)
-                if not isinstance(values, dict):
+                if values is None:
+                    failed.append(register)
                     continue
                 for name, value in values.items():
-                    if name not in motors:
-                        continue
-                    stored = _as_int(value)
-                    if stored is None:
-                        continue
-                    motors[name].setdefault("registers", {})[register] = stored
+                    motors[name].setdefault("registers", {})[register] = int(value)
+        if failed:
+            logger.warning("Failed to read robot setting registers: %s", ", ".join(failed))
         return {
-            "robot_type": getattr(self.config, "type", self.robot_type),
+            "robot_type": self.robot_type,
             "robot_id": self.id,
             "motors": motors,
         }
