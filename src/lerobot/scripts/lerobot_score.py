@@ -92,10 +92,12 @@ class ScoreConfig:
     def __post_init__(self) -> None:
         reward_model_path = parser.get_path_arg("reward_model")
         if reward_model_path:
+            yaml_overrides = parser.get_yaml_overrides("reward_model")
+            cli_overrides = parser.get_cli_overrides("reward_model") or []
             self.reward_model = RewardModelConfig.from_pretrained(
                 reward_model_path,
                 revision=parser.get_pretrained_revision("reward_model"),
-                cli_overrides=parser.get_cli_overrides("reward_model"),
+                cli_overrides=yaml_overrides + cli_overrides,
             )
 
     @classmethod
@@ -134,7 +136,7 @@ def run_score(cfg: ScoreConfig) -> None:
         episodes=cfg.episodes,
         download_videos=True,
     )
-    score_name = cfg.name or scorer.name
+    score_name = scorer.name if cfg.name is None else cfg.name
     score_dataset(
         dataset,
         scorer,

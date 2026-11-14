@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from lerobot.scripts import lerobot_score
 from lerobot.scripts.lerobot_score import ScoreConfig
@@ -32,17 +35,67 @@ def test_score_config_loads_reward_model_from_path(monkeypatch):
 
     monkeypatch.setattr(lerobot_score.parser, "get_path_arg", lambda field: "user/robometer")
     monkeypatch.setattr(lerobot_score.parser, "get_pretrained_revision", lambda field: "model-revision")
+    monkeypatch.setattr(
+        lerobot_score.parser,
+        "get_yaml_overrides",
+        lambda field: ["--device=cuda", "--image_key=observation.images.front"],
+    )
     monkeypatch.setattr(lerobot_score.parser, "get_cli_overrides", lambda field: ["--device=cpu"])
     monkeypatch.setattr(lerobot_score.RewardModelConfig, "from_pretrained", fake_from_pretrained)
 
     cfg = ScoreConfig(dataset_repo_id="user/dataset", num_samples=4, head_mode="dense")
 
     assert cfg.reward_model is loaded_config
-    assert captured["load"] == ("user/robometer", "model-revision", ["--device=cpu"])
+    assert captured["load"] == (
+        "user/robometer",
+        "model-revision",
+        ["--device=cuda", "--image_key=observation.images.front", "--device=cpu"],
+    )
     assert cfg.scorer_options == {"num_samples": 4, "head_mode": "dense"}
 
 
-def test_run_score_uses_reward_scoring_api(monkeypatch, tmp_path):
+def test_score_config_applies_yaml_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from lerobot.rewards.topreward import TOPRewardConfig
+
+    checkpoint = tmp_path / "checkpoint"
+    TOPRewardConfig(device="cpu", image_key="observation.images.top", fps=2.0).save_pretrained(checkpoint)
+    config_path = tmp_path / "score.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "dataset_repo_id": "user/dataset",
+                "reward_model": {
+                    "path": str(checkpoint),
+                    "image_key": "observation.images.front",
+                    "fps": 7.0,
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(lerobot_score.parser, "_config_path_args", {})
+    monkeypatch.setattr(lerobot_score.parser, "_config_yaml_overrides", {})
+    monkeypatch.setattr(sys, "argv", ["lerobot-score", f"--config_path={config_path}"])
+    received: list[ScoreConfig] = []
+    monkeypatch.setattr(lerobot_score, "run_score", received.append)
+    monkeypatch.setattr(lerobot_score, "init_logging", lambda: None)
+
+    lerobot_score.main()
+
+    assert len(received) == 1
+    reward_model = received[0].reward_model
+    assert isinstance(reward_model, TOPRewardConfig)
+    assert reward_model.pretrained_path == str(checkpoint)
+    assert reward_model.image_key == "observation.images.front"
+    assert reward_model.fps == 7.0
+
+
+@pytest.mark.parametrize(
+    "name,expected_name",
+    [(None, "robometer"), ("robometer-4b", "robometer-4b"), ("", "")],
+)
+def test_run_score_uses_reward_scoring_api(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str | None, expected_name: str
+) -> None:
     pytest.importorskip("datasets")
     pytest.importorskip("av")
 
@@ -81,7 +134,7 @@ def test_run_score_uses_reward_scoring_api(monkeypatch, tmp_path):
         reward_model=reward_config,
         dataset_root=tmp_path / "dataset",
         dataset_revision="dataset-revision",
-        name="robometer-4b",
+        name=name,
         episodes=[1],
         batch_size=8,
         num_subsampled_frames=6,
@@ -103,9 +156,9 @@ def test_run_score_uses_reward_scoring_api(monkeypatch, tmp_path):
     assert captured["score_dataset"] == (
         fake_dataset,
         fake_scorer,
-        {"name": "robometer-4b", "episodes": [1], "resume": True, "overwrite": False},
+        {"name": expected_name, "episodes": [1], "resume": True, "overwrite": False},
     )
-    assert captured["push_scores_to_hub"] == (fake_dataset, "robometer-4b")
+    assert captured["push_scores_to_hub"] == (fake_dataset, expected_name)
 
 
 def test_run_score_requires_a_reward_model():
