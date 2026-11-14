@@ -40,6 +40,7 @@ from .io_utils import (
     write_stats,
     write_tasks,
 )
+from .robot_settings import ROBOT_SETTINGS_COLUMN, episodes_have_robot_settings
 from .utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -414,6 +415,17 @@ def aggregate_datasets(
         video_files_size_in_mb=video_files_size_in_mb,
     )
 
+    sources_with_episodes = [meta for meta in all_metadata if meta.total_episodes > 0]
+    sources_without_settings = [
+        meta.repo_id for meta in sources_with_episodes if not episodes_have_robot_settings(meta)
+    ]
+    keep_robot_settings = bool(sources_with_episodes) and not sources_without_settings
+    if sources_without_settings and len(sources_without_settings) < len(sources_with_episodes):
+        logger.warning(
+            "Dropping robot_settings because not every dataset has it. "
+            f"{', '.join(sources_without_settings)} have none."
+        )
+
     logger.info("Find all tasks")
     unique_tasks = pd.concat([m.tasks for m in all_metadata]).index.unique()
     dst_meta.tasks = pd.DataFrame(
@@ -436,7 +448,14 @@ def aggregate_datasets(
             src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size, concatenate_data
         )
 
-        meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
+        meta_idx = aggregate_metadata(
+            src_meta,
+            dst_meta,
+            meta_idx,
+            data_idx,
+            videos_idx,
+            keep_robot_settings=keep_robot_settings,
+        )
 
         # Clear the src_to_dst mapping after processing each source dataset
         # to avoid interference between different source datasets
@@ -658,6 +677,7 @@ def aggregate_metadata(
     meta_idx: IndexState,
     data_idx: IndexState,
     videos_idx: VideoIndexState,
+    keep_robot_settings: bool = False,
 ) -> IndexState:
     """Aggregates metadata from a source dataset into the destination dataset.
 
@@ -687,6 +707,8 @@ def aggregate_metadata(
     for chunk_idx, file_idx in chunk_file_ids:
         src_path = src_meta.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         df = pd.read_parquet(src_path)
+        if not keep_robot_settings and ROBOT_SETTINGS_COLUMN in df.columns:
+            df = df.drop(columns=[ROBOT_SETTINGS_COLUMN])
         df = update_meta_data(
             df,
             dst_meta,

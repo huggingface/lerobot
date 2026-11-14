@@ -29,6 +29,60 @@ from .config_so_follower import SOFollowerRobotConfig
 
 logger = logging.getLogger(__name__)
 
+# STS3215 setting registers, by the names the bus already accepts.
+# No live readings, no goal commands, and no torque switch.
+_STS3215_SETTING_REGISTERS = (
+    "id",
+    "baud_rate",
+    "return_delay_time",
+    "response_status_level",
+    "min_position_limit",
+    "max_position_limit",
+    "max_temperature_limit",
+    "max_voltage_limit",
+    "min_voltage_limit",
+    "max_torque_limit",
+    "phase",
+    "unloading_condition",
+    "led_alarm_condition",
+    "p_coefficient",
+    "i_coefficient",
+    "d_coefficient",
+    "minimum_startup_force",
+    "cw_dead_zone",
+    "ccw_dead_zone",
+    "protection_current",
+    "angular_resolution",
+    "homing_offset",
+    "operating_mode",
+    "protective_torque",
+    "protection_time",
+    "overload_torque",
+    "speed_closed_loop_p_coefficient",
+    "over_current_protection_time",
+    "velocity_closed_loop_i_coefficient",
+    "acceleration",
+    "torque_limit",
+    "lock",
+    "moving_velocity_threshold",
+    "dts",
+    "velocity_unit_factor",
+    "hts",
+    "maximum_velocity_limit",
+    "maximum_acceleration",
+    "acceleration_multiplier",
+)
+_CALIBRATION_KEYS = ("id", "drive_mode", "homing_offset", "range_min", "range_max")
+
+
+def _read_register(bus, register: str, names: list[str]):
+    """One setting register for these motors, or None when the read fails."""
+    try:
+        return bus.sync_read(register, names, normalize=False)
+    except Exception:
+        return None
+
+
 _HOMING_POSITION_DIAGRAM = r"""
        ╭─────┬────────────────────┬──────╮ ◉╲═════╗   ← moveable claw
        │     │      forearm       │  ▤▤  │╤══╲════╝   ← fixed claw
@@ -219,6 +273,33 @@ class SOFollower(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
+
+    def read_settings(self) -> dict | None:
+        motors: dict[str, dict] = {}
+        bus = self.bus
+        for name, motor in bus.motors.items():
+            entry: dict = {"model": motor.model}
+            calibration = self.calibration.get(name)
+            if calibration is not None:
+                entry["calibration"] = {key: int(getattr(calibration, key)) for key in _CALIBRATION_KEYS}
+            motors[name] = entry
+        sts_names = [name for name, motor in bus.motors.items() if motor.model == "sts3215"]
+        failed: list[str] = []
+        if sts_names:
+            for register in _STS3215_SETTING_REGISTERS:
+                values = _read_register(bus, register, sts_names)
+                if values is None:
+                    failed.append(register)
+                    continue
+                for name, value in values.items():
+                    motors[name].setdefault("registers", {})[register] = int(value)
+        if failed:
+            logger.warning("Failed to read robot setting registers: %s", ", ".join(failed))
+        return {
+            "robot_type": self.robot_type,
+            "robot_id": self.id,
+            "motors": motors,
+        }
 
 
 SO100Follower = SOFollower

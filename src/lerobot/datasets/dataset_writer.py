@@ -54,6 +54,7 @@ from .io_utils import (
     load_episodes,
     write_info,
 )
+from .robot_settings import ROBOT_SETTINGS_COLUMN
 from .utils import (
     DEFAULT_DEPTH_PATH,
     DEFAULT_EPISODES_PATH,
@@ -272,6 +273,7 @@ class DatasetWriter:
         self,
         episode_data: dict | None = None,
         parallel_encoding: bool = True,
+        robot_settings: str | None = None,
     ) -> None:
         """Save the current episode in self.episode_buffer to disk."""
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
@@ -374,7 +376,10 @@ class DatasetWriter:
                 for video_key in self._meta.video_keys:
                     ep_metadata.update(self._save_episode_video(video_key, episode_index))
 
-        # `meta.save_episode` need to be executed after encoding the videos
+        # `meta.save_episode` need to be executed after encoding the videos.
+        # The value was read at the episode boundary, before the control loop.
+        if robot_settings is not None:
+            ep_metadata[ROBOT_SETTINGS_COLUMN] = robot_settings
         self._meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
 
         if has_video_keys and use_batched_encoding:
