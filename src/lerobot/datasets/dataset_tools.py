@@ -1175,10 +1175,11 @@ def _copy_data_with_feature_changes(
             for feature_name, (values, _) in add_features.items():
                 if callable(values):
                     feature_values = []
-                    for _, row in df.iterrows():
+                    for row_values in df.itertuples(index=False, name=None):
+                        row = dict(zip(df.columns, row_values, strict=True))
                         ep_idx = row["episode_index"]
                         frame_in_ep = row["frame_index"]
-                        value = values(row.to_dict(), ep_idx, frame_in_ep)
+                        value = values(row, ep_idx, frame_in_ep)
                         if isinstance(value, np.ndarray) and value.size == 1:
                             value = value.item()
                         feature_values.append(value)
