@@ -90,6 +90,7 @@ def _as_int(value) -> int | None:
     except (TypeError, ValueError):
         return None
 
+
 _HOMING_POSITION_DIAGRAM = r"""
        ╭─────┬────────────────────┬──────╮ ◉╲═════╗   ← moveable claw
        │     │      forearm       │  ▤▤  │╤══╲════╝   ← fixed claw
@@ -282,7 +283,6 @@ class SOFollower(Robot):
         logger.info(f"{self} disconnected.")
 
     def read_settings(self) -> dict | None:
-        """Robot type, id, and each STS3215 motor's calibration and setting registers."""
         motors: dict[str, dict] = {}
         bus = self.bus
         for name, motor in bus.motors.items():

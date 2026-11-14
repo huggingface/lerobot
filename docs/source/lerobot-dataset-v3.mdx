@@ -85,6 +85,12 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 - **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
 - **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
 
+### Robot settings
+
+`meta/episodes` can include a `robot_settings` column. Each value is a string of JSON for that episode: the robot type, the robot id, and for each motor the model, the calibration, and the setting registers. Live readings and commands are not included.
+
+`lerobot-record` adds the column only when it creates a new dataset and the robot's `read_settings` returns a setup. Every episode in that dataset then has a string, including when a later read fails. A dataset recorded without the column does not gain one on resume. Delete, split, and image-to-video conversion keep the column. Merge keeps it only when every source has it. Otherwise the merge drops the column and logs one warning.
+
 ## Load a dataset for training
 
 `LeRobotDataset` returns Python dictionaries of PyTorch tensors and integrates with `torch.utils.data.DataLoader`. Here is a code example showing its use:

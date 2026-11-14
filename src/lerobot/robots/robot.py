@@ -57,11 +57,15 @@ class Robot(abc.ABC):
         raise NotImplementedError(f"{self.name} does not implement command hold")
 
     def read_settings(self) -> dict | None:
-        """JSON-ready setup of this robot, or None when this type does not record one.
+        """JSON-ready setup of this robot, read once at the start of an episode.
 
-        Called once at the start of an episode, not from the control loop. The
-        default records nothing. A follower that implements it returns the robot
-        type, its id, and each motor's model, calibration, and setting registers.
+        Return None to record nothing. That is the default. A robot that records
+        settings returns a dict with ``robot_type``, ``robot_id``, and ``motors``.
+        Each motor has ``model``, ``calibration``, and ``registers`` (setting names
+        to raw integers). Leave out live readings and commands: position, speed,
+        load, voltage, temperature, current, goal values, and the torque switch.
+        Do not call this from the control loop. ``lerobot-record`` stores the dict
+        as one JSON string on the episode.
         """
         return None
 
