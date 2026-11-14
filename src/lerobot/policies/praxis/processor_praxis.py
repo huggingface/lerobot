@@ -78,6 +78,7 @@ __all__ = [
     "make_praxis_pre_post_processors",
     "pose8_to_droid7",
     "pose12_grip_to_droid7",
+    "tile_frames",
     "tile_views",
 ]
 
@@ -181,22 +182,31 @@ def tile_views(
     flat = frames.reshape(-1, *frames.shape[-3:]).cpu()
     if flat.dtype != torch.uint8:
         flat = (flat.float() * 255.0).round().clamp_(0, 255).to(torch.uint8)
-    if tuple(flat.shape[-2:]) == (tile_height, tile_width):
-        tiles = flat.float()
-    elif antialias:
-        tiles = _fit_view(flat, tile_height, tile_width, aspect_tol).float()
-    else:
-        cropped = aspect_crop(flat, tile_height, tile_width, aspect_tol)
-        tiles = torch.cat(
-            [
-                F.interpolate(
-                    chunk.float(), size=(tile_height, tile_width), mode="bilinear", align_corners=False
-                )
-                for chunk in cropped.split(TILE_CHUNK_FRAMES, dim=0)
-            ]
-        ).round()
-    tiles = tiles.clamp_(0, 255) / 255.0
+    tiles = tile_frames(flat, tile_height, tile_width, aspect_tol, antialias).float() / 255.0
     return tiles.reshape(*lead, 3, tile_height, tile_width).to(frames.device)
+
+
+def tile_frames(
+    frames: Tensor, tile_height: int, tile_width: int, aspect_tol: float = ASPECT_TOL, antialias: bool = False
+) -> Tensor:
+    """The praxis tile of uint8 camera frames ``(N, 3, H, W)``, uint8 ``(N, 3, tile_height, tile_width)``.
+
+    The canvas rule of `tile_views`, on the device of the frames, so a caller can tile on the GPU. With
+    ``antialias`` on CUDA, the resize rounds one level differently on some pixels, which `tile_views`
+    avoids by resizing on the CPU.
+    """
+    if tuple(frames.shape[-2:]) == (tile_height, tile_width):
+        return frames
+    if antialias:
+        return _fit_view(frames, tile_height, tile_width, aspect_tol)
+    cropped = aspect_crop(frames, tile_height, tile_width, aspect_tol)
+    tiles = torch.cat(
+        [
+            F.interpolate(chunk.float(), size=(tile_height, tile_width), mode="bilinear", align_corners=False)
+            for chunk in cropped.split(TILE_CHUNK_FRAMES, dim=0)
+        ]
+    )
+    return tiles.round().clamp_(0, 255).to(torch.uint8)
 
 
 def tile_views_bimanual(frames: dict[str, Tensor], tile_height: int, tile_width: int) -> dict[str, Tensor]:
@@ -218,20 +228,7 @@ def tile_views_bimanual(frames: dict[str, Tensor], tile_height: int, tile_width:
         if f.dtype != torch.uint8:
             f = (f.float() * 255.0).round().clamp_(0, 255).to(torch.uint8)
         flat[key] = f
-    native = [(int(f.shape[-2]), int(f.shape[-1])) for f in flat.values()]
-    if all(n == (tile_height, tile_width) for n in native):
-        tiles = dict(flat.items())
-    else:
-        resize, trimmed = bimanual.fit_row_sizes(native, bimanual.RESTRICT_SIDE, bimanual.SPATIAL_PATCH)
-        if any(tr != (tile_height, tile_width) for tr in trimmed):
-            raise ValueError(
-                f"views of {native} fit to {trimmed}, not the {tile_height}x{tile_width} tiles of the "
-                "checkpoint; send the views at their native aspect (16:10 for the YAM rig)"
-            )
-        tiles = {
-            k: bimanual._trim(bimanual._resize(f, *r), tile_height, tile_width)
-            for (k, f), r in zip(flat.items(), resize, strict=True)
-        }
+    tiles = dict(zip(keys, tile_frames_bimanual(list(flat.values()), tile_height, tile_width), strict=True))
     out = {}
     for key in keys:
         lead = frames[key].shape[:-3]
@@ -239,6 +236,26 @@ def tile_views_bimanual(frames: dict[str, Tensor], tile_height: int, tile_width:
             (tiles[key].float() / 255.0).reshape(*lead, 3, tile_height, tile_width).to(frames[key].device)
         )
     return out
+
+
+def tile_frames_bimanual(frames: list[Tensor], tile_height: int, tile_width: int) -> list[Tensor]:
+    """The bimanual rig's tiles of uint8 views ``(N, 3, H, W)``, uint8 ``(N, 3, tile_height, tile_width)``.
+
+    The fit rule of `tile_views_bimanual`, on the device of the frames, so a caller can tile on the GPU.
+    """
+    native = [(int(f.shape[-2]), int(f.shape[-1])) for f in frames]
+    if all(n == (tile_height, tile_width) for n in native):
+        return list(frames)
+    resize, trimmed = bimanual.fit_row_sizes(native, bimanual.RESTRICT_SIDE, bimanual.SPATIAL_PATCH)
+    if any(tr != (tile_height, tile_width) for tr in trimmed):
+        raise ValueError(
+            f"views of {native} fit to {trimmed}, not the {tile_height}x{tile_width} tiles of the "
+            "checkpoint; send the views at their native aspect (16:10 for the YAM rig)"
+        )
+    return [
+        bimanual._trim(bimanual._resize(f, *r), tile_height, tile_width)
+        for f, r in zip(frames, resize, strict=True)
+    ]
 
 
 @dataclass

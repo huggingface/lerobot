@@ -109,6 +109,25 @@ def set_flex_attention_compiled(compiled: bool) -> None:
     set_flex_attention_mode("compiled" if compiled else "dense")
 
 
+_CUSTOM_KERNELS = True
+
+
+def set_custom_kernels(enabled: bool) -> None:
+    """Run the layers' custom Triton kernels on CUDA (default) or the PyTorch ops they stand for.
+
+    A LeRobot addition. The kernels are those of ``modulate`` and of the expert SwiGLU; the VAE encoder's
+    fused kernels are separate. ``torch.export`` records only PyTorch ops, so a caller that exports the
+    layers turns these off. The PyTorch ops compute the same values with other rounding.
+    """
+    global _CUSTOM_KERNELS
+    _CUSTOM_KERNELS = enabled
+
+
+def custom_kernels_enabled() -> bool:
+    """Whether the custom Triton kernels run on CUDA (see ``set_custom_kernels``)."""
+    return _CUSTOM_KERNELS
+
+
 # The router GEMM runs over row chunks of this size. A different chunking can
 # make cuBLAS pick a different kernel, which can flip near-tied experts.
 _ROUTER_CHUNK_ROWS = 65536
@@ -167,11 +186,13 @@ def modulate(
     ``"mixed"`` and ``"float32"`` compute in float32. ``"bfloat16"`` computes
     in bf16. ``None`` uses the normal type promotion. With ``"mixed"``, 3-D
     CUDA inputs of one shape (or ``shift`` and ``scale`` of shape
-    ``(B, 1, C)``) go to a Triton kernel. That kernel can fuse the multiply
-    and the add, so its rounding is not the rounding of the eager path.
+    ``(B, 1, C)``) go to a Triton kernel, unless ``set_custom_kernels`` turned
+    it off. That kernel can fuse the multiply and the add, so its rounding is
+    not the rounding of the eager path.
     """
     compute: Literal["bfloat16", "float32"] | None = "float32" if dtype == "mixed" else dtype
-    case = _fused_modulate_case(x, shift, scale) if dtype == "mixed" and HAS_TRITON else None
+    fused = dtype == "mixed" and HAS_TRITON and _CUSTOM_KERNELS
+    case = _fused_modulate_case(x, shift, scale) if fused else None
     if case is None:
         return _modulate_eager(x, shift, scale, compute)
     return modulate_fused(x, shift, scale, rows=case == "rows")
@@ -440,10 +461,10 @@ class SharedExpert(nn.Module):
 def _expert_swiglu(gate_up: Tensor) -> Tensor:
     """``silu(gate) * up`` of the routed experts.
 
-    On CUDA this runs the custom kernel of the original implementation. Its sigmoid rounds
-    differently from ``F.silu``.
+    On CUDA this runs the custom kernel of the original implementation, unless
+    ``set_custom_kernels`` turned it off. Its sigmoid rounds differently from ``F.silu``.
     """
-    if gate_up.is_cuda and HAS_TRITON:
+    if gate_up.is_cuda and HAS_TRITON and _CUSTOM_KERNELS:
         return swiglu_packed(gate_up)
     gate, up = gate_up.chunk(2, dim=-1)
     return F.silu(gate) * up

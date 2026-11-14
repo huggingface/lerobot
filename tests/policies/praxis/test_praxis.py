@@ -791,3 +791,38 @@ def test_to_another_device_selects_its_attention_kernels() -> None:
     assert policy.attention_backend == "triton" and policy.model.action_expert.attention == "sdpa"
     assert all(m.backend == "triton" and m._kernel_options is None for m in attention)
     assert all(t._tf_masks.block_size == block for t in towers)
+
+
+def test_custom_kernels_can_be_turned_off_for_export(monkeypatch) -> None:
+    """With the switch off, `modulate` and the expert SwiGLU run their PyTorch ops even where a kernel would run."""
+    from lerobot.policies.praxis.praxis_core import layers
+
+    def kernel(*args, **kwargs):
+        raise AssertionError("custom kernel called")
+
+    class LooksLikeCuda(torch.Tensor):
+        @property
+        def is_cuda(self):
+            return True
+
+    monkeypatch.setattr(layers, "HAS_TRITON", True)
+    monkeypatch.setattr(layers, "_fused_modulate_case", lambda x, shift, scale: "rows")
+    monkeypatch.setattr(layers, "modulate_fused", kernel)
+    monkeypatch.setattr(layers, "swiglu_packed", kernel)
+    x, shift, scale = torch.randn(2, 3, 4), torch.randn(2, 1, 4), torch.randn(2, 1, 4)
+    gate_up = torch.randn(5, 8).as_subclass(LooksLikeCuda)
+    assert layers.custom_kernels_enabled()
+    with pytest.raises(AssertionError, match="custom kernel called"):
+        layers.modulate(x, shift, scale, dtype="mixed")
+    with pytest.raises(AssertionError, match="custom kernel called"):
+        layers._expert_swiglu(gate_up)
+    monkeypatch.setattr(layers, "_CUSTOM_KERNELS", True)
+    layers.set_custom_kernels(False)
+    assert not layers.custom_kernels_enabled()
+    torch.testing.assert_close(
+        layers.modulate(x, shift, scale, dtype="mixed"), layers._modulate_eager(x, shift, scale, "float32")
+    )
+    gate, up = torch.Tensor(gate_up).chunk(2, dim=-1)
+    torch.testing.assert_close(
+        torch.Tensor(layers._expert_swiglu(gate_up)), torch.nn.functional.silu(gate) * up
+    )
