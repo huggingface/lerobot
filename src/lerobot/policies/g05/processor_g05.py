@@ -1022,7 +1022,7 @@ def _training_recipe(config: G05Config) -> TrainingRecipe | None:
     """The config's serialized recipe as the `TrainingRecipe` the render steps take."""
     if config.recipe is None:
         return None
-    # Imported here: recipes need the dataset extras, the policy does not.
+    # Imported here: recipes need the dataset extras.
     from lerobot.datasets.recipe import TrainingRecipe
 
     return TrainingRecipe.from_dict(config.recipe)
