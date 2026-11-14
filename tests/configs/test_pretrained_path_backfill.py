@@ -197,7 +197,7 @@ def test_cli_preserves_reference_after_config_load(monkeypatch, tmp_path, local,
     import lerobot.configs.rewards as rewards_mod
 
     policy_type = "_dummy_reward_backfill" if field == "reward_model" else "_dummy_backfill"
-    _write_checkpoint(str(tmp_path), {"type": policy_type})
+    (tmp_path / "config.json").write_text(json.dumps({"type": policy_type, "lr": 0.1}))
     reference = str(tmp_path) if local else "user/dummy_backfill"
 
     def fake_download(*, repo_id, filename, revision, **kwargs):
