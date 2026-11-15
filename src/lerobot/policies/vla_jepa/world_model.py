@@ -339,6 +339,17 @@ class ACBlock(nn.Module):
         return x + self.drop_path(self.mlp(y))
 
 
+def _drop_removed_modules(
+    module: ActionConditionedVideoPredictor, state_dict: dict[str, torch.Tensor], prefix: str, *args
+) -> None:
+    """`load_state_dict` pre-hook for checkpoints that still carry the predictor's removed modules."""
+    removed = [f"{prefix}state_encoder."]
+    if module.extrinsics_encoder is None:
+        removed.append(f"{prefix}extrinsics_encoder.")
+    for key in [key for key in state_dict if key.startswith(tuple(removed))]:
+        del state_dict[key]
+
+
 class ActionConditionedVideoPredictor(nn.Module):
     """JEVLA1-compatible action-conditioned V-JEPA predictor."""
 
@@ -366,10 +377,11 @@ class ActionConditionedVideoPredictor(nn.Module):
         self.action_encoder = nn.Linear(action_embed_dim, predictor_embed_dim, bias=True)
         # Only built when `use_extrinsics`; unconditionally was ~2.1M parameters that never got a
         # gradient. A never-called `state_encoder` was dropped for the same reason. Older checkpoints
-        # carry both and they are ignored as unexpected keys on load.
+        # carry both, and `_drop_removed_modules` drops their weights on load.
         self.extrinsics_encoder = (
             nn.Linear(action_embed_dim - 1, predictor_embed_dim, bias=True) if use_extrinsics else None
         )
+        self.register_load_state_dict_pre_hook(_drop_removed_modules)
 
         self.img_height, self.img_width = img_size
         self.patch_size = patch_size
