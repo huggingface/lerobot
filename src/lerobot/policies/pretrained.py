@@ -333,8 +333,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         device = "cpu"
         if len(checkpoint.files) == 1:
             missing_keys, unexpected_keys = load_model_as_safetensor(
-                model, str(checkpoint.files[0]), strict=strict, device=device
+                model, str(checkpoint.files[0]), strict=False, device=device
             )
+            missing_keys = sorted(missing_keys)
+            # safetensors reports a tied weight's second name as unexpected when the file holds both names.
+            names = model.state_dict().keys()
+            unexpected_keys = [key for key in unexpected_keys if key not in names]
         else:
             expected = set(model.state_dict())
             missing = set(expected)
@@ -347,11 +351,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 del state
             missing_keys = _missing_keys(model, expected - missing)
             unexpected_keys = sorted(unexpected)
-            if strict and (missing_keys or unexpected_keys):
-                raise RuntimeError(
-                    f"Error(s) in loading state_dict for {type(model).__name__}: "
-                    f"missing keys {missing_keys}, unexpected keys {unexpected_keys}"
-                )
+        if strict and (missing_keys or unexpected_keys):
+            raise RuntimeError(
+                f"Error(s) in loading state_dict for {type(model).__name__}: "
+                f"missing keys {missing_keys}, unexpected keys {unexpected_keys}"
+            )
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model
 
