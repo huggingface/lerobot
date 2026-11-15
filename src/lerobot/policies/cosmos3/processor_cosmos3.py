@@ -52,7 +52,6 @@ from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     DeviceProcessorStep,
-    LiberoProcessorStep,
     PolicyAction,
     PolicyActionProcessorStep,
     PolicyProcessorPipeline,
@@ -723,11 +722,12 @@ def make_cosmos3_libero_pre_post_processors() -> tuple[
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """
-    Env processors of LIBERO for a Cosmos3 policy trained on the rot6d LIBERO dataset: the observations as the
-    LIBERO environment processes them, and the predicted action decoded into the LIBERO command.
+    Env processors of LIBERO for a Cosmos3 policy trained on the rot6d LIBERO dataset. The LIBERO integration
+    already gives the observation as the dataset holds it (images rotated by 180 degrees, the 8 value state), so
+    only the predicted action is decoded into the LIBERO command.
     """
     return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](steps=[LiberoProcessorStep()]),
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](steps=[]),
         PolicyProcessorPipeline[PolicyAction, PolicyAction](steps=[Cosmos3LiberoActionProcessorStep()]),
     )
 

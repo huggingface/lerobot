@@ -217,11 +217,15 @@ def test_failed_torque_disable_still_closes_the_bus(monkeypatch):
 
 
 def frame(motor_id, age=0, status=1):
-    return SimpleNamespace(
-        arbitration_id=motor_id + 0x10,
-        data=bytes([status << 4]) + bytes(7),
-        timestamp=time.time() - age,
-    )
+    """A feedback frame received `age` seconds before `received()` hands it out."""
+    return SimpleNamespace(arbitration_id=motor_id + 0x10, data=bytes([status << 4]) + bytes(7), age=age)
+
+
+def received(msg):
+    """Stamp `msg` when the monitor returns it, as SocketCAN does, so a slow test can't age it."""
+    if msg is not None:
+        msg.timestamp = time.time() - msg.age
+    return msg
 
 
 def feedback_bus(frames):
@@ -229,7 +233,7 @@ def feedback_bus(frames):
     bus = robot_module._YamMotorsBus("can0", feedback_timeout_s=0.2)
     bus.motorbridge_controller = MagicMock()
     queued = deque(frames)
-    bus.monitor = SimpleNamespace(recv=lambda timeout: queued.popleft() if queued else None)
+    bus.monitor = SimpleNamespace(recv=lambda timeout: received(queued.popleft()) if queued else None)
     bus.motors = {name: MagicMock() for name in MOTOR_NAMES}
     for motor in bus.motors.values():
         motor.get_state.return_value = SimpleNamespace(pos=0.1, vel=0.2, torq=0.3)
@@ -603,7 +607,7 @@ def test_controller_waits_for_asynchronous_feedback(robot):
         value = replies.popleft() if replies else None
         if not replies:
             robot.controller.stop_event.set()
-        return value
+        return received(value)
 
     robot.bus.monitor.recv = receive
     set_initial_state(robot)

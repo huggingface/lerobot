@@ -101,7 +101,7 @@ from .relative_action_processor import (
     to_absolute_actions,
     to_relative_actions,
 )
-from .rename_processor import RenameObservationsProcessorStep, rename_stats
+from .rename_processor import RenameObservationsProcessorStep, rename_keys, rename_stats
 from .render_messages_processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
@@ -162,6 +162,7 @@ __all__ = [
     "RobotAction",
     "RobotActionProcessorStep",
     "RobotObservation",
+    "rename_keys",
     "rename_stats",
     "RenameObservationsProcessorStep",
     "RenderRuntimeMessagesStep",

@@ -23,6 +23,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import require_package
@@ -166,7 +167,9 @@ class FastWAMPolicy(PreTrainedPolicy):
         return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
 
     @classmethod
-    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+    def _load_checkpoint(
+        cls, model: FastWAMPolicy, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> FastWAMPolicy:
         """Shape-aware load that supports cross-embodiment fine-tuning.
 
         `safetensors.load_model(strict=False)` ignores missing/unexpected keys but
@@ -178,27 +181,20 @@ class FastWAMPolicy(PreTrainedPolicy):
         initialized values — and load every compatible tensor. With `strict=True`
         the standard exact-match loader is used.
         """
-        from safetensors import safe_open
-
         model_state_dict = model.state_dict()
-        mismatched = []
-        with safe_open(model_file, framework="pt") as f:
-            checkpoint_keys = list(f.keys())
-            for key in checkpoint_keys:
-                if key in model_state_dict and tuple(model_state_dict[key].shape) != tuple(
-                    f.get_slice(key).get_shape()
-                ):
-                    mismatched.append(key)
+        mismatched = [
+            key
+            for key, shape in checkpoint.shapes().items()
+            if key in model_state_dict and tuple(model_state_dict[key].shape) != shape
+        ]
 
         if not mismatched:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
+            return super()._load_checkpoint(model, checkpoint, map_location, strict)
         if strict:
             raise RuntimeError(
                 f"FastWAM: {len(mismatched)} checkpoint tensors have a shape mismatch under "
                 f"strict=True: {mismatched}"
             )
-
-        from safetensors.torch import load_file
 
         logging.warning(
             "FastWAM cross-embodiment load: reinitializing %d shape-mismatched tensor(s), keeping "
@@ -206,7 +202,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             len(mismatched),
             mismatched,
         )
-        state_dict = load_file(model_file, device="cpu")
+        state_dict = checkpoint.load_state_dict(device="cpu")
         for key in mismatched:
             state_dict.pop(key, None)
         model.load_state_dict(state_dict, strict=False)

@@ -1,0 +1,92 @@
+# NVIDIA RoboLab
+
+RoboLab is a benchmark of **120 tabletop manipulation tasks** for a DROID robot (a Franka Panda arm with a Robotiq 2F-85 gripper), simulated with NVIDIA Isaac Lab and rendered with Isaac Sim's RTX renderer. Tasks span pick-and-place, stacking, sorting, reorientation and language-conditioned variants (spatial relations, colors, counting, vague instructions), graded simple, moderate or complex.
+
+- Paper: [RoboLab: A High-Fidelity Simulation Benchmark for Analysis of Task Generalist Policies](https://arxiv.org/abs/2604.09860)
+- GitHub: [NVlabs/RoboLab](https://github.com/NVlabs/RoboLab)
+- Project page and leaderboard: [research.nvidia.com/labs/srl/projects/robolab](https://research.nvidia.com/labs/srl/projects/robolab/)
+
+## Requirements and licences
+
+- **GPU**: an NVIDIA RTX GPU (Isaac Sim renders with RTX). One env of one task takes about 7 GB of VRAM, Isaac Sim included; each further env in the same task adds about 1 to 2 GB (RoboLab's guide fits 30 to 100 envs on a 48 GB GPU, depending on the task). Your policy needs its own memory on top.
+- **Isaac Sim**: RoboLab runs on Isaac Sim 6.0.1 and Isaac Lab 3.0 beta 2 here, RoboLab's Isaac Sim 6 stack. Using Isaac Sim accepts the [NVIDIA Isaac Sim license](https://docs.isaacsim.omniverse.nvidia.com/latest/common/NVIDIA_Omniverse_License_Agreement.html); the Docker image accepts it for you, as RoboLab's own image does.
+- **Assets**: RoboLab's scenes, objects and robot models (about 6 GB, from its git LFS) are mostly licensed **CC BY-NC-SA 4.0**, with some under other terms; see RoboLab's [THIRD_PARTY_NOTICES.md](https://github.com/NVlabs/RoboLab/blob/main/THIRD_PARTY_NOTICES.md). LeRobot does not distribute them: the image downloads them from NVlabs when you build it.
+- **Docker**, for the served setup below: [BuildKit (`docker buildx`)](https://docs.docker.com/go/buildx/) to build the image, and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) so that the container can use the GPU.
+
+## Run it served (recommended)
+
+Isaac Lab 3.0 beta pins `transformers==4.57.6` (hence `huggingface-hub<1.0`), `numpy==2.3.1` and `packaging==26.0`, which LeRobot's own dependencies don't accept. Run RoboLab in its own Docker image, behind `lerobot-env-server`, and your policy in your usual LeRobot environment:
+
+```bash
+# Build the image on first use (Isaac Sim and the assets: a long first build), then serve every task
+lerobot-env-server --config_path=docker/sim/configs/robolab.yaml --docker=true
+
+# In your LeRobot environment
+lerobot-eval \
+  --policy.path=<your DROID joint-position policy> \
+  --env.type=robolab \
+  --env.task=BananaInBowlTask \
+  --env.server.endpoint=tcp/127.0.0.1:7448 \
+  --rename_map='{"observation.images.over_shoulder_left_camera": "observation.images.<exterior>", "observation.images.wrist_cam": "observation.images.<wrist>"}' \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+The server runs any of its configured tasks: the client opens the one it asks for, and the server builds it in the running Isaac Sim (a few seconds). Starting Isaac Sim itself takes from seconds to a few minutes. If it finds no GPU in the container (`ERROR_INCOMPATIBLE_DRIVER`), see the Vulkan note in [Simulation](./simulation#serve-an-environment).
+
+## Run it locally
+
+With Isaac Sim and RoboLab installed in your environment, drop `--env.server.endpoint` and `lerobot-eval` runs RoboLab in its own process. Install RoboLab's stack first, then LeRobot without its dependencies, as the Docker image does:
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/NVlabs/RoboLab.git && git -C RoboLab lfs pull
+uv venv --python 3.12 && source .venv/bin/activate
+uv pip install "isaaclab[isaacsim]==3.0.0b2.post1" -e ./RoboLab \
+  --extra-index-url https://pypi.nvidia.com --index-strategy unsafe-best-match
+uv pip install --no-deps -e ./lerobot
+uv pip install draccus termcolor eclipse-zenoh  # what the rest of LeRobot's simulation code imports
+export OMNI_KIT_ACCEPT_EULA=YES                 # accepts the Isaac Sim license
+```
+
+This environment has no room for policies that need `transformers` 5 (π₀.₅, SmolVLA, ...): run those served.
+
+## Tasks
+
+Each of RoboLab's 120 tasks is its own suite with one task id, so `lerobot-eval` reports a success rate per task and overall. `--env.task` takes a comma-separated list of task names, e.g. `BananaInBowlTask,RubiksCubeAndBananaTask`; leave it empty for all 120. The task names, instructions and difficulty are listed in RoboLab's [task metadata](https://github.com/NVlabs/RoboLab/blob/main/robolab/tasks/_metadata/task_metadata.json).
+
+All envs of a task share one Isaac Lab world on the GPU: `--eval.batch_size=N` runs N episodes at once in that world.
+
+## Observations and actions
+
+| Key                                            | Shape          | Content                                                                     |
+| ---------------------------------------------- | -------------- | --------------------------------------------------------------------------- |
+| `observation.images.over_shoulder_left_camera` | 720 × 1280 × 3 | Exterior camera, left of the robot                                          |
+| `observation.images.wrist_cam`                 | 720 × 1280 × 3 | Wrist camera                                                                |
+| `observation.state`                            | 8              | `joint_0.pos` … `joint_6.pos` (radians), `gripper.pos` (0 open, 1 closed)   |
+| `action`                                       | 8              | Absolute joint targets for the 7 joints, then the gripper: closed above 0.5 |
+
+The robot runs at 15 Hz (physics at 120 Hz, 8 physics steps per action), and LeRobot records it as `robot_type="Franka"`, as in [DROID](https://huggingface.co/datasets/lerobot/droid_1.0.1). Each episode has its task's time limit (20 to 300 s, so 300 to 4,500 steps); an episode that succeeds ends as terminated, one that runs out of time as truncated. The task's instruction is the env's task description.
+
+## Sim robot
+
+RoboLab can also stand in for a real DROID robot in `lerobot-rollout`, `lerobot-record` and the other robot tools (see [Simulation: local or served](./simulation)):
+
+```bash
+lerobot-rollout \
+  --robot.type=sim --robot.env.type=robolab --robot.env.task=BananaInBowlTask --robot.task_id=0 \
+  --robot.env.server.endpoint=tcp/127.0.0.1:7448 \
+  --policy.path=<your policy> --fps=15 ...
+```
+
+## Environment config reference
+
+| Parameter                                 | Default           | Description                                                                                                                     |
+| ----------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `task`                                    | empty: all 120    | Comma-separated task names                                                                                                      |
+| `cameras`                                 | `"WRIST_LEFT"`    | A camera preset of RoboLab's `robolab/registrations/droid/camera_presets.py`, e.g. `WRIST_LEFT_RIGHT` for both exterior cameras |
+| `instruction_type`                        | `"default"`       | Which instruction each task gives: `default`, `vague` or `specific`                                                             |
+| `observation_height`, `observation_width` | unset: 720 × 1280 | Resize camera frames on the GPU first, e.g. to send smaller frames from a server                                                |
+
+## Comparing with the leaderboard
+
+RoboLab's leaderboard evaluates 10 episodes per task with the default instruction, the `WRIST_LEFT` cameras and joint-position actions, which are LeRobot's defaults. It doesn't state which Isaac Sim version produced its numbers, and RoboLab's default is Isaac Sim 5.0: physics and rendering differ between Isaac Sim versions, so numbers from this Isaac Sim 6.0.1 setup are not directly comparable.
