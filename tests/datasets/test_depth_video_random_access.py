@@ -37,8 +37,14 @@ pytestmark = pytest.mark.dataset
 @pytest.mark.parametrize("streaming_encoding", [False, True])
 @pytest.mark.parametrize("custom_quantizer", [False, True])
 @pytest.mark.parametrize("reader", ["random", "streaming"])
+@pytest.mark.parametrize("lengths,encoder_threads", [((3, 5, 4), 1), ((3, 7, 2, 11, 3), 2)])
 def test_recorded_depth_random_access(
-    tmp_path: Path, streaming_encoding: bool, custom_quantizer: bool, reader: str
+    tmp_path: Path,
+    streaming_encoding: bool,
+    custom_quantizer: bool,
+    reader: str,
+    lengths: tuple[int, ...],
+    encoder_threads: int,
 ) -> None:
     key = "observation.images.depth"
     encoder = (
@@ -59,7 +65,7 @@ def test_recorded_depth_random_access(
             }
         },
         depth_encoder=encoder,
-        encoder_threads=1,
+        encoder_threads=encoder_threads,
         streaming_encoding=streaming_encoding,
     )
     quantizer = {
@@ -69,7 +75,7 @@ def test_recorded_depth_random_access(
         "use_log": encoder.use_log,
     }
     expected = []
-    for episode, length in enumerate((3, 5, 4)):
+    for episode, length in enumerate(lengths):
         for frame in range(length):
             depth = np.linspace(0.5, 1.5, 32 * 48, dtype=np.float32).reshape(32, 48, 1)
             depth = depth + episode + frame / 10
@@ -81,13 +87,13 @@ def test_recorded_depth_random_access(
     video_path = dataset.root / dataset.meta.get_video_file_path(0, key)
     with av.open(str(video_path)) as container:
         sequential = [frame.to_ndarray(format="gray12le") for frame in container.decode(video=0)]
-    assert len(sequential) == 12
+    assert len(sequential) == sum(lengths)
     np.testing.assert_array_equal(sequential, expected)
 
     if reader == "random":
         # Starting at a CRA in an open GOP can silently corrupt a later frame even
         # when its timestamp matches. Test the pixel oracle before single-frame seeks.
-        for indices in ([2, 4], *([i] for i in range(12))):
+        for indices in ([2, 4], *([i] for i in range(sum(lengths)))):
             actual = decode_video_frames_pyav(
                 video_path, [i / 10 for i in indices], tolerance_s=1e-4, is_depth=True
             )
@@ -102,7 +108,7 @@ def test_recorded_depth_random_access(
             decoded_queue_size=1,
         )
         rows = list(streaming)
-        assert sorted(int(row["index"]) for row in rows) == list(range(12))
+        assert sorted(int(row["index"]) for row in rows) == list(range(sum(lengths)))
         for row in rows:
             index = int(row["index"])
             depth = dequantize_depth(torch.from_numpy(sequential[index].copy()), **quantizer)
