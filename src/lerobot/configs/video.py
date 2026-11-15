@@ -291,7 +291,8 @@ class DepthEncoderConfig(VideoEncoderConfig):
 
     vcodec: str = "hevc"  # Video codec name. Defaults to HEVC Main 12 (a 12-bit-capable codec).
     pix_fmt: str = "gray12le"  # Pixel format. Defaults to 12-bit grayscale.
-    extra_options: dict[str, Any] = field(default_factory=lambda: {"x265-params": "lossless=1"})
+    # Closed GOPs keep random seeks and streaming slices safe across concatenated episodes.
+    extra_options: dict[str, Any] = field(default_factory=lambda: {"x265-params": "lossless=1:open-gop=0"})
 
     depth_min: float = DEFAULT_DEPTH_MIN  # Minimum depth in meters, mapped to the lowest quantum.
     depth_max: float = DEFAULT_DEPTH_MAX  # Maximum depth in meters, mapped to the highest quantum.
