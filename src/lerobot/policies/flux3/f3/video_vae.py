@@ -53,6 +53,9 @@ _norm_layer = partial(nn.LayerNorm, eps=1e-5)
 _NATTEN_BACKEND_ENV = "F3_NATTEN_BACKEND"
 _PERSISTENT_KERNEL_BACKENDS = ("blackwell-fna", "hopper-fna")
 _natten_backends: dict[int, str] = {}
+_FORCE_CHUNKED_TASK_ENCODE_ENV = "F3_FORCE_CHUNKED_TASK_ENCODE"
+_CHUNK_SIZE_FRAMES_ENV = "F3_CHUNK_SIZE_FRAMES"
+_LOG_TASK_VIDEO_SHAPE_ENV = "F3_LOG_TASK_VIDEO_SHAPE"
 
 
 def _natten_attention_kwargs(q: Tensor, k: Tensor, v: Tensor) -> dict:
@@ -378,13 +381,21 @@ class Natten3D(nn.Module):
                 attention_kwargs=_natten_attention_kwargs(q2, k2, v2),
             ).unsqueeze(1)
         else:
+            attn_kwargs = _natten_attention_kwargs(q, k, v)
+            flex = attn_kwargs["backend"] == "flex-fna" and not torch.is_grad_enabled()
+            if flex:
+                from .natten_flex_patch import install
+
+                install()
             out = na3d(
                 q,
                 k,
                 v,
                 is_causal=[self.causal, False, False],
                 kernel_size=self.window_size,
-                attention_kwargs=_natten_attention_kwargs(q, k, v),
+                attention_kwargs=attn_kwargs,
+                backend=attn_kwargs["backend"],
+                torch_compile=flex,
             )
         out = out.reshape(b, t, h, w, c)
         return self.proj(out)
@@ -979,7 +990,12 @@ class VideoVAE:
     @torch.inference_mode()
     def encode_task(self, video: Tensor) -> Tensor:
         """Native task-LoRA encoding: independent snapshots/future clip, without DROID black padding."""
-        return self._model.encode(video, chunked_encode=False)
+        if os.environ.get(_LOG_TASK_VIDEO_SHAPE_ENV, "0") == "1":
+            logger.warning("flux3: encode_task input shape=%s dtype=%s", tuple(video.shape), video.dtype)
+        force_chunked = os.environ.get(_FORCE_CHUNKED_TASK_ENCODE_ENV, "0") == "1"
+        if force_chunked and video.shape[2] < self._model.chunk_size_frames:
+            force_chunked = False
+        return self._model.encode(video, chunked_encode=force_chunked)
 
     @torch.inference_mode()
     def decode(self, latents: Tensor) -> Tensor:
@@ -1005,11 +1021,13 @@ def load_video_vae(
             "The FLUX3 video VAE requires NATTEN. Install a torch/CUDA-matched wheel from "
             "https://whl.natten.org; see docs/source/flux3.mdx."
         ) from e
+    chunk_size_frames = int(os.environ.get(_CHUNK_SIZE_FRAMES_ENV, "45"))
     params = ViTNormInferenceParams(
         use_compile=compile_model,
         compile_decoder=compile_model,
         chunked_decode=True,
         chunked_encode=True,
+        chunk_size_frames=chunk_size_frames,
     )
     if weights is None:
         model = ViTNormInference(params)

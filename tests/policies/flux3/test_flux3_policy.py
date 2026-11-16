@@ -129,6 +129,30 @@ def test_flux3_is_registered_and_publicly_exported():
     assert "flux3" in PreTrainedConfig.get_known_choices()
 
 
+def test_camera_resize_warns_once_for_mismatched_streams(monkeypatch):
+    policy = Flux3Policy.__new__(Flux3Policy)
+    policy._camera_resize_warned = False
+
+    calls = []
+
+    def fake_warning(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr("lerobot.policies.flux3.modeling_flux3.logger.warning", fake_warning)
+
+    cams = [
+        torch.rand(2, 1, 3, 720, 1280),
+        torch.rand(2, 1, 3, 480, 640),
+    ]
+
+    resized_a = policy._resize_cameras_to_smallest(cams, target_hw=(256, 256))
+    resized_b = policy._resize_cameras_to_smallest(cams, target_hw=(256, 256))
+
+    assert resized_a[0].shape[-2:] == (256, 256)
+    assert resized_b[0].shape[-2:] == (256, 256)
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize("large_budget", [False, True])
 @pytest.mark.parametrize("robot", ["so101", "so101_overrides", "droid"])
 def test_shared_peft_recipe_preserves_checkpoint_contract(tmp_path, monkeypatch, large_budget, robot):

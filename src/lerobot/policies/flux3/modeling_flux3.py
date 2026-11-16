@@ -37,6 +37,7 @@ from dataclasses import dataclass, replace
 from typing import Any, cast
 
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.policies.checkpoint import SafetensorsCheckpoint
@@ -147,6 +148,7 @@ class Flux3Policy(PreTrainedPolicy):
         self.frozen = FrozenComponents(self._build_video_vae(config), self._build_text_encoder(config))
         self._ctx_cache: dict[str, tuple[Tensor, Tensor]] = {}
         self._compiled_dit: Callable[..., dict[str, Tensor]] | None = None
+        self._camera_resize_warned = False
         self.reset()
 
     @classmethod
@@ -324,6 +326,45 @@ class Flux3Policy(PreTrainedPolicy):
         x[..., dims] = 1.0 - x[..., dims]
         return x
 
+    def _resize_cameras_to_smallest(
+        self, cams: list[Tensor], target_hw: tuple[int, int] | None = None
+    ) -> list[Tensor]:
+        """Resize all camera streams to a target resolution, or the smallest stream if target is not set."""
+        if len(cams) < 2:
+            return cams
+
+        src_hws = [(cam.shape[-2], cam.shape[-1]) for cam in cams]
+        if target_hw is None:
+            target_hw = min(src_hws, key=lambda hw: hw[0] * hw[1])
+        target_h, target_w = target_hw
+        if len(set(src_hws)) > 1 and not self._camera_resize_warned:
+            logger.warning(
+                "flux3: camera resolutions differ (%s); resizing all streams to %sx%s",
+                src_hws,
+                target_h,
+                target_w,
+            )
+            self._camera_resize_warned = True
+        resized: list[Tensor] = []
+
+        for cam in cams:
+            h, w = cam.shape[-2], cam.shape[-1]
+            if (h, w) == target_hw:
+                resized.append(cam)
+                continue
+
+            b, t, c = cam.shape[:3]
+            flat = cam.reshape(b * t, c, h, w)
+            if flat.is_floating_point():
+                flat = F.interpolate(flat, size=(target_h, target_w), mode="bilinear", align_corners=False)
+            else:
+                flat = F.interpolate(
+                    flat.float(), size=(target_h, target_w), mode="bilinear", align_corners=False
+                ).to(cam.dtype)
+            resized.append(flat.reshape(b, t, c, target_h, target_w))
+
+        return resized
+
     def _cameras(self, batch: dict[str, Any]) -> Tensor:
         """Stack the configured cameras: ``(B, n_cams, T, 3, H, W)`` (``T = 1`` for single frames)."""
         cams = []
@@ -337,11 +378,21 @@ class Flux3Policy(PreTrainedPolicy):
             if img.ndim != 5:
                 raise ValueError(f"{key}: expected (B, C, H, W) or (B, T, C, H, W), got {tuple(img.shape)}")
             cams.append(img)
-        if len({tuple(c.shape[1:]) for c in cams}) != 1:
+        if len({tuple(c.shape[:3]) for c in cams}) != 1:
             raise ValueError(
-                f"cameras must share (T, C, H, W), got {[tuple(c.shape) for c in cams]}; "
-                "apply the saved preprocessor before calling the policy"
+                f"cameras must share (B, T, C), got {[tuple(c.shape) for c in cams]}"
             )
+
+        # Prefer the model-declared camera feature size when available (SO-101 expects 256x256 per stream).
+        target_hw = None
+        for key in self.config.camera_order:
+            feature = self.config.input_features.get(key)
+            shape = getattr(feature, "shape", None)
+            if shape and len(shape) >= 3:
+                target_hw = (int(shape[-2]), int(shape[-1]))
+                break
+
+        cams = self._resize_cameras_to_smallest(cams, target_hw=target_hw)
         return torch.stack(cams, dim=1)
 
     def _conditioning_inputs(self, batch: dict[str, Any]) -> tuple[Tensor, Tensor | None]:
