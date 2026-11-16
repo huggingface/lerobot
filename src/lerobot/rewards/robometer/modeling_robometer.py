@@ -203,7 +203,7 @@ class RobometerRewardModel(PreTrainedRewardModel):
             self.model = AutoModelForImageTextToText.from_pretrained(
                 config.base_model_id,
                 dtype=torch_dtype,
-                trust_remote_code=True,
+                trust_remote_code=self.config.trust_remote_code,
             )
             target_vocab = config.vlm_config["text_config"]["vocab_size"]
             self.model.resize_token_embeddings(target_vocab)
@@ -211,7 +211,7 @@ class RobometerRewardModel(PreTrainedRewardModel):
             self.model = AutoModelForImageTextToText.from_config(
                 config.vlm_backbone_config,
                 dtype=torch_dtype,
-                trust_remote_code=True,
+                trust_remote_code=self.config.trust_remote_code,
             )
 
         # All Qwen-VL backbones Robometer supports expose `text_config.hidden_size`.

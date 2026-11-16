@@ -107,7 +107,7 @@ class TOPRewardModel(PreTrainedRewardModel):
         self.config = config
 
         torch_dtype = _torch_dtype(config.torch_dtype)
-        model_kwargs: dict[str, Any] = {"dtype": torch_dtype, "trust_remote_code": True}
+        model_kwargs: dict[str, Any] = {"dtype": torch_dtype, "trust_remote_code": config.trust_remote_code}
         if config.attn_implementation is not None:
             model_kwargs["attn_implementation"] = config.attn_implementation
 
@@ -160,6 +160,7 @@ class TOPRewardModel(PreTrainedRewardModel):
         **kwargs: Any,
     ) -> T:
         """Load a TOPReward configuration and instantiate the wrapped VLM."""
+        trust_remote_code = kwargs.pop("trust_remote_code", False)
         if config is None:
             config = RewardModelConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -170,6 +171,7 @@ class TOPRewardModel(PreTrainedRewardModel):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                trust_remote_code=trust_remote_code,
                 **kwargs,
             )
         if not isinstance(config, TOPRewardConfig):

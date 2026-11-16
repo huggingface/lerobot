@@ -115,7 +115,9 @@ class Classifier(PreTrainedRewardModel):
         self.config = config
 
         # Set up encoder
-        encoder = AutoModel.from_pretrained(self.config.model_name, trust_remote_code=True)
+        encoder = AutoModel.from_pretrained(
+            self.config.model_name, trust_remote_code=self.config.trust_remote_code
+        )
         # Extract vision model if we're given a multimodal model
         if hasattr(encoder, "vision_model"):
             logging.info("Multimodal model detected - using vision encoder only")

@@ -181,7 +181,7 @@ def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, Po
 
 ### Loading custom processor code
 
-External step imports and custom tokenizer code require caller consent, including for local checkpoints. Resolved classes must inherit from `ProcessorStep`; saved configs and already loaded modules cannot grant consent. For policy CLIs, use `--policy.trust_remote_code=true`, independently of `--env.trust_remote_code=true`.
+External step imports and custom tokenizer code require caller consent, including for local checkpoints. Resolved classes must inherit from `ProcessorStep`; saved configs and already loaded modules cannot grant consent. For policy CLIs, use `--policy.trust_remote_code=true`, independently of `--env.trust_remote_code=true`. Reward models use `--reward_model.trust_remote_code=true`, also defaulting to false and requiring fresh caller consent when reloading a checkpoint.
 
 ```python
 processor = PolicyProcessorPipeline.from_pretrained(

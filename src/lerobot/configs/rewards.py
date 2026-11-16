@@ -54,6 +54,7 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
 
     device: str | None = None
+    trust_remote_code: bool = False
 
     pretrained_path: str | None = None
     # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained reward model version.
@@ -105,8 +106,10 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def _save_pretrained(self, save_directory: Path) -> None:
         # Encode against the base class so draccus includes the choice "type" key,
         # which `from_pretrained` needs to resolve the concrete subclass.
+        config = draccus.encode(self, RewardModelConfig)
+        config.pop("trust_remote_code", None)
         with open(save_directory / CONFIG_NAME, "w") as f:
-            json.dump(draccus.encode(self, RewardModelConfig), f, indent=4)
+            json.dump(config, f, indent=4)
 
     @classmethod
     def from_pretrained(
@@ -120,6 +123,7 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool = False,
         **reward_kwargs: Any,
     ) -> T:
         model_id = str(pretrained_name_or_path)
@@ -148,22 +152,22 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         if config_file is None:
             raise FileNotFoundError(f"{CONFIG_NAME} not found in {model_id}")
 
-        # HACK: Parse the original config to get the config subclass, so that we can
-        # apply cli overrides.
-        with draccus.config_type("json"):
-            orig_config = draccus.parse(cls, config_file, args=[])
-
         with open(config_file) as f:
             config = json.load(f)
 
-        config.pop("type", None)
+        # Reset checkpoint consent before constructing configs that load tokenizers.
+        config["trust_remote_code"] = trust_remote_code
+        reward_type = config.pop("type", None)
+        if reward_type is None:
+            raise ValueError(f"Missing 'type' field in {CONFIG_NAME} of {model_id}")
+        config_cls = cls.get_choice_class(reward_type)
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)
             config_file = f.name
 
         cli_overrides = reward_kwargs.pop("cli_overrides", [])
         with draccus.config_type("json"):
-            config = draccus.parse(orig_config.__class__, config_file, args=cli_overrides)
+            config = draccus.parse(config_cls, config_file, args=cli_overrides)
 
         # Same backfill as PreTrainedConfig.from_pretrained: config.json does not
         # carry the source path, and direct callers (PreTrainedRewardModel,

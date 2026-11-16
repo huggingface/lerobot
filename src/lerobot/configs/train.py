@@ -446,8 +446,9 @@ class TrainPipelineConfig(HubMixin):
 
     def _save_pretrained(self, save_directory: Path) -> None:
         config = self.to_dict()
-        if isinstance(config.get("policy"), dict):
-            config["policy"].pop("trust_remote_code", None)
+        for config_key in ("policy", "reward_model"):
+            if isinstance(config.get(config_key), dict):
+                config[config_key].pop("trust_remote_code", None)
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f:
             json.dump(config, f, indent=4)
 

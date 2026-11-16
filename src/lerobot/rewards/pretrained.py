@@ -100,6 +100,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         The reward model is set in evaluation mode by default using `reward.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `reward.train()`.
         """
+        trust_remote_code = kwargs.pop("trust_remote_code", False)
         if config is None:
             config = RewardModelConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -110,6 +111,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                trust_remote_code=trust_remote_code,
                 **kwargs,
             )
         model_id = str(pretrained_name_or_path)

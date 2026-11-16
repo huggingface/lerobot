@@ -128,6 +128,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
     """
 
     base_model_id: str = "Qwen/Qwen3-VL-4B-Instruct"
+    trust_remote_code: bool = False
     image_key: str = OBS_IMAGES + ".top"
     task_key: str = "task"
     default_task: str | None = None
@@ -144,7 +145,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
 
         self._processor = AutoProcessor.from_pretrained(
             self.base_model_id,
-            trust_remote_code=True,
+            trust_remote_code=self.trust_remote_code,
             do_sample_frames=False,
             padding_side="right",
         )
@@ -320,6 +321,7 @@ def make_robometer_pre_post_processors(
             AddBatchDimensionProcessorStep(),
             RobometerEncoderProcessorStep(
                 base_model_id=config.base_model_id,
+                trust_remote_code=config.trust_remote_code,
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,

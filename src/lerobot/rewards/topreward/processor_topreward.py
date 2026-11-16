@@ -126,6 +126,7 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
     """
 
     vlm_name: str = "Qwen/Qwen3-VL-8B-Instruct"
+    trust_remote_code: bool = False
     image_key: str = OBS_IMAGES + ".top"
     task_key: str = "task"
     default_task: str | None = None
@@ -140,7 +141,9 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="topreward")
-        self._processor = AutoProcessor.from_pretrained(self.vlm_name, trust_remote_code=True)
+        self._processor = AutoProcessor.from_pretrained(
+            self.vlm_name, trust_remote_code=self.trust_remote_code
+        )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
@@ -286,6 +289,7 @@ def make_topreward_pre_post_processors(
             AddBatchDimensionProcessorStep(),
             TOPRewardEncoderProcessorStep(
                 vlm_name=config.vlm_name,
+                trust_remote_code=config.trust_remote_code,
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,

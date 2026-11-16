@@ -190,23 +190,50 @@ def test_cli_pretrained_revision_reaches_from_pretrained(monkeypatch, argv, buil
 
 @pytest.mark.parametrize("serialized_trust", [False, True])
 @pytest.mark.parametrize("caller_trust", [False, True])
-def test_checkpoint_cannot_grant_policy_code_consent(tmp_path, serialized_trust, caller_trust):
-    _write_checkpoint(str(tmp_path), {"trust_remote_code": serialized_trust})
-    cfg = PreTrainedConfig.from_pretrained(tmp_path, trust_remote_code=caller_trust)
+@pytest.mark.parametrize(
+    ("config_cls", "subclass", "field"),
+    [
+        (PreTrainedConfig, _DummyBackfillConfig, "policy"),
+        (RewardModelConfig, _DummyRewardBackfillConfig, "reward_model"),
+    ],
+)
+def test_checkpoint_cannot_grant_code_consent(
+    monkeypatch, tmp_path, serialized_trust, caller_trust, config_cls, subclass, field
+):
+    observed = []
+    original = subclass.__post_init__
+
+    def post_init(self):
+        observed.append(self.trust_remote_code)
+        original(self)
+
+    monkeypatch.setattr(subclass, "__post_init__", post_init)
+    (tmp_path / "config.json").write_text(
+        json.dumps({"type": subclass.get_choice_name(subclass), "trust_remote_code": serialized_trust})
+    )
+    cfg = config_cls.from_pretrained(tmp_path, trust_remote_code=caller_trust)
+    assert observed == [caller_trust]
     assert cfg.trust_remote_code is caller_trust
     cfg.save_pretrained(tmp_path)
     assert "trust_remote_code" not in json.loads((tmp_path / "config.json").read_text())
-    TrainPipelineConfig(dataset=DatasetConfig(repo_id="user/data"), policy=cfg).save_pretrained(tmp_path)
-    assert "trust_remote_code" not in json.loads((tmp_path / "train_config.json").read_text())["policy"]
+    TrainPipelineConfig(dataset=DatasetConfig(repo_id="user/data"), **{field: cfg}).save_pretrained(tmp_path)
+    assert "trust_remote_code" not in json.loads((tmp_path / "train_config.json").read_text())[field]
     assert cfg.trust_remote_code is caller_trust
 
 
-@pytest.mark.parametrize("build", [_eval_config, _train_config])
-def test_cli_policy_consent_overrides_checkpoint(monkeypatch, tmp_path, build):
-    _write_checkpoint(str(tmp_path), {"trust_remote_code": False})
+@pytest.mark.parametrize(
+    ("build", "field", "config_type"),
+    [
+        (_eval_config, "policy", "_dummy_backfill"),
+        (_train_config, "policy", "_dummy_backfill"),
+        (_train_config, "reward_model", "_dummy_reward_backfill"),
+    ],
+)
+def test_cli_consent_overrides_checkpoint(monkeypatch, tmp_path, build, field, config_type):
+    (tmp_path / "config.json").write_text(json.dumps({"type": config_type, "trust_remote_code": False}))
     monkeypatch.setattr(
-        sys, "argv", ["lerobot", f"--policy.path={tmp_path}", "--policy.trust_remote_code=true"]
+        sys, "argv", ["lerobot", f"--{field}.path={tmp_path}", f"--{field}.trust_remote_code=true"]
     )
     cfg = build()
-    assert cfg.policy.trust_remote_code is True
+    assert getattr(cfg, field).trust_remote_code is True
     assert not getattr(cfg, "trust_remote_code", False)

@@ -115,8 +115,12 @@ class RobometerConfig(RewardModelConfig):
         # vocab the published ``Robometer-4B`` checkpoint was saved with.
         if not self.vlm_config:
             require_package("transformers", extra="robometer")
-            vlm = AutoConfig.from_pretrained(self.base_model_id).to_dict()
-            tokenizer = AutoTokenizer.from_pretrained(self.base_model_id)
+            vlm = AutoConfig.from_pretrained(
+                self.base_model_id, trust_remote_code=self.trust_remote_code
+            ).to_dict()
+            tokenizer = AutoTokenizer.from_pretrained(
+                self.base_model_id, trust_remote_code=self.trust_remote_code
+            )
             text_config = vlm.get("text_config")
             if not isinstance(text_config, dict):
                 raise ValueError(
