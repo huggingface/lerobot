@@ -30,6 +30,8 @@ env:
   UV_VERSION: "0.11.30"
   PYTHON_VERSION: "3.12"
   DOCKER_IMAGE_NAME: huggingface/lerobot-gpu:latest-deps
+  # Workaround for egl-probe 1.0.2 incompatibility with CMake 4.x.
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 # Ensures that only the latest run is active, canceling older runs.
 concurrency:

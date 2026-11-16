@@ -31,7 +31,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/lerobot/.venv/bin:$PATH \
     CUDA_VISIBLE_DEVICES=0 \
     TEST_TYPE=single_gpu \
-    DEVICE=cuda
+    DEVICE=cuda \
+    # Workaround for egl-probe 1.0.2 incompatibility with CMake 4.x.
+    CMAKE_POLICY_VERSION_MINIMUM=3.5
 
 # Install Python, system dependencies, and uv (as root)
 RUN apt-get update && apt-get install -y --no-install-recommends \
