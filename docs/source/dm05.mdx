@@ -1,5 +1,18 @@
 # DM0.5 for LeRobot
 
+| At a glance |                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=dm05`                                                                                           |
+| Family      | Vision-language-action model (VLA)                                                                             |
+| Size        | 5.2B parameters                                                                                                |
+| GPU memory  | Not measured                                                                                                   |
+| Takes text  | Yes                                                                                                            |
+| Starts from | Pretrained: [`lerobot/dm05_base`](https://huggingface.co/lerobot/dm05_base)                                    |
+| Install     | `pip install 'lerobot[dm05]'`                                                                                  |
+| Guide shows | Simulation (LIBERO)                                                                                            |
+| License     | Code: Apache 2.0. Weights: the [Gemma license](https://ai.google.dev/gemma/terms), as listed on the model card |
+| Paper       | [DM0.5 technical blog](https://www.dexmal.com/blog/dm0.5/index_en.html) (Dexmal)                               |
+
 DM05, also released as DM0.5, is Dexmal's Vision-Language-Action model for open-world robot control. The LeRobot
 adapter preserves the OpenDM model path while using standard LeRobot datasets, processors, training,
 checkpointing, Hub loading, and evaluation.

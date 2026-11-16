@@ -1,5 +1,18 @@
 # LingBot-VLA 2.0
 
+| At a glance |                                                                                                                        |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=lingbot_vla_v2`                                                                                         |
+| Family      | Vision-language-action model (VLA)                                                                                     |
+| Size        | 6.4B parameters                                                                                                        |
+| GPU memory  | Not measured                                                                                                           |
+| Takes text  | Yes                                                                                                                    |
+| Starts from | Pretrained: [`lerobot/lingbot_vla_v2_base`](https://huggingface.co/lerobot/lingbot_vla_v2_base)                        |
+| Install     | `pip install 'lerobot[lingbot_vla_v2]'`                                                                                |
+| Guide shows | Simulation (RoboTwin)                                                                                                  |
+| License     | Apache 2.0. Training with distillation also uses weights under other licenses: see [License](#license)                 |
+| Paper       | [From Foundation to Application: Improving VLA Models in Practice](https://arxiv.org/abs/2607.06403) (Wu et al., 2026) |
+
 LingBot-VLA 2.0 is Robbyant's vision-language-action model, the successor to LingBot-VLA 1.0. It pairs a
 Qwen3-VL-4B backbone with a sparse Mixture-of-Experts Qwen2 action expert (32 experts, top-4 routing) and
 generates action chunks with flow matching over a 55-D canonical state/action space shared across embodiments.

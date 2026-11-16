@@ -1,5 +1,18 @@
 # FineART-VLA
 
+| At a glance |                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=fineart_vla`                                                                                    |
+| Family      | Vision-language-action model (VLA)                                                                             |
+| Size        | 4.1B parameters                                                                                                |
+| GPU memory  | Not measured                                                                                                   |
+| Takes text  | Yes                                                                                                            |
+| Starts from | Pretrained: [`lerobot/fineart_vla_base`](https://huggingface.co/lerobot/fineart_vla_base)                      |
+| Install     | `pip install 'lerobot[fineart_vla]'`                                                                           |
+| Guide shows | Training and running on your robot                                                                             |
+| License     | Code: Apache 2.0. Weights: the [Gemma license](https://ai.google.dev/gemma/terms), as listed on the model card |
+| Paper       | [FineART](https://arxiv.org/abs/2609.36416) (Choghari et al., 2026)                                            |
+
 FineART-VLA builds on **π0.5 from Physical Intelligence** and its
 [openpi implementation](https://github.com/Physical-Intelligence/openpi),
 through LeRobot's [Pi05](./pi05) policy. It extends this foundation with a trainable PaliGemma language head and a
@@ -227,8 +240,8 @@ Use `lerobot-rollout` with the robot/camera configuration matching the checkpoin
 `--interactive=true`, and `--autosteer_interval_s=3`. Choose
 `--inference.type=sync` or `--inference.type=rtc`. In the interactive terminal,
 `/autosteer <goal>` enables generated subtasks, `/subtask <instruction>` supplies
-one manually, and `/start` starts robot control. See [Interactive language
-control](./inference#interactive-language-control) for complete hardware setup,
+one manually, and `/start` starts robot control. See [Interactive
+sessions](./inference#interactive-sessions) for complete hardware setup,
 safety behavior, and recording controls. The former `--sim`, `--mode`, and
 `--high_level_hz` adapter CLI options are not part of this interface.
 
@@ -273,5 +286,6 @@ FineART-VLA builds on [π₀.₅](https://arxiv.org/abs/2504.16054) and
 
 ## License
 
-This model follows the **Apache 2.0 License**, consistent with the original
+LeRobot's code for this model follows the **Apache 2.0 License**, consistent with the original
 [OpenPI repository](https://github.com/Physical-Intelligence/openpi) that the PI0.5 backbone is adapted from.
+The pretrained checkpoint on the Hub lists the [Gemma license](https://ai.google.dev/gemma/terms) on its model card.
