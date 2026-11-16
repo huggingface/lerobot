@@ -107,7 +107,7 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         # Encode against the base class so draccus includes the choice "type" key,
         # which `from_pretrained` needs to resolve the concrete subclass.
         config = draccus.encode(self, RewardModelConfig)
-        config.pop("trust_remote_code", None)
+        config.pop("trust_remote_code", None)  # Runtime consent; absent from older checkpoint schemas.
         with open(save_directory / CONFIG_NAME, "w") as f:
             json.dump(config, f, indent=4)
 
