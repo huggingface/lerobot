@@ -123,7 +123,7 @@ def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMeta
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]) -> tuple[int, str | None, FeatureDict]:
     """Validates that all dataset metadata have consistent properties.
 
-    Ensures all datasets have the same fps, robot_type, and features to guarantee
+    Ensures all datasets have the same fps, robot_type, features, and effective tool catalog to guarantee
     compatibility when aggregating them into a single dataset.
     Video encoder info is not considered for validation but is merged during aggregation in ``merge_video_feature_info_for_aggregate``.
 
@@ -134,13 +134,14 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]) -> tuple[i
         tuple: A tuple containing (fps, robot_type, features) from the first metadata.
 
     Raises:
-        ValueError: If any metadata has different fps, robot_type, or features
+        ValueError: If any metadata has different fps, robot_type, features, or effective tool catalog
                    than the first metadata in the list.
     """
 
     fps = all_metadata[0].fps
     robot_type = all_metadata[0].robot_type
     features = all_metadata[0].features
+    tools = all_metadata[0].tools
 
     for meta in tqdm.tqdm(all_metadata, desc="Validate all meta data"):
         if fps != meta.fps:
@@ -153,6 +154,8 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]) -> tuple[i
             raise ValueError(
                 f"Same features is expected, but got features={meta.features} instead of {features}."
             )
+        if meta.tools != tools:
+            raise ValueError(f"Same tool catalog is expected, but {meta.repo_id} has a different catalog.")
 
     return fps, robot_type, features
 
@@ -413,6 +416,7 @@ def aggregate_datasets(
         data_files_size_in_mb=data_files_size_in_mb,
         video_files_size_in_mb=video_files_size_in_mb,
     )
+    dst_meta.info.tools = copy.deepcopy(all_metadata[0].info.tools)
 
     logger.info("Find all tasks")
     unique_tasks = pd.concat([m.tasks for m in all_metadata]).index.unique()

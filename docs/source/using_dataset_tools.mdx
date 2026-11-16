@@ -151,6 +151,8 @@ There are no constraints on the split names, they can be determined by the user.
 
 Combine multiple datasets into a single dataset.
 
+Sources must have the same effective tool catalog, including its order. An absent catalog is equivalent to the default `say` catalog. The merged dataset preserves the first source's declaration; differing catalogs are rejected before creating the output, so align them explicitly before merging.
+
 ```bash
 # Merge train and validation splits back into one dataset
 lerobot-edit-dataset \
