@@ -194,6 +194,11 @@ def test_checkpoint_cannot_grant_policy_code_consent(tmp_path, serialized_trust,
     _write_checkpoint(str(tmp_path), {"trust_remote_code": serialized_trust})
     cfg = PreTrainedConfig.from_pretrained(tmp_path, trust_remote_code=caller_trust)
     assert cfg.trust_remote_code is caller_trust
+    cfg.save_pretrained(tmp_path)
+    assert "trust_remote_code" not in json.loads((tmp_path / "config.json").read_text())
+    TrainPipelineConfig(dataset=DatasetConfig(repo_id="user/data"), policy=cfg).save_pretrained(tmp_path)
+    assert "trust_remote_code" not in json.loads((tmp_path / "train_config.json").read_text())["policy"]
+    assert cfg.trust_remote_code is caller_trust
 
 
 @pytest.mark.parametrize("build", [_eval_config, _train_config])

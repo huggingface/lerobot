@@ -493,6 +493,7 @@ def make_fineart_vla_pre_post_processors(
                     episodes,
                     exclude_episodes,
                 ),
+                trust_remote_code=config.trust_remote_code,
                 max_action_tokens=config.max_action_tokens,
                 fast_skip_tokens=config.fast_skip_tokens,
                 paligemma_tokenizer_name=config.text_tokenizer_name,

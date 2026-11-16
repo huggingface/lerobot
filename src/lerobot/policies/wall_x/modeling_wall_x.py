@@ -301,6 +301,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         token: str | bool | None = None,
         revision: str = "main",
         strict: bool = False,
+        trust_remote_code: bool = False,
         **kwargs: Any,
     ) -> Self:
         """
@@ -340,9 +341,12 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             token=token,
             revision=revision,
             use_fast=True,
+            trust_remote_code=trust_remote_code,
         )
         if action_tokenizer_path is not None:
-            action_tokenizer = AutoProcessor.from_pretrained(action_tokenizer_path, trust_remote_code=True)
+            action_tokenizer = AutoProcessor.from_pretrained(
+                action_tokenizer_path, trust_remote_code=trust_remote_code
+            )
             processor.action_processor = action_tokenizer
         else:
             action_tokenizer = None
@@ -1815,6 +1819,7 @@ class WallXPolicy(PreTrainedPolicy):
         self.model = Qwen2_5_VLMoEForAction.from_pretrained(
             pretrained_name_or_path=config.pretrained_name_or_path,
             action_tokenizer_path=config.action_tokenizer_path,
+            trust_remote_code=config.trust_remote_code,
             attn_implementation=config.attn_implementation,
             vision_attn_implementation=vision_attn_implementation,
         )

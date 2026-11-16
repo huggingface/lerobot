@@ -317,18 +317,58 @@ def test_policy_consent_reaches_both_loaded_processors(monkeypatch, consent, ove
 
 @pytest.mark.parametrize("consent", [False, True])
 @pytest.mark.parametrize("override", [None, False, True])
-def test_fresh_pi0_fast_processors_receive_consent(monkeypatch, consent, override):
-    from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
+@pytest.mark.parametrize("policy_type", ["pi0_fast", pytest.param("fineart_vla", marks=pytest.mark.dataset)])
+def test_fresh_fast_processors_receive_consent(monkeypatch, consent, override, policy_type):
+    if policy_type == "fineart_vla":
+        pytest.importorskip("datasets")
     from lerobot.processor import tokenizer_processor
 
     monkeypatch.setattr(tokenizer_processor, "_transformers_available", True)
     monkeypatch.setattr(tokenizer_processor, "AutoProcessor", MagicMock())
     tokenizer = MagicMock()
     monkeypatch.setattr(tokenizer_processor, "AutoTokenizer", tokenizer)
-    config = PI0FastConfig(device="cpu", trust_remote_code=consent)
+    config = factory.make_policy_config(policy_type, device="cpu", trust_remote_code=consent)
     config.validate_features()
     kwargs = {} if override is None else {"trust_remote_code": override}
     pre, _ = factory.make_pre_post_processors(config, **kwargs)
     step = next(step for step in pre.steps if type(step).__name__ == "ActionTokenizerProcessorStep")
     assert step.trust_remote_code is (consent if override is None else override)
     assert config.trust_remote_code is consent
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_wallx_model_tokenizer_loaders_receive_consent(monkeypatch, consent):
+    from lerobot.policies.wall_x import modeling_wall_x as wallx
+
+    load = MagicMock(side_effect=[MagicMock(), RuntimeError("stop before model construction")])
+    monkeypatch.setattr(wallx, "AutoProcessor", SimpleNamespace(from_pretrained=load))
+    monkeypatch.setattr(wallx, "Qwen2_5_VLMoEModel", SimpleNamespace(_require_eager_attention=lambda _: None))
+    with pytest.raises(RuntimeError, match="stop before model construction"):
+        wallx.Qwen2_5_VLMoEForAction.from_pretrained(
+            "user/model",
+            config=SimpleNamespace(),
+            action_tokenizer_path="user/fast",
+            trust_remote_code=consent,
+        )
+    assert load.call_count == 2
+    assert all(call.kwargs["trust_remote_code"] is consent for call in load.call_args_list)
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_fineart_fitter_fallback_requires_consent(monkeypatch, consent):
+    from lerobot.policies.fineart_vla import fit_fast_tokenizer as fitter
+
+    loader = MagicMock(side_effect=ValueError("custom tokenizer code"))
+    fallback = MagicMock()
+    monkeypatch.setattr(fitter, "AutoProcessor", SimpleNamespace(from_pretrained=loader), raising=False)
+    monkeypatch.setattr(fitter, "get_class_from_dynamic_module", fallback, raising=False)
+    if consent:
+        assert (
+            fitter._load_fast_fitter("physical-intelligence/fast", trust_remote_code=True)
+            is fallback.return_value
+        )
+    else:
+        with pytest.raises(ValueError, match="custom tokenizer code"):
+            fitter._load_fast_fitter("physical-intelligence/fast")
+        fallback.assert_not_called()
+    assert loader.call_args.kwargs["trust_remote_code"] is consent

@@ -445,8 +445,11 @@ class TrainPipelineConfig(HubMixin):
         return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
-            draccus.dump(self, f, indent=4)
+        config = self.to_dict()
+        if isinstance(config.get("policy"), dict):
+            config["policy"].pop("trust_remote_code", None)
+        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f:
+            json.dump(config, f, indent=4)
 
     @classmethod
     def from_pretrained(

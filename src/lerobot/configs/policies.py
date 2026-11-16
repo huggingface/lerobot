@@ -174,7 +174,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         # Encode against the base class so draccus includes the choice "type" key,
         # which `from_pretrained` needs to resolve the concrete subclass.
         with open(save_directory / CONFIG_NAME, "w") as f:
-            json.dump(draccus.encode(self, PreTrainedConfig), f, indent=4)
+            config = draccus.encode(self, PreTrainedConfig)
+            config.pop("trust_remote_code", None)  # Runtime consent; absent from older checkpoint schemas.
+            json.dump(config, f, indent=4)
 
     @classmethod
     def from_pretrained(
