@@ -179,6 +179,27 @@ def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, Po
 - Always return the modified features dictionary
 - Document transformations clearly in the docstring
 
+### Loading custom processor code
+
+Processor configs describe steps; they cannot grant permission to execute custom code. By default, pipelines resolve registered steps and built-in LeRobot class paths. Importing an external class requires caller consent, even if its module is already loaded. The resolved target must always inherit from `ProcessorStep`.
+
+After reviewing the custom code, opt in explicitly:
+
+```python
+processor = PolicyProcessorPipeline.from_pretrained(
+    "user/policy",
+    config_filename="policy_preprocessor.json",
+    revision="<reviewed-commit-hash>",
+    trust_remote_code=True,
+)
+```
+
+`from_config(..., trust_remote_code=True)` provides the same opt-in for in-memory configs. A registered step can be supplied by trusted application code without enabling external class imports; registering it does not authorize custom tokenizer code.
+
+For policy entry points such as training, evaluation, and recording, use `--policy.trust_remote_code=true`. In Python, pass `trust_remote_code=True` to `PreTrainedConfig.from_pretrained(...)` or `make_pre_post_processors(...)`. PI0-FAST's FAST tokenizer requires this consent both when building fresh processors and when loading saved ones. Checkpoint JSON cannot enable the policy's flag; only the caller's argument or explicit CLI/YAML override can do so. This also applies when loading a local checkpoint or cached Hub artifact.
+
+The policy flag is independent of `--env.trust_remote_code=true`: trusting an environment does not authorize custom policy processors, and trusting a policy does not authorize an environment. A step config or constructor override requesting `trust_remote_code=True` is rejected unless the outer pipeline was loaded with consent.
+
 ### Using overrides
 
 You can override step parameters at load-time using `overrides`. This is handy for non-serializable objects or site-specific settings. It works both in policy factories and with `DataProcessorPipeline.from_pretrained(...)`.

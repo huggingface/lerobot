@@ -2162,7 +2162,7 @@ def test_groot_n1_7_processor_uses_qwen_component_assets(monkeypatch):
         ("image_processor", "nvidia/Cosmos-Reason2-2B"),
         ("video_processor", "nvidia/Cosmos-Reason2-2B"),
     ]
-    assert all(call[2] == {"trust_remote_code": True} for call in calls)
+    assert all(call[2] == {"trust_remote_code": False} for call in calls)
     assert processor.tokenizer.padding_side == "left"
     assert processor.chat_template == "fake-chat-template"
     assert not FakeProcessor.from_pretrained_called

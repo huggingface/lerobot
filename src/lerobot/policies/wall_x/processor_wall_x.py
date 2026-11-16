@@ -110,6 +110,7 @@ def make_wall_x_pre_post_processors(
         WallXPromptProcessorStep(image_keys=list(config.image_features), chunk_size=config.chunk_size),
         WallXTokenizerStep(
             processor_name=config.pretrained_name_or_path,
+            trust_remote_code=config.trust_remote_code,
             processor_revision=config.pretrained_revision,
             action_tokenizer_name=config.action_tokenizer_path,
             image_keys=list(config.image_features),
@@ -366,6 +367,7 @@ class WallXTokenizerStep(ProcessorStep):
     use_fast_tokenizer: bool = False
     action_tokenizer_name: str | None = None
     processor_revision: str | None = None
+    trust_remote_code: bool = False
     _processor: Any = field(default=None, init=False, repr=False)
     _action_tokenizer: Any = field(default=None, init=False, repr=False)
 
@@ -389,13 +391,14 @@ class WallXTokenizerStep(ProcessorStep):
             self._processor = AutoProcessor.from_pretrained(
                 self.processor_name,
                 revision=self.processor_revision,
+                trust_remote_code=self.trust_remote_code,
                 use_fast=True,
             )
             if self.use_fast_tokenizer:
                 if self.action_tokenizer_name is None:
                     raise ValueError("Fast WALL-X tokenization requires action_tokenizer_name.")
                 self._action_tokenizer = AutoProcessor.from_pretrained(
-                    self.action_tokenizer_name, trust_remote_code=True
+                    self.action_tokenizer_name, trust_remote_code=self.trust_remote_code
                 )
         return self._processor, self._action_tokenizer
 

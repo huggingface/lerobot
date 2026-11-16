@@ -88,12 +88,15 @@ policy.type=pi0_fast
 
 ## Training
 
+The FAST action tokenizer loads custom Python code. Review the tokenizer repository before enabling `--policy.trust_remote_code=true`; this caller consent is required for training and inference and is not inherited from a saved checkpoint.
+
 For training π₀-FAST, you can use the LeRobot training script:
 
 ```bash
 lerobot-train \
     --dataset.repo_id=your_dataset \
     --policy.type=pi0_fast \
+    --policy.trust_remote_code=true \
     --output_dir=./outputs/pi0fast_training \
     --job_name=pi0fast_training \
     --policy.pretrained_path=lerobot/pi0fast-base \
@@ -137,7 +140,7 @@ policy.use_kv_cache=true
 from lerobot.policies.pi0_fast import PI0FastPolicy, PI0FastConfig
 
 # Load the policy
-policy = PI0FastPolicy.from_pretrained("your-model-path")
+policy = PI0FastPolicy.from_pretrained("your-model-path", trust_remote_code=True)
 
 # During inference
 actions = policy.predict_action_chunk(batch)
@@ -189,6 +192,7 @@ lerobot-train \
   --output_dir=outputs/libero_pi0fast \
   --job_name=libero_pi0fast \
   --policy.path=lerobot/pi0fast-base \
+  --policy.trust_remote_code=true \
   --policy.dtype=bfloat16 \
   --steps=100000 \
   --save_freq=20000 \
@@ -210,6 +214,7 @@ We then evaluate the finetuned model using the LeRobot LIBERO implementation, by
 tasks="libero_object,libero_spatial,libero_goal,libero_10"
 lerobot-eval \
   --policy.path=lerobot/pi0fast-libero \
+  --policy.trust_remote_code=true \
   --policy.max_action_tokens=256 \
   --env.type=libero \
   --policy.gradient_checkpointing=false \

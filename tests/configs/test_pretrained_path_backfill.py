@@ -186,3 +186,34 @@ def test_cli_pretrained_revision_reaches_from_pretrained(monkeypatch, argv, buil
 
     assert captured["revision"] == "cli-sha"
     assert getattr(cfg, field).pretrained_revision == "cli-sha"
+
+
+@pytest.mark.parametrize("serialized_trust", [False, True])
+@pytest.mark.parametrize("caller_trust", [False, True])
+def test_checkpoint_cannot_grant_policy_code_consent(tmp_path, serialized_trust, caller_trust):
+    _write_checkpoint(str(tmp_path), {"trust_remote_code": serialized_trust})
+    cfg = PreTrainedConfig.from_pretrained(tmp_path, trust_remote_code=caller_trust)
+    assert cfg.trust_remote_code is caller_trust
+
+
+@pytest.mark.parametrize("build", [_eval_config, _train_config])
+def test_cli_policy_consent_overrides_checkpoint(monkeypatch, tmp_path, build):
+    _write_checkpoint(str(tmp_path), {"trust_remote_code": False})
+    monkeypatch.setattr(
+        sys, "argv", ["lerobot", f"--policy.path={tmp_path}", "--policy.trust_remote_code=true"]
+    )
+    cfg = build()
+    assert cfg.policy.trust_remote_code is True
+    assert not getattr(cfg, "trust_remote_code", False)
+
+
+@pytest.mark.parametrize("policy_consent,env_consent", [(False, True), (True, False)])
+def test_policy_and_env_consent_are_independent(monkeypatch, policy_consent, env_consent):
+    from lerobot.envs.configs import HubEnvConfig
+
+    monkeypatch.setattr(sys, "argv", ["lerobot-eval"])
+    policy = _DummyBackfillConfig(device="cpu", trust_remote_code=policy_consent)
+    env = HubEnvConfig(hub_path="user/environment", trust_remote_code=env_consent)
+    config = EvalPipelineConfig(env=env, policy=policy)
+    assert config.policy.trust_remote_code is policy_consent
+    assert config.env.trust_remote_code is env_consent

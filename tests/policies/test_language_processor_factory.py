@@ -296,3 +296,56 @@ def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
     )
     torch.testing.assert_close(processed["observation.state"], torch.tensor([[5.0]]))
     torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[12.0]]))
+
+
+@pytest.mark.parametrize("consent", [False, True])
+@pytest.mark.parametrize("override", [None, False, True])
+def test_policy_consent_reaches_both_loaded_processors(monkeypatch, consent, override):
+    config = _act_config()
+    config.trust_remote_code = consent
+    load = MagicMock(side_effect=[SimpleNamespace(steps=[]), SimpleNamespace(steps=[])])
+    monkeypatch.setattr(DataProcessorPipeline, "from_pretrained", load)
+    kwargs = {} if override is None else {"trust_remote_code": override}
+    factory.make_pre_post_processors(config, pretrained_path="user/checkpoint", **kwargs)
+    assert load.call_count == 2
+    assert config.trust_remote_code is consent
+    assert all(
+        call.kwargs["trust_remote_code"] is (consent if override is None else override)
+        for call in load.call_args_list
+    )
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_custom_pretrained_hook_receives_consent(monkeypatch, consent):
+    config = _act_config()
+    config.trust_remote_code = consent
+    received = {}
+    result = (SimpleNamespace(steps=[]), SimpleNamespace(steps=[]))
+
+    def hook(*, config, **kwargs):
+        received["consent"] = config.trust_remote_code
+        return result
+
+    module = SimpleNamespace(make_act_pre_post_processors_from_pretrained=hook)
+    monkeypatch.setattr(factory, "_import_sibling_policy_module", lambda *args: module)
+    assert factory.make_pre_post_processors(config, pretrained_path="user/checkpoint") == result
+    assert received["consent"] is consent
+
+
+@pytest.mark.parametrize("consent", [False, True])
+@pytest.mark.parametrize("override", [None, False, True])
+def test_fresh_pi0_fast_processors_receive_consent(monkeypatch, consent, override):
+    from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
+    from lerobot.processor import tokenizer_processor
+
+    monkeypatch.setattr(tokenizer_processor, "_transformers_available", True)
+    monkeypatch.setattr(tokenizer_processor, "AutoProcessor", MagicMock())
+    tokenizer = MagicMock()
+    monkeypatch.setattr(tokenizer_processor, "AutoTokenizer", tokenizer)
+    config = PI0FastConfig(device="cpu", trust_remote_code=consent)
+    config.validate_features()
+    kwargs = {} if override is None else {"trust_remote_code": override}
+    pre, _ = factory.make_pre_post_processors(config, **kwargs)
+    step = next(step for step in pre.steps if type(step).__name__ == "ActionTokenizerProcessorStep")
+    assert step.trust_remote_code is (consent if override is None else override)
+    assert config.trust_remote_code is consent

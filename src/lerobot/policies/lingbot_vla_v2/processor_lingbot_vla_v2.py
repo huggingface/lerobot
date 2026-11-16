@@ -451,4 +451,5 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
         postprocessor_overrides=post,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
+        trust_remote_code=config.trust_remote_code,
     )

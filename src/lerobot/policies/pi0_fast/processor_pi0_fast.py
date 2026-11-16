@@ -154,6 +154,7 @@ def make_pi0_fast_pre_post_processors(
         ),
         ActionTokenizerProcessorStep(
             action_tokenizer_name=config.action_tokenizer_name,
+            trust_remote_code=config.trust_remote_code,
             max_action_tokens=config.max_action_tokens,
             fast_skip_tokens=config.fast_skip_tokens,
             paligemma_tokenizer_name=config.text_tokenizer_name,

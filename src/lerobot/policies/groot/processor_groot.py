@@ -482,7 +482,6 @@ def make_groot_pre_post_processors_from_pretrained(
     postprocessor_overrides: dict[str, Any] | None = None,
     preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
-    trust_remote_code: bool = False,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -521,7 +520,7 @@ def make_groot_pre_post_processors_from_pretrained(
         postprocessor_overrides=postprocessor_overrides,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
-        trust_remote_code=trust_remote_code,
+        trust_remote_code=config.trust_remote_code,
     )
     _reconnect_groot_n1_7_pack_decode_steps(preprocessor, postprocessor)
     _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)
@@ -1220,6 +1219,7 @@ def make_groot_pre_post_processors(
         pack_step,
         GrootN17VLMEncodeStep(
             model_name=GROOT_N1_7_BACKBONE_MODEL,
+            trust_remote_code=config.trust_remote_code,
             image_crop_size=image_crop_size,
             image_target_size=image_target_size,
             shortest_image_edge=shortest_image_edge,
@@ -1329,11 +1329,13 @@ def _align_video_horizon(video: torch.Tensor, horizon: int | None) -> torch.Tens
     return torch.cat([pad, video], dim=1)
 
 
-def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> ProcessorMixin:
+def _build_n1_7_processor(
+    model_name: str = GROOT_N1_7_BACKBONE_MODEL, *, trust_remote_code: bool = False
+) -> ProcessorMixin:
     require_package("transformers", extra="groot")
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    image_processor = Qwen2VLImageProcessor.from_pretrained(model_name, trust_remote_code=True)
-    video_processor = Qwen3VLVideoProcessor.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote_code)
+    image_processor = Qwen2VLImageProcessor.from_pretrained(model_name, trust_remote_code=trust_remote_code)
+    video_processor = Qwen3VLVideoProcessor.from_pretrained(model_name, trust_remote_code=trust_remote_code)
     proc = Qwen3VLProcessor(
         image_processor=image_processor,
         tokenizer=tokenizer,
@@ -2018,6 +2020,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
     """
 
     model_name: str = GROOT_N1_7_BACKBONE_MODEL
+    trust_remote_code: bool = False
     image_crop_size: list[int] | None = None
     image_target_size: list[int] | None = None
     shortest_image_edge: int | None = None
@@ -2035,7 +2038,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
     @property
     def proc(self) -> ProcessorMixin:
         if self._proc is None:
-            self._proc = _build_n1_7_processor(self.model_name)
+            self._proc = _build_n1_7_processor(self.model_name, trust_remote_code=self.trust_remote_code)
         return self._proc
 
     def _target_device(self) -> torch.device | None:

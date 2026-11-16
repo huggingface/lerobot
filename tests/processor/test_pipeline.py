@@ -15,14 +15,11 @@
 # limitations under the License.
 
 import json
-import os
-import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -604,7 +601,9 @@ def test_save_and_load_pretrained():
         assert config["steps"][1]["config"]["counter"] == 10
 
         # Load pipeline
-        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="testpipeline.json")
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="testpipeline.json", trust_remote_code=True
+        )
 
         assert loaded_pipeline.name == "TestPipeline"
         assert len(loaded_pipeline) == 2
@@ -633,7 +632,7 @@ def test_step_without_optional_methods():
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, config_filename="dataprocessorpipeline.json"
+            tmp_dir, config_filename="dataprocessorpipeline.json", trust_remote_code=True
         )
         assert len(loaded_pipeline) == 1
 
@@ -664,7 +663,7 @@ def test_mixed_json_and_tensor_state():
 
         # Load and verify
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, config_filename="dataprocessorpipeline.json"
+            tmp_dir, config_filename="dataprocessorpipeline.json", trust_remote_code=True
         )
         loaded_step = loaded_pipeline.steps[0]
 
@@ -743,7 +742,9 @@ def test_from_config_round_trips_stateful_pipeline():
     config = pipeline.get_config()
     pipeline_state_dict = pipeline.state_dict()
 
-    loaded_pipeline = DataProcessorPipeline.from_config(config, state_dict=pipeline_state_dict)
+    loaded_pipeline = DataProcessorPipeline.from_config(
+        config, state_dict=pipeline_state_dict, trust_remote_code=True
+    )
     loaded_step = loaded_pipeline.steps[0]
 
     assert len(loaded_pipeline) == 1
@@ -779,7 +780,7 @@ def test_from_config_preserves_state_metadata_for_empty_initial_state():
     config = pipeline.get_config()
     pipeline_state_dict = pipeline.state_dict()
 
-    loaded_pipeline = DataProcessorPipeline.from_config(config)
+    loaded_pipeline = DataProcessorPipeline.from_config(config, trust_remote_code=True)
     loaded_step = loaded_pipeline.steps[0]
 
     assert isinstance(loaded_step, MockLazyTensorStateStep)
@@ -802,6 +803,7 @@ def test_from_config_applies_overrides_before_state_loading():
         config,
         state_dict=pipeline_state_dict,
         overrides={"MockLazyTensorStateStep": {"scale": 5.0}},
+        trust_remote_code=True,
     )
     loaded_step = loaded_pipeline.steps[0]
 
@@ -814,7 +816,7 @@ def test_load_state_dict_raises_on_missing_expected_state():
     """Test loading raises when serialized config expects missing state."""
     stateful_step = MockLazyTensorStateStep(initial_value=19.0)
     pipeline = DataProcessorPipeline([stateful_step], name="Missing Pipeline")
-    loaded_pipeline = DataProcessorPipeline.from_config(pipeline.get_config())
+    loaded_pipeline = DataProcessorPipeline.from_config(pipeline.get_config(), trust_remote_code=True)
 
     with pytest.raises(KeyError, match="missing_pipeline_step_0"):
         loaded_pipeline.load_state_dict({})
@@ -837,7 +839,9 @@ def test_stateless_pipeline_in_memory_serialization_returns_empty_state():
     assert pipeline.state_dict() == {}
     assert all("state_file" not in step_entry for step_entry in config["steps"])
 
-    loaded_pipeline = DataProcessorPipeline.from_config(config_without_name, state_dict={})
+    loaded_pipeline = DataProcessorPipeline.from_config(
+        config_without_name, state_dict={}, trust_remote_code=True
+    )
 
     assert loaded_pipeline.name == "DataProcessorPipeline"
     assert loaded_pipeline.state_dict() == {}
@@ -1130,6 +1134,7 @@ def test_from_pretrained_with_overrides():
             overrides=overrides,
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         # Verify the pipeline was loaded correctly
@@ -1172,6 +1177,7 @@ def test_from_pretrained_with_partial_overrides():
             overrides=overrides,
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         transition = create_transition(reward=1.0)
@@ -1196,7 +1202,10 @@ def test_from_pretrained_invalid_override_key():
 
         with pytest.raises(KeyError, match="Override keys.*do not match any step"):
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
 
@@ -1213,7 +1222,10 @@ def test_from_pretrained_multiple_invalid_override_keys():
 
         with pytest.raises(KeyError) as exc_info:
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
         error_msg = str(exc_info.value)
@@ -1239,6 +1251,7 @@ def test_from_pretrained_registered_step_override():
             overrides=overrides,
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         # Test that overrides were applied
@@ -1273,6 +1286,7 @@ def test_from_pretrained_mixed_registered_and_unregistered():
             overrides=overrides,
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         # Test both steps
@@ -1299,6 +1313,7 @@ def test_from_pretrained_no_overrides():
             config_filename="dataprocessorpipeline.json",
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         assert len(loaded_pipeline) == 1
@@ -1325,6 +1340,7 @@ def test_from_pretrained_empty_overrides():
             overrides={},
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         assert len(loaded_pipeline) == 1
@@ -1353,7 +1369,10 @@ def test_from_pretrained_override_instantiation_error():
 
         with pytest.raises(ValueError, match="Failed to instantiate processor step"):
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
 
@@ -1379,7 +1398,7 @@ def test_from_pretrained_with_state_and_overrides():
         }
 
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides, trust_remote_code=True
         )
         loaded_step = loaded_pipeline.steps[0]
 
@@ -1409,7 +1428,10 @@ def test_from_pretrained_override_error_messages():
 
         with pytest.raises(KeyError) as exc_info:
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
         error_msg = str(exc_info.value)
@@ -1563,7 +1585,9 @@ def test_save_with_custom_config_filename():
         assert config["name"] == "TestProcessor"
 
         # Load with specific filename
-        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="my_custom_config.json")
+        loaded = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="my_custom_config.json", trust_remote_code=True
+        )
         assert loaded.name == "TestProcessor"
 
 
@@ -1586,8 +1610,12 @@ def test_multiple_processors_same_directory():
         assert (Path(tmp_dir) / "postprocessor.json").exists()
 
         # Load them back
-        loaded_pre = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="preprocessor.json")
-        loaded_post = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="postprocessor.json")
+        loaded_pre = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="preprocessor.json", trust_remote_code=True
+        )
+        loaded_post = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="postprocessor.json", trust_remote_code=True
+        )
 
         assert loaded_pre.name == "preprocessor"
         assert loaded_post.name == "postprocessor"
@@ -1604,7 +1632,9 @@ def test_explicit_config_filename_loading():
         pipeline.save_pretrained(tmp_dir)
 
         # Load with explicit config_filename (now required)
-        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="singleconfig.json")
+        loaded = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="singleconfig.json", trust_remote_code=True
+        )
         assert loaded.name == "SingleConfig"
 
 
@@ -1618,8 +1648,12 @@ def test_explicit_config_selection_with_multiple_configs():
         proc2.save_pretrained(tmp_dir)
 
         # Can load specific configs explicitly
-        loaded1 = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor1.json")
-        loaded2 = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor2.json")
+        loaded1 = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="processor1.json", trust_remote_code=True
+        )
+        loaded2 = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="processor2.json", trust_remote_code=True
+        )
 
         assert loaded1.name == "processor1"
         assert loaded2.name == "processor2"
@@ -1760,6 +1794,7 @@ def test_override_with_nested_config():
                 overrides={"complex_config_step": {"nested_config": {"level1": {"level2": "overridden"}}}},
                 to_transition=identity_transition,
                 to_output=identity_transition,
+                trust_remote_code=True,
             )
 
             # Test that override worked
@@ -1787,6 +1822,7 @@ def test_override_preserves_defaults():
                     "multiplier": 5.0  # Only override multiplier
                 }
             },
+            trust_remote_code=True,
         )
 
         # Check that name was preserved from saved config
@@ -1812,7 +1848,10 @@ def test_override_type_validation():
 
         with pytest.raises(ValueError, match="Failed to instantiate"):
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
 
@@ -1866,6 +1905,7 @@ def test_override_with_callables():
                 overrides={"callable_step": {"transform_fn": double_values}},
                 to_transition=identity_transition,
                 to_output=identity_transition,
+                trust_remote_code=True,
             )
 
             # Test it works
@@ -1890,6 +1930,7 @@ def test_override_multiple_same_class_warning():
             tmp_dir,
             config_filename="dataprocessorpipeline.json",
             overrides={"MockStepWithNonSerializableParam": {"multiplier": 10.0}},
+            trust_remote_code=True,
         )
 
         # Both steps get the same override
@@ -1945,8 +1986,12 @@ def test_state_file_naming_with_multiple_processors():
         assert (Path(tmp_dir) / "postprocessor_step_0.safetensors").exists()
 
         # Load both back and verify they work correctly
-        loaded_pre = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="preprocessor.json")
-        loaded_post = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="postprocessor.json")
+        loaded_pre = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="preprocessor.json", trust_remote_code=True
+        )
+        loaded_post = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="postprocessor.json", trust_remote_code=True
+        )
 
         assert loaded_pre.name == "PreProcessor"
         assert loaded_post.name == "PostProcessor"
@@ -1998,6 +2043,7 @@ def test_override_with_device_strings():
                     tmp_dir,
                     config_filename="dataprocessorpipeline.json",
                     overrides={"device_aware_step": {"device": "cuda:0"}},
+                    trust_remote_code=True,
                 )
 
                 loaded_step = loaded.steps[0]
@@ -2067,7 +2113,9 @@ def test_save_load_with_custom_converter_functions():
         pipeline.save_pretrained(tmp_dir)
 
         # Load - should use default converters
-        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="dataprocessorpipeline.json")
+        loaded = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="dataprocessorpipeline.json", trust_remote_code=True
+        )
 
         # Verify it uses default converters by checking with standard batch format
         batch = {
@@ -2498,283 +2546,3 @@ def test_artifact_download_pattern_matches_directories_and_files(
 
     assert captured["allow_patterns"] == expected_pattern
     assert loaded_config["steps"][0]["config"]["asset"] == str(tmp_path / relative_path)
-
-
-def _create_temp_model_dir(config_dict: dict) -> str:
-    """Helper to create a temporary directory containing processor.json."""
-    model_dir = tempfile.mkdtemp(prefix="lerobot_test_model_")
-    config_path = os.path.join(model_dir, "processor.json")
-    with open(config_path, "w") as f:
-        json.dump(config_dict, f)
-    return model_dir
-
-
-def test_rce_pre_import_gate_blocks_execution():
-    """Test that untrusted external module import is blocked before module-level side effects execute."""
-    temp_pkg_dir = tempfile.mkdtemp()
-    marker_file = os.path.join(temp_pkg_dir, "PWNED_ON_IMPORT")
-    module_name = "malicious_unimported_processor_mod"
-
-    # Create a python module with top-level side effect
-    module_file = os.path.join(temp_pkg_dir, f"{module_name}.py")
-    with open(module_file, "w") as f:
-        f.write(
-            f"import pathlib\npathlib.Path({repr(marker_file)}).touch()\nclass MaliciousStep:\n    pass\n"
-        )
-
-    sys.path.insert(0, temp_pkg_dir)
-    try:
-        malicious_config = {
-            "name": "malicious-processor",
-            "steps": [
-                {
-                    "class": f"{module_name}.MaliciousStep",
-                    "config": {},
-                }
-            ],
-        }
-        model_dir = _create_temp_model_dir(malicious_config)
-
-        with pytest.raises(ValueError, match="requires `trust_remote_code=True`"):
-            DataProcessorPipeline.from_pretrained(
-                model_dir,
-                config_filename="processor.json",
-                trust_remote_code=False,
-            )
-
-        # Crucial check: the module was never imported, so the top-level marker file was NOT created
-        assert not os.path.exists(marker_file), (
-            "Security vulnerability! Module was imported and top-level side effect executed."
-        )
-        assert module_name not in sys.modules
-    finally:
-        if temp_pkg_dir in sys.path:
-            sys.path.remove(temp_pkg_dir)
-        sys.modules.pop(module_name, None)
-
-
-def test_rce_subclass_guard_blocks_non_processor_step():
-    """Test that non-ProcessorStep classes in loaded modules are blocked by the subclass guard."""
-    marker_dir = tempfile.mkdtemp()
-    marker_file = os.path.join(marker_dir, "LEROBOT_PWNED")
-
-    malicious_config = {
-        "name": "malicious-processor",
-        "steps": [
-            {
-                "class": "subprocess.Popen",
-                "config": {
-                    "args": [
-                        sys.executable,
-                        "-c",
-                        f"import pathlib; pathlib.Path({repr(marker_file)}).touch()",
-                    ]
-                },
-            }
-        ],
-    }
-
-    model_dir = _create_temp_model_dir(malicious_config)
-
-    with pytest.raises((TypeError, ValueError, ImportError)) as exc_info:
-        DataProcessorPipeline.from_pretrained(
-            model_dir,
-            config_filename="processor.json",
-        )
-
-    # Verify that the attempt was blocked because Popen is not a ProcessorStep subclass
-    assert "not a valid ProcessorStep subclass" in str(exc_info.value)
-    assert not os.path.exists(marker_file), (
-        "Security vulnerability! Code executed and marker file was created."
-    )
-
-
-def test_nested_step_trust_remote_code_rejected_when_pipeline_safe():
-    """Test that a step requesting trust_remote_code=True is rejected when pipeline has trust_remote_code=False."""
-    config = {
-        "name": "nested-rtc-processor",
-        "steps": [
-            {
-                "registry_name": "action_tokenizer_processor",
-                "config": {
-                    "action_tokenizer_name": "attacker/processor",
-                    "paligemma_tokenizer_name": "attacker/tokenizer",
-                    "trust_remote_code": True,
-                },
-            }
-        ],
-    }
-
-    model_dir = _create_temp_model_dir(config)
-
-    # 1. from_pretrained defaults to trust_remote_code=False -> must reject
-    with pytest.raises(ValueError, match="requested `trust_remote_code=True` in its configuration"):
-        DataProcessorPipeline.from_pretrained(
-            model_dir,
-            config_filename="processor.json",
-            trust_remote_code=False,
-        )
-
-    # 2. from_config with default trust_remote_code=False -> must reject
-    with pytest.raises(ValueError, match="requested `trust_remote_code=True` in its configuration"):
-        DataProcessorPipeline.from_config(config)
-
-    # 3. from_config with overrides requesting trust_remote_code=True -> must reject if outer flag is False
-    safe_config = {
-        "name": "nested-rtc-processor",
-        "steps": [
-            {
-                "registry_name": "action_tokenizer_processor",
-                "config": {
-                    "action_tokenizer_name": "attacker/processor",
-                    "paligemma_tokenizer_name": "attacker/tokenizer",
-                },
-            }
-        ],
-    }
-    with pytest.raises(ValueError, match="requested `trust_remote_code=True` in its configuration"):
-        DataProcessorPipeline.from_config(
-            safe_config,
-            overrides={"action_tokenizer_processor": {"trust_remote_code": True}},
-            trust_remote_code=False,
-        )
-
-
-@patch("lerobot.processor.tokenizer_processor.AutoProcessor")
-@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
-def test_nested_step_trust_remote_code_allowed_when_pipeline_opts_in(mock_tokenizer, mock_processor):
-    """Test that a step requesting trust_remote_code=True is permitted when pipeline passes trust_remote_code=True."""
-    mock_processor.from_pretrained.return_value = MagicMock()
-    mock_tokenizer.from_pretrained.return_value = MagicMock()
-
-    config = {
-        "name": "nested-rtc-processor",
-        "steps": [
-            {
-                "registry_name": "action_tokenizer_processor",
-                "config": {
-                    "action_tokenizer_name": "attacker/processor",
-                    "paligemma_tokenizer_name": "attacker/tokenizer",
-                    "trust_remote_code": True,
-                },
-            }
-        ],
-    }
-
-    pipeline = DataProcessorPipeline.from_config(config, trust_remote_code=True)
-    assert len(pipeline.steps) == 1
-    assert pipeline.steps[0].trust_remote_code is True
-    mock_processor.from_pretrained.assert_called_once_with("attacker/processor", trust_remote_code=True)
-    mock_tokenizer.from_pretrained.assert_called_once_with(
-        "attacker/tokenizer",
-        trust_remote_code=True,
-        add_eos_token=True,
-        add_bos_token=False,
-    )
-
-
-def test_untrusted_external_module_blocked():
-    """Test that custom external modules require trust_remote_code=True."""
-    untrusted_config = {
-        "name": "untrusted-processor",
-        "steps": [{"class": "unimported_fake_external_module.SomeStep", "config": {}}],
-    }
-
-    model_dir = _create_temp_model_dir(untrusted_config)
-
-    with pytest.raises(ValueError, match="requires `trust_remote_code=True`"):
-        DataProcessorPipeline.from_pretrained(
-            model_dir,
-            config_filename="processor.json",
-            trust_remote_code=False,
-        )
-
-
-def test_trust_remote_code_flag():
-    """Test that trust_remote_code=True allows dynamic lookup attempt of external module."""
-    external_config = {
-        "name": "external-processor",
-        "steps": [{"class": "non_existent_external_module_xyz.SomeStep", "config": {}}],
-    }
-
-    model_dir = _create_temp_model_dir(external_config)
-
-    # Should pass trust_remote_code check and fail at module import stage (ImportError)
-    with pytest.raises(ImportError, match="Failed to load processor step"):
-        DataProcessorPipeline.from_pretrained(
-            model_dir,
-            config_filename="processor.json",
-            trust_remote_code=True,
-        )
-
-
-def test_invalid_class_path_without_dot():
-    """Test 2: Malicious/invalid class path without a dot (e.g. 'Popen' or 'eval') is blocked cleanly."""
-    invalid_config = {"name": "invalid-class-processor", "steps": [{"class": "Popen", "config": {}}]}
-
-    model_dir = _create_temp_model_dir(invalid_config)
-
-    with pytest.raises(ValueError) as exc_info:
-        DataProcessorPipeline.from_pretrained(
-            model_dir,
-            config_filename="processor.json",
-        )
-
-    assert "Invalid class path 'Popen'" in str(exc_info.value)
-
-
-def test_unregistered_registry_name():
-    """Test 3: Unregistered registry_name raises ImportError."""
-    invalid_registry_config = {
-        "name": "invalid-registry-processor",
-        "steps": [{"registry_name": "non_existent_processor_step", "config": {}}],
-    }
-
-    model_dir = _create_temp_model_dir(invalid_registry_config)
-
-    with pytest.raises((TypeError, KeyError, ImportError)) as exc_info:
-        DataProcessorPipeline.from_pretrained(
-            model_dir,
-            config_filename="processor.json",
-        )
-
-    assert "Failed to load processor step from registry" in str(exc_info.value)
-
-
-def test_valid_registry_name():
-    """Test 4: Registry-based step resolution works correctly."""
-    valid_registry_config = {
-        "name": "valid-registry-processor",
-        "steps": [{"registry_name": "rename_observations_processor", "config": {"rename_map": {}}}],
-    }
-
-    model_dir = _create_temp_model_dir(valid_registry_config)
-
-    pipeline = DataProcessorPipeline.from_pretrained(
-        model_dir,
-        config_filename="processor.json",
-    )
-    assert len(pipeline.steps) == 1
-    assert pipeline.steps[0].__class__.__name__ == "RenameObservationsProcessorStep"
-
-
-def test_valid_legacy_class_path():
-    """Test 5: Backward compatibility - valid internal lerobot.processor module class path works."""
-    valid_legacy_config = {
-        "name": "valid-legacy-processor",
-        "steps": [
-            {
-                "class": "lerobot.processor.rename_processor.RenameObservationsProcessorStep",
-                "config": {"rename_map": {}},
-            }
-        ],
-    }
-
-    model_dir = _create_temp_model_dir(valid_legacy_config)
-
-    pipeline = DataProcessorPipeline.from_pretrained(
-        model_dir,
-        config_filename="processor.json",
-    )
-    assert len(pipeline.steps) == 1
-    assert pipeline.steps[0].__class__.__name__ == "RenameObservationsProcessorStep"

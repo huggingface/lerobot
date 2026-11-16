@@ -20,6 +20,7 @@ import importlib
 import inspect
 import logging
 import os
+from copy import copy
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
@@ -154,7 +155,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
     dataset_meta: Any | None
-    trust_remote_code: bool | None
+    trust_remote_code: bool
 
 
 def make_pre_post_processors(
@@ -187,6 +188,10 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
+    trust_remote_code = kwargs.get("trust_remote_code", policy_cfg.trust_remote_code)
+    if trust_remote_code != policy_cfg.trust_remote_code:
+        policy_cfg = copy(policy_cfg)
+        policy_cfg.trust_remote_code = trust_remote_code
     if pretrained_path:
         preprocessor_config_filename = (
             kwargs.get("preprocessor_config_filename") or f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
@@ -215,6 +220,7 @@ def make_pre_post_processors(
             postprocessor_overrides=kwargs.get("postprocessor_overrides"),
             preprocessor_config_filename=preprocessor_config_filename,
             postprocessor_config_filename=postprocessor_config_filename,
+            trust_remote_code=trust_remote_code,
         )
 
     # Create new processors from the policy config, resolving the per-policy factory

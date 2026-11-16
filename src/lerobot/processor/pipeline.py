@@ -31,9 +31,9 @@ The core components are:
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import re
-import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
@@ -738,6 +738,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 match the step's class name or registry name.
             to_transition: A custom function to convert input data to `EnvTransition`.
             to_output: A custom function to convert the final `EnvTransition` to the output format.
+            trust_remote_code: Caller consent to import external step classes or run custom
+                tokenizer code. Defaults to False, including for local checkpoints.
             **kwargs: Additional arguments (not used).
 
         Returns:
@@ -811,6 +813,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             overrides: Optional constructor overrides keyed by registry name or class name.
             to_transition: Optional converter from input data to `EnvTransition`.
             to_output: Optional converter from `EnvTransition` to output data.
+            trust_remote_code: Caller consent for external step imports and custom tokenizer code.
+                Config contents and already imported modules do not grant consent.
 
         Returns:
             A processor pipeline built from the config and optional state.
@@ -1190,7 +1194,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         Args:
             step_entry: The step configuration dictionary (must have "registry_name" or "class")
             trust_remote_code: Whether to allow importing custom processor step classes from
-                external modules that are not built into lerobot or already loaded.
+                external modules that are not built into lerobot.
 
         Returns:
             Tuple of (step_class, step_key)
@@ -1210,7 +1214,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         else:
             # Fallback to dynamic import using the full class path
             full_class_path = step_entry.get("class", "")
-            if not full_class_path or "." not in full_class_path:
+            if (
+                not isinstance(full_class_path, str)
+                or "." not in full_class_path
+                or not all(part.isidentifier() for part in full_class_path.split("."))
+            ):
                 raise ValueError(
                     f"Invalid class path '{full_class_path}' in step entry. "
                     "Expected a full module path like 'lerobot.processor.normalize.NormalizeStep'."
@@ -1219,12 +1227,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             module_path, class_name = full_class_path.rsplit(".", 1)
 
             is_lerobot_module = module_path.startswith("lerobot.") or module_path == "lerobot"
-            is_already_loaded = module_path in sys.modules
 
-            if not (trust_remote_code or is_lerobot_module or is_already_loaded):
+            if not (trust_remote_code or is_lerobot_module):
                 raise ValueError(
                     f"Loading processor step from custom external module '{module_path}' requires `trust_remote_code=True`. "
-                    f"Pass `trust_remote_code=True` to `from_pretrained()` or `from_config()` if you trust the source of this configuration."
+                    f"Pass `trust_remote_code=True` to `from_pretrained()` or `from_config()` if you trust the source of this configuration, or use --policy.trust_remote_code=true in the CLI."
                 )
 
             try:
@@ -1304,8 +1311,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             raise ValueError(
                 f"Processor step '{step_name}' requested `trust_remote_code=True` in its configuration, "
                 f"but the pipeline was loaded with `trust_remote_code=False`. "
-                f"Pass `trust_remote_code=True` to `from_pretrained()` or `from_config()` if you trust the source of this configuration."
+                f"Pass `trust_remote_code=True` to `from_pretrained()` or `from_config()` if you trust the source of this configuration, or use --policy.trust_remote_code=true in the CLI."
             )
+
+        # Enforce caller consent even when a registered step defaults to True,
+        # and pass explicit opt-in through when the serialized config omits the flag.
+        if "trust_remote_code" in inspect.signature(step_class).parameters:
+            merged_cfg.setdefault("trust_remote_code", trust_remote_code)
 
         try:
             return step_class(**merged_cfg)

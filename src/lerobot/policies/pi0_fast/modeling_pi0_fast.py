@@ -769,12 +769,15 @@ class PI0FastPolicy(PreTrainedPolicy):
         try:
             # Load FAST tokenizer
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                config.action_tokenizer_name, trust_remote_code=True
+                config.action_tokenizer_name, trust_remote_code=config.trust_remote_code
             )
 
             # Load PaliGemma tokenizer for token conversion
             self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-                config.text_tokenizer_name, trust_remote_code=True, add_eos_token=True, add_bos_token=False
+                config.text_tokenizer_name,
+                trust_remote_code=config.trust_remote_code,
+                add_eos_token=True,
+                add_bos_token=False,
             )
 
             logging.info("Loaded FAST tokenizer for action detokenization")

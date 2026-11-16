@@ -881,7 +881,6 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         pretrained_path=cfg.policy.pretrained_path,
         pretrained_revision=cfg.policy.pretrained_revision,
         preprocessor_overrides=preprocessor_overrides,
-        trust_remote_code=cfg.trust_remote_code,
     )
 
     recording_dir = Path(cfg.output_dir) / "recordings" if cfg.eval.recording else None
