@@ -878,7 +878,7 @@ class VLAFlowMatching(nn.Module):
             inputs_embeds=[None, suffix_embs],
             use_cache=self.config.use_cache,
         )
-        if past_key_values is not None and hasattr(past_key_values, "crop"):
+        if past_key_values is not None and hasattr(past_key_values, "layers"):
             # Self-attention layers append suffix K/V in place; restore the prefix for the next step.
             for layer in past_key_values.layers:
                 layer.crop(prefix_len - layer.get_seq_length())

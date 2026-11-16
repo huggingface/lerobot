@@ -106,7 +106,8 @@ def test_smolvla_tuple_kv_parity():
         dt = -1.0 / config.num_steps
         for step in range(config.num_steps):
             t = torch.tensor(1.0 + step * dt, dtype=torch.float32, device="cpu").expand(1)
-            dynamic_kv.crop(prefix_len)
+            for layer in dynamic_kv.layers:
+                layer.crop(prefix_len - layer.get_seq_length())
             v_dyn = policy.model.denoise_step(prefix_pad_masks, dynamic_kv, x_dyn, t)
             v_tup = policy.model.denoise_step(prefix_pad_masks, tuple_kv, x_tup, t)
             assert torch.equal(v_dyn, v_tup), (
