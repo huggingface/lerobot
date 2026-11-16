@@ -34,7 +34,7 @@ from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.feature_spec import FeatureSpec
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, hub_safe_id
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .checkpoint import SafetensorsCheckpoint, safetensors_shard_names
@@ -229,7 +229,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 revision=revision,
                 **kwargs,
             )
-        model_id = str(pretrained_name_or_path)
+        model_id = hub_safe_id(pretrained_name_or_path)
         instance = cls(config, **kwargs)
         device = config.device
         if device is None:
@@ -634,7 +634,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         # Store pretrained path for PEFT's base_model_name_or_path
         if self.config.pretrained_path:
-            self.name_or_path = str(self.config.pretrained_path)
+            self.name_or_path = hub_safe_id(self.config.pretrained_path)
 
         # Wrap with PEFT
         peft_model = get_peft_model(self, final_config, revision=self.config.pretrained_revision)

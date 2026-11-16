@@ -30,7 +30,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, hub_safe_id
 
 from .types import PolicyFeature
 
@@ -122,7 +122,7 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         revision: str | None = None,
         **reward_kwargs: Any,
     ) -> T:
-        model_id = str(pretrained_name_or_path)
+        model_id = hub_safe_id(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():
             if CONFIG_NAME in os.listdir(model_id):

@@ -28,7 +28,7 @@ from torch import Tensor, nn
 
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, hub_safe_id
 
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
@@ -112,7 +112,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
                 revision=revision,
                 **kwargs,
             )
-        model_id = str(pretrained_name_or_path)
+        model_id = hub_safe_id(pretrained_name_or_path)
         instance = cls(config, **kwargs)
         if os.path.isdir(model_id):
             print("Loading weights from local directory")

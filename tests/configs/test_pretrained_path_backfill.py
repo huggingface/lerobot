@@ -138,7 +138,7 @@ def test_reward_config_from_pretrained_backfills_path():
         Path(tmpdir, "config.json").write_text(json.dumps({"type": "_dummy_reward_backfill", "lr": 0.1}))
         cfg = RewardModelConfig.from_pretrained(tmpdir)
         assert isinstance(cfg, _DummyRewardBackfillConfig)
-        assert cfg.pretrained_path == tmpdir
+        assert cfg.pretrained_path == Path(tmpdir).as_posix()
         assert cfg.pretrained_revision is None
 
 

@@ -32,6 +32,7 @@ from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION
+from lerobot.utils.hub import hub_safe_id
 from lerobot.utils.import_utils import require_package
 
 from ..common.vla_utils import pad_vector
@@ -295,7 +296,7 @@ class DM05Policy(PreTrainedPolicy):
         **kwargs,
     ) -> T:
         """Load DM05 from a self-contained LeRobot checkpoint."""
-        model_id = str(pretrained_name_or_path)
+        model_id = hub_safe_id(pretrained_name_or_path)
         saved_config = None
         if config is None:
             config = PreTrainedConfig.from_pretrained(

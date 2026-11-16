@@ -39,6 +39,7 @@ from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
+from lerobot.utils.hub import hub_safe_id
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..chunk import ChunkPolicySpec
@@ -194,14 +195,14 @@ class GrootPolicy(PreTrainedPolicy):
         Returns:
             Initialized GrootPolicy instance with loaded model
         """
-        requested_version = infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
+        requested_version = infer_groot_model_version(hub_safe_id(pretrained_name_or_path)) or GROOT_N1_7
         logger.info(
             "The Groot policy wraps NVIDIA's GR00T %s model. Loading pretrained model from: %s",
             requested_version,
             pretrained_name_or_path,
         )
 
-        model_id = str(pretrained_name_or_path)
+        model_id = hub_safe_id(pretrained_name_or_path)
         is_finetuned_checkpoint = False
 
         # Check if this is a fine-tuned LeRobot checkpoint (has model.safetensors)
@@ -254,7 +255,7 @@ class GrootPolicy(PreTrainedPolicy):
 
         if config is None:
             # Create default config with the pretrained path
-            config = GrootConfig(**{"base_model_path": str(pretrained_name_or_path), **field_kwargs})
+            config = GrootConfig(**{"base_model_path": hub_safe_id(pretrained_name_or_path), **field_kwargs})
 
             # Add minimal visual feature required for validation
             # validate_features() will automatically add state and action features
@@ -268,7 +269,7 @@ class GrootPolicy(PreTrainedPolicy):
                 }
         else:
             # Override the base_model_path with the provided path
-            config.base_model_path = str(pretrained_name_or_path)
+            config.base_model_path = hub_safe_id(pretrained_name_or_path)
             if field_kwargs:
                 config = dataclasses.replace(config, **field_kwargs)
 

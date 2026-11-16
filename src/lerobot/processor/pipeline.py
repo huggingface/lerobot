@@ -54,7 +54,7 @@ from lerobot.lerobot_types import (
     TransitionKey,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, hub_safe_id
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
 
@@ -748,7 +748,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             KeyError: If an override key doesn't match any step in the pipeline.
             ProcessorMigrationError: If the model requires migration to processor format.
         """
-        model_id = str(pretrained_model_name_or_path)
+        model_id = hub_safe_id(pretrained_model_name_or_path)
         model_path = Path(model_id)
         is_local_source = model_path.is_dir() or model_path.is_file()
         hub_download_kwargs = {

@@ -32,6 +32,7 @@ from torch import Tensor, nn
 from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.feature_spec import FeatureSpec
+from lerobot.utils.hub import hub_safe_id
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..common.vla_utils import pad_vector, resize_with_pad
@@ -502,7 +503,7 @@ class XVLAPolicy(PreTrainedPolicy):
                 **kwargs,
             )
 
-        model_id = str(pretrained_name_or_path)
+        model_id = hub_safe_id(pretrained_name_or_path)
         instance = cls(config, **kwargs)
         # step 2: locate model.safetensors
         if os.path.isdir(model_id):
