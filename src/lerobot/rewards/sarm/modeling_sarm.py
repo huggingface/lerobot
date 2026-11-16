@@ -22,12 +22,12 @@ Paper: https://arxiv.org/abs/2509.25358
 - SubtaskTransformer: Predicts within-stage progress (tau) conditioned on stage
 """
 
-import json
 import logging
 import random
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
@@ -37,6 +37,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 from lerobot.utils.constants import OBS_STR
+from lerobot.utils.io_utils import load_json
 
 from ..prediction import ProgressOutput
 from ..pretrained import PreTrainedRewardModel
@@ -446,15 +447,14 @@ class SARMRewardModel(PreTrainedRewardModel):
 
         logging.info(f"SARM initialized on {self.device}")
 
-    def _load_proportions_from_json(self, path, annotation_type: str) -> tuple[list[str], list[float]]:
+    def _load_proportions_from_json(self, path: Path, annotation_type: str) -> tuple[list[str], list[float]]:
         """Load temporal proportions from a JSON file (preserving order)."""
         if not path.exists():
             raise ValueError(
                 f"{annotation_type.capitalize()} temporal proportions not found at {path}. "
                 f"Run the subtask annotation tool with --{annotation_type}-subtasks to generate annotations."
             )
-        with open(path) as f:
-            proportions_dict = json.load(f)
+        proportions_dict = load_json(path)
         names = list(proportions_dict.keys())
         logging.info(f"Loaded {len(names)} {annotation_type} subtasks: {names}")
         logging.info(f"{annotation_type.capitalize()} temporal proportions: {proportions_dict}")

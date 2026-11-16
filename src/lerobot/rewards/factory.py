@@ -74,7 +74,7 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
             raise ValueError(f"Reward model type '{name}' is not available.") from e
 
 
-def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
+def make_reward_model_config(reward_type: str, **kwargs: Any) -> RewardModelConfig:
     """
     Instantiates a reward model configuration object based on the reward type.
 
@@ -82,8 +82,8 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
     by mapping a string identifier to the corresponding config class.
 
     Args:
-        reward_type: The type of the reward model. Supported types include
-                     "reward_classifier", "sarm", "robometer", "topreward".
+        reward_type: A registered reward model type, such as
+                     "reward_classifier", "sarm", "robometer" or "topreward".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -92,20 +92,11 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
     Raises:
         ValueError: If the `reward_type` is not recognized.
     """
-    if reward_type == "reward_classifier":
-        return RewardClassifierConfig(**kwargs)
-    elif reward_type == "sarm":
-        return SARMConfig(**kwargs)
-    elif reward_type == "robometer":
-        return RobometerConfig(**kwargs)
-    elif reward_type == "topreward":
-        return TOPRewardConfig(**kwargs)
-    else:
-        try:
-            config_cls = RewardModelConfig.get_choice_class(reward_type)
-            return config_cls(**kwargs)
-        except Exception as e:
-            raise ValueError(f"Reward model type '{reward_type}' is not available.") from e
+    try:
+        config_cls = RewardModelConfig.get_choice_class(reward_type)
+    except Exception as e:
+        raise ValueError(f"Reward model type '{reward_type}' is not available.") from e
+    return config_cls(**kwargs)
 
 
 def make_reward_model(
