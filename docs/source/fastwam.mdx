@@ -1,5 +1,18 @@
 # FastWAM
 
+| At a glance |                                                                                                                                                                                                 |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=fastwam`                                                                                                                                                                         |
+| Family      | World action model (WAM)                                                                                                                                                                        |
+| Size        | 6B parameters                                                                                                                                                                                   |
+| GPU memory  | Not measured                                                                                                                                                                                    |
+| Takes text  | Yes                                                                                                                                                                                             |
+| Starts from | Pretrained: [`lerobot/fastwam_base`](https://huggingface.co/lerobot/fastwam_base), or a new policy from the [`Wan-AI/Wan2.2-TI2V-5B`](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B) video model |
+| Install     | `pip install 'lerobot[fastwam]'`                                                                                                                                                                |
+| Guide shows | Real robot (SO-101), simulation (LIBERO)                                                                                                                                                        |
+| License     | Apache 2.0                                                                                                                                                                                      |
+| Paper       | [Fast-WAM](https://arxiv.org/abs/2603.16666) (Yuan et al., 2026)                                                                                                                                |
+
 FastWAM is a World Action Model policy for robot control. The LeRobot integration exposes FastWAM through the standard policy API so it can be configured with `policy.type=fastwam`, trained with `lerobot-train`, and loaded through the LeRobot pretrained policy interface.
 
 ## Model Overview

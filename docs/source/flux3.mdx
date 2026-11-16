@@ -1,5 +1,18 @@
 # FLUX 3 Action
 
+| At a glance |                                                                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=flux3`                                                                                                                                                        |
+| Family      | World action model (WAM)                                                                                                                                                     |
+| Size        | 7B parameters                                                                                                                                                                |
+| GPU memory  | Not measured                                                                                                                                                                 |
+| Takes text  | Yes                                                                                                                                                                          |
+| Starts from | Pretrained: [`black-forest-labs/flux-3-action-so101`](https://huggingface.co/black-forest-labs/flux-3-action-so101) for the SO-101. Gated: accept its terms on the Hub first |
+| Install     | Follow [Installation](#installation): it needs specific PyTorch and NATTEN versions                                                                                          |
+| Guide shows | Fine-tuning on SO-101 and DROID data                                                                                                                                         |
+| License     | Weights: FLUX Kommunity License v1.0, on the model card                                                                                                                      |
+| Paper       | None yet. Code: [flux-action](https://github.com/black-forest-labs/flux-action)                                                                                              |
+
 FLUX 3 Action predicts robot actions from camera observations, state and a task instruction. A frozen
 Video VAE and text encoder feed a diffusion transformer that predicts video latents and action chunks;
 only actions are returned at inference. LeRobot supports inference and PEFT: LoRA adapts the trunk

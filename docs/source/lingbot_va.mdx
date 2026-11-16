@@ -1,5 +1,18 @@
 # LingBot-VA
 
+| At a glance |                                                                                               |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=lingbot_va`                                                                    |
+| Family      | World action model (WAM)                                                                      |
+| Size        | 5.1B parameters                                                                               |
+| GPU memory  | 18–24 GB to run. Training in full doesn't fit in 32 GB: fine-tune with LoRA                   |
+| Takes text  | Yes                                                                                           |
+| Starts from | Pretrained: [`lerobot/lingbot_va_base`](https://huggingface.co/lerobot/lingbot_va_base)       |
+| Install     | `pip install 'lerobot[lingbot_va]'`                                                           |
+| Guide shows | Simulation (LIBERO, RoboTwin)                                                                 |
+| License     | Apache 2.0                                                                                    |
+| Paper       | [Causal World Modeling for Robot Control](https://arxiv.org/abs/2601.21998) (Li et al., 2026) |
+
 LingBot-VA is an **autoregressive video-action world-model policy** built on the **Wan2.2**
 video-diffusion stack. It interleaves, in one autoregressive sequence, the prediction of
 future **video latents** and **robot actions** ("VA" = Video-Action). The LeRobot

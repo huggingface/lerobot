@@ -1,5 +1,18 @@
 # LaWAM
 
+| At a glance |                                                                                                         |
+| ----------- | ------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=lawam`                                                                                   |
+| Family      | World action model (WAM)                                                                                |
+| Size        | 2.6B parameters                                                                                         |
+| GPU memory  | Not measured                                                                                            |
+| Takes text  | Yes                                                                                                     |
+| Starts from | Pretrained: [`jialei02/lawam-pretrain-lerobot`](https://huggingface.co/jialei02/lawam-pretrain-lerobot) |
+| Install     | `pip install 'lerobot[lawam]'`                                                                          |
+| Guide shows | Simulation (LIBERO)                                                                                     |
+| License     | Code: Apache 2.0. Weights: MIT, as listed on the model card                                             |
+| Paper       | [LaWAM](https://arxiv.org/abs/2606.15768) (Chen et al., 2026)                                           |
+
 `lawam` is the LeRobot adapter for [LaWAM](https://github.com/RLinf/LaWAM), a latent world action model for dynamics-aware robot policies. It combines a Qwen3-VL backbone, a latent action/world model, and a flow-matching action head while exposing the standard LeRobot policy, training, and evaluation interfaces.
 
 Resources:
