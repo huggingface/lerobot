@@ -50,6 +50,16 @@ from tests.fixtures.dataset_factories import add_frames
 
 pytestmark = pytest.mark.dataset
 
+DEPTH_IMAGE_FEATURES = {
+    "state": {"dtype": "float32", "shape": (1,), "names": None},
+    "observation.images.depth": {
+        "dtype": "image",
+        "shape": (6, 8, 1),
+        "names": ["height", "width", "channels"],
+        "info": {"is_depth_map": True},
+    },
+}
+
 
 @pytest.mark.parametrize("operation", ["add", "recompute"])
 @pytest.mark.parametrize("native_unit,output_unit", [("m", "mm"), ("mm", "m"), ("m", "m"), ("mm", "mm")])
@@ -63,15 +73,7 @@ def test_edits_preserve_native_depth_stats(
         root=tmp_path / "source",
         fps=10,
         use_videos=False,
-        features={
-            "state": {"dtype": "float32", "shape": (1,), "names": None},
-            depth_key: {
-                "dtype": "image",
-                "shape": (6, 8, 1),
-                "names": ["height", "width", "channels"],
-                "info": {"is_depth_map": True},
-            },
-        },
+        features=DEPTH_IMAGE_FEATURES,
     )
     for episode in range(2):
         for frame in range(3):
@@ -121,6 +123,42 @@ def test_edits_preserve_native_depth_stats(
             np.testing.assert_array_equal(reopened[index]["extra"], [index])
     assert (source.root / "meta/info.json").read_bytes() == original_info
     assert all(path.read_bytes() == data for path, data in original_data.items())
+
+
+def test_recompute_stats_keeps_resumed_writer_stats_native(tmp_path: Path) -> None:
+    """Episodes appended after recompute_stats must aggregate with recorded-unit statistics."""
+    depth_key = "observation.images.depth"
+
+    def record_episode(dataset: LeRobotDataset) -> None:
+        for metres in (1, 3):
+            depth = np.full((6, 8, 1), metres, dtype=np.float32)
+            dataset.add_frame(
+                {"state": np.array([metres], dtype=np.float32), depth_key: depth, "task": "pick"}
+            )
+        dataset.save_episode()
+        dataset.finalize()
+
+    root = tmp_path / "dataset"
+    record_episode(
+        LeRobotDataset.create(
+            "local/depth-resume", root=root, fps=10, use_videos=False, features=DEPTH_IMAGE_FEATURES
+        )
+    )
+    resumed = LeRobotDataset.resume("local/depth-resume", root=root)
+    recompute_stats(resumed)
+    assert resumed.meta.stats is not None
+    np.testing.assert_allclose(resumed.meta.stats[depth_key]["mean"], 2)
+    record_episode(resumed)
+
+    persisted = load_stats(root)
+    assert persisted is not None
+    np.testing.assert_allclose(persisted[depth_key]["mean"], 2)
+    np.testing.assert_array_equal(persisted[depth_key]["count"], [4])
+    reopened = LeRobotDataset("local/depth-resume", root=root)
+    assert reopened.meta.stats is not None
+    np.testing.assert_allclose(reopened.meta.stats[depth_key]["mean"], 2000)
+    for index in range(4):
+        np.testing.assert_allclose(reopened[index][depth_key], (1000, 3000)[index % 2])
 
 
 @pytest.fixture(scope="module")

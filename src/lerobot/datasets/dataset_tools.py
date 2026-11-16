@@ -1834,7 +1834,9 @@ def recompute_stats(
 
     write_stats(new_stats, dataset.root)
     dataset.meta.stats = new_stats
-    dataset.meta.rescale_depth_stats(dataset.depth_output_unit)
+    # A writer still recording aggregates recorded-unit episode stats into meta.stats; only readers get output units.
+    if dataset.writer is None or dataset._is_finalized:
+        dataset.meta.rescale_depth_stats(dataset.depth_output_unit)
 
     logger.info("Stats recomputed successfully")
     return dataset
