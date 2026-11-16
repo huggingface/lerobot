@@ -86,11 +86,6 @@ def _validate_writable_storage(dataset: LeRobotDataset) -> None:
             f"Scores are not supported for storage_format={dataset.meta.storage_format!r}; "
             "materialize the dataset in the default local LeRobot format first"
         )
-    if dataset._storage_root is not None:
-        raise NotImplementedError(
-            "Scores cannot be written through a localized metadata-only root; "
-            "materialize the dataset locally first"
-        )
     if Path(dataset.root).resolve().is_relative_to(Path(HF_LEROBOT_HUB_CACHE).resolve()):
         raise NotImplementedError(
             "Scores cannot be written into the revision-safe Hub snapshot cache; "
@@ -98,16 +93,16 @@ def _validate_writable_storage(dataset: LeRobotDataset) -> None:
         )
 
 
-def _resolve_episode_indices(dataset: LeRobotDataset, episodes: Sequence[int] | None) -> tuple[int, ...]:
+def _resolve_episode_indices(dataset: LeRobotDataset, episodes: Sequence[int] | None) -> set[int]:
     """Resolve global episode IDs within the current dataset view."""
     view = resolve_episode_indices(dataset.episodes, dataset.meta.total_episodes)
     visible = set(range(dataset.meta.total_episodes)) if view is None else set(view)
     if episodes is None:
         selected = visible
     else:
-        if len(set(episodes)) != len(episodes):
-            raise ValueError("episodes must not contain duplicates")
         selected = set(episodes)
+        if len(selected) != len(episodes):
+            raise ValueError("episodes must not contain duplicates")
         outside_view = sorted(selected - visible)
         if outside_view:
             raise ValueError(
@@ -116,14 +111,14 @@ def _resolve_episode_indices(dataset: LeRobotDataset, episodes: Sequence[int] | 
             )
     if not selected:
         raise ValueError("At least one episode must be selected")
-    return tuple(sorted(int(index) for index in selected))
+    return {int(index) for index in selected}
 
 
-def _build_metadata(dataset_block: Mapping[str, Any], info: Mapping[str, Any]) -> dict[bytes, bytes]:
+def _build_metadata(dataset_metadata: Mapping[str, Any], info: Mapping[str, Any]) -> dict[bytes, bytes]:
     return {
         _FORMAT_KEY: SCORES_FORMAT.encode(),
         _SCHEMA_VERSION_KEY: str(SCORES_SCHEMA_VERSION).encode(),
-        _DATASET_KEY: _canonical_json(dict(dataset_block), label="dataset identity").encode(),
+        _DATASET_KEY: _canonical_json(dict(dataset_metadata), label="dataset identity").encode(),
         _INFO_KEY: _canonical_json(dict(info), label="score info").encode(),
     }
 
@@ -142,13 +137,12 @@ def _atomic_path(path: Path) -> Iterator[Path]:
         temporary_path = Path(temporary.name)
     try:
         yield temporary_path
-        # Flush to disk so a finished part survives a machine crash, not just a process crash.
+        # Flush the completed file before publishing it.
         with temporary_path.open("rb") as written:
             os.fsync(written.fileno())
         os.replace(temporary_path, path)
     finally:
-        if temporary_path.exists():
-            temporary_path.unlink()
+        temporary_path.unlink(missing_ok=True)
 
 
 def _write_episode_tables(path: Path, schema: pa.Schema, tables: Iterable[pa.Table]) -> None:
@@ -206,12 +200,13 @@ class ScoreWriter:
         dataset._ensure_reader()
         self.output_path = _scores_path(dataset, name)
         _validate_writable_storage(dataset)
-        self.episode_indices = _resolve_episode_indices(dataset, episodes)
-        self._selected = set(self.episode_indices)
+        self._selected = _resolve_episode_indices(dataset, episodes)
+        self.episode_indices = tuple(sorted(self._selected))
         self.parts_dir = self.output_path.with_name(f".{self.output_path.name}.parts")
         self._dataset = dataset
+        self._finalized = False
 
-        self._dataset_block = {
+        self._dataset_metadata = {
             "lerobot_version": __version__,
             "repo_id": dataset.repo_id,
             "revision": dataset.revision,
@@ -229,7 +224,7 @@ class ScoreWriter:
             "format": SCORES_FORMAT,
             "schema_version": SCORES_SCHEMA_VERSION,
             "name": name,
-            "dataset": self._dataset_block,
+            "dataset": self._dataset_metadata,
             "info": self._info,
             "episodes": list(self.episode_indices),
             "episode_ranges": episode_ranges,
@@ -295,9 +290,12 @@ class ScoreWriter:
                 column names and types.
 
         Raises:
+            RuntimeError: If the writer has already been finalized.
             ValueError: If the episode is not selected or the rows do not fit the episode or
                 the columns of earlier episodes.
         """
+        if self._finalized:
+            raise RuntimeError("Cannot write episodes after finalization; create a new ScoreWriter")
         if episode_index not in self._selected:
             raise ValueError(f"Episode {episode_index} is not in the selected episodes")
         episode = self._dataset.meta.episodes[episode_index]
@@ -339,7 +337,7 @@ class ScoreWriter:
                 f"Column names or types for episode {episode_index} differ from earlier episodes"
             )
 
-        table = table.replace_schema_metadata(_build_metadata(self._dataset_block, self._info))
+        table = table.replace_schema_metadata(_build_metadata(self._dataset_metadata, self._info))
         with _atomic_path(self._part_path(episode_index)) as temporary_path:
             pq.write_table(table, temporary_path, compression="snappy", use_dictionary=True)
         self._completed.add(episode_index)
@@ -347,9 +345,13 @@ class ScoreWriter:
     def finalize(self) -> None:
         """Publish the written episodes, in episode order, as one Parquet file and remove the parts.
 
+        Safe to call multiple times after successful publication. Staging cleanup failures are logged.
+
         Raises:
             RuntimeError: If a selected episode has not been written.
         """
+        if self._finalized:
+            return
         missing = list(self.pending_episodes)
         if missing:
             raise RuntimeError(f"Cannot publish scores; missing episodes: {missing}")
@@ -357,7 +359,11 @@ class ScoreWriter:
         schema = pq.read_schema(self._part_path(self.episode_indices[0]))
         tables = (pq.read_table(self._part_path(index)) for index in self.episode_indices)
         _write_episode_tables(self.output_path, schema, tables)
-        shutil.rmtree(self.parts_dir, ignore_errors=True)
+        self._finalized = True
+        try:
+            shutil.rmtree(self.parts_dir)
+        except OSError as error:
+            logger.warning("Could not remove score staging directory %s: %s", self.parts_dir, error)
         logger.info("Published scores to %s", self.output_path)
 
 
@@ -441,8 +447,8 @@ def merge_scores(
 ) -> None:
     """Merge scores of disjoint episodes under one name.
 
-    Useful when episodes were scored in parallel, each worker with its own score name. The
-    merged scores are kept.
+    Useful when episodes were scored in parallel, each worker with its own score name.
+    Source score files are not deleted.
 
     Args:
         dataset: Dataset the scores belong to.

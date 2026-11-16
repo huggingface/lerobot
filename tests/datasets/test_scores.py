@@ -14,6 +14,7 @@
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
@@ -264,6 +265,78 @@ def test_scores_reject_published_extension_without_overwrite(tmp_path):
     assert function.calls == []
 
 
+def test_score_writer_finalize_is_idempotent(tmp_path: Path) -> None:
+    dataset = FakeDataset(tmp_path / "dataset", [2])
+    writer = ScoreWriter(dataset, "test", info=INFO)
+    writer.write_episode(0, *dense(dataset)(0))
+
+    writer.finalize()
+    published = writer.output_path.read_bytes()
+    writer.finalize()
+
+    assert writer.output_path.read_bytes() == published
+    assert not writer.parts_dir.exists()
+
+
+def test_score_writer_rejects_writes_after_finalization(tmp_path: Path) -> None:
+    dataset = FakeDataset(tmp_path / "dataset", [2])
+    writer = ScoreWriter(dataset, "test", info=INFO)
+    writer.write_episode(0, *dense(dataset)(0))
+    writer.finalize()
+
+    with pytest.raises(RuntimeError, match="after finalization"):
+        writer.write_episode(0, *dense(dataset)(0))
+
+    assert not writer.parts_dir.exists()
+
+
+def test_score_writer_finalize_retries_after_publication_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import lerobot.datasets.scores as scores
+
+    dataset = FakeDataset(tmp_path / "dataset", [2])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    writer = ScoreWriter(dataset, "test", info=INFO, overwrite=True)
+    writer.write_episode(0, np.arange(2), {COLUMN: np.ones(2, dtype=np.float32)})
+    published = writer.output_path.read_bytes()
+
+    with monkeypatch.context() as context:
+        context.setattr(scores, "_write_episode_tables", Mock(side_effect=OSError("publication failed")))
+        with pytest.raises(OSError, match="publication failed"):
+            writer.finalize()
+
+    assert writer.output_path.read_bytes() == published
+    assert writer.parts_dir.exists()
+    writer.finalize()
+
+    assert list(load_scores(dataset, "test")[COLUMN]) == [1.0, 1.0]
+    assert not writer.parts_dir.exists()
+
+
+def test_score_writer_finalize_logs_cleanup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import lerobot.datasets.scores as scores
+
+    dataset = FakeDataset(tmp_path / "dataset", [2])
+    writer = ScoreWriter(dataset, "test", info=INFO)
+    writer.write_episode(0, *dense(dataset)(0))
+    cleanup = Mock(side_effect=PermissionError("cleanup denied"))
+
+    with monkeypatch.context() as context:
+        context.setattr(scores.shutil, "rmtree", cleanup)
+        with caplog.at_level("WARNING", logger="lerobot.datasets.scores"):
+            writer.finalize()
+            writer.finalize()
+
+    cleanup.assert_called_once_with(writer.parts_dir)
+    assert len(load_scores(dataset, "test")) == 2
+    assert writer.parts_dir.exists()
+    assert "Could not remove score staging directory" in caplog.text
+    assert "cleanup denied" in caplog.text
+
+
 def test_scores_overwrite_keeps_published_output_until_success(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [2])
     add_scores(dataset, "test", dense(dataset), info=INFO)
@@ -467,9 +540,9 @@ def test_scores_store_dataset_identity_and_info_under_separate_keys(tmp_path):
         b"lerobot.scores.dataset",
         b"lerobot.scores.info",
     }
-    dataset_block = json.loads(metadata[b"lerobot.scores.dataset"])
-    assert dataset_block["repo_id"] == "test/dataset"
-    assert dataset_block["total_frames"] == 1
+    dataset_metadata = json.loads(metadata[b"lerobot.scores.dataset"])
+    assert dataset_metadata["repo_id"] == "test/dataset"
+    assert dataset_metadata["total_frames"] == 1
     assert load_scores_info(dataset, "test") == {"dataset": "cannot-clobber"}
 
 
