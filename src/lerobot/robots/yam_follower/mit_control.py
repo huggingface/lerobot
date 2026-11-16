@@ -50,15 +50,19 @@ _GRIPPER_GOAL_FILTER = 0.1
 class MitCommand:
     """Command for one MIT-mode motor.
 
+    The motor's driver applies the torque
+    `torque + kp * (position - measured_position) + kd * (velocity - measured_velocity)`,
+    from its own position and velocity measurements, until the next command.
+
     Args:
         position (`float`):
             Target motor position in radians.
         velocity (`float`):
             Target motor velocity in radians per second.
         kp (`float`):
-            Position gain.
+            Position gain, in newton-metres per radian.
         kd (`float`):
-            Damping gain.
+            Damping gain, in newton-metre-seconds per radian.
         torque (`float`):
             Feedforward torque in newton-metres.
     """
