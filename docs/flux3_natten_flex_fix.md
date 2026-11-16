@@ -132,13 +132,13 @@ This confirms the issue was not the LoRA weights or optimizer state; it was the 
 
 ```bash
 tmux new-session -d -s flux3_train \
-'cd /home/ahegai/workspace/lerobot-flux3-test && \
+'cd /path/to/lerobot && \
 export PYTHONPATH=$PWD/src && \
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && \
 env -u VIRTUAL_ENV uv run --no-sync python -m lerobot.scripts.lerobot_train \
   --config_path=examples/flux3/lora.json \
   --policy.path=black-forest-labs/flux-3-action-so101 \
-  --dataset.repo_id=AHegai/mixed \
+  --dataset.repo_id=your-org/your-dataset \
   --rename_map="{\"observation.images.top\":\"observation.images.scene\",\"observation.images.gripper_cam\":\"observation.images.wrist\"}" \
   --output_dir=outputs/so101_lora'
 ```
