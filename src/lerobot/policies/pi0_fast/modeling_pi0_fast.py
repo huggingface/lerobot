@@ -1245,8 +1245,9 @@ class PI0FastPolicy(PreTrainedPolicy):
                 temperature=temperature,
             )
 
-        # Detokenize action tokens to continuous actions
-        action_horizon = self.config.n_action_steps
+        # DCT coefficients represent the full training chunk. select_action slices
+        # the decoded trajectory to n_action_steps when filling its execution queue.
+        action_horizon = self.config.chunk_size
         if self.config.output_features is None:
             raise ValueError("output_features must be set (validate_features) before predicting actions")
         action_dim = self.config.output_features[ACTION].shape[0]
