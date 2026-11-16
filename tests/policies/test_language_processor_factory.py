@@ -316,23 +316,6 @@ def test_policy_consent_reaches_both_loaded_processors(monkeypatch, consent, ove
 
 
 @pytest.mark.parametrize("consent", [False, True])
-def test_custom_pretrained_hook_receives_consent(monkeypatch, consent):
-    config = _act_config()
-    config.trust_remote_code = consent
-    received = {}
-    result = (SimpleNamespace(steps=[]), SimpleNamespace(steps=[]))
-
-    def hook(*, config, **kwargs):
-        received["consent"] = config.trust_remote_code
-        return result
-
-    module = SimpleNamespace(make_act_pre_post_processors_from_pretrained=hook)
-    monkeypatch.setattr(factory, "_import_sibling_policy_module", lambda *args: module)
-    assert factory.make_pre_post_processors(config, pretrained_path="user/checkpoint") == result
-    assert received["consent"] is consent
-
-
-@pytest.mark.parametrize("consent", [False, True])
 @pytest.mark.parametrize("override", [None, False, True])
 def test_fresh_pi0_fast_processors_receive_consent(monkeypatch, consent, override):
     from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig

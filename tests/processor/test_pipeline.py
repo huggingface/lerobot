@@ -1251,7 +1251,6 @@ def test_from_pretrained_registered_step_override():
             overrides=overrides,
             to_transition=identity_transition,
             to_output=identity_transition,
-            trust_remote_code=True,
         )
 
         # Test that overrides were applied
@@ -1794,7 +1793,6 @@ def test_override_with_nested_config():
                 overrides={"complex_config_step": {"nested_config": {"level1": {"level2": "overridden"}}}},
                 to_transition=identity_transition,
                 to_output=identity_transition,
-                trust_remote_code=True,
             )
 
             # Test that override worked
@@ -1905,7 +1903,6 @@ def test_override_with_callables():
                 overrides={"callable_step": {"transform_fn": double_values}},
                 to_transition=identity_transition,
                 to_output=identity_transition,
-                trust_remote_code=True,
             )
 
             # Test it works
@@ -2043,7 +2040,6 @@ def test_override_with_device_strings():
                     tmp_dir,
                     config_filename="dataprocessorpipeline.json",
                     overrides={"device_aware_step": {"device": "cuda:0"}},
-                    trust_remote_code=True,
                 )
 
                 loaded_step = loaded.steps[0]

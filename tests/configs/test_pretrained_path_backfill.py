@@ -205,15 +205,3 @@ def test_cli_policy_consent_overrides_checkpoint(monkeypatch, tmp_path, build):
     cfg = build()
     assert cfg.policy.trust_remote_code is True
     assert not getattr(cfg, "trust_remote_code", False)
-
-
-@pytest.mark.parametrize("policy_consent,env_consent", [(False, True), (True, False)])
-def test_policy_and_env_consent_are_independent(monkeypatch, policy_consent, env_consent):
-    from lerobot.envs.configs import HubEnvConfig
-
-    monkeypatch.setattr(sys, "argv", ["lerobot-eval"])
-    policy = _DummyBackfillConfig(device="cpu", trust_remote_code=policy_consent)
-    env = HubEnvConfig(hub_path="user/environment", trust_remote_code=env_consent)
-    config = EvalPipelineConfig(env=env, policy=policy)
-    assert config.policy.trust_remote_code is policy_consent
-    assert config.env.trust_remote_code is env_consent

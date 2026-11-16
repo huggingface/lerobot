@@ -1219,10 +1219,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 or "." not in full_class_path
                 or not all(part.isidentifier() for part in full_class_path.split("."))
             ):
-                raise ValueError(
-                    f"Invalid class path '{full_class_path}' in step entry. "
-                    "Expected a full module path like 'lerobot.processor.normalize.NormalizeStep'."
-                )
+                raise ValueError(f"Invalid class path: {full_class_path!r}")
 
             module_path, class_name = full_class_path.rsplit(".", 1)
 
@@ -1230,8 +1227,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
             if not (trust_remote_code or is_lerobot_module):
                 raise ValueError(
-                    f"Loading processor step from custom external module '{module_path}' requires `trust_remote_code=True`. "
-                    f"Pass `trust_remote_code=True` to `from_pretrained()` or `from_config()` if you trust the source of this configuration, or use --policy.trust_remote_code=true in the CLI."
+                    f"Importing '{module_path}' requires `trust_remote_code=True` "
+                    "(CLI: --policy.trust_remote_code=true)."
                 )
 
             try:
@@ -1247,11 +1244,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 ) from e
 
         if not (isinstance(step_class, type) and issubclass(step_class, ProcessorStep)):
-            step_name = step_entry.get("registry_name", step_entry.get("class", "Unknown"))
-            raise TypeError(
-                f"Resolved target '{step_class}' for processor step '{step_name}' "
-                "is not a valid ProcessorStep subclass."
-            )
+            raise TypeError(f"Processor step '{step_key}' must resolve to a ProcessorStep subclass.")
         return step_class, step_key
 
     @classmethod
@@ -1307,12 +1300,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         merged_cfg = {**saved_cfg, **step_overrides}
 
         if not trust_remote_code and merged_cfg.get("trust_remote_code", False):
-            step_name = step_entry.get("registry_name", step_entry.get("class", "Unknown"))
-            raise ValueError(
-                f"Processor step '{step_name}' requested `trust_remote_code=True` in its configuration, "
-                f"but the pipeline was loaded with `trust_remote_code=False`. "
-                f"Pass `trust_remote_code=True` to `from_pretrained()` or `from_config()` if you trust the source of this configuration, or use --policy.trust_remote_code=true in the CLI."
-            )
+            raise ValueError(f"Step '{step_key}' requests trust_remote_code=True without pipeline consent.")
 
         # Enforce caller consent even when a registered step defaults to True,
         # and pass explicit opt-in through when the serialized config omits the flag.
