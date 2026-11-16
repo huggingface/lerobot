@@ -1,14 +1,17 @@
 # Diffusion Policy
 
-| Field           | Value                                                                     |
-| --------------- | ------------------------------------------------------------------------- |
-| Policy type     | `--policy.type=diffusion`                                                 |
-| Family          | Small imitation-learning model                                            |
-| GPU memory      | 8–14 GB to train                                                          |
-| Takes text      | No                                                                        |
-| Base checkpoint | None, trains from scratch on your data                                    |
-| Install         | `pip install 'lerobot[diffusion]'`                                        |
-| Paper           | [Diffusion Policy](https://diffusion-policy.cs.columbia.edu) (Chi et al.) |
+| At a glance |                                                                         |
+| ----------- | ----------------------------------------------------------------------- |
+| Policy type | `--policy.type=diffusion`                                               |
+| Family      | Small imitation-learning model                                          |
+| Size        | 280M parameters (default settings, two cameras)                         |
+| GPU memory  | 8–14 GB to train                                                        |
+| Takes text  | No                                                                      |
+| Starts from | Scratch: no base checkpoint needed                                      |
+| Install     | `pip install 'lerobot[diffusion]'`                                      |
+| Guide shows | Training and running on your robot                                      |
+| License     | Apache 2.0                                                              |
+| Paper       | [Diffusion Policy](https://arxiv.org/abs/2303.04137) (Chi et al., 2023) |
 
 Diffusion Policy learns one task from your episodes, like [ACT](./act). It creates its actions the way image-generation models create pictures: it starts from random noise and refines it, step by step, into a smooth sequence of movements. This makes it good at tasks that can be done in several different ways, where other policies may average two ways into one that doesn't work.
 

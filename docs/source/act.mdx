@@ -1,5 +1,18 @@
 # ACT (Action Chunking with Transformers)
 
+| At a glance |                                                                                                                            |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=act`                                                                                                        |
+| Family      | Small imitation-learning model                                                                                             |
+| Size        | 52M parameters (default settings)                                                                                          |
+| GPU memory  | 2–6 GB to train                                                                                                            |
+| Takes text  | No                                                                                                                         |
+| Starts from | Scratch: no base checkpoint needed                                                                                         |
+| Install     | Nothing extra: included in LeRobot                                                                                         |
+| Guide shows | Real robot (SO-101)                                                                                                        |
+| License     | Apache 2.0                                                                                                                 |
+| Paper       | [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705) (Zhao et al., 2023) |
+
 ACT is a **lightweight and efficient policy for imitation learning**, especially well-suited for fine-grained manipulation tasks. It's the **first model we recommend when you're starting out** with LeRobot due to its fast training time, low computational requirements, and strong performance.
 
 <div class="video-container">
@@ -25,7 +38,7 @@ Action Chunking with Transformers (ACT) was introduced in the paper [Learning Fi
 ACT stands out as an excellent starting point for several reasons:
 
 - **Fast Training**: Trains in a few hours on a single GPU
-- **Lightweight**: Only ~80M parameters, making it efficient and easy to work with
+- **Lightweight**: Only ~52M parameters with the default settings, making it efficient and easy to work with
 - **Data Efficient**: Often achieves high success rates with just 50 demonstrations
 
 ### Architecture

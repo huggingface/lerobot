@@ -1,5 +1,18 @@
 # Multitask DiT Policy
 
+| At a glance |                                                                                                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=multi_task_dit`                                                                                                                            |
+| Family      | Small imitation-learning model                                                                                                                            |
+| Size        | 250M parameters (default settings, two cameras)                                                                                                           |
+| GPU memory  | 8–14 GB to train                                                                                                                                          |
+| Takes text  | Yes                                                                                                                                                       |
+| Starts from | Scratch: no base checkpoint needed                                                                                                                        |
+| Install     | `pip install 'lerobot[multi_task_dit]'`                                                                                                                   |
+| Guide shows | Training                                                                                                                                                  |
+| License     | Apache 2.0                                                                                                                                                |
+| Paper       | [A Careful Examination of Large Behavior Models for Multitask Dexterous Manipulation](https://arxiv.org/abs/2507.05331) (Toyota Research Institute, 2025) |
+
 Multitask Diffusion Transformer (DiT) Policy is an evolution of the original Diffusion Policy architecture, which leverages a large DiT with text and vision conditioning for multitask robot learning. This implementation supports both diffusion and flow matching objectives for action generation, enabling robots to perform diverse manipulation tasks conditioned on language instructions.
 
 ## Model Overview

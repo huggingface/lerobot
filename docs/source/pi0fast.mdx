@@ -1,5 +1,18 @@
 # π₀-FAST (Pi0-FAST)
 
+| At a glance |                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=pi0_fast`                                                                                       |
+| Family      | Vision-language-action model (VLA)                                                                             |
+| Size        | 2.9B parameters                                                                                                |
+| GPU memory  | 24–40 GB to train                                                                                              |
+| Takes text  | Yes                                                                                                            |
+| Starts from | Pretrained: [`lerobot/pi0fast-base`](https://huggingface.co/lerobot/pi0fast-base)                              |
+| Install     | `pip install 'lerobot[pi]'`                                                                                    |
+| Guide shows | Simulation (LIBERO)                                                                                            |
+| License     | Code: Apache 2.0. Weights: the [Gemma license](https://ai.google.dev/gemma/terms), as listed on the model card |
+| Paper       | [FAST](https://arxiv.org/abs/2501.09747) (Pertsch et al., 2025)                                                |
+
 π₀-FAST is a **Vision-Language-Action model for general robot control** that uses autoregressive next-token prediction to model continuous robot actions.
 
 ## Model Overview
@@ -233,7 +246,7 @@ The full evaluation output folder, including videos, is available [here](https:/
 
 ## License
 
-This model follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi).
+LeRobot's code for this model follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi). The pretrained checkpoints on the Hub list the [Gemma license](https://ai.google.dev/gemma/terms) on their model cards.
 
 ## References
 

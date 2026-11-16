@@ -39,15 +39,20 @@ Each page does **one** of these jobs. If a page tries to do two, split it.
 
 **Policy page** "At a glance" table, at the top of every policy page:
 
-| Field           | Example                               |
-| --------------- | ------------------------------------- |
-| Policy type     | `--policy.type=act`                   |
-| Family          | Small imitation-learning model        |
-| Size            | 80M parameters                        |
-| GPU memory      | 2–6 GB to train (or "not measured")   |
-| Takes text      | No                                    |
-| Base checkpoint | None, trains from scratch             |
-| Tested on       | Real robot (SO-101) / simulation only |
+| At a glance |                                                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=act`                                                                                       |
+| Family      | Small imitation-learning model, Vision-language-action model (VLA) or World action model (WAM)            |
+| Size        | 52M parameters, from the base checkpoint on the Hub or by counting the default settings                   |
+| GPU memory  | 2–6 GB to train, from [Which GPU do I need?](./hardware_guide), or "Not measured"                         |
+| Takes text  | Yes or No                                                                                                 |
+| Starts from | "Scratch: no base checkpoint needed", or "Pretrained:" and a link to the base checkpoint                  |
+| Install     | `pip install 'lerobot[smolvla]'`, or "Nothing extra: included in LeRobot"                                 |
+| Guide shows | Real robot (SO-101), simulation (LIBERO), or Training: the same words as in [Choose a policy](./policies) |
+| License     | The license of the code and, if different, of the pretrained weights, as their model card lists it        |
+| Paper       | [Title](https://arxiv.org/abs/...) (First author et al., year)                                            |
+
+Put it right below the `#` title, and keep the rows in this order on every policy page.
 
 **Chooser** template: one sentence with the default recommendation first ("Start with ACT"), then a short table or diagram to decide, then the full comparison table, then links.
 
