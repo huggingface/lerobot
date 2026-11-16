@@ -108,6 +108,8 @@ lerobot-calibrate --robot.type=bi_yam_follower --robot.id=bimanual_yam \
 
 Use the same `--robot.id` in later commands, so LeRobot loads the saved file.
 
+To measure the limits without moving the gripper by hand, set `gripper_calibration=auto`: `--robot.gripper_calibration=auto` for one arm, or `--robot.left_arm_config.gripper_calibration=auto --robot.right_arm_config.gripper_calibration=auto` for two. Torque turns on, the joints hold their position, and the gripper motor pushes the gripper closed, then open, with `gripper_calibration_torque_nm` (0.2 N·m) until it stops at each end. Keep hands and objects away from the fingers. Calibration turns torque off and saves nothing if a joint moves more than `max_tracking_error_deg`, or if the gripper does not reach a stop within `gripper_calibration_timeout_s`.
+
 ## Observations and actions
 
 One arm has `joint_1.pos` to `joint_6.pos`, then `gripper.pos`, for both observations and actions. Joints are absolute angles in degrees, and the gripper goes from 0 (closed) to 100 (open). `use_degrees=false` switches to radians and 0 to 1, as I2RT and MolmoAct2 data use. `use_velocity_and_torque=true` adds `.vel` and `.torque` observations. Actions are absolute joint targets, clipped to the joint limits.

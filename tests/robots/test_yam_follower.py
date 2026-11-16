@@ -599,6 +599,96 @@ def test_calibration_refuses_an_implausible_stroke(robot, monkeypatch, opened):
     robot.disconnect()
 
 
+def auto_calibration_robot(tmp_path, monkeypatch, *, closed=6.1, opened=0.1, prompt=lambda _: ""):
+    """Robot set to `auto`, on a clock that advances only when it sleeps, whose mocked gripper moves 0.05 rad
+    toward a stop on each push. Returns the robot and the gripper torques it sends."""
+    robot = make_robot(tmp_path, gripper=None, gripper_calibration="auto")
+    mock_hardware(robot, monkeypatch)
+    now = [0.0]
+    monkeypatch.setattr(robot_module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(robot_module.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    monkeypatch.setattr("builtins.input", prompt)
+    states = robot.bus.read_states.return_value
+    torques = []
+
+    def send_mit(name, command):
+        if name == "gripper":
+            torques.append(command.torque)
+            states.position[6] = float(
+                np.clip(states.position[6] + 0.05 * np.sign(command.torque), opened, closed)
+            )
+
+    robot.bus.send_mit.side_effect = send_mit
+    return robot, torques
+
+
+def test_auto_calibration_finds_both_gripper_stops(tmp_path, monkeypatch):
+    robot, torques = auto_calibration_robot(tmp_path, monkeypatch)
+    robot.connect()
+    calibration = robot.calibration["gripper"]
+    assert (calibration.range_min, calibration.range_max, calibration.drive_mode) == (6, 350, 1)
+    assert set(np.sign(torques)) == {1.0, -1.0}
+    assert max(np.abs(torques)) == pytest.approx(robot.config.gripper_calibration_torque_nm)
+    calls = [name for name, *_ in robot.bus.mock_calls if name in ("enable_torque_at", "disable_torque")]
+    assert calls == ["enable_torque_at", "disable_torque", "enable_torque_at"]
+    assert robot.controller.active
+    robot.disconnect()
+
+
+def test_auto_calibration_holds_the_arm_joints(tmp_path, monkeypatch):
+    robot, _ = auto_calibration_robot(tmp_path, monkeypatch)
+    robot.connect(calibrate=False)
+    robot.calibrate()
+    joint_commands = [call.args for call in robot.bus.send_mit.call_args_list if call.args[0] != "gripper"]
+    assert joint_commands
+    for name, command in joint_commands:
+        index = MOTOR_NAMES.index(name)
+        assert (command.position, command.velocity, command.torque) == (0.0, 0.0, 0.0)
+        assert (command.kp, command.kd) == (robot.config.kp[index], robot.config.kd[index])
+    robot.disconnect()
+
+
+def test_auto_calibration_stops_if_the_arm_moves(tmp_path, monkeypatch):
+    def move_the_arm(_):
+        robot.bus.read_states.return_value.position[1] = 1.0
+        return ""
+
+    robot, _ = auto_calibration_robot(tmp_path, monkeypatch, prompt=move_the_arm)
+    robot.connect(calibrate=False)
+    with pytest.raises(ValueError, match="Arm moved"):
+        robot.calibrate()
+    robot.bus.disable_torque.assert_called_once()
+    assert not robot.calibration_fpath.is_file()
+    robot.disconnect()
+
+
+def test_auto_calibration_stops_if_a_gripper_stop_is_not_reached(tmp_path, monkeypatch):
+    robot, _ = auto_calibration_robot(tmp_path, monkeypatch, closed=1e9)
+    robot.connect(calibrate=False)
+    with pytest.raises(ValueError, match="did not reach its stop"):
+        robot.calibrate()
+    robot.bus.disable_torque.assert_called_once()
+    assert not robot.calibration_fpath.is_file()
+    robot.disconnect()
+
+
+def test_auto_calibration_turns_torque_off_if_enabling_fails(tmp_path, monkeypatch):
+    robot, _ = auto_calibration_robot(tmp_path, monkeypatch)
+    robot.connect(calibrate=False)
+    robot.bus.enable_torque_at.side_effect = OSError("enable failed")
+    with pytest.raises(OSError, match="enable failed"):
+        robot.calibrate()
+    robot.bus.disable_torque.assert_called_once()
+    assert not robot.calibration_fpath.is_file()
+    robot.disconnect()
+
+
+@pytest.mark.parametrize("name", ["gripper_calibration_torque_nm", "gripper_calibration_timeout_s"])
+def test_auto_calibration_settings_must_be_positive(tmp_path, name):
+    with pytest.raises(ValueError, match=name):
+        make_robot(tmp_path, **{name: 0.0})
+
+
 def test_controller_waits_for_asynchronous_feedback(robot):
     attach_bus(robot, feedback_bus([]))
     replies = deque([None, *[frame(i) for i in range(1, 8)], None])
