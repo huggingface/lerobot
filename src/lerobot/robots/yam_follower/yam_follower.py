@@ -33,10 +33,7 @@ from lerobot.utils import (
     check_if_not_connected,
     require_package,
 )
-from lerobot.utils.import_utils import (
-    _can_available,
-    _motorbridge_available,
-)
+from lerobot.utils.import_utils import _motorbridge_available
 
 from ..robot import Robot
 from .config_yam_follower import (
@@ -57,9 +54,6 @@ from .mit_control import (
 
 if TYPE_CHECKING or _motorbridge_available:
     from motorbridge import Controller as MotorBridgeController, Mode
-
-if TYPE_CHECKING or _can_available:
-    import can
 
 logger = logging.getLogger(__name__)
 
@@ -137,9 +131,8 @@ def _from_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
 class _YamMotorsBus:
     """CAN interface of one YAM arm.
 
-    MotorBridge sends commands and decodes motor states. A receive-only python-can socket on
-    the same interface checks that every motor answered recently and reports motor faults,
-    because MotorBridge's cached states carry no receive time.
+    MotorBridge sends commands, decodes motor states and reports how long ago each motor's feedback
+    arrived, which checks that every motor answered recently.
     """
 
     motor_names: tuple[str, ...] = MOTOR_NAMES
@@ -148,26 +141,13 @@ class _YamMotorsBus:
         self.port = port
         self.feedback_timeout_s = feedback_timeout_s
         self.motorbridge_controller: MotorBridgeController | None = None
-        self.monitor: can.BusABC | None = None
         self.motors: dict[str, Any] = {}
         self.enabled = False
         self._enabled_at = 0.0
-        self._last_feedback: dict[int, float] = {}  # receive time per motor ID
-        self._last_status: dict[int, int] = {}
 
     def connect(self) -> None:
-        """Open the SocketCAN monitor and MotorBridge devices."""
+        """Open the MotorBridge devices."""
         self.enabled = False
-        self.monitor = can.Bus(
-            channel=self.port,
-            interface="socketcan",
-            # Only the motors' feedback frames reach the monitor.
-            can_filters=[
-                {"can_id": motor_id + _FEEDBACK_ID_OFFSET, "can_mask": 0x7FF, "extended": False}
-                for motor_id in _MOTOR_IDS
-            ],
-            ignore_rx_error_frames=True,
-        )
         self.motorbridge_controller = MotorBridgeController(channel=self.port)
         self.motors = {
             name: self.motorbridge_controller.add_damiao_motor(
@@ -175,8 +155,6 @@ class _YamMotorsBus:
             )
             for motor_id, name in zip(_MOTOR_IDS, self.motor_names, strict=True)
         }
-        self._last_feedback.clear()
-        self._last_status.clear()
 
     def read_states(self) -> MotorStates:
         """Return the raw states of the seven motors, once every motor has fresh feedback."""
@@ -189,7 +167,7 @@ class _YamMotorsBus:
 
     def set_mit_mode(self) -> None:
         """Put every motor into MIT control mode."""
-        motorbridge_controller, _ = self._require_connected()
+        motorbridge_controller = self._require_connected()
         motorbridge_controller.disable_all()
         for motor in self.motors.values():
             motor.ensure_mode(Mode.MIT)
@@ -202,7 +180,7 @@ class _YamMotorsBus:
 
     def enable_torque_at(self, hold: np.ndarray) -> None:
         """Send zero-gain commands at the `hold` motor positions, then enable torque."""
-        motorbridge_controller, _ = self._require_connected()
+        motorbridge_controller = self._require_connected()
         for name, value in zip(self.motor_names, hold, strict=True):
             self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
         # Set before enabling, so disable_torque also turns off motors enabled by a failed enable_all.
@@ -245,55 +223,44 @@ class _YamMotorsBus:
                     logger.exception("Failed to close YAM MotorBridge")
                 finally:
                     self.motorbridge_controller = None
-            if self.monitor is not None:
-                try:
-                    self.monitor.shutdown()
-                except Exception:
-                    logger.exception("Failed to close YAM feedback monitor")
-                finally:
-                    self.monitor = None
 
-    def _require_connected(self) -> "tuple[MotorBridgeController, can.BusABC]":
-        if self.motorbridge_controller is None or self.monitor is None:
+    def _require_connected(self) -> "MotorBridgeController":
+        if self.motorbridge_controller is None:
             raise RuntimeError(f"{self.port} bus is not connected")
-        return self.motorbridge_controller, self.monitor
+        return self.motorbridge_controller
 
     def _wait_for_fresh_states(self) -> dict[str, Any]:
-        motorbridge_controller, monitor = self._require_connected()
+        motorbridge_controller = self._require_connected()
         for motor in self.motors.values():
             motor.request_feedback()
+        motor_ids = dict(zip(self.motor_names, _MOTOR_IDS, strict=True))
         deadline = time.monotonic() + self.feedback_timeout_s
         while True:
-            for _ in range(256):
-                msg = monitor.recv(timeout=0)
-                if msg is None:
-                    break
-                motor_id = msg.arbitration_id - _FEEDBACK_ID_OFFSET
-                status = msg.data[0] >> 4
-                if status not in (0, 1):
-                    raise ConnectionError(f"{self.port}: motor {motor_id} fault {status:#x}")
-                self._last_feedback[motor_id] = msg.timestamp
-                self._last_status[motor_id] = status
             motorbridge_controller.poll_feedback_once()
-            states = {name: motor.get_state() for name, motor in self.motors.items()}
-            # SocketCAN frame timestamps use wall time; monotonic time above bounds the wait.
-            now = time.time()
-            fresh = all(
-                0 <= now - self._last_feedback.get(motor_id, 0) <= self.feedback_timeout_s
-                for motor_id in _MOTOR_IDS
-            )
-            if fresh and all(state is not None for state in states.values()):
+            snapshots = {name: motor.get_state_snapshot() for name, motor in self.motors.items()}
+            for name, snapshot in snapshots.items():
+                status = None if snapshot is None else snapshot.state.status_code
+                if status not in (None, 0, 1):
+                    raise ConnectionError(f"{self.port}: motor {motor_ids[name]} fault {status:#x}")
+            if all(
+                snapshot is not None and snapshot.feedback_age_s <= self.feedback_timeout_s
+                for snapshot in snapshots.values()
+            ):
                 if self.enabled and time.monotonic() - self._enabled_at > self.feedback_timeout_s:
-                    disabled = [motor_id for motor_id in _MOTOR_IDS if self._last_status[motor_id] == 0]
+                    disabled = [
+                        motor_ids[name]
+                        for name, snapshot in snapshots.items()
+                        if snapshot.state.status_code == 0
+                    ]
                     if disabled:
                         raise ConnectionError(f"{self.port}: motor {disabled[0]} unexpectedly disabled")
-                return states
+                return {name: snapshot.state for name, snapshot in snapshots.items()}
             if time.monotonic() >= deadline:
                 ages = ", ".join(
-                    f"{motor_id}: {(now - self._last_feedback[motor_id]) * 1000:.1f} ms"
-                    if motor_id in self._last_feedback
-                    else f"{motor_id}: missing"
-                    for motor_id in _MOTOR_IDS
+                    f"{motor_ids[name]}: missing"
+                    if snapshot is None
+                    else f"{motor_ids[name]}: {snapshot.feedback_age_s * 1000:.1f} ms"
+                    for name, snapshot in snapshots.items()
                 )
                 raise ConnectionError(f"{self.port}: missing or stale motor feedback ({ages})")
             time.sleep(0.001)
@@ -315,7 +282,6 @@ class YamFollower(Robot):
 
     def __init__(self, config: YamFollowerRobotConfig, fault_event: threading.Event | None = None) -> None:
         require_package("motorbridge", extra="yam")
-        require_package("python-can", extra="yam", import_name="can")
         if config.gravity_compensation:
             require_package("placo", extra="yam")
         super().__init__(config)

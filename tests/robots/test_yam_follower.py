@@ -14,7 +14,6 @@
 
 import math
 import time
-from collections import deque
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -131,13 +130,12 @@ def test_measured_position_has_wider_tolerance_than_action(robot):
 
 @pytest.fixture
 def motorbridge(monkeypatch):
-    """Mocked MotorBridge and python-can, to drive a real `_YamMotorsBus`."""
+    """Mocked MotorBridge, to drive a real `_YamMotorsBus`."""
     controller = MagicMock()
     controller.add_damiao_motor.side_effect = lambda *args: MagicMock()
     monkeypatch.setattr(
         robot_module, "MotorBridgeController", MagicMock(return_value=controller), raising=False
     )
-    monkeypatch.setattr(robot_module, "can", SimpleNamespace(Bus=MagicMock()), raising=False)
     return controller
 
 
@@ -145,10 +143,6 @@ def test_motorbridge_mapping_and_mit_radians(motorbridge):
     bus = robot_module._YamMotorsBus("can0", feedback_timeout_s=0.2)
     bus.connect()
     robot_module.MotorBridgeController.assert_called_once_with(channel="can0")
-    monitor = robot_module.can.Bus
-    # The monitor only receives the seven feedback IDs, without error frames.
-    assert [f["can_id"] for f in monitor.call_args.kwargs["can_filters"]] == list(range(17, 24))
-    assert monitor.call_args.kwargs["ignore_rx_error_frames"] is True
     assert [call.args for call in motorbridge.add_damiao_motor.call_args_list] == [
         (i + 1, i + 17, "4340" if i < 3 else "4310") for i in range(7)
     ]
@@ -179,63 +173,53 @@ def test_torque_failures_raise_and_still_close_the_bus(motorbridge):
         bus.disconnect()
     motorbridge.disable_all.assert_called_once()
     motorbridge.close.assert_called_once()
-    robot_module.can.Bus.return_value.shutdown.assert_called_once()
 
 
-def frame(motor_id, age=0, status=1):
-    """A feedback frame received `age` seconds before `received()` hands it out."""
-    return SimpleNamespace(arbitration_id=motor_id + 0x10, data=bytes([status << 4]) + bytes(7), age=age)
+def snapshot(age=0.0, status=1):
+    """A MotorBridge state snapshot whose feedback arrived `age` seconds ago."""
+    return SimpleNamespace(
+        state=SimpleNamespace(status_code=status, pos=0.1, vel=0.2, torq=0.3), feedback_age_s=age
+    )
 
 
-def received(msg):
-    """Stamp `msg` when the monitor returns it, as SocketCAN does, so a slow test can't age it."""
-    if msg is not None:
-        msg.timestamp = time.time() - msg.age
-    return msg
-
-
-def feedback_bus(frames):
-    """An opened bus whose python-can monitor replays ``frames``."""
+def feedback_bus(snapshots):
+    """An opened bus whose motors report `snapshots`, in motor order; `None` means no feedback yet."""
     bus = robot_module._YamMotorsBus("can0", feedback_timeout_s=0.2)
     bus.motorbridge_controller = MagicMock()
-    queued = deque(frames)
-    bus.monitor = SimpleNamespace(recv=lambda timeout: received(queued.popleft()) if queued else None)
     bus.motors = {name: MagicMock() for name in MOTOR_NAMES}
-    for motor in bus.motors.values():
-        motor.get_state.return_value = SimpleNamespace(pos=0.1, vel=0.2, torq=0.3)
+    for motor, motor_snapshot in zip(bus.motors.values(), snapshots, strict=True):
+        motor.get_state_snapshot.return_value = motor_snapshot
     return bus
 
 
 @pytest.mark.parametrize(
-    ("frames", "enabled", "error"),
+    ("snapshots", "enabled", "error"),
     [
-        ([frame(i) for i in range(1, 7)], False, "stale"),
-        ([frame(i, age=1) for i in range(1, 8)], False, "stale"),
-        ([frame(i, status=13 if i == 3 else 1) for i in range(1, 8)], False, "fault 0xd"),
-        ([frame(i, status=0 if i == 3 else 1) for i in range(1, 8)], True, "motor 3 unexpectedly disabled"),
+        ([*[snapshot()] * 6, None], False, "7: missing"),
+        ([snapshot(age=1)] * 7, False, "stale"),
+        ([snapshot(status=13 if i == 3 else 1) for i in range(1, 8)], False, "motor 3 fault 0xd"),
+        ([snapshot(status=0 if i == 3 else 1) for i in range(1, 8)], True, "motor 3 unexpectedly disabled"),
     ],
-    ids=["a motor never answered", "old frames", "motor fault", "motor disabled after the enable grace"],
+    ids=["a motor never answered", "old feedback", "motor fault", "motor disabled after the enable grace"],
 )
-def test_bad_feedback_fails(frames, enabled, error):
-    # MotorBridge's cached states can't show this; the monitor's frames do.
-    bus = feedback_bus(frames)
+def test_bad_feedback_fails(snapshots, enabled, error):
+    bus = feedback_bus(snapshots)
     bus.enabled, bus._enabled_at = enabled, time.monotonic() - 1
     with pytest.raises(ConnectionError, match=error):
         bus.read_states()
 
 
 @pytest.mark.parametrize(
-    ("frames", "enabled", "enabled_ago_s"),
+    ("snapshots", "enabled", "enabled_ago_s"),
     [
-        ([frame(i) for i in range(1, 8)], True, 1.0),
-        ([frame(i, status=0) for i in range(1, 8)], False, 1.0),
-        ([frame(i, status=0) for i in range(1, 8)], True, 0.0),
-        ([frame(3, status=0), *[frame(i) for i in range(1, 8)]], True, 1.0),
+        ([snapshot()] * 7, True, 1.0),
+        ([snapshot(status=0)] * 7, False, 1.0),
+        ([snapshot(status=0)] * 7, True, 0.0),
     ],
-    ids=["fresh", "torque disabled", "torque just enabled", "newer enabled frame"],
+    ids=["fresh", "torque disabled", "torque just enabled"],
 )
-def test_fresh_feedback_is_accepted(frames, enabled, enabled_ago_s):
-    bus = feedback_bus(frames)
+def test_fresh_feedback_is_accepted(snapshots, enabled, enabled_ago_s):
+    bus = feedback_bus(snapshots)
     bus.enabled, bus._enabled_at = enabled, time.monotonic() - enabled_ago_s
     states = bus.read_states()
     np.testing.assert_allclose(states.position, np.full(7, 0.1))
@@ -483,16 +467,16 @@ def test_calibration_refuses_an_implausible_stroke(robot, monkeypatch, opened):
 
 
 def test_controller_waits_for_asynchronous_feedback(robot):
-    attach_bus(robot, feedback_bus([]))
-    replies = deque([None, *[frame(i) for i in range(1, 8)], None])
+    bus = attach_bus(robot, feedback_bus([None] * 7))
 
-    def receive(timeout):
-        value = replies.popleft() if replies else None
-        if not replies:
+    def poll_feedback_once():
+        # Feedback arrives on the second poll; the controller stops after that cycle.
+        if bus.motorbridge_controller.poll_feedback_once.call_count == 2:
+            for motor in bus.motors.values():
+                motor.get_state_snapshot.return_value = snapshot()
             robot.controller._stop.set()
-        return received(value)
 
-    robot.bus.monitor.recv = receive
+    bus.motorbridge_controller.poll_feedback_once.side_effect = poll_feedback_once
     zeros = np.zeros(7)
     robot.controller._set_initial_state(mit_control.JointState(position=zeros, velocity=zeros, torque=zeros))
     started_at = robot.controller._updated_at

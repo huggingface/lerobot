@@ -224,7 +224,6 @@ def test_partial_connection_must_be_disconnected_before_reconnecting(robot):
 
 def test_installed_optional_dependencies_allow_construction(tmp_path):
     pytest.importorskip("motorbridge")
-    pytest.importorskip("can")
     pytest.importorskip("placo")
     bot = BiYamFollower(
         BiYamFollowerConfig(
