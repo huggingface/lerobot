@@ -99,7 +99,7 @@ dependencies = [
 # ── Feature-scoped extras ──────────────────────────────────
 lancedb = [
     "lerobot[dataset]",
-    "lancedb>=0.37.1,<0.40.0",
+    "lancedb>=0.37.1,<1.0.0",
 ]
 lancedb-convert = [
     "lerobot[lancedb]",
@@ -285,6 +285,11 @@ lawam = [
     "lerobot[diffusers-dep]",
 ]
 cosmos3 = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
+# praxis (Runway Praxis-1): Qwen3.5 text encoder via transformers; the Wan2.2 VAE and the
+# model are in-tree.
+# The optional kernels of the checkpoint's validation setup (flash-attn-4, causal-conv1d,
+# flash-linear-attention) are documented in docs/source/praxis.mdx; they are not an extra.
+praxis = ["lerobot[transformers-dep]"]
 
 # Features
 # Remote inference transport and serialization.
@@ -311,7 +316,7 @@ test = ["pytest>=8.1.0,<10.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
-# NOTE: Explicitly listing scipy helps flatten the dependecy tree.
+# NOTE: Explicitly listing scipy helps flatten the dependency tree.
 aloha = ["lerobot[dataset]", "gym-aloha>=0.1.5,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["lerobot[dataset]", "gym-pusht>=0.1.8,<0.2.0"]
 libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
@@ -379,6 +384,7 @@ all = [
     "lerobot[g05]",
     "lerobot[lawam]",
     "lerobot[cosmos3]",
+    "lerobot[praxis]",
     "lerobot[remote]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -469,6 +475,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403", "E402", "D104"]
+# N803: Triton kernels name their constexpr arguments in upper case by convention
+"src/lerobot/policies/praxis/praxis_core/kernels/*.py" = ["N803"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 
@@ -538,7 +546,7 @@ exclude_dirs = [
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
 [tool.typos]
-default.extend-words = { trak = "trak", nd = "nd" }
+default.extend-words = { trak = "trak", nd = "nd", dout = "dout" }
 default.extend-ignore-re = [
     "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",                      # spellchecker:disable-line
     "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on", # spellchecker:<on|off>

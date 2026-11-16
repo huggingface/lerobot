@@ -228,6 +228,14 @@ ssh unitree@<ROBOT_WIFI_IP>
 
 ## Part 2: Teleoperation & Locomotion
 
+### Input Devices and Whole-Body Controllers
+
+Here, **controller** refers to the robot's whole-body control policy selected with `--robot.controller`, such as GR00T, Holosoma, or SONIC. The Unitree wireless remote and the exoskeleton thumbsticks are **input devices**.
+
+The G1 teleoperator represents their axes and buttons as `JoystickState`.
+
+With GR00T, pressing the right exo thumbstick raises the waist (`remote.button.0`, R1), and pressing the left lowers it (`remote.button.4`, R2).
+
 ### Run the Robot Server
 
 On the robot (from `~/lerobot`):
@@ -431,6 +439,34 @@ the token back to its connect-time value. `/stop` still closes the remote sessio
 the robot through the normal controller shutdown path.
 
 With `SonicWholeBodyController`, the observation state is the 64-D token echo rather than the 29 joint positions, so a compatible checkpoint must be trained against that state. On connect, the robot eases joints to the decoder's `default_angles` before the controller takes over.
+
+---
+
+## Troubleshooting
+
+### Simulation Runs in Slow Motion
+
+If the MuJoCo sim moves slower than real time or the log keeps printing `Control loop is running slower than the target FPS`, check the following.
+
+**The viewer renders on the CPU.** On laptops with hybrid graphics, OpenGL often falls back to Mesa's software renderer:
+
+```bash
+glxinfo -B | grep "OpenGL renderer"  # "llvmpipe" means software rendering
+```
+
+The viewer runs in the same process as the physics loop, so software rendering slows down the sim itself. On NVIDIA hybrid laptops, render on the discrete GPU:
+
+```bash
+export __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia
+```
+
+**The exoskeleton IK uses every CPU core.** With exoskeleton teleop on many-core machines, the numerical libraries behind the arm IK can start one thread per core, making each solve far slower than the control period. Limit them to one thread:
+
+```bash
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+```
+
+To make both settings persistent in a conda env, use `conda env config vars set -n <env> VAR=value` and reactivate the env.
 
 ---
 
