@@ -15,7 +15,6 @@
 # limitations under the License.
 import contextlib
 import glob
-import importlib.util
 import logging
 import os
 import queue
@@ -23,16 +22,13 @@ import shutil
 import tempfile
 import threading
 import warnings
-from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from threading import Lock
-from typing import Any, BinaryIO, ClassVar, cast
+from typing import Any, BinaryIO, ClassVar
 
 import av
-import fsspec
 import numpy as np
 import pyarrow as pa
 import torch
@@ -55,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 
 def decode_video_frames(
-    video_path: Path | str,
+    video_file: BinaryIO,
     timestamps: list[float],
     tolerance_s: float,
     backend: str | None = None,
@@ -66,7 +62,8 @@ def decode_video_frames(
     Decodes video frames using the specified backend.
 
     Args:
-        video_path (Path): Path to the video file.
+        video_file (BinaryIO): Video file, as a file-like object
+            (supporting ``read``/``seek``) — e.g. a buffered remote source.
         timestamps (list[float]): List of timestamps to extract frames.
         tolerance_s (float): Allowed deviation in seconds for frame retrieval.
         backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available
@@ -85,28 +82,28 @@ def decode_video_frames(
         logger.debug("Decoding depth maps is only supported with the 'pyav' backend, falling back to pyav.")
         # We do not actually return uint8 here, but we avoid the 255 normalization step.
         return decode_video_frames_pyav(
-            video_path, timestamps, tolerance_s, return_uint8=False, is_depth=True
+            video_file, timestamps, tolerance_s, return_uint8=False, is_depth=True
         )
 
     if backend is None:
         backend = get_safe_default_video_backend()
     if backend == "torchcodec":
-        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s, return_uint8=return_uint8)
+        return decode_video_frames_torchcodec(video_file, timestamps, tolerance_s, return_uint8=return_uint8)
     elif backend == "pyav":
         return decode_video_frames_pyav(
-            video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
+            video_file, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
         )
     elif backend == "video_reader":
         logger.warning("backend='video_reader' is deprecated and now aliases to 'pyav'.")
         return decode_video_frames_pyav(
-            video_path, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
+            video_file, timestamps, tolerance_s, return_uint8=return_uint8, is_depth=is_depth
         )
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
 
 def decode_video_frames_pyav(
-    video_path: Path | str | BinaryIO,
+    video_file: BinaryIO,
     timestamps: list[float],
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
@@ -125,7 +122,7 @@ def decode_video_frames_pyav(
     video can be adjusted at encoding time to trade off decoding speed against file size.
 
     Args:
-        video_path: Path to the video file, or a seekable binary file-like object
+        video_file (BinaryIO): Video file, as a file-like object
             (supporting ``read``/``seek``) — e.g. a buffered remote source.
         timestamps: List of timestamps (in seconds) to extract frames for.
         tolerance_s: Allowed deviation in seconds between a queried timestamp and the closest
@@ -138,11 +135,6 @@ def decode_video_frames_pyav(
     Returns:
         torch.Tensor of shape (len(timestamps), C, H, W).
     """
-    # TODO(rcadene): also load audio stream at the same time
-    if isinstance(video_path, (str, Path)):
-        video_path = str(video_path)
-    # else: a file-like object (e.g. a buffered remote source) passes to av.open as-is.
-
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
     first_ts = min(timestamps)
@@ -155,7 +147,7 @@ def decode_video_frames_pyav(
     # av.time_base units (microseconds). `backward=True` lands us on the nearest keyframe at or
     # before `first_ts`, so we can then decode forward until we cover `last_ts`. See:
     # https://pyav.basswood-io.com/docs/stable/api/container.html#av.container.InputContainer.seek
-    with av.open(video_path) as container:
+    with av.open(video_file) as container:
         stream = container.streams.video[0]
         # Seek to the nearest keyframe at or before `first_ts` with a 1 frame margin
         container.seek(
@@ -184,7 +176,7 @@ def decode_video_frames_pyav(
 
     if not loaded_frames:
         raise FrameTimestampError(
-            f"No frames could be decoded from {video_path} in the timestamp range [{first_ts}, {last_ts}]."
+            f"No frames could be decoded from {video_file} in the timestamp range [{first_ts}, {last_ts}]."
         )
 
     # float64: hour-scale timestamps quantize past tolerance_s in float32.
@@ -204,7 +196,7 @@ def decode_video_frames_pyav(
             " To be safe, we advise to ignore this item during training."
             f"\nqueried timestamps: {query_ts}"
             f"\nloaded timestamps: {loaded_ts_t}"
-            f"\nvideo: {video_path}"
+            f"\nvideo: {video_file}"
             f"\nbackend: pyav"
         )
 
@@ -259,105 +251,16 @@ def _default_max_cache_size() -> int | None:
     return value
 
 
-class VideoDecoderCache:
-    """Thread-safe LRU cache for torchcodec ``VideoDecoder`` instances.
-
-    Cached entries hold a ``VideoDecoder`` plus the open ``fsspec`` file handle
-    backing it. When the cache is full and a new path is requested, the
-    least-recently-used entry is evicted and its file handle is closed. This
-    bounds host-RAM growth when iterating over datasets with many distinct
-    video files (otherwise each ``DataLoader`` worker pins every decoder it has
-    ever opened until the process exits).
-
-    Args:
-        max_size: Maximum number of decoders to retain. ``None`` disables
-            eviction and restores legacy unbounded behaviour. Defaults to the
-            value of ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` if set, otherwise
-            :data:`DEFAULT_DECODER_CACHE_SIZE`.
-    """
-
-    _SENTINEL: ClassVar[object] = object()
-
-    def __init__(self, max_size: int | None | object = _SENTINEL):
-        if max_size is VideoDecoderCache._SENTINEL:
-            max_size = _default_max_cache_size()
-        max_size = cast(int | None, max_size)
-        if max_size is not None and max_size <= 0:
-            raise ValueError(f"max_size must be positive or None; got {max_size}")
-        self.max_size: int | None = max_size
-        self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
-        self._lock = Lock()
-
-    def __contains__(self, video_path: object) -> bool:
-        with self._lock:
-            return str(video_path) in self._cache
-
-    def get_decoder(self, video_path: str):
-        """Get a cached decoder or create a new one, evicting LRU if at capacity."""
-        if importlib.util.find_spec("torchcodec"):
-            from torchcodec.decoders import VideoDecoder
-        else:
-            raise ImportError(
-                "'torchcodec' is required but not installed. "
-                "Install it with: pip install 'lerobot[dataset]' (or uv pip install 'lerobot[dataset]')"
-            )
-
-        video_path = str(video_path)
-
-        with self._lock:
-            entry = self._cache.get(video_path)
-            if entry is not None:
-                self._cache.move_to_end(video_path)
-                return entry[0]
-
-            file_handle = fsspec.open(video_path).__enter__()
-            try:
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
-            except Exception:
-                file_handle.close()
-                raise
-            self._cache[video_path] = (decoder, file_handle)
-
-            # Evict LRU entries until we are back under the cap. We close
-            # evicted file handles immediately; the associated ``VideoDecoder``
-            # is released to the GC when its last reference goes away.
-            if self.max_size is not None:
-                while len(self._cache) > self.max_size:
-                    _evicted_path, (_evicted_decoder, evicted_handle) = self._cache.popitem(last=False)
-                    with contextlib.suppress(Exception):
-                        evicted_handle.close()
-
-            return decoder
-
-    def clear(self):
-        """Clear the cache and close all file handles."""
-        with self._lock:
-            for _, file_handle in self._cache.values():
-                with contextlib.suppress(Exception):
-                    file_handle.close()
-            self._cache.clear()
-
-    def size(self) -> int:
-        """Return the number of cached decoders."""
-        with self._lock:
-            return len(self._cache)
-
-
 class FrameTimestampError(ValueError):
     """Helper error to indicate the retrieved timestamps exceed the queried ones"""
 
-    pass
-
-
-_default_decoder_cache = VideoDecoderCache()
 
 
 def decode_video_frames_torchcodec(
-    video_path: Path | str,
+    video_file: BinaryIO,
     timestamps: list[float],
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
-    decoder_cache: VideoDecoderCache | None = None,
     return_uint8: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated with the requested timestamps of a video using torchcodec.
@@ -367,7 +270,6 @@ def decode_video_frames_torchcodec(
         timestamps: List of timestamps to extract frames.
         tolerance_s: Allowed deviation in seconds for frame retrieval.
         log_loaded_timestamps: Whether to log loaded timestamps.
-        decoder_cache: Optional decoder cache instance. Uses default if None.
 
     Note: Setting device="cuda" outside the main process, e.g. in data loader workers, will lead to CUDA initialization errors.
 
@@ -377,11 +279,9 @@ def decode_video_frames_torchcodec(
     and all subsequent frames until reaching the requested frame. The number of key frames in a video
     can be adjusted during encoding to take into account decoding time and video size in bytes.
     """
-    if decoder_cache is None:
-        decoder_cache = _default_decoder_cache
+    from torchcodec.decoders import VideoDecoder
 
-    # Use cached decoder instead of creating new one each time
-    decoder = decoder_cache.get_decoder(str(video_path))
+    decoder = VideoDecoder(video_file, seek_mode="approximate")
 
     loaded_ts = []
     loaded_frames = []
@@ -417,7 +317,7 @@ def decode_video_frames_torchcodec(
             " To be safe, we advise to ignore this item during training."
             f"\nqueried timestamps: {query_ts}"
             f"\nloaded timestamps: {loaded_ts}"
-            f"\nvideo: {video_path}"
+            f"\nvideo: {video_file}"
         )
 
     # get closest frames to the query timestamps

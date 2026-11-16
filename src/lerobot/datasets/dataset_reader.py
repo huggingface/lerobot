@@ -394,14 +394,15 @@ class DatasetReader(BaseDatasetReader):
             from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
             video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames(
-                video_path,
-                shifted_query_ts,
-                self._tolerance_s,
-                self._video_backend,
-                return_uint8=self._return_uint8,
-                is_depth=vid_key in self._meta.depth_keys,
-            )
+            with video_path.open("rb") as video_file:
+                frames = decode_video_frames(
+                    video_file,
+                    shifted_query_ts,
+                    self._tolerance_s,
+                    self._video_backend,
+                    return_uint8=self._return_uint8,
+                    is_depth=vid_key in self._meta.depth_keys,
+                )
             if vid_key in self._meta.depth_keys:
                 depth_encoder = self._depth_encoder_configs[vid_key]
                 frames = dequantize_depth(
