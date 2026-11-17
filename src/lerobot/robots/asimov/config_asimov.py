@@ -16,8 +16,11 @@ from dataclasses import dataclass, field
 from math import degrees, isfinite
 
 from lerobot.cameras import CameraConfig
+from lerobot.envs.configs import AsimovMujocoEnvConfig
 
 from ..config import RobotConfig
+
+SIM_HOST = "127.0.0.1"
 
 
 @RobotConfig.register_subclass("asimov")
@@ -25,7 +28,7 @@ from ..config import RobotConfig
 class AsimovConfig(RobotConfig):
     """Asimov 1 locomotion or arm control over the Menlo SDK's UDP transport."""
 
-    # The robot's address; unused with is_simulation.
+    # The robot's address; the simulation's with is_simulation.
     host: str = ""
     command_port: int = 8850
     # Receive LAN telemetry on all local interfaces; the SDK filters by robot source IP.
@@ -63,14 +66,24 @@ class AsimovConfig(RobotConfig):
     # The controller walks at zero velocity when send_action() is older than this.
     input_timeout_s: float = 0.5
 
-    # Run a MuJoCo Asimov instead of connecting to the robot ("whole_body" only: the sim
-    # has no onboard walking policy).
+    # Launch the lerobot/asimov-mujoco simulation and connect to it on 127.0.0.1 instead of
+    # the robot ("whole_body" only: the sim has no onboard walking policy). The robot starts
+    # held by an elastic band; press 9 in the viewer to release it.
     is_simulation: bool = False
-    sim_onscreen: bool = True
+    sim_env: AsimovMujocoEnvConfig = field(init=False)
+    # Publish the sim's head and wrist cameras over ZMQ on sim_camera_port, or open its
+    # viewer instead when publishing is off.
+    sim_publish_images: bool = False
+    sim_camera_port: int = 5555
+    sim_onscreen: bool | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if not self.is_simulation and not self.host.strip():
+        if self.is_simulation:
+            if self.host.strip() not in ("", SIM_HOST):
+                raise ValueError(f"The Asimov simulation listens on {SIM_HOST}; leave host unset.")
+            self.host = SIM_HOST
+        if not self.host.strip():
             raise ValueError("host must be the Asimov robot's address.")
         if self.control_mode not in ("velocity", "arms", "whole_body"):
             raise ValueError("control_mode must be 'velocity', 'arms' or 'whole_body'.")
@@ -110,3 +123,10 @@ class AsimovConfig(RobotConfig):
             value = getattr(self, name)
             if not isfinite(value) or not 0 <= value <= cap:
                 raise ValueError(f"{name} must be finite and between 0 and {cap}.")
+        self.sim_env = AsimovMujocoEnvConfig(
+            publish_images=self.sim_publish_images,
+            camera_port=self.sim_camera_port,
+            onscreen=self.sim_onscreen,
+            # The robot's own simulation repository, as for the G1.
+            trust_remote_code=True,
+        )

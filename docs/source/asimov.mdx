@@ -138,6 +138,21 @@ Arm actions are `<joint>.pos` targets in radians for the ten `L_*`/`R_*` shoulde
 
 Asimov's wrist yaw is at its joint limit at zero, so in the exoskeleton's neutral wrist pose the hand can only roll one way. The exoskeleton joystick does not drive locomotion here, because the walking policy is off during arm control.
 
+## Simulation
+
+[`lerobot/asimov-mujoco`](https://huggingface.co/lerobot/asimov-mujoco) simulates Asimov 1 in MuJoCo and emulates Asimov Edge on `127.0.0.1`, so the driver talks to it as to the robot. The sim has no onboard walking policy: use `--robot.control_mode=whole_body`, where LeRobot runs the locomotion policy itself.
+
+```bash
+uv sync --locked --extra asimov
+uv run --locked lerobot-teleoperate \
+  --robot.type=asimov \
+  --robot.is_simulation=true \
+  --robot.control_mode=whole_body \
+  --teleop.type=keyboard_base
+```
+
+The viewer opens with the robot held by an elastic band; press <kbd>9</kbd> in it to release the robot once the policy has taken over, about two seconds after connecting, and <kbd>7</kbd>/<kbd>8</kbd> to lower or raise the band. `--robot.sim_publish_images=true` publishes the head and wrist cameras over ZMQ on port 5555 instead of opening the viewer.
+
 ## Validation
 
 ```bash
