@@ -99,6 +99,8 @@ class ACTPolicy(PreTrainedPolicy):
             self.temporal_ensembler.reset()
         else:
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
+        self._last_commanded_action: Tensor | None = None
+        self.watchdog_stats: dict[str, Any] = {"triggers": 0, "last_discrepancy": 0.0}
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -106,13 +108,43 @@ class ACTPolicy(PreTrainedPolicy):
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
-        queue is empty.
+        queue is empty. When `watchdog_tracking_threshold` is configured, it continuously checks whether
+        the observed state has diverged from the previous commanded action; if divergence exceeds the
+        threshold, stale action chunks or ensembles are immediately flushed to trigger an early re-plan.
         """
         self.eval()  # keeping the policy in eval mode as it could be set to train mode while queue is consumed
+
+        # Check for state tracking discrepancy / external disturbance watchdog trigger
+        if (
+            self.config.watchdog_tracking_threshold is not None
+            and self._last_commanded_action is not None
+            and OBS_STATE in batch
+        ):
+            current_state = batch[OBS_STATE]
+            last_cmd = self._last_commanded_action.to(device=current_state.device)
+            # Ensure matching shapes for joint comparison
+            if current_state.ndim > last_cmd.ndim:
+                last_cmd = last_cmd.unsqueeze(0)
+            elif last_cmd.ndim > current_state.ndim:
+                current_state = current_state.unsqueeze(0)
+
+            dim_to_compare = min(current_state.shape[-1], last_cmd.shape[-1])
+            discrepancy = torch.max(
+                torch.abs(current_state[..., :dim_to_compare] - last_cmd[..., :dim_to_compare])
+            ).item()
+
+            if discrepancy > self.config.watchdog_tracking_threshold:
+                self.watchdog_stats["triggers"] += 1
+                self.watchdog_stats["last_discrepancy"] = discrepancy
+                if self.config.temporal_ensemble_coeff is not None:
+                    self.temporal_ensembler.reset()
+                else:
+                    self._action_queue.clear()
 
         if self.config.temporal_ensemble_coeff is not None:
             actions = self.predict_action_chunk(batch)
             action = self.temporal_ensembler.update(actions)
+            self._last_commanded_action = action.clone().detach()
             return action
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
@@ -123,7 +155,9 @@ class ACTPolicy(PreTrainedPolicy):
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+        action = self._action_queue.popleft()
+        self._last_commanded_action = action.clone().detach()
+        return action
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
