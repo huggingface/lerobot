@@ -33,6 +33,7 @@ from lerobot.utils import (
     check_if_not_connected,
     require_package,
 )
+from lerobot.utils.constants import ROBOT_URDFS_REPO_ID
 from lerobot.utils.import_utils import _motorbridge_available
 
 from ..robot import Robot
@@ -63,7 +64,6 @@ _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
 # DM4310 gripper's force limit to motor torque.
 _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRIPPER_FINGER_STROKE_M = 0.096
-_GRAVITY_MODEL_REPO_ID = "lerobot/robot-urdfs"
 _GRAVITY_MODEL_REMOTE_PATH = "yam/v1/linear_4310.urdf"
 _MAX_GRAVITY_TORQUE_NM = 25.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
@@ -502,7 +502,7 @@ class YamFollower(Robot):
     def _load_gravity_model(self) -> None:
         if not self.config.gravity_compensation or self.gravity_model is not None:
             return
-        model_path = hf_hub_download(_GRAVITY_MODEL_REPO_ID, _GRAVITY_MODEL_REMOTE_PATH, repo_type="dataset")
+        model_path = hf_hub_download(ROBOT_URDFS_REPO_ID, _GRAVITY_MODEL_REMOTE_PATH, repo_type="dataset")
         self.gravity_model = GravityCompensation(model_path, _MODEL_ARM_JOINTS, base_frame="base")
 
     def _gravity_torque(self, positions: np.ndarray) -> np.ndarray:
