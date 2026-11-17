@@ -16,9 +16,12 @@
 
 from __future__ import annotations
 
+import warnings
 from copy import deepcopy
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from dataclasses import asdict, dataclass, field
+from typing import TYPE_CHECKING, Literal
+
+import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -39,6 +42,34 @@ else:
     Qwen2_5_VLVisionConfig = None
 
 
+EO1_DEFAULT_SYSTEM_MESSAGE = "You are a helpful physical assistant."
+
+
+def _eo1_default_recipe() -> dict:
+    """Serialized recipe; keep policy config discovery independent of dataset extras."""
+    return {
+        "messages": [
+            {
+                "role": "system",
+                "content": EO1_DEFAULT_SYSTEM_MESSAGE,
+                "stream": "low_level",
+            },
+            {
+                "role": "user",
+                "content": "${task}\nPredict the next action in language.",
+                "stream": "low_level",
+            },
+            {
+                "role": "assistant",
+                "content": "${subtask}",
+                "stream": "low_level",
+                "target": True,
+                "if_present": "subtask",
+            },
+        ]
+    }
+
+
 @PreTrainedConfig.register_subclass("eo1")
 @dataclass
 class EO1Config(PreTrainedConfig):
@@ -54,8 +85,9 @@ class EO1Config(PreTrainedConfig):
 
     # Execution and action horizon.
     n_obs_steps: int = 1
-    chunk_size: int = 8
-    n_action_steps: int = 8
+    # Match the released IPEC-COMMUNITY/EO-1-3B checkpoint.
+    chunk_size: int = 16
+    n_action_steps: int = 16
 
     # State/action padding to match EO1 flow head dimensionality.
     max_state_dim: int = 32
@@ -74,12 +106,10 @@ class EO1Config(PreTrainedConfig):
     supervise_padding_action_dims: bool = True
     supervise_padding_actions: bool = True
 
-    # Policy-level dtype request for the Qwen backbone.
-    # - "auto": follow the backbone config/checkpoint default dtype. For Qwen2.5-VL this resolves to bf16.
-    #           The EO1 flow-matching head still keeps its own parameters in fp32.
-    # - "bfloat16": force the backbone to initialize/load in bf16 regardless of the saved config default.
-    # - "float32": force the backbone to initialize/load in fp32 for maximum numerical conservatism.
-    dtype: str = "auto"  # Options: "auto", "bfloat16", "float32"
+    # Policy-level dtype request for the Qwen backbone. `torch.bfloat16` is set as the default because
+    # `Qwen/Qwen2.5-VL-3B-Instruct` is published in bf16. The EO1 flow-matching head still keeps its own
+    # parameters in fp32. `Literal["auto"]` is introduced only for backward compatibility.
+    dtype: torch.dtype | Literal["auto"] | None = torch.bfloat16
     force_fp32_autocast: bool = True
 
     # Optional attention backend request passed through to the Qwen backbone.
@@ -88,6 +118,18 @@ class EO1Config(PreTrainedConfig):
 
     # Training settings.
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
+    # The built-in recipe handles annotated training and runtime prompts.
+    # recipe_path optionally overrides it; recipe=None disables recipe training.
+    recipe_path: str | None = None
+    # EO-1's language contract. Defaults to the subtask wording the released
+    # checkpoints answer; a fine-tune with `recipe_path` replaces it, and the
+    # checkpoint then prompts itself with the recipe it was trained on.
+    recipe: dict | None = field(default_factory=_eo1_default_recipe)
+    tokenizer_max_length: int = 1000
+    text_temperature: float = 0.0
+    text_top_p: float = 1.0
+    flow_loss_weight: float = 1.0
+    text_loss_weight: float = 0.01
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -112,12 +154,37 @@ class EO1Config(PreTrainedConfig):
     scheduler_decay_lr: float = 0.0
 
     def __post_init__(self):
+        # Resolve the legacy sentinel before the base class validates `dtype`. "auto" meant "follow the
+        # `Qwen/Qwen2.5-VL-3B-Instruct` checkpoint dtype".
+        if self.dtype == "auto":
+            warnings.warn(
+                "`dtype='auto'` is deprecated; use `--policy.dtype` instead.",
+                FutureWarning,
+                stacklevel=3,
+            )
+            self.dtype = torch.bfloat16
+
         super().__post_init__()
+
+        if self.recipe_path is not None:
+            from lerobot.datasets.recipe import resolve_recipe_override
+
+            self.recipe = asdict(resolve_recipe_override(self.recipe, self.recipe_path))
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
             )
+        if self.tokenizer_max_length < self.chunk_size + 1:
+            raise ValueError("tokenizer_max_length must leave room for the EO-1 action chunk.")
+        if self.flow_loss_weight < 0 or self.text_loss_weight < 0:
+            raise ValueError("EO-1 loss weights must be non-negative.")
+        if self.flow_loss_weight == 0 and self.text_loss_weight == 0:
+            raise ValueError("At least one EO-1 training loss must be enabled.")
+        if self.text_temperature < 0:
+            raise ValueError("text_temperature must be non-negative.")
+        if not 0 < self.text_top_p <= 1:
+            raise ValueError("text_top_p must be in (0, 1].")
 
         # Populate the serialized backbone config only when the caller did not provide one.
         if self.vlm_config is None:
@@ -127,6 +194,10 @@ class EO1Config(PreTrainedConfig):
     @property
     def vlm_backbone_config(self) -> Qwen2_5_VLConfig:
         require_package("transformers", extra="eo1")
+        if self.vlm_config is None:
+            raise ValueError(
+                "`vlm_config` is populated from `vlm_base` in `__post_init__`; it cannot be None."
+            )
         config_dict = deepcopy(self.vlm_config)
         if self.attn_implementation is not None:
             config_dict["attn_implementation"] = self.attn_implementation
@@ -142,6 +213,10 @@ class EO1Config(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate and set up EO1 input and output features."""
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "`input_features` and `output_features` must be resolved before `validate_features()` is called."
+            )
         image_features = [key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL]
         if not image_features:
             raise ValueError(

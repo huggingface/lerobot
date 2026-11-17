@@ -22,6 +22,7 @@ visualizing the result in meshcat after calibration.
 import logging
 import os
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -29,6 +30,11 @@ from lerobot.robots.unitree_g1.g1_kinematics import G1_29_ArmIK
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
 
 from .exo_calib import JOINTS
+
+if TYPE_CHECKING:
+    import meshcat
+    from pinocchio.robot_wrapper import RobotWrapper
+    from pinocchio.visualize import MeshcatVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -136,20 +142,20 @@ class ExoskeletonIKHelper:
             ),
         ]
 
-        self.exo = {}  # side -> pin.RobotWrapper
-        self.q_exo = {}  # side -> q
-        self.ee_id_exo = {}  # side -> frame id
-        self.qmap = {}  # side -> {joint_name: q_idx}
-        self.ee_id_g1 = {}  # side -> frame id
+        self.exo: dict[str, RobotWrapper] = {}  # side -> exo robot model
+        self.q_exo: dict[str, np.ndarray] = {}  # side -> q
+        self.ee_id_exo: dict[str, int] = {}  # side -> frame id
+        self.qmap: dict[str, dict[str, int]] = {}  # side -> {joint_name: q_idx}
+        self.ee_id_g1: dict[str, int | None] = {}  # side -> frame id
 
         self._load_exo_models(assets_dir)
         for a in self.arms:
             self.ee_id_g1[a.side] = _frame_id(self.robot_g1.model, a.g1_ee)
 
-        self.viewer = None
+        self.viewer: meshcat.Visualizer | None = None
         self.markers: Markers | None = None
-        self.viz_g1 = None
-        self.viz_exo = {}  # side -> viz
+        self.viz_g1: MeshcatVisualizer | None = None
+        self.viz_exo: dict[str, MeshcatVisualizer] = {}  # side -> viz
 
     def _frozen_joint_indices(self) -> dict[str, int]:
         out = {}

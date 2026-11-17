@@ -11,9 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
+import logging
+
+import draccus
 import pytest
 
 from lerobot.configs.default import DatasetConfig
+from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 
 
 def test_dataset_config_valid():
@@ -38,6 +43,41 @@ def test_dataset_config_empty_episodes_ok():
     DatasetConfig(repo_id="user/repo", episodes=[])
 
 
+def test_dataset_config_derives_video_decoder_cache_size_by_default():
+    assert DatasetConfig(repo_id="user/repo").video_decoder_cache_size is None
+
+
+def test_streaming_sampling_strategy_cli_and_round_trip() -> None:
+    assert DatasetConfig(repo_id="user/repo").streaming_sampling_strategy == "remaining"
+    config = draccus.parse(
+        DatasetConfig,
+        args=["--repo_id=user/repo", "--streaming=true", "--streaming_sampling_strategy=round_robin"],
+    )
+    assert config.streaming_sampling_strategy == "round_robin"
+    restored = draccus.decode(DatasetConfig, draccus.encode(config))
+    assert restored.streaming_sampling_strategy == "round_robin"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("streaming_sampling_strategy", "invalid", "StreamingSamplingStrategy"),
+        ("streaming_episode_pool_size", 0, "episode_pool_size"),
+        ("streaming_prefetch_episodes", -1, "prefetch_episodes"),
+        ("streaming_byte_budget_gb", 0, "byte_budget_gb"),
+        ("streaming_decode_threads", 0, "decode_threads"),
+        ("streaming_decoded_queue_size", 0, "decoded_queue_size"),
+        ("video_decoder_cache_size", 0, "video_decoder_cache_size"),
+        ("streaming_native_http_connections", 0, "native_http_connections"),
+        ("streaming_native_http_subranges", 0, "native_http_subranges"),
+        ("streaming_sidecar_lock_timeout_s", 0, "sidecar_lock_timeout_s"),
+    ],
+)
+def test_dataset_config_rejects_invalid_streaming_resource_limits(field, value, message):
+    with pytest.raises(ValueError, match=message):
+        DatasetConfig(repo_id="user/repo", **{field: value})
+
+
 def test_dataset_config_ignores_negative_excluded_episodes(caplog):
     config = DatasetConfig(repo_id="user/repo", exclude_episodes=[-2, 1, -1, 3])
 
@@ -45,8 +85,21 @@ def test_dataset_config_ignores_negative_excluded_episodes(caplog):
     assert "Ignoring negative exclude_episodes entries: [-2, -1]" in caplog.text
 
 
-def test_dataset_config_bucket_streaming_ok():
+def test_dataset_config_bucket_ok():
+    # Both allowed at config level. The dataset factory raises for storage
+    # formats that only support streaming access on buckets.
     DatasetConfig(repo_id="user/repo", repo_type="bucket", streaming=True)
+    DatasetConfig(repo_id="user/repo", repo_type="bucket")
+
+
+def test_bucket_streaming_cli_and_round_trip() -> None:
+    config = draccus.parse(
+        DatasetConfig, args=["--repo_id=owner/bucket", "--repo_type=bucket", "--streaming=true"]
+    )
+    restored = draccus.decode(DatasetConfig, draccus.encode(config))
+    assert restored.repo_id == "owner/bucket"
+    assert restored.repo_type == "bucket"
+    assert restored.streaming is True
 
 
 def test_dataset_config_invalid_repo_type():
@@ -54,11 +107,46 @@ def test_dataset_config_invalid_repo_type():
         DatasetConfig(repo_id="user/repo", repo_type="model")
 
 
-def test_dataset_config_bucket_requires_streaming():
-    with pytest.raises(ValueError, match="streaming-only"):
-        DatasetConfig(repo_id="user/repo", repo_type="bucket")
+def test_dataset_config_eval_split():
+    # map-style access on a bucket is fine; streaming access is not, anywhere
+    DatasetConfig(repo_id="user/repo", repo_type="bucket", eval_split=0.1)
+    with pytest.raises(ValueError, match="streaming"):
+        DatasetConfig(repo_id="user/repo", streaming=True, eval_split=0.1)
 
 
-def test_dataset_config_bucket_rejects_eval_split():
-    with pytest.raises(ValueError, match="eval_split"):
-        DatasetConfig(repo_id="user/repo", repo_type="bucket", streaming=True, eval_split=0.1)
+@pytest.mark.parametrize("revision_key", ["revision", "REVISION"])
+def test_dataset_config_storage_options_rejects_revision(revision_key):
+    with pytest.raises(ValueError, match="storage_options.*revision"):
+        DatasetConfig(repo_id="user/repo", storage_options={revision_key: "main"})
+
+    DatasetConfig(repo_id="user/repo", revision="main", storage_options={})
+
+
+@pytest.mark.parametrize("storage_options", [{}, {"aws_region": "us-east-1"}])
+def test_dataset_config_streaming_rejects_storage_options(storage_options):
+    with pytest.raises(ValueError, match="storage_options.*streaming"):
+        DatasetConfig(repo_id="user/repo", streaming=True, storage_options=storage_options)
+
+
+def test_dataset_config_removes_credentials_before_saving(tmp_path, caplog):
+    storage_options = {
+        "aws_endpoint": "https://s3.example.com",
+        "aws_region": "us-east-1",
+        "aws_secret_access_key": "secret-access-key",
+        "AWS_SESSION_TOKEN": "session-token",
+        "azure_storage_account_key": "storage-account-key",
+    }
+
+    with caplog.at_level(logging.WARNING, logger="lerobot.configs.default"):
+        dataset_config = DatasetConfig(repo_id="user/repo", storage_options=storage_options)
+
+    expected_options = {
+        "aws_endpoint": "https://s3.example.com",
+        "aws_region": "us-east-1",
+    }
+    assert dataset_config.storage_options == expected_options
+    assert "environment variables" in caplog.text
+
+    TrainPipelineConfig(dataset=dataset_config)._save_pretrained(tmp_path)
+    saved_config = json.loads((tmp_path / TRAIN_CONFIG_NAME).read_text())
+    assert saved_config["dataset"]["storage_options"] == expected_options

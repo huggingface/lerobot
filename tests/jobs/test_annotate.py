@@ -28,6 +28,8 @@ from lerobot.annotations.steerable_pipeline.config import (
 )
 from lerobot.jobs.annotate import build_pod_command, build_pod_setup, submit_annotate_to_hf
 
+pytestmark = pytest.mark.dataset
+
 
 def _parse(*args):
     return draccus.parse(AnnotationPipelineConfig, args=list(args))

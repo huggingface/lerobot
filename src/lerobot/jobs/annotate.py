@@ -45,11 +45,11 @@ if TYPE_CHECKING:
 LEROBOT_GIT_URL = "https://github.com/huggingface/lerobot.git"
 
 # Mirrors the pins in pyproject.toml. The vLLM image resolves dependencies on its
-# own otherwise, and pulls av 18 / datasets 5 / draccus 0.11 — each of which breaks
-# lerobot at import time. `--upgrade-strategy only-if-needed` keeps vLLM's own
+# own otherwise, and pulls av 18 / draccus 0.11 — each of which breaks lerobot at
+# import time. `--upgrade-strategy only-if-needed` keeps vLLM's own
 # (torch, transformers, ...) pins intact.
 _RUNTIME_REQUIREMENTS = (
-    "'datasets>=4.7.0,<5.0.0' 'pyarrow>=21.0.0,<30.0.0' 'av>=15.0.0,<16.0.0' 'draccus==0.10.0' "
+    "'datasets>=4.7.0,<6.0.0' 'pyarrow>=21.0.0,<30.0.0' 'av>=15.0.0,<16.0.0' 'draccus==0.10.0' "
     "'pandas>=2.0.0,<3.0.0' jsonlines gymnasium torchcodec mergedeep pyyaml-include toml typing-inspect "
     "openai"
 )

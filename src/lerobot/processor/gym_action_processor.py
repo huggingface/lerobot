@@ -16,6 +16,9 @@
 
 from dataclasses import dataclass
 
+import numpy as np
+import torch
+
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvAction, EnvTransition, PolicyAction, TransitionKey
 
@@ -42,7 +45,7 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
     squeeze_batch_dim: bool = True
 
     def action(self, action: PolicyAction) -> EnvAction:
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise TypeError(
                 f"Expected PolicyAction or None, got {type(action).__name__}. "
                 "Use appropriate processor for non-tensor actions."
@@ -80,7 +83,7 @@ class Numpy2TorchActionProcessorStep(ProcessorStep):
 
         action = new_transition.get(TransitionKey.ACTION)
         if action is not None:
-            if not isinstance(action, EnvAction):
+            if not isinstance(action, np.ndarray):
                 raise TypeError(
                     f"Expected np.ndarray or None, got {type(action).__name__}. "
                     "Use appropriate processor for non-tensor actions."
@@ -88,10 +91,12 @@ class Numpy2TorchActionProcessorStep(ProcessorStep):
             torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
             new_transition[TransitionKey.ACTION] = torch_action
 
-        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            complementary_data = {}
         if TELEOP_ACTION_KEY in complementary_data:
             teleop_action = complementary_data[TELEOP_ACTION_KEY]
-            if isinstance(teleop_action, EnvAction):
+            if isinstance(teleop_action, np.ndarray):
                 complementary_data[TELEOP_ACTION_KEY] = to_tensor(teleop_action)
             new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
 

@@ -23,18 +23,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
 from huggingface_hub import hf_hub_download, save_torch_state_dict
-from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from huggingface_hub.errors import HfHubHTTPError
-from safetensors.torch import load_model as load_model_as_safetensor
+from huggingface_hub.constants import SAFETENSORS_INDEX_FILE, SAFETENSORS_SINGLE_FILE
+from huggingface_hub.errors import EntryNotFoundError
+from safetensors.torch import load_file, load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
+from lerobot.configs import FeatureType, PreTrainedConfig
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
+from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
 
-from .utils import log_model_loading_keys
+from .checkpoint import SafetensorsCheckpoint, safetensors_shard_names
+from .chunk import ChunkPolicySpec, ExecutionMode
+from .utils import log_model_loading_keys, rename_legacy_vision_model_keys
 
 if TYPE_CHECKING or _peft_available:
     from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
@@ -54,8 +59,38 @@ T = TypeVar("T", bound="PreTrainedPolicy")
 _SINGLE_FILE_SHARD_SIZE = "1TB"
 
 
+def _missing_keys(model: nn.Module, loaded_keys: set[str]) -> list[str]:
+    """Return the state-dict keys of `model` that no shard filled.
+
+    Tied tensors share storage: a key whose storage another loaded key filled is not missing.
+    """
+    storage_to_keys: dict[tuple, set[str]] = {}
+
+    def storage_key(tensor: Tensor) -> tuple:
+        return (tensor.device, tensor.dtype, tensor.data_ptr(), tensor.shape, tensor.stride())
+
+    state_dict = model.state_dict()
+    for key, tensor in state_dict.items():
+        if tensor.device.type != "meta" and tensor.numel() > 0:
+            storage_to_keys.setdefault(storage_key(tensor), set()).add(key)
+    filled = set(loaded_keys)
+    for key in loaded_keys:
+        tensor = state_dict.get(key)
+        if tensor is not None and tensor.device.type != "meta" and tensor.numel() > 0:
+            filled |= storage_to_keys.get(storage_key(tensor), set())
+    return [key for key in state_dict if key not in filled]
+
+
 class ActionSelectKwargs(TypedDict, total=False):
     noise: Tensor | None
+
+
+class RTCActionSelectKwargs(TypedDict, total=False):
+    """Keyword arguments Real-Time Chunking passes to `predict_action_chunk`."""
+
+    inference_delay: int | None
+    prev_chunk_left_over: Tensor | None
+    execution_horizon: int | None
 
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
@@ -63,10 +98,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     Base class for policy models.
     """
 
-    config_class: None
-    name: None
+    config_class: ClassVar[type[PreTrainedConfig]]
+    name: ClassVar[str]
 
-    # --- declarative parallelism/acceleration surface ----------------------------------------
+    # declarative parallelism/acceleration surface
     # Module CLASS names forming the FSDP2 wrap units (and, once wired, the activation-
     # checkpointing units). Resolved onto the accelerate plugin right before
     # `accelerator.prepare()` by `lerobot.distributed.set_fsdp_wrap_modules`; sharded training
@@ -95,6 +130,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 f"`model = {self.__class__.__name__}.from_pretrained(PRETRAINED_MODEL_NAME)`"
             )
         self.config = config
+        self.register_load_state_dict_pre_hook(rename_legacy_vision_model_keys)
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -115,6 +151,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 "checkpoint-conditional value), otherwise the text head is never used."
             )
 
+    # Largest weights file that `save_pretrained` writes. The default keeps every policy one
+    # `model.safetensors`. A policy whose weights exceed the Hub's 50 GB file limit sets a smaller
+    # value (transformers shards at 50 GB since v5.5, 5 GB before) and is written as
+    # `model-XXXXX-of-NNNNN.safetensors` shards
+    # plus `model.safetensors.index.json`. Only enable this for policies whose loader reaches
+    # `_resolve_weight_files`; independent loaders (PI0/PI05/PI0-FAST, XVLA, WALL-X, GR00T)
+    # still require their own sharded-checkpoint support. `dcp_to_safetensors` always writes a
+    # single `model.safetensors`.
+    _max_shard_size: ClassVar[int | str] = _SINGLE_FILE_SHARD_SIZE
+
     def _save_pretrained(self, save_directory: Path) -> None:
         """Serialize this policy's parameters (and config) into `save_directory`.
 
@@ -122,6 +168,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         COLLECTIVE, so when the policy is sharded this method (via `save_pretrained`) must be
         called on EVERY rank — a rank-0-gated call deadlocks. File writes happen on the main
         process only, in all layouts (single, DDP, sharded).
+
+        The weights go to one `model.safetensors`, or, when they exceed `_max_shard_size`, to
+        `model-XXXXX-of-NNNNN.safetensors` shards with a `model.safetensors.index.json` (the
+        transformers layout).
 
         Args:
             save_directory (Path): Target directory for the policy config (`config.json`) and the
@@ -141,7 +191,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             # gate prevents N ranks racing on the same files. Single process: never taken.
             return
         self.config._save_pretrained(save_directory)
-        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=_SINGLE_FILE_SHARD_SIZE)
+        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=self._max_shard_size)
 
     @classmethod
     def from_pretrained(
@@ -162,6 +212,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         The policy is set in evaluation mode by default using `policy.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `policy.train()`.
+
+        The weights are read from `model.safetensors`, or from the shards of
+        `model.safetensors.index.json` when the checkpoint is sharded, in a local directory or a
+        Hub repo.
         """
         if config is None:
             config = PreTrainedConfig.from_pretrained(
@@ -177,45 +231,134 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             )
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
-        if os.path.isdir(model_id):
-            print("Loading weights from local directory")
-            model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
-            policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
-        else:
-            try:
-                model_file = hf_hub_download(
-                    repo_id=model_id,
-                    filename=SAFETENSORS_SINGLE_FILE,
-                    revision=revision,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
-                    token=token,
-                    local_files_only=local_files_only,
-                )
-                policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
-            except HfHubHTTPError as e:
-                raise FileNotFoundError(
-                    f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
-                ) from e
+        device = config.device
+        if device is None:
+            # PreTrainedConfig.__post_init__ always resolves a device; None here is a programming error.
+            raise ValueError(f"{type(config).__name__}.device is unset; cannot load the weights")
+        weight_files = cls._resolve_weight_files(
+            model_id,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            token=token,
+            local_files_only=local_files_only,
+        )
+        policy = cls._load_weight_files(instance, weight_files, device, strict)
 
-        policy.to(config.device)
+        policy.to(device)
         policy.eval()
         return policy
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        missing_keys, unexpected_keys = load_model_as_safetensor(
-            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
+    def _resolve_weight_files(cls, model_id: str, **hub_kwargs: Any) -> list[Path]:
+        """Return the safetensors file(s) of a checkpoint, downloading them from the Hub if needed.
+
+        Args:
+            model_id (str): A local directory or a Hub repo id.
+            **hub_kwargs: Download options of `hf_hub_download` (`revision`, `cache_dir`, `token`, ...).
+
+        Returns:
+            list[Path]: One `model.safetensors`, or the shards that `model.safetensors.index.json`
+            lists, in sorted order.
+
+        Raises:
+            FileNotFoundError: Neither file is present.
+            HfHubHTTPError: A Hub request failed for a reason other than a missing file.
+        """
+        if os.path.isdir(model_id):
+            root = Path(model_id)
+            if (root / SAFETENSORS_SINGLE_FILE).is_file():
+                logging.info("Loading weights from local directory")
+                return [root / SAFETENSORS_SINGLE_FILE]
+            if (root / SAFETENSORS_INDEX_FILE).is_file():
+                logging.info("Loading sharded weights from local directory")
+                return [root / name for name in safetensors_shard_names(root / SAFETENSORS_INDEX_FILE)]
+            raise FileNotFoundError(
+                f"{root} holds neither {SAFETENSORS_SINGLE_FILE} nor {SAFETENSORS_INDEX_FILE}"
+            )
+        try:
+            return [Path(hf_hub_download(repo_id=model_id, filename=SAFETENSORS_SINGLE_FILE, **hub_kwargs))]
+        except EntryNotFoundError:
+            pass
+        try:
+            index = Path(hf_hub_download(repo_id=model_id, filename=SAFETENSORS_INDEX_FILE, **hub_kwargs))
+        except EntryNotFoundError as e:
+            raise FileNotFoundError(
+                f"Neither {SAFETENSORS_SINGLE_FILE} nor {SAFETENSORS_INDEX_FILE} found on the "
+                f"HuggingFace Hub in {model_id}"
+            ) from e
+        return [
+            Path(hf_hub_download(repo_id=model_id, filename=name, **hub_kwargs))
+            for name in safetensors_shard_names(index)
+        ]
+
+    @classmethod
+    def _load_weight_files(cls, model: T, files: list[Path], map_location: str, strict: bool) -> T:
+        """Dispatch a checkpoint to the policy's loader without writing a merged copy.
+
+        Override `_load_checkpoint` to filter, rename or assign tensors across all shards.
+        Legacy single-file hooks still work for single-file checkpoints; they must adopt the
+        checkpoint hook before loading shards.
+        """
+        if not files:
+            raise ValueError("A checkpoint must contain at least one weights file")
+        if len(files) == 1:
+            return cls._load_as_safetensor(model, str(files[0]), map_location, strict)
+        # A legacy single-file hook can stay. Shards are refused only when `_load_checkpoint`
+        # is still the base implementation.
+        legacy_hook = cls._load_as_safetensor.__func__ is not PreTrainedPolicy._load_as_safetensor.__func__  # type: ignore[attr-defined]
+        base_checkpoint_hook = (
+            cls._load_checkpoint.__func__ is PreTrainedPolicy._load_checkpoint.__func__  # type: ignore[attr-defined]
         )
+        if legacy_hook and base_checkpoint_hook:
+            raise NotImplementedError(
+                f"{cls.__name__} must implement _load_checkpoint to load sharded weights"
+            )
+        return cls._load_checkpoint(model, SafetensorsCheckpoint(files), map_location, strict)
+
+    @classmethod
+    def _load_checkpoint(
+        cls, model: T, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> T:
+        """Load a checkpoint, checking keys after all shards and load-state hooks have run.
+
+        The default streams one shard at a time. Custom loaders can inspect the whole
+        checkpoint through its keys, shapes and tensors without creating a temporary file.
+        """
+        device = resolve_safetensors_device(map_location)
+        if len(checkpoint.files) == 1:
+            missing_keys, unexpected_keys = load_model_as_safetensor(
+                model, str(checkpoint.files[0]), strict=strict, device=device
+            )
+        else:
+            expected = set(model.state_dict())
+            missing = set(expected)
+            unexpected: set[str] = set()
+            for file in checkpoint.files:
+                state = load_file(str(file), device=device)
+                result = model.load_state_dict(state, strict=False)
+                missing.intersection_update(result.missing_keys)
+                unexpected.update(result.unexpected_keys)
+                del state
+            missing_keys = _missing_keys(model, expected - missing)
+            unexpected_keys = sorted(unexpected)
+            if strict and (missing_keys or unexpected_keys):
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {type(model).__name__}: "
+                    f"missing keys {missing_keys}, unexpected keys {unexpected_keys}"
+                )
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model
 
+    @classmethod
+    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+        """Compatibility entry point for a single weights file."""
+        return cls._load_checkpoint(model, SafetensorsCheckpoint([Path(model_file)]), map_location, strict)
+
     @abc.abstractmethod
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> OptimizerParams:
         """
-        Returns the policy-specific parameters dict to be passed on to the optimizer.
+        Returns the policy-specific parameters (parameters or param groups) to be passed on to the optimizer.
         """
         raise NotImplementedError
 
@@ -245,9 +388,101 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             elif queue is not None:
                 queue.clear()
 
+    def count_queued_actions(self) -> int:
+        """Number of actions already computed and waiting to be served.
+
+        0 for a policy that keeps no action queue (never chunks) or whose queue is
+        currently empty (about to compute a fresh chunk). Reads the same queues
+        :meth:`drop_queued_actions` clears, named in :attr:`_action_queue_attrs`.
+        """
+        total = 0
+        for attr in self._action_queue_attrs:
+            queue = getattr(self, attr, None)
+            if isinstance(queue, dict):
+                action_queue = queue.get(ACTION)
+                total += len(action_queue) if action_queue is not None else 0
+            elif queue is not None:
+                total += len(queue)
+        return total
+
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""
         return False
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Validate canonical inputs before serving, with exact shapes by default.
+
+        Policies that explicitly resize or mask missing inputs may override this
+        contract. Such exceptions belong with the policy, never the transport.
+        The negotiated wire schema still fixes every supplied feature's shape.
+        """
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        if supplied.keys() != expected.keys():
+            raise ValueError("Canonical feature names must exactly match policy input_features.")
+        for name, policy_feature in expected.items():
+            feature = supplied[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if (
+                    len(shape) != 3
+                    or feature.kind != "rgb"
+                    or feature.shape != (shape[1], shape[2], shape[0])
+                ):
+                    raise ValueError(f"RGB feature shape differs from checkpoint: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Declare the default current-observation chunk-serving author contract.
+
+        Inheriting this implementation declares that ``predict_action_chunk`` does
+        every preparation needed by direct callers, accepts the complete current
+        observation, and returns ``[B, chunk_size, A]`` in model coordinates. Its
+        canonical processor pair must support whole chunks. ``n_action_steps`` is
+        the ordinary playback slice; RTC retains the full prediction horizon.
+
+        A policy requiring select_action-only preparation, other action layouts,
+        or temporal sampling must override this method and reject unsupported
+        configurations or provide a custom runner. Method presence or a successful
+        warmup is not evidence for this contract. Policy/processor state is allowed
+        only within an exclusive session and reset() must clear it for a new run.
+        """
+        config = self.config
+        if config.n_obs_steps != 1:
+            raise ValueError("Chunk inference requires n_obs_steps=1; observation history is unsupported.")
+        for field_name in (
+            "observation_delta_indices",
+            "image_observation_delta_indices",
+            "state_observation_delta_indices",
+        ):
+            indices = getattr(config, field_name, None)
+            if indices is not None and list(indices) != [0]:
+                raise ValueError(f"Chunk inference cannot sample temporal history ({field_name}).")
+        if getattr(config, "temporal_ensemble_coeff", None) is not None:
+            raise ValueError("Chunk inference does not support temporal ensembling.")
+        if getattr(config, "use_visual_memory", False) or getattr(config, "use_proprioceptive_memory", False):
+            raise ValueError(
+                "Chunk inference cannot sample observation memory at the required control cadence."
+            )
+        prediction_steps = getattr(config, "chunk_size", None)
+        if not isinstance(prediction_steps, int) or prediction_steps <= 0:
+            raise ValueError(
+                "The default chunk runner requires a positive chunk_size; provide a custom runner."
+            )
+        execution_steps = getattr(config, "n_action_steps", prediction_steps)
+        modes = [ExecutionMode.CHUNK]
+        training_max_delay = int(getattr(config, "rtc_training_max_delay", 0))
+        if self.supports_rtc():
+            modes.append(ExecutionMode.RTC_GUIDED)
+            if training_max_delay > 0:
+                modes.append(ExecutionMode.RTC_TRAINED)
+        return ChunkPolicySpec(
+            prediction_steps=prediction_steps,
+            execution_steps=execution_steps,
+            modes=tuple(modes),
+            training_max_delay=training_max_delay,
+        )
 
     def supports_text_generation(self) -> bool:
         """Whether this policy implements :meth:`generate_text` (override both together)."""
@@ -280,20 +515,44 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor | PolicyOutput:
         """Returns the action chunk (for action chunking policies) for a given observation, potentially in batch mode.
 
         Child classes using action chunking should use this method within `select_action` to form the action chunk
         cached for selection.
+
+        A policy that supports a `noise` keyword starts its sampling from that tensor, shaped as the policy would
+        draw it. When `noise` is None, the policy draws it as usual.
+
+        May return a `PolicyOutput` carrying the chunk and its prediction, as for `select_action`.
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor | PolicyOutput:
         """Return one action to run in the environment (potentially in batch mode).
 
         When the model uses a history of observations, or outputs a sequence of actions, this method deals
         with caching.
+
+        Returns a bare action tensor, or a `PolicyOutput`: a batch, keyed like the input batch, holding
+        the action under ``"action"`` and what the policy expects or believes besides it under
+        ``"prediction"`` (a `PolicyPrediction`). The prediction is batched like the action, one value
+        per environment, and each entry is keyed by what it refers to: predicted frames by the
+        observation key they predict, language by annotation style ("subtask", "plan", "memory"),
+        boxes (annotation VQA schema) by the camera they are drawn on. Callers normalize the two
+        return types with `lerobot.processor.policy_output_to_transition`; `--display_data` shows
+        the prediction of the first environment.
+
+        A prediction holds values for this step: one spanning a chunk (e.g. an imagined clip) is
+        returned piece by piece, with the action each piece belongs to. Each entry stays displayed
+        until it is returned again. Predicting is opt-in through a config field of the policy's
+        choosing, and must not change the actions; text that should steer the policy goes
+        through `generate_text`.
         """
         raise NotImplementedError
 
@@ -378,7 +637,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             self.name_or_path = str(self.config.pretrained_path)
 
         # Wrap with PEFT
-        peft_model = get_peft_model(self, final_config)
+        peft_model = get_peft_model(self, final_config, revision=self.config.pretrained_revision)
 
         # Mark config as using PEFT for proper loading later
         peft_model.config.use_peft = True
@@ -386,7 +645,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         logging.info(f"Wrapped {self.name} with PEFT ({type(final_config).__name__})")
         return peft_model
 
-    def _get_default_peft_targets(self) -> dict[str, any] | None:
+    def _get_default_peft_targets(self) -> dict[str, Any] | None:
         """
         Return default PEFT target modules for this policy.
 

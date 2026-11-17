@@ -85,11 +85,15 @@ class TestStripAccelerateCpHooks:
         assert len(model.self_attn._forward_pre_hooks) == 1
 
 
-class _DeclaredPolicy:
+class _DeclaredPolicy(nn.Module):
     _fsdp_wrap_modules = ["DeclaredBlock"]
 
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Linear(4, 4)
 
-class _UndeclaredPolicy:
+
+class _UndeclaredPolicy(nn.Module):
     _fsdp_wrap_modules = None
 
 
@@ -105,6 +109,13 @@ class TestSetFsdpWrapModules:
     def test_policy_declaration_fills_plugin(self):
         plugin = FSDPConfig().build_plugin()
         set_fsdp_wrap_modules(_accelerator_with(plugin), _DeclaredPolicy())
+        assert plugin.transformer_cls_names_to_wrap == ["DeclaredBlock"]
+
+    def test_policy_declaration_is_read_through_peft(self):
+        peft = pytest.importorskip("peft")
+        plugin = FSDPConfig().build_plugin()
+        model = peft.get_peft_model(_DeclaredPolicy(), peft.LoraConfig(r=2, target_modules=["net"]))
+        set_fsdp_wrap_modules(_accelerator_with(plugin), model)
         assert plugin.transformer_cls_names_to_wrap == ["DeclaredBlock"]
 
     def test_user_override_wins(self):

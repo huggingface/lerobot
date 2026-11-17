@@ -14,10 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify PI0Fast policy integration with LeRobot vs the original implementation"""
+"""PI0Fast integration checks and a fixed-token decoding reference.
+
+Generation from synthetic observations is checked for validity and reproducibility,
+not exact parity with OpenPI or across Torch versions and GPU attention backends.
+"""
 # ruff: noqa: E402
 
 import random
+from collections.abc import Iterator
 from copy import deepcopy
 from typing import Any
 
@@ -48,26 +53,21 @@ DUMMY_ACTION_DIM = 7
 DUMMY_STATE_DIM = 20
 IMAGE_HEIGHT = 224
 IMAGE_WIDTH = 224
-NUM_VIEWS = 2  # Number of camera views
 DEVICE = "cuda"
 MODEL_PATH_LEROBOT = "lerobot/pi0fast-base"
 
 # Expected action token shape: (batch_size, max_decoding_steps)
 EXPECTED_ACTION_TOKENS_SHAPE = (1, 2)
 
-# Expected first 5 action tokens (for reproducibility check)
-EXPECTED_ACTION_TOKENS_FIRST_5 = torch.tensor([255020, 255589])
+# Fixed input for the decoding reference, independent of model generation.
+REFERENCE_ACTION_TOKENS = torch.tensor([[255020, 255589]])
 
 # Expected actions after detokenization
 EXPECTED_ACTIONS_SHAPE = (1, 2, 32)  # (batch_size, n_action_steps, action_dim)
-EXPECTED_ACTIONS_MEAN = 0.046403881162405014
-EXPECTED_ACTIONS_STD = 0.2607129216194153
 EXPECTED_ACTIONS_FIRST_5 = torch.tensor([0.0000, 0.3536, 0.0707, 0.0000, 0.0000])
 
 
-@require_cuda
-@require_hf_token
-def set_seed_all(seed: int):
+def set_seed_all(seed: int) -> None:
     """Set random seed for all RNG sources to ensure reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
@@ -127,19 +127,17 @@ def instantiate_lerobot_pi0_fast(
     return policy, preprocessor, postprocessor
 
 
-@require_cuda
-@require_hf_token
-def create_dummy_data(device=DEVICE):
-    """Create dummy data for testing both implementations."""
+def create_dummy_data(device: str = DEVICE) -> dict[str, Any]:
+    """Create synthetic observations with float32 images in [0, 1]."""
     batch_size = 1
     prompt = "Pick up the red block and place it in the bin"
 
     # Create random RGB images in [0, 255] uint8 range (as PIL images would be)
     # Then convert to [0, 1] float32 range for LeRobot
-    def fake_rgb(h, w):
+    def fake_rgb(h: int, w: int) -> torch.Tensor:
         arr = np.random.randint(0, 255, (h, w, 3), dtype=np.uint8)
         t = torch.from_numpy(arr).permute(2, 0, 1)  # CHW
-        return t
+        return t.to(torch.float32) / 255.0
 
     batch = {
         f"{OBS_IMAGES}.base_0_rgb": torch.stack(
@@ -159,24 +157,53 @@ def create_dummy_data(device=DEVICE):
 
 
 # Pytest fixtures
+@pytest.fixture(autouse=True)
+def restore_determinism(restore_torch_backend_flags: None) -> Iterator[None]:
+    """Keep the module's deterministic settings from leaking into other tests."""
+    enabled = torch.are_deterministic_algorithms_enabled()
+    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    try:
+        yield
+    finally:
+        torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
+
+
 @pytest.fixture(scope="module")
 @require_cuda
 @require_hf_token
-def pi0_fast_components():
+def pi0_fast_components(
+    request: pytest.FixtureRequest,
+) -> tuple[
+    PI0FastPolicy,
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
     """Fixture to instantiate and provide all PI0Fast components for tests."""
     print(f"\nTesting with DEVICE='{DEVICE}'")
     print("\n[Setup] Instantiating LeRobot PI0Fast policy...")
     policy_obj, preprocessor_obj, postprocessor_obj = instantiate_lerobot_pi0_fast(from_pretrained=True)
+
+    def release_cuda_model() -> None:
+        # Failed assertions can retain the policy through traceback locals. Moving
+        # its tensors to CPU frees GPU memory even while those references survive.
+        policy_obj.cpu()
+        policy_obj.reset()
+        torch.cuda.empty_cache()
+
+    request.addfinalizer(release_cuda_model)
     print("Model loaded successfully")
     return policy_obj, preprocessor_obj, postprocessor_obj
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 @require_cuda
 @require_hf_token
-def policy(pi0_fast_components):
+def policy(pi0_fast_components: tuple) -> PI0FastPolicy:
     """Fixture to provide the PI0Fast policy for tests."""
-    return pi0_fast_components[0]
+    policy_obj = pi0_fast_components[0]
+    policy_obj.eval()
+    policy_obj.reset()
+    return policy_obj
 
 
 @pytest.fixture(scope="module")
@@ -189,330 +216,127 @@ def preprocessor(pi0_fast_components):
 
 @require_cuda
 @require_hf_token
-def test_pi0_fast_preprocessor_alignment(policy, preprocessor):
-    """Test that LeRobot PI0Fast preprocessor produces expected outputs."""
-    print("\n" + "=" * 80)
-    print("Test: PI0Fast Preprocessor Outputs")
-    print("=" * 80)
-
+def test_pi0_fast_preprocessor_alignment(
+    policy: PI0FastPolicy, preprocessor: PolicyProcessorPipeline
+) -> None:
+    """Require language inputs and valid image ranges through preprocessing."""
     set_seed_all(42)
-
-    print("\nCreating dummy data...")
     batch = create_dummy_data()
+    observation = preprocessor(deepcopy(batch))
 
-    print("\n[LeRobot] Preprocessing...")
-    lerobot_observation = preprocessor(deepcopy(batch))
+    for key in batch:
+        if key.startswith(OBS_IMAGES + "."):
+            image = observation[key]
+            assert image.dtype == torch.float32
+            assert torch.isfinite(image).all()
+            assert image.min() >= 0 and image.max() <= 1
 
-    print("\nVerifying preprocessor outputs:")
-    print("-" * 80)
+    # Use the actual constants: the old literal keys silently skipped these checks.
+    tokens = observation[OBS_LANGUAGE_TOKENS]
+    masks = observation[OBS_LANGUAGE_ATTENTION_MASK]
+    assert tokens.ndim == 2 and tokens.shape[0] == 1
+    assert tokens.dtype == torch.long
+    assert masks.shape == tokens.shape
+    assert masks.dtype == torch.bool
+    assert masks.any()
 
-    # Expected keys from PI0Fast preprocessing
-    expected_keys = [
-        "observation.images.base_0_rgb",
-        "observation.images.left_wrist_0_rgb",
-        "observation.images.right_wrist_0_rgb",
-        "observation.state",
-        "observation.language_tokens",
-        "observation.language_attention_mask",
-    ]
-
-    for key in expected_keys:
-        if key in lerobot_observation:
-            shape = tuple(lerobot_observation[key].shape)
-            print(f"\nKey: {key}")
-            print(f"Shape: {shape}")
-            print(f"Dtype: {lerobot_observation[key].dtype}")
-        else:
-            print(f"\nKey '{key}' not found in inputs!")
-
-    # Check language tokens shape
-    if "observation.language_tokens" in lerobot_observation:
-        lang_tokens = lerobot_observation["observation.language_tokens"]
-        print(f"\nLanguage tokens shape: {lang_tokens.shape}")
-        # Should have batch dimension and max_length from tokenizer
-        assert lang_tokens.dim() == 2, f"Expected 2D tensor, got {lang_tokens.dim()}D"
-
-    print("\nPreprocessor outputs verified!")
+    images, _ = policy._preprocess_images(observation)
+    assert images
+    for image in images:
+        assert torch.isfinite(image).all()
+        assert image.min() >= -1 and image.max() <= 1
 
 
 @require_cuda
 @require_hf_token
-def test_pi0_fast_action_generation(policy, preprocessor):
-    """Test PI0Fast LeRobot implementation generates expected actions."""
-    print("\n" + "=" * 80)
-    print("Test: PI0Fast Action Generation Against Expected Values")
-    print("=" * 80)
-
+def test_pi0_fast_action_generation(policy: PI0FastPolicy, preprocessor: PolicyProcessorPipeline) -> None:
+    """Exercise generation and decoding without hardware-specific golden tokens."""
     set_seed_all(42)
+    observation = preprocessor(create_dummy_data())
 
-    print("\nCreating dummy data...")
-    batch = create_dummy_data()
-
-    print("\n[LeRobot] Running inference...")
-    lerobot_observation = preprocessor(deepcopy(batch))
-
-    # Reset seed for inference
-    torch.manual_seed(42)
     with torch.no_grad():
-        lerobot_actions = policy.predict_action_chunk(lerobot_observation)
-        lerobot_actions = lerobot_actions.float().cpu()
+        actions = policy.predict_action_chunk(observation)
 
-    print(f"LeRobot actions shape: {lerobot_actions.shape}")
-    print(f"LeRobot actions mean: {lerobot_actions.mean().item():.6f}")
-    print(f"LeRobot actions std: {lerobot_actions.std().item():.6f}")
-    print(f"LeRobot actions first 5: {lerobot_actions[0, 0, :5]}")
-
-    print("\nExpected values (from original PI0Fast):")
-    print(f"Expected actions shape: {EXPECTED_ACTIONS_SHAPE}")
-    print(f"Expected actions mean: {EXPECTED_ACTIONS_MEAN:.6f}")
-    print(f"Expected actions std: {EXPECTED_ACTIONS_STD:.6f}")
-    print(f"Expected actions first 5: {EXPECTED_ACTIONS_FIRST_5}")
-
-    print("\nAction Comparison:")
-    print("-" * 80)
-
-    # Compare shapes
-    actual_shape = tuple(lerobot_actions.shape)
-    print(f"Actual shape: {actual_shape}")
-
-    assert actual_shape == EXPECTED_ACTIONS_SHAPE, (
-        f"Shape mismatch: {actual_shape} vs {EXPECTED_ACTIONS_SHAPE}"
-    )
-    print(f"Shape matches: {actual_shape}")
-
-    # Compare statistics
-    actual_mean = lerobot_actions.mean().item()
-    actual_std = lerobot_actions.std().item()
-
-    print(f"\nMean: {actual_mean:.6f} (expected: {EXPECTED_ACTIONS_MEAN:.6f})")
-    print(f"Std: {actual_std:.6f} (expected: {EXPECTED_ACTIONS_STD:.6f})")
-
-    # Compare first 5 actions
-    actual_first_5 = lerobot_actions[0, 0, :5]
-    print("\nFirst 5 actions comparison:")
-    print(f"  Actual:   {actual_first_5}")
-    print(f"  Expected: {EXPECTED_ACTIONS_FIRST_5}")
-
-    first_5_diff = torch.abs(actual_first_5 - EXPECTED_ACTIONS_FIRST_5)
-    print(f"  Max diff: {first_5_diff.max().item():.6e}")
-    print(f"  Mean diff: {first_5_diff.mean().item():.6e}")
-
-    # Check with different tolerances
-    tolerances = [1e-5, 1e-4, 1e-3, 1e-2]
-    for tol in tolerances:
-        is_close = torch.allclose(actual_first_5, EXPECTED_ACTIONS_FIRST_5, atol=tol)
-        status = "Success" if is_close else "Failure"
-        print(f"{status}: First 5 actions close (atol={tol}): {is_close}")
-
-    # Assert with reasonable tolerance
-    tolerance = 1e-3
-    assert torch.allclose(actual_first_5, EXPECTED_ACTIONS_FIRST_5, atol=tolerance), (
-        f"First 5 actions differ by more than tolerance ({tolerance})"
-    )
-    print(f"\nSuccess: Actions match expected values within tolerance ({tolerance})!")
-
-    print("\nAction generation test completed (values printed for reference)!")
+    assert tuple(actions.shape) == EXPECTED_ACTIONS_SHAPE
+    assert actions.dtype == torch.float32
+    assert torch.isfinite(actions).all()
 
 
 @require_cuda
 @require_hf_token
-def test_pi0_fast_inference_reproducibility(policy, preprocessor):
-    """Test that PI0Fast inference is reproducible with the same seed."""
-    print("\n" + "=" * 80)
-    print("Test: PI0Fast Inference Reproducibility")
-    print("=" * 80)
-
-    print("\nCreating dummy data...")
+def test_pi0_fast_inference_reproducibility(
+    policy: PI0FastPolicy, preprocessor: PolicyProcessorPipeline
+) -> None:
+    """Inference is repeatable for the same observations and seed on one stack."""
+    set_seed_all(42)
     batch = create_dummy_data()
 
-    # First inference
-    print("\n[Run 1] Running inference...")
     set_seed_all(42)
-    lerobot_observation = preprocessor(deepcopy(batch))
     with torch.no_grad():
-        actions_1 = policy.predict_action_chunk(lerobot_observation)
-        actions_1 = actions_1.float().cpu()
+        actions_1 = policy.predict_action_chunk(preprocessor(deepcopy(batch)))
 
-    # Second inference with same seed
-    print("\n[Run 2] Running inference with same seed...")
     set_seed_all(42)
-    lerobot_observation = preprocessor(deepcopy(batch))
     with torch.no_grad():
-        actions_2 = policy.predict_action_chunk(lerobot_observation)
-        actions_2 = actions_2.float().cpu()
+        actions_2 = policy.predict_action_chunk(preprocessor(deepcopy(batch)))
 
-    print("\nComparing two runs:")
-    print("-" * 80)
-    if torch.allclose(actions_1, actions_2, atol=1e-8):
-        print("Inference is perfectly reproducible!")
-    else:
-        diff = torch.abs(actions_1 - actions_2)
-        print("Small differences detected:")
-        print(f"  Max diff: {diff.max().item():.6e}")
-        print(f"  Mean diff: {diff.mean().item():.6e}")
-
-    assert torch.allclose(actions_1, actions_2, atol=1e-6), "Inference should be reproducible!"
-
-    print("\nInference is reproducible!")
+    torch.testing.assert_close(actions_1, actions_2, rtol=0, atol=1e-6)
 
 
 @require_cuda
 @require_hf_token
-def test_pi0_fast_forward_pass_logits(policy, preprocessor):
-    """Test PI0Fast forward pass and compare logits against expected values."""
-    print("\n" + "=" * 80)
-    print("Test: PI0Fast Forward Pass Logits")
-    print("=" * 80)
-
+def test_pi0_fast_forward_pass_logits(policy: PI0FastPolicy, preprocessor: PolicyProcessorPipeline) -> None:
+    """The training forward pass produces a finite, positive cross-entropy loss."""
     set_seed_all(42)
-
-    print("\nCreating dummy data with action tokens...")
-    batch = create_dummy_data()
-
-    # Preprocess the batch
-    lerobot_observation = preprocessor(deepcopy(batch))
-
-    # For forward pass, we need action tokens
-    # Create dummy action tokens for testing
-    batch_size = 1
-    max_action_tokens = policy.config.max_action_tokens
-
-    # Create dummy action tokens (in practice, these come from the FAST tokenizer)
-    dummy_action_tokens = torch.randint(
-        0, 1000, (batch_size, max_action_tokens), dtype=torch.long, device=DEVICE
+    observation = preprocessor(create_dummy_data())
+    observation[ACTION_TOKENS] = torch.randint(
+        0, 1000, (1, policy.config.max_action_tokens), dtype=torch.long, device=DEVICE
     )
-    dummy_action_masks = torch.ones(batch_size, max_action_tokens, dtype=torch.bool, device=DEVICE)
+    observation[ACTION_TOKEN_MASK] = torch.ones_like(observation[ACTION_TOKENS], dtype=torch.bool)
 
-    # Add action tokens to the observation
-    lerobot_observation[ACTION_TOKENS] = dummy_action_tokens
-    lerobot_observation[ACTION_TOKEN_MASK] = dummy_action_masks
-
-    print("\n[LeRobot] Running forward pass...")
     policy.train()
-    with torch.no_grad():
-        loss, loss_dict = policy.forward(lerobot_observation)
-
-    print(f"Loss: {loss.item():.6f}")
-    print(f"FAST Loss: {loss_dict['ce_loss']:.6f}")
-
-    print("\nForward pass completed successfully!")
-    print(f"Loss value: {loss.item():.6f}")
-
-    # The loss should be a positive value
-    assert loss.item() > 0, "Loss should be positive"
-    assert not torch.isnan(loss), "Loss should not be NaN"
-    assert not torch.isinf(loss), "Loss should not be infinite"
-
-    print("\nForward pass test passed!")
-
-
-@require_cuda
-@require_hf_token
-def test_pi0_fast_action_token_sampling(policy, preprocessor):
-    """Test PI0Fast action token sampling (autoregressive decoding)."""
-    print("\n" + "=" * 80)
-    print("Test: PI0Fast Action Token Sampling")
-    print("=" * 80)
-
-    set_seed_all(42)
-
-    print("\nCreating dummy data...")
-    batch = create_dummy_data()
-
-    print("\n[LeRobot] Preprocessing...")
-    lerobot_observation = preprocessor(deepcopy(batch))
-
-    # Prepare inputs for model
-    images, img_masks = policy._preprocess_images(lerobot_observation)
-    tokens = lerobot_observation[OBS_LANGUAGE_TOKENS]
-    masks = lerobot_observation[OBS_LANGUAGE_ATTENTION_MASK]
-
-    print("\n[LeRobot] Sampling action tokens...")
-    torch.manual_seed(42)
-    with torch.no_grad():
-        action_tokens = policy.model.sample_actions_fast(
-            images,
-            img_masks,
-            tokens,
-            masks,
-            max_decoding_steps=2,
-            temperature=0.0,  # Greedy decoding for reproducibility
-        )
-
-    print(f"Action tokens shape: {action_tokens.shape}")
-    print(f"Action tokens first 10: {action_tokens[0, :10].tolist()}")
-
-    print("\nExpected values (from original PI0Fast):")
-    print(f"Expected shape: {EXPECTED_ACTION_TOKENS_SHAPE}")
-    print(f"Expected first 5: {EXPECTED_ACTION_TOKENS_FIRST_5.tolist()}")
-
-    # Verify shape
-    actual_shape = tuple(action_tokens.shape)
-    print(f"\nActual shape: {actual_shape}")
-
-    assert actual_shape == EXPECTED_ACTION_TOKENS_SHAPE, (
-        f"Shape mismatch: {actual_shape} vs {EXPECTED_ACTION_TOKENS_SHAPE}"
-    )
-
-    # Compare first 5 tokens
-    actual_first_5 = action_tokens[0, :5].cpu()
-    assert torch.equal(actual_first_5, EXPECTED_ACTION_TOKENS_FIRST_5), (
-        f"First 5 tokens mismatch: {actual_first_5} vs {EXPECTED_ACTION_TOKENS_FIRST_5}"
-    )
-
-    print("\nAction token sampling test completed!")
-
-
-@require_cuda
-@require_hf_token
-def test_pi0_fast_detokenization(policy, preprocessor):
-    """Test PI0Fast action detokenization (FAST decoding)."""
-    print("\n" + "=" * 80)
-    print("Test: PI0Fast Action Detokenization")
-    print("=" * 80)
-
-    set_seed_all(42)
-
-    print("\nCreating dummy data...")
-    batch = create_dummy_data()
-
-    print("\n[LeRobot] Preprocessing...")
-    lerobot_observation = preprocessor(deepcopy(batch))
-
-    # Prepare inputs for model
-    images, img_masks = policy._preprocess_images(lerobot_observation)
-    tokens = lerobot_observation[OBS_LANGUAGE_TOKENS]
-    masks = lerobot_observation[OBS_LANGUAGE_ATTENTION_MASK]
-
-    print("\n[LeRobot] Sampling action tokens...")
-    torch.manual_seed(42)
-    with torch.no_grad():
-        action_tokens = policy.model.sample_actions_fast(
-            images,
-            img_masks,
-            tokens,
-            masks,
-            max_decoding_steps=2,
-            temperature=0.0,
-        )
-
-    print(f"Action tokens shape: {action_tokens.shape}")
-
-    # Detokenize
-    print("\n[LeRobot] Detokenizing action tokens...")
-    action_horizon = policy.config.n_action_steps
-    action_dim = policy.config.output_features["action"].shape[0]
-
     try:
-        continuous_actions = policy.detokenize_actions(
-            action_tokens, action_horizon=action_horizon, action_dim=action_dim
+        with torch.no_grad():
+            loss, _ = policy.forward(observation)
+        assert torch.isfinite(loss).all()
+        assert loss.item() > 0
+    finally:
+        policy.eval()
+
+
+@require_cuda
+@require_hf_token
+def test_pi0_fast_action_token_sampling(policy: PI0FastPolicy, preprocessor: PolicyProcessorPipeline) -> None:
+    """Greedy decoding returns valid vocabulary IDs and is repeatable."""
+    set_seed_all(42)
+    observation = preprocessor(create_dummy_data())
+    images, img_masks = policy._preprocess_images(observation)
+    tokens = observation[OBS_LANGUAGE_TOKENS]
+    masks = observation[OBS_LANGUAGE_ATTENTION_MASK]
+
+    with torch.no_grad():
+        action_tokens = policy.model.sample_actions_fast(
+            images, img_masks, tokens, masks, max_decoding_steps=2, temperature=0.0
         )
-        print(f"Continuous actions shape: {continuous_actions.shape}")
-        print(f"Continuous actions mean: {continuous_actions.mean().item():.6f}")
-        print(f"Continuous actions std: {continuous_actions.std().item():.6f}")
-        print(f"Continuous actions first 5: {continuous_actions[0, 0, :5]}")
-        print("\nDetokenization successful!")
-    except Exception as e:
-        print(f"\nDetokenization failed with error: {e}")
-        print("This may be expected if the action tokens are not valid FAST tokens.")
-        print("The test will pass as long as the sampling works correctly.")
+        repeated_tokens = policy.model.sample_actions_fast(
+            images, img_masks, tokens, masks, max_decoding_steps=2, temperature=0.0
+        )
+
+    assert tuple(action_tokens.shape) == EXPECTED_ACTION_TOKENS_SHAPE
+    assert action_tokens.dtype == torch.long
+    vocab_size = policy.model.paligemma_with_expert.paligemma.lm_head.out_features
+    assert (action_tokens >= 0).all() and (action_tokens < vocab_size).all()
+    assert torch.equal(action_tokens, repeated_tokens)
+
+
+@require_cuda
+@require_hf_token
+def test_pi0_fast_detokenization(policy: PI0FastPolicy) -> None:
+    """Decode fixed reference tokens independently of model/backend numerics."""
+    with torch.no_grad():
+        actions = policy.detokenize_actions(
+            REFERENCE_ACTION_TOKENS.to(DEVICE), action_horizon=2, action_dim=32
+        ).cpu()
+
+    assert tuple(actions.shape) == EXPECTED_ACTIONS_SHAPE
+    assert torch.isfinite(actions).all()
+    torch.testing.assert_close(actions[0, 0, :5], EXPECTED_ACTIONS_FIRST_5, rtol=0, atol=1e-3)

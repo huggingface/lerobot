@@ -270,6 +270,10 @@ class SmolVLMWithExpertModel(nn.Module):
         key_states = apply_rope(key_states, position_ids_)
 
         if use_cache:
+            if past_key_values is None:
+                raise ValueError(
+                    "`use_cache=True` requires a `past_key_values` cache (forward() creates one on prefill)."
+                )
             # `DynamicCache` stores tensors as [batch, heads, seq, head_dim]; this module works with
             # [batch, seq, heads, head_dim]. During prefix prefill this stores the (post-RoPE) K/V and
             # returns them unchanged; during denoising it appends the suffix K/V and returns
@@ -412,9 +416,15 @@ class SmolVLMWithExpertModel(nn.Module):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: "DynamicCache | None" = None,
-        inputs_embeds: list[torch.FloatTensor] = None,
+        inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
     ):
+        if inputs_embeds is None:
+            raise ValueError(
+                "`inputs_embeds` is required: pass the [prefix, suffix] embeddings (either may be None)."
+            )
+        # `None` means "no cache", like `False`.
+        use_cache = bool(use_cache)
         models = [self.get_vlm_model().text_model, self.lm_expert]
         model_layers = self.get_model_layers(models)
         for hidden_states in inputs_embeds:

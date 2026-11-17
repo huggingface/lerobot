@@ -19,6 +19,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.scripts.lerobot_dataset_viz import visualize_dataset
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.skip("TODO: add dummy videos")
 def test_visualize_local_dataset(tmp_path, lerobot_dataset_factory):

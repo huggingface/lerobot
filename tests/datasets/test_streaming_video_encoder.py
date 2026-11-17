@@ -34,6 +34,8 @@ from lerobot.datasets.video_utils import (
 )
 from lerobot.utils.constants import OBS_IMAGES
 
+pytestmark = pytest.mark.dataset
+
 # Cross-codec validation tests only fire when the target codec is present
 # in the local FFmpeg build; on other platforms validate() is a no-op.
 _has_videotoolbox = get_codec("h264_videotoolbox") is not None

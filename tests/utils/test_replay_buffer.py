@@ -28,6 +28,8 @@ from lerobot.rl.buffer import BatchTransition, ReplayBuffer, random_crop_vectori
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_STATE, OBS_STR, REWARD  # noqa: E402
 from tests.fixtures.constants import DUMMY_REPO_ID  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 def state_dims() -> list[str]:
     return [OBS_IMAGE, OBS_STATE]

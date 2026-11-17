@@ -175,13 +175,17 @@ class TDMPCPolicy(PreTrainedPolicy):
         device = get_device_from_parameters(self)
 
         batch_size = z.shape[0]
+        action_feature = self.config.action_feature
+        if action_feature is None:
+            raise ValueError("TD-MPC requires an action output feature.")
+        action_dim = action_feature.shape[0]
 
         # Sample Nπ trajectories from the policy.
         pi_actions = torch.empty(
             self.config.horizon,
             self.config.n_pi_samples,
             batch_size,
-            self.config.action_feature.shape[0],
+            action_dim,
             device=device,
         )
         if self.config.n_pi_samples > 0:
@@ -199,9 +203,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         # Model Predictive Path Integral (MPPI) with the cross-entropy method (CEM) as the optimization
         # algorithm.
         # The initial mean and standard deviation for the cross-entropy method (CEM).
-        mean = torch.zeros(
-            self.config.horizon, batch_size, self.config.action_feature.shape[0], device=device
-        )
+        mean = torch.zeros(self.config.horizon, batch_size, action_dim, device=device)
         # Maybe warm start CEM with the mean from the previous step.
         if self._prev_mean is not None:
             mean[:-1] = self._prev_mean[1:]
@@ -213,7 +215,7 @@ class TDMPCPolicy(PreTrainedPolicy):
                 self.config.horizon,
                 self.config.n_gaussian_samples,
                 batch_size,
-                self.config.action_feature.shape[0],
+                action_dim,
                 device=std.device,
             )
             gaussian_actions = torch.clamp(mean.unsqueeze(1) + std.unsqueeze(1) * std_normal_noise, -1, 1)
@@ -268,7 +270,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             (batch,) tensor of values.
         """
         # Initialize return and running discount factor.
-        G, running_discount = 0, 1
+        G, running_discount = 0, 1.0
         # Iterate over the actions in the trajectory to simulate the trajectory using the latent dynamics
         # model. Keep track of return.
         for t in range(actions.shape[0]):
@@ -523,9 +525,13 @@ class TDMPCTOLD(nn.Module):
     def __init__(self, config: TDMPCConfig):
         super().__init__()
         self.config = config
+        action_feature = config.action_feature
+        if action_feature is None:
+            raise ValueError("TD-MPC requires an action output feature.")
+        action_dim = action_feature.shape[0]
         self._encoder = TDMPCObservationEncoder(config)
         self._dynamics = nn.Sequential(
-            nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
+            nn.Linear(config.latent_dim + action_dim, config.mlp_dim),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
             nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -536,7 +542,7 @@ class TDMPCTOLD(nn.Module):
             nn.Sigmoid(),
         )
         self._reward = nn.Sequential(
-            nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
+            nn.Linear(config.latent_dim + action_dim, config.mlp_dim),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
             nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -551,12 +557,12 @@ class TDMPCTOLD(nn.Module):
             nn.Linear(config.mlp_dim, config.mlp_dim),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
-            nn.Linear(config.mlp_dim, config.action_feature.shape[0]),
+            nn.Linear(config.mlp_dim, action_dim),
         )
         self._Qs = nn.ModuleList(
             [
                 nn.Sequential(
-                    nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
+                    nn.Linear(config.latent_dim + action_dim, config.mlp_dim),
                     nn.LayerNorm(config.mlp_dim),
                     nn.Tanh(),
                     nn.Linear(config.mlp_dim, config.mlp_dim),

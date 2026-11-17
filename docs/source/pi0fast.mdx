@@ -62,7 +62,7 @@ lerobot-train-tokenizer \
     --scale 10.0 \
     --normalization_mode QUANTILES \
     --output_dir "./my_fast_tokenizer" \
-    --push_to_hub \
+    --push_to_hub true \
     --hub_repo_id "username/my-action-tokenizer"
 ```
 
@@ -118,6 +118,7 @@ lerobot-train \
 | `--policy.max_action_tokens`           | Maximum number of FAST tokens per action chunk     | `256`                           |
 | `--policy.action_tokenizer_name`       | FAST tokenizer to use                              | `lerobot/fast-action-tokenizer` |
 | `--policy.compile_model=true`          | Enable torch.compile for faster training           | `false`                         |
+| `--policy.optimizer_fused=true`        | Use fused AdamW; ignored on resume                 | `None`                          |
 
 ## Inference
 
@@ -200,7 +201,7 @@ lerobot-train \
   --policy.chunk_size=10 \
   --policy.n_action_steps=10 \
   --policy.max_action_tokens=256 \
-  --policy.empty_cameras=1 \
+  --policy.empty_cameras=1
 ```
 
 We then evaluate the finetuned model using the LeRobot LIBERO implementation, by running the following command:

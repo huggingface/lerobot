@@ -30,6 +30,8 @@ from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig  # noqa: 
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 # ---------------------------------------------------------------------------
 # Helpers (reuse patterns from tests/policies/test_gaussian_actor_policy.py)
 # ---------------------------------------------------------------------------

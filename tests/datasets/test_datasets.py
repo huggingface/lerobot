@@ -55,6 +55,8 @@ from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_MOTOR_FEATURES,
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.utils import require_x86_64_kernel
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.fixture
 def image_dataset(tmp_path, empty_lerobot_dataset_factory):
@@ -590,22 +592,12 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
 # - [ ] remove old tests
 
 
+# One video and one image dataset per env: the aloha task / human / scripted variants share one schema.
 ENV_DATASET_POLICY_TRIPLETS = [
-    ("aloha", dataset, "act")
-    for dataset in [
-        "lerobot/aloha_sim_insertion_human",
-        "lerobot/aloha_sim_insertion_scripted",
-        "lerobot/aloha_sim_transfer_cube_human",
-        "lerobot/aloha_sim_transfer_cube_scripted",
-        "lerobot/aloha_sim_insertion_human_image",
-        "lerobot/aloha_sim_insertion_scripted_image",
-        "lerobot/aloha_sim_transfer_cube_human_image",
-        "lerobot/aloha_sim_transfer_cube_scripted_image",
-    ]
-] + [
-    ("pusht", dataset, policy)
-    for dataset in ["lerobot/pusht", "lerobot/pusht_image"]
-    for policy in ["diffusion", "vqbet"]
+    ("aloha", "lerobot/aloha_sim_insertion_human", "act"),
+    ("aloha", "lerobot/aloha_sim_insertion_human_image", "act"),
+    ("pusht", "lerobot/pusht", "diffusion"),
+    ("pusht", "lerobot/pusht_image", "vqbet"),
 ]
 
 

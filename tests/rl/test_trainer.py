@@ -26,6 +26,8 @@ from lerobot.rl.algorithms.configs import TrainingStats  # noqa: E402
 from lerobot.rl.trainer import RLTrainer  # noqa: E402
 from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 class _DummyRLAlgorithmConfig:
     """Dummy config for testing."""

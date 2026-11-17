@@ -100,7 +100,7 @@ def test_molmoact2_policy_registration():
     assert cfg.per_episode_seed is False
     assert cfg.eval_seed is None
     assert cfg.normalize_language is True
-    assert cfg.dtype == "bfloat16"
+    assert cfg.dtype == torch.bfloat16
     assert cfg.llm_residual_dropout == 0.1
     assert not hasattr(cfg, "model_dtype")
     assert cfg.get_scheduler_preset().num_decay_steps == 24_000
@@ -1613,6 +1613,8 @@ def test_molmoact2_norm_metadata_is_initialization_only(tmp_path, monkeypatch):
 
     molmoact2_modeling._apply_norm_tag_metadata(config)
     config._save_pretrained(checkpoint_path)
+    # Weight resolution checks for this file before calling the mocked loader.
+    (checkpoint_path / "model.safetensors").touch()
     stats_path.unlink()
     reloaded = PreTrainedConfig.from_pretrained(checkpoint_path)
 
@@ -2036,14 +2038,14 @@ def test_train_mode_vlm_rejects_unknown_value():
 
 
 def test_molmoact2_pi05_style_precision_config():
-    assert MolmoAct2Config().dtype == "bfloat16"
-    assert MolmoAct2Config(dtype="float32").dtype == "float32"
+    assert MolmoAct2Config().dtype == torch.bfloat16
+    assert MolmoAct2Config(dtype=torch.float32).dtype == torch.float32
 
     with pytest.raises(ValueError, match="Unsupported dtype"):
-        MolmoAct2Config(dtype="float64")
+        MolmoAct2Config(dtype=torch.float64)
 
     with pytest.raises(ValueError, match="Unsupported dtype"):
-        MolmoAct2Config(dtype="float16")
+        MolmoAct2Config(dtype=torch.float16)
 
 
 def test_molmoact2_pi05_compile_defaults():
@@ -2165,14 +2167,8 @@ def test_molmoact2_compile_applies_precision_safe_action_partition(monkeypatch):
     policy = _make_compile_test_policy()
     backbone = policy._backbone()
     state_dict_keys = tuple(policy.state_dict())
-    matmul_precision_calls = []
     lru_cache_calls = []
     ddp_optimizer_disable_calls = []
-    monkeypatch.setattr(
-        torch,
-        "set_float32_matmul_precision",
-        lambda precision: matmul_precision_calls.append(precision),
-    )
     monkeypatch.setattr(
         molmoact2_modeling,
         "_set_dynamo_lru_cache",
@@ -2204,7 +2200,6 @@ def test_molmoact2_compile_applies_precision_safe_action_partition(monkeypatch):
         "fullgraph": False,
     }
 
-    assert matmul_precision_calls == ["high"]
     assert lru_cache_calls == [False]
     assert ddp_optimizer_disable_calls == [True]
     assert tuple(policy.state_dict()) == state_dict_keys
@@ -2219,7 +2214,6 @@ def test_molmoact2_compile_uses_automatic_shapes_without_gradient_checkpointing(
     backbone = policy._backbone()
     lru_cache_calls = []
     ddp_optimizer_disable_calls = []
-    monkeypatch.setattr(torch, "set_float32_matmul_precision", lambda precision: None)
     monkeypatch.setattr(
         molmoact2_modeling,
         "_set_dynamo_lru_cache",
@@ -2264,7 +2258,6 @@ def test_molmoact2_compile_marks_only_context_sequence_dynamic(monkeypatch):
 def test_molmoact2_compile_is_limited_to_action_expert_for_every_train_mode(monkeypatch, train_mode_vlm):
     policy = _make_compile_test_policy(train_mode_vlm=train_mode_vlm)
     backbone = policy._backbone()
-    monkeypatch.setattr(torch, "set_float32_matmul_precision", lambda precision: None)
     monkeypatch.setattr(molmoact2_modeling, "_set_dynamo_lru_cache", lambda enabled: None)
     monkeypatch.setattr(molmoact2_modeling, "_disable_dynamo_ddp_optimizer", lambda: None)
 
@@ -2287,7 +2280,6 @@ def test_molmoact2_compile_is_limited_to_action_expert_for_every_train_mode(monk
 
 def test_molmoact2_checkpoint_compile_requires_dynamo_cache_order_control(monkeypatch):
     policy = _make_compile_test_policy()
-    monkeypatch.setattr(torch, "set_float32_matmul_precision", lambda precision: None)
 
     class MissingEvalFrame:
         pass
@@ -2308,18 +2300,11 @@ def test_molmoact2_checkpoint_compile_disables_dynamo_ddp_optimizer(monkeypatch)
         torch._dynamo.config.optimize_ddp = original_optimize_ddp
 
 
-def test_molmoact2_compile_disabled_is_a_noop(monkeypatch):
+def test_molmoact2_compile_disabled_is_a_noop():
     policy = _make_compile_test_policy(compile_model=False)
-    matmul_precision_calls = []
-    monkeypatch.setattr(
-        torch,
-        "set_float32_matmul_precision",
-        lambda precision: matmul_precision_calls.append(precision),
-    )
 
     policy._apply_compile()
 
-    assert matmul_precision_calls == []
     assert all(module.compile_calls == [] for module in policy.modules() if hasattr(module, "compile_calls"))
 
 
@@ -2342,7 +2327,7 @@ def test_molmoact2_train_cli_choice_remains_available(tmp_path):
 def test_model_inputs_keep_continuous_values_float32_before_autocast():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(dtype="bfloat16")
+    policy.config = SimpleNamespace(dtype=torch.bfloat16)
 
     model_inputs = policy._model_inputs(
         {
@@ -2438,7 +2423,7 @@ def test_bfloat16_parameter_policy_keeps_action_expert_float32():
 
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(dtype="bfloat16")
+    policy.config = SimpleNamespace(dtype=torch.bfloat16)
     policy.model = DummyModel()
 
     policy._apply_bfloat16_parameter_policy()
@@ -2475,7 +2460,7 @@ def test_bfloat16_parameter_policy_keeps_action_expert_float32():
 
     float32_policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(float32_policy)
-    float32_policy.config = SimpleNamespace(dtype="float32")
+    float32_policy.config = SimpleNamespace(dtype=torch.float32)
     float32_policy.model = DummyModel()
 
     float32_policy._apply_bfloat16_parameter_policy()
@@ -2637,7 +2622,7 @@ def test_embedding_boundary_uses_active_autocast_dtype():
 def test_bfloat16_policy_autocast_bridges_fp32_heads_to_bf16_blocks():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(dtype="bfloat16")
+    policy.config = SimpleNamespace(dtype=torch.bfloat16)
     policy.fp32_head = torch.nn.Linear(4, 4).to(dtype=torch.float32)
     policy.bf16_block = torch.nn.Linear(4, 4).to(dtype=torch.bfloat16)
 
@@ -2652,7 +2637,7 @@ def test_bfloat16_policy_autocast_bridges_fp32_heads_to_bf16_blocks():
 def test_float32_policy_disables_surrounding_autocast():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(dtype="float32")
+    policy.config = SimpleNamespace(dtype=torch.float32)
     policy.fp32_layer = torch.nn.Linear(4, 4).to(dtype=torch.float32)
     inputs = torch.ones(2, 4, dtype=torch.float32)
 
@@ -2668,7 +2653,7 @@ def test_float32_policy_disables_surrounding_autocast():
 def test_bfloat16_policy_rejects_device_without_autocast(monkeypatch):
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(dtype="bfloat16")
+    policy.config = SimpleNamespace(dtype=torch.bfloat16)
     policy.layer = torch.nn.Linear(2, 2)
     monkeypatch.setattr(
         torch.amp.autocast_mode,
@@ -2765,7 +2750,7 @@ def test_bfloat16_checkpoint_reload_happens_after_dtype_tree_is_applied(monkeypa
         action_mode="both",
         train_mode_vlm="fft",
         freeze_embedding=False,
-        dtype="bfloat16",
+        dtype=torch.bfloat16,
     )
 
     policy._load_hf_model()
@@ -2890,7 +2875,7 @@ def test_load_hf_model_accepts_max_action_horizon_schema(monkeypatch):
         chunk_size=10,
         n_action_steps=10,
         action_mode="both",
-        dtype="float32",
+        dtype=torch.float32,
     )
 
     policy._load_hf_model()
@@ -3122,7 +3107,7 @@ def test_saved_continuous_checkpoint_forwards_outer_mask_to_hf_generation():
     policy.config = MolmoAct2Config(
         action_mode="continuous",
         inference_action_mode="continuous",
-        dtype="float32",
+        dtype=torch.float32,
         chunk_size=2,
         n_action_steps=2,
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
@@ -3486,7 +3471,7 @@ def test_forward_reduction_none_returns_per_sample_discrete_loss():
     policy.config = SimpleNamespace(
         action_mode="discrete",
         inference_action_mode="discrete",
-        dtype="float32",
+        dtype=torch.float32,
         softmax_auxiliary_loss=True,
         softmax_auxiliary_loss_scale=1e-4,
         discrete_loss_token_weighting="none",
@@ -3630,7 +3615,7 @@ def test_discrete_predict_action_chunk_uses_hf_cached_generation_path():
     policy.config = MolmoAct2Config(
         action_mode="discrete",
         inference_action_mode="discrete",
-        dtype="float32",
+        dtype=torch.float32,
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
         discrete_generation_max_steps=None,
         discrete_action_tokenizer="unused",
@@ -3726,7 +3711,7 @@ def test_discrete_predict_action_chunk_uses_graph_backed_ar_decode_when_enabled(
     policy.config = MolmoAct2Config(
         action_mode="discrete",
         inference_action_mode="discrete",
-        dtype="float32",
+        dtype=torch.float32,
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
         discrete_generation_max_steps=None,
         discrete_action_tokenizer="unused",

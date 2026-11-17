@@ -21,6 +21,7 @@ cover the parts that are easy to get silently wrong — the 994-D decoder input 
 IsaacLab/MuJoCo reordering, the token hold/neutral-seed logic, and the joint-target math.
 """
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -162,10 +163,10 @@ class TestFeatureSchemas:
             f"{swb.TOKEN_STATE_PREFIX}.{i}.pos" for i in range(swb.TOKEN_DIM)
         }
 
-    def test_action_obs_keys_disjoint(self, make_controller):
-        """A shared prefix would make the action token and its echo collide in a dataset frame."""
+    def test_echo_uses_action_keys(self, make_controller):
+        """Rollout holds and homes to observed values only under keys it can send back."""
         controller, _ = make_controller()
-        assert not set(controller.action_ft) & set(controller.observation_ft)
+        assert set(controller.observation_ft) == set(controller.action_ft)
 
     def test_gains_and_home_pose_are_exposed(self, make_controller):
         """UnitreeG1.connect() reads these off the controller."""
@@ -256,11 +257,33 @@ class TestTokenHandling:
         )
         np.testing.assert_allclose(echoed, token, atol=1e-6)
 
-    def test_state_zeros_before_first_tick(self, make_controller):
+    def test_state_neutral_before_first_tick(self, make_controller):
         controller, _ = make_controller()
         state = controller.observation_state()
-        assert len(state) == swb.TOKEN_DIM
-        assert all(v == 0.0 for v in state.values())
+        echoed = [state[f"{swb.TOKEN_STATE_PREFIX}.{i}.pos"] for i in range(swb.TOKEN_DIM)]
+        np.testing.assert_allclose(echoed, NEUTRAL_TOKEN)
+
+
+class TestDeploymentProfile:
+    """The maintained remote-inference profile must describe this controller's contract."""
+
+    PROFILE = Path(__file__).parents[2] / "examples/remote_inference/unitree_g1_sonic.yaml"
+
+    def test_profile_pins_the_token_contract(self):
+        import draccus
+
+        from lerobot.remote_inference.configs import ServerConfig
+
+        cfg = draccus.parse(ServerConfig, config_path=str(self.PROFILE), args=[])
+        token_names = tuple(f"{swb.TOKEN_ACTION_PREFIX}.{i}.pos" for i in range(swb.TOKEN_DIM))
+
+        assert cfg.robot_type == "unitree_g1"
+        assert cfg.action_feature.names == token_names
+        state = next(feature for feature in cfg.features if feature.name == "observation.state")
+        # The client sends the echo under the same keys, and the server checks names and order.
+        assert state.names == token_names
+        assert state.shape == cfg.action_feature.shape == (swb.TOKEN_DIM,)
+        assert state.semantics == cfg.action_feature.semantics == cfg.semantics
 
 
 class TestDecoderInputAssembly:

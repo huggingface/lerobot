@@ -58,7 +58,7 @@ LeRobot disables dataset image augmentation by default. Keep
 original MolmoAct2 transform recipe is not LeRobot's generic transform default,
 so the first command also pins its 95% crop, 5-degree rotation, and color
 jitter explicitly. The original recipe additionally applies a Gaussian blur
-with probability 0.2; LeRobot's generic `RandomSubsetApply` configuration cannot
+with probability 0.2; LeRobot's generic transform-subset configuration cannot
 express that optional fourth transform without sometimes dropping one of the
 three required transforms.
 
@@ -108,9 +108,8 @@ accelerate launch \
   --policy.normalize_gripper=false \
   --policy.enable_knowledge_insulation=false \
   --policy.push_to_hub=false \
-  --wandb.enable=true \
-  --wandb.entity=<wandb_entity> \
-  --wandb.project=<wandb_project> \
+  --trackio.enable=true \
+  --trackio.project=<trackio_project> \
   --job_name=<job_name> \
   --output_dir=outputs/<job_name> \
   --steps=10000 \
@@ -154,9 +153,8 @@ accelerate launch \
   --policy.num_flow_timesteps=8 \
   --policy.gradient_checkpointing=true \
   --policy.compile_model=true \
-  --wandb.enable=true \
-  --wandb.entity=<wandb_entity> \
-  --wandb.project=<wandb_project> \
+  --trackio.enable=true \
+  --trackio.project=<trackio_project> \
   --job_name=<job_name> \
   --output_dir=outputs/<job_name> \
   --steps=10000 \
@@ -302,7 +300,7 @@ python src/lerobot/scripts/augment_dataset_quantile_stats.py \
   --skip-images
 ```
 
-`--skip-images` keeps the existing image statistics and avoids video decoding when only `STATE`/`ACTION` need recomputing, and `--root` reads a local dataset instead of the Hub. These values are histogram estimates, subject to discretization and rebinning error, so they can differ from the conservative ones — which changes MolmoAct2's normalized targets and therefore its loss scale. Statistics already saved inside an existing checkpoint are not affected.
+`--skip-images` keeps the existing image statistics and avoids downloading or decoding video data when only `STATE`/`ACTION` need recomputing, and `--root` reads a local dataset instead of the Hub. These values are histogram estimates, subject to discretization and rebinning error, so they can differ from the conservative ones — which changes MolmoAct2's normalized targets and therefore its loss scale. Statistics already saved inside an existing checkpoint are not affected.
 
 Alternatively, train MolmoAct2 with mean/std normalization:
 
@@ -526,7 +524,7 @@ differences from the original training repository are:
   one LeRobot sample per item and uses batch-local padding with an inferred
   maximum sequence-length guard.
 - The LeRobot port follows LeRobot's optimizer, scheduler, checkpoint saving,
-  dataset transforms, image augmentation, and Weights & Biases logging
+  dataset transforms, image augmentation, and Trackio logging
   conventions.
 - The original training path supports mixed action horizons by padding to
   `max_action_horizon` and masking padded horizon slots in the action expert

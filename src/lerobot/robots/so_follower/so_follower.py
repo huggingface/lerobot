@@ -18,13 +18,9 @@ import logging
 import time
 from functools import cached_property
 
-from lerobot.cameras import make_cameras_from_configs
+from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -32,6 +28,27 @@ from ..utils import ensure_safe_goal_position
 from .config_so_follower import SOFollowerRobotConfig
 
 logger = logging.getLogger(__name__)
+
+_HOMING_POSITION_DIAGRAM = r"""
+       ╭─────┬────────────────────┬──────╮ ◉╲═════╗   ← moveable claw
+       │     │      forearm       │  ▤▤  │╤══╲════╝   ← fixed claw
+       ╰┬───┬┴────────────────────┴──────┴┴═══════╝
+        │   │
+        │   │
+        │   │
+        │   │   upper arm
+        │   │
+        │   │
+        │   │
+   ╭────┴───┴────╮
+   │   base ◉    │
+   ╰──┬───────┬──╯
+  ╭───┴───────┴───╮
+  │▓▓▓ C-clamp ▓▓▓│
+  ╰───────────────╯
+ ═══════════════════════════════════════════════════
+                table edge
+"""
 
 
 class SOFollower(Robot):
@@ -42,13 +59,14 @@ class SOFollower(Robot):
 
     config_class = SOFollowerRobotConfig
     name = "so_follower"
+    supports_position_hold = True
 
     def __init__(self, config: SOFollowerRobotConfig):
         super().__init__(config)
         self.config = config
         # choose normalization mode depending on config if available
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
@@ -69,11 +87,12 @@ class SOFollower(Robot):
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
         features: dict[str, tuple] = {}
-        for cam in self.cameras:
-            if getattr(self.cameras[cam], "use_rgb", True):
-                features[cam] = (self.cameras[cam].height, self.cameras[cam].width, 3)
-            if getattr(self.cameras[cam], "use_depth", False):
-                features[f"{cam}_depth"] = (self.cameras[cam].height, self.cameras[cam].width, 1)
+        for cam_key, cam in self.cameras.items():
+            if getattr(cam, "use_rgb", True):
+                features[cam_key] = (cam.height, cam.width, 3)
+            # Same predicate as get_observation(), so the two key sets always agree.
+            if isinstance(cam, DepthCamera) and cam.use_depth:
+                features[f"{cam_key}_depth"] = (cam.height, cam.width, 1)
         return features
 
     @cached_property
@@ -113,45 +132,12 @@ class SOFollower(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        if self.calibration:
-            # Calibration file exists, ask user whether to use it or run new calibration
-            user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
-                self.bus.write_calibration(self.calibration)
-                return
+        if self._keep_calibration_file(self.bus):
+            return
 
-        logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-
-        input(f"Move {self} to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings()
-
-        # Attempt to call record_ranges_of_motion with a reduced motor set when appropriate.
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
-        print(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
-        )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
-
-        self.calibration = {}
-        for motor, m in self.bus.motors.items():
-            self.calibration[motor] = MotorCalibration(
-                id=m.id,
-                drive_mode=0,
-                homing_offset=homing_offsets[motor],
-                range_min=range_mins[motor],
-                range_max=range_maxes[motor],
-            )
-
+        print(_HOMING_POSITION_DIAGRAM)
+        print("Video walkthrough: https://huggingface.co/docs/lerobot/main/en/so101#calibration-video")
+        self.calibration = self.bus.record_calibration("position", full_turn_motors=["wrist_roll"])
         self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
@@ -160,7 +146,7 @@ class SOFollower(Robot):
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             for motor in self.bus.motors:
-                self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+                self.bus.set_operating_mode("position", motor)
                 self.bus.write("P_Coefficient", motor, self.config.position_p_coefficient)
                 self.bus.write("I_Coefficient", motor, self.config.position_i_coefficient)
                 self.bus.write("D_Coefficient", motor, self.config.position_d_coefficient)
@@ -171,10 +157,7 @@ class SOFollower(Robot):
                     self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
 
     def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors()
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
@@ -193,7 +176,7 @@ class SOFollower(Robot):
                 dt_ms = (time.perf_counter() - start) * 1e3
                 logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
-            if getattr(cam, "use_depth", False):
+            if isinstance(cam, DepthCamera) and cam.use_depth:
                 start = time.perf_counter()
                 obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
                 dt_ms = (time.perf_counter() - start) * 1e3

@@ -36,6 +36,8 @@ from lerobot.datasets.dataset_writer import DatasetWriter
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 SIMPLE_FEATURES = {
     "state": {"dtype": "float32", "shape": (2,), "names": None},
 }
