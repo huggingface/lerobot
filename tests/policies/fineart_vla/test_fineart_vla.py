@@ -19,7 +19,6 @@
 import json
 import shutil
 from dataclasses import asdict, dataclass
-from types import SimpleNamespace
 
 import draccus
 import numpy as np
@@ -214,7 +213,7 @@ def test_processor_save_load_roundtrip_embeds_action_tokenizer(tmp_path, monkeyp
     # The checkpoint must be self-contained: the original tokenizer directory is gone.
     shutil.rmtree(source_tokenizer)
     loaded, _ = make_pre_post_processors(
-        SimpleNamespace(type="fineart_vla", auto_fit_fast_tokenizer=False), pretrained_path=str(checkpoint)
+        FineARTVLAConfig(device="cpu", auto_fit_fast_tokenizer=False), pretrained_path=str(checkpoint)
     )
     assert asdict(loaded.steps[1].recipe) == asdict(recipe)
     torch.testing.assert_close(loaded.steps[0].state_dict()["action.min"], torch.tensor([-1.0, -2.0]))

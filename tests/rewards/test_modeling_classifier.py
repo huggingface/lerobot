@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -19,6 +20,27 @@ from lerobot.rewards.classifier.configuration_classifier import RewardClassifier
 from lerobot.rewards.classifier.modeling_classifier import ClassifierOutput
 from lerobot.utils.constants import OBS_IMAGE, REWARD
 from tests.utils import skip_if_package_missing
+
+
+@pytest.fixture
+def local_encoder(monkeypatch):
+    """Exercise a real ResNet without downloading weights or running Hub code."""
+    transformers = pytest.importorskip("transformers")
+    encoder = transformers.ResNetModel(
+        transformers.ResNetConfig(
+            embedding_size=8,
+            hidden_sizes=[8, 16, 32, 64],
+            depths=[1, 1, 1, 1],
+            layer_type="basic",
+        )
+    )
+
+    def from_pretrained(model_name, *, trust_remote_code):
+        assert model_name == "lerobot/resnet10"
+        assert trust_remote_code is False
+        return encoder
+
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", from_pretrained)
 
 
 def test_classifier_output():
@@ -35,7 +57,7 @@ def test_classifier_output():
 
 
 @skip_if_package_missing("transformers")
-def test_binary_classifier_with_default_params():
+def test_binary_classifier_with_default_params(local_encoder):
     from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     config = RewardClassifierConfig()
@@ -76,7 +98,7 @@ def test_binary_classifier_with_default_params():
 
 
 @skip_if_package_missing("transformers")
-def test_multiclass_classifier():
+def test_multiclass_classifier(local_encoder):
     from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     num_classes = 5
@@ -115,7 +137,7 @@ def test_multiclass_classifier():
 
 
 @skip_if_package_missing("transformers")
-def test_default_device():
+def test_default_device(local_encoder):
     from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     config = RewardClassifierConfig()
@@ -131,7 +153,7 @@ def test_default_device():
 
 
 @skip_if_package_missing("transformers")
-def test_explicit_device_setup():
+def test_explicit_device_setup(local_encoder):
     from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     config = RewardClassifierConfig(device="cpu")
