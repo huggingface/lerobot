@@ -237,3 +237,42 @@ def test_cli_consent_overrides_checkpoint(monkeypatch, tmp_path, build, field, c
     cfg = build()
     assert getattr(cfg, field).trust_remote_code is True
     assert not getattr(cfg, "trust_remote_code", False)
+
+
+@pytest.mark.parametrize("source", ["hub", "directory", "checkpoint_file", "recipe"])
+@pytest.mark.parametrize("caller_trust", [None, False, True])
+@pytest.mark.parametrize(
+    ("field", "subclass"),
+    [("policy", _DummyBackfillConfig), ("reward_model", _DummyRewardBackfillConfig)],
+)
+def test_training_checkpoint_consent_is_reset_before_construction(
+    monkeypatch, tmp_path, source, caller_trust, field, subclass
+):
+    import lerobot.configs.train as train_module
+
+    observed = []
+    original = subclass.__post_init__
+
+    def post_init(self):
+        observed.append(self.trust_remote_code)
+        original(self)
+
+    monkeypatch.setattr(subclass, "__post_init__", post_init)
+    path = tmp_path / ("recipe.json" if source == "recipe" else "train_config.json")
+    path.write_text(
+        json.dumps(
+            {
+                "dataset": {"repo_id": "user/data"},
+                field: {"type": subclass.get_choice_name(subclass), "trust_remote_code": True},
+            }
+        )
+    )
+    monkeypatch.setattr(train_module, "hf_hub_download", lambda **kwargs: str(path))
+    checkpoint = "user/checkpoint" if source == "hub" else tmp_path if source == "directory" else path
+    args = [] if caller_trust is None else [f"--{field}.trust_remote_code={str(caller_trust).lower()}"]
+
+    config = TrainPipelineConfig.from_pretrained(checkpoint, cli_args=args)
+
+    expected = source == "recipe" if caller_trust is None else caller_trust
+    assert observed == [expected]
+    assert getattr(config, field).trust_remote_code is expected

@@ -467,6 +467,9 @@ class TrainPipelineConfig(HubMixin):
         **kwargs: Any,
     ) -> "TrainPipelineConfig":
         model_id = str(pretrained_name_or_path)
+        # Explicit recipe files may contain caller consent. Hub/directory loads and
+        # the canonical checkpoint filename must require fresh consent on reload.
+        is_checkpoint = not Path(model_id).is_file() or Path(model_id).name == TRAIN_CONFIG_NAME
         config_file: str | None = None
         if Path(model_id).is_dir():
             if TRAIN_CONFIG_NAME in os.listdir(model_id):
@@ -505,12 +508,19 @@ class TrainPipelineConfig(HubMixin):
         if config_file is not None and config_file.endswith(".json"):
             with open(config_file) as f:
                 config = json.load(f)
-            migrated = False
+            updated = False
+            if is_checkpoint:
+                # Reset before draccus constructs nested configs: their __post_init__
+                # may load custom tokenizer code. Explicit CLI overrides apply below.
+                for config_key in ("policy", "reward_model"):
+                    if isinstance(config.get(config_key), dict):
+                        config[config_key]["trust_remote_code"] = False
+                        updated = True
             for migrate in (_migrate_legacy_rabc_fields, _migrate_legacy_wandb_section):
                 migrated_config = migrate(config)
                 if migrated_config is not None:
-                    config, migrated = migrated_config, True
-            if migrated:
+                    config, updated = migrated_config, True
+            if updated:
                 with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
                     json.dump(config, f)
                     config_file = f.name

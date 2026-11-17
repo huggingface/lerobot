@@ -569,3 +569,39 @@ def test_action_tokenizer_loaders_receive_consent(load_pipeline, monkeypatch, co
     )
     for loader in loaders:
         assert loader.from_pretrained.call_args.kwargs["trust_remote_code"] is consent
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_reward_classifier_pipeline_consent_reaches_encoder(load_pipeline, monkeypatch, tmp_path, consent):
+    transformers = pytest.importorskip("transformers")
+    from lerobot.configs import rewards as rewards_module
+    from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig  # noqa: F401
+
+    config_file = tmp_path / "classifier_config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "type": "reward_classifier",
+                "device": "cpu",
+                "trust_remote_code": True,
+                "model_name": "user/custom-encoder",
+                "input_features": {"observation.images.top": {"type": "VISUAL", "shape": [3, 16, 16]}},
+            }
+        )
+    )
+    monkeypatch.setattr(rewards_module, "hf_hub_download", lambda **kwargs: str(config_file))
+    # Keep pipeline loading, classifier config parsing and model construction real;
+    # stop only at the external encoder loader, before downloading weights.
+    encoder_loader = MagicMock(side_effect=RuntimeError("reached encoder loader"))
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", encoder_loader)
+
+    with pytest.raises(ValueError, match="reached encoder loader"):
+        load_pipeline(
+            {
+                "registry_name": "reward_classifier_processor",
+                "config": {"pretrained_path": "user/classifier"},
+            },
+            trust_remote_code=consent,
+        )
+
+    encoder_loader.assert_called_once_with("user/custom-encoder", trust_remote_code=consent)
