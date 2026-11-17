@@ -39,7 +39,7 @@ import datasets
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.__version__ import __version__
@@ -413,7 +413,34 @@ def _read_schema(path: Path) -> pa.Schema:
     return schema
 
 
-def load_scores(dataset: LeRobotDataset, name: str, columns: Sequence[str] | None = None) -> datasets.Dataset:
+def _get_scores_path(dataset: LeRobotDataset, name: str, *, download: bool, token: str | bool | None) -> Path:
+    path = _scores_path(dataset, name)
+    if path.is_file() or not download:
+        return path
+    root = Path(dataset.root)
+    in_snapshot = root.parent.name == "snapshots" and root.is_relative_to(HF_LEROBOT_HUB_CACHE)
+    location = {"cache_dir": HF_LEROBOT_HUB_CACHE} if in_snapshot else {"local_dir": root}
+    downloaded_root = Path(
+        snapshot_download(
+            dataset.repo_id,
+            repo_type="dataset",
+            revision=root.name if in_snapshot else dataset.revision,
+            allow_patterns=[f"{SCORES_DIR}/{path.name}"],
+            token=token,
+            **location,
+        )
+    )
+    return downloaded_root / SCORES_DIR / path.name
+
+
+def load_scores(
+    dataset: LeRobotDataset,
+    name: str,
+    columns: Sequence[str] | None = None,
+    *,
+    download: bool = True,
+    token: str | bool | None = None,
+) -> datasets.Dataset:
     """Load named scores.
 
     Args:
@@ -421,23 +448,36 @@ def load_scores(dataset: LeRobotDataset, name: str, columns: Sequence[str] | Non
         name: Score name.
         columns: Columns to load. Defaults to every column, including ``index``,
             ``episode_index`` and ``frame_index``.
+        download: Download this named score file if absent locally. Set to ``False`` for local-only reads.
+        token: Optional authentication token for the download.
 
     Returns:
         The scores as a Hugging Face dataset.
     """
-    path = _scores_path(dataset, name)
-    _read_schema(path)
-    table = pq.read_table(path, columns=None if columns is None else list(columns))
+    path = _get_scores_path(dataset, name, download=download, token=token)
+    schema = _read_schema(path)
+    requested = schema.names if columns is None else list(columns)
+    table = pq.read_table(
+        path,
+        columns=requested,
+    )
     return datasets.Dataset(table)
 
 
-def load_scores_info(dataset: LeRobotDataset, name: str) -> dict[str, Any]:
-    """Return the ``info`` dict that named scores were written with."""
-    return json.loads(_read_schema(_scores_path(dataset, name)).metadata[_INFO_KEY])
+def load_scores_info(
+    dataset: LeRobotDataset,
+    name: str,
+    *,
+    download: bool = True,
+    token: str | bool | None = None,
+) -> dict[str, Any]:
+    """Read score info, downloading the named file if absent and ``download=True``."""
+    path = _get_scores_path(dataset, name, download=download, token=token)
+    return json.loads(_read_schema(path).metadata[_INFO_KEY])
 
 
 def list_scores(dataset: LeRobotDataset) -> list[str]:
-    """List the names of the scores published for a dataset."""
+    """List locally available score names without downloading files."""
     directory = Path(dataset.root) / SCORES_DIR
     return sorted(path.stem for path in directory.glob("*.parquet") if path.is_file())
 

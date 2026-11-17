@@ -56,7 +56,7 @@ import pandas as pd
 from huggingface_hub import snapshot_download
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.scores import list_scores, load_scores
+from lerobot.datasets.scores import load_scores
 from lerobot.rewards.scoring import load_signal_descriptors
 
 GRAPH_Y_TOP_FRAC = 0.01
@@ -237,11 +237,11 @@ def load_progress_data(
     Returns:
         Sorted (N, 2) array of (frame_index, value), or None if unavailable.
     """
-    available = list_scores(dataset)
-    if score_name not in available:
-        logging.warning("Scores %r not found; available scores: %s", score_name, available)
+    try:
+        signals = sorted(load_signal_descriptors(dataset, score_name))
+    except FileNotFoundError:
+        logging.warning("Scores %r not found", score_name)
         return None
-    signals = sorted(load_signal_descriptors(dataset, score_name))
     if not signals:
         logging.warning("No signals in scores %r", score_name)
         return None

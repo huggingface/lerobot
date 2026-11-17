@@ -236,7 +236,9 @@ def test_data_download_forwards_token(tmp_path, monkeypatch, token):
     assert snapshot_download.call_args.kwargs["token"] is token
 
 
-def test_episode_download_includes_scores(tmp_path, monkeypatch):
+@pytest.mark.parametrize("episodes", [None, [0]])
+@pytest.mark.parametrize("download_videos", [True, False])
+def test_data_download_excludes_scores(tmp_path, monkeypatch, episodes, download_videos):
     snapshot_root = tmp_path / "snapshot"
     snapshot_download = Mock(return_value=str(snapshot_root))
     monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", snapshot_download)
@@ -244,7 +246,7 @@ def test_episode_download_includes_scores(tmp_path, monkeypatch):
     dataset = LeRobotDataset.__new__(LeRobotDataset)
     dataset.repo_id = DUMMY_REPO_ID
     dataset.revision = "main"
-    dataset.episodes = [0]
+    dataset.episodes = episodes
     dataset._requested_root = None
     dataset.meta = SimpleNamespace(root=None)
     dataset.reader = SimpleNamespace(
@@ -252,9 +254,15 @@ def test_episode_download_includes_scores(tmp_path, monkeypatch):
         get_episodes_file_paths=Mock(return_value=["data/chunk-000/file-000.parquet"]),
     )
 
-    dataset._download()
+    dataset._download(download_videos=download_videos)
 
-    assert "scores/" in snapshot_download.call_args.kwargs["allow_patterns"]
+    patterns = snapshot_download.call_args.kwargs
+    if episodes is None:
+        assert patterns["allow_patterns"] is None
+    else:
+        assert "scores/" not in patterns["allow_patterns"]
+    assert "scores/" in patterns["ignore_patterns"]
+    assert ("videos/" in patterns["ignore_patterns"]) is not download_videos
 
 
 def test_push_to_hub_ignores_unpublished_score_parts(tmp_path, monkeypatch):

@@ -726,14 +726,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def _download(self, download_videos: bool = True, *, token: str | bool | None = None) -> None:
         """Downloads the dataset from the given 'repo_id' at the provided version."""
-        ignore_patterns = None if download_videos else "videos/"
+        # Scores are fetched by name when a consumer explicitly loads them.
+        ignore_patterns = [f"{SCORES_DIR}/"]
+        if not download_videos:
+            ignore_patterns.append("videos/")
         files = None
         token_kwargs = {} if token is None else {"token": token}
         # Only the default format downloads data; __init__ builds its DatasetReader before _download.
         reader = cast(DatasetReader, self.reader)
         if self.episodes is not None:
             files = reader.get_episodes_file_paths()
-            files.append(f"{SCORES_DIR}/")
 
         if self._requested_root is None:
             self.meta.root = Path(

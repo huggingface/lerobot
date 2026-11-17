@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -617,3 +618,48 @@ def test_merge_scores_replaces_existing_scores_only_with_overwrite(tmp_path):
     with pytest.raises(FileExistsError, match="Published scores"):
         merge_scores(dataset, ["a", "b"], name="test")
     merge_scores(dataset, ["a", "b"], name="test", overwrite=True)
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+@pytest.mark.parametrize("info_first", [False, True])
+def test_load_scores_downloads_only_named_file_at_dataset_revision(
+    tmp_path, monkeypatch, snapshot, info_first
+):
+    import lerobot.datasets.scores as scores
+
+    original = FakeDataset(tmp_path / "original", [2])
+    add_scores(original, "test", dense(original), info=INFO)
+    cache = tmp_path / "cache"
+    root = cache / "datasets--test--dataset/snapshots/commit-id" if snapshot else tmp_path / "local"
+    dataset = FakeDataset(root, [2])
+
+    def download(*args, **kwargs):
+        target = root / "scores/test.parquet"
+        target.parent.mkdir(parents=True)
+        shutil.copyfile(original.root / "scores/test.parquet", target)
+        return str(root)
+
+    download_snapshot = Mock(side_effect=download)
+    monkeypatch.setattr(scores, "HF_LEROBOT_HUB_CACHE", cache)
+    monkeypatch.setattr(scores, "snapshot_download", download_snapshot)
+
+    with pytest.raises(FileNotFoundError):
+        load_scores(dataset, "test", download=False)
+    download_snapshot.assert_not_called()
+
+    reader = load_scores_info if info_first else load_scores
+    reader(dataset, "test", token=False)
+    download_snapshot.assert_called_once_with(
+        dataset.repo_id,
+        repo_type="dataset",
+        revision="commit-id" if snapshot else dataset.revision,
+        allow_patterns=["scores/test.parquet"],
+        token=False,
+        **({"cache_dir": cache} if snapshot else {"local_dir": root}),
+    )
+
+    assert len(load_scores(dataset, "test", download=False)) == 2
+    assert load_scores_info(dataset, "test") == INFO
+    assert list_scores(dataset) == ["test"]
+    assert len(load_scores(dataset, "test")) == 2
+    assert download_snapshot.call_count == 1

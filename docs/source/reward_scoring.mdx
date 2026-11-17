@@ -213,7 +213,7 @@ A scorer exposes its descriptors up front through `scorer.descriptors` and retur
 
 ### Read Scores
 
-`load_scores()` returns a Hugging Face `datasets.Dataset`. Use the same dataset root as the scoring run:
+`LeRobotDataset` does not download scores by default. `load_scores()` uses a local score file when available, otherwise downloads the named file from the Hub with `snapshot_download()`. The file is cached locally for later reads. It returns a Hugging Face `datasets.Dataset`. Downloads use the dataset revision; cached snapshots use their exact commit.
 
 ```python
 from lerobot.datasets.scores import list_scores, load_scores, load_scores_info
@@ -233,7 +233,7 @@ progress = load_scores(
 )
 ```
 
-The optional `columns` argument selects exactly the requested columns. `load_signal_descriptors()` restores the typed signal descriptors, and `load_scores_info()` reads the scorer provenance.
+The optional `columns` argument selects the returned columns. Set `download=False` for local-only reads. `list_scores()` lists local files without downloading them. `load_signal_descriptors()` restores the typed signal descriptors, and `load_scores_info()` reads the scorer provenance.
 
 ### Train with RA-BC
 
