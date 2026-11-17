@@ -24,7 +24,9 @@ device and passes the features through the stock normalizer (identity). The poli
 tiles on the device they arrive on until the autoencoder encodes them. The postprocessor converts
 the policy's command, the praxis wire pose and the gripper, to the DROID
 ``[x, y, z, roll, pitch, yaw, gripper]`` (`PraxisCommandProcessorStep`) on the CPU, where the
-policy returns its commands.
+policy returns its commands. The SO-100 / SO-101 rig has neither the pose nor the command step:
+its state and actions are the follower's joints in LeRobot's units, and its tiles follow the
+cameras (`tile_views_so101`).
 
 The q99 action normalization, the mean/std proprio normalization and the relative-action decode
 stay in the praxis session inside the policy: they are anchored to the pose at the start of each
@@ -64,7 +66,7 @@ from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LAN
 from lerobot.utils.rotation import Rotation
 
 from .configuration_praxis import PRAXIS_ACTION_DIM, PRAXIS_COMMAND_DIM, PRAXIS_POSE_DIM, PraxisConfig
-from .praxis_core import bimanual
+from .praxis_core import bimanual, so101
 from .praxis_core.robot_io import ASPECT_TOL, aspect_crop, text_encoder_prompt, unit_quat_wxyz_to_matrix
 from .praxis_core.single_arm import TILE_CHUNK_FRAMES, _fit_view, canvas_size
 from .praxis_core.text_encoder import PAD_TO_MULTIPLE_OF
@@ -233,7 +235,7 @@ def tile_views_bimanual(frames: dict[str, Tensor], tile_height: int, tile_width:
                 "checkpoint; send the views at their native aspect (16:10 for the YAM rig)"
             )
         tiles = {
-            k: bimanual._trim(bimanual._resize(f, *r), tile_height, tile_width)
+            k: bimanual.trim_centre(bimanual.resize_frames(f, *r), tile_height, tile_width)
             for (k, f), r in zip(flat.items(), resize, strict=True)
         }
     out = {}
@@ -242,6 +244,36 @@ def tile_views_bimanual(frames: dict[str, Tensor], tile_height: int, tile_width:
         out[key] = (
             (tiles[key].float() / 255.0).reshape(*lead, 3, tile_height, tile_width).to(frames[key].device)
         )
+    return out
+
+
+def tile_views_so101(frames: dict[str, Tensor]) -> dict[str, Tensor]:
+    """The tiles of the so101 rig's views (`so101.canvas_clip`'s fit rule), one tensor per key.
+
+    The views share one fitted height (each view scaled down to fit a 416 px box with its aspect
+    kept, the taller ones to the smallest height, then trimmed to the 32 px grid). The tile size
+    follows the cameras, as in training: a 640 x 480 camera gives a 288 x 416 tile. Frames are
+    ``(..., 3, H, W)`` float in [0, 1] or uint8; the resize runs on the CPU in float32 with
+    antialias, as the praxis session does, and the tiles come back as float in [0, 1] on the device
+    of the frames. The rule leaves its own tiles as they are, so a tile passes through.
+    """
+    keys = list(frames)
+    flat: dict[str, Tensor] = {}
+    for key in keys:
+        value = frames[key]
+        if value.ndim < 3 or value.shape[-3] != 3:
+            raise ValueError(f"{key}: camera frames must be (..., 3, H, W), got {tuple(value.shape)}")
+        f = value.reshape(-1, *value.shape[-3:]).cpu()
+        if f.dtype != torch.uint8:
+            f = (f.float() * 255.0).round().clamp_(0, 255).to(torch.uint8)
+        flat[key] = f
+    native = [(int(f.shape[-2]), int(f.shape[-1])) for f in flat.values()]
+    resize, trimmed = bimanual.fit_row_sizes(native, so101.RESTRICT_SIDE, so101.SPATIAL_PATCH)
+    out = {}
+    for (key, f), r, (th, tw) in zip(flat.items(), resize, trimmed, strict=True):
+        tile = bimanual.trim_centre(bimanual.resize_frames(f, *r), th, tw)
+        lead = frames[key].shape[:-3]
+        out[key] = (tile.float() / 255.0).reshape(*lead, 3, th, tw).to(frames[key].device)
     return out
 
 
@@ -261,8 +293,10 @@ class PraxisTileViewsProcessorStep(ObservationProcessorStep):
         aspect_tol: Aspect tolerance of the centre crop.
         antialias: The ``video.antialias`` of the checkpoint: the fit rule with an antialiased
             resize (`praxis-1-droid`) instead of the plain resize to the tile (the earlier DROID checkpoint).
-        fit_rule: ``single_arm`` (the DROID fit rule of `tile_views`) or ``bimanual`` (the YAM
-            rule of `tile_views_bimanual`: the views fit a 416 px box together).
+        fit_rule: ``single_arm`` (the DROID fit rule of `tile_views`), ``bimanual`` (the YAM
+            rule of `tile_views_bimanual`: the views fit a 416 px box together) or ``so101`` (the
+            same rule with tiles that follow the cameras, `tile_views_so101`; the tile size is that
+            of the native 640 x 480 view).
     """
 
     camera_keys: list[str] = field(default_factory=list)
@@ -275,10 +309,16 @@ class PraxisTileViewsProcessorStep(ObservationProcessorStep):
     def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
         out = dict(observation)
         present = [k for k in self.camera_keys if k in out and isinstance(out[k], Tensor)]
-        if self.fit_rule == "bimanual" and present:
+        if self.fit_rule in ("bimanual", "so101") and present:
             if len(present) != len(self.camera_keys):
-                raise ValueError(f"the bimanual canvas needs every view of {self.camera_keys}, got {present}")
-            out.update(tile_views_bimanual({k: out[k] for k in present}, self.tile_height, self.tile_width))
+                raise ValueError(
+                    f"the {self.fit_rule} canvas needs every view of {self.camera_keys}, got {present}"
+                )
+            views = {k: out[k] for k in present}
+            if self.fit_rule == "so101":
+                out.update(tile_views_so101(views))
+            else:
+                out.update(tile_views_bimanual(views, self.tile_height, self.tile_width))
             return out
         for key in present:
             out[key] = tile_views(
@@ -512,11 +552,14 @@ def make_praxis_pre_post_processors(
     """
     steps = make_default_policy_processor_steps(config, dataset_stats)
     video = (config.model_config or {}).get("video", {})
-    bimanual_rig = config.embodiment == "bimanual"
+    rig = config.embodiment
     if config.model_config and video.get("canvas") == "tiles":
-        tile_height, canvas_width = (bimanual.canvas_size if bimanual_rig else canvas_size)(
-            config.model_config
-        )
+        if rig == "so101":
+            tile_height, canvas_width = so101.canvas_size(config.model_config, len(config.image_keys))
+        else:
+            tile_height, canvas_width = (bimanual.canvas_size if rig == "bimanual" else canvas_size)(
+                config.model_config
+            )
         tile_width = canvas_width // len(config.image_keys)
     else:
         tile_height, tile_width = int(video.get("tile_height", 256)), int(video.get("tile_width", 416))
@@ -529,10 +572,11 @@ def make_praxis_pre_post_processors(
             tile_width=tile_width,
             aspect_tol=float(video.get("aspect_tol", ASPECT_TOL)),
             antialias=bool(video.get("antialias", False)),
-            fit_rule="bimanual" if bimanual_rig else "single_arm",
+            fit_rule=rig if rig in ("bimanual", "so101") else "single_arm",
         ),
-        PraxisPoseProcessorStep(),
     ]
+    if rig != "so101":  # the so101 state is the joints in LeRobot's units, read as they are
+        input_steps.append(PraxisPoseProcessorStep())
     if config.text_encoder_id:
         input_steps.append(
             PraxisTokenizerProcessorStep(
@@ -540,9 +584,8 @@ def make_praxis_pre_post_processors(
             )
         )
     input_steps += [steps.to_device, steps.normalize]
-    output_steps: list[ProcessorStep] = [
-        steps.unnormalize,
-        PraxisCommandProcessorStep(n_arms=config.n_arms),
-        steps.to_cpu,
-    ]
+    output_steps: list[ProcessorStep] = [steps.unnormalize]
+    if rig != "so101":  # the so101 commands are the joint targets in LeRobot's units already
+        output_steps.append(PraxisCommandProcessorStep(n_arms=config.n_arms))
+    output_steps.append(steps.to_cpu)
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)

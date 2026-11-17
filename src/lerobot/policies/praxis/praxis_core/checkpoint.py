@@ -1,6 +1,7 @@
-# Vendored from the praxis repository (main, with its base-checkpoint additions).
-# Import paths are rewritten to the LeRobot package; the class PraxisPolicy of praxis.model
-# is PraxisModel here. Keep the file in sync with the praxis repository.
+# Vendored from runwayml/praxis-1-oss at commit afef2e1 (the so101 rig), original path praxis/checkpoint.py,
+# without the cudnn attention backend; the init_heads pointers name examples/praxis. Import paths are
+# rewritten to the LeRobot package; the class PraxisPolicy of praxis.model is PraxisModel here. Keep the
+# file in sync with the upstream file.
 """Load praxis weights from a directory of safetensors shards.
 
 A checkpoint directory contains these files:
@@ -18,9 +19,11 @@ The tensor names start with ``backbone.encoder.``, ``backbone.decoder.`` or
 (``*.ffn.expert_bias``), which are float32. The loaders keep the stored dtype.
 
 ``load_config`` checks the config with ``validate_config``. Format version 2
-loads for two rigs: ``"embodiment": "single_arm"`` (the DROID checkpoint) and
-``"embodiment": "bimanual"`` (the YAM checkpoint). Both rigs run the same model
-variant; only the expert head widths, the views and the normalization differ.
+loads for three rigs: ``"embodiment": "single_arm"`` (the DROID checkpoint),
+``"embodiment": "bimanual"`` (the YAM checkpoint) and ``"embodiment": "so101"``
+(an SO-100 / SO-101 arm in joint space: 5 joints and a gripper, 1 or 2 views,
+see :mod:`praxis.so101`). All rigs run the same model variant; only the expert
+head widths, the views and the normalization differ.
 A config of another embodiment raises ``CheckpointError``
 (``OTHER_RIG_REFUSED``), and so does a config of another model variant
 (``OTHER_VARIANT_REFUSED``). The variant fields below are optional.
@@ -60,8 +63,9 @@ A missing field takes the value of the checkpoint.
 - ``pose_frame``: the frame of the arm poses of the model. ``"flange"`` (the
   single-arm rig): the Franka flange pose with no turn; the session converts
   the pose of each client to it. ``"rig"`` (the bimanual rig): the poses as
-  the rig reports them, in its world frame, with no conversion. Each rig
-  takes only its own value; a missing field takes it.
+  the rig reports them, in its world frame, with no conversion. ``"joints"``
+  (the so101 rig): joint angles, no pose. Each rig takes only its own value;
+  a missing field takes it.
 
 An unknown key or value in these sections raises ``CheckpointError``.
 """
@@ -186,9 +190,13 @@ ROPE_REF_PLACEMENTS = ("group",)
 CANVASES = ("tiles",)
 VAE_ENCODE_IMPLS = ("megakernel",)
 TEXT_UNCONDS = ("blank_caption",)
-POSE_FRAMES = ("flange", "rig")
+POSE_FRAMES = ("flange", "rig", "joints")
 #: The pose frame of each rig (``pose_frame`` in the config).
-RIG_POSE_FRAMES: dict[str, str] = {"single_arm": "flange", "bimanual": "rig"}
+RIG_POSE_FRAMES: dict[str, str] = {
+    "single_arm": "flange",
+    "bimanual": "rig",
+    "so101": "joints",
+}
 #: The tile canvas of the checkpoint: the views, the tile (height,
 #: width) and the aspect tolerance of the centre crop.
 VIEWS = ("exterior", "wrist")
@@ -196,26 +204,28 @@ TILE_SIZE = (256, 416)
 ASPECT_TOL = 0.03
 
 #: The rigs of format version 2 and the views of each rig, in canvas order.
-EMBODIMENTS = ("single_arm", "bimanual")
+EMBODIMENTS = ("single_arm", "bimanual", "so101")
 RIG_VIEWS: dict[str, tuple[str, ...]] = {
     "single_arm": VIEWS,
     "bimanual": ("top_left", "wrist_left", "wrist_right"),
+    "so101": ("exterior", "wrist"),
 }
 #: The action row width of each rig (``action_space.dim``).
-RIG_ACTION_DIMS: dict[str, int] = {"single_arm": 10, "bimanual": 20}
+RIG_ACTION_DIMS: dict[str, int] = {"single_arm": 10, "bimanual": 20, "so101": 6}
 #: The native camera view (height, width) of each rig. The fit rule of an
 #: antialiased canvas resizes this view to the tile width and trims it to the
 #: tile: DROID 720x1280 -> 234x416 -> 224x416, YAM 1200x1920 -> 260x416 ->
-#: 256x416.
+#: 256x416, SO101 480x640 -> 312x416 -> 288x416.
 NATIVE_VIEWS: dict[str, tuple[int, int]] = {
     "single_arm": (720, 1280),
     "bimanual": (1200, 1920),
+    "so101": (480, 640),
 }
 
 #: The error of a config of another embodiment.
 OTHER_RIG_REFUSED = (
-    'config: only "embodiment": "single_arm" or "bimanual" is supported; use the '
-    "single-arm or the bimanual checkpoint"
+    'config: only "embodiment": "single_arm", "bimanual" or "so101" is supported; '
+    "use the single-arm, the bimanual or an so101 checkpoint"
 )
 
 #: The embodiment of a base checkpoint: the backbone and the action expert

@@ -7,6 +7,7 @@ about 3B active per token) with an action expert that denoises 24 Cartesian comm
 `praxis-1-droid` (224 x 416 camera tiles with an antialiased
 resize; 2 Euler steps, flow shift 12.5, video guidance 4.0) drives a single-arm DROID rig (Franka
 arm, exterior and wrist camera). `praxis-1-yam` drives two YAM arms with a top camera and two wrist
+cameras. `praxis-1-so101` drives an SO-100 / SO-101 follower arm in joint space with one or two
 cameras. `praxis-1-base` is the start of a fine-tune for a new single-arm rig.
 
 ## Project

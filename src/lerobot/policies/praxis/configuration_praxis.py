@@ -26,6 +26,7 @@ from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import PraxisAdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.policies.praxis.praxis_core.robot_io import contiguous_chunk_geometry
+from lerobot.policies.praxis.praxis_core.so101 import DEFAULT_GRIP_CLOSED, DEFAULT_GRIP_OPEN, GripRange
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 #: The praxis action row: the DROID Cartesian pose and the gripper, in the Franka flange frame.
@@ -40,7 +41,18 @@ PRAXIS_COMMAND_DIM = 13
 ATTENTION_BACKENDS: tuple[str, ...] = ("auto", "flash", "triton", "eager")
 #: The arms of each rig (``embodiment`` of the checkpoint config). A bimanual rig stacks the two
 #: arms (left, then right): 14 state and action values, 16 pose values, 26 command values.
-EMBODIMENT_ARMS: dict[str, int] = {"single_arm": 1, "bimanual": 2}
+EMBODIMENT_ARMS: dict[str, int] = {"single_arm": 1, "bimanual": 2, "so101": 1}
+#: The state and action of the SO-100 / SO-101 rig (``embodiment: so101``): the follower's joints in
+#: LeRobot's units (``SOFollower`` with ``use_degrees=True``), five in degrees and the gripper in 0..100.
+SO101_JOINT_NAMES: tuple[str, ...] = (
+    "shoulder_pan.pos",
+    "shoulder_lift.pos",
+    "elbow_flex.pos",
+    "wrist_flex.pos",
+    "wrist_roll.pos",
+    "gripper.pos",
+)
+SO101_JOINT_DIM = len(SO101_JOINT_NAMES)
 #: The default camera keys of the bimanual rig, in canvas order (the single-arm rig has
 #: `exterior_image_key` and `wrist_image_key`).
 BIMANUAL_CAMERA_KEYS: tuple[str, ...] = (
@@ -71,6 +83,10 @@ class PraxisConfig(PreTrainedConfig):
     ``observation.state`` as ``[x, y, z, roll, pitch, yaw, gripper]`` in metres and
     radians (extrinsic x-y-z Euler angles, the DROID convention, Franka flange frame)
     and ``task`` (the instruction). Actions: the same seven values, absolute targets.
+    The bimanual checkpoint stacks two such arms. The SO-100 / SO-101 checkpoint
+    (``embodiment: so101``) reads one or two cameras (``camera_keys``: exterior, then wrist)
+    and the follower's six joints in LeRobot's units (``SO101_JOINT_NAMES``, ``use_degrees=True``)
+    as ``observation.state``; its actions are the six absolute joint targets in the same units.
 
     Args:
         model_config: The praxis checkpoint ``config.json`` (architecture, chunking,
@@ -108,6 +124,11 @@ class PraxisConfig(PreTrainedConfig):
             sampler skips without it (the commands are the same either way).
         text_pad_to_multiple_of: Padding of the tokenized prompt. 1 encodes the prompt
             without padding; 32 is the praxis setting (the default).
+        grip_closed: The so101 rig only: the follower's ``gripper.pos`` when the gripper is fully
+            closed (closure 1). The default is the median of the training data; measure your arm.
+        grip_open: The so101 rig only: the follower's ``gripper.pos`` when fully open (closure 0).
+            ``grip_closed > grip_open`` is allowed (a gripper whose reading grows as it closes); the
+            two must differ by at least 1.
     """
 
     model_config: dict[str, Any] = field(default_factory=dict)
@@ -141,6 +162,9 @@ class PraxisConfig(PreTrainedConfig):
     # Prompt padding of the text encoder: praxis pads the tokens to a multiple of 32 (the validated
     # setting). 1 encodes the prompt without padding; both differ only in the last bits.
     text_pad_to_multiple_of: int = 32
+    # The so101 rig's gripper calibration (`praxis_core.so101.GripRange`): `gripper.pos` at closure 1 / 0.
+    grip_closed: float = DEFAULT_GRIP_CLOSED
+    grip_open: float = DEFAULT_GRIP_OPEN
 
     dtype: torch.dtype | None = torch.bfloat16
 
@@ -205,6 +229,7 @@ class PraxisConfig(PreTrainedConfig):
             )
         if self.n_obs_steps != 1:
             raise ValueError("Praxis keeps its own frame history; n_obs_steps must be 1")
+        GripRange(float(self.grip_closed), float(self.grip_open))  # raises on a bad calibration
         if self.exterior_image_key == self.wrist_image_key:
             raise ValueError("exterior_image_key and wrist_image_key must differ")
         for name in ("text_dropout", "proprio_dropout"):
@@ -232,7 +257,7 @@ class PraxisConfig(PreTrainedConfig):
 
     @property
     def embodiment(self) -> str:
-        """The rig of the checkpoint: ``single_arm`` (DROID) or ``bimanual`` (YAM)."""
+        """The rig of the checkpoint: ``single_arm`` (DROID), ``bimanual`` (YAM) or ``so101`` (SO-100 / SO-101)."""
         return str((self.model_config or {}).get("embodiment", "single_arm"))
 
     @property
@@ -241,17 +266,25 @@ class PraxisConfig(PreTrainedConfig):
 
     @property
     def state_dim(self) -> int:
-        """Values of `observation.state` and `action`: the DROID pose and gripper of each arm."""
+        """Values of `observation.state` and `action`: the DROID pose and gripper of each arm, or the
+        six joints of the so101 rig."""
+        if self.embodiment == "so101":
+            return SO101_JOINT_DIM
         return PRAXIS_ACTION_DIM * self.n_arms
 
     @property
     def pose_dim(self) -> int:
-        """Values of the praxis pose rows: pose8 of each arm."""
+        """Values of the praxis pose rows: pose8 of each arm (the so101 rig: its six joints)."""
+        if self.embodiment == "so101":
+            return SO101_JOINT_DIM
         return PRAXIS_POSE_DIM * self.n_arms
 
     @property
     def command_dim(self) -> int:
-        """Values of one command row of `select_action`: the wire pose and gripper of each arm."""
+        """Values of one command row of `select_action`: the wire pose and gripper of each arm (the
+        so101 rig: the six joint targets, in the units of the state)."""
+        if self.embodiment == "so101":
+            return SO101_JOINT_DIM
         return PRAXIS_COMMAND_DIM * self.n_arms
 
     @property
@@ -264,7 +297,7 @@ class PraxisConfig(PreTrainedConfig):
         return [self.exterior_image_key, self.wrist_image_key]
 
     def validate_features(self) -> None:
-        """Require the camera inputs of the rig and its pose-and-gripper state and action."""
+        """Require the camera inputs of the rig and its state and action (pose and gripper, or joints)."""
         if not self.model_config:
             raise ValueError(
                 "PraxisConfig.model_config is empty: load a converted praxis checkpoint "
@@ -276,9 +309,18 @@ class PraxisConfig(PreTrainedConfig):
                 "examples/praxis/init_heads.py first (docs/source/praxis.mdx, 'Fine-tune the base checkpoint')."
             )
         if self.embodiment not in EMBODIMENT_ARMS:
-            raise ValueError(f"Praxis supports the single_arm and bimanual rigs, got {self.embodiment!r}")
+            raise ValueError(
+                f"Praxis supports the single_arm, bimanual and so101 rigs, got {self.embodiment!r}"
+            )
         views = ((self.model_config.get("video") or {}).get("views")) or []
-        if views and len(views) != len(self.image_keys):
+        if self.embodiment == "so101":
+            # The so101 rig reads the first one or both of its views (exterior, then wrist).
+            if not 1 <= len(self.image_keys) <= max(len(views), 1):
+                raise ValueError(
+                    f"the so101 rig reads 1 or {len(views)} views {list(views)}, in that order; "
+                    f"camera_keys names {len(self.image_keys)}: {self.image_keys}"
+                )
+        elif views and len(views) != len(self.image_keys):
             raise ValueError(
                 f"the checkpoint has {len(views)} views {list(views)} but camera_keys names "
                 f"{len(self.image_keys)}: {self.image_keys}"
@@ -290,23 +332,28 @@ class PraxisConfig(PreTrainedConfig):
                 f"Praxis needs the camera inputs {missing}; configured image features: {sorted(images)}. "
                 "Set camera_keys (or exterior_image_key / wrist_image_key) or use --rename_map."
             )
+        layout = (
+            f"the joints {SO101_JOINT_NAMES}"
+            if self.embodiment == "so101"
+            else f"{PRAXIS_ACTION_NAMES} per arm"
+        )
         if self.action_feature is None:
             raise ValueError("Praxis requires an action output feature.")
         if tuple(self.action_feature.shape) != (self.state_dim,):
             raise ValueError(
-                f"Praxis actions are {PRAXIS_ACTION_NAMES} per arm ({self.state_dim} values for the "
+                f"Praxis actions are {layout} ({self.state_dim} values for the "
                 f"{self.embodiment} rig); got shape {tuple(self.action_feature.shape)}"
             )
         state = self.robot_state_feature
         if state is None:
-            raise ValueError(f"Praxis requires {OBS_STATE} with {PRAXIS_ACTION_NAMES} per arm")
+            raise ValueError(f"Praxis requires {OBS_STATE} with {layout}")
         if tuple(state.shape) != (self.state_dim,):
             raise ValueError(f"{OBS_STATE} must have shape ({self.state_dim},), got {tuple(state.shape)}")
         names = self.action_feature_names
         if names is not None and len(names) != self.state_dim:
             raise ValueError(
                 f"action_feature_names has {len(names)} names for the {self.state_dim} action values "
-                f"({PRAXIS_ACTION_NAMES} per arm): {names}"
+                f"({layout}): {names}"
             )
 
     def get_optimizer_preset(self) -> PraxisAdamWConfig:
