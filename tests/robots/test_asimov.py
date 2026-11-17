@@ -14,6 +14,7 @@
 
 """Exercise the robot contract without a robot or the optional Menlo SDK."""
 
+import time
 from dataclasses import dataclass
 from math import radians
 from types import SimpleNamespace
@@ -26,7 +27,7 @@ import pytest
 from lerobot.cameras import DepthCamera
 from lerobot.robots import RobotConfig, make_robot_from_config
 from lerobot.robots.asimov import Asimov, AsimovConfig, asimov as module
-from lerobot.robots.asimov.asimov import ASIMOV_JOINTS, BASE_ACTIONS
+from lerobot.robots.asimov.asimov import ARM_ACTIONS, ASIMOV_JOINTS, BASE_ACTIONS
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 
@@ -40,7 +41,9 @@ class Velocity:
 @pytest.fixture
 def setup_robot(monkeypatch, tmp_path):
     state = SimpleNamespace(
-        joints=tuple(SimpleNamespace(name=name, pos=i / 100) for i, name in enumerate(ASIMOV_JOINTS)),
+        joints=tuple(
+            SimpleNamespace(name=name, pos=i / 100, vel=0.0) for i, name in enumerate(ASIMOV_JOINTS)
+        ),
         gravity=(0.0, 0.0, -1.0),
         gyro=(0.1, 0.2, 0.3),
         quat=(1.0, 0.0, 0.0, 0.0),
@@ -57,7 +60,7 @@ def setup_robot(monkeypatch, tmp_path):
         UdpConfig=Mock(side_effect=lambda **kw: SimpleNamespace(**kw)),
         Limits=Velocity,
         Velocity=Velocity,
-        Mode=SimpleNamespace(MOVE=2),
+        Mode=SimpleNamespace(DAMP=0, STAND=1, MOVE=2, FAULT_DAMP=5),
     )
 
     def set_velocity(vx, vy, vyaw, *, duration, wait, timeout):
@@ -79,7 +82,7 @@ def setup_robot(monkeypatch, tmp_path):
     robots = []
 
     def make(**kwargs):
-        config = AsimovConfig(host="192.0.2.10", calibration_dir=tmp_path, **kwargs)
+        config = AsimovConfig(**{"host": "192.0.2.10", "calibration_dir": tmp_path, **kwargs})
         robot = make_robot_from_config(config)
         robots.append(robot)
         return robot
@@ -322,6 +325,82 @@ def test_cleanup_continues_after_camera_failure_and_can_be_retried(setup_robot):
     assert not robot.is_connected
 
 
+def make_arms_robot(env, **kwargs):
+    robot = env.make(control_mode="arms", robot_supported=True, **kwargs)
+    robot.connect()
+    return robot
+
+
+def test_arm_mode_features(setup_robot):
+    robot = setup_robot.make(control_mode="arms", robot_supported=True)
+    assert tuple(robot.action_features) == ARM_ACTIONS
+    assert len(ARM_ACTIONS) == 10
+    assert set(ARM_ACTIONS) <= set(robot.observation_features)
+
+
+def test_arm_targets_ramp_from_measured_pose_and_hold_other_joints(setup_robot):
+    env = setup_robot
+    robot = make_arms_robot(env, max_arm_step_rad=0.1)
+    measured = [joint.pos for joint in env.state.joints]
+    elbow = ASIMOV_JOINTS.index("L_Elbow")
+
+    sent = robot.send_action({"L_Elbow.pos": measured[elbow] + 1.0})
+    (positions,), kwargs = env.client.trajectory.call_args
+    assert kwargs == {"timeout": 0.0}
+    expected = list(measured)
+    expected[elbow] += 0.1
+    assert positions == pytest.approx(expected)
+    assert sent["L_Elbow.pos"] == pytest.approx(measured[elbow] + 0.1)
+    assert set(sent) == set(ARM_ACTIONS)
+
+    # Later commands step from the previous target, not from new measurements.
+    env.state.joints = tuple(SimpleNamespace(name=j.name, pos=0.0) for j in env.state.joints)
+    robot.send_action({"L_Elbow.pos": measured[elbow] + 1.0})
+    (positions,), _ = env.client.trajectory.call_args
+    assert positions[elbow] == pytest.approx(measured[elbow] + 0.2)
+    assert positions[:12] == pytest.approx(measured[:12])  # Legs held.
+    env.client.set_velocity.assert_not_called()
+
+
+def test_arm_control_requires_stand_or_move_and_stops_after_damp(setup_robot):
+    env = setup_robot
+    robot = make_arms_robot(env)
+    env.state.mode = 0
+    with pytest.raises(RuntimeError, match="STAND or MOVE"):
+        robot.send_action({"L_Elbow.pos": 0.0})
+    env.client.trajectory.assert_not_called()
+
+    env.state.mode = 1
+    robot.send_action({"L_Elbow.pos": 0.0})
+    env.state.mode = 0
+    with pytest.raises(RuntimeError, match="DAMP"):
+        robot.send_action({"L_Elbow.pos": 0.0})
+    with pytest.raises(RuntimeError, match="STAND or MOVE"):
+        robot.send_action({"L_Elbow.pos": 0.0})
+    assert env.client.trajectory.call_count == 1
+
+
+@pytest.mark.parametrize("action", [{"x.vel": 0.1}, {"L_Elbow.pos": float("nan")}])
+def test_invalid_arm_actions_never_reach_sdk(setup_robot, action):
+    robot = make_arms_robot(setup_robot)
+    with pytest.raises(ValueError):
+        robot.send_action(action)
+    setup_robot.client.trajectory.assert_not_called()
+
+
+def test_arm_stop_never_starts_walking_policy(setup_robot):
+    env = setup_robot
+    robot = make_arms_robot(env)
+    robot.send_action({"L_Elbow.pos": 0.0})
+    robot.stop()
+    env.client.balance.assert_not_called()
+    env.client.set_velocity.assert_not_called()
+    # The next command restarts from the measured pose.
+    robot.send_action({})
+    (positions,), _ = env.client.trajectory.call_args
+    assert positions == pytest.approx([joint.pos for joint in env.state.joints])
+
+
 def test_disconnected_calls_fail(setup_robot):
     robot = setup_robot.make()
     with pytest.raises(DeviceNotConnectedError):
@@ -343,11 +422,140 @@ def test_disconnected_calls_fail(setup_robot):
         {"max_linear_velocity": -1},
         {"max_lateral_velocity": 0.5},
         {"max_angular_velocity": 90},
+        {"control_mode": "torque"},
+        {"control_mode": "arms"},  # An unsupported robot would fall with the walking policy off.
+        {"control_mode": "arms", "robot_supported": True, "max_arm_step_rad": 0},
+        {"control_mode": "whole_body"},  # Not yet validated off the gantry.
     ],
 )
 def test_invalid_config(kwargs):
     with pytest.raises(ValueError):
         AsimovConfig(**{"host": "192.0.2.10", **kwargs})
+
+
+def test_simulation_config_targets_the_hub_sim():
+    # On the sim, whole-body control needs no gantry.
+    config = AsimovConfig(control_mode="whole_body", is_simulation=True)
+    assert config.host == "127.0.0.1"
+    assert config.sim_env.hub_path == "lerobot/asimov-mujoco"
+    assert config.sim_env.trust_remote_code
+    assert config.sim_env.onscreen and not config.sim_env.publish_images
+    cameras = AsimovConfig(control_mode="whole_body", is_simulation=True, sim_publish_images=True)
+    assert not cameras.sim_env.onscreen and cameras.sim_env.publish_images
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},  # The sim has no onboard walking policy.
+        {"control_mode": "whole_body", "host": "192.0.2.10"},
+        {"control_mode": "whole_body", "input_timeout_s": 0},
+        {"control_mode": "whole_body", "sim_publish_images": True, "sim_onscreen": True},
+    ],
+)
+def test_invalid_simulation_config(kwargs):
+    with pytest.raises(ValueError):
+        AsimovConfig(is_simulation=True, **kwargs)
+
+
+def test_simulation_launches_the_sim_and_connects_to_it(setup_robot, monkeypatch):
+    pytest.importorskip("menlo")
+    import lerobot.envs
+    from lerobot.controllers.asimov import locomotion
+
+    monkeypatch.setattr(locomotion, "AsimovLocomotionController", FakeController)
+    sim = Mock()
+    make_env = Mock(return_value={"hub_env": {0: SimpleNamespace(envs=[sim])}})
+    monkeypatch.setattr(lerobot.envs, "make_env", make_env)
+    env = setup_robot
+    env.state.mode = 1
+    robot = env.make(host="", control_mode="whole_body", is_simulation=True)
+    robot.connect()
+    make_env.assert_called_once_with(robot.config.sim_env)
+    sim.reset.assert_called_once()
+    sim.simulator.start_as_thread.assert_called_once()
+    assert env.sdk.UdpConfig.call_args.kwargs["host"] == "127.0.0.1"
+    robot.disconnect()
+    sim.close.assert_called_once()
+    assert not robot.is_connected
+
+
+class FakeController:
+    control_dt = 0.001
+    leg_defaults = np.full(12, 0.05)
+    default_pose = np.concatenate([leg_defaults, np.full(len(ASIMOV_JOINTS) - 12, 0.2)])
+    kp = np.ones(len(ASIMOV_JOINTS))
+    kd = np.ones(len(ASIMOV_JOINTS))
+
+    def __init__(self, repo_id):
+        self.commands = []
+
+    def reset(self):
+        pass
+
+    def run_step(self, q, dq, gyro, gravity, command, upper_body):
+        self.commands.append(np.array(command))
+        return upper_body
+
+
+@pytest.fixture
+def whole_body(setup_robot, monkeypatch):
+    pytest.importorskip("menlo")
+    from lerobot.controllers.asimov import locomotion
+
+    monkeypatch.setattr(locomotion, "AsimovLocomotionController", FakeController)
+    env = setup_robot
+    env.state.mode = 1
+    robot = env.make(control_mode="whole_body", robot_supported=True, controller_ease_in_s=0.005)
+    robot.connect()
+    deadline = time.monotonic() + 2.0
+    while not robot._controller.commands and time.monotonic() < deadline:
+        time.sleep(0.001)
+    return robot
+
+
+def test_ankle_conversion_matches_sdk_wire_format():
+    pytest.importorskip("menlo")
+    from menlo.asimov.robots import trajectory_wire_positions
+
+    joints = np.zeros(len(ASIMOV_JOINTS))
+    joints[[4, 5, 10, 11]] = (0.2, -0.05, -0.3, 0.08)
+    motors = module.joints_to_motors(joints)
+    assert trajectory_wire_positions(tuple(motors)) == pytest.approx(joints)
+    assert module.motors_to_joints(motors) == pytest.approx(joints)
+
+
+def test_whole_body_streams_policy_targets_with_policy_gains(whole_body, setup_robot):
+    assert set(whole_body.action_features) == {*BASE_ACTIONS, *ARM_ACTIONS}
+    (positions,), kwargs = setup_robot.client.trajectory.call_args
+    assert kwargs["kp"] == pytest.approx(FakeController.kp) and kwargs["timeout"] == 0.0
+    assert module.motors_to_joints(positions)[12:] == pytest.approx(FakeController.default_pose[12:])
+    setup_robot.client.set_velocity.assert_not_called()
+
+
+def test_whole_body_actions_only_update_controller_input(whole_body, setup_robot):
+    elbow = ASIMOV_JOINTS.index("L_Elbow")
+    sent = whole_body.send_action({"x.vel": 9.0, "theta.vel": -10.0, "L_Elbow.pos": 1.0})
+    assert sent["x.vel"] == pytest.approx(whole_body.config.max_linear_velocity)
+    assert sent["y.vel"] == 0.0 and sent["theta.vel"] == pytest.approx(-10.0)
+    assert sent["L_Elbow.pos"] == pytest.approx(0.2 + whole_body.config.max_arm_step_rad)
+    assert whole_body._upper_targets[elbow] == pytest.approx(sent["L_Elbow.pos"])
+    controller = whole_body._controller
+    n = len(controller.commands)
+    deadline = time.monotonic() + 2.0
+    while len(controller.commands) <= n + 1 and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert controller.commands[-1] == pytest.approx([0.3, 0.0, radians(-10.0)])
+    whole_body.stop()
+    time.sleep(0.01)
+    assert controller.commands[-1] == pytest.approx([0.0, 0.0, 0.0])
+
+
+def test_whole_body_surfaces_damp_from_send_action(whole_body, setup_robot):
+    setup_robot.state.mode = 0
+    whole_body._controller_thread.join(timeout=2.0)
+    with pytest.raises(RuntimeError, match="controller stopped"):
+        whole_body.send_action({"x.vel": 0.1})
 
 
 def test_cli_config_roundtrip():

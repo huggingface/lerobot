@@ -83,6 +83,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .unitree_g1 import UnitreeG1Teleoperator
 
         return UnitreeG1Teleoperator(config)
+    elif config.type == "asimov_exo":
+        from .asimov_exo import AsimovExoTeleoperator
+
+        return AsimovExoTeleoperator(config)
     elif config.type == "bi_so_leader":
         from .bi_so_leader import BiSOLeader
 

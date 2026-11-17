@@ -601,6 +601,36 @@ class UnitreeG1MujocoEnvConfig(HubEnvConfig):
             )
 
 
+@EnvConfig.register_subclass("asimov_mujoco")
+@dataclass
+class AsimovMujocoEnvConfig(HubEnvConfig):
+    """Config for the MuJoCo simulation of Asimov 1.
+
+    The sim emulates Asimov Edge on 127.0.0.1, so the Asimov driver reaches it over UDP as
+    it reaches the robot. Like the G1 sim, it renders either its cameras or its window,
+    and `onscreen` is resolved from `publish_images` unless it is set explicitly.
+    """
+
+    hub_path: str = "lerobot/asimov-mujoco"
+    # Run the repo's own env locally, as an EnvHub native batch.
+    use_native_batch: bool = True
+    publish_images: bool = False
+    camera_port: int = 5555
+    onscreen: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.make_env_kwargs:
+            raise ValueError(f"--env.type={self.type} is configured by its own options, not make_env_kwargs")
+        if self.onscreen is None:
+            self.onscreen = not self.publish_images
+        elif self.onscreen and self.publish_images:
+            raise ValueError(
+                "The Asimov sim cannot publish camera images and open its viewer in the same "
+                "process. Set publish_images=False to watch the window, or onscreen=False "
+                "to take the image stream."
+            )
+
+
 @EnvConfig.register_subclass("libero_plus")
 @dataclass
 class LiberoPlusEnvConfig(LiberoEnvConfig):
