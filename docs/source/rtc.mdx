@@ -194,6 +194,24 @@ lerobot-rollout \
     --device=cuda
 ```
 
+## Policies that condition on past observations
+
+Local RTC predicts from the latest capture. A policy trained on a window of past frames (for example `n_obs_steps > 1`) declares that window in its `ChunkPolicySpec`: it sets `current_observation_only=False` and lists, per input feature, the frame offsets in policy ticks that it stacks along dimension 1, as its training `observation_delta_indices` do.
+
+```python
+ChunkPolicySpec(
+    prediction_steps=config.n_action_steps,
+    execution_steps=config.n_action_steps,
+    modes=(ExecutionMode.CHUNK, ExecutionMode.RTC_GUIDED),
+    current_observation_only=False,
+    observation_history=(("observation.state", (-1, 0)), ("observation.images.front", (-1, 0))),
+)
+```
+
+The engine samples by capture time, so a loop that republishes while it waits for actions does not shorten the window: it keeps about one control-thread capture per half policy period (a newer capture inside that window replaces the kept one) and picks, for each offset, the kept capture nearest `now + offset / fps`. The choice can therefore differ from the nearest raw capture by up to half a policy period. Each selected capture is preprocessed once, the current one last, and every declared feature reaches the policy as `[B, T, ...]` with an `<feature>_is_pad` mask. Offsets that reach before the first capture of a run, or of a restart after a pause, reset or hold, repeat that capture and are marked as padding, like the start of a dataset episode.
+
+The default remote runner serves current-observation policies only, and policies that keep temporal state of their own rather than a declared window need a custom runner.
+
 ## How RTC relates to remote inference
 
 `--inference.type=rtc` is local RTC: inference runs in a background thread in the rollout process and uses no transport. Running a policy server and a robot client as separate processes on the same machine uses the remote backend instead.

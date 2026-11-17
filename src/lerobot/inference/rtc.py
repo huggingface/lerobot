@@ -21,6 +21,7 @@ import logging
 import math
 import time
 import traceback
+from collections.abc import Mapping
 from copy import deepcopy
 from threading import Event, Lock, Thread
 from typing import Any
@@ -48,6 +49,7 @@ from .contracts import (
     QueryKind,
 )
 from .execution import ChunkRuntime, HoldState
+from .observation_history import HistoryFrame, ObservationHistory
 from .prediction import chunk_inference_context, predict_chunk
 
 logger = logging.getLogger(__name__)
@@ -73,8 +75,11 @@ def validate_local_chunk_policy(policy: PreTrainedPolicy) -> ChunkPolicySpec:
     """Check local asynchronous compatibility before connecting hardware or starting a worker."""
     try:
         spec = policy.chunk_inference_spec()
-        if not spec.current_observation_only:
-            raise ValueError("Local asynchronous inference does not implement temporal observation sampling")
+        if not spec.current_observation_only and not spec.observation_history:
+            raise ValueError(
+                "Local asynchronous inference implements temporal observation sampling only for a "
+                "declared ChunkPolicySpec.observation_history"
+            )
     except (ValueError, NotImplementedError) as exc:
         raise ValueError(
             f"{type(policy).__name__} cannot run with local asynchronous inference: {exc} "
@@ -136,6 +141,12 @@ class RTCInferenceEngine(InferenceEngine):
         super().__init__(task=task)
         self._policy = policy
         self._policy_spec = validate_local_chunk_policy(policy)
+        # Past frames are sampled from the control thread's captures at the policy rate.
+        self._history = (
+            ObservationHistory(dict(self._policy_spec.observation_history), fps)
+            if self._policy_spec.observation_history
+            else None
+        )
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._model_action_dim: int | None = None
@@ -269,6 +280,8 @@ class RTCInferenceEngine(InferenceEngine):
         self._started = True
         self._runtime.invalidate()
         self._obs_holder = {"obs": None}
+        if self._history is not None:
+            self._history.clear()
         self._shutdown_event.clear()
         self._rtc_thread = Thread(
             target=self._rtc_loop,
@@ -300,7 +313,7 @@ class RTCInferenceEngine(InferenceEngine):
         self._runtime.deactivate()
         with self._obs_lock:
             self._reset_epoch += 1
-            self._obs_holder["obs"] = None
+            self._drop_observations()
             self._hold.clear()
 
     def resume(self) -> None:
@@ -354,7 +367,7 @@ class RTCInferenceEngine(InferenceEngine):
             # check-and-merge, so a reset cannot leak a pre-reset chunk into the fresh
             # queue.  Lock order is _obs_lock -> queue.lock on both sides.
             self._runtime.invalidate()
-            self._obs_holder["obs"] = None
+            self._drop_observations()
             self._reset_epoch += 1
             self._reset_pending = True
             self._hold.clear()
@@ -390,6 +403,14 @@ class RTCInferenceEngine(InferenceEngine):
         with self._obs_lock:
             self._obs_holder["obs"] = owned
             self._obs_holder["capture_time"] = captured_at
+            if self._history is not None:
+                self._history.record(owned, captured_at)
+
+    def _drop_observations(self) -> None:
+        """Forget published captures so work restarts from a fresh one; hold ``_obs_lock``."""
+        self._obs_holder["obs"] = None
+        if self._history is not None:
+            self._history.clear()
 
     def dispatch_allowed(self) -> bool:
         """Revoke dispatch on every motor tick, including interpolation-only ticks."""
@@ -405,7 +426,7 @@ class RTCInferenceEngine(InferenceEngine):
         """Let the worker submit text only after the control thread held the robot."""
         with self._obs_lock:
             if self._hold.acknowledge():
-                self._obs_holder["obs"] = None
+                self._drop_observations()
                 self._runtime.acknowledge_starvation_hold()
         if self.failed and self._global_shutdown_event is not None:
             self._global_shutdown_event.set()
@@ -504,6 +525,33 @@ class RTCInferenceEngine(InferenceEngine):
     # RTC: background inference thread
     # ------------------------------------------------------------------
 
+    def _inference_batch(
+        self, features: Mapping[str, Any], task: str, device: torch.device
+    ) -> dict[str, Any]:
+        batch = prepare_observation_for_inference(
+            {key: value.copy() for key, value in features.items()}, device, task, self._robot.robot_type
+        )
+        batch["task"] = [task]
+        return batch
+
+    def _prepare(
+        self,
+        observation: ObservationSnapshot,
+        history: tuple[HistoryFrame, ...] | None,
+        task: str,
+        device: torch.device,
+    ) -> dict[str, Any]:
+        """Preprocess the current capture, with the past frames a policy declares."""
+        if self._history is None:
+            return self._preprocessor(self._inference_batch(observation.features, task, device))
+
+        def prepare(raw: Mapping[str, Any]) -> dict[str, Any]:
+            frame = build_dataset_frame(self._obs_features, dict(raw), prefix="observation")
+            return self._preprocessor(self._inference_batch(frame, task, device))
+
+        # The newest frame is the capture behind ``observation``; both were read under one lock.
+        return self._history.assemble(history or (), prepare)
+
     def _rtc_loop(self) -> None:
         """Own all policy/processor mutations and use the shared chunk runtime."""
         try:
@@ -555,7 +603,7 @@ class RTCInferenceEngine(InferenceEngine):
                                 generation
                             ):
                                 self._hold.clear()
-                                self._obs_holder["obs"] = None
+                                self._drop_observations()
                         continue
                     if obs is None:
                         time.sleep(_RTC_IDLE_SLEEP_S)
@@ -567,7 +615,7 @@ class RTCInferenceEngine(InferenceEngine):
                         # resume. A healthy active run must obtain fresh actions.
                         if self._runtime.release_hold(generation):
                             self._hold.clear()
-                            self._obs_holder["obs"] = None
+                            self._drop_observations()
                     continue
                 if self._rtc_queue_threshold < 0 or not self._runtime.should_request():
                     time.sleep(_RTC_IDLE_SLEEP_S)
@@ -575,6 +623,7 @@ class RTCInferenceEngine(InferenceEngine):
                 with self._obs_lock:
                     obs = self._obs_holder.get("obs")
                     capture_time = self._obs_holder.get("capture_time")
+                    history = self._history.frames() if self._history is not None else None
                     epoch_before = self._reset_epoch
                 if obs is None or capture_time is None:
                     time.sleep(_RTC_IDLE_SLEEP_S)
@@ -599,15 +648,8 @@ class RTCInferenceEngine(InferenceEngine):
                     delay = 0 if inference_count == 1 else 1
                     if self._runtime.mode is ExecutionMode.RTC_TRAINED and delay:
                         delay = min(self._policy_spec.training_max_delay, self._rtc_config.execution_horizon)
-                batch = prepare_observation_for_inference(
-                    {key: value.copy() for key, value in observation.features.items()},
-                    policy_device,
-                    task,
-                    self._robot.robot_type,
-                )
-                batch["task"] = [task]
                 with chunk_inference_context(request.mode):
-                    preprocessed = self._preprocessor(batch)
+                    preprocessed = self._prepare(observation, history, task, policy_device)
                     prediction = predict_chunk(
                         self._policy,
                         self._postprocessor,

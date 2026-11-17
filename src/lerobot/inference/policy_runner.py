@@ -88,7 +88,10 @@ class PolicyRunner:
             raise ValueError("Language is enabled but this policy has no text capability.")
         spec = self._policy_spec = policy.chunk_inference_spec()
         if not spec.current_observation_only:
-            raise ValueError("The default runner does not implement temporal observation sampling.")
+            raise ValueError(
+                "The default runner does not implement temporal observation sampling; local RTC "
+                "inference samples a declared ChunkPolicySpec.observation_history."
+            )
         modes = tuple(ExecutionMode(mode) for mode in modes)
         if any(mode not in spec.modes for mode in modes):
             raise ValueError(f"Unsupported execution mode; policy declares {spec.modes!r}.")
