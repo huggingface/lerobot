@@ -19,7 +19,7 @@ import threading
 import time
 from functools import cached_property
 from math import degrees, isfinite, radians
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -145,6 +145,7 @@ class Asimov(Robot):
         self._velocity = np.zeros(3)  # vx m/s, vy m/s, wz rad/s
         self._velocity_time = float("-inf")
         self._upper_targets: np.ndarray | None = None  # 25 joint-space targets; legs unused
+        self._sim_env: Any = None
         # Validate camera names before any resources are opened.
         _ = self.observation_features
 
@@ -177,7 +178,11 @@ class Asimov(Robot):
     def is_connected(self) -> bool:
         # Resource ownership, including after SDK link loss, so callers still clean up.
         # The SDK's live connection is checked before every observation and action.
-        return self._client is not None or any(camera.is_connected for camera in self.cameras.values())
+        return (
+            self._client is not None
+            or self._sim_env is not None
+            or any(camera.is_connected for camera in self.cameras.values())
+        )
 
     @property
     def is_calibrated(self) -> bool:
@@ -193,13 +198,8 @@ class Asimov(Robot):
     def connect(self, calibrate: bool = True) -> None:
         try:
             if self.config.is_simulation:
-                from .asimov_sim import AsimovMujocoClient
-
-                # Answers the trajectory/state subset of menlo.Robot that whole_body uses.
-                self._client = cast("menlo.Robot", AsimovMujocoClient(onscreen=self.config.sim_onscreen))
-                self._client.connect("sim")
-            else:
-                self._connect_sdk()
+                self._start_sim()
+            self._connect_sdk()
             assert self._client is not None
             if tuple(self._client.info.joint_names or ()) != ASIMOV_JOINTS:
                 raise ValueError("Expected the Asimov 1 25-joint body reported by menlo-sdk 0.1.x.")
@@ -214,6 +214,15 @@ class Asimov(Robot):
             except Exception:
                 logger.exception("Failed to clean up Asimov after connection failure")
             raise
+
+    def _start_sim(self) -> None:
+        """Launch the lerobot/asimov-mujoco sim, which emulates Asimov Edge on 127.0.0.1."""
+        from lerobot.envs import make_env
+
+        suites = make_env(self.config.sim_env)
+        self._sim_env = next(iter(suites.values()))[0].envs[0]
+        self._sim_env.reset()
+        self._sim_env.simulator.start_as_thread()
 
     def _connect_sdk(self) -> None:
         connection = menlo.ConnectionConfig(
@@ -482,5 +491,11 @@ class Asimov(Robot):
                     camera.disconnect()
                 except Exception as exc:
                     errors.append(exc)
+        if self._sim_env is not None:
+            try:
+                self._sim_env.close()
+                self._sim_env = None
+            except Exception as exc:
+                errors.append(exc)
         if errors:
             raise errors[0]

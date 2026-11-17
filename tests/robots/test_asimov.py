@@ -84,7 +84,7 @@ def setup_robot(monkeypatch, tmp_path):
     robots = []
 
     def make(**kwargs):
-        config = AsimovConfig(host="192.0.2.10", calibration_dir=tmp_path, **kwargs)
+        config = AsimovConfig(**{"host": "192.0.2.10", "calibration_dir": tmp_path, **kwargs})
         robot = make_robot_from_config(config)
         robots.append(robot)
         return robot
@@ -450,8 +450,6 @@ def test_disconnected_calls_fail(setup_robot):
         {"control_mode": "arms"},  # An unsupported robot would fall with the walking policy off.
         {"control_mode": "arms", "robot_supported": True, "max_arm_step_rad": 0},
         {"control_mode": "whole_body"},  # Not yet validated off the gantry.
-        {"is_simulation": True},  # The sim has no onboard walking policy.
-        {"control_mode": "whole_body", "is_simulation": True, "input_timeout_s": 0},
     ],
 )
 def test_invalid_config(kwargs):
@@ -459,8 +457,51 @@ def test_invalid_config(kwargs):
         AsimovConfig(**{"host": "192.0.2.10", **kwargs})
 
 
-def test_simulation_needs_no_host():
-    AsimovConfig(control_mode="whole_body", is_simulation=True)
+def test_simulation_config_targets_the_hub_sim():
+    # On the sim, whole-body control needs no gantry.
+    config = AsimovConfig(control_mode="whole_body", is_simulation=True)
+    assert config.host == "127.0.0.1"
+    assert config.sim_env.hub_path == "lerobot/asimov-mujoco"
+    assert config.sim_env.trust_remote_code
+    assert config.sim_env.onscreen and not config.sim_env.publish_images
+    cameras = AsimovConfig(control_mode="whole_body", is_simulation=True, sim_publish_images=True)
+    assert not cameras.sim_env.onscreen and cameras.sim_env.publish_images
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},  # The sim has no onboard walking policy.
+        {"control_mode": "whole_body", "host": "192.0.2.10"},
+        {"control_mode": "whole_body", "input_timeout_s": 0},
+        {"control_mode": "whole_body", "sim_publish_images": True, "sim_onscreen": True},
+    ],
+)
+def test_invalid_simulation_config(kwargs):
+    with pytest.raises(ValueError):
+        AsimovConfig(is_simulation=True, **kwargs)
+
+
+def test_simulation_launches_the_sim_and_connects_to_it(setup_robot, monkeypatch):
+    pytest.importorskip("menlo")
+    import lerobot.envs
+    from lerobot.controllers.asimov import locomotion
+
+    monkeypatch.setattr(locomotion, "AsimovLocomotionController", FakeController)
+    sim = Mock()
+    make_env = Mock(return_value={"hub_env": {0: SimpleNamespace(envs=[sim])}})
+    monkeypatch.setattr(lerobot.envs, "make_env", make_env)
+    env = setup_robot
+    env.state.mode = 1
+    robot = env.make(host="", control_mode="whole_body", is_simulation=True)
+    robot.connect()
+    make_env.assert_called_once_with(robot.config.sim_env)
+    sim.reset.assert_called_once()
+    sim.simulator.start_as_thread.assert_called_once()
+    assert env.sdk.UdpConfig.call_args.kwargs["host"] == "127.0.0.1"
+    robot.disconnect()
+    sim.close.assert_called_once()
+    assert not robot.is_connected
 
 
 class FakeController:
