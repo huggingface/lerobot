@@ -32,7 +32,8 @@ import dataclasses
 import logging
 import sys
 import time
-from collections.abc import Iterator
+from collections import defaultdict, deque
+from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
@@ -322,6 +323,25 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def _balanced_eval_indices(task_indices: Iterable[int], limit: int) -> list[int]:
+    """Use the budget across tasks in round-robin order, keeping each task's frame order."""
+    frames_by_task: dict[int, list[int]] = defaultdict(list)
+    for frame, task in enumerate(task_indices):
+        task_frames = frames_by_task[task]
+        if len(task_frames) < limit:
+            task_frames.append(frame)
+
+    task_frames_left = deque(iter(frames_by_task[task]) for task in sorted(frames_by_task))
+    selected: list[int] = []
+    while task_frames_left and len(selected) < limit:
+        current = task_frames_left.popleft()
+        next_frame = next(current, None)
+        if next_frame is not None:
+            selected.append(next_frame)
+            task_frames_left.append(current)
+    return selected
+
+
 def make_dataloaders(
     cfg: TrainPipelineConfig,
     dataset: LeRobotDataset | StreamingLeRobotDataset,
@@ -496,16 +516,15 @@ def make_dataloaders(
                 )
             )
             eval_ds = torch.utils.data.Subset(eval_dataset, valid_frames)
-        if cfg.max_eval_samples > 0 and hasattr(eval_dataset, "hf_dataset"):
-            task_arr = eval_dataset.hf_dataset.data.column("task_index").to_numpy()
-            if valid_frames is not None:
-                task_arr = task_arr[valid_frames]
-            unique_tasks = sorted(set(task_arr.tolist()))
-            per_task = max(1, cfg.max_eval_samples // len(unique_tasks))
-            selected: list[int] = []
-            for t in unique_tasks:
-                frames = (task_arr == t).nonzero()[0][:per_task]
-                selected.extend(frames.tolist())
+        if 0 < cfg.max_eval_samples < len(eval_ds):
+            hf_dataset = getattr(eval_dataset, "hf_dataset", None)
+            if hf_dataset is None:
+                selected: list[int] | range = range(cfg.max_eval_samples)
+            else:
+                task_arr = hf_dataset.data.column("task_index").to_numpy()
+                if valid_frames is not None:
+                    task_arr = task_arr[valid_frames]
+                selected = _balanced_eval_indices(task_arr.tolist(), cfg.max_eval_samples)
             eval_ds = torch.utils.data.Subset(eval_ds, selected)
 
         eval_collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
