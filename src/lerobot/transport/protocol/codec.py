@@ -14,7 +14,7 @@
 
 """Bounded MessagePack values and explicit tensor/RGB records.
 
-Arrays decode into owned writable NumPy storage. The caller chooses which named visual
+Arrays decode into owned writable NumPy storage by default. The caller chooses which named visual
 features are RGB; JPEG is never inferred from an array's shape. CPU snapshots are the
 caller's responsibility, before an asynchronous encoder accesses reused sensor buffers.
 """
@@ -91,8 +91,15 @@ def _malformed(message: str) -> ProtocolError:
 
 
 class _Budget:
-    def __init__(self, limits: CodecLimits, tensor_converter: Callable[[Any], Any] | None = None):
+    def __init__(
+        self,
+        limits: CodecLimits,
+        tensor_converter: Callable[[Any], Any] | None = None,
+        *,
+        copy_arrays: bool = True,
+    ):
         self.tensor_converter = tensor_converter
+        self.copy_arrays = copy_arrays
         self.limits = limits
         self.nodes = 0
         self.decoded_bytes = 0
@@ -147,6 +154,7 @@ def _rgb_shape(shape: Any, limits: CodecLimits) -> tuple[int, ...]:
 def _encode_value(value: Any, budget: _Budget, depth: int = 0) -> Any:
     budget.visit(depth)
     limits = budget.limits
+    data: bytes | memoryview
     if isinstance(value, RGBImage):
         array = value.array
         if not isinstance(array, np.ndarray) or array.dtype != np.uint8:
@@ -154,7 +162,7 @@ def _encode_value(value: Any, budget: _Budget, depth: int = 0) -> Any:
         shape = _rgb_shape(array.shape, limits)
         budget.allocate(math.prod(shape))
         if value.encoding == "raw":
-            data = array.tobytes(order="C")
+            data = memoryview(np.ascontiguousarray(array)).cast("B")
         elif value.encoding == "jpeg":
             if type(value.quality) is not int or not 1 <= value.quality <= 100:
                 raise _malformed("JPEG quality must be in [1, 100]")
@@ -182,10 +190,13 @@ def _encode_value(value: Any, budget: _Budget, depth: int = 0) -> Any:
             raise _malformed("Tensor contains non-finite values")
         # NumPy bool arrays may contain any nonzero backing byte for True. Emit
         # canonical 0/1 bytes even for such valid local arrays or strided views.
+        # MessagePack copies a contiguous buffer into its output. Passing a view
+        # avoids an intermediate full-size Python bytes snapshot; the returned
+        # encoded message still owns its data before this function returns.
         data = (
-            np.where(value, np.uint8(1), np.uint8(0)).tobytes(order="C")
+            memoryview(np.ascontiguousarray(np.where(value, np.uint8(1), np.uint8(0))))
             if dtype.kind == "b"
-            else value.astype(dtype, copy=False).tobytes(order="C")
+            else memoryview(np.ascontiguousarray(value, dtype=dtype))
         )
         return {
             _MARKER: "tensor",
@@ -240,7 +251,7 @@ def _decode_record(record: dict[str, Any], budget: _Budget) -> np.ndarray:
         array = np.frombuffer(data, dtype=dtype).reshape(shape)
         if dtype.kind == "f" and not np.isfinite(array).all():
             raise _malformed("Tensor contains non-finite values")
-        return array.astype(dtype.newbyteorder("="), copy=True)
+        return array.astype(dtype.newbyteorder("="), copy=budget.copy_arrays)
     if record[_MARKER] != "rgb":
         raise _malformed("Unknown typed record")
     shape = _rgb_shape(record.get("shape"), limits)
@@ -250,7 +261,8 @@ def _decode_record(record: dict[str, Any], budget: _Budget) -> np.ndarray:
     if record.get("encoding") == "raw":
         if len(data) != math.prod(shape):
             raise _malformed("Raw RGB byte count mismatch")
-        return np.frombuffer(data, dtype=np.uint8).reshape(shape).copy()
+        array = np.frombuffer(data, dtype=np.uint8).reshape(shape)
+        return array.copy() if budget.copy_arrays else array
     if record.get("encoding") != "jpeg":
         raise _malformed("Unsupported RGB encoding")
     try:
@@ -395,9 +407,17 @@ def peek_envelope(payload: bytes, limits: CodecLimits = CodecLimits()) -> Envelo
     return envelope
 
 
-def decode_message(payload: bytes, limits: CodecLimits = CodecLimits()) -> Envelope:
-    """Validate the envelope and allocation bounds before materializing tensors/images."""
+def decode_message(
+    payload: bytes, limits: CodecLimits = CodecLimits(), *, copy_arrays: bool = True
+) -> Envelope:
+    """Validate the envelope and allocation bounds before materializing tensors/images.
+
+    ``copy_arrays=False`` permits read-only views over the decoder's immutable bytes.
+    Those views retain their backing storage, independently of the input payload's
+    lifetime. Endian conversion and JPEG decoding may still allocate writable arrays.
+    The default returns owned writable arrays for existing consumers.
+    """
     envelope, body = _unpack_envelope(payload, limits)
     if not isinstance(body, dict):
         raise _malformed("Message body must be a map")
-    return replace(envelope, body=_decode_value(body, _Budget(limits)))
+    return replace(envelope, body=_decode_value(body, _Budget(limits, copy_arrays=copy_arrays)))
