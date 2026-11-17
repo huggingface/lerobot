@@ -220,7 +220,6 @@
   },
   "source": {
     "checkpoint": "runwayml/praxis-1-base-lerobot",
-    "global_step": 526120,
     "contents": "The base checkpoint: video backbone + shared action-expert trunk. No per-embodiment heads (head, embed_proprio, action_encoder.w1), no optimizer state. Add embodiment heads before fine-tuning."
   },
   "heads": {
