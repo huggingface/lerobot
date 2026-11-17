@@ -1,4 +1,5 @@
-# Vendored from runwayml/praxis-1-oss at commit 8dad1a4 plus the canvas rule of the released DROID checkpoint,
+# Vendored from runwayml/praxis-1-oss at commit 8dad1a4 plus the canvas rule of the released DROID checkpoint
+# and a8eb983 (the unguided pass skips the action expert without action guidance; no host synchronize),
 # original path praxis/model.py.
 # Import paths are rewritten to the LeRobot package; the class PraxisPolicy of praxis.model
 # is renamed PraxisModel here. Keep this file in sync with the upstream file.
@@ -25,6 +26,7 @@ from torch import Tensor, nn
 from lerobot.policies.praxis.praxis_core.action_expert import ActionExpert, run_expert_on_taps_k
 from lerobot.policies.praxis.praxis_core.backbone import VideoBackbone, build_backbone
 from lerobot.policies.praxis.praxis_core.checkpoint import load_checkpoint, load_config, model_variant
+from lerobot.policies.praxis.praxis_core.layers import to_device_async
 from lerobot.policies.praxis.praxis_core.sampler import (
     ACTION_SALT,
     VIDEO_SALT,
@@ -243,8 +245,8 @@ class PraxisModel(nn.Module):
         probe("noise.salt1", noise_a)
         ts = window_time_grid(settings.num_steps, settings.t_shift)
         probe("sampler.time_grid", torch.tensor(ts, dtype=torch.float64))
-        xv = noise_v.to(dev)
-        xa = noise_a.to(dev)
+        xv = to_device_async(noise_v, dev)
+        xa = to_device_async(noise_a, dev)
         anchor_m = anchor.to(dev, md)
         clean = torch.cat([z.to(dev, md) for z in cleans], dim=2) if d else None
         pro = pro.to(dev, torch.float32)
@@ -253,13 +255,23 @@ class PraxisModel(nn.Module):
         backbone = cast(ChunkCausalBackbone, self.backbone)
 
         def velocity(
-            text_in: Tensor, x_v: Tensor, x_a: Tensor, t_cur: float, decode: bool
-        ) -> tuple[Tensor | None, Tensor]:
+            text_in: Tensor,
+            x_v: Tensor,
+            x_a: Tensor,
+            t_cur: float,
+            decode: bool,
+            act: bool = True,
+        ) -> tuple[Tensor | None, Tensor | None]:
             probe("velocity.in.xt_v", x_v)
             probe("velocity.in.xt_a", x_a)
             probe("velocity.in.t_cur", torch.tensor(t_cur, dtype=torch.float64))
             t_trunk = torch.full((1, kk), t_cur, dtype=md, device=dev)
             out = backbone.forward_chunk_causal(text_in, anchor_m, clean, x_v.to(md), t_trunk, decode=decode)
+            v = None if out.velocity is None else out.velocity.float()
+            if v is not None:
+                probe("velocity.out.video", v)
+            if not act:
+                return v, None
             taps = out.taps
             a = run_expert_on_taps_k(
                 self.action_expert,
@@ -276,22 +288,24 @@ class PraxisModel(nn.Module):
                 action_t_per_chunk=torch.full((1, kk), t_cur, device=dev),
                 proprio_per_chunk=pro,
             ).float()[0]
-            v = None if out.velocity is None else out.velocity.float()
-            if v is not None:
-                probe("velocity.out.video", v)
             probe("velocity.out.action", a)
             return v, a
 
+        # The unguided pass computes only what a guidance scale reads: its
+        # video with cfg_video_scale != 1, its actions with cfg_scale != 1.
+        # guidance_combine returns the guided velocity at scale 1.0, so a
+        # skipped part changes no bit. A trace keeps both parts.
         decode_uncond = trace is not None or float(settings.cfg_video_scale) != 1.0
+        act_uncond = trace is not None or float(settings.cfg_scale) != 1.0
         for step in range(settings.num_steps):
             t_cur, t_next = ts[step], ts[step + 1]
             probe("pass.marker", torch.tensor([step, 0]))
             v, a = velocity(text_c, xv, xa, t_cur, True)
-            assert v is not None
+            assert v is not None and a is not None
             if guided:
                 assert text_u is not None
                 probe("pass.marker", torch.tensor([step, 1]))
-                v_u, a_u = velocity(text_u, xv, xa, t_cur, decode_uncond)
+                v_u, a_u = velocity(text_u, xv, xa, t_cur, decode_uncond, act=act_uncond)
                 for kind, cond, unc, scale in (
                     ("video", v, v_u, settings.cfg_video_scale),
                     ("action", a, a_u, settings.cfg_scale),
