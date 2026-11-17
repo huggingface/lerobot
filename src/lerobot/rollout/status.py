@@ -53,6 +53,18 @@ def _gpu_memory_bytes(device: str | None) -> tuple[int, int] | None:
         return None
 
 
+def _gpu_is_integrated(device: str) -> bool:
+    """True on an integrated GPU (Jetson / Tegra), where the GPU has no memory of its own.
+
+    There ``torch.cuda.mem_get_info`` reports the system RAM it shares with the CPU, which already
+    holds the process memory reported next to it.
+    """
+    try:
+        return bool(torch.cuda.get_device_properties(torch.device(device)).is_integrated)
+    except (RuntimeError, ValueError, AssertionError, AttributeError):
+        return False
+
+
 class RolloutStatusReporter:
     """Own the reporting schedule and baseline; call after each control-loop tick starts."""
 
@@ -109,6 +121,7 @@ def _log_status(
         parts.append(f"process {rss / _GIB:.2f} GiB")
     if (gpu := _gpu_memory_bytes(device)) is not None:
         used, total = gpu
-        parts.append(f"GPU {used / _GIB:.2f}/{total / _GIB:.1f} GiB")
+        label = "system (shared with GPU)" if _gpu_is_integrated(device) else "GPU"
+        parts.append(f"{label} {used / _GIB:.2f}/{total / _GIB:.1f} GiB")
     logger.info("Rollout: %s", " · ".join(parts))
     return current
