@@ -60,7 +60,7 @@ from lerobot.distributed.checkpoint import (
     save_sharded_model,
     save_sharded_optimizer,
 )
-from lerobot.distributed.utils import is_main_process
+from lerobot.distributed.utils import is_distributed_initialized, is_main_process
 from lerobot.optim import (
     load_optimizer_state,
     load_scaler_state,
@@ -736,7 +736,7 @@ def publish_trained_model(
     else:
         with ema.average_parameters(model if peft_model is None else peft_model):
             commit_info = _push_bundle(cfg, model, preprocessor, postprocessor, dataset_meta, peft_model)
-        if dist.is_initialized():
+        if is_distributed_initialized():
             dist.barrier()
         _push_bundle(cfg, model, preprocessor, postprocessor, dataset_meta, peft_model, branch="live")
     if commit_info is not None:
@@ -744,7 +744,7 @@ def publish_trained_model(
         # line to end a remote run early. Keep the wording and URL format in sync.
         logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
-    if dist.is_initialized():
+    if is_distributed_initialized():
         dist.barrier()
 
 

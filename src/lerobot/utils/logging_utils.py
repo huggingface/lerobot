@@ -211,7 +211,7 @@ class MetricsTracker:
         are identical within a context-parallel group, so including CP peers is a weighted
         no-op).
         """
-        if not dist.is_initialized() or dist.get_world_size() <= 1:
+        if not dist.is_available() or not dist.is_initialized() or dist.get_world_size() <= 1:
             return
 
         buckets: dict[str, list[str]] = defaultdict(list)
