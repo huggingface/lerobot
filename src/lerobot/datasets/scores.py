@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 import datasets
 import numpy as np
 import pyarrow as pa
+import pyarrow.dataset as pa_ds
 import pyarrow.parquet as pq
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
@@ -438,6 +439,7 @@ def load_scores(
     name: str,
     columns: Sequence[str] | None = None,
     *,
+    episodes: Sequence[int] | None = None,
     download: bool = True,
     token: str | bool | None = None,
 ) -> datasets.Dataset:
@@ -448,20 +450,37 @@ def load_scores(
         name: Score name.
         columns: Columns to load. Defaults to every column, including ``index``,
             ``episode_index`` and ``frame_index``.
-        download: Download this named score file if absent locally. Set to ``False`` for local-only reads.
+        episodes: Global episodes to read within the dataset view. Defaults to that view.
+        download: Download this named score file if absent locally. Episodes and columns are
+            selected when reading the local file. Set to ``False`` for local-only reads.
         token: Optional authentication token for the download.
 
     Returns:
-        The scores as a Hugging Face dataset.
+        The scores as a Hugging Face dataset backed by a memory-mapped Arrow cache.
+        A selection with no matching rows returns an empty dataset.
     """
     path = _get_scores_path(dataset, name, download=download, token=token)
     schema = _read_schema(path)
+    identity = json.loads(schema.metadata[_DATASET_KEY])
+    if (
+        identity["repo_id"] != dataset.repo_id
+        or identity["total_episodes"] > dataset.meta.total_episodes
+        or identity["total_frames"] > dataset.meta.total_frames
+    ):
+        raise ValueError("Scores no longer align with this dataset; score it again")
+    selected = sorted(_resolve_episode_indices(dataset, episodes))
     requested = schema.names if columns is None else list(columns)
-    table = pq.read_table(
-        path,
-        columns=requested,
-    )
-    return datasets.Dataset(table)
+    filters = pa_ds.field("episode_index").isin(selected)
+    # Return a typed empty dataset when no score rows match the selection.
+    if pa_ds.dataset(path, format="parquet").count_rows(filter=filters) == 0:
+        scores = datasets.Dataset(schema.empty_table().select(requested))
+    else:
+        scores = datasets.Dataset.from_parquet(
+            str(path),
+            columns=requested,
+            filters=filters,
+        )
+    return scores.select_columns(requested)
 
 
 def load_scores_info(

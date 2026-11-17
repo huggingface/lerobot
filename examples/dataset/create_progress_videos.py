@@ -251,7 +251,7 @@ def load_progress_data(
         return None
 
     scores = load_scores(
-        dataset, score_name, columns=["episode_index", "frame_index", signal_name]
+        dataset, score_name, columns=["episode_index", "frame_index", signal_name], episodes=[episode]
     ).to_pandas()
     episode_df = scores[scores["episode_index"] == episode].sort_values("frame_index")
     if episode_df.empty:

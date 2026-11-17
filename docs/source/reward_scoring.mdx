@@ -233,7 +233,9 @@ progress = load_scores(
 )
 ```
 
-The optional `columns` argument selects the returned columns. Set `download=False` for local-only reads. `list_scores()` lists local files without downloading them. `load_signal_descriptors()` restores the typed signal descriptors, and `load_scores_info()` reads the scorer provenance.
+The optional `columns` argument selects the returned columns. Reads include only episodes in the dataset view; pass `episodes=[2, 5, 9]` to select a smaller subset. Set `download=False` for local-only reads. `list_scores()` lists local files without downloading them. `load_signal_descriptors()` restores the typed signal descriptors, and `load_scores_info()` reads the scorer provenance.
+
+Each named score is one Parquet file with one row group per episode. Downloads transfer the complete selected score file, including its other episodes. Episode and column selection happen when reading the local Parquet file. Loaded scores use a memory-mapped Arrow cache on disk. A selection with no matching rows returns an empty dataset.
 
 ### Train with RA-BC
 

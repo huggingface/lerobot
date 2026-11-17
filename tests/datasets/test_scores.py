@@ -26,6 +26,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 import datasets
+from datasets.table import MemoryMappedTable
 from httpx import Request, Response
 from huggingface_hub.errors import RevisionNotFoundError
 
@@ -620,6 +621,18 @@ def test_merge_scores_replaces_existing_scores_only_with_overwrite(tmp_path):
     merge_scores(dataset, ["a", "b"], name="test", overwrite=True)
 
 
+def test_scores_use_global_ids_for_noncontiguous_episode_views(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2] * 10, episodes=[2, 5, 9])
+    function = dense(dataset)
+    add_scores(dataset, "test", function, info=INFO)
+
+    assert function.calls == [2, 5, 9]
+    assert list(load_scores(dataset, "test")["index"]) == [4, 5, 10, 11, 18, 19]
+    assert list(load_scores(dataset, "test", episodes=[5, 9])["episode_index"]) == [5, 5, 9, 9]
+    with pytest.raises(ValueError, match="not visible"):
+        load_scores(dataset, "test", episodes=[0])
+
+
 @pytest.mark.parametrize("snapshot", [False, True])
 @pytest.mark.parametrize("info_first", [False, True])
 def test_load_scores_downloads_only_named_file_at_dataset_revision(
@@ -663,3 +676,37 @@ def test_load_scores_downloads_only_named_file_at_dataset_revision(
     assert list_scores(dataset) == ["test"]
     assert len(load_scores(dataset, "test")) == 2
     assert download_snapshot.call_count == 1
+
+
+def test_load_scores_memory_maps_selected_episodes_and_columns(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2] * 10)
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+
+    table = load_scores(dataset, "test", episodes=[2, 5, 9], columns=[COLUMN, "episode_index", "index"])
+
+    assert isinstance(table.data, MemoryMappedTable)
+    assert table.cache_files
+    assert len(table) == 6
+    assert table.column_names == [COLUMN, "episode_index", "index"]
+    assert list(table["episode_index"]) == [2, 2, 5, 5, 9, 9]
+    assert list(table["index"]) == [4, 5, 10, 11, 18, 19]
+
+
+@pytest.mark.parametrize("empty_file", [False, True])
+def test_load_scores_preserves_types_when_no_rows_match(tmp_path, empty_file):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 2])
+    frames = np.asarray([] if empty_file else [0, 1], dtype=np.int64)
+    add_scores(
+        dataset,
+        "test",
+        lambda _: (frames, {COLUMN: np.ones(len(frames), dtype=np.float32)}),
+        info=INFO,
+        episodes=[0],
+    )
+
+    table = load_scores(dataset, "test", episodes=[1], columns=["index", COLUMN])
+
+    assert len(table) == 0
+    assert table.column_names == ["index", COLUMN]
+    assert table.features["index"].dtype == "int64"
+    assert table.features[COLUMN].dtype == "float32"

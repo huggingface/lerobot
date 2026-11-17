@@ -188,6 +188,8 @@ def test_factory_rabc_reads_local_scores_for_a_streaming_dataset(tmp_path: Path)
     streaming = StreamingLeRobotDataset.__new__(StreamingLeRobotDataset)
     streaming.root = dataset.root
     streaming.meta = dataset.meta
+    streaming.repo_id = dataset.repo_id
+    streaming.episodes = None
 
     weighter = make_sample_weighter(
         SampleWeightingConfig(score_name="fake", signal_name="progress"),
