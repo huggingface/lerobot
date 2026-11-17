@@ -30,7 +30,7 @@ from lerobot.policies.praxis.praxis_core import model as model_mod
 from lerobot.policies.praxis.praxis_core.layers import RotaryEmbedding, to_device_async
 from lerobot.policies.praxis.praxis_core.model import PraxisModel, SamplerSettings
 
-from .tiny_model import LATENT_CHANNELS, TEXT_DIM, make_tiny_policy
+from .tiny_model import LATENT_CHANNELS, TEXT_DIM, fake_observation, make_tiny_policy
 
 pytest.importorskip("transformers", reason="praxis requires the praxis extra (transformers)")
 
@@ -137,3 +137,83 @@ def test_rotary_table_keeps_one_frequency_copy_per_device() -> None:
     assert torch.equal(first, second) and torch.equal(first, reference(positions))
     assert list(rope._theta_on) == [positions.device]
     assert rope._theta_on[positions.device].dtype == torch.float64
+
+
+@pytest.mark.parametrize(("depth", "steps", "shift", "cfg", "cfg_v"), CASES)
+def test_skip_last_video_keeps_the_action_bits(
+    monkeypatch: pytest.MonkeyPatch, depth: int, steps: int, shift: float, cfg: float, cfg_v: float
+) -> None:
+    """The last step without its video decoder: the same action bits, no video.
+
+    The last step runs its guided pass with ``decode=False``, and its unguided pass only when the
+    action scale reads it (also without the decoder). The earlier steps are unchanged.
+    """
+    settings = _settings(steps, shift, cfg, cfg_v)
+    out, calls_of = {}, {}
+    for skip in (False, True):
+        calls = Calls()
+        model = _model(calls, monkeypatch)
+        out[skip] = model.sample_window_joint(
+            seed=7, settings=settings, skip_last_video=skip, **_inputs(depth)
+        )
+        calls_of[skip] = calls
+    assert out[False][0] is not None and out[True][0] is None
+    assert torch.equal(out[True][1], out[False][1])
+    guided = cfg != 1.0 or cfg_v != 1.0
+    per_step = 2 if guided else 1
+    full, skipped = calls_of[False].trunk, calls_of[True].trunk
+    # The earlier steps make the same trunk calls with the same inputs.
+    assert len(skipped) == (steps - 1) * per_step + (2 if cfg != 1.0 else 1)
+    for a, b in zip(full[: (steps - 1) * per_step], skipped, strict=False):
+        assert a["decode"] is b["decode"] and torch.equal(a["noised"], b["noised"])
+    # The last step decodes no video in any pass.
+    assert all(c["decode"] is False for c in skipped[(steps - 1) * per_step :])
+    # The expert sees the same calls: the action path is untouched.
+    assert len(calls_of[True].expert) == len(calls_of[False].expert)
+    for a, b in zip(calls_of[False].expert, calls_of[True].expert, strict=True):
+        assert torch.equal(a["noised_actions"], b["noised_actions"])
+
+
+def test_skip_last_video_follows_the_model_flag_and_a_trace_runs_all_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``model.skip_last_video`` is the default of the argument; a trace keeps every pass."""
+    settings = _settings(2, 12.5, 1.0, 4.0)
+    model = _model(Calls(), monkeypatch)
+    assert model.skip_last_video is False
+    model.skip_last_video = True
+    video, _ = model.sample_window_joint(seed=1, settings=settings, **_inputs(1))
+    assert video is None
+    video, _ = model.sample_window_joint(seed=1, settings=settings, skip_last_video=False, **_inputs(1))
+    assert video is not None
+    traced, _ = model.sample_window_joint(seed=1, settings=settings, trace=lambda n, t: None, **_inputs(1))
+    assert traced is not None
+
+
+@pytest.mark.parametrize("return_prediction", [False, True])
+def test_policy_skips_the_last_video_unless_it_returns_the_prediction(
+    monkeypatch: pytest.MonkeyPatch, return_prediction: bool
+) -> None:
+    """`select_action` skips the last step's video decoder unless `return_prediction` reads the video,
+    and the commands are those of the sampler with the decoder."""
+    commands, skips = {}, {}
+    for force_decoder in (False, True):
+        policy = make_tiny_policy(seed=11, return_prediction=return_prediction)
+        sample = policy.model.sample_window_joint
+        seen: list[bool | None] = []
+
+        def spy(
+            *args, skip_last_video: bool | None = None, _force=force_decoder, _seen=seen, _s=sample, **kw
+        ):  # noqa: ANN002, ANN003, ANN202
+            _seen.append(skip_last_video)
+            return _s(*args, skip_last_video=False if _force else skip_last_video, **kw)
+
+        monkeypatch.setattr(policy.model, "sample_window_joint", spy)
+        policy.reset()
+        rows = []
+        for step in range(22):  # the cold-start chunk and the first command of the depth-1 chunk
+            out = policy.select_action(fake_observation(step))
+            rows.append((out["action"] if isinstance(out, dict) else out).clone())
+        commands[force_decoder], skips[force_decoder] = torch.stack(rows), seen
+    assert skips[False] == [not return_prediction] * 2
+    assert torch.equal(commands[False], commands[True])

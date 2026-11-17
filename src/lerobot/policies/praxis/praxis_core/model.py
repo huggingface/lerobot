@@ -1,6 +1,6 @@
-# Vendored from runwayml/praxis-1-oss at commit 8dad1a4 plus the canvas rule of the released DROID checkpoint
-# and a8eb983 (the unguided pass skips the action expert without action guidance; no host synchronize),
-# original path praxis/model.py.
+# Vendored from runwayml/praxis-1-oss at commit 8dad1a4, original path praxis/model.py, plus the canvas
+# rule of the released DROID checkpoint, a8eb983 (the unguided pass skips the action expert without action
+# guidance; no host synchronize) and the skip_last_video option of the sampler from bd0b693.
 # Import paths are rewritten to the LeRobot package; the class PraxisPolicy of praxis.model
 # is renamed PraxisModel here. Keep this file in sync with the upstream file.
 """The praxis policy: video backbone, action expert, autoencoder, text encoder.
@@ -132,6 +132,9 @@ class PraxisModel(nn.Module):
         self.backbone = backbone
         self.action_expert = expert
         self.config = config
+        # True: the last Euler step of sample_window_joint moves only the actions
+        # (no video decoder on that step); the sampler then returns no video.
+        self.skip_last_video = False
 
     @classmethod
     def from_config(cls, config: dict) -> PraxisModel:
@@ -189,7 +192,8 @@ class PraxisModel(nn.Module):
         seed: int,
         settings: SamplerSettings,
         trace: TraceFn | None = None,
-    ) -> tuple[Tensor, Tensor]:
+        skip_last_video: bool | None = None,
+    ) -> tuple[Tensor | None, Tensor]:
         """Denoise the window of the chunk at depth ``d = len(cleans)`` jointly.
 
         The sampler of the checkpoint (layout ``window_joint``). The
@@ -213,9 +217,17 @@ class PraxisModel(nn.Module):
           states stay float32 and enter the models in the model dtype. The
           step is ``x + (t_next - t_cur) * v`` with a Python float step.
         * ``trace`` receives the intermediate tensors by name.
+        * ``skip_last_video`` (default None: ``self.skip_last_video``, which
+          is False unless set): the last step moves only the actions. Its
+          guided pass runs without the video decoder, and its unguided pass
+          runs only for action guidance, also without the decoder. The action
+          expert reads only the encoder taps, and the guidance combine at
+          scale 1.0 is the identity, so the actions keep their bits. The video
+          comes back as None. A ``trace`` call runs all passes.
 
-        Returns the video latent of the last chunk ``(1, 192, 6, h, w)`` and
-        its normalized action tokens ``(1, 6, A)``, float32.
+        Returns the video latent of the last chunk ``(1, 192, 6, h, w)`` (None
+        with ``skip_last_video``) and its normalized action tokens
+        ``(1, 6, A)``, float32.
         """
         if settings.layout != "window_joint":
             raise ValueError(f"layout {settings.layout!r} is not 'window_joint'")
@@ -297,20 +309,30 @@ class PraxisModel(nn.Module):
         # skipped part changes no bit. A trace keeps both parts.
         decode_uncond = trace is not None or float(settings.cfg_video_scale) != 1.0
         act_uncond = trace is not None or float(settings.cfg_scale) != 1.0
+        skip = self.skip_last_video if skip_last_video is None else skip_last_video
+        # The skip serves callers that read no video: a trace keeps the decoder.
+        skip_video = trace is None and bool(skip)
         for step in range(settings.num_steps):
             t_cur, t_next = ts[step], ts[step + 1]
+            # the last step's video moves only the returned latent: skip its decoder
+            video = not (skip_video and step == settings.num_steps - 1)
             probe("pass.marker", torch.tensor([step, 0]))
-            v, a = velocity(text_c, xv, xa, t_cur, True)
-            assert v is not None and a is not None
-            if guided:
-                assert text_u is not None
+            v, a = velocity(text_c, xv, xa, t_cur, video)
+            if a is None or (video and v is None):
+                raise RuntimeError(
+                    f"the trunk pass of step {step} returned no {'actions' if a is None else 'video velocity'}"
+                )
+            # The unguided pass runs only for a part that a guidance scale reads.
+            if guided and (video or act_uncond):
+                if text_u is None:
+                    raise RuntimeError("guided sampling needs text_uncond")
                 probe("pass.marker", torch.tensor([step, 1]))
-                v_u, a_u = velocity(text_u, xv, xa, t_cur, decode_uncond, act=act_uncond)
+                v_u, a_u = velocity(text_u, xv, xa, t_cur, video and decode_uncond, act=act_uncond)
                 for kind, cond, unc, scale in (
                     ("video", v, v_u, settings.cfg_video_scale),
                     ("action", a, a_u, settings.cfg_scale),
                 ):
-                    if unc is None:  # the unguided video is not needed
+                    if unc is None or cond is None:  # a part not needed
                         continue
                     out = guidance_combine(cond, unc, scale)
                     probe(f"cfg_combine.{kind}.cond", cond)
@@ -321,12 +343,14 @@ class PraxisModel(nn.Module):
                     else:
                         a = out
             dt = t_next - t_cur
-            xv = xv + dt * v
+            if video and v is not None:
+                xv = xv + dt * v
             xa = xa + dt * a
         probe("out.video", xv)
         probe("out.action", xa)
-        video = xv[:, :, d * lat :].contiguous()
+        video_last = None if skip_video else xv[:, :, d * lat :].contiguous()
         actions = xa[d * lat :].contiguous()
-        probe("out.video_last", video)
+        if video_last is not None:
+            probe("out.video_last", video_last)
         probe("out.action_last", actions)
-        return video, actions[None]
+        return video_last, actions[None]
