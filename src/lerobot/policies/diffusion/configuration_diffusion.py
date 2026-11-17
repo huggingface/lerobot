@@ -145,6 +145,13 @@ class DiffusionConfig(PreTrainedConfig):
     clip_sample: bool = True
     clip_sample_range: float = 1.0
 
+    # Reactive Watchdog / Recovery.
+    # When set, monitors tracking discrepancy (max absolute error between observed state and previous
+    # commanded action). If discrepancy exceeds this threshold, the active action queue is flushed
+    # immediately, forcing the diffusion model to re-plan from the actual perturbed state.
+    watchdog_tracking_threshold: float | None = None
+    watchdog_replan_mode: str = "flush"
+
     # Inference
     num_inference_steps: int | None = None
 
@@ -210,6 +217,15 @@ class DiffusionConfig(PreTrainedConfig):
             raise ValueError(
                 "The horizon should be an integer multiple of the downsampling factor (which is determined "
                 f"by `len(down_dims)`). Got {self.horizon=} and {self.down_dims=}"
+            )
+
+        if self.watchdog_tracking_threshold is not None and self.watchdog_tracking_threshold <= 0:
+            raise ValueError(
+                f"`watchdog_tracking_threshold` must be positive. Got {self.watchdog_tracking_threshold}."
+            )
+        if self.watchdog_replan_mode not in ("flush", "adaptive"):
+            raise ValueError(
+                f"`watchdog_replan_mode` must be 'flush' or 'adaptive'. Got {self.watchdog_replan_mode}."
             )
 
     def get_optimizer_preset(self) -> AdamConfig:
