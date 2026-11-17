@@ -506,20 +506,21 @@ def merge_scores(
 ) -> None:
     """Merge scores of disjoint episodes under one name.
 
-    Useful when episodes were scored in parallel, each worker with its own score name.
+    Useful for parallel scoring and for adding scores for appended episodes without recomputing
+    existing scores.
     Source score files are not deleted.
 
     Args:
         dataset: Dataset the scores belong to.
-        names: Score names to merge. They must have the same columns, dataset identity and ``info``,
+        names: Score names to merge. They must have the same columns, dataset repository and ``info``,
             and share no episode.
         name: Name of the merged scores.
         overwrite: If ``True``, replace existing scores with that name.
 
     Raises:
         FileExistsError: If the scores exist and ``overwrite`` is ``False``.
-        ValueError: If the scores differ in columns, dataset identity or ``info``, or share an
-            episode.
+        ValueError: If the scores differ in columns or ``info``, do not fit the dataset, or share
+            an episode.
     """
     if not names:
         raise ValueError("At least one score name must be given to merge")
@@ -533,10 +534,19 @@ def merge_scores(
     paths = [_scores_path(dataset, part) for part in names]
     schemas = [_read_schema(path) for path in paths]
     reference = schemas[0]
+    reference_metadata = dict(reference.metadata)
+    reference_metadata.pop(_DATASET_KEY)
     episode_paths: dict[int, Path] = {}
     for part, path, schema in zip(names, paths, schemas, strict=True):
-        # Equal schemas, metadata included, mean equal columns, dtypes, dataset identity and info.
-        if not schema.equals(reference, check_metadata=True):
+        metadata = dict(schema.metadata)
+        identity = json.loads(metadata.pop(_DATASET_KEY))
+        if (
+            identity["repo_id"] != dataset.repo_id
+            or identity["total_episodes"] > dataset.meta.total_episodes
+            or identity["total_frames"] > dataset.meta.total_frames
+        ):
+            raise ValueError(f"Scores {part!r} no longer align with this dataset; score it again")
+        if not schema.equals(reference, check_metadata=False) or metadata != reference_metadata:
             raise ValueError(f"Scores {part!r} have different columns or info than {names[0]!r}")
         episodes = np.unique(
             pq.read_table(path, columns=["episode_index"]).column("episode_index").to_numpy()
@@ -545,6 +555,16 @@ def merge_scores(
         if shared:
             raise ValueError(f"Scores {part!r} repeat episodes of earlier scores: {shared}")
         episode_paths.update((int(index), path) for index in episodes)
+
+    # The merged file describes the current dataset, including any appended episodes.
+    identity = json.loads(reference.metadata[_DATASET_KEY])
+    identity.update(
+        revision=dataset.revision,
+        total_episodes=int(dataset.meta.total_episodes),
+        total_frames=int(dataset.meta.total_frames),
+    )
+    reference_metadata[_DATASET_KEY] = _canonical_json(identity, label="dataset identity").encode()
+    reference = reference.with_metadata(reference_metadata)
 
     tables = (
         pq.read_table(episode_paths[index], filters=[("episode_index", "==", index)], schema=reference)

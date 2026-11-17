@@ -577,6 +577,51 @@ def test_merge_scores_combines_disjoint_episodes(tmp_path):
     assert list_scores(dataset) == ["part-0", "part-1", "test"]
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_merge_scores_combines_scores_from_before_and_after_append(tmp_path, reverse):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 3])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    original = load_scores(dataset, "test")[:]
+    appended = FakeDataset(dataset.root, [2, 3, 4])
+    appended.revision = "new-revision"
+    function = dense(appended)
+    add_scores(appended, "new", function, info=INFO, episodes=[2])
+
+    names = ["new", "test"] if reverse else ["test", "new"]
+    merge_scores(appended, names, name="test", overwrite=True)
+
+    merged = load_scores(appended, "test")
+    assert function.calls == [2]
+    assert merged[:5] == original
+    assert list(merged["index"]) == list(range(9))
+    assert list(merged["episode_index"]) == [0, 0, 1, 1, 1, 2, 2, 2, 2]
+    identity = json.loads(
+        pq.read_schema(dataset.root / "scores/test.parquet").metadata[b"lerobot.scores.dataset"]
+    )
+    assert identity["revision"] == appended.revision
+    assert identity["total_episodes"] == 3
+    assert identity["total_frames"] == 9
+    assert list_scores(appended) == ["new", "test"]
+
+
+@pytest.mark.parametrize(
+    "repo_id,lengths",
+    [("other/dataset", [2, 3]), ("test/dataset", [2]), ("test/dataset", [2, 2])],
+    ids=["different-repository", "deleted-episode", "deleted-frame"],
+)
+def test_merge_scores_rejects_incompatible_dataset(tmp_path, repo_id, lengths):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 3])
+    add_scores(dataset, "a", dense(dataset), info=INFO, episodes=[0])
+    add_scores(dataset, "b", dense(dataset), info=INFO, episodes=[1])
+    changed = FakeDataset(dataset.root, lengths)
+    changed.repo_id = repo_id
+
+    with pytest.raises(ValueError, match="no longer align"):
+        merge_scores(changed, ["a", "b"], name="test")
+
+    assert not (dataset.root / "scores/test.parquet").exists()
+
+
 def test_merge_scores_keeps_row_order_within_an_episode(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [3, 3])
 
@@ -669,6 +714,7 @@ def test_scores_survive_real_dataset_append_and_parquet_repacking(tmp_path):
         appended.add_frame({"state": np.asarray([index], dtype=np.float32), "task": "new task"})
     appended.save_episode()
     appended.finalize()
+    appended = LeRobotDataset("test/dataset", root=root)
     assert load_scores(appended, "test")[:] == expected
 
     # Logical source rows remain the same when compression and row-group sizes change.
@@ -676,6 +722,14 @@ def test_scores_survive_real_dataset_append_and_parquet_repacking(tmp_path):
         table = pq.read_table(path)
         pq.write_table(table, path, row_group_size=1, compression="gzip")
     assert load_scores(appended, "test")[:] == expected
+
+    function = dense(appended)
+    add_scores(appended, "new", function, info=INFO, episodes=[2])
+    merge_scores(appended, ["test", "new"], name="test", overwrite=True)
+    merged = load_scores(appended, "test")
+    assert function.calls == [2]
+    assert merged[:5] == expected
+    assert list(merged["index"]) == list(range(7))
 
 
 @pytest.mark.parametrize("snapshot", [False, True])

@@ -181,7 +181,7 @@ score_dataset(dataset, scorer, name=f"sarm-rank{rank}", episodes=my_episodes)  #
 merge_scores(dataset, [f"sarm-rank{rank}" for rank in range(world_size)], name="sarm")  # once at the end
 ```
 
-Place all worker score files in the same dataset's `scores/` directory before merging. `merge_scores()` requires matching dataset identity, column types, and score info in every file, and rejects episodes written twice.
+Place all worker score files in the same dataset's `scores/` directory before merging. `merge_scores()` requires the same dataset repository, column types, and score info in every file, and rejects episodes written twice. After appending episodes, score only the new episodes under another name, then merge them with the existing scores. The original episodes must remain unchanged.
 
 ## Python API
 
