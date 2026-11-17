@@ -19,7 +19,11 @@ import importlib.util
 import logging
 from typing import Any, Literal, overload
 
-from draccus.choice_types import ChoiceRegistry
+try:
+    from draccus.choice_types import ChoiceRegistry
+except ImportError:
+    class ChoiceRegistry:
+        pass
 
 
 @overload
