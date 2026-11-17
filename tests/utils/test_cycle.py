@@ -15,6 +15,8 @@
 from itertools import islice
 
 import pytest
+import torch
+from torch.utils.data import DataLoader, TensorDataset
 
 from lerobot.utils.utils import cycle
 
@@ -65,3 +67,24 @@ def test_cycle_propagates_source_errors():
     assert next(iterator) == 1
     with pytest.raises(ValueError, match="source failed"):
         next(iterator)
+
+
+@pytest.mark.timeout(120)
+@pytest.mark.parametrize("workers", [0, 2])
+def test_cycle_dataloader_drop_last_terminates(workers):
+    loader = DataLoader(TensorDataset(torch.arange(1)), batch_size=2, drop_last=True, num_workers=workers)
+    assert list(cycle(loader)) == []
+
+
+@pytest.mark.timeout(120)
+@pytest.mark.parametrize("workers", [0, 2])
+def test_cycle_dataloader_reads_new_epoch_values(workers):
+    values = torch.arange(4)
+    loader = DataLoader(TensorDataset(values), batch_size=2, num_workers=workers)
+    iterator = cycle(loader)
+    try:
+        assert [batch[0].tolist() for batch in islice(iterator, 2)] == [[0, 1], [2, 3]]
+        values.add_(10)
+        assert [batch[0].tolist() for batch in islice(iterator, 2)] == [[10, 11], [12, 13]]
+    finally:
+        iterator.close()
