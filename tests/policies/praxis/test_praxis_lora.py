@@ -101,6 +101,23 @@ def test_merge_folds_the_adapter_into_the_weights(tmp_path: Path) -> None:
     assert changed > 0
 
 
+def test_merge_keeps_the_device_of_the_base_config(tmp_path: Path) -> None:
+    """The merge runs where `--device` says (the CPU by default), but the merged checkpoint keeps
+    the device its base names: loading it later must not put the model on the merge host's CPU."""
+    import json
+
+    merge_adapter = load_example("merge_praxis_adapter").merge_adapter
+    policy = make_tiny_policy(seed=4)
+    base_dir = tmp_path / "base"
+    policy.save_pretrained(base_dir)
+    config_file = base_dir / "config.json"
+    config_file.write_text(json.dumps({**json.loads(config_file.read_text()), "device": "cuda"}))
+    adapter_dir = tmp_path / "adapter"
+    _wrap(policy, tmp_path).save_pretrained(adapter_dir)
+    out = merge_adapter(base_dir, adapter_dir, tmp_path / "merged", device="cpu")
+    assert json.loads((out / "config.json").read_text())["device"] == "cuda"
+
+
 def test_adapter_fine_tune_keeps_the_router_biases_and_saves_the_counter(tmp_path) -> None:
     """Under PEFT the MoE routing biases of the base stay fixed (an adapter checkpoint could not carry them)
     and the training counter is part of the adapter (`modules_to_save`)."""
