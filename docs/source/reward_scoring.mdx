@@ -237,6 +237,8 @@ The optional `columns` argument selects the returned columns. Reads include only
 
 Each named score is one Parquet file with one row group per episode. Downloads transfer the complete selected score file, including its other episodes. Episode and column selection happen when reading the local Parquet file. Loaded scores use a memory-mapped Arrow cache on disk. A selection with no matching rows returns an empty dataset.
 
+Appending episodes does not require regenerating existing scores.
+
 ### Train with RA-BC
 
 Select the score file and a progress signal in your training configuration:

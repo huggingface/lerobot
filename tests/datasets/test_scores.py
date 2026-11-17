@@ -633,6 +633,51 @@ def test_scores_use_global_ids_for_noncontiguous_episode_views(tmp_path):
         load_scores(dataset, "test", episodes=[0])
 
 
+def test_scores_remain_valid_after_appending_but_not_deleting_episodes(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 3])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    expected = load_scores(dataset, "test")[:]
+
+    appended = FakeDataset(dataset.root, [2, 3, 4])
+    appended.revision = "new-revision"
+    assert load_scores(appended, "test")[:] == expected
+    assert len(load_scores(appended, "test", episodes=[2])) == 0
+
+    shortened = FakeDataset(dataset.root, [2])
+    with pytest.raises(ValueError, match="no longer align"):
+        load_scores(shortened, "test")
+
+
+def test_scores_survive_real_dataset_append_and_parquet_repacking(tmp_path):
+    root = tmp_path / "dataset"
+    dataset = LeRobotDataset.create(
+        "test/dataset",
+        fps=10,
+        features={"state": {"dtype": "float32", "shape": (1,), "names": None}},
+        root=root,
+    )
+    for length in (3, 2):
+        for index in range(length):
+            dataset.add_frame({"state": np.asarray([index], dtype=np.float32), "task": "test task"})
+        dataset.save_episode()
+    dataset.finalize()
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    expected = load_scores(dataset, "test")[:]
+
+    appended = LeRobotDataset.resume("test/dataset", root=root)
+    for index in range(2):
+        appended.add_frame({"state": np.asarray([index], dtype=np.float32), "task": "new task"})
+    appended.save_episode()
+    appended.finalize()
+    assert load_scores(appended, "test")[:] == expected
+
+    # Logical source rows remain the same when compression and row-group sizes change.
+    for path in (root / "data").glob("*/*.parquet"):
+        table = pq.read_table(path)
+        pq.write_table(table, path, row_group_size=1, compression="gzip")
+    assert load_scores(appended, "test")[:] == expected
+
+
 @pytest.mark.parametrize("snapshot", [False, True])
 @pytest.mark.parametrize("info_first", [False, True])
 def test_load_scores_downloads_only_named_file_at_dataset_revision(
