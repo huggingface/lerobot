@@ -26,7 +26,10 @@ SIM_HOST = "127.0.0.1"
 @RobotConfig.register_subclass("asimov")
 @dataclass
 class AsimovConfig(RobotConfig):
-    """Asimov 1 locomotion or arm control over the Menlo SDK's UDP transport."""
+    """Asimov 1 locomotion or arm control over the Menlo SDK's UDP transport.
+
+    The robot is calibrated by its firmware: LeRobot does not calibrate it and ignores `calibration_dir`.
+    """
 
     # The robot's address; the simulation's with is_simulation.
     host: str = ""
