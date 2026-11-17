@@ -1,6 +1,14 @@
 # Adding a Benchmark
 
-A benchmark is a simulator that LeRobot drives in one place, `lerobot.sim`, so that every way of using it behaves the same: `lerobot-eval` (a batched env, `--env.type=<benchmark>`), rollout and recording (a sim robot, `--robot.type=sim --robot.env.type=<benchmark>`), locally or served by `lerobot-env-server` from its own Docker image. See [Simulation: local or served](./simulation) for how it is used.
+This page covers adding a benchmark to LeRobot itself, maintained and tested in LeRobot's CI like LIBERO or Meta-World. To share an environment of your own, publish it on the Hub instead: see [EnvHub](./envhub).
+
+A benchmark's code is one module, `src/lerobot/sim/integrations/<benchmark>.py`: its `gym.Env`, the adapter that turns its observations into LeRobot's, and its control conventions. Every way of using the benchmark builds it from that module: `lerobot-eval` (a batched env, `--env.type=<benchmark>`), rollout and recording (a sim robot, `--robot.type=sim --robot.env.type=<benchmark>`), in your process or served by `lerobot-env-server` from its own Docker image. No command has a wrapper of its own, so they all see the same observations and apply actions the same way. See [Simulation](./simulation) for how it is used.
+
+A benchmark touches three layers:
+
+- **`lerobot.envs`** holds its `EnvConfig`: the options users pass with `--env.*` (and `--robot.env.*`), and how they map to the simulator's (`sim_settings()`).
+- **`lerobot.sim`** holds the simulator itself, its integration module, stepped by `LocalVectorEnv`. It never imports torch, so that it runs in the server's image.
+- **`lerobot.env_server`** serves `lerobot.sim` to other processes. `RemoteVectorEnv` drives a served simulator with the same API as `LocalVectorEnv`, so commands work the same whether it runs in their process or on a server.
 
 ## What to add
 
@@ -53,6 +61,8 @@ def env_fns(
 A single-task benchmark returns `{"<task>": {0: [...]}}`; a multi-task one (like LIBERO) returns `{"libero_spatial": {0: [...], 1: [...], ...}, ...}`. `LocalVectorEnv` calls each `make_single_env` factory on first use, locally or on the server and, with `--eval.use_async_envs=true`, in a separate process per environment.
 
 ### The gym.Env
+
+The environment follows the same contract as an EnvHub one (see [The environment](./envhub#the-environment)): observations as a dict of NumPy arrays, a one-dimensional continuous `Box` action, `info["is_success"]` on every step, and optionally `info["metrics"]`.
 
 ```python
 class MyBenchmarkEnv(gym.Env):
@@ -122,7 +132,7 @@ Keep its defaults and the server YAML's in agreement: a served evaluation refuse
 
 1. Check the integration's observation adapter against your simulator's raw outputs, especially camera orientation and state order, and check the environment wrapper's applied actions.
 2. Compare seeded reset/step sequences locally and served (`scripts/ci/check_sim_parity.py`); set `parity: true` in the manifest entry of a deterministic simulator so CI runs it. Check terminal freezing, success, episode length, rendering and resource cleanup.
-3. Run torch-disabled import guards for the server code and your native module. Document simulators that need their own torch runtime, such as RoboTwin and RoboMME.
+3. Check that the server code and your integration import without torch.
 4. Run `lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --policy.path=<checkpoint>` locally, and with `--env.server.endpoint` against the server. Inspect task descriptions and rendered camera views.
 5. Run the generated benchmark job on the GPU runner. Preserve the LIBERO training smoke when changing shared evaluation/training integration.
 
