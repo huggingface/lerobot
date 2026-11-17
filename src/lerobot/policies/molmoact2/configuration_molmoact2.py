@@ -475,6 +475,34 @@ class MolmoAct2Config(PreTrainedConfig):
         config_for_save = replace(self, norm_tag=None, norm_stats_path=None)
         PreTrainedConfig._save_pretrained(config_for_save, save_directory)
 
+    @classmethod
+    def _migrate_pretrained_config(cls, config: dict[str, Any]) -> None:
+        if "model_dtype" in config:
+            config.setdefault("dtype", config.pop("model_dtype"))
+
+        legacy_flags = ("enable_lora_vlm", "enable_lora_action_expert", "train_action_expert_only")
+        if not any(name in config for name in legacy_flags):
+            return
+
+        flags = {}
+        for name in legacy_flags:
+            value = config.pop(name, False)
+            if not isinstance(value, bool):
+                raise ValueError(f"Legacy MolmoAct2 {name} must be a boolean, got {value!r}.")
+            flags[name] = value
+
+        if flags["enable_lora_action_expert"]:
+            raise ValueError(
+                "Legacy MolmoAct2 action-expert LoRA has no equivalent in the current config. "
+                "Use a compatible LeRobot version for this checkpoint."
+            )
+        if flags["enable_lora_vlm"]:
+            raise ValueError(
+                "Legacy MolmoAct2 VLM LoRA used different adapter targets. "
+                "Use a compatible LeRobot version for this checkpoint."
+            )
+        config.setdefault("train_mode_vlm", "freeze" if flags["train_action_expert_only"] else "fft")
+
     @property
     def observation_delta_indices(self) -> None:
         return None

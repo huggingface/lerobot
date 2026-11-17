@@ -175,6 +175,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             json.dump(draccus.encode(self, PreTrainedConfig), f, indent=4)
 
     @classmethod
+    def _migrate_pretrained_config(cls, config: dict[str, Any]) -> None:
+        """Update legacy checkpoint fields in memory before parsing overrides."""
+
+    @classmethod
     def from_pretrained(
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
@@ -231,6 +235,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                 f"Available policy types: {cls.get_known_choices()}"
             ) from e
 
+        config_cls._migrate_pretrained_config(config)
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)
             config_file = f.name
