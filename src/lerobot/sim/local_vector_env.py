@@ -38,8 +38,6 @@ from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
 logger = logging.getLogger(__name__)
 
-# Env attributes copied from a worker process after it builds the env and after each reset.
-_ENV_ATTRS = ("task_description", "task", "num_envs")
 # Episode limit for an env that declares none.
 _DEFAULT_MAX_EPISODE_STEPS = 500
 # Gymnasium 0.29, which some simulators pin (RoboMME's ManiSkill), has no AutoresetMode; there a vector env always
@@ -73,6 +71,18 @@ def _max_episode_steps(env: Any) -> int | None:
     except AttributeError:
         return None
     return None if limit is None else int(limit)
+
+
+def _task_attribute(env: Any) -> tuple[str, Any] | None:
+    """Find the preferred task attribute through wrappers, distinguishing missing from falsey values."""
+    get_wrapper_attr = getattr(env, "get_wrapper_attr", None)
+    for name in ("task_description", "task"):
+        try:
+            value = get_wrapper_attr(name) if get_wrapper_attr is not None else getattr(env, name)
+        except AttributeError:
+            continue
+        return name, value
+    return None
 
 
 def _spaces(env: Any) -> tuple[spaces.Space, spaces.Space]:
@@ -127,7 +137,12 @@ def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
                 elif command == "spaces":
                     result = _spaces(env)
                 else:  # "attrs"
-                    result = {name: getattr(env, name) for name in _ENV_ATTRS if hasattr(env, name)}
+                    result = {}
+                    task_attribute = _task_attribute(env)
+                    if task_attribute is not None:
+                        result[task_attribute[0]] = task_attribute[1]
+                    if hasattr(env, "num_envs"):
+                        result["num_envs"] = env.num_envs
                     result["_max_episode_steps"] = _max_episode_steps(env)
                 pipe.send((True, result))
             except Exception:
@@ -513,7 +528,8 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         # A metric an env has not reported in this episode reads as zero.
         names = dict.fromkeys(name for last in self._last for name in last.metrics)
         task = tuple(
-            str(getattr(env, "task_description", getattr(env, "task", self.task_group))) for env in self._envs
+            str(attribute[1] if (attribute := _task_attribute(env)) is not None else self.task_group)
+            for env in self._envs
         )
         self._latest = StepResult(
             obs=obs,

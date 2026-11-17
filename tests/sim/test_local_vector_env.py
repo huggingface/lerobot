@@ -18,6 +18,8 @@ import os
 import sys
 import types
 from dataclasses import replace
+from functools import partial
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
@@ -245,6 +247,136 @@ class _Reach(gym.Env):
 
     def step(self, action):
         return {"agent_pos": np.zeros(2, np.float32)}, 0.0, False, False, {}
+
+
+class _UnusedTaskReach(_Reach):
+    task_description = "Inner instruction"
+
+    @property
+    def task(self) -> str:
+        raise RuntimeError("Lower-priority task must not be read")
+
+
+class _BrokenDescriptionReach(_Reach):
+    @property
+    def task_description(self) -> str:
+        raise ValueError("Instruction lookup failed")
+
+
+def _instruction_env(kind: str, outer_attrs: dict[str, Any]) -> Any:
+    if kind == "native":
+        return _NativeEnv()
+    base = _UnusedTaskReach() if kind in ("lazy", "plain-lazy") else _Reach()
+    if kind not in ("task-only", "absent", "lazy", "plain-lazy"):
+        base.task_description = "Inner instruction"
+    if kind == "task-only":
+        base.task = "inner-task"
+    if kind in ("plain", "plain-lazy"):
+        return base
+    env = gym.wrappers.OrderEnforcing(base)
+    if kind != "order":
+        env = gym.wrappers.TimeLimit(gym.wrappers.TimeLimit(env, 8), 5)
+    for name, value in outer_attrs.items():
+        setattr(env, name, value)
+    # Even an outer override may itself sit below another wrapper.
+    return gym.wrappers.OrderEnforcing(env)
+
+
+@pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "kind, outer_attrs, expected",
+    [
+        ("plain", {}, "Inner instruction"),
+        ("native", {}, "Pick the object"),
+        ("order", {}, "Inner instruction"),
+        ("nested", {}, "Inner instruction"),
+        ("override", {"task_description": "Outer instruction"}, "Outer instruction"),
+        ("override", {"task_description": ""}, ""),
+        ("override", {"task_description": None}, "None"),
+        ("override", {"task_description": False}, "False"),
+        ("override", {"task_description": 0}, "0"),
+        ("override", {"task": "outer-task"}, "Inner instruction"),
+        ("task-only", {}, "inner-task"),
+        ("absent", {}, "reach"),
+        ("lazy", {}, "Inner instruction"),
+        ("plain-lazy", {}, "Inner instruction"),
+    ],
+)
+def test_task_instructions_respect_wrappers_and_fallback(
+    monkeypatch, use_async_envs: bool, kind: str, outer_attrs: dict[str, Any], expected: str
+) -> None:
+    make = partial(_instruction_env, kind, outer_attrs)
+    _register_integration(monkeypatch, "instructions", lambda task, n_envs: {task: {0: [make] * n_envs}})
+    env = LocalVectorEnv(SimConfig(type="instructions", task="reach"), use_async_envs=use_async_envs)
+    try:
+        env.reset(seed=0)
+        assert env.latest.task == (expected,)
+        env.step(np.zeros((1, env.single_action_space.shape[0]), np.float32))
+        assert env.call("task_description") == (expected,)
+        if kind == "nested":
+            assert env.call("_max_episode_steps") == (5,)
+    finally:
+        env.close()
+
+
+class _ResetInstructionReach(_Reach):
+    def reset(self, seed=None, options=None):
+        self.task_description = "Episode A" if seed == 0 else "Episode B"
+        return super().reset(seed=seed, options=options)
+
+
+def _reset_instruction_env(has_instruction: bool) -> gym.Env:
+    base = _ResetInstructionReach() if has_instruction else _Reach()
+    return gym.wrappers.OrderEnforcing(gym.wrappers.TimeLimit(base, 5))
+
+
+@pytest.mark.parametrize("has_instruction", [False, True])
+def test_worker_task_attributes_appear_on_reset_and_refresh(has_instruction: bool) -> None:
+    env = _ProcessEnv(partial(_reset_instruction_env, has_instruction))
+    try:
+        env.ready()
+        assert not hasattr(env, "task_description") and not hasattr(env, "task")
+        for seed, expected in ((0, "Episode A"), (1, "Episode B")):
+            env.reset(seed=seed)
+            assert getattr(env, "task_description", None) == (expected if has_instruction else None)
+            env.step(np.zeros(2, np.float32))
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("has_instruction", [False, True])
+def test_task_instructions_refresh_on_reset(monkeypatch, use_async_envs: bool, has_instruction: bool) -> None:
+    make = partial(_reset_instruction_env, has_instruction)
+    _register_integration(monkeypatch, "instructions", lambda task, n_envs: {task: {0: [make] * n_envs}})
+    env = LocalVectorEnv(
+        SimConfig(type="instructions", task="reach"), num_envs=2, use_async_envs=use_async_envs
+    )
+    try:
+        for seed, instruction in ((0, "Episode A"), (1, "Episode B")):
+            expected = (instruction if has_instruction else "reach",) * 2
+            env.reset(seed=[seed, seed])
+            assert env.latest.task == expected
+            env.step(np.zeros((2, 2), np.float32))
+            assert env.latest.task == expected
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
+def test_task_instruction_lookup_errors_are_reported(monkeypatch, use_async_envs: bool) -> None:
+    def make():
+        return gym.wrappers.OrderEnforcing(_BrokenDescriptionReach())
+
+    _register_integration(monkeypatch, "instructions", lambda task, n_envs: {task: {0: [make] * n_envs}})
+    env = None
+    try:
+        with pytest.raises(RuntimeError if use_async_envs else ValueError, match="Instruction lookup failed"):
+            env = LocalVectorEnv(SimConfig(type="instructions", task="reach"), use_async_envs=use_async_envs)
+            env.reset(seed=0)
+    finally:
+        if env is not None:
+            env.close()
 
 
 def test_episode_limit_is_found_through_wrappers(monkeypatch):

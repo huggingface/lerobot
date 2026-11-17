@@ -20,12 +20,15 @@ from torch import nn
 
 pytest.importorskip("datasets")
 
+from lerobot.envs.factory import make_env
 from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
 from lerobot.scripts.lerobot_eval import rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
+from tests.fixtures import toy_env
+from tests.fixtures.toy_env import ToyEnvConfig
 from tests.policies.flux3.helpers import task_config
 
 pytestmark = pytest.mark.dataset
@@ -72,6 +75,45 @@ class _RecordingPolicy(nn.Module):
         )
         # A nonzero normalized delta updates the FLUX3 processor's command anchor each tick.
         return torch.full((observation[OBS_STATE].shape[0], 6), 0.25)
+
+
+def _wrapped_instruction_env() -> gym.Env:
+    return gym.wrappers.OrderEnforcing(gym.wrappers.TimeLimit(gym.wrappers.TimeLimit(_TwoStepEnv(), 3), 2))
+
+
+@pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
+def test_rollout_receives_wrapped_environment_instructions(monkeypatch, use_async_envs: bool) -> None:
+    # Direct factories also work in forkserver workers, without parent-only Gym registration.
+    monkeypatch.setattr(
+        toy_env, "env_fns", lambda task, n_envs, **kwargs: {task: {0: [_wrapped_instruction_env] * n_envs}}
+    )
+
+    class _InstructionPolicy(_RecordingPolicy):
+        def reset(self) -> None:
+            super().reset()
+            self.tasks = []
+
+        def select_action(self, observation):
+            self.tasks.append(list(observation["task"]))
+            return super().select_action(observation)
+
+    env = make_env(ToyEnvConfig(), n_envs=2, use_async_envs=use_async_envs)["reach"][0]
+    policy = _InstructionPolicy()
+    pre, post = make_policy_processor_pipelines([], [])
+    try:
+        assert env.use_async_envs == use_async_envs
+        rollout(
+            env,
+            policy,
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=pre,
+            postprocessor=post,
+            seeds=[0, 1],
+        )
+    finally:
+        env.close()
+    assert policy.tasks == [["move the robot", "move the robot"]] * 2
 
 
 class _AccumulatingStep(ProcessorStep):
