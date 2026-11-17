@@ -96,4 +96,6 @@ class UnitreeG1Config(RobotConfig):
             camera_port=self.sim_camera_port,
             onscreen=self.sim_onscreen,
             end_effector=self.end_effector,
+            # The robot's own simulation repository, trusted as it always was.
+            trust_remote_code=True,
         )
