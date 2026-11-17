@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import builtins
 import logging
 import os
 import re
@@ -35,7 +34,7 @@ from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..common.vla_utils import pad_vector, resize_with_pad
-from ..pretrained import PreTrainedPolicy, T
+from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .action_hub import build_action_space
 from .configuration_xvla import XVLAConfig
@@ -466,7 +465,7 @@ class XVLAPolicy(PreTrainedPolicy):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
