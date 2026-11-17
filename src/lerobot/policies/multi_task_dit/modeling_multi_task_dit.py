@@ -26,6 +26,7 @@ References:
 """
 
 import math
+import re
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
@@ -67,6 +68,24 @@ from ..utils import populate_queues
 
 # -- Policy --
 
+# Checkpoints saved with the pre-flattening CLIP layout keep a `text_model.` / `vision_model.` level
+# inside the text encoder and each vision encoder (shared or one per camera); without this rename
+# those weights would not load.
+_LEGACY_CLIP_LEVELS = (
+    re.compile(r"^(observation_encoder\.text_encoder\.text_encoder\.)text_model\."),
+    re.compile(r"^(observation_encoder\.(?:vision_encoder|vision_encoders\.\d+)\.model\.)vision_model\."),
+)
+
+
+def _rename_legacy_clip_keys(module: nn.Module, state_dict: dict[str, Tensor], prefix: str, *args) -> None:
+    """`load_state_dict` pre-hook mapping pre-flattening CLIP keys onto the current layout."""
+    for key in [key for key in state_dict if key.startswith(prefix)]:
+        for level in _LEGACY_CLIP_LEVELS:
+            renamed, count = level.subn(r"\1", key[len(prefix) :], count=1)
+            if count:
+                state_dict[prefix + renamed] = state_dict.pop(key)
+                break
+
 
 class MultiTaskDiTPolicy(PreTrainedPolicy):
     config_class = MultiTaskDiTConfig
@@ -76,6 +95,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         require_package("transformers", extra="multi_task_dit")
         require_package("diffusers", extra="multi_task_dit")
         super().__init__(config)
+        self.register_load_state_dict_pre_hook(_rename_legacy_clip_keys)
         config.validate_features()
         self.config = config
 
