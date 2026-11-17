@@ -228,6 +228,7 @@ class RewardClassifierConfig:
     pretrained_path: str | None = None
     success_threshold: float = 0.5
     success_reward: float = 1.0
+    trust_remote_code: bool = False
 
 
 @dataclass
