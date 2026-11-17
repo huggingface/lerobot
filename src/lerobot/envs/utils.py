@@ -13,7 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
 import logging
+import re
 import warnings
 from collections.abc import Mapping, Sequence
 from functools import singledispatch
@@ -245,6 +247,23 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
                 UserWarning,
                 stacklevel=2,
             )
+        else:
+            with contextlib.suppress(Exception):
+                task_descs = env.call("task_description")
+                tasks = env.call("task")
+                if (
+                    task_descs
+                    and tasks
+                    and task_descs[0] == tasks[0]
+                    and re.search(r"-v\d+$", str(task_descs[0]))
+                ):
+                    warnings.warn(
+                        f"The environment's task_description is identical to its gym task ID ({task_descs[0]!r}). "
+                        "Language-conditioned policies typically expect a natural language instruction. "
+                        "You can specify one via --env.instruction or --env.task_description.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
 
 
 def _close_single_env(env: Any) -> None:

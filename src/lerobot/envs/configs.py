@@ -66,6 +66,17 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     disable_env_checker: bool = True
     # Env server that runs this env, and how to reach it. When unset, the env runs locally.
     server: EnvClientConfig | None = None
+    # Natural language instruction or task description (e.g. for language-conditioned policies)
+    instruction: str | None = None
+    task_description: str | None = None
+
+    def get_task_description(self) -> str | None:
+        """Return the natural language instruction or task description, or None if not set."""
+        if self.instruction is not None:
+            return self.instruction
+        if self.task_description is not None:
+            return self.task_description
+        return None
 
     @property
     def type(self) -> str:
@@ -145,6 +156,16 @@ class HubEnvConfig(EnvConfig):
         }
 
 
+ALOHA_TASK_DESCRIPTIONS: dict[str, str] = {
+    "AlohaInsertion-v0": "Insert the peg into the socket.",
+    "AlohaTransferCube-v0": "Pick up the cube with the right arm and transfer it to the left arm.",
+}
+
+PUSHT_TASK_DESCRIPTIONS: dict[str, str] = {
+    "PushT-v0": "Push the T-shaped block onto the T-shaped target.",
+}
+
+
 def _gym_settings(
     config: EnvConfig,
     control_mode: str,
@@ -164,6 +185,7 @@ def _gym_settings(
             "gym_id": config.gym_id,
             "gym_kwargs": config.gym_kwargs,
             "disable_env_checker": config.disable_env_checker,
+            "task_description": config.get_task_description(),
         },
     }
 
@@ -176,6 +198,14 @@ class AlohaEnvConfig(EnvConfig):
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
+
+    def get_task_description(self) -> str | None:
+        if self.instruction is not None:
+            return self.instruction
+        if self.task_description is not None:
+            return self.task_description
+        task_key = (self.task or "").split("/")[-1]
+        return ALOHA_TASK_DESCRIPTIONS.get(task_key, self.task)
 
     @property
     def gym_kwargs(self) -> dict:
@@ -200,6 +230,14 @@ class PushtEnvConfig(EnvConfig):
     render_mode: str = "rgb_array"
     visualization_width: int = 384
     visualization_height: int = 384
+
+    def get_task_description(self) -> str | None:
+        if self.instruction is not None:
+            return self.instruction
+        if self.task_description is not None:
+            return self.task_description
+        task_key = (self.task or "").split("/")[-1]
+        return PUSHT_TASK_DESCRIPTIONS.get(task_key, self.task)
 
     @property
     def gym_kwargs(self) -> dict:

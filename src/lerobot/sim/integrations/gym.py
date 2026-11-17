@@ -14,6 +14,7 @@
 
 """Gymnasium envs that their own package registers on import (gym_aloha, gym_pusht, ...)."""
 
+import contextlib
 import importlib
 from collections.abc import Callable
 from functools import partial
@@ -26,11 +27,22 @@ from .utils import canonical_observation
 __all__ = ["canonical_observation", "env_fns"]
 
 
-def _make(gym_id: str, gym_kwargs: dict[str, Any], disable_env_checker: bool) -> gym.Env:
+def _make(
+    gym_id: str,
+    gym_kwargs: dict[str, Any],
+    disable_env_checker: bool,
+    task_description: str | None = None,
+) -> gym.Env:
     if gym_id not in gym.registry:
         # Importing the package named before the slash registers its envs.
         importlib.import_module(gym_id.split("/")[0])
-    return gym.make(gym_id, disable_env_checker=disable_env_checker, **gym_kwargs)
+    env = gym.make(gym_id, disable_env_checker=disable_env_checker, **gym_kwargs)
+    if task_description is not None:
+        env.task_description = task_description
+        if hasattr(env, "unwrapped"):
+            with contextlib.suppress(Exception):
+                env.unwrapped.task_description = task_description
+    return env
 
 
 def env_fns(
@@ -39,7 +51,14 @@ def env_fns(
     gym_id: str,
     gym_kwargs: dict[str, Any] | None = None,
     disable_env_checker: bool = True,
+    task_description: str | None = None,
 ) -> dict[str, dict[int, list[Callable[[], gym.Env]]]]:
     """Return `n_envs` factories that call `gym.make(gym_id)`, as `{task: {0: [factory, ...]}}`."""
-    make = partial(_make, gym_id, dict(gym_kwargs or {}), disable_env_checker)
+    make = partial(
+        _make,
+        gym_id,
+        dict(gym_kwargs or {}),
+        disable_env_checker,
+        task_description=task_description,
+    )
     return {task: {0: [make] * n_envs}}

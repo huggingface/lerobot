@@ -25,9 +25,20 @@ from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
+from lerobot.envs.configs import (
+    ALOHA_TASK_DESCRIPTIONS,
+    PUSHT_TASK_DESCRIPTIONS,
+    AlohaEnvConfig,
+    EnvConfig,
+    HILSerlRobotEnvConfig,
+    PushtEnvConfig,
+)
 from lerobot.envs.factory import make_env, make_env_config, make_task_env
-from lerobot.envs.utils import prepare_canonical_observation, preprocess_observation
+from lerobot.envs.utils import (
+    check_env_attributes_and_types,
+    prepare_canonical_observation,
+    preprocess_observation,
+)
 from lerobot.sim.integrations import envhub
 from lerobot.sim.integrations.envhub import _normalize_hub_result, _parse_hub_url
 from tests.fixtures.toy_env import DictObservationEnv, ToyEnvConfig
@@ -120,6 +131,130 @@ def test_factory_custom_gym_id():
         assert env is not None and isinstance(env, gym.vector.VectorEnv)
         env.close()
 
+    finally:
+        if gym_id in gym_registry:
+            del gym_registry[gym_id]
+
+
+@pytest.mark.parametrize(
+    "task, expected_desc",
+    [
+        ("AlohaInsertion-v0", ALOHA_TASK_DESCRIPTIONS["AlohaInsertion-v0"]),
+        ("AlohaTransferCube-v0", ALOHA_TASK_DESCRIPTIONS["AlohaTransferCube-v0"]),
+    ],
+)
+def test_aloha_env_config_task_description(task, expected_desc):
+    cfg = AlohaEnvConfig(task=task)
+    assert cfg.get_task_description() == expected_desc
+
+    # Override with instruction
+    cfg_inst = AlohaEnvConfig(task=task, instruction="Custom instruction")
+    assert cfg_inst.get_task_description() == "Custom instruction"
+
+    # Override with task_description
+    cfg_desc = AlohaEnvConfig(task=task, task_description="Another instruction")
+    assert cfg_desc.get_task_description() == "Another instruction"
+
+
+def test_pusht_env_config_task_description():
+    cfg = PushtEnvConfig(task="PushT-v0")
+    assert cfg.get_task_description() == PUSHT_TASK_DESCRIPTIONS["PushT-v0"]
+
+    # Override with instruction
+    cfg_inst = PushtEnvConfig(task="PushT-v0", instruction="Custom push instruction")
+    assert cfg_inst.get_task_description() == "Custom push instruction"
+
+    # Override with task_description
+    cfg_desc = PushtEnvConfig(task="PushT-v0", task_description="Another push instruction")
+    assert cfg_desc.get_task_description() == "Another push instruction"
+
+
+@pytest.mark.parametrize("env_name", ["aloha"])
+@require_env
+def test_aloha_env_task_description_in_vector_env(env_name):
+    cfg = make_env_config(env_name, task="AlohaTransferCube-v0")
+    envs = make_env(cfg, n_envs=1)
+    try:
+        suite = next(iter(envs))
+        task_id = next(iter(envs[suite]))
+        env = envs[suite][task_id]
+        env.reset()
+        assert env.call("task_description") == (
+            "Pick up the cube with the right arm and transfer it to the left arm.",
+        )
+    finally:
+        for suite in envs.values():
+            for env in suite.values():
+                env.close()
+
+
+@pytest.mark.parametrize("env_name", ["pusht"])
+@require_env
+def test_pusht_env_task_description_in_vector_env(env_name):
+    cfg = make_env_config(env_name, task="PushT-v0")
+    envs = make_env(cfg, n_envs=1)
+    try:
+        suite = next(iter(envs))
+        task_id = next(iter(envs[suite]))
+        env = envs[suite][task_id]
+        env.reset()
+        assert env.call("task_description") == ("Push the T-shaped block onto the T-shaped target.",)
+    finally:
+        for suite in envs.values():
+            for env in suite.values():
+                env.close()
+
+
+@pytest.mark.parametrize("env_name", ["aloha"])
+@require_env
+def test_instruction_override_in_vector_env(env_name):
+    cfg = make_env_config(env_name, instruction="Do the task carefully")
+    envs = make_env(cfg, n_envs=1)
+    try:
+        suite = next(iter(envs))
+        task_id = next(iter(envs[suite]))
+        env = envs[suite][task_id]
+        env.reset()
+        assert env.call("task_description") == ("Do the task carefully",)
+    finally:
+        for suite in envs.values():
+            for env in suite.values():
+                env.close()
+
+
+def test_warning_when_task_description_is_gym_id():
+    gym_id = "dummy_gym_pkg/GymIdTask-v0"
+    if gym_id in gym_registry:
+        pytest.skip(f"Environment ID {gym_id} is already registered")
+
+    @EnvConfig.register_subclass("dummy_gym_id")
+    @dataclass
+    class DummyGymIdEnv(EnvConfig):
+        task: str = "GymIdTask-v0"
+        fps: int = 10
+        features: dict[str, PolicyFeature] = field(default_factory=dict)
+
+        @property
+        def package_name(self) -> str:
+            return "dummy_gym_pkg"
+
+        @property
+        def gym_id(self) -> str:
+            return gym_id
+
+        @property
+        def gym_kwargs(self) -> dict:
+            return {}
+
+    try:
+        register(id=gym_id, entry_point=DictObservationEnv)
+        cfg = DummyGymIdEnv()
+        envs_dict = make_env(cfg, n_envs=1)
+        env = next(iter(envs_dict["GymIdTask-v0"].values()))
+        env.reset()
+        with pytest.warns(UserWarning, match="identical to its gym task ID"):
+            check_env_attributes_and_types(env)
+        env.close()
     finally:
         if gym_id in gym_registry:
             del gym_registry[gym_id]

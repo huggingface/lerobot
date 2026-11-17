@@ -513,7 +513,14 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         # A metric an env has not reported in this episode reads as zero.
         names = dict.fromkeys(name for last in self._last for name in last.metrics)
         task = tuple(
-            str(getattr(env, "task_description", getattr(env, "task", self.task_group))) for env in self._envs
+            str(
+                getattr(
+                    env,
+                    "task_description",
+                    self.config.kwargs.get("task_description") or getattr(env, "task", self.task_group),
+                )
+            )
+            for env in self._envs
         )
         self._latest = StepResult(
             obs=obs,
