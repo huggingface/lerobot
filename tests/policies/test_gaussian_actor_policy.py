@@ -28,6 +28,8 @@ from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig  # noqa: 
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE  # noqa: E402
 from lerobot.utils.random_utils import seeded_context, set_seed  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 try:
     import transformers  # noqa: F401
 

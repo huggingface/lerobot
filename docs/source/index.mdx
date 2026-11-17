@@ -44,7 +44,40 @@ The goal: lower the barrier to entry for robotics, so that everyone can contribu
 
 ## Get Started
 
-New here? [Install LeRobot](./installation), then pick your path:
+New here? See what a LeRobot dataset looks like before installing anything:
+
+<div class="border dark:border-gray-700 rounded-lg p-4 my-6 flex flex-col md:flex-row gap-4 items-center shadow">
+  <a
+    target="_blank"
+    href="https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0"
+    class="shrink-0"
+  >
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-episode-v2.webp"
+      alt="The LeRobot Dataset Visualizer playing an SO-101 dataset"
+      width="320"
+    />
+  </a>
+  <div>
+    <div class="text-lg font-semibold mb-1">👀 See a dataset first</div>
+    <!-- prettier-ignore -->
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      Open <a
+        target="_blank"
+        href="https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0"
+      ><code>lerobot/svla_so101_pickplace</code></a> in the <a
+        target="_blank"
+        href="https://huggingface.co/spaces/lerobot/visualize_dataset"
+      >LeRobot Dataset Visualizer</a> to watch its camera recordings next to the
+      robot's state and actions, frame by frame, with nothing to install. It
+      works for any LeRobot dataset on the Hub, including your own. See <a
+        href="./using_dataset_tools#explore-a-dataset-in-the-browser"
+      >how to use it</a>.
+    </p>
+  </div>
+</div>
+
+Ready to try it yourself? [Install LeRobot](./installation), then pick your path:
 
 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
   <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
@@ -80,6 +113,12 @@ New here? [Install LeRobot](./installation), then pick your path:
     </p>
     <ul class="text-gray-700 dark:text-gray-300 text-sm list-disc pl-5 mb-2">
       <li>
+        explore any dataset in the
+        <a href="https://huggingface.co/spaces/lerobot/visualize_dataset">
+          Dataset Visualizer
+        </a>
+      </li>
+      <li>
         train on an existing
         <a href="https://huggingface.co/datasets?other=LeRobot">
           LeRobot dataset
@@ -87,8 +126,8 @@ New here? [Install LeRobot](./installation), then pick your path:
         from the Hub
       </li>
       <li>
-        evaluate in <a href="./envhub">simulation</a>, against benchmarks like
-        LIBERO or Meta-World
+        evaluate in simulation, against benchmarks like
+        <a href="./libero">LIBERO</a> or <a href="./metaworld">Meta-World</a>
       </li>
       <li>
         try the free <a href="./notebooks">Colab notebooks</a> - nothing to
@@ -157,12 +196,12 @@ New here? [Install LeRobot](./installation), then pick your path:
   </a>
   <a
     class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
-    href="./envhub"
+    href="./libero"
   >
     <div class="font-semibold mb-1">🎮 Simulation & Benchmarks</div>
     <p class="text-gray-700 dark:text-gray-300 text-sm">
-      Train and evaluate in simulated environments before touching real
-      hardware.
+      Train and evaluate in simulated benchmarks like LIBERO before touching
+      real hardware.
     </p>
   </a>
 </div>
@@ -171,7 +210,7 @@ New here? [Install LeRobot](./installation), then pick your path:
 
 Running into issues? A few of the most frequent ones:
 
-- **Blurry or unusable camera footage** - lighting matters more than resolution. See the [Cameras](./cameras) guide.
+- **Blurry or unusable camera footage** - lighting matters more than resolution. See [Camera placement and lighting](./cameras#camera-placement-and-lighting).
 - **Build or install errors** (`cmake`, `ffmpeg`, CUDA) - see the Troubleshooting section of the [Installation guide](./installation#troubleshooting).
 - **Not sure which policy fits your GPU** - check the [Compute & Hardware Guide](./hardware_guide).
 - **Still stuck?** Ask on [Discord](https://discord.gg/s3KuuzsPFb) - the community (and the LeRobot team) is there to help.

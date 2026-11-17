@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
@@ -38,6 +38,7 @@ from lerobot.processor import (
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import normalize_semantic_messages
+from lerobot.utils.transition import move_state_dict_to_device
 
 from .configuration_eo1 import EO1_DEFAULT_SYSTEM_MESSAGE, EO1Config
 
@@ -76,23 +77,18 @@ class EO1PrepareModelMessagesStep(ComplementaryDataProcessorStep):
 
     _image_keys: list[str] = field(default_factory=list, init=False, repr=False)
 
-    def __post_init__(self):
-        # Robust JSON deserialization handling (guard empty maps).
-        if self.input_features:
-            first_val = next(iter(self.input_features.values()))
-            if isinstance(first_val, dict):
-                reconstructed = {}
-                for key, ft_dict in self.input_features.items():
-                    reconstructed[key] = PolicyFeature(
-                        type=FeatureType(ft_dict["type"]), shape=tuple(ft_dict["shape"])
-                    )
-                self.input_features = reconstructed
+    def __post_init__(self) -> None:
+        # Robust JSON deserialization handling: a serialized step carries feature dicts.
+        input_features = {
+            key: PolicyFeature(type=FeatureType(feature["type"]), shape=tuple(feature["shape"]))
+            if isinstance(feature, dict)
+            else feature
+            for key, feature in self.input_features.items()
+        }
+        self.input_features = input_features
+        self._image_keys = [key for key, value in input_features.items() if value.type == FeatureType.VISUAL]
 
-        self._image_keys = [
-            key for key, value in self.input_features.items() if value.type == FeatureType.VISUAL
-        ]
-
-    def complementary_data(self, complementary_data):
+    def complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
         tasks = complementary_data.get("task")
         if tasks is None:
             raise ValueError("Task is required for EO1PrepareModelMessagesStep.")
@@ -123,12 +119,16 @@ class EO1PrepareModelMessagesStep(ComplementaryDataProcessorStep):
         for i in range(len(tasks)):
             if conversations is not None:
                 row_messages = conversations[i]
-                row_streams = (
-                    [] if generation_request else (recipe_streams[i] if len(tasks) > 1 else recipe_streams[0])
-                )
-                row_targets = (
-                    [] if generation_request else (recipe_targets[i] if len(tasks) > 1 else recipe_targets[0])
-                )
+                if generation_request:
+                    row_streams: list[Any] = []
+                    row_targets: list[Any] = []
+                else:
+                    if recipe_streams is None or recipe_targets is None:
+                        raise ValueError(
+                            "EO-1 training messages require `message_streams` and `target_message_indices`."
+                        )
+                    row_streams = recipe_streams[i] if len(tasks) > 1 else recipe_streams[0]
+                    row_targets = recipe_targets[i] if len(tasks) > 1 else recipe_targets[0]
                 if not isinstance(row_messages, list) or not isinstance(row_streams, list):
                     raise TypeError("EO-1 messages and streams must be batched lists.")
 
@@ -267,9 +267,10 @@ class EO1PrepareModelMessagesStep(ComplementaryDataProcessorStep):
         return features
 
     def get_config(self) -> dict[str, Any]:
+        input_features = cast(dict[str, PolicyFeature], self.input_features)
         return {
             "input_features": {
-                key: {"type": ft.type.value, "shape": ft.shape} for key, ft in self.input_features.items()
+                key: {"type": ft.type.value, "shape": ft.shape} for key, ft in input_features.items()
             },
             "chunk_size": self.chunk_size,
         }
@@ -312,6 +313,10 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         # Rollout batches use left padding so action spans stay aligned across samples.
         # Supervised batches use right padding to match standard training collation.
         padding_side = "right" if self.transition.get(TransitionKey.ACTION) is not None else "left"
+
+        if not self.use_fast_processor:
+            # The slow image processor needs CPU images, and the batch may already be on the policy device.
+            messages = move_state_dict_to_device(messages, "cpu")
 
         inputs = self._processor.apply_chat_template(
             messages,
@@ -377,12 +382,20 @@ def make_eo1_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """Build pre/post processor pipelines for EO1."""
+    if config.input_features is None:
+        raise ValueError("`input_features` must be resolved before building the processors.")
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
+    recipe = None
+    if config.recipe is not None:
+        from lerobot.datasets.recipe import TrainingRecipe  # recipes need the dataset extras
+
+        recipe = TrainingRecipe.from_dict(config.recipe)
+
     input_steps: list[ProcessorStep] = [
-        RenderRuntimeMessagesStep(config.recipe),
-        RenderTrainingMessagesStep(config.recipe),
+        RenderRuntimeMessagesStep(recipe),
+        RenderTrainingMessagesStep(recipe),
         steps.rename_observations,
         steps.add_batch_dim,
         steps.normalize,

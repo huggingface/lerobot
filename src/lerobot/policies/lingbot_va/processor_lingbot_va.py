@@ -44,6 +44,8 @@ def make_lingbot_va_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """Build the pre/post processor pipelines for LingBot-VA."""
+    if config.output_features is None:
+        raise ValueError("LingBot-VA requires resolved `output_features` to build its postprocessor.")
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
 

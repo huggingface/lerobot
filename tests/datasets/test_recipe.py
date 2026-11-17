@@ -16,6 +16,8 @@ from lerobot.datasets.recipe import (  # noqa: E402
     resolve_recipe_override,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def _minimal_message_turn(content: str = "${task}") -> MessageTurn:
     return MessageTurn(role="user", content=content, stream="high_level")
@@ -39,7 +41,7 @@ def test_message_recipe_validates_unknown_binding():
 
 
 def test_canonical_recipe_loads():
-    """The canonical PI052 blend YAML loads + validates."""
+    """The canonical FineARTVLA blend YAML loads + validates."""
     recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/subtask_mem_vqa_speech.yaml"))
     assert recipe.blend is not None
     assert sum(c.weight for c in recipe.blend.values()) == pytest.approx(1.0)

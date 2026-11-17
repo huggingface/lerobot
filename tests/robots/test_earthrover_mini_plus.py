@@ -99,6 +99,9 @@ class TestEveryRequestTargetsTheConfiguredSdk:
             robot.connect(calibrate=False)
             robot.get_observation()
             robot.send_action({"linear_velocity": 0.5, "angular_velocity": -0.5})
+            # Disconnect while mocked: it sends a stop command, which must also target the configured SDK,
+            # and otherwise `__del__` sends it for real after the mocks are gone.
+            robot.disconnect()
 
             calls = list(get.call_args_list) + list(post.call_args_list)
         return [call.args[0] for call in calls if call.args]

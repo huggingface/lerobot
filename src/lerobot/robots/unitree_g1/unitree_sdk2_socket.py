@@ -117,7 +117,7 @@ def ChannelFactoryInitialize(domain_id: int = 0, config: Any = None) -> None:  #
         config = UnitreeG1Config()
     robot_ip = config.robot_ip
 
-    ctx = zmq.Context.instance()
+    ctx: zmq.Context = zmq.Context.instance()
     _ctx = ctx
 
     # lowcmd: send robot commands

@@ -144,6 +144,8 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
+        if observation is None:
+            raise ValueError("TOPRewardEncoderProcessorStep requires an observation in the transition")
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         if self.image_key not in observation:
             raise KeyError(f"TOPReward expected image key {self.image_key!r} in observation")

@@ -48,6 +48,8 @@ from lerobot.datasets.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 
 from ._helpers import make_canned_responder  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 def _build_style_blend_recipe() -> TrainingRecipe:
     """Inline blend recipe that consumes every style this pipeline produces.
