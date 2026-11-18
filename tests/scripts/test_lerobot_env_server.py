@@ -108,8 +108,8 @@ def test_docker_launch_selects_backend_from_overridden_config(tmp_path, monkeypa
 @pytest.mark.parametrize(
     "hub_path,repo_type,expected_types,tag",
     [
-        ("User/My-Env", "model", ["model"], "user-my-env-v1"),
-        ("User/My-Env", "space", ["model", "space"], "user-my-env-v1"),
+        ("User/My-Env", "space", ["space"], "user-my-env-v1"),
+        ("User/My-Env", "model", ["space", "model"], "user-my-env-v1"),
         ("spaces/User/My-Env", "space", ["space"], "spaces-user-my-env-v1"),
     ],
 )

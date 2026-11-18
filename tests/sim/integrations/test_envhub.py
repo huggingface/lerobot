@@ -110,8 +110,8 @@ def test_envhub_runs_a_hub_repository(hub_repo):
 @pytest.mark.parametrize(
     "hub_path,available_type,expected_types",
     [
-        ("user/reach", "model", ["model"]),
-        ("user/reach", "space", ["model", "space"]),
+        ("user/reach", "space", ["space"]),
+        ("user/reach", "model", ["space", "model"]),
         ("spaces/user/reach", "space", ["space"]),
         ("models/user/reach", "model", ["model"]),
     ],
@@ -170,10 +170,10 @@ def test_envhub_does_not_change_repository_on_access_revision_or_network_errors(
     with pytest.raises(error_type) as caught:
         LocalVectorEnv(_envhub())
     assert caught.value is error
-    assert calls == ["model"]
+    assert calls == ["space"]
 
 
-def test_explicit_space_does_not_fall_back_to_a_model(monkeypatch):
+def test_explicit_prefix_does_not_fall_back_to_the_other_type(monkeypatch):
     calls = []
 
     def download(*args, **kwargs):

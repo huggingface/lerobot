@@ -68,20 +68,19 @@ def download_envhub_snapshot(
     revision: str | None,
     cache_dir: str | None = None,
 ) -> str:
-    """Download an EnvHub repo, trying a model repo then a Space when its type is unset.
+    """Download an EnvHub repo, trying a Space then a model repo when its type is unset.
 
-    Model-first resolution preserves existing references when both types share an id. Only a
-    missing/inaccessible repository triggers fallback: gated access, missing revisions and network
+    Only a missing/inaccessible repository triggers fallback: gated access, missing revisions and network
     errors must surface instead of selecting different code. Explicit prefixes never fall back.
     """
     if repo_type is not None:
         return snapshot_download(repo_id, repo_type=repo_type, revision=revision, cache_dir=cache_dir)
     try:
-        return snapshot_download(repo_id, repo_type="model", revision=revision, cache_dir=cache_dir)
+        return snapshot_download(repo_id, repo_type="space", revision=revision, cache_dir=cache_dir)
     except GatedRepoError:
         raise
     except RepositoryNotFoundError:
-        return snapshot_download(repo_id, repo_type="space", revision=revision, cache_dir=cache_dir)
+        return snapshot_download(repo_id, repo_type="model", revision=revision, cache_dir=cache_dir)
 
 
 def _load_module_from_path(path: str, module_name: str | None = None):
