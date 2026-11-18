@@ -31,6 +31,7 @@ from typing import Literal
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
+from torch._inductor import list_options
 from torch.nn.attention.flex_attention import BlockMask, flex_attention
 
 from lerobot.policies.praxis.praxis_core.kernels.layers_triton import (
@@ -55,11 +56,13 @@ _compiled_flex_attention = torch.compile(flex_attention)
 # configs for it at run time. The chosen config changes the summation order,
 # so two processes can give outputs that differ in the last bits. The option
 # below makes inductor pick one fixed config by a rule (no benchmark). The
-# original implementation runs with the same option.
+# original implementation runs with the same option. Older supported Torch
+# releases do not expose this option, so use their default reduction config.
+_FORCE_REDUCTION_CONFIG = "test_configs.force_filter_reduction_configs"
 _compiled_flex_attention_dynamic = torch.compile(
     flex_attention,
     dynamic=True,
-    options={"test_configs.force_filter_reduction_configs": True},
+    options={_FORCE_REDUCTION_CONFIG: True} if _FORCE_REDUCTION_CONFIG in list_options() else None,
 )
 _FLEX_ATTENTION_COMPILED = _compiled_flex_attention
 
