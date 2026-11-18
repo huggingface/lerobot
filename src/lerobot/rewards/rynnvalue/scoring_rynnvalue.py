@@ -23,9 +23,9 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from lerobot.datasets.scores import FrameSignals, SignalDescriptor
 from lerobot.processor import PolicyProcessorPipeline
 
+from ..scoring import FrameSignals, SignalDescriptor
 from .modeling_rynnvalue import RynnValueRewardModel
 from .processor_rynnvalue import make_rynnvalue_pre_post_processors
 
@@ -41,8 +41,8 @@ RYNNVALUE_SIGNAL_DESCRIPTORS = {
             "RynnValue predicted seconds until the task is completed, for the trajectory prefix ending at "
             "this frame, linearly interpolated between the frames RynnValue ran on."
         ),
+        greater_is_better=False,
         unit="s",
-        direction="lower",
     ),
 }
 
@@ -86,6 +86,11 @@ class RynnValueFrameScorer:
         self.inference_fps = inference_fps
 
     @property
+    def descriptors(self) -> dict[str, SignalDescriptor]:
+        """Describe the per-frame remaining-time signal."""
+        return RYNNVALUE_SIGNAL_DESCRIPTORS
+
+    @property
     def provenance(self) -> dict[str, Any]:
         """Describe the model and the settings that change the signals."""
         config = self.model.config
@@ -101,6 +106,8 @@ class RynnValueFrameScorer:
                     "model_id": config.model_id,
                     "model_revision": config.model_revision,
                     "image_key": config.image_key,
+                    "task_key": config.task_key,
+                    "default_task": config.default_task,
                     "max_frames": config.max_frames,
                     "robot_description": config.robot_description,
                     "camera_description": config.camera_description,
@@ -145,7 +152,6 @@ class RynnValueFrameScorer:
                     np.float32
                 )
             },
-            descriptors=RYNNVALUE_SIGNAL_DESCRIPTORS,
         )
 
 

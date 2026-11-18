@@ -40,7 +40,7 @@ Follow the [Installation Guide](./installation), then install the dataset extra 
 uv sync --extra dataset --extra robometer
 ```
 
-Replace `--extra robometer` with `--extra topreward` or `--extra sarm` for the other models. See [RoboMeter](./robometer), [TOPReward](./topreward), and [SARM](./sarm) for model requirements and checkpoints. GPU inference is recommended.
+Replace `--extra robometer` with `--extra topreward`, `--extra sarm` or `--extra rynnvalue` for the other models. See [RoboMeter](./robometer), [TOPReward](./topreward), [SARM](./sarm), and [RynnValue](./rynnvalue) for model requirements and checkpoints. GPU inference is recommended.
 
 ## What Scoring Produces
 
@@ -53,8 +53,9 @@ Each model writes its signals to one named score file:
 | TOPReward | `topreward`        | `reward.topreward.progress`            | Task log-probability, min-max normalized per episode and interpolated between scored prefixes. |
 | SARM      | `sarm`             | `reward.sarm.sparse_progress`          | Progress from the sparse head, using a window around this frame.                               |
 | SARM      | `sarm`             | `reward.sarm.dense_progress`           | Progress from the dense head, available for dual-head models.                                  |
+| RynnValue | `rynnvalue`        | `reward.rynnvalue.remaining_time_s`    | Seconds until the task is completed, interpolated between scored prefixes. Lower is better.    |
 
-These are dense float32 signals with a semantic range of `[0, 1]`. SARM writes the heads selected by `--reward_model.head_mode`; failed predictions can produce NaN values.
+These are dense float32 signals. Progress and success signals have a semantic range of `[0, 1]`; RynnValue's remaining time is in seconds. SARM writes the heads selected by `--reward_model.head_mode`; failed predictions can produce NaN values.
 
 Scores are stored separately from the frame data. Language annotations instead live in columns inside `data/`, as described in [Language Columns and Recipes](./language_and_recipes).
 

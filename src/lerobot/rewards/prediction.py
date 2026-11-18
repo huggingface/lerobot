@@ -27,7 +27,7 @@ class ProgressOutput:
 
 
 @dataclass(frozen=True)
-class RemainingTimePrediction:
+class RemainingTimeOutput:
     """Seconds until the task is completed, at the last frame of each trajectory, shaped `(batch,)`."""
 
     remaining_time_s: Tensor

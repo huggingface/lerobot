@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch import Tensor
 
-from lerobot.rewards.prediction import RemainingTimePrediction
+from lerobot.rewards.prediction import RemainingTimeOutput
 from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_PREFIX, RynnValueConfig
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -123,7 +123,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         else:
             self.model = RynnValueLangModel._from_config(model_config, dtype=dtype)
 
-    def predict_remaining_time(self, batch: Mapping[str, Any]) -> RemainingTimePrediction:
+    def predict_remaining_time(self, batch: Mapping[str, Any]) -> RemainingTimeOutput:
         """Predict the seconds until the task is completed, at the last frame of each trajectory.
 
         It changes neither the model mode nor gradients: for inference, call it in `eval()` mode under
@@ -134,7 +134,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
                 Output of the RynnValue preprocessor.
 
         Returns:
-            `RemainingTimePrediction`: One remaining time per trajectory.
+            `RemainingTimeOutput`: One remaining time per trajectory.
         """
         inputs: dict[str, Any] = {}
         for key in RYNNVALUE_MODEL_INPUT_KEYS:
@@ -172,7 +172,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             batch_size=int(inputs["input_ids"].shape[0]),
             slot_counts=slot_counts,
         )
-        return RemainingTimePrediction(remaining_time_s=remaining_time)
+        return RemainingTimeOutput(remaining_time_s=remaining_time)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         self.config.model_config = self.model.config.to_dict()

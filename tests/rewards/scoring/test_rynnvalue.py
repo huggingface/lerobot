@@ -22,9 +22,11 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.scores import load_scores, load_scores_info
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
-from lerobot.rewards.prediction import RemainingTimePrediction
+from lerobot.rewards import load_signal_descriptors, score_dataset
+from lerobot.rewards.prediction import RemainingTimeOutput
 from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig
 from lerobot.rewards.rynnvalue.scoring_rynnvalue import (
     REMAINING_TIME_SIGNAL,
@@ -129,6 +131,7 @@ class _FakeModel:
         model_revision=None,
         image_key=IMAGE_KEY,
         task_key="task",
+        default_task=None,
         max_frames=3,
         robot_description="a single-arm robot",
         camera_description=None,
@@ -141,7 +144,7 @@ class _FakeModel:
     def predict_remaining_time(self, batch):
         assert torch.is_inference_mode_enabled()
         # Four seconds remain at frame 0, then one second less per frame.
-        return RemainingTimePrediction(remaining_time_s=4.0 - batch["observation.last_frame"])
+        return RemainingTimeOutput(remaining_time_s=4.0 - batch["observation.last_frame"])
 
 
 def test_rynnvalue_frame_scorer_scores_prefixes_and_interpolates_remaining_time():
@@ -155,8 +158,8 @@ def test_rynnvalue_frame_scorer_scores_prefixes_and_interpolates_remaining_time(
     np.testing.assert_array_equal(result.frame_indices, np.arange(5))
     np.testing.assert_allclose(result.signals[REMAINING_TIME_SIGNAL], [4.0, 3.0, 2.0, 1.0, 0.0])
     assert result.signals[REMAINING_TIME_SIGNAL].dtype == np.float32
-    assert result.descriptors[REMAINING_TIME_SIGNAL].unit == "s"
-    assert result.descriptors[REMAINING_TIME_SIGNAL].direction == "lower"
+    assert scorer.descriptors[REMAINING_TIME_SIGNAL].unit == "s"
+    assert scorer.descriptors[REMAINING_TIME_SIGNAL].greater_is_better is False
     assert scorer.name == "rynnvalue"
     options = scorer.provenance["scorer"]["options"]
     assert options["inference_fps"] == 1.0
@@ -182,7 +185,7 @@ def test_rynnvalue_frame_scorer_rejects_non_positive_inference_fps():
         RynnValueFrameScorer(_FakeModel(), _FakeEncoder(), inference_fps=0)
 
 
-def test_rynnvalue_scores_publish_through_dataset_score_api(tmp_path):
+def test_rynnvalue_frame_scorer_publishes_a_dataset_score(tmp_path):
     class FakeDataset(LeRobotDataset):
         absolute_to_relative_idx = None
         episodes = None
@@ -206,9 +209,10 @@ def test_rynnvalue_scores_publish_through_dataset_score_api(tmp_path):
             return {IMAGE_KEY: torch.full((3, 2, 2), float(index)), "task": "pick up the cube"}
 
     dataset = FakeDataset()
-    dataset.add_score(RynnValueFrameScorer(_FakeModel(), _FakeEncoder(), inference_fps=1.0))
+    score_dataset(dataset, RynnValueFrameScorer(_FakeModel(), _FakeEncoder(), inference_fps=1.0))
 
-    scores = dataset.read_score("rynnvalue")
+    scores = load_scores(dataset, "rynnvalue")
     assert list(scores[REMAINING_TIME_SIGNAL]) == [4.0, 3.0, 2.0, 1.0, 0.0]
-    assert dataset.get_score_descriptors("rynnvalue")[REMAINING_TIME_SIGNAL].direction == "lower"
-    assert dataset.get_score_provenance("rynnvalue")["scoring"]["model"]["id"] == "test/rynnvalue"
+    assert scores.features[REMAINING_TIME_SIGNAL].dtype == "float32"
+    assert load_signal_descriptors(dataset, "rynnvalue")[REMAINING_TIME_SIGNAL].greater_is_better is False
+    assert load_scores_info(dataset, "rynnvalue")["provenance"]["model"]["id"] == "test/rynnvalue"

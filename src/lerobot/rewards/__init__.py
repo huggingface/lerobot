@@ -22,7 +22,7 @@ from .factory import (
 )
 from .prediction import (
     ProgressOutput as ProgressOutput,
-    RemainingTimePrediction as RemainingTimePrediction,
+    RemainingTimeOutput as RemainingTimeOutput,
 )
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
@@ -48,7 +48,7 @@ __all__ = [
     "PreTrainedRewardModel",
     # Outputs
     "ProgressOutput",
-    "RemainingTimePrediction",
+    "RemainingTimeOutput",
     # Dataset scoring
     "FrameScorer",
     "FrameSignals",
