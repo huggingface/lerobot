@@ -17,6 +17,7 @@
 import importlib
 import logging
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -38,40 +39,46 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
     """
     Retrieves a reward model class by its registered name.
 
-    This function uses dynamic imports to avoid loading all reward model classes into
-    memory at once, improving startup time and reducing dependencies.
+    Resolution is convention-based: the draccus-registered config class of ``name`` is
+    looked up, its ``configuration_*`` module path is rewritten to ``modeling_*``, and the
+    ``PreTrainedRewardModel`` subclass whose ``config_class`` is that config is returned.
+    The modeling module is only imported at call time, keeping heavy optional dependencies
+    lazy. This works for both built-in reward models and third-party lerobot plugins
+    (anything registered via ``@RewardModelConfig.register_subclass``).
 
     Args:
-        name: The name of the reward model. Supported names are "reward_classifier",
-              "sarm", "robometer", "topreward".
+        name: The registered name of the reward model (e.g. "sarm", "robometer").
 
     Returns:
         The reward model class corresponding to the given name.
 
     Raises:
-        ValueError: If the reward model name is not recognized.
+        ValueError: If the reward model name is not registered or has no reward model class.
+        ImportError: If the reward model's optional dependencies are not installed.
     """
-    if name == "reward_classifier":
-        from lerobot.rewards.classifier.modeling_classifier import Classifier
+    if name not in RewardModelConfig.get_known_choices():
+        raise ValueError(
+            f"Unknown reward model name '{name}'. "
+            f"Available reward models: {RewardModelConfig.get_known_choices()}"
+        )
 
-        return Classifier
-    elif name == "sarm":
-        from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
+    config_cls = RewardModelConfig.get_choice_class(name)
 
-        return SARMRewardModel
-    elif name == "robometer":
-        from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-
-        return RobometerRewardModel
-    elif name == "topreward":
-        from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
-        return TOPRewardModel
-    else:
-        try:
-            return _get_reward_model_cls_from_name(name=name)
-        except Exception as e:
-            raise ValueError(f"Reward model type '{name}' is not available.") from e
+    module = _import_sibling_reward_module(config_cls, "modeling")
+    if module is None:
+        raise ValueError(f"Reward model class for '{name}' is not implemented.")
+    for obj in vars(module).values():
+        if (
+            isinstance(obj, type)
+            and issubclass(obj, PreTrainedRewardModel)
+            and getattr(obj, "config_class", None) is config_cls
+        ):
+            return obj
+    raise ValueError(
+        f"Reward model class with 'config_class = {config_cls.__name__}' not found in '{module.__name__}'. "
+        f"Reward models must expose a 'PreTrainedRewardModel' subclass with that 'config_class' "
+        f"in the sibling 'modeling_*' module."
+    )
 
 
 def make_reward_model_config(reward_type: str, **kwargs: Any) -> RewardModelConfig:
@@ -229,40 +236,18 @@ def make_reward_pre_post_processors(
         return processors
 
 
-def _get_reward_model_cls_from_name(name: str) -> type[PreTrainedRewardModel]:
-    """Get reward model class from its registered name using dynamic imports.
-
-    This is used as a helper function to import reward models from 3rd party lerobot
-    plugins.
-
-    Args:
-        name: The name of the reward model.
-
-    Returns:
-        The reward model class corresponding to the given name.
-    """
-    if name not in RewardModelConfig.get_known_choices():
-        raise ValueError(
-            f"Unknown reward model name '{name}'. "
-            f"Available reward models: {RewardModelConfig.get_known_choices()}"
-        )
-
-    config_cls = RewardModelConfig.get_choice_class(name)
-    config_cls_name = config_cls.__name__
-
-    model_name = config_cls_name.removesuffix("Config")
-    if model_name == config_cls_name:
-        raise ValueError(
-            f"The config class name '{config_cls_name}' does not follow the expected naming convention. "
-            f"Make sure it ends with 'Config'!"
-        )
-
-    cls_name = model_name + "RewardModel"
-    module_path = config_cls.__module__.replace("configuration_", "modeling_")
-
-    module = importlib.import_module(module_path)
-    reward_cls = getattr(module, cls_name)
-    return reward_cls
+def _import_sibling_reward_module(config_cls: type[RewardModelConfig], prefix: str) -> ModuleType | None:
+    """Import a config class' sibling ``{prefix}_*`` module, or None when that module does not exist."""
+    module_path = config_cls.__module__.replace("configuration_", f"{prefix}_")
+    try:
+        return importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+        if e.name == module_path:
+            # The sibling module itself does not exist for this reward model type. A missing optional
+            # dependency inside an existing module propagates unchanged instead, so its
+            # actionable install hint stays visible.
+            return None
+        raise
 
 
 def _make_processors_from_reward_model_config(
@@ -312,18 +297,8 @@ def _make_frame_scorer_from_reward_model_config(
     Raises:
         ValueError: If the scoring module or its factory function does not exist.
     """
-    function_name = f"make_{config.type}_frame_scorer"
-    module_path = config.__class__.__module__.replace("configuration_", "scoring_")
-    not_implemented = f"Frame scorer for reward model type '{config.type}' is not implemented."
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as exc:
-        # A dependency missing inside the scoring module is the real cause; keep it.
-        if exc.name != module_path:
-            raise
-        raise ValueError(not_implemented) from exc
-
-    function = getattr(module, function_name, None)
+    module = _import_sibling_reward_module(type(config), "scoring")
+    function = getattr(module, f"make_{config.type}_frame_scorer", None)
     if function is None:
-        raise ValueError(not_implemented)
+        raise ValueError(f"Frame scorer for reward model type '{config.type}' is not implemented.")
     return function(model=model)

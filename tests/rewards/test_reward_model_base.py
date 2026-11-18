@@ -17,7 +17,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import torch
@@ -59,21 +59,95 @@ def test_reward_model_config_lookup():
     assert cls is RewardClassifierConfig
 
 
-def test_factory_get_reward_model_class():
-    """Test the get_reward_model_class factory."""
+@pytest.mark.parametrize(
+    ("name", "module_path", "class_name"),
+    [
+        ("reward_classifier", "lerobot.rewards.classifier.modeling_classifier", "Classifier"),
+        ("sarm", "lerobot.rewards.sarm.modeling_sarm", "SARMRewardModel"),
+        ("topreward", "lerobot.rewards.topreward.modeling_topreward", "TOPRewardModel"),
+    ],
+)
+def test_factory_get_reward_model_class(name, module_path, class_name):
+    """Built-in reward models resolve by config_class, whatever their class name."""
+    import importlib
+
     from lerobot.rewards.factory import get_reward_model_class
 
-    cls = get_reward_model_class("sarm")
-    from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
+    assert get_reward_model_class(name) is getattr(importlib.import_module(module_path), class_name)
 
-    assert cls is SARMRewardModel
+
+def test_factory_get_reward_model_class_matches_plugin_config_class(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig(RewardModelConfig):
+        pass
+
+    class OtherConfig(RewardModelConfig):
+        pass
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+
+    class OtherModel(PreTrainedRewardModel):
+        config_class = OtherConfig
+        name = "other"
+
+    class PluginModel(PreTrainedRewardModel):
+        config_class = PluginConfig
+        name = "plugin"
+
+    def make_module(name, **classes):
+        module = ModuleType(name)
+        vars(module).update(classes)
+        return module
+
+    captured = {}
+
+    def import_module(name):
+        captured.update(module=name)
+        return make_module(
+            name, PreTrainedRewardModel=PreTrainedRewardModel, OtherModel=OtherModel, PluginModel=PluginModel
+        )
+
+    monkeypatch.setattr(RewardModelConfig, "get_known_choices", lambda: {"plugin": PluginConfig})
+    monkeypatch.setattr(RewardModelConfig, "get_choice_class", lambda name: PluginConfig)
+    monkeypatch.setattr(reward_factory.importlib, "import_module", import_module)
+
+    assert reward_factory.get_reward_model_class("plugin") is PluginModel
+    assert captured == {"module": "example.modeling_plugin"}
+
+    monkeypatch.setattr(
+        reward_factory.importlib, "import_module", lambda name: make_module(name, OtherModel=OtherModel)
+    )
+    with pytest.raises(
+        ValueError, match="config_class = PluginConfig.*not found in 'example.modeling_plugin'"
+    ):
+        reward_factory.get_reward_model_class("plugin")
+
+
+def test_factory_get_reward_model_class_reports_missing_modeling_module(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig(RewardModelConfig):
+        pass
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+
+    def raise_missing_module(module_path):
+        raise ModuleNotFoundError(f"No module named {module_path!r}", name=module_path)
+
+    monkeypatch.setattr(RewardModelConfig, "get_known_choices", lambda: {"plugin": PluginConfig})
+    monkeypatch.setattr(RewardModelConfig, "get_choice_class", lambda name: PluginConfig)
+    monkeypatch.setattr(reward_factory.importlib, "import_module", raise_missing_module)
+
+    with pytest.raises(ValueError, match="Reward model class for 'plugin' is not implemented"):
+        reward_factory.get_reward_model_class("plugin")
 
 
 def test_factory_unknown_raises():
-    """Unknown name should raise ValueError."""
+    """Unknown name should raise ValueError listing the registered reward models."""
     from lerobot.rewards.factory import get_reward_model_class
 
-    with pytest.raises(ValueError, match="not available"):
+    with pytest.raises(ValueError, match="Unknown reward model name 'nonexistent_reward_model'.*sarm"):
         get_reward_model_class("nonexistent_reward_model")
 
 
