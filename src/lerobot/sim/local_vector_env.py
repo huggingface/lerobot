@@ -348,11 +348,16 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         running = [i for i, last in enumerate(self._last) if not last.done]
         for i, obs, reward, terminated, truncated, success, metrics in self._step_envs(actions, running):
             self._elapsed_steps[i] += 1
+            truncated = bool(truncated or self._elapsed_steps[i] >= self._max_steps[i])
+            observation = self._canonical_observation(obs)
+            if self._batched and not self.use_async_envs and (terminated or truncated):
+                # A native vector env can overwrite its observation buffers while stepping other rows.
+                observation = {name: value.copy() for name, value in observation.items()}
             self._last[i] = _LastStep(
-                obs=self._canonical_observation(obs),
+                obs=observation,
                 reward=float(reward),
                 terminated=bool(terminated),
-                truncated=bool(truncated or self._elapsed_steps[i] >= self._max_steps[i]),
+                truncated=truncated,
                 is_success=bool(success),
                 metrics={**self._last[i].metrics, **{name: float(value) for name, value in metrics.items()}},
             )
