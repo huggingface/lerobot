@@ -53,12 +53,14 @@ def _gpu_memory_bytes(device: str | None) -> tuple[int, int] | None:
         return None
 
 
-def _gpu_is_integrated(device: str) -> bool:
+def _gpu_is_integrated(device: str | None) -> bool:
     """True on an integrated GPU (Jetson / Tegra), where the GPU has no memory of its own.
 
     There ``torch.cuda.mem_get_info`` reports the system RAM it shares with the CPU, which already
     holds the process memory reported next to it.
     """
+    if device is None:
+        return False
     try:
         return bool(torch.cuda.get_device_properties(torch.device(device)).is_integrated)
     except (RuntimeError, ValueError, AssertionError, AttributeError):
