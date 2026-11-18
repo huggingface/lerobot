@@ -32,7 +32,6 @@ from .processor_rynnvalue import make_rynnvalue_pre_post_processors
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
 
-DEFAULT_INFERENCE_FPS = 1.0
 REMAINING_TIME_SIGNAL = "reward.rynnvalue.remaining_time_s"
 
 RYNNVALUE_SIGNAL_DESCRIPTORS = {
@@ -76,14 +75,9 @@ class RynnValueFrameScorer:
         self,
         model: RynnValueRewardModel,
         preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-        *,
-        inference_fps: float = DEFAULT_INFERENCE_FPS,
     ) -> None:
-        if inference_fps <= 0:
-            raise ValueError(f"inference_fps must be > 0, got {inference_fps}")
         self.model = model
         self.preprocessor = preprocessor
-        self.inference_fps = inference_fps
 
     @property
     def descriptors(self) -> dict[str, SignalDescriptor]:
@@ -112,7 +106,7 @@ class RynnValueFrameScorer:
                     "robot_description": config.robot_description,
                     "camera_description": config.camera_description,
                     "use_meta": config.use_meta,
-                    "inference_fps": self.inference_fps,
+                    "inference_fps": config.inference_fps,
                 },
             },
         }
@@ -130,7 +124,7 @@ class RynnValueFrameScorer:
         ]
         task = dataset[positions[0]].get(config.task_key)
 
-        anchors = select_anchor_indices(num_frames, float(dataset.fps), self.inference_fps)
+        anchors = select_anchor_indices(num_frames, float(dataset.fps), config.inference_fps)
         remaining_time: NDArray[np.float64] = np.empty(len(anchors), dtype=np.float64)
 
         self.model.eval()
@@ -155,12 +149,8 @@ class RynnValueFrameScorer:
         )
 
 
-def make_rynnvalue_frame_scorer(
-    model: RynnValueRewardModel,
-    *,
-    inference_fps: float = DEFAULT_INFERENCE_FPS,
-) -> RynnValueFrameScorer:
+def make_rynnvalue_frame_scorer(model: RynnValueRewardModel) -> RynnValueFrameScorer:
     """Construct the standard RynnValue offline frame scorer."""
     # The scorer picks each prefix's frames, so the processor must not subsample them again.
     preprocessor, _ = make_rynnvalue_pre_post_processors(replace(model.config, max_frames=None))
-    return RynnValueFrameScorer(model, preprocessor, inference_fps=inference_fps)
+    return RynnValueFrameScorer(model, preprocessor)

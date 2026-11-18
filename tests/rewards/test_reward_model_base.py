@@ -173,14 +173,21 @@ def _topreward_config(**kwargs):
     return TOPRewardConfig(device="cpu", **kwargs)
 
 
+def _rynnvalue_config(**kwargs):
+    from lerobot.rewards.rynnvalue import RynnValueConfig
+
+    return RynnValueConfig(device="cpu", **kwargs)
+
+
 @pytest.mark.parametrize(
     ("make_config", "scoring_options"),
     [
         (_robometer_config, {"num_subsampled_frames": 2, "scoring_batch_size": 8}),
         (_sarm_config, {"head_mode": "both", "stride": 5, "scoring_batch_size": 8}),
         (_topreward_config, {"num_samples": 3}),
+        (_rynnvalue_config, {"inference_fps": 2.0}),
     ],
-    ids=["robometer", "sarm", "topreward"],
+    ids=["robometer", "sarm", "topreward", "rynnvalue"],
 )
 def test_saved_reward_model_configs_leave_out_scoring_options(tmp_path, make_config, scoring_options):
     make_config(**scoring_options).save_pretrained(tmp_path)

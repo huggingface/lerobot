@@ -149,6 +149,7 @@ Scoring options are fields of each reward model's config, so they are set with `
 | `--reward_model.num_samples`           | TOPReward       | `15`     | Evenly spaced prefixes to score per episode; shorter episodes use every prefix. |
 | `--reward_model.head_mode`             | SARM            | `sparse` | Heads to score: `sparse`, `dense`, or `both`.                                   |
 | `--reward_model.stride`                | SARM            | `1`      | Evaluate every Nth frame and interpolate between valid predictions.             |
+| `--reward_model.inference_fps`         | RynnValue       | `1`      | Frames per second of video to score; frames in between are interpolated.        |
 
 ## Resume or Replace Scores
 

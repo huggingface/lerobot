@@ -131,6 +131,8 @@ def test_rynnvalue_registered_with_reward_factory():
 def test_rynnvalue_config_validation():
     with pytest.raises(ValueError, match="max_frames"):
         RynnValueConfig(device="cpu", max_frames=0)
+    with pytest.raises(ValueError, match="inference_fps must be > 0"):
+        RynnValueConfig(device="cpu", inference_fps=0)
 
 
 def test_value_tokenizer_two_hot_symlog_roundtrip():

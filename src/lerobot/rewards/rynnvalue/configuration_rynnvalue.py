@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
@@ -42,6 +42,11 @@ class RynnValueConfig(RewardModelConfig):
     camera_description: str | None = None
     use_meta: bool | None = None
 
+    # Offline scoring (`lerobot-score`): run RynnValue on about this many frames per second of
+    # video and interpolate the frames in between. Not saved with checkpoints.
+    inference_fps: float = 1.0
+    _scoring_fields: ClassVar[tuple[str, ...]] = ("inference_fps",)
+
     license: str | None = "apache-2.0"
     tags: list[str] | None = field(
         default_factory=lambda: [
@@ -65,6 +70,8 @@ class RynnValueConfig(RewardModelConfig):
         super().__post_init__()
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
+        if self.inference_fps <= 0:
+            raise ValueError(f"inference_fps must be > 0, got {self.inference_fps}")
         if self.image_key not in self.input_features:
             self.input_features[self.image_key] = PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL)
         self.output_features.setdefault(

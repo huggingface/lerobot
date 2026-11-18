@@ -124,7 +124,7 @@ uv run lerobot-score \
     --reward_model.camera_description="a fixed third-person camera"
 ```
 
-RynnValue runs on the trajectory prefix ending at about one frame per second of the dataset, set with `--inference_fps` (default 1), each with at most `max_frames` evenly spaced frames, set with `--reward_model.max_frames` (default 8). The scorer interpolates linearly between the frames RynnValue runs on and writes the dataset score `rynnvalue` with one signal, `reward.rynnvalue.remaining_time_s`, in seconds, lower is better. RA-BC needs a higher-is-better progress signal, so it can't weight samples with this score.
+RynnValue runs on the trajectory prefix ending at about one frame per second of the dataset, set with `--reward_model.inference_fps` (default 1), each with at most `max_frames` evenly spaced frames, set with `--reward_model.max_frames` (default 8). The scorer interpolates linearly between the frames RynnValue runs on and writes the dataset score `rynnvalue` with one signal, `reward.rynnvalue.remaining_time_s`, in seconds, lower is better. RA-BC needs a higher-is-better progress signal, so it can't weight samples with this score.
 
 From Python, build the scorer, score the dataset and load the result:
 
