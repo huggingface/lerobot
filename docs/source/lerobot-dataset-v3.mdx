@@ -87,16 +87,16 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 
 ## Load a dataset for training
 
-`LeRobotDataset` returns Python dictionaries of PyTorch tensors and integrates with `torch.utils.data.DataLoader`. Here is a code example showing its use:
+`LeRobotDataset` returns Python dictionaries of PyTorch tensors and integrates with `torch.utils.data.DataLoader`. This example uses the first episode of `lerobot/pusht`, which has `observation.state`, `action`, and `observation.image` features. Feature names depend on the dataset; check `dataset.meta.features` when adapting the example to another dataset.
 
 ```python
 import torch
 from lerobot.datasets import LeRobotDataset
 
-repo_id = "yaak-ai/L2D-v3"
+repo_id = "lerobot/pusht"
 
-# 1) Load from the Hub (cached locally)
-dataset = LeRobotDataset(repo_id)
+# 1) Load the first episode from the Hub (cached locally)
+dataset = LeRobotDataset(repo_id, episodes=[0])
 
 # 2) Random access by index
 sample = dataset[100]
@@ -104,21 +104,21 @@ print(sample)
 # {
 #   'observation.state': tensor([...]),
 #   'action': tensor([...]),
-#   'observation.images.front_left': tensor([C, H, W]),
+#   'observation.image': tensor([C, H, W]),
 #   'timestamp': tensor(1.234),
 #   ...
 # }
 
 # 3) Temporal windows via delta_timestamps (seconds relative to t)
 delta_timestamps = {
-    "observation.images.front_left": [-0.2, -0.1, 0.0]  # 0.2s and 0.1s before current frame
+    "observation.image": [-0.2, -0.1, 0.0]  # 0.2s and 0.1s before current frame
 }
 
-dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps)
+dataset = LeRobotDataset(repo_id, episodes=[0], delta_timestamps=delta_timestamps)
 
 # Accessing an index now returns a stack for the specified key(s)
 sample = dataset[100]
-print(sample["observation.images.front_left"].shape)  # [T, C, H, W], where T=3
+print(sample["observation.image"].shape)  # [T, C, H, W], where T=3
 
 # 4) Wrap with a DataLoader for training
 batch_size = 16
@@ -128,7 +128,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 for batch in data_loader:
     observations = batch["observation.state"].to(device)
     actions = batch["action"].to(device)
-    images = batch["observation.images.front_left"].to(device)
+    images = batch["observation.image"].to(device)
     # model.forward(batch)
 ```
 
