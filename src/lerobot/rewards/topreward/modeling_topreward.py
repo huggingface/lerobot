@@ -58,7 +58,7 @@ import builtins
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -80,8 +80,6 @@ else:
     Qwen3VLForConditionalGeneration = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T", bound="TOPRewardModel")
 
 
 def _torch_dtype(name: str) -> torch.dtype | str:
@@ -144,7 +142,7 @@ class TOPRewardModel(PreTrainedRewardModel):
         self.config._save_pretrained(save_directory)
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "TOPRewardModel"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

@@ -29,7 +29,7 @@ import os
 from collections import deque
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, Unpack
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -61,8 +61,6 @@ else:
     get_parameter_names = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T", bound="GrootPolicy")
 
 
 class GrootPolicy(PreTrainedPolicy):
@@ -157,7 +155,7 @@ class GrootPolicy(PreTrainedPolicy):
         self._action_queue = deque([], maxlen=self._action_queue_steps)
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "GrootPolicy"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

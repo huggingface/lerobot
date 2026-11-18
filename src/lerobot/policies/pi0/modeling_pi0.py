@@ -69,7 +69,7 @@ from ..common.vla_utils import (
     prepare_attention_masks_4d,
     resize_with_pad_torch,
 )
-from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
+from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0 import DEFAULT_IMAGE_SIZE, PI0Config
 
@@ -799,7 +799,7 @@ class PI0Policy(PreTrainedPolicy):
         self.reset()
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "PreTrainedPolicy"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

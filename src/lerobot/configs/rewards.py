@@ -20,7 +20,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -34,7 +34,6 @@ from lerobot.utils.hub import HubMixin
 
 from .types import PolicyFeature
 
-T = TypeVar("T", bound="RewardModelConfig")
 logger = logging.getLogger(__name__)
 
 
@@ -109,7 +108,7 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             json.dump(draccus.encode(self, RewardModelConfig), f, indent=4)
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "RewardModelConfig"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

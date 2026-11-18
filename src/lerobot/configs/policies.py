@@ -19,7 +19,7 @@ import tempfile
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 import draccus
 import torch
@@ -34,7 +34,6 @@ from lerobot.utils.hub import HubMixin
 
 from .types import FeatureType, PolicyFeature
 
-T = TypeVar("T", bound="PreTrainedConfig")
 logger = getLogger(__name__)
 
 
@@ -175,7 +174,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             json.dump(draccus.encode(self, PreTrainedConfig), f, indent=4)
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "PreTrainedConfig"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

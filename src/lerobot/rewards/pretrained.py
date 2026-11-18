@@ -18,7 +18,7 @@ import logging
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
@@ -32,8 +32,6 @@ from lerobot.utils.hub import HubMixin
 
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
-
-T = TypeVar("T", bound="PreTrainedRewardModel")
 
 
 class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
@@ -81,7 +79,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "PreTrainedRewardModel"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,
@@ -140,7 +138,9 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         return reward
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+    def _load_as_safetensor[T: "PreTrainedRewardModel"](
+        cls, model: T, model_file: str, map_location: str, strict: bool
+    ) -> T:
         missing_keys, unexpected_keys = load_model_as_safetensor(
             model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
         )

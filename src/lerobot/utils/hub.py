@@ -15,14 +15,12 @@
 import builtins
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, TypeVar
+from typing import Any
 
 from huggingface_hub import HfApi
 from huggingface_hub.utils import validate_hf_hub_args
 
 from .constants import CHECKPOINTS_DIR
-
-T = TypeVar("T", bound="HubMixin")
 
 
 # Sharded-training resume artifacts (torch DCP shard dirs + shard files). Published model repos
@@ -122,7 +120,7 @@ class HubMixin:
 
     @classmethod
     @validate_hf_hub_args
-    def from_pretrained(
+    def from_pretrained[T: "HubMixin"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

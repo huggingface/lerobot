@@ -37,7 +37,7 @@ import os
 from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, ClassVar, TypeVar, Unpack
+from typing import Any, ClassVar, Unpack
 
 import numpy as np
 import torch
@@ -86,7 +86,6 @@ from .processor_praxis import droid7_to_pose8
 
 logger = logging.getLogger(__name__)
 
-K = TypeVar("K")
 
 #: The observation key of the scene seed an environment may provide (see ``PraxisConfig.seed``).
 OBS_SCENE_SEED = "observation.scene_seed"
@@ -390,7 +389,7 @@ class _TextCache:
         self._by_tokens: dict[tuple[int, ...], Tensor] = {}
 
     @staticmethod
-    def _put(cache: dict[K, Tensor], key: K, value: Tensor) -> Tensor:
+    def _put[K](cache: dict[K, Tensor], key: K, value: Tensor) -> Tensor:
         if len(cache) >= _TextCache.max_entries:
             del cache[next(iter(cache))]  # dicts keep insertion order: the oldest entry goes
         cache[key] = value

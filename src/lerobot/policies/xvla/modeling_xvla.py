@@ -35,7 +35,7 @@ from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..common.vla_utils import pad_vector, resize_with_pad
-from ..pretrained import PreTrainedPolicy, T
+from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .action_hub import build_action_space
 from .configuration_xvla import XVLAConfig
@@ -465,7 +465,7 @@ class XVLAPolicy(PreTrainedPolicy):
         return self._queues[ACTION].popleft()
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "PreTrainedPolicy"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

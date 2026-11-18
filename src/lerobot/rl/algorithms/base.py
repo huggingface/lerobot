@@ -19,7 +19,7 @@ import builtins
 import os
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -37,8 +37,6 @@ if TYPE_CHECKING:
     from torch import nn
 
     from ..data_sources.data_mixer import DataMixer
-
-T = TypeVar("T", bound="RLAlgorithm")
 
 
 class RLAlgorithm(HubMixin, abc.ABC):
@@ -148,7 +146,7 @@ class RLAlgorithm(HubMixin, abc.ABC):
         self.config._save_pretrained(save_directory)
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "RLAlgorithm"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

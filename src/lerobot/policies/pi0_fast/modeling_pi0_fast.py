@@ -47,6 +47,7 @@ else:
     PiGemmaModel = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 
+
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
     ACTION,
@@ -57,7 +58,7 @@ from lerobot.utils.constants import (
 )
 
 from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_with_pad_torch
-from ..pretrained import PreTrainedPolicy, T
+from ..pretrained import PreTrainedPolicy
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0_fast import PI0FastConfig
 
@@ -798,7 +799,7 @@ class PI0FastPolicy(PreTrainedPolicy):
         self.reset()
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "PreTrainedPolicy"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

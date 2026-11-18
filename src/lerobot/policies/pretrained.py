@@ -20,7 +20,7 @@ import logging
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, Unpack
 
 from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_INDEX_FILE, SAFETENSORS_SINGLE_FILE
@@ -52,7 +52,6 @@ if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 
-T = TypeVar("T", bound="PreTrainedPolicy")
 
 # Pinned far above any policy's total size so save_torch_state_dict always emits exactly one
 # `model.safetensors` (no shards, no index) — a constant, not a computed byte count.
@@ -194,7 +193,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         save_torch_state_dict(state_dict, str(save_directory), max_shard_size=self._max_shard_size)
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "PreTrainedPolicy"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,
@@ -293,7 +292,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         ]
 
     @classmethod
-    def _load_weight_files(cls, model: T, files: list[Path], map_location: str, strict: bool) -> T:
+    def _load_weight_files[T: "PreTrainedPolicy"](
+        cls, model: T, files: list[Path], map_location: str, strict: bool
+    ) -> T:
         """Dispatch a checkpoint to the policy's loader without writing a merged copy.
 
         Override `_load_checkpoint` to filter, rename or assign tensors across all shards.
@@ -317,7 +318,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return cls._load_checkpoint(model, SafetensorsCheckpoint(files), map_location, strict)
 
     @classmethod
-    def _load_checkpoint(
+    def _load_checkpoint[T: "PreTrainedPolicy"](
         cls, model: T, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
     ) -> T:
         """Load a checkpoint, checking keys after all shards and load-state hooks have run.
@@ -351,7 +352,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return model
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+    def _load_as_safetensor[T: "PreTrainedPolicy"](
+        cls, model: T, model_file: str, map_location: str, strict: bool
+    ) -> T:
         """Compatibility entry point for a single weights file."""
         return cls._load_checkpoint(model, SafetensorsCheckpoint([Path(model_file)]), map_location, strict)
 

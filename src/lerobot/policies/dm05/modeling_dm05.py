@@ -35,7 +35,7 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
 from ..common.vla_utils import pad_vector
-from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
+from ..pretrained import ActionSelectKwargs, PreTrainedPolicy
 from .configuration_dm05 import DM05Config
 from .core.adapter import (
     flatten_feature_names,
@@ -279,7 +279,7 @@ class DM05Policy(PreTrainedPolicy):
             hook.remove()
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "PreTrainedPolicy"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

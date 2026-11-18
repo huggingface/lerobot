@@ -49,6 +49,7 @@ else:
     layernorm_forward = None
     sdpa_attention_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
+
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import (
     ACTION,
@@ -72,7 +73,7 @@ from ..common.vla_utils import (
     prepare_attention_masks_4d,
     resize_with_pad_torch,
 )
-from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
+from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
 from .memory import encode_video_with_mem, sample_observation_history
@@ -1099,7 +1100,7 @@ class PI05Policy(PreTrainedPolicy):
         self.reset()
 
     @classmethod
-    def from_pretrained(
+    def from_pretrained[T: "PreTrainedPolicy"](
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,

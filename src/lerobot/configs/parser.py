@@ -23,7 +23,7 @@ from functools import wraps
 from pathlib import Path
 from pkgutil import ModuleInfo
 from types import ModuleType
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 import draccus
 import torch
@@ -37,8 +37,6 @@ from draccus.wrappers.suppressing_argparse import SuppressingArgumentParser
 from draccus.wrappers.wrapper import AggregateWrapper, Wrapper
 
 from lerobot.utils.utils import has_method
-
-F = TypeVar("F", bound=Callable[..., object])
 
 PATH_KEY = "path"
 PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
@@ -411,7 +409,7 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
     return tmp.name
 
 
-def wrap(config_path: Path | None = None) -> Callable[[F], F]:
+def wrap[F: Callable[..., object]](config_path: Path | None = None) -> Callable[[F], F]:
     """
     HACK: Similar to draccus.wrap but does three additional things:
         - Will remove '.path' arguments from CLI in order to process them later on.
