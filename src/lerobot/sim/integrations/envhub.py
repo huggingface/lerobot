@@ -20,7 +20,7 @@ import os
 from collections.abc import Callable
 from difflib import get_close_matches
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 
 import gymnasium as gym
 from huggingface_hub import snapshot_download
@@ -44,7 +44,11 @@ SIM_DEFAULTS: dict[str, Any] = {
 }
 
 
-def parse_envhub_path(hub_path: str) -> tuple[str, str | None, str | None, str]:
+RepoType = Literal["model", "space"]
+_PREFIXES: dict[str, RepoType] = {"spaces/": "space", "models/": "model"}
+
+
+def parse_envhub_path(hub_path: str) -> tuple[str, RepoType | None, str | None, str]:
     """Return repo id, repo type, revision and entry file for an EnvHub Hub path.
 
     Explicit paths use `spaces/owner/repo[@revision][:path]` or `models/owner/repo[@revision][:path]`.
@@ -53,8 +57,8 @@ def parse_envhub_path(hub_path: str) -> tuple[str, str | None, str | None, str]:
     """
     location, _, file_path = hub_path.partition(":")
     repo_id, _, revision = location.partition("@")
-    repo_type = None
-    for prefix, kind in (("spaces/", "space"), ("models/", "model")):
+    repo_type: RepoType | None = None
+    for prefix, kind in _PREFIXES.items():
         if repo_id.startswith(prefix):
             repo_id = repo_id.removeprefix(prefix)
             repo_type = kind
@@ -64,7 +68,7 @@ def parse_envhub_path(hub_path: str) -> tuple[str, str | None, str | None, str]:
 
 def download_envhub_snapshot(
     repo_id: str,
-    repo_type: str | None,
+    repo_type: RepoType | None,
     revision: str | None,
     cache_dir: str | None = None,
 ) -> str:
@@ -138,7 +142,9 @@ def _download_hub_file(
     snapshot_dir = download_envhub_snapshot(repo_id, repo_type, revision, hub_cache_dir)
     local_file = os.path.join(snapshot_dir, file_path)
     if not os.path.isfile(local_file):
-        raise FileNotFoundError(f"Could not find {file_path} in repository {repo_id}@{revision or 'main'}")
+        raise FileNotFoundError(
+            f"Could not find {file_path} in {repo_id}@{revision or 'main'} (downloaded to {snapshot_dir})"
+        )
 
     return repo_id, file_path, local_file, revision
 

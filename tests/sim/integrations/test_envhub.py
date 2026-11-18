@@ -251,7 +251,7 @@ def test_envhub_names_a_file_missing_from_the_repository(tmp_path, monkeypatch):
         return str(tmp_path)
 
     monkeypatch.setattr(envhub, "snapshot_download", download)
-    with pytest.raises(FileNotFoundError, match="custom.py in repository user/reach@v1"):
+    with pytest.raises(FileNotFoundError, match="custom.py in user/reach@v1"):
         LocalVectorEnv(_envhub(hub_path="user/reach@v1:custom.py"))
     assert downloads == [("user/reach", "v1")]
 
