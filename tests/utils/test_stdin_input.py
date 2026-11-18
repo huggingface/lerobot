@@ -154,3 +154,33 @@ def test_stdin_listener_unusable_stream_treated_as_eof(monkeypatch):
     missing.start()
     assert missing_eof.is_set()
     missing.stop()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="batched descriptor input requires POSIX select")
+@pytest.mark.parametrize("commands", ["/stop\n/start\n", "/stop"])
+def test_stdin_listener_stop_from_callback(commands: str):
+    lines: list[str] = []
+    eof = Event()
+    allow_stop = Event()
+    stopped = Event()
+
+    def handle_line(line: str) -> None:
+        lines.append(line)
+        allow_stop.wait(timeout=2.0)
+        listener.stop()
+        stopped.set()
+
+    with _pipe_stream() as (reader, writer):
+        listener = StdinCommandListener(handle_line, on_eof=eof.set, stream=reader)
+        writer.write(commands)
+        writer.close()
+        listener.start()
+        thread = listener._thread
+        assert thread is not None
+        allow_stop.set()
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+
+    assert stopped.is_set()
+    assert lines == ["/stop"]
+    assert not eof.is_set()
