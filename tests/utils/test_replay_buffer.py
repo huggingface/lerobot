@@ -21,11 +21,20 @@ import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 from lerobot.rl.buffer import BatchTransition, ReplayBuffer, random_crop_vectorized  # noqa: E402
-from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_STATE, OBS_STR, REWARD  # noqa: E402
+from lerobot.utils.constants import (  # noqa: E402
+    ACTION,
+    DONE,
+    OBS_IMAGE,
+    OBS_IMAGES,
+    OBS_STATE,
+    OBS_STR,
+    REWARD,
+)
 from tests.fixtures.constants import DUMMY_REPO_ID  # noqa: E402
 
 pytestmark = pytest.mark.dataset
@@ -470,6 +479,92 @@ def test_from_lerobot_dataset(tmp_path):
         assert torch.equal(
             replay_buffer.states[OBS_STATE][i],
             reconverted_buffer.next_states[OBS_STATE][i],
+        )
+
+
+VIDEO_CAMERA_KEY = f"{OBS_IMAGES}.front"
+
+
+def create_video_dataset(root) -> None:
+    """Write a dataset with a video-backed camera: 2 episodes of 3 frames."""
+    features = {
+        VIDEO_CAMERA_KEY: {"dtype": "video", "shape": (32, 32, 3), "names": ["height", "width", "channels"]},
+        OBS_STATE: {"dtype": "float32", "shape": (2,), "names": None},
+        ACTION: {"dtype": "float32", "shape": (2,), "names": None},
+        REWARD: {"dtype": "float32", "shape": (1,), "names": None},
+        DONE: {"dtype": "bool", "shape": (1,), "names": None},
+    }
+    dataset = LeRobotDataset.create(DUMMY_REPO_ID, fps=10, root=root, features=features, use_videos=True)
+    generator = np.random.default_rng(0)
+    for _ in range(2):
+        for frame_index in range(3):
+            dataset.add_frame(
+                {
+                    VIDEO_CAMERA_KEY: generator.integers(0, 256, size=(32, 32, 3), dtype=np.uint8),
+                    OBS_STATE: generator.standard_normal(2).astype(np.float32),
+                    ACTION: generator.standard_normal(2).astype(np.float32),
+                    REWARD: np.array([1.0], dtype=np.float32),
+                    DONE: np.array([frame_index == 2]),
+                    "task": "dummy task",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+
+
+@pytest.mark.parametrize("optimize_memory", [False, True])
+def test_from_lerobot_dataset_stores_uint8_video_frames_in_unit_range(tmp_path, optimize_memory):
+    # `make_dataset` opens datasets with `return_uint8=True`, so video-backed cameras come back as uint8.
+    root = tmp_path / "video_dataset"
+    create_video_dataset(root)
+    uint8_dataset = LeRobotDataset(DUMMY_REPO_ID, root=root, return_uint8=True)
+    float_dataset = LeRobotDataset(DUMMY_REPO_ID, root=root)
+    assert uint8_dataset[0][VIDEO_CAMERA_KEY].dtype == torch.uint8
+
+    buffer = ReplayBuffer.from_lerobot_dataset(
+        uint8_dataset,
+        device="cpu",
+        state_keys=[VIDEO_CAMERA_KEY, OBS_STATE],
+        use_drq=False,
+        optimize_memory=optimize_memory,
+    )
+
+    images = buffer.states[VIDEO_CAMERA_KEY][: len(buffer)]
+    assert images.dtype == torch.float32
+    assert images.max() <= 1.0
+    for i in range(len(buffer)):
+        # Same frames as a dataset that decodes them to float32 in [0, 1] itself.
+        assert torch.equal(buffer.states[VIDEO_CAMERA_KEY][i], float_dataset[i][VIDEO_CAMERA_KEY])
+        assert torch.equal(buffer.states[OBS_STATE][i], float_dataset[i][OBS_STATE])
+
+    if not optimize_memory:
+        # The next state of a frame that is not the last of its episode is the following frame.
+        for i in (0, 1, 3, 4):
+            assert torch.equal(
+                buffer.next_states[VIDEO_CAMERA_KEY][i], float_dataset[i + 1][VIDEO_CAMERA_KEY]
+            )
+
+
+def test_from_lerobot_dataset_with_uint8_video_frames_converts_back_to_dataset(tmp_path):
+    # The learner writes its offline buffer back with `to_lerobot_dataset` at every checkpoint.
+    root = tmp_path / "video_dataset"
+    create_video_dataset(root)
+    buffer = ReplayBuffer.from_lerobot_dataset(
+        LeRobotDataset(DUMMY_REPO_ID, root=root, return_uint8=True),
+        device="cpu",
+        state_keys=[VIDEO_CAMERA_KEY, OBS_STATE],
+        use_drq=False,
+        optimize_memory=True,
+    )
+
+    dataset = buffer.to_lerobot_dataset(DUMMY_REPO_ID, root=tmp_path / "from_buffer")
+
+    assert dataset.num_episodes == 2
+    assert dataset.num_frames == len(buffer)
+    for i in range(len(buffer)):
+        # Written as 8-bit images, so frames round to the nearest 1/255.
+        torch.testing.assert_close(
+            dataset[i][VIDEO_CAMERA_KEY], buffer.states[VIDEO_CAMERA_KEY][i], rtol=0, atol=1 / 255
         )
 
 

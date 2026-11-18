@@ -18,7 +18,7 @@ import functools
 import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -422,6 +422,9 @@ class ReplayBuffer:
         """
         Convert a LeRobotDataset into a ReplayBuffer.
 
+        RGB camera frames are stored as float32 in [0, 1], like online transitions, even when the dataset
+        returns them as uint8 (`return_uint8=True`).
+
         Args:
             lerobot_dataset (LeRobotDataset): The dataset to convert.
             device (str): The device for sampling tensors. Defaults to "cuda:0".
@@ -643,6 +646,11 @@ class ReplayBuffer:
         transitions = []
         num_frames = len(dataset)
 
+        # A dataset opened with `return_uint8=True` (as `make_dataset` does) returns its video-backed RGB
+        # cameras as uint8 in [0, 255]. Online transitions and image-backed cameras are float32 in [0, 1],
+        # and the policy normalizes images assuming that range, so convert them, as `lerobot-train` does.
+        rgb_camera_keys = set(dataset.meta.camera_keys) - set(dataset.meta.depth_keys)
+
         # Check if the dataset has "next.done" key
         sample = dataset[0]
         has_done_key = DONE in sample
@@ -659,10 +667,7 @@ class ReplayBuffer:
             current_sample = dataset[i]
 
             # ----- 1) Current state -----
-            current_state: dict[str, torch.Tensor] = {}
-            for key in state_keys:
-                val = current_sample[key]
-                current_state[key] = val.unsqueeze(0)  # Add batch dimension
+            current_state = _sample_to_state(current_sample, state_keys, rgb_camera_keys)
 
             # ----- 2) Action -----
             action = current_sample[ACTION].unsqueeze(0)  # Add batch dimension
@@ -694,11 +699,7 @@ class ReplayBuffer:
                 next_sample = dataset[i + 1]
                 if next_sample["episode_index"] == current_sample["episode_index"]:
                     # Build next_state from the same keys
-                    next_state_data: dict[str, torch.Tensor] = {}
-                    for key in state_keys:
-                        val = next_sample[key]
-                        next_state_data[key] = val.unsqueeze(0)  # Add batch dimension
-                    next_state = next_state_data
+                    next_state = _sample_to_state(next_sample, state_keys, rgb_camera_keys)
 
             # ----- 5) Complementary info (if available) -----
             complementary_info = None
@@ -729,6 +730,19 @@ class ReplayBuffer:
             transitions.append(transition)
 
         return transitions
+
+
+def _sample_to_state(
+    sample: dict[str, Any], state_keys: Sequence[str], rgb_camera_keys: set[str]
+) -> dict[str, torch.Tensor]:
+    """Batch the `state_keys` of a dataset sample, with uint8 RGB camera frames as float32 in [0, 1]."""
+    state: dict[str, torch.Tensor] = {}
+    for key in state_keys:
+        val = sample[key]
+        if key in rgb_camera_keys and val.dtype == torch.uint8:
+            val = val.to(torch.float32) / 255.0
+        state[key] = val.unsqueeze(0)  # Add batch dimension
+    return state
 
 
 # Utility function to guess shapes/dtypes from a tensor
