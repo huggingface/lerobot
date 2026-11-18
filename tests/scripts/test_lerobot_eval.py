@@ -20,12 +20,17 @@ from torch import nn
 
 pytest.importorskip("datasets")
 
+from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.envs import make_env
 from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
 from lerobot.scripts.lerobot_eval import rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
+from tests.fixtures.toy_env import ToyEnvConfig
 from tests.policies.flux3.helpers import task_config
 
 pytestmark = pytest.mark.dataset
@@ -198,3 +203,38 @@ def test_eval_consent_is_the_env_own():
 
     with pytest.raises(ValueError, match="--env.trust_remote_code=true"):
         EvalPipelineConfig(env=PushtEnvConfig(), trust_remote_code=True)
+
+
+def test_rollout_saves_recordings_at_the_step_cap(tmp_path):
+    class _Policy(_RecordingPolicy):
+        def select_action(self, observation):
+            return torch.tensor([[2.0, 0.0], [0.0, 0.0]])
+
+    env = make_env(ToyEnvConfig(), n_envs=2)["reach"][0]
+    preprocessor, postprocessor = make_policy_processor_pipelines([], [])
+    try:
+        result = rollout(
+            env,
+            _Policy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            seeds=[4, 5],
+            recording_dir=tmp_path / "recordings",
+            env_features={
+                OBS_STATE: PolicyFeature(FeatureType.STATE, (2,)),
+                ACTION: PolicyFeature(FeatureType.ACTION, (2,)),
+            },
+            max_episode_steps=3,
+        )
+    finally:
+        env.close()
+
+    assert result["done"].tolist() == [[True, True, True], [False, False, True]]
+    for index, expected in enumerate(([True], [False, False, True])):
+        root = tmp_path / "recordings" / f"env_{index}"
+        assert load_info(root).total_episodes == 1
+        dataset = LeRobotDataset(repo_id=f"eval_recording_env_{index}", root=root)
+        assert [bool(dataset[i]["next.done"].item()) for i in range(len(dataset))] == expected
+        assert bool(dataset[len(dataset) - 1]["next.success"].item()) == (index == 0)

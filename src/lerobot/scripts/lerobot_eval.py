@@ -373,10 +373,15 @@ def rollout(
             else:
                 successes = [False] * env.num_envs
 
+            episode_ends = terminated | truncated
+            # The rollout can end before the simulator declares the episode over.
+            # Use the same boundary in the recorded datasets and returned transitions.
+            if step + 1 == max_steps:
+                episode_ends = np.ones_like(episode_ends, dtype=bool)
+
             if recording_datasets is not None and raw_observation is not None:
-                prev_done = done.copy()
                 for env_idx in range(env.num_envs):
-                    if prev_done[env_idx]:
+                    if done[env_idx]:
                         continue
                     frame = _build_raw_frame(
                         raw_observation,
@@ -384,22 +389,16 @@ def rollout(
                         action_numpy[env_idx],
                         reward[env_idx],
                         successes[env_idx],
-                        bool(terminated[env_idx] | truncated[env_idx]),
+                        bool(episode_ends[env_idx]),
                         task_desc,
                         recording_datasets[env_idx].features,
                     )
                     recording_datasets[env_idx].add_frame(frame)
-                    if terminated[env_idx] or truncated[env_idx]:
+                    if episode_ends[env_idx]:
                         recording_datasets[env_idx].save_episode()
                 raw_observation = deepcopy(observation)
 
-            # Keep track of which environments are done so far.
-            # Mark the episode as done if we reach the maximum step limit.
-            # This ensures that the rollout always terminates cleanly at `max_steps`,
-            # and allows logging/saving (e.g., videos) to be triggered consistently.
-            done = terminated | truncated | done
-            if step + 1 == max_steps:
-                done = np.ones_like(done, dtype=bool)
+            done = episode_ends | done
 
             all_actions.append(torch.from_numpy(action_numpy))
             all_rewards.append(torch.from_numpy(reward))
