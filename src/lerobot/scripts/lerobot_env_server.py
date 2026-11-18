@@ -120,7 +120,7 @@ def envhub_context(hub_path: str, directory: Path) -> Path:
         return Path(location).resolve()
     repo, repo_type, revision, _ = parse_envhub_path(hub_path)
     snapshot = download_envhub_snapshot(repo, repo_type, revision)
-    context = directory / "envhub" / re.sub(r"[^a-z0-9_.-]+", "-", location.lower())
+    context = directory / "envhub" / re.sub(r"[^a-z0-9_.-]+", "-", repo.lower())
     shutil.rmtree(context, ignore_errors=True)
     shutil.copytree(snapshot, context)
     return context

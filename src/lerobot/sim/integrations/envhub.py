@@ -24,7 +24,7 @@ from typing import Any
 
 import gymnasium as gym
 from huggingface_hub import snapshot_download
-from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError, RevisionNotFoundError
 
 from .utils import canonical_observation
 
@@ -79,7 +79,13 @@ def download_envhub_snapshot(
         return snapshot_download(repo_id, repo_type="space", revision=revision, cache_dir=cache_dir)
     except GatedRepoError:
         raise
+    except RevisionNotFoundError as e:
+        raise RevisionNotFoundError(
+            f"Space {repo_id} has no revision {revision}; for a model repository, use models/{repo_id}@{revision}",
+            response=e.response,
+        ) from e
     except RepositoryNotFoundError:
+        logger.info("No Space %s; loading the model repository", repo_id)
         return snapshot_download(repo_id, repo_type="model", revision=revision, cache_dir=cache_dir)
 
 

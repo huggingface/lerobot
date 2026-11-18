@@ -23,6 +23,7 @@ import pytest
 from huggingface_hub.errors import (
     GatedRepoError,
     HfHubHTTPError,
+    LocalEntryNotFoundError,
     RepositoryNotFoundError,
     RevisionNotFoundError,
 )
@@ -149,7 +150,7 @@ def test_envhub_selects_the_repository_type(tmp_path, monkeypatch, hub_path, ava
 
 
 @pytest.mark.parametrize(
-    "error_type", [GatedRepoError, RevisionNotFoundError, HfHubHTTPError, ConnectionError]
+    "error_type", [GatedRepoError, HfHubHTTPError, ConnectionError, LocalEntryNotFoundError]
 )
 def test_envhub_does_not_change_repository_on_access_revision_or_network_errors(monkeypatch, error_type):
     calls = []
@@ -171,6 +172,18 @@ def test_envhub_does_not_change_repository_on_access_revision_or_network_errors(
         LocalVectorEnv(_envhub())
     assert caught.value is error
     assert calls == ["space"]
+
+
+def test_missing_space_revision_points_to_the_models_prefix(monkeypatch):
+    def download(*args, **kwargs):
+        raise RevisionNotFoundError(
+            "No such revision",
+            response=httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co")),
+        )
+
+    monkeypatch.setattr(envhub, "snapshot_download", download)
+    with pytest.raises(RevisionNotFoundError, match="models/user/reach@v1"):
+        envhub.download_envhub_snapshot("user/reach", None, "v1")
 
 
 def test_explicit_prefix_does_not_fall_back_to_the_other_type(monkeypatch):

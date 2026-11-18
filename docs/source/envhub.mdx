@@ -1,6 +1,6 @@
 # EnvHub: Share a Simulator on the Hub
 
-An EnvHub environment is a Hugging Face Space with an `env.py` that builds a [Gymnasium](https://gymnasium.farama.org) environment following LeRobot's conventions (see [The environment](#the-environment)). That file is the whole integration: no pull request to LeRobot, no package to publish. Once it is on the Hub, anyone can:
+An EnvHub environment is a Hugging Face Space (or a model repository) with an `env.py` that builds a [Gymnasium](https://gymnasium.farama.org) environment following LeRobot's conventions (see [The environment](#the-environment)). That file is the whole integration: no pull request to LeRobot, no package to publish. Once it is on the Hub, anyone can:
 
 - **evaluate** a policy on it with `lerobot-eval`,
 - **drive it as a robot** with `lerobot-rollout`, `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay`, swappable with the real robot it simulates,
@@ -10,7 +10,7 @@ This page shows how to use an EnvHub environment, then everything needed to writ
 
 ## Use an EnvHub environment
 
-Browse [Spaces tagged `envhub`](https://huggingface.co/spaces?filter=envhub) or the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments).
+Browse [Spaces tagged `envhub`](https://huggingface.co/spaces?filter=envhub), [models tagged `envhub`](https://huggingface.co/models?other=envhub) or the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments).
 
 The commands below use `spaces/my-org/my-env@<commit>`. Replace it with the Space ID and commit you want to run. The robot and camera options illustrate an SO-101 environment; adapt them to your environment and policy.
 
@@ -85,7 +85,7 @@ Published examples: [SO-101 tabletop in MuJoCo](https://huggingface.co/spaces/le
 
 Publish your environment as a Space using [Static HTML](https://huggingface.co/docs/hub/spaces-sdks-static) for a page, [Gradio](https://huggingface.co/docs/hub/spaces-sdks-gradio) for an interactive demo, or [Docker](https://huggingface.co/docs/hub/spaces-sdks-docker) for a custom app. Document the task, robot, installation and evaluation commands, and link to the source and licenses. Videos and camera views help show what to expect. Beyond that, get creative with how you present your environment!
 
-Keep demo code and dependencies in their own directory. A Docker Space uses the root `Dockerfile` for its web app; place any separate simulator-server Dockerfile at a different path, such as `deploy/Dockerfile.envhub`.
+The Space's root `requirements.txt` and `packages.txt` are also installed in the simulator server image, so they must suit both. Static and Docker Spaces keep the demo's own dependencies apart (for a Docker Space, in a subdirectory such as `demo/requirements.txt`). A Gradio Space builds from the root files, so use it only when the environment's requirements also suit the demo.
 
 ### Python and dependencies
 
@@ -213,7 +213,7 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False, **kwargs):
     return {"reach": {0: vector_cls([factory] * n_envs)}}
 ```
 
-Each EnvHub Space should document its simulator, installation requirements, observations and actions, and provide a page or demo showing what to expect.
+Each EnvHub Space should document its simulator, installation requirements, observations and actions, and provide a page or demo showing what to expect. For real simulators, see the [MuJoCo](https://huggingface.co/spaces/lerobot/so101-tabletop-mujoco) and [Isaac Sim](https://huggingface.co/spaces/lerobot/so101-tabletop-isaac) SO-101 Spaces. They share the same `LEROBOT_SIM`, and the Isaac one installs its simulator through `requirements.txt` and `packages.txt`.
 
 ### Batches
 
@@ -361,7 +361,7 @@ Updates are new commits: users pinned to an older commit keep running the code t
 | `user/repo@rev:path` | Another file at a revision          | `my-org/my-envs@v1.0:envs/task_a.py` |
 | `./folder`           | `env.py` in a local folder          | `./my-env`                           |
 
-Bare `user/repo` paths try a Space first, then a model repository if no accessible Space exists. If both types share a name, the Space wins: use `models/user/repo` to load the model repository. Gated access, missing revisions and network errors are raised as they are, without trying the other type. The prefixes also work with revisions and custom files, e.g. `spaces/my-org/my-env@v1.0:envs/task_a.py`.
+Bare `user/repo` paths try a Space first, then a model repository if no accessible Space exists. If both types share a name, the Space wins: use `models/user/repo` to load the model repository. Gated access, missing revisions and network errors are raised as they are, without trying the other type. Offline, a bare path does not find a cached repository of the other type: use the prefix. The prefixes also work with revisions and custom files, e.g. `spaces/my-org/my-env@v1.0:envs/task_a.py`.
 
 ### Versions
 
