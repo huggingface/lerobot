@@ -171,9 +171,11 @@ class DiffusionPolicy(PreTrainedPolicy):
             elif last_cmd.ndim > current_state.ndim:
                 current_state = current_state.unsqueeze(0)
 
-            dim_to_compare = min(current_state.shape[-1], last_cmd.shape[-1])
+            aligned_cmd = self.align_action_to_observation_state(last_cmd)
+
+            dim_to_compare = min(current_state.shape[-1], aligned_cmd.shape[-1])
             discrepancy = torch.max(
-                torch.abs(current_state[..., :dim_to_compare] - last_cmd[..., :dim_to_compare])
+                torch.abs(current_state[..., :dim_to_compare] - aligned_cmd[..., :dim_to_compare])
             ).item()
 
             if discrepancy > self.config.watchdog_tracking_threshold:

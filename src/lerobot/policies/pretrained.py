@@ -26,12 +26,13 @@ from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_INDEX_FILE, SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import EntryNotFoundError
 from safetensors.torch import load_file, load_model as load_model_as_safetensor
+import torch
 from torch import Tensor, nn
 
-from lerobot.configs import FeatureType, PreTrainedConfig
+from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
 from lerobot.lerobot_types import PolicyOutput
 from lerobot.optim.optimizers import OptimizerParams
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.hub import HubMixin
@@ -404,6 +405,94 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             elif queue is not None:
                 total += len(queue)
         return total
+
+    def set_dataset_stats(self, dataset_stats: dict[str, dict[str, Any]] | None) -> None:
+        """Set or update dataset normalization statistics used for coordinate alignment."""
+        self.config.dataset_stats = dataset_stats
+
+    def align_action_to_observation_state(self, action: Tensor) -> Tensor:
+        """Align an action tensor (normalized according to action statistics) into the
+        coordinate system of `OBS_STATE` (normalized according to state statistics).
+
+        If normalization statistics or mapping are not available, or if action and state
+        already share the same statistics, the action tensor is returned as-is.
+        """
+        stats = getattr(self.config, "dataset_stats", None)
+        if stats is None:
+            return action
+
+        action_stats = stats.get(ACTION, stats.get("action"))
+        state_stats = stats.get(OBS_STATE, stats.get("observation.state", stats.get("state")))
+        if action_stats is None or state_stats is None:
+            return action
+
+        norm_map = getattr(self.config, "normalization_mapping", {})
+        action_mode = norm_map.get(FeatureType.ACTION, norm_map.get("ACTION", NormalizationMode.IDENTITY))
+        state_mode = norm_map.get(FeatureType.STATE, norm_map.get("STATE", NormalizationMode.IDENTITY))
+
+        if isinstance(action_mode, str):
+            action_mode = NormalizationMode(action_mode)
+        if isinstance(state_mode, str):
+            state_mode = NormalizationMode(state_mode)
+
+        # 1. Unnormalize action to raw physical space
+        raw_action = action
+        if action_mode == NormalizationMode.MEAN_STD and "mean" in action_stats and "std" in action_stats:
+            a_mean = torch.as_tensor(action_stats["mean"], device=action.device, dtype=action.dtype)
+            a_std = torch.as_tensor(action_stats["std"], device=action.device, dtype=action.dtype)
+            dim = min(raw_action.shape[-1], a_mean.shape[-1])
+            raw_action = raw_action.clone()
+            raw_action[..., :dim] = raw_action[..., :dim] * a_std[..., :dim] + a_mean[..., :dim]
+        elif action_mode == NormalizationMode.MIN_MAX and "min" in action_stats and "max" in action_stats:
+            a_min = torch.as_tensor(action_stats["min"], device=action.device, dtype=action.dtype)
+            a_max = torch.as_tensor(action_stats["max"], device=action.device, dtype=action.dtype)
+            dim = min(raw_action.shape[-1], a_min.shape[-1])
+            denom = a_max[..., :dim] - a_min[..., :dim]
+            denom = torch.where(denom == 0, torch.tensor(1e-8, device=action.device, dtype=action.dtype), denom)
+            raw_action = raw_action.clone()
+            raw_action[..., :dim] = (raw_action[..., :dim] + 1.0) / 2.0 * denom + a_min[..., :dim]
+        elif action_mode in (NormalizationMode.QUANTILES, NormalizationMode.QUANTILE10):
+            q_low_key = "q01" if action_mode == NormalizationMode.QUANTILES else "q10"
+            q_high_key = "q99" if action_mode == NormalizationMode.QUANTILES else "q90"
+            if q_low_key in action_stats and q_high_key in action_stats:
+                a_low = torch.as_tensor(action_stats[q_low_key], device=action.device, dtype=action.dtype)
+                a_high = torch.as_tensor(action_stats[q_high_key], device=action.device, dtype=action.dtype)
+                dim = min(raw_action.shape[-1], a_low.shape[-1])
+                denom = a_high[..., :dim] - a_low[..., :dim]
+                denom = torch.where(denom == 0, torch.tensor(1e-8, device=action.device, dtype=action.dtype), denom)
+                raw_action = raw_action.clone()
+                raw_action[..., :dim] = (raw_action[..., :dim] + 1.0) * denom / 2.0 + a_low[..., :dim]
+
+        # 2. Normalize raw_action into state coordinate system
+        state_action = raw_action
+        if state_mode == NormalizationMode.MEAN_STD and "mean" in state_stats and "std" in state_stats:
+            s_mean = torch.as_tensor(state_stats["mean"], device=action.device, dtype=action.dtype)
+            s_std = torch.as_tensor(state_stats["std"], device=action.device, dtype=action.dtype)
+            dim = min(state_action.shape[-1], s_mean.shape[-1])
+            denom = s_std[..., :dim] + 1e-8
+            state_action = state_action.clone()
+            state_action[..., :dim] = (state_action[..., :dim] - s_mean[..., :dim]) / denom
+        elif state_mode == NormalizationMode.MIN_MAX and "min" in state_stats and "max" in state_stats:
+            s_min = torch.as_tensor(state_stats["min"], device=action.device, dtype=action.dtype)
+            s_max = torch.as_tensor(state_stats["max"], device=action.device, dtype=action.dtype)
+            dim = min(state_action.shape[-1], s_min.shape[-1])
+            denom = s_max[..., :dim] - s_min[..., :dim]
+            denom = torch.where(denom == 0, torch.tensor(1e-8, device=action.device, dtype=action.dtype), denom)
+            state_action = state_action.clone()
+            state_action[..., :dim] = 2.0 * (state_action[..., :dim] - s_min[..., :dim]) / denom - 1.0
+        elif state_mode in (NormalizationMode.QUANTILES, NormalizationMode.QUANTILE10):
+            q_low_key = "q01" if state_mode == NormalizationMode.QUANTILES else "q10"
+            q_high_key = "q99" if state_mode == NormalizationMode.QUANTILES else "q90"
+            if q_low_key in state_stats and q_high_key in state_stats:
+                s_low = torch.as_tensor(state_stats[q_low_key], device=action.device, dtype=action.dtype)
+                s_high = torch.as_tensor(state_stats[q_high_key], device=action.device, dtype=action.dtype)
+                dim = min(state_action.shape[-1], s_low.shape[-1])
+                denom = s_high[..., :dim] - s_low[..., :dim]
+                denom = torch.where(denom == 0, torch.tensor(1e-8, device=action.device, dtype=action.dtype), denom)
+                state_action = state_action.clone()
+                state_action[..., :dim] = 2.0 * (state_action[..., :dim] - s_low[..., :dim]) / denom - 1.0
+
+        return state_action
 
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""
