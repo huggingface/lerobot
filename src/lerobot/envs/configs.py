@@ -209,7 +209,7 @@ class AlohaEnvConfig(EnvConfig):
 
     def sim_settings(self) -> dict[str, Any]:
         joints = tuple(f"joint_{i}.pos" for i in range(14))
-        instruction = self.instruction or _REFERENCE_INSTRUCTIONS.get(self.task)
+        instruction = self.instruction or (_REFERENCE_INSTRUCTIONS.get(self.task) if self.task else None)
         return {**_gym_settings(self, "position", joints, joints, instruction), "robot_type": "aloha"}
 
 
@@ -237,7 +237,7 @@ class PushtEnvConfig(EnvConfig):
         }
 
     def sim_settings(self) -> dict[str, Any]:
-        instruction = self.instruction or _REFERENCE_INSTRUCTIONS.get(self.task)
+        instruction = self.instruction or (_REFERENCE_INSTRUCTIONS.get(self.task) if self.task else None)
         return _gym_settings(self, "position", ("agent.x", "agent.y"), ("agent.x", "agent.y"), instruction)
 
 
