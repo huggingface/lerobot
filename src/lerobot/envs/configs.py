@@ -15,33 +15,19 @@
 from __future__ import annotations
 
 import abc
-import logging
-from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
-from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal, NoReturn
 
 import draccus
-import gymnasium as gym
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.env_server import DEFAULT_MAX_PAYLOAD_BYTES
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sim import EnvDescriptor, SimConfig
-from lerobot.sim.integrations import envhub
+from lerobot.sim import SimConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
-
-if TYPE_CHECKING:
-    from lerobot.env_server import RemoteVectorEnv
-    from lerobot.sim import LocalVectorEnv
-
-logger = logging.getLogger(__name__)
-
-# Timeout of each request to a served env.
-SERVED_TIMEOUT_S = 120.0
 
 
 @dataclass
@@ -69,9 +55,11 @@ class EnvClientConfig:
 
 @dataclass
 class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
+    """An environment's options. `make_env` builds the environment from its `sim_settings()`."""
+
     task: str | None = None
     fps: int = 30
-    # Filled from the env's descriptor when the env is created.
+    # The policy-side features. `lerobot-eval` fills them from the env's descriptor; envs without one declare them.
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
     max_parallel_tasks: int = 1
@@ -95,7 +83,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @property
     def gym_kwargs(self) -> dict:
-        """Keyword arguments used to build the sim's envs; empty by default."""
+        """Keyword arguments for ``gym.make``; empty by default."""
         return {}
 
     def sim_settings(self) -> dict[str, Any]:
@@ -109,146 +97,23 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """Return ``sim_settings()`` with the sim's defaults, as local envs and the env server run it."""
         return SimConfig.resolve(self.sim_settings())
 
-    def create_envs(
-        self,
-        n_envs: int,
-        use_async_envs: bool = False,
-    ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        """Create local or served vector envs, as ``{suite: {task_id: env}}``."""
-        descriptor, make = self._environment_factory(n_envs, use_async_envs)
-        groups = [task.strip() for task in self.task.split(",")] if self.task else list(descriptor.tasks)
-        result = {}
-        for group in groups:
-            if group not in descriptor.tasks:
-                raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
-            result[group] = {task_id: make(group, task_id) for task_id in descriptor.tasks[group]}
-        return result
+    def create_envs(self, *args: Any, **kwargs: Any) -> NoReturn:
+        """Removed: build the envs with ``lerobot.envs.make_env(config, n_envs, use_async_envs)``."""
+        raise RuntimeError(
+            "EnvConfig.create_envs() was removed: build the envs with "
+            "lerobot.envs.make_env(config, n_envs=..., use_async_envs=...)"
+        )
 
-    def create_env(
-        self,
-        task_group: str | None = None,
-        task_id: int | None = None,
-        n_envs: int = 1,
-        use_async_envs: bool = False,
-    ) -> LocalVectorEnv | RemoteVectorEnv:
-        """Create one local or served vector env for one task; no `task_id` means the suite's first task."""
-        descriptor, make = self._environment_factory(n_envs, use_async_envs, task_group, task_id)
-        group = task_group or next(iter(descriptor.tasks))
-        if group not in descriptor.tasks:
-            raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
-        task_ids = descriptor.tasks[group]
-        if task_id is None:
-            task_id = task_ids[0]
-        if task_id not in task_ids:
-            raise ValueError(f"Unknown task ID {task_id} for {group!r}; this suite has {sorted(task_ids)}")
-        return make(group, task_id)
-
-    def _environment_factory(
-        self,
-        n_envs: int,
-        use_async_envs: bool,
-        task_group: str | None = None,
-        task_id: int | None = None,
-    ) -> tuple[EnvDescriptor, Callable[[str, int], LocalVectorEnv | RemoteVectorEnv]]:
-        from lerobot.sim import LocalVectorEnv
-
-        settings = self.sim_settings()
-        server = self.server
-        if server is not None:
-            from lerobot.env_server import EnvClient, RemoteVectorEnv
-
-            if self.max_parallel_tasks != 1:
-                raise ValueError("A served environment runs one task at a time")
-            connect = partial(
-                EnvClient,
-                server.endpoint,
-                server.deployment or self.type,
-                SERVED_TIMEOUT_S,
-                handshake_timeout_s=server.handshake_timeout_s,
-                zenoh_config_path=server.zenoh_config_path,
-                max_payload_bytes=server.max_payload_bytes,
-            )
-            probe = connect()
-            try:
-                descriptor = probe.describe()
-            finally:
-                probe.close()
-            check_served(descriptor.config, settings, server.endpoint)
-
-            def make(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
-                return RemoteVectorEnv(
-                    connect(encoding=server.encoding, jpeg_quality=server.jpeg_quality),
-                    n_envs,
-                    group,
-                    task_id,
-                    use_async_envs and n_envs > 1,
-                    descriptor,
-                )
-        else:
-            sim = self.sim_config()
-            parallel = use_async_envs and n_envs > 1
-            # Reuse the env built to read the descriptor for its own task instead of building it twice.
-            first = [LocalVectorEnv(sim, n_envs, task_group, task_id, parallel)]
-            descriptor = first[0].descriptor
-
-            def make(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
-                if first:
-                    env = first.pop()
-                    if (group, task_id) == (env.task_group, env.task_id):
-                        return env
-                    env.close()
-                # With the descriptor given, the other tasks build their sims on first use.
-                return LocalVectorEnv(sim, n_envs, group, task_id, parallel, descriptor)
-
-        self.fps = int(descriptor.fps)
-        self.features = {
-            f.name: PolicyFeature(
-                type=FeatureType.VISUAL if f.kind == "rgb" else FeatureType.STATE, shape=f.shape
-            )
-            for f in descriptor.features
-        }
-        self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=descriptor.action_feature.shape)
-        # Sim keys reach the policy unchanged; --rename_map renames them, as for any env.
-        self.features_map = {name: name for name in self.features}
-        return descriptor, make
+    def create_env(self, *args: Any, **kwargs: Any) -> NoReturn:
+        """Removed: build one task's env with ``lerobot.envs.make_task_env(config, task_group, task_id, ...)``."""
+        raise RuntimeError(
+            "EnvConfig.create_env() was removed: build one task's env with "
+            "lerobot.envs.make_task_env(config, task_group=..., task_id=..., n_envs=...)"
+        )
 
     def get_env_processors(self):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
         return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
-
-
-def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str) -> None:
-    """Raise if the server runs a different env than ``expected``; warn if only its kwargs differ."""
-
-    def plain(value: Any) -> Any:
-        # Make YAML, wire and dataclass values comparable: tuples become lists, recursively.
-        if isinstance(value, dict):
-            return {key: plain(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [plain(item) for item in value]
-        return value
-
-    # A server opens any of the tasks it configures (all of them for an empty list), so the requested tasks
-    # are checked against the descriptor's task list instead.
-    errors = [
-        f"{key}: server {served.get(key)!r}, expected {value!r}"
-        for key, value in expected.items()
-        if key not in ("kwargs", "task") and value is not None and plain(value) != plain(served.get(key))
-    ]
-    served_kwargs = served.get("kwargs") or {}
-    # hub_path and trust_remote_code may differ: the env server loads EnvHub repos from its own image.
-    warnings = [
-        f"kwargs.{key}: server {served_kwargs.get(key)!r}, expected {value!r}"
-        for key, value in (expected.get("kwargs") or {}).items()
-        if key not in ("hub_path", "trust_remote_code") and plain(value) != plain(served_kwargs.get(key))
-    ]
-    if errors:
-        raise ValueError(
-            f"The env server at {endpoint} runs another environment than this command describes "
-            f"({'; '.join(errors)}). Pass the same --env options as the server's configuration."
-        )
-    for warning in warnings:
-        logger.warning("The env server at %s differs in %s", endpoint, warning)
 
 
 @EnvConfig.register_subclass("envhub")
@@ -260,29 +125,8 @@ class HubEnvConfig(EnvConfig):
     trust_remote_code: bool = False
     # Keyword arguments for the repo's make_env, e.g. '{"episode_length": 9000}'.
     make_env_kwargs: dict[str, Any] = field(default_factory=dict)
+    # Return the repo's own vector envs (e.g. GPU batches) unchanged, in this process.
     use_native_batch: bool = False
-
-    def create_envs(
-        self, n_envs: int, use_async_envs: bool = False
-    ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        """With ``use_native_batch``, return the repo's own vector envs (e.g. GPU batches) unchanged."""
-        if not self.use_native_batch:
-            return super().create_envs(n_envs, use_async_envs)
-        if self.server is not None:
-            raise ValueError("use_native_batch runs locally; it cannot use an env server")
-        if not self.hub_path:
-            raise ValueError("--env.hub_path is required for an EnvHub environment")
-        # Provider configs (Isaac Lab Arena, Unitree G1) subclass this one and also pass themselves as `cfg`,
-        # since their options are config fields.
-        provider = None if type(self) is HubEnvConfig else self
-        return envhub.make_envs(
-            self.hub_path,
-            n_envs,
-            use_async_envs,
-            self.trust_remote_code,
-            cfg=provider,
-            **self.make_env_kwargs,
-        )
 
     def sim_settings(self) -> dict[str, Any]:
         if self.use_native_batch:
@@ -450,9 +294,6 @@ class HILSerlRobotEnvConfig(EnvConfig):
     name: str = "real_robot"
 
     def sim_settings(self) -> dict[str, Any]:
-        raise NotImplementedError("gym_manipulator wraps a robot for RL; it does not describe a simulator")
-
-    def create_envs(self, n_envs: int, use_async_envs: bool = False):
         """Raise: this config drives a real robot, which `make_env` and `lerobot-eval` cannot build."""
         raise NotImplementedError(
             "'gym_manipulator' is a real-robot environment: make_env and lerobot-eval cannot build it. "
