@@ -30,7 +30,7 @@ import pytest
 pytest.importorskip("onnx")
 pytest.importorskip("onnxruntime")
 
-from lerobot.robots.unitree_g1.controllers import sonic_whole_body as swb  # noqa: E402
+from lerobot.controllers.unitree_g1 import sonic_whole_body as swb  # noqa: E402
 from lerobot.robots.unitree_g1.g1_utils import (  # noqa: E402
     ISAACLAB_TO_MUJOCO,
     MUJOCO_TO_ISAACLAB,
