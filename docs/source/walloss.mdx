@@ -46,6 +46,7 @@ Python code. Review the tokenizer repository before setting
 configured action tokenizer in both `diffusion` and `fast` modes. Consent defaults
 to false and must be supplied again when loading a checkpoint, including a local
 copy; `--env.trust_remote_code` does not grant policy consent.
+Pin it with `--policy.action_tokenizer_path=lerobot/fast-action-tokenizer@<full-commit-sha>`; code consent is still required.
 
 ### Text generation and interactive control
 

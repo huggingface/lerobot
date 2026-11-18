@@ -177,6 +177,7 @@ inside the checkpoint's processor artifacts, so inference reuses it. Set
 Disabling automatic fitting does not remove the consent requirement for a
 tokenizer that loads custom code. When calling `fit_fast_tokenizer` directly in
 Python, pass `trust_remote_code=True` after reviewing the base tokenizer code.
+Pin the base FAST tokenizer with `--policy.action_tokenizer_name=physical-intelligence/fast@<full-commit-sha>`; this also pins the source used for fitting.
 
 ## Training performance
 
