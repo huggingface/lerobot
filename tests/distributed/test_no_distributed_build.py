@@ -74,11 +74,31 @@ def test_full_state_dict_of_a_plain_module(no_distributed):
     assert dist_checkpoint.full_model_state_dict(model).keys() == model.state_dict().keys()
 
 
-def test_ema_average_parameters(no_distributed):
+@pytest.mark.parametrize("exceptional_exit", [False, True])
+def test_ema_average_parameters_swaps_and_restores(no_distributed, exceptional_exit):
     model = nn.Linear(2, 2)
+    with torch.no_grad():
+        model.weight.fill_(2)
+        model.bias.fill_(3)
     ema = EMA(model, ConstantEMAConfig())
-    with ema.average_parameters(model):
-        pass
+    with torch.no_grad():
+        model.weight.fill_(7)
+        model.bias.fill_(11)
+
+    def evaluate():
+        with ema.average_parameters(model):
+            torch.testing.assert_close(model.weight, torch.full_like(model.weight, 2))
+            torch.testing.assert_close(model.bias, torch.full_like(model.bias, 3))
+            if exceptional_exit:
+                raise RuntimeError("evaluation failed")
+
+    if exceptional_exit:
+        with pytest.raises(RuntimeError, match="evaluation failed"):
+            evaluate()
+    else:
+        evaluate()
+    torch.testing.assert_close(model.weight, torch.full_like(model.weight, 7))
+    torch.testing.assert_close(model.bias, torch.full_like(model.bias, 11))
 
 
 def test_metrics_reduce_is_a_no_op(no_distributed):
