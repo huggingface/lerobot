@@ -14,6 +14,7 @@
 
 """Local vector environments built from a simulator integration."""
 
+import multiprocessing
 import os
 import sys
 import types
@@ -264,6 +265,28 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
 class _CrashingEnv(ToyEnv):
     def reset(self, seed=None):
         os._exit(3)
+
+
+def test_worker_uses_spawn_when_forkserver_is_unavailable(monkeypatch):
+    get_context = multiprocessing.get_context
+
+    def spawn_only(method):
+        if method != "spawn":
+            raise ValueError(f"cannot find context for {method!r}")
+        return get_context(method)
+
+    monkeypatch.setattr(multiprocessing, "get_all_start_methods", lambda: ["spawn"])
+    monkeypatch.setattr(multiprocessing, "get_context", spawn_only)
+
+    env = _ProcessEnv(ToyEnv)
+    try:
+        env.ready()
+        initial, _ = env.reset(seed=7)
+        observation, reward, terminated, truncated, _ = env.step(np.array([2.0, 0.0], np.float32))
+        np.testing.assert_allclose(observation["agent_pos"], initial["agent_pos"] + [2, 0])
+        assert (reward, terminated, truncated) == (1.0, True, False)
+    finally:
+        env.close()
 
 
 def test_a_dead_environment_process_is_reported():

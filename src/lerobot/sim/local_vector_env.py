@@ -145,7 +145,8 @@ class _ProcessEnv:
     """
 
     def __init__(self, make: Callable[[], Any]):
-        context = multiprocessing.get_context("forkserver")
+        start_method = "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
+        context = multiprocessing.get_context(start_method)
         self._pipe, child = context.Pipe()
         self._process = context.Process(
             target=_env_worker, args=(child, CloudpickleWrapper(make)), daemon=True
