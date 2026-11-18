@@ -586,3 +586,30 @@ def test_reward_loaders_require_caller_consent(
                 device="cpu", pretrained_path=None, trust_remote_code=trust_remote_code, **kwargs
             )
             constructor(config)
+
+
+@pytest.mark.parametrize(
+    "config_consent,consent", [(False, None), (True, None), (True, False), (False, True)]
+)
+@pytest.mark.parametrize("topreward", [False, True])
+def test_explicit_reward_consent_overrides_supplied_config(
+    monkeypatch, tmp_path, consent, config_consent, topreward
+):
+    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
+
+    model_cls = TOPRewardModel if topreward else _DummyHubReward
+    config = model_cls.config_class(device="cpu", trust_remote_code=config_consent)
+
+    class ConstructionReachedError(Exception):
+        pass
+
+    def construct(self, received):
+        assert received.trust_remote_code is (config_consent if consent is None else consent)
+        assert (received is config) is (consent is None)
+        raise ConstructionReachedError
+
+    monkeypatch.setattr(model_cls, "__init__", construct)
+    kwargs = {} if consent is None else {"trust_remote_code": consent}
+    with pytest.raises(ConstructionReachedError):
+        model_cls.from_pretrained(tmp_path, config=config, **kwargs)
+    assert config.trust_remote_code is config_consent

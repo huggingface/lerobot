@@ -59,6 +59,7 @@ from torch import Tensor, nn
 from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.utils.constants import OBS_PREFIX
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -200,10 +201,13 @@ class RobometerRewardModel(PreTrainedRewardModel):
         #     no redundant Qwen weight download.
         torch_dtype = _torch_dtype(config.torch_dtype)
         if config.pretrained_path is None:
+            repo_id, revision = split_hub_reference(config.base_model_id)
             self.model = AutoModelForImageTextToText.from_pretrained(
-                config.base_model_id,
+                repo_id,
                 dtype=torch_dtype,
                 trust_remote_code=self.config.trust_remote_code,
+                revision=revision,
+                code_revision=revision,
             )
             target_vocab = config.vlm_config["text_config"]["vocab_size"]
             self.model.resize_token_embeddings(target_vocab)

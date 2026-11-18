@@ -28,6 +28,7 @@ import torchvision.transforms.v2.functional as tv_functional
 from einops import rearrange
 from torchvision.transforms import InterpolationMode
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -1333,9 +1334,16 @@ def _build_n1_7_processor(
     model_name: str = GROOT_N1_7_BACKBONE_MODEL, *, trust_remote_code: bool = False
 ) -> ProcessorMixin:
     require_package("transformers", extra="groot")
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=trust_remote_code)
-    image_processor = Qwen2VLImageProcessor.from_pretrained(model_name, trust_remote_code=trust_remote_code)
-    video_processor = Qwen3VLVideoProcessor.from_pretrained(model_name, trust_remote_code=trust_remote_code)
+    repo_id, revision = split_hub_reference(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(
+        repo_id, trust_remote_code=trust_remote_code, revision=revision, code_revision=revision
+    )
+    image_processor = Qwen2VLImageProcessor.from_pretrained(
+        repo_id, trust_remote_code=trust_remote_code, revision=revision, code_revision=revision
+    )
+    video_processor = Qwen3VLVideoProcessor.from_pretrained(
+        repo_id, trust_remote_code=trust_remote_code, revision=revision, code_revision=revision
+    )
     proc = Qwen3VLProcessor(
         image_processor=image_processor,
         tokenizer=tokenizer,

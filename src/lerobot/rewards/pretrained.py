@@ -17,6 +17,7 @@ import builtins
 import logging
 import os
 import warnings
+from copy import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -93,6 +94,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool | None = None,
         strict: bool = False,
         **kwargs,
     ) -> T:
@@ -100,7 +102,6 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         The reward model is set in evaluation mode by default using `reward.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `reward.train()`.
         """
-        trust_remote_code = kwargs.pop("trust_remote_code", False)
         if config is None:
             config = RewardModelConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -111,9 +112,12 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
-                trust_remote_code=trust_remote_code,
+                trust_remote_code=bool(trust_remote_code),
                 **kwargs,
             )
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
         if os.path.isdir(model_id):

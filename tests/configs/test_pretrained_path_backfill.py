@@ -188,8 +188,7 @@ def test_cli_pretrained_revision_reaches_from_pretrained(monkeypatch, argv, buil
     assert getattr(cfg, field).pretrained_revision == "cli-sha"
 
 
-@pytest.mark.parametrize("serialized_trust", [False, True])
-@pytest.mark.parametrize("caller_trust", [False, True])
+@pytest.mark.parametrize("serialized_trust,caller_trust", [(True, False), (False, True)])
 @pytest.mark.parametrize(
     ("config_cls", "subclass", "field"),
     [
@@ -275,4 +274,37 @@ def test_training_checkpoint_consent_is_reset_before_construction(
 
     expected = source == "recipe" if caller_trust is None else caller_trust
     assert observed == [expected]
+    assert getattr(config, field).trust_remote_code is expected
+
+
+@pytest.mark.parametrize("caller_trust", [None, False, True])
+@pytest.mark.parametrize("filename", ["train_config.json", "recipe.json"])
+@pytest.mark.parametrize("field", ["policy", "reward_model"])
+def test_cli_path_extraction_cannot_restore_checkpoint_consent(
+    monkeypatch, tmp_path, caller_trust, filename, field
+):
+    config_cls = PreTrainedConfig if field == "policy" else RewardModelConfig
+    subclass = _DummyBackfillConfig if field == "policy" else _DummyRewardBackfillConfig
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text(json.dumps({"type": subclass.get_choice_name(subclass)}))
+    path = tmp_path / filename
+    path.write_text(
+        json.dumps(
+            {"dataset": {"repo_id": "user/data"}, field: {"path": str(model), "trust_remote_code": True}}
+        )
+    )
+    monkeypatch.setattr(parser, "_config_path_args", {})
+    monkeypatch.setattr(parser, "_config_yaml_overrides", {})
+    args = [] if caller_trust is None else [f"--{field}.trust_remote_code={str(caller_trust).lower()}"]
+    monkeypatch.setattr(sys, "argv", ["lerobot-train", f"--config_path={path}", *args])
+
+    @parser.wrap()
+    def load(config: TrainPipelineConfig):
+        config._resolve_pretrained_from_cli()
+        return config
+
+    config = load()
+    expected = filename == "recipe.json" if caller_trust is None else caller_trust
+    assert isinstance(getattr(config, field), config_cls)
     assert getattr(config, field).trust_remote_code is expected

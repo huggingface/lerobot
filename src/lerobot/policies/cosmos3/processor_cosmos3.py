@@ -67,6 +67,7 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_cosmos3 import RESOLUTION_TIER_LIMITS, Cosmos3Config
@@ -529,7 +530,8 @@ class Cosmos3TokenizerProcessorStep(ComplementaryDataProcessorStep):
 
     def __post_init__(self):
         require_package("transformers", extra="cosmos3")
-        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+        repo_id, revision = split_hub_reference(self.tokenizer_name)
+        self._tokenizer = AutoTokenizer.from_pretrained(repo_id, revision=revision, code_revision=revision)
         if self._tokenizer.convert_tokens_to_ids(START_OF_GENERATION) == self._tokenizer.unk_token_id:
             raise ValueError(f"The tokenizer of {self.tokenizer_name} has no {START_OF_GENERATION} token.")
 

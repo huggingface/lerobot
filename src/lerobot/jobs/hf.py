@@ -102,9 +102,12 @@ def build_remote_config_file(cfg, repo_id: str, dest: Path, tags: list[str] | No
     # trainer image doesn't know about.
     data = remote.to_dict()
     data.pop("job", None)
+    for field in ("policy", "reward_model"):
+        if isinstance(data.get(field), dict):
+            data[field].pop("trust_remote_code", None)
+    policy = data.get("policy")
     # `policy.dtype` is newer than the released trainer image. Omit it only when both the value and the
     # policy class default are None: the pod then decodes the missing key back to the same None.
-    policy = data.get("policy")
     if (
         isinstance(policy, dict)
         and policy.get("dtype") is None
@@ -406,6 +409,9 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
         config_repo_id = _stage_config_on_hub(cfg, fresh_repo_id, token, tags=tags)
         repo_id = fresh_repo_id
         command = ["lerobot-train", f"--config_path={config_repo_id}"]
+
+    if cfg.policy is not None and cfg.policy.trust_remote_code:
+        command.append("--policy.trust_remote_code=true")
 
     print(f"Submitting job to HF Jobs (flavor={cfg.job.target}, image={cfg.job.image}) ...")
     job_info = run_job(

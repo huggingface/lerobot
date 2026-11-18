@@ -56,6 +56,7 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available
 
 from ..pi05.processor_pi05 import make_pi05_pre_post_processors
@@ -292,7 +293,10 @@ class FineARTVLATextTokenizerStep(ProcessorStep):
     def _ensure_tokenizer(self) -> Any:
         if self._tokenizer is not None:
             return self._tokenizer
-        self._tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(self.tokenizer_name))
+        repo_id, revision = split_hub_reference(self.tokenizer_name)
+        self._tokenizer = register_paligemma_loc_tokens(
+            AutoTokenizer.from_pretrained(repo_id, revision=revision, code_revision=revision)
+        )
         return self._tokenizer
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

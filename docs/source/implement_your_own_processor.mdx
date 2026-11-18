@@ -183,6 +183,8 @@ def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, Po
 
 External step imports and custom tokenizer code require caller consent, including for local checkpoints. Resolved classes must inherit from `ProcessorStep`; saved configs and already loaded modules cannot grant consent. For policy CLIs, use `--policy.trust_remote_code=true`, independently of `--env.trust_remote_code=true`. Reward models use `--reward_model.trust_remote_code=true`, also defaulting to false and requiring fresh caller consent when reloading a checkpoint.
 
+Hub tokenizer and processor names support `repo@revision` (for example, `org/tokenizer@<commit-sha>`), including policy-specific loaders such as FineART, WALL-X and GR00T. Assets and custom code use the selected revision; use a full commit SHA for immutable pins. Existing local paths are used unchanged. The model checkpoint and each separate tokenizer repository need their own pins. Existing dedicated revision options remain supported, with an embedded `@revision` taking precedence.
+
 ```python
 processor = PolicyProcessorPipeline.from_pretrained(
     "user/policy", config_filename="policy_preprocessor.json", trust_remote_code=True,

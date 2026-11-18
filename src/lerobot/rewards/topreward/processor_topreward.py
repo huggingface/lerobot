@@ -44,6 +44,7 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -141,8 +142,9 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="topreward")
+        repo_id, revision = split_hub_reference(self.vlm_name)
         self._processor = AutoProcessor.from_pretrained(
-            self.vlm_name, trust_remote_code=self.trust_remote_code
+            repo_id, trust_remote_code=self.trust_remote_code, revision=revision, code_revision=revision
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

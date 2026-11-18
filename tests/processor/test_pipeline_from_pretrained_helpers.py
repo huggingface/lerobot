@@ -604,4 +604,24 @@ def test_reward_classifier_pipeline_consent_reaches_encoder(load_pipeline, monke
             trust_remote_code=consent,
         )
 
-    encoder_loader.assert_called_once_with("user/custom-encoder", trust_remote_code=consent)
+    encoder_loader.assert_called_once_with(
+        "user/custom-encoder", trust_remote_code=consent, revision=None, code_revision=None
+    )
+
+
+@pytest.mark.parametrize("step_override", [None, False, True])
+def test_explicit_pipeline_consent_overrides_saved_false(load_pipeline, monkeypatch, step_override):
+    loader = MagicMock()
+
+    class ConsentStep(IdentityProcessorStep):
+        def __init__(self, trust_remote_code=False):
+            loader(trust_remote_code)
+
+    monkeypatch.setitem(ProcessorStepRegistry._registry, "consent_step", ConsentStep)
+    overrides = {} if step_override is None else {"consent_step": {"trust_remote_code": step_override}}
+    load_pipeline(
+        {"registry_name": "consent_step", "config": {"trust_remote_code": False}},
+        overrides=overrides,
+        trust_remote_code=True,
+    )
+    loader.assert_called_once_with(True if step_override is None else step_override)

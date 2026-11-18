@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from huggingface_hub import snapshot_download
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -204,10 +205,13 @@ def _validate_fast_reconstruction(
 
 def _load_fast_fitter(base_tokenizer_name: str, *, trust_remote_code: bool = False) -> Any:
     """Load FAST's fitting implementation without requiring its universal BPE weights."""
+    repo_id, revision = split_hub_reference(base_tokenizer_name)
     try:
-        return AutoProcessor.from_pretrained(base_tokenizer_name, trust_remote_code=trust_remote_code)
+        return AutoProcessor.from_pretrained(
+            repo_id, trust_remote_code=trust_remote_code, revision=revision, code_revision=revision
+        )
     except ValueError as error:
-        if not trust_remote_code or base_tokenizer_name != "physical-intelligence/fast":
+        if not trust_remote_code or repo_id != "physical-intelligence/fast":
             raise
         logger.warning(
             "Could not load the universal FAST tokenizer backend; loading its fitting class directly: %s",
@@ -215,7 +219,9 @@ def _load_fast_fitter(base_tokenizer_name: str, *, trust_remote_code: bool = Fal
         )
         return get_class_from_dynamic_module(
             "processing_action_tokenizer.UniversalActionProcessor",
-            base_tokenizer_name,
+            repo_id,
+            revision=revision,
+            code_revision=revision,
         )
 
 

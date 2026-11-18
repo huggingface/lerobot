@@ -46,6 +46,7 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_dm05 import DM05Config
@@ -157,9 +158,9 @@ class DM05TokenizerProcessorStep(ObservationProcessorStep):
         """Load the Gemma processor on first use so building a pipeline stays offline."""
         if self.processor is None:
             require_package("transformers", extra="dm05")
+            repo_id, revision = split_hub_reference(self.processor_name_or_path)
             self.processor = AutoProcessor.from_pretrained(
-                self.processor_name_or_path,
-                fix_mistral_regex=False,
+                repo_id, fix_mistral_regex=False, revision=revision, code_revision=revision
             )
         return self.processor
 

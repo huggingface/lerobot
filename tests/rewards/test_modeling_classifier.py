@@ -35,7 +35,7 @@ def local_encoder(monkeypatch):
         )
     )
 
-    def from_pretrained(model_name, *, trust_remote_code):
+    def from_pretrained(model_name, *, trust_remote_code, revision=None, code_revision=None):
         assert model_name == "lerobot/resnet10"
         assert trust_remote_code is False
         return encoder

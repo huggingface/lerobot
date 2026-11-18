@@ -90,6 +90,16 @@ policy.type=pi0_fast
 
 The FAST action tokenizer loads custom Python code. Review the tokenizer repository before enabling `--policy.trust_remote_code=true`; this caller consent is required for training and inference and is not inherited from a saved checkpoint.
 
+The policy checkpoint and its tokenizers are separate Hub repositories. To pin all three, use independent commit SHAs:
+
+```bash
+--policy.pretrained_revision=<model-commit-sha> \
+--policy.action_tokenizer_name=lerobot/fast-action-tokenizer@<fast-commit-sha> \
+--policy.text_tokenizer_name=google/paligemma-3b-pt-224@<paligemma-commit-sha>
+```
+
+In Python, use the same `repo@revision` strings in `action_tokenizer_name` and `text_tokenizer_name` on `PI0FastConfig`. Tokenizer files and custom code use that revision. Saved policy configs retain the references; processor exports bundle the loaded artifacts or retain pinned references. Use full commit SHAs for immutable pins. Plain repo names and local paths keep their existing behavior. Pinning does not grant permission to execute code: `trust_remote_code=True` is still required.
+
 For training π₀-FAST, you can use the LeRobot training script:
 
 ```bash

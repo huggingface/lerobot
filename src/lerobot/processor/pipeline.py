@@ -1303,9 +1303,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             raise ValueError(f"Step '{step_key}' requests trust_remote_code=True without pipeline consent.")
 
         # Enforce caller consent even when a registered step defaults to True,
-        # and pass explicit opt-in through when the serialized config omits the flag.
+        # and let explicit pipeline/step consent take precedence over saved values.
         if "trust_remote_code" in inspect.signature(step_class).parameters:
-            merged_cfg.setdefault("trust_remote_code", trust_remote_code)
+            merged_cfg["trust_remote_code"] = step_overrides.get("trust_remote_code", trust_remote_code)
 
         try:
             return step_class(**merged_cfg)

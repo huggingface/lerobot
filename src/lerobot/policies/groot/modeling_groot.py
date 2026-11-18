@@ -111,7 +111,7 @@ class GrootPolicy(PreTrainedPolicy):
         model = GR00TN17.from_pretrained(
             **model_kwargs,
             tune_vlln=self.config.tune_vlln,
-            transformers_loading_kwargs={"trust_remote_code": True},
+            transformers_loading_kwargs={"trust_remote_code": self.config.trust_remote_code},
         )
         backbone = getattr(model, "backbone", None)
         qwen_model = getattr(backbone, "model", None)

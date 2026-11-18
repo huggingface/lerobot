@@ -32,7 +32,7 @@ from lerobot.configs.accelerator import AcceleratorConfig, ActivationCheckpointi
 from lerobot.configs.parallelism import ParallelismConfig
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.optim.ema import EMAConfig
-from lerobot.utils.constants import PRETRAINED_MODEL_DIR
+from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAIN_CONFIG_NAME as TRAIN_CONFIG_NAME
 from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
@@ -40,8 +40,6 @@ from . import parser
 from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
-
-TRAIN_CONFIG_NAME = "train_config.json"
 
 
 class CheckpointFormat(str, Enum):
@@ -226,7 +224,9 @@ class TrainPipelineConfig(HubMixin):
         policy_path = parser.get_path_arg("policy")
 
         if reward_model_path:
-            cli_overrides = parser.get_cli_overrides("reward_model")
+            cli_overrides = parser.get_yaml_overrides("reward_model") + (
+                parser.get_cli_overrides("reward_model") or []
+            )
             self.reward_model = RewardModelConfig.from_pretrained(
                 reward_model_path,
                 revision=parser.get_pretrained_revision("reward_model"),

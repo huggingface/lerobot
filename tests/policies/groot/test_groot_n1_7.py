@@ -542,7 +542,8 @@ def test_groot_from_pretrained_rejects_mismatched_caller_config(tmp_path):
         GrootPolicy.from_pretrained(model_path, config=config)
 
 
-def test_groot_from_pretrained_keeps_matching_caller_config(tmp_path, monkeypatch):
+@pytest.mark.parametrize("consent", [False, True])
+def test_groot_from_pretrained_keeps_matching_caller_config(tmp_path, monkeypatch, consent):
     pytest.importorskip("transformers")
 
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
@@ -550,8 +551,13 @@ def test_groot_from_pretrained_keeps_matching_caller_config(tmp_path, monkeypatc
     model_path = tmp_path / "GR00T-N1.7-local"
     model_path.mkdir()
     config = _groot_config()
+    config.trust_remote_code = consent
 
-    monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: _DummyGrootModel()))
+    def load(cls, **kwargs):
+        assert kwargs["transformers_loading_kwargs"]["trust_remote_code"] is consent
+        return _DummyGrootModel()
+
+    monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(load))
 
     policy = GrootPolicy.from_pretrained(model_path, config=config)
 
@@ -2155,14 +2161,17 @@ def test_groot_n1_7_processor_uses_qwen_component_assets(monkeypatch):
     monkeypatch.setattr(processor_groot, "Qwen3VLVideoProcessor", FakeVideoProcessor)
     monkeypatch.setattr(processor_groot, "Qwen3VLProcessor", FakeProcessor)
 
-    processor = processor_groot._build_n1_7_processor("nvidia/Cosmos-Reason2-2B")
+    processor = processor_groot._build_n1_7_processor("nvidia/Cosmos-Reason2-2B@" + "a" * 40)
 
     assert [call[:2] for call in calls] == [
         ("tokenizer", "nvidia/Cosmos-Reason2-2B"),
         ("image_processor", "nvidia/Cosmos-Reason2-2B"),
         ("video_processor", "nvidia/Cosmos-Reason2-2B"),
     ]
-    assert all(call[2] == {"trust_remote_code": False} for call in calls)
+    assert all(
+        call[2] == {"trust_remote_code": False, "revision": "a" * 40, "code_revision": "a" * 40}
+        for call in calls
+    )
     assert processor.tokenizer.padding_side == "left"
     assert processor.chat_template == "fake-chat-template"
     assert not FakeProcessor.from_pretrained_called
@@ -3010,6 +3019,7 @@ def test_gr00t_n1_7_from_pretrained_defers_backbone_weight_loading(monkeypatch, 
     assert isinstance(loaded, FakeLoadedModel)
     assert called["pretrained_model_name_or_path"] == str(tmp_path)
     assert called["load_backbone_weights"] is False
+    assert called["transformers_loading_kwargs"]["trust_remote_code"] is False
 
 
 def test_gr00t_n1_7_action_head_samples_time_after_meta_init():

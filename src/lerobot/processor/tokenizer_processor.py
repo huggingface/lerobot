@@ -41,6 +41,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_SUBTASK_TOKENS,
     OBS_LANGUAGE_TOKENS,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available
 
 from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
@@ -110,7 +111,10 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         elif self.tokenizer_name is not None:
             if AutoTokenizer is None:
                 raise ImportError("AutoTokenizer is not available")
-            self.input_tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+            repo_id, revision = split_hub_reference(self.tokenizer_name)
+            self.input_tokenizer = AutoTokenizer.from_pretrained(
+                repo_id, revision=revision, code_revision=revision
+            )
         else:
             raise ValueError(
                 "Either 'tokenizer' or 'tokenizer_name' must be provided. "
@@ -388,8 +392,9 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         elif self.action_tokenizer_name is not None:
             if AutoProcessor is None:
                 raise ImportError("AutoProcessor is not available")
+            repo_id, revision = split_hub_reference(self.action_tokenizer_name)
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                self.action_tokenizer_name, trust_remote_code=self.trust_remote_code
+                repo_id, trust_remote_code=self.trust_remote_code, revision=revision, code_revision=revision
             )
         else:
             raise ValueError(
@@ -397,11 +402,14 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
                 "Pass a tokenizer object directly or a tokenizer name to auto-load."
             )
 
+        repo_id, revision = split_hub_reference(self.paligemma_tokenizer_name)
         self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-            self.paligemma_tokenizer_name,
+            repo_id,
             trust_remote_code=self.trust_remote_code,
             add_eos_token=True,
             add_bos_token=False,
+            revision=revision,
+            code_revision=revision,
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

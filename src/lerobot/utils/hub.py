@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import builtins
+from os import PathLike
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, TypeVar
@@ -23,6 +24,18 @@ from huggingface_hub.utils import validate_hf_hub_args
 from .constants import CHECKPOINTS_DIR
 
 T = TypeVar("T", bound="HubMixin")
+
+
+def split_hub_reference(
+    name: str | PathLike, revision: str | None = None
+) -> tuple[str | PathLike, str | None]:
+    """Resolve ``repo@revision``, preserving local paths and unpinned loader defaults."""
+    if isinstance(name, str) and "@" in name and not Path(name).is_absolute() and not Path(name).exists():
+        repo, revision = name.split("@", 1)
+        if not repo or not revision:
+            raise ValueError(f"Expected 'repo@revision', got {name!r}")
+        return repo, revision
+    return name, revision
 
 
 # Sharded-training resume artifacts (torch DCP shard dirs + shard files). Published model repos

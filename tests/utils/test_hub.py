@@ -14,6 +14,8 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from lerobot.utils.hub import find_latest_hub_checkpoint
 
 
@@ -52,3 +54,21 @@ def test_find_latest_hub_checkpoint_ignores_non_step_entries(monkeypatch):
 def test_find_latest_hub_checkpoint_none_when_no_checkpoints(monkeypatch):
     _patch_list_files(monkeypatch, ["config.json", "model.safetensors"])
     assert find_latest_hub_checkpoint("u/run") is None
+
+
+def test_split_hub_reference_preserves_local_paths(tmp_path, monkeypatch):
+    from lerobot.utils.hub import split_hub_reference
+
+    path = tmp_path / "tokenizer@local"
+    path.mkdir()
+    monkeypatch.chdir(tmp_path)
+    for reference in (path, str(path), path.name):
+        assert split_hub_reference(reference) == (reference, None)
+
+
+@pytest.mark.parametrize("reference", ["org/tokenizer@", "@commit"])
+def test_split_hub_reference_rejects_incomplete_pins(reference):
+    from lerobot.utils.hub import split_hub_reference
+
+    with pytest.raises(ValueError, match="repo@revision"):
+        split_hub_reference(reference)
