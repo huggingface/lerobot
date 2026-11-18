@@ -23,7 +23,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
-from lerobot.rewards.sarm import SARMOutput, scoring_sarm
+from lerobot.rewards.sarm import SARMConfig, SARMOutput, scoring_sarm
 from lerobot.rewards.sarm.scoring_sarm import (
     DENSE_PROGRESS_SIGNAL,
     SPARSE_PROGRESS_SIGNAL,
@@ -61,7 +61,15 @@ class _WindowEncoderStep(ProcessorStep):
 
 
 class _FakeModel:
-    def __init__(self, *, dual_heads: bool = False, fail_on: int | None = None):
+    def __init__(
+        self,
+        *,
+        dual_heads: bool = False,
+        fail_on: int | None = None,
+        head_mode: str = "sparse",
+        stride: int = 1,
+        scoring_batch_size: int = 32,
+    ):
         self.config = SimpleNamespace(
             type="sarm",
             pretrained_path="test/sarm",
@@ -71,6 +79,9 @@ class _FakeModel:
             n_obs_steps=4,
             observation_delta_indices=DELTAS,
             uses_dual_heads=dual_heads,
+            head_mode=head_mode,
+            stride=stride,
+            scoring_batch_size=scoring_batch_size,
         )
         self.fail_on = fail_on
         self.heads_seen = []
@@ -130,8 +141,8 @@ def encoder(monkeypatch):
 
 @pytest.mark.parametrize("with_state", [True, False])
 def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder, with_state: bool):
-    model = _FakeModel()
-    scorer = SARMFrameScorer(model, batch_size=2)
+    model = _FakeModel(scoring_batch_size=2)
+    scorer = SARMFrameScorer(model)
     dataset = _FakeDataset(with_state=with_state)
 
     result = scorer.score_episode(dataset, 0)
@@ -172,15 +183,15 @@ def test_sarm_frame_scorer_clamps_windows_to_the_episode(encoder, monkeypatch):
 
 
 def test_sarm_frame_scorer_interpolates_between_strided_frames(encoder):
-    result = SARMFrameScorer(_FakeModel(), stride=3).score_episode(_FakeDataset(num_frames=5), 0)
+    result = SARMFrameScorer(_FakeModel(stride=3)).score_episode(_FakeDataset(num_frames=5), 0)
 
     assert [call["index"] for call in encoder.calls] == [[0, 3, 4]]
     np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, 0.2, 0.3, 0.4], atol=1e-6)
 
 
 def test_sarm_frame_scorer_scores_both_heads_of_a_dual_head_model(encoder):
-    model = _FakeModel(dual_heads=True)
-    scorer = SARMFrameScorer(model, head_mode="both")
+    model = _FakeModel(dual_heads=True, head_mode="both")
+    scorer = SARMFrameScorer(model)
 
     result = scorer.score_episode(_FakeDataset(num_frames=2), 0)
 
@@ -190,30 +201,35 @@ def test_sarm_frame_scorer_scores_both_heads_of_a_dual_head_model(encoder):
 
 
 def test_sarm_frame_scorer_falls_back_to_the_sparse_head_without_dual_heads(encoder):
-    scorer = SARMFrameScorer(_FakeModel(dual_heads=False), head_mode="dense")
+    scorer = SARMFrameScorer(_FakeModel(dual_heads=False, head_mode="dense"))
 
     assert scorer.heads == ["sparse"]
     assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL}
 
 
 def test_sarm_frame_scorer_stores_nan_for_frames_that_fail(encoder):
-    scorer = SARMFrameScorer(_FakeModel(fail_on=2), batch_size=1)
+    scorer = SARMFrameScorer(_FakeModel(fail_on=2, scoring_batch_size=1))
     result = scorer.score_episode(_FakeDataset(num_frames=4), 0)
 
     np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, np.nan, 0.3])
     assert scorer.descriptors[SPARSE_PROGRESS_SIGNAL].allow_nan is True
 
 
-def test_make_sarm_frame_scorer_forwards_options():
-    scorer = make_sarm_frame_scorer(_FakeModel(dual_heads=True), head_mode="dense", stride=2, batch_size=4)
+def test_make_sarm_frame_scorer_reads_options_from_the_model_config():
+    scorer = make_sarm_frame_scorer(_FakeModel(dual_heads=True, head_mode="dense", stride=2))
 
-    assert (scorer.head_mode, scorer.stride, scorer.batch_size) == ("dense", 2, 4)
+    assert scorer.heads == ["dense"]
+    assert scorer.provenance["scorer"]["options"]["stride"] == 2
 
 
 @pytest.mark.parametrize(
     ("kwargs", "match"),
-    [({"head_mode": "middle"}, "head_mode"), ({"stride": 0}, "stride"), ({"batch_size": 0}, "batch_size")],
+    [
+        ({"head_mode": "middle"}, "head_mode"),
+        ({"stride": 0}, "stride"),
+        ({"scoring_batch_size": 0}, "scoring_batch_size"),
+    ],
 )
-def test_sarm_frame_scorer_rejects_invalid_options(kwargs, match):
+def test_sarm_config_rejects_invalid_scoring_options(kwargs, match):
     with pytest.raises(ValueError, match=match):
-        SARMFrameScorer(_FakeModel(), **kwargs)
+        SARMConfig(device="cpu", **kwargs)

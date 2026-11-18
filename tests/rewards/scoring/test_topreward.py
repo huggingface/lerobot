@@ -58,12 +58,12 @@ def test_make_topreward_frame_scorer_builds_processor_without_frame_cap(monkeypa
         return preprocessor, object()
 
     monkeypatch.setattr(scoring_topreward, "make_topreward_pre_post_processors", fake_make_processors)
-    model = SimpleNamespace(config=TOPRewardConfig(device="cpu"))
+    model = SimpleNamespace(config=TOPRewardConfig(device="cpu", num_samples=3))
 
-    scorer = make_topreward_frame_scorer(model, num_samples=3)
+    scorer = make_topreward_frame_scorer(model)
 
     assert scorer.preprocessor is preprocessor
-    assert scorer.num_samples == 3
+    assert scorer.provenance["scorer"]["options"]["num_samples"] == 3
     assert received["config"].max_frames is None
     assert model.config.max_frames == 16
 
@@ -129,6 +129,7 @@ class _FakeModel:
         prompt_prefix="prefix",
         prompt_suffix_template="{instruction}",
         add_chat_template=False,
+        num_samples=3,
     )
 
     def eval(self):
@@ -144,7 +145,7 @@ class _FakeModel:
 def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress(monkeypatch, task_key: str):
     monkeypatch.setattr(_FakeModel.config, "task_key", task_key)
     encoder = _FakeEncoder(task_key=task_key)
-    scorer = TOPRewardFrameScorer(_FakeModel(), encoder, num_samples=3)
+    scorer = TOPRewardFrameScorer(_FakeModel(), encoder)
     dataset = _FakeDataset([{"dataset_from_index": 0, "dataset_to_index": 5}])
 
     result = scorer.score_episode(dataset, 0)
@@ -185,20 +186,21 @@ def test_topreward_scores_publish_to_the_dataset(tmp_path):
             return {IMAGE_KEY: torch.full((3, 2, 2), float(index)), "task": "pick up the cube"}
 
     dataset = FakeDataset()
-    score_dataset(dataset, TOPRewardFrameScorer(_FakeModel(), _FakeEncoder(), num_samples=3))
+    score_dataset(dataset, TOPRewardFrameScorer(_FakeModel(), _FakeEncoder()))
 
     assert list(load_scores(dataset, "topreward")[PROGRESS_SIGNAL]) == [0.0, 0.25, 0.5, 0.75, 1.0]
 
 
 @pytest.mark.parametrize("filtered", [False, True])
-def test_topreward_frame_scorer_supports_episode_filtered_dataset_views(filtered: bool):
+def test_topreward_frame_scorer_supports_episode_filtered_dataset_views(monkeypatch, filtered: bool):
+    monkeypatch.setattr(_FakeModel.config, "num_samples", None)
     dataset = _FakeDataset(
         [{"dataset_from_index": 0, "dataset_to_index": 5}, {"dataset_from_index": 5, "dataset_to_index": 7}]
     )
     dataset.absolute_to_relative_idx = {5: 0, 6: 1} if filtered else None
     encoder = _FakeEncoder()
 
-    result = TOPRewardFrameScorer(_FakeModel(), encoder, num_samples=None).score_episode(dataset, 1)
+    result = TOPRewardFrameScorer(_FakeModel(), encoder).score_episode(dataset, 1)
 
     assert encoder.prefix_shapes == [(1, 1, 3, 2, 2), (1, 2, 3, 2, 2)]
     np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.0, 1.0])
@@ -206,6 +208,6 @@ def test_topreward_frame_scorer_supports_episode_filtered_dataset_views(filtered
     assert encoder.steps[0].tasks == ["pick up the cube", "pick up the cube"]
 
 
-def test_topreward_frame_scorer_rejects_non_positive_num_samples():
+def test_topreward_config_rejects_non_positive_num_samples():
     with pytest.raises(ValueError, match="num_samples must be >= 1"):
-        TOPRewardFrameScorer(_FakeModel(), _FakeEncoder(), num_samples=0)
+        TOPRewardConfig(device="cpu", num_samples=0)

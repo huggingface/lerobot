@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
@@ -70,6 +71,9 @@ class TOPRewardConfig(RewardModelConfig):
             upstream ``add_chat_template=True``).
         max_input_length: Hard limit on the total tokenized input length;
             samples that exceed it raise a ``ValueError``.
+        num_samples: Offline scoring (``lerobot-score``) scores this many evenly
+            spaced prefixes per episode and interpolates between them.
+            ``None`` = score every prefix. Not saved with checkpoints.
     """
 
     # Path to a local LeRobot dir or HF repo that holds a ``config.json``
@@ -92,6 +96,9 @@ class TOPRewardConfig(RewardModelConfig):
     add_chat_template: bool = False
 
     max_input_length: int = 32768
+
+    num_samples: int | None = 15
+    _scoring_fields: ClassVar[tuple[str, ...]] = ("num_samples",)
 
     license: str | None = "mit"  # matches upstream TOPReward
     tags: list[str] | None = field(
@@ -120,6 +127,8 @@ class TOPRewardConfig(RewardModelConfig):
             )
         if self.max_input_length <= 0:
             raise ValueError(f"max_input_length must be > 0, got {self.max_input_length}")
+        if self.num_samples is not None and self.num_samples < 1:
+            raise ValueError(f"num_samples must be >= 1, got {self.num_samples}")
 
         if self.image_key not in self.input_features:
             self.input_features[self.image_key] = PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL)

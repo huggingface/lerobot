@@ -443,28 +443,28 @@ uv run lerobot-score \
   --dataset_root=/path/to/local/dataset \
   --reward_model.path=your-username/sarm-model \
   --reward_model.device=cuda \
-  --head_mode=sparse \
+  --reward_model.head_mode=sparse \
   --push_to_hub=true
 ```
 
 SARM predicts progress from a window around each frame. The scorer saves the center prediction to `scores/sarm.parquet` in the dataset directory.
 
-**Scorer options:**
+**Scoring options** (SARM config fields):
 
-| Argument       | Description                                     | Default  |
-| -------------- | ----------------------------------------------- | -------- |
-| `--head_mode`  | SARM head to use: `sparse`, `dense`, or `both`  | `sparse` |
-| `--stride`     | Compute every N frames and interpolate the rest | `1`      |
-| `--batch_size` | Number of frames scored together                | `32`     |
+| Argument                            | Description                                     | Default  |
+| ----------------------------------- | ----------------------------------------------- | -------- |
+| `--reward_model.head_mode`          | SARM head to use: `sparse`, `dense`, or `both`  | `sparse` |
+| `--reward_model.stride`             | Compute every N frames and interpolate the rest | `1`      |
+| `--reward_model.scoring_batch_size` | Number of frames scored together                | `32`     |
 
-The score contains the signals selected by `--head_mode`:
+The score contains the signals selected by `--reward_model.head_mode`:
 
 | Signal                        | Description                                         |
 | ----------------------------- | --------------------------------------------------- |
 | `reward.sarm.sparse_progress` | Sparse head progress value [0, 1]                   |
 | `reward.sarm.dense_progress`  | Dense head progress value [0, 1] (dual-head models) |
 
-Failed predictions are marked as NaN. With `--stride > 1`, interpolation fills gaps when valid predictions are available.
+Failed predictions are marked as NaN. With `--reward_model.stride` above 1, interpolation fills gaps when valid predictions are available.
 
 > [!NOTE]
 > RA-BC reads dataset scores. It cannot read `sarm_progress.parquet` files from `compute_rabc_weights.py`. Recompute progress with `lerobot-score`.

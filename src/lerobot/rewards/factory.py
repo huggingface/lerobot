@@ -139,17 +139,16 @@ def make_reward_model(
     return reward_model
 
 
-def make_frame_scorer(model: PreTrainedRewardModel, **kwargs: Any) -> "FrameScorer":
+def make_frame_scorer(model: PreTrainedRewardModel) -> "FrameScorer":
     """
     Create the standard offline frame scorer for a reward model.
 
     The scorer is built by the ``make_<type>_frame_scorer`` function of the model's
-    ``scoring_<type>`` module, found next to its configuration module.
+    ``scoring_<type>`` module, found next to its configuration module. Scoring options,
+    such as the number of frames scored together, are read from the model's config.
 
     Args:
         model: The reward model the scorer will run.
-        **kwargs: Scorer options forwarded to the model-specific factory
-            (e.g., ``batch_size``).
 
     Returns:
         A frame scorer that can be passed to :func:`lerobot.rewards.scoring.score_dataset`.
@@ -157,11 +156,7 @@ def make_frame_scorer(model: PreTrainedRewardModel, **kwargs: Any) -> "FrameScor
     Raises:
         ValueError: If no frame scorer is implemented for the model's type.
     """
-    return _make_frame_scorer_from_reward_model_config(
-        config=model.config,
-        model=model,
-        **kwargs,
-    )
+    return _make_frame_scorer_from_reward_model_config(config=model.config, model=model)
 
 
 def make_reward_pre_post_processors(
@@ -301,7 +296,6 @@ def _make_processors_from_reward_model_config(
 def _make_frame_scorer_from_reward_model_config(
     config: RewardModelConfig,
     model: PreTrainedRewardModel,
-    **kwargs: Any,
 ) -> "FrameScorer":
     """Create a frame scorer from a reward model configuration using dynamic imports.
 
@@ -311,7 +305,6 @@ def _make_frame_scorer_from_reward_model_config(
     Args:
         config: The reward model configuration object.
         model: The reward model the scorer will run.
-        **kwargs: Scorer options forwarded to the factory.
 
     Returns:
         The frame scorer returned by ``make_<type>_frame_scorer``.
@@ -333,4 +326,4 @@ def _make_frame_scorer_from_reward_model_config(
     function = getattr(module, function_name, None)
     if function is None:
         raise ValueError(not_implemented)
-    return function(model=model, **kwargs)
+    return function(model=model)

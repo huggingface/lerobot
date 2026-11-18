@@ -20,7 +20,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -67,6 +67,10 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     tags: list[str] | None = None
     private: bool | None = None
 
+    # Fields used only by offline scoring (`lerobot-score`). They describe a scoring run, not the
+    # model, so they are left out of saved checkpoint configs and loading starts from their defaults.
+    _scoring_fields: ClassVar[tuple[str, ...]] = ()
+
     def __post_init__(self) -> None:
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
@@ -105,8 +109,11 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def _save_pretrained(self, save_directory: Path) -> None:
         # Encode against the base class so draccus includes the choice "type" key,
         # which `from_pretrained` needs to resolve the concrete subclass.
+        config = draccus.encode(self, RewardModelConfig)
+        for name in self._scoring_fields:
+            config.pop(name, None)
         with open(save_directory / CONFIG_NAME, "w") as f:
-            json.dump(draccus.encode(self, RewardModelConfig), f, indent=4)
+            json.dump(config, f, indent=4)
 
     @classmethod
     def from_pretrained(

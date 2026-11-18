@@ -124,10 +124,10 @@ uv run lerobot-score \
     --dataset_root=/path/to/local/dataset \
     --reward_model.type=topreward \
     --reward_model.device=cuda \
-    --num_samples=15
+    --reward_model.num_samples=15
 ```
 
-For each episode, the scorer computes the log-probability of the task for `--num_samples` evenly spaced prefixes (15 by default, every prefix when the episode is shorter), normalizes them per episode with min-max, and interpolates between them. Each prefix is passed whole, without the `max_frames` cap. The dataset score `topreward` holds one dense signal, `reward.topreward.progress`, in `[0, 1]`.
+For each episode, the scorer computes the log-probability of the task for `--reward_model.num_samples` evenly spaced prefixes (15 by default, every prefix when the episode is shorter), normalizes them per episode with min-max, and interpolates between them. Each prefix is passed whole, without the `max_frames` cap. The dataset score `topreward` holds one dense signal, `reward.topreward.progress`, in `[0, 1]`.
 
 For RA-BC weighting, select it explicitly:
 

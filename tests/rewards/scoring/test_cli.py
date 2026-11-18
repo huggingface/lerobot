@@ -43,7 +43,7 @@ def test_score_config_loads_reward_model_from_path(monkeypatch):
     monkeypatch.setattr(lerobot_score.parser, "get_cli_overrides", lambda field: ["--device=cpu"])
     monkeypatch.setattr(lerobot_score.RewardModelConfig, "from_pretrained", fake_from_pretrained)
 
-    cfg = ScoreConfig(dataset_repo_id="user/dataset", num_samples=4, head_mode="dense")
+    cfg = ScoreConfig(dataset_repo_id="user/dataset")
 
     assert cfg.reward_model is loaded_config
     assert captured["load"] == (
@@ -51,7 +51,6 @@ def test_score_config_loads_reward_model_from_path(monkeypatch):
         "model-revision",
         ["--device=cuda", "--image_key=observation.images.front", "--device=cpu"],
     )
-    assert cfg.scorer_options == {"num_samples": 4, "head_mode": "dense"}
 
 
 def test_score_config_applies_yaml_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -68,6 +67,7 @@ def test_score_config_applies_yaml_overrides(monkeypatch: pytest.MonkeyPatch, tm
                     "path": str(checkpoint),
                     "image_key": "observation.images.front",
                     "fps": 7.0,
+                    "num_samples": 5,
                 },
             }
         )
@@ -87,6 +87,7 @@ def test_score_config_applies_yaml_overrides(monkeypatch: pytest.MonkeyPatch, tm
     assert reward_model.pretrained_path == str(checkpoint)
     assert reward_model.image_key == "observation.images.front"
     assert reward_model.fps == 7.0
+    assert reward_model.num_samples == 5
 
 
 @pytest.mark.parametrize(
@@ -116,7 +117,7 @@ def test_run_score_uses_reward_scoring_api(
     monkeypatch.setattr(
         lerobot_score,
         "make_frame_scorer",
-        lambda model, **kwargs: captured.update(make_scorer=(model, kwargs)) or fake_scorer,
+        lambda model: captured.update(make_scorer=model) or fake_scorer,
     )
     monkeypatch.setattr(
         lerobot_score,
@@ -136,14 +137,12 @@ def test_run_score_uses_reward_scoring_api(
         dataset_revision="dataset-revision",
         name=name,
         episodes=[1],
-        batch_size=8,
-        num_subsampled_frames=6,
         push_to_hub=True,
     )
 
     assert lerobot_score.run_score(cfg) is None
     assert captured["model_config"] is reward_config
-    assert captured["make_scorer"] == (fake_model, {"batch_size": 8, "num_subsampled_frames": 6})
+    assert captured["make_scorer"] is fake_model
     assert captured["dataset_load"] == (
         "user/dataset",
         {

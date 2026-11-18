@@ -81,9 +81,14 @@ class ComputeWorkerScores(PipelineStep):
         logging.info(f"Rank {rank}: {len(my_episodes)} / {dataset.num_episodes} episodes")
 
         config = RewardModelConfig.from_pretrained(
-            self.reward_model_path, cli_overrides=[f"--device={self.device}"]
+            self.reward_model_path,
+            cli_overrides=[
+                f"--device={self.device}",
+                f"--head_mode={self.head_mode}",
+                f"--stride={self.stride}",
+            ],
         )
-        scorer = make_frame_scorer(make_reward_model(config), head_mode=self.head_mode, stride=self.stride)
+        scorer = make_frame_scorer(make_reward_model(config))
         score_dataset(dataset, scorer, name=f"{self.score_name}-rank{rank:05d}", episodes=my_episodes)
 
 

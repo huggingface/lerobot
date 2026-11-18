@@ -56,35 +56,20 @@ class SARMFrameScorer:
 
     name = "sarm"
 
-    def __init__(
-        self,
-        model: SARMRewardModel,
-        *,
-        head_mode: Literal["sparse", "dense", "both"] = "sparse",
-        stride: int = 1,
-        batch_size: int = 32,
-    ) -> None:
-        if head_mode not in ("sparse", "dense", "both"):
-            raise ValueError(f"head_mode must be 'sparse', 'dense' or 'both', got {head_mode!r}")
-        if stride < 1:
-            raise ValueError(f"stride must be >= 1, got {stride}")
-        if batch_size < 1:
-            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    def __init__(self, model: SARMRewardModel) -> None:
         self.model = model
-        self.head_mode = head_mode
-        self.stride = stride
-        self.batch_size = batch_size
         self._preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self._preprocessor_dataset: LeRobotDataset | None = None
 
     @property
     def heads(self) -> list[Literal["sparse", "dense"]]:
         """The heads to score: the dense head only exists for dual-head models."""
+        head_mode = self.model.config.head_mode
         dual_heads = self.model.config.uses_dual_heads
         heads: list[Literal["sparse", "dense"]] = []
-        if self.head_mode in ("sparse", "both") or not dual_heads:
+        if head_mode in ("sparse", "both") or not dual_heads:
             heads.append("sparse")
-        if self.head_mode in ("dense", "both") and dual_heads:
+        if head_mode in ("dense", "both") and dual_heads:
             heads.append("dense")
         return heads
 
@@ -104,7 +89,7 @@ class SARMFrameScorer:
                     "image_key": config.image_key,
                     "state_key": config.state_key,
                     "heads": self.heads,
-                    "stride": self.stride,
+                    "stride": config.stride,
                 },
             },
         }
@@ -155,7 +140,7 @@ class SARMFrameScorer:
         frames = torch.stack(frame_list)
         states = torch.stack(state_list) if state_list else None
 
-        query_frames = list(range(0, num_frames, self.stride))
+        query_frames = list(range(0, num_frames, config.stride))
         if query_frames[-1] != num_frames - 1:
             query_frames.append(num_frames - 1)
         center = config.n_obs_steps // 2
@@ -163,8 +148,8 @@ class SARMFrameScorer:
 
         self.model.eval()
         with torch.inference_mode():
-            for start in range(0, len(query_frames), self.batch_size):
-                chunk = query_frames[start : start + self.batch_size]
+            for start in range(0, len(query_frames), config.scoring_batch_size):
+                chunk = query_frames[start : start + config.scoring_batch_size]
                 # Windows are clamped to the episode, as `LeRobotDataset` does for `delta_timestamps`.
                 windows = torch.tensor(
                     [
@@ -209,12 +194,6 @@ class SARMFrameScorer:
         )
 
 
-def make_sarm_frame_scorer(
-    model: SARMRewardModel,
-    *,
-    head_mode: Literal["sparse", "dense", "both"] = "sparse",
-    stride: int = 1,
-    batch_size: int = 32,
-) -> SARMFrameScorer:
+def make_sarm_frame_scorer(model: SARMRewardModel) -> SARMFrameScorer:
     """Construct the standard SARM offline frame scorer."""
-    return SARMFrameScorer(model, head_mode=head_mode, stride=stride, batch_size=batch_size)
+    return SARMFrameScorer(model)

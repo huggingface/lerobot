@@ -54,7 +54,7 @@ Each model writes its signals to one named score file:
 | SARM      | `sarm`             | `reward.sarm.sparse_progress`          | Progress from the sparse head, using a window around this frame.                               |
 | SARM      | `sarm`             | `reward.sarm.dense_progress`           | Progress from the dense head, available for dual-head models.                                  |
 
-These are dense float32 signals with a semantic range of `[0, 1]`. SARM writes the heads selected by `--head_mode`; failed predictions can produce NaN values.
+These are dense float32 signals with a semantic range of `[0, 1]`. SARM writes the heads selected by `--reward_model.head_mode`; failed predictions can produce NaN values.
 
 Scores are stored separately from the frame data. Language annotations instead live in columns inside `data/`, as described in [Language Columns and Recipes](./language_and_recipes).
 
@@ -100,11 +100,11 @@ uv run lerobot-score \
     --dataset_root=/path/to/local/dataset \
     --reward_model.path=/path/to/sarm-checkpoint \
     --reward_model.device=cuda \
-    --head_mode=sparse \
-    --stride=5
+    --reward_model.head_mode=sparse \
+    --reward_model.stride=5
 ```
 
-With `--stride=5`, SARM evaluates every fifth frame and interpolates between valid predictions. See the [SARM guide](./sarm) for training and head configuration.
+With `--reward_model.stride=5`, SARM evaluates every fifth frame and interpolates between valid predictions. See the [SARM guide](./sarm) for training and head configuration.
 
 ## Key Options
 
@@ -137,17 +137,17 @@ Use `--name=robometer-4b` to keep results from a specific model or configuration
 
 For checkpoint-based runs, pass commit hashes through `--dataset_revision` and `--reward_model.pretrained_revision` to pin the dataset and checkpoint versions. The requested revisions are stored with the scores and must match when resuming.
 
-### Scorer Options
+### Scoring Options
 
-Only set options supported by the selected scorer. Unset options use the scorer's defaults.
+Scoring options are fields of each reward model's config, so they are set with `--reward_model.<field>` like any other model setting. They describe a scoring run rather than the model: saved checkpoints leave them out, so a loaded checkpoint always starts from the defaults below. Options that change the scores are recorded in the score file's provenance.
 
-| Flag                      | Model           | Default  | Description                                                                     |
-| ------------------------- | --------------- | -------- | ------------------------------------------------------------------------------- |
-| `--batch_size`            | RoboMeter, SARM | `32`     | Number of target frames scored together.                                        |
-| `--num_subsampled_frames` | RoboMeter       | `4`      | Frames sampled from the prefix ending at each target frame.                     |
-| `--num_samples`           | TOPReward       | `15`     | Evenly spaced prefixes to score per episode; shorter episodes use every prefix. |
-| `--head_mode`             | SARM            | `sparse` | Heads to score: `sparse`, `dense`, or `both`.                                   |
-| `--stride`                | SARM            | `1`      | Evaluate every Nth frame and interpolate between valid predictions.             |
+| Flag                                   | Model           | Default  | Description                                                                     |
+| -------------------------------------- | --------------- | -------- | ------------------------------------------------------------------------------- |
+| `--reward_model.scoring_batch_size`    | RoboMeter, SARM | `32`     | Number of target frames scored together.                                        |
+| `--reward_model.num_subsampled_frames` | RoboMeter       | `4`      | Frames sampled from the prefix ending at each target frame.                     |
+| `--reward_model.num_samples`           | TOPReward       | `15`     | Evenly spaced prefixes to score per episode; shorter episodes use every prefix. |
+| `--reward_model.head_mode`             | SARM            | `sparse` | Heads to score: `sparse`, `dense`, or `both`.                                   |
+| `--reward_model.stride`                | SARM            | `1`      | Evaluate every Nth frame and interpolate between valid predictions.             |
 
 ## Resume or Replace Scores
 
@@ -203,7 +203,7 @@ score_dataset(
 )
 ```
 
-Set the model's device and camera through `cli_overrides` when loading if needed, for example `cli_overrides=["--device=cuda", "--image_key=observation.images.front"]`.
+Set the model's device, camera and scoring options through `cli_overrides` when loading if needed, for example `cli_overrides=["--device=cuda", "--image_key=observation.images.front", "--scoring_batch_size=8"]`.
 
 Applications that load reward models dynamically can use `lerobot.rewards.make_frame_scorer()` instead. The CLI and both programmatic factories follow the same path: construct a model-specific frame scorer, then call `score_dataset()`.
 

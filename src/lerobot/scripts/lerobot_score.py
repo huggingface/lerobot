@@ -34,8 +34,8 @@ Examples:
             --dataset_root=/path/to/local/dataset \
             --reward_model.path=/path/to/sarm-checkpoint \
             --reward_model.device=cuda \
-            --head_mode=sparse \
-            --stride=5
+            --reward_model.head_mode=sparse \
+            --reward_model.stride=5
 
     Score with zero-shot TOPReward:
 
@@ -44,10 +44,11 @@ Examples:
             --dataset_root=/path/to/local/dataset \
             --reward_model.type=topreward \
             --reward_model.device=cuda \
-            --num_samples=15
+            --reward_model.num_samples=15
 
 The score name defaults to the model type; override it with ``--name=my-run``.
 Set ``--reward_model.image_key`` if your camera differs from the checkpoint's configured key.
+Scoring options belong to each reward model's config, for example ``--reward_model.scoring_batch_size``.
 Rerun the same command to resume an interrupted run. To discard staged work and replace
 existing scores, add ``--overwrite=true --resume=false``. Add ``--push_to_hub=true`` to
 upload the completed scores to the dataset repository.
@@ -79,12 +80,6 @@ class ScoreConfig:
     dataset_revision: str | None = None
     name: str | None = None
     episodes: list[int] | None = None
-    # Scorer options: only the ones set are passed, so each scorer keeps its own defaults.
-    batch_size: int | None = None
-    num_subsampled_frames: int | None = None
-    num_samples: int | None = None
-    stride: int | None = None
-    head_mode: str | None = None
     resume: bool = True
     overwrite: bool = False
     push_to_hub: bool = False
@@ -105,17 +100,6 @@ class ScoreConfig:
         """Keys for draccus pretrained-path loading."""
         return ["reward_model"]
 
-    @property
-    def scorer_options(self) -> dict[str, int | str]:
-        options = {
-            "batch_size": self.batch_size,
-            "num_subsampled_frames": self.num_subsampled_frames,
-            "num_samples": self.num_samples,
-            "stride": self.stride,
-            "head_mode": self.head_mode,
-        }
-        return {name: value for name, value in options.items() if value is not None}
-
 
 def run_score(cfg: ScoreConfig) -> None:
     """Load the model and dataset, then publish a score sidecar."""
@@ -127,7 +111,7 @@ def run_score(cfg: ScoreConfig) -> None:
         )
 
     model = make_reward_model(cfg.reward_model)
-    scorer = make_frame_scorer(model, **cfg.scorer_options)
+    scorer = make_frame_scorer(model)
 
     dataset = LeRobotDataset(
         cfg.dataset_repo_id,

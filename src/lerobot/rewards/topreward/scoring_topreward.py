@@ -32,7 +32,6 @@ from .processor_topreward import make_topreward_pre_post_processors
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
 
-DEFAULT_NUM_SAMPLES = 15
 PROGRESS_SIGNAL = "reward.topreward.progress"
 
 TOPREWARD_SIGNAL_DESCRIPTORS = {
@@ -73,14 +72,9 @@ class TOPRewardFrameScorer:
         self,
         model: TOPRewardModel,
         preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-        *,
-        num_samples: int | None = DEFAULT_NUM_SAMPLES,
     ) -> None:
-        if num_samples is not None and num_samples < 1:
-            raise ValueError(f"num_samples must be >= 1, got {num_samples}")
         self.model = model
         self.preprocessor = preprocessor
-        self.num_samples = num_samples
 
     @property
     def descriptors(self) -> dict[str, SignalDescriptor]:
@@ -108,7 +102,7 @@ class TOPRewardFrameScorer:
                     "prompt_prefix": config.prompt_prefix,
                     "prompt_suffix_template": config.prompt_suffix_template,
                     "add_chat_template": config.add_chat_template,
-                    "num_samples": self.num_samples,
+                    "num_samples": config.num_samples,
                 },
             },
         }
@@ -128,7 +122,7 @@ class TOPRewardFrameScorer:
         task = dataset[positions[0]].get(config.task_key)
         episode_frames = torch.stack([dataset[position][config.image_key] for position in positions])
 
-        prefix_lengths = _build_prefix_lengths(num_frames, self.num_samples)
+        prefix_lengths = _build_prefix_lengths(num_frames, config.num_samples)
         log_probabilities: NDArray[np.float64] = np.empty(len(prefix_lengths), dtype=np.float64)
 
         self.model.eval()
@@ -149,12 +143,8 @@ class TOPRewardFrameScorer:
         )
 
 
-def make_topreward_frame_scorer(
-    model: TOPRewardModel,
-    *,
-    num_samples: int | None = DEFAULT_NUM_SAMPLES,
-) -> TOPRewardFrameScorer:
+def make_topreward_frame_scorer(model: TOPRewardModel) -> TOPRewardFrameScorer:
     """Construct the standard TOPReward offline frame scorer."""
     # Each prefix is scored whole, so the processor must not crop it to `max_frames`.
     preprocessor, _ = make_topreward_pre_post_processors(replace(model.config, max_frames=None))
-    return TOPRewardFrameScorer(model, preprocessor, num_samples=num_samples)
+    return TOPRewardFrameScorer(model, preprocessor)

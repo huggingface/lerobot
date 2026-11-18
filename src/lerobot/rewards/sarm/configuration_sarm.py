@@ -19,6 +19,7 @@ Paper: https://arxiv.org/abs/2509.25358
 """
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
@@ -87,6 +88,14 @@ class SARMConfig(RewardModelConfig):
     image_key: str = OBS_IMAGES + ".top"  # Key for image used from the dataset
     state_key: str = OBS_STATE
 
+    # Offline scoring (`lerobot-score`): the heads to score ("sparse", "dense" or "both"), score
+    # every `stride`-th frame and interpolate in between, and the number of frames scored together.
+    # Not saved with checkpoints.
+    head_mode: str = "sparse"
+    stride: int = 1
+    scoring_batch_size: int = 32
+    _scoring_fields: ClassVar[tuple[str, ...]] = ("head_mode", "stride", "scoring_batch_size")
+
     # Populated by the processor (video_features, state_features, text_features)
     input_features: dict = field(default_factory=lambda: {})
 
@@ -113,6 +122,12 @@ class SARMConfig(RewardModelConfig):
             raise ValueError(
                 f"annotation_mode must be 'single_stage', 'dense_only', or 'dual', got {self.annotation_mode}"
             )
+        if self.head_mode not in ("sparse", "dense", "both"):
+            raise ValueError(f"head_mode must be 'sparse', 'dense' or 'both', got {self.head_mode!r}")
+        if self.stride < 1:
+            raise ValueError(f"stride must be >= 1, got {self.stride}")
+        if self.scoring_batch_size < 1:
+            raise ValueError(f"scoring_batch_size must be >= 1, got {self.scoring_batch_size}")
 
         if self.annotation_mode == "single_stage":
             # Use task description as stage name, full episode as one stage

@@ -110,6 +110,14 @@ def test_make_robometer_frame_scorer_builds_processor_without_frame_cap(monkeypa
     assert config.max_frames == 8
 
 
+@pytest.mark.parametrize("option", ["num_subsampled_frames", "scoring_batch_size"])
+def test_robometer_config_rejects_invalid_scoring_options(option: str):
+    from lerobot.rewards.robometer import RobometerConfig
+
+    with pytest.raises(ValueError, match=option):
+        RobometerConfig(device="cpu", **{option: 0})
+
+
 @pytest.mark.parametrize("task_key", ["task", "missing_task"])
 def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     image_key = "observation.images.top"
@@ -134,6 +142,8 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
             default_task=None,
             pretrained_path="test/robometer",
             pretrained_revision="model-revision",
+            num_subsampled_frames=2,
+            scoring_batch_size=2,
         )
 
         def eval(self):
@@ -150,7 +160,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     dataset = FakeDataset()
     model = FakeModel()
     preprocessor = _make_preprocessor(task_key=task_key)
-    scorer = RobometerFrameScorer(model, preprocessor, batch_size=2, num_subsampled_frames=2)
+    scorer = RobometerFrameScorer(model, preprocessor)
 
     result = scorer.score_episode(dataset, episode_index=0)
 
@@ -217,7 +227,9 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(filtered
             }
 
     class FakeModel:
-        config = SimpleNamespace(image_key=image_key, task_key="task")
+        config = SimpleNamespace(
+            image_key=image_key, task_key="task", num_subsampled_frames=2, scoring_batch_size=32
+        )
 
         def eval(self):
             return self
@@ -227,7 +239,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(filtered
             return RobometerOutput(progress=values, success_probability=values)
 
     preprocessor = _make_preprocessor()
-    scorer = RobometerFrameScorer(FakeModel(), preprocessor, num_subsampled_frames=2)
+    scorer = RobometerFrameScorer(FakeModel(), preprocessor)
     dataset = FakeDataset()
 
     result = scorer.score_episode(dataset, episode_index=1)
@@ -269,6 +281,8 @@ def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):
             default_task=None,
             pretrained_path="test/robometer",
             pretrained_revision="model-revision",
+            num_subsampled_frames=2,
+            scoring_batch_size=2,
         )
 
         def eval(self):
@@ -281,7 +295,7 @@ def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):
                 success_probability=progress / 2.0,
             )
 
-    scorer = RobometerFrameScorer(FakeModel(), _make_preprocessor(), batch_size=2, num_subsampled_frames=2)
+    scorer = RobometerFrameScorer(FakeModel(), _make_preprocessor())
     dataset = FakeDataset()
     score_dataset(dataset, scorer)
 
