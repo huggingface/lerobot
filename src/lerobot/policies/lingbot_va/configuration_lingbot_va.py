@@ -62,7 +62,7 @@ class LingBotVAConfig(PreTrainedConfig):
     wan_pretrained_path: str = "robbyant/lingbot-va-base"
     # transformer / VAE / text-encoder dtype
     dtype: torch.dtype | None = torch.bfloat16
-    # Frozen UMT5-XXL encoder device; "cpu" frees ~11 GB VRAM (it runs once per episode).
+    # Frozen UMT5-XXL encoder device; "cpu" frees ~11 GB VRAM (embeddings are reused across episodes).
     text_encoder_device: str = "cpu"
 
     # Observation cameras (order matters: latents are concatenated on width; LIBERO defaults)

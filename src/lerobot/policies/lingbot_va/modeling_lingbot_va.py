@@ -32,6 +32,7 @@ NOTE: The streaming path is written for single-environment eval (``--eval.batch_
 """
 
 from collections import deque
+from weakref import ref
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -99,6 +100,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # from ``config.wan_pretrained_path`` the first time inference runs.
         self._frozen: dict = {}
 
+        # Keep only the most recent prompt across episode resets. These tensors are not
+        # buffers: like the frozen text encoder, they must stay out of checkpoints.
+        self._prompt_cache_key: tuple | None = None
+        self._prompt_cache: tuple[Tensor, Tensor | None] | None = None
+
         self.last_predicted_frames: Tensor | None = None
         self.last_predicted_latents: Tensor | None = None
         self.reset()
@@ -115,7 +121,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # ``--bundle-frozen`` output dir. ``from_pretrained(path, subfolder=...)`` resolves
         # them for either a HF repo id or a local directory.
         vae = load_vae(path, torch_dtype=self.dtype, torch_device=device, subfolder="vae")
-        # The UMT5-XXL text encoder (~11 GB) runs once per episode; keep it on its own
+        # The UMT5-XXL text encoder (~11 GB) runs when the prompt changes; keep it on its own
         # (CPU by default) device so the 5B transformer + VAE fit on a single GPU.
         text_encoder = load_text_encoder(
             path,
@@ -543,13 +549,30 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return a.to(torch.float32), latents
 
     # Prompt / text encoding
-    def _maybe_init_prompt(self, batch):
+    @torch.no_grad()
+    def _maybe_init_prompt(self, batch: dict | None) -> None:
         if self._prompt_embeds is not None or batch is None:
             return
         task = batch.get("task")
         prompt = task[0] if isinstance(task, list | tuple) else task
         self._prompt = prompt or ""
-        self._prompt_embeds, self._negative_prompt_embeds = self._encode_prompt(self._prompt)
+        text_encoder = self._frozen["text_encoder"]
+        encoder_param = next(text_encoder.parameters())
+        cache_key = (
+            self._prompt,
+            self.config.max_sequence_length,
+            self._use_cfg,
+            self.dtype,
+            self.config.device,
+            ref(text_encoder),  # do not keep replaced frozen modules alive
+            encoder_param.dtype,
+            encoder_param.device,
+            ref(self._frozen["tokenizer"]),
+        )
+        if self._prompt_cache is None or self._prompt_cache_key != cache_key:
+            self._prompt_cache = self._encode_prompt(self._prompt)
+            self._prompt_cache_key = cache_key
+        self._prompt_embeds, self._negative_prompt_embeds = self._prompt_cache
 
     def _get_t5_prompt_embeds(self, prompt, max_sequence_length):
         tokenizer = self._frozen["tokenizer"]
