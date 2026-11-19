@@ -670,6 +670,7 @@ class RewardClassifierProcessorStep(ProcessorStep):
             A dictionary containing the step's configuration attributes.
         """
         return {
+            "pretrained_path": self.pretrained_path,
             "device": self.device,
             "success_threshold": self.success_threshold,
             "success_reward": self.success_reward,
