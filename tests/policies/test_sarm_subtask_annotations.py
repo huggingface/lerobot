@@ -167,3 +167,28 @@ class TestSaveAnnotationsToDataset:
         assert df.loc[0, "episode_index"] == 2
         assert list(df.loc[0, "sparse_subtask_names"]) == ["reach"]
         assert list(df.loc[0, "sparse_subtask_end_frames"]) == [30]
+
+    @pytest.mark.parametrize("prefix", ["sparse", "dense"])
+    def test_saved_annotations_reload_across_files(self, tmp_path, prefix):
+        from lerobot.data_processing.sarm_annotations.subtask_annotation import load_annotations_from_dataset
+
+        self.write_episodes_file(tmp_path, 0, [0, 1])
+        self.write_episodes_file(tmp_path, 1, [2])
+        annotation = make_annotation([("reach", 0, 1)])
+        save_annotations_to_dataset(tmp_path, {2: annotation}, fps=30, prefix=prefix)
+
+        restored = load_annotations_from_dataset(tmp_path, prefix=prefix)
+        assert restored == {2: annotation}
+
+    def test_dense_save_keeps_earlier_sparse_annotations_loadable(self, tmp_path):
+        from lerobot.data_processing.sarm_annotations.subtask_annotation import load_annotations_from_dataset
+
+        self.write_episodes_file(tmp_path, 0, [0, 1])
+        self.write_episodes_file(tmp_path, 1, [2])
+        sparse = make_annotation([("task", 0, 1)])
+        dense = make_annotation([("reach", 0, 1)])
+        save_annotations_to_dataset(tmp_path, {2: sparse}, fps=30, prefix="sparse")
+        save_annotations_to_dataset(tmp_path, {2: dense}, fps=30, prefix="dense")
+
+        assert load_annotations_from_dataset(tmp_path, prefix="sparse") == {2: sparse}
+        assert load_annotations_from_dataset(tmp_path, prefix="dense") == {2: dense}
