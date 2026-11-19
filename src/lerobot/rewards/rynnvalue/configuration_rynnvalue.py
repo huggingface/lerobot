@@ -48,7 +48,7 @@ class RynnValueConfig(RewardModelConfig):
     # video and interpolate the frames in between, and the number of prefixes scored together.
     # Not saved with checkpoints.
     inference_fps: float = 1.0
-    scoring_batch_size: int = 4
+    scoring_batch_size: int = 1
     _scoring_fields: ClassVar[tuple[str, ...]] = ("inference_fps", "scoring_batch_size")
 
     license: str | None = "apache-2.0"
