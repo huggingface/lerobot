@@ -103,7 +103,12 @@ from .relative_action_processor import (
 )
 from .rename_processor import RenameObservationsProcessorStep, rename_keys, rename_stats
 from .render_messages_processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
-from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
+from .tokenizer_processor import (
+    ActionTokenizerProcessorStep,
+    TokenizerProcessorStep,
+    decode_fast_actions,
+    encode_fast_actions,
+)
 
 __all__ = [
     "ActionProcessorStep",
@@ -177,6 +182,8 @@ __all__ = [
     "RobotProcessorPipeline",
     "TokenizerProcessorStep",
     "ActionTokenizerProcessorStep",
+    "decode_fast_actions",
+    "encode_fast_actions",
     "Torch2NumpyActionProcessorStep",
     "RobotActionToPolicyActionProcessorStep",
     "PolicyActionToRobotActionProcessorStep",

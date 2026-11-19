@@ -24,10 +24,12 @@ token IDs and attention masks, which are then added to the observation dictionar
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
@@ -41,7 +43,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_SUBTASK_TOKENS,
     OBS_LANGUAGE_TOKENS,
 )
-from lerobot.utils.import_utils import _transformers_available
+from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
 
@@ -51,6 +53,10 @@ if TYPE_CHECKING or _transformers_available:
 else:
     AutoProcessor = None
     AutoTokenizer = None
+if TYPE_CHECKING or _scipy_available:
+    from scipy.fft import idct
+else:
+    idct = None
 
 
 @dataclass
@@ -334,6 +340,83 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         return features
 
 
+def encode_fast_actions(tokenizer: Any, actions: torch.Tensor | np.ndarray) -> list[list[int]]:
+    """Encode normalized action chunks into raw FAST token IDs.
+
+    Args:
+        tokenizer: A FAST ``UniversalActionProcessor``.
+        actions: Normalized action chunks of shape (B, H, D).
+
+    Returns:
+        One list of raw FAST token IDs per chunk. Lengths vary between chunks.
+
+    Raises:
+        ValueError: If ``actions`` is not (B, H, D), or the tokenizer does not return one
+            sequence per chunk.
+    """
+    if actions.ndim != 3:
+        raise ValueError(f"Expected actions of shape (B, H, D), got {tuple(actions.shape)}.")
+    if isinstance(actions, torch.Tensor):
+        # FAST computes the DCT with SciPy, on the CPU.
+        actions = actions.detach().cpu().numpy()
+    tokens = tokenizer(actions)
+    if len(tokens) != len(actions):
+        raise ValueError(f"FAST returned {len(tokens)} token sequences for {len(actions)} action chunks.")
+    return [[int(token) for token in sequence] for sequence in tokens]
+
+
+def decode_fast_actions(
+    tokenizer: Any,
+    tokens: Sequence[Sequence[int]],
+    action_dim: int,
+    *,
+    time_horizon: int,
+    relaxed: bool = False,
+) -> np.ndarray:
+    """Decode raw FAST token IDs into action chunks.
+
+    Pass the horizon the tokens were encoded with (the full chunk), not the number of
+    steps to execute: the inverse DCT depends on it.
+
+    Args:
+        tokenizer: A FAST ``UniversalActionProcessor``.
+        tokens: One sequence of raw FAST token IDs per chunk.
+        action_dim: Number of action dimensions the tokens encode.
+        time_horizon: Number of timesteps the tokens encode.
+        relaxed: Zero-fill missing trailing DCT coefficients and drop extra ones. When
+            ``False``, a sequence of the wrong length decodes to zeros, like the
+            tokenizer's own ``decode()``.
+
+    Returns:
+        Actions of shape (B, time_horizon, action_dim). A sequence that cannot be decoded
+        becomes a chunk of zeros.
+    """
+    require_package("scipy", extra="scipy-dep")
+    num_coefficients = time_horizon * action_dim
+    decoded_actions = []
+    for sequence in tokens:
+        try:
+            text = tokenizer.bpe_tokenizer.decode(sequence)
+            coefficients = np.array([ord(character) for character in text]) + tokenizer.min_token
+            if relaxed:
+                missing = num_coefficients - len(coefficients)
+                if missing > 0:
+                    coefficients = np.pad(coefficients, (0, missing))
+                else:
+                    coefficients = coefficients[:num_coefficients]
+            if len(coefficients) != num_coefficients:
+                raise ValueError(
+                    f"decoded {len(coefficients)} DCT coefficients, expected {time_horizon} x {action_dim}"
+                )
+            coefficients = coefficients.reshape(time_horizon, action_dim)
+        except Exception as error:  # noqa: BLE001
+            # Generated sequences can be malformed, including IDs outside the FAST vocabulary.
+            logging.warning("Could not decode FAST tokens %s: %s", list(sequence), error)
+            coefficients = np.zeros((time_horizon, action_dim))
+        decoded_actions.append(idct(coefficients / tokenizer.scale, axis=0, norm="ortho"))
+    return np.stack(decoded_actions)
+
+
 @dataclass
 @ProcessorStepRegistry.register(name="action_tokenizer_processor")
 class ActionTokenizerProcessorStep(ActionProcessorStep):
@@ -472,37 +555,20 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         if single_sample:
             action = action.unsqueeze(0)
 
-        batch_size = action.shape[0]
+        fast_tokens = encode_fast_actions(self.action_tokenizer, action)
+        bos_id = self._paligemma_tokenizer.bos_token_id
+        prompt_tokens = torch.tensor(
+            self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False),
+            device=action.device,
+        )
+        end_tokens = torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device)
 
-        # Tokenize the action batch
-        # The fast tokenizer expects action data and returns token IDs
         tokens_list = []
         masks_list = []
         code_masks_list = []
-
-        for i in range(batch_size):
-            # Tokenize single action (move to CPU first as tokenizer uses scipy which requires numpy)
-            action_cpu = action[i : i + 1].cpu()
-            tokens = self.action_tokenizer(action_cpu)
-
-            # Convert to numpy array if it's a list
-            if isinstance(tokens, list) or not isinstance(tokens, torch.Tensor):
-                tokens = torch.tensor(tokens, dtype=torch.long, device=action.device)
-            else:
-                # Move tokens back to the same device as input action
-                tokens = tokens.to(device=action.device)
-
-            # Flatten to 1D if needed
-            if tokens.dim() > 1:
-                tokens = tokens.flatten()
-
+        for sample_tokens in fast_tokens:
+            tokens = torch.tensor(sample_tokens, dtype=torch.long, device=action.device)
             action_code_tokens = self._act_tokens_to_paligemma_tokens(tokens)
-            bos_id = self._paligemma_tokenizer.bos_token_id
-            prompt_tokens = torch.tensor(
-                self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False),
-                device=action.device,
-            )
-            end_tokens = torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device)
 
             code_start = 1 + len(prompt_tokens)
             code_end = code_start + len(action_code_tokens)

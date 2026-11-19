@@ -116,7 +116,7 @@ def test_train_expert_only_without_vlm_supervision():
 
 class _ActionTokenizer:
     def __call__(self, actions):
-        return np.asarray(actions).round().astype(np.int64)
+        return [chunk.flatten().tolist() for chunk in np.asarray(actions).round().astype(np.int64)]
 
     def save_pretrained(self, path):
         path.mkdir(parents=True)

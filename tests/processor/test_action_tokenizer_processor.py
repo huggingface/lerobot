@@ -24,7 +24,7 @@ import pytest
 import torch
 
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import ActionTokenizerProcessorStep
+from lerobot.processor import ActionTokenizerProcessorStep, decode_fast_actions, encode_fast_actions
 from lerobot.processor.converters import create_transition
 from lerobot.utils.constants import ACTION_CODE_TOKEN_MASK, ACTION_TOKEN_MASK, ACTION_TOKENS
 
@@ -70,7 +70,9 @@ def processor() -> ActionTokenizerProcessorStep:
     processor.max_action_tokens = 12
     processor.fast_skip_tokens = 128
     processor.allow_truncation = False
-    processor.action_tokenizer = Mock(side_effect=lambda chunk: [[int(chunk.sum().item()) % 100, 2, 3]])
+    processor.action_tokenizer = Mock(
+        side_effect=lambda chunks: [[int(chunk.sum()) % 100, 2, 3] for chunk in chunks]
+    )
     processor._paligemma_tokenizer = SimpleNamespace(
         vocab_size=1000,
         bos_token_id=2,
@@ -107,12 +109,11 @@ def test_action_chunks_preserve_horizon_and_formatting(
 
     assert result[TransitionKey.ACTION] is actions
     torch.testing.assert_close(actions, original)
-    assert processor.action_tokenizer.call_count == len(chunks)
-    for call, chunk in zip(processor.action_tokenizer.call_args_list, chunks, strict=True):
-        backend_input = call.args[0]
-        assert backend_input.shape == (1, *chunk.shape)
-        assert backend_input.device.type == "cpu"
-        torch.testing.assert_close(backend_input, chunk.unsqueeze(0).cpu())
+    # One backend call per batch, on CPU NumPy data.
+    processor.action_tokenizer.assert_called_once()
+    backend_input = processor.action_tokenizer.call_args.args[0]
+    assert isinstance(backend_input, np.ndarray)
+    np.testing.assert_array_equal(backend_input, chunks.cpu().numpy())
 
     raw_codes = [int(chunk.sum().item()) % 100 for chunk in chunks]
     expected_tokens = torch.tensor(
@@ -181,3 +182,86 @@ def test_saved_fast_backend_reloads_without_hub_access(fast_backend: Any, tmp_pa
 
     assert (reloaded.scale, reloaded.min_token) == (fast_backend.scale, fast_backend.min_token)
     assert reloaded(ACTION_CHUNKS) == EXPECTED_TOKENS
+
+
+def test_encode_fast_actions_matches_backend(fast_backend: Any) -> None:
+    assert encode_fast_actions(fast_backend, ACTION_CHUNKS) == EXPECTED_TOKENS
+    assert encode_fast_actions(fast_backend, torch.from_numpy(ACTION_CHUNKS)) == EXPECTED_TOKENS
+
+
+@pytest.mark.parametrize("shape", [(10, 3), (1, 1, 10, 3)])
+def test_encode_fast_actions_rejects_non_batched_chunks(shape: tuple[int, ...]) -> None:
+    tokenizer = Mock()
+
+    with pytest.raises(ValueError, match=r"\(B, H, D\)"):
+        encode_fast_actions(tokenizer, np.zeros(shape))
+    tokenizer.assert_not_called()
+
+
+def _dct_coefficients(fast_backend: Any, actions: np.ndarray) -> np.ndarray:
+    """Recover the flattened integer FAST coefficients of decoded chunks."""
+    from scipy.fft import dct
+
+    coefficients = dct(actions, axis=-2, norm="ortho") * fast_backend.scale
+    return np.rint(coefficients).reshape(len(actions), -1)
+
+
+def test_decode_fast_actions_matches_backend_for_complete_sequences(fast_backend: Any) -> None:
+    horizon, action_dim = ACTION_CHUNKS.shape[1:]
+    expected = fast_backend.decode(EXPECTED_TOKENS, time_horizon=horizon, action_dim=action_dim)
+
+    for relaxed in (True, False):
+        decoded = decode_fast_actions(
+            fast_backend, EXPECTED_TOKENS, action_dim, time_horizon=horizon, relaxed=relaxed
+        )
+        assert decoded.shape == ACTION_CHUNKS.shape
+        np.testing.assert_allclose(decoded, expected, rtol=0, atol=1e-12)
+
+
+def test_relaxed_decoding_zero_fills_missing_trailing_coefficients(fast_backend: Any) -> None:
+    horizon, action_dim = ACTION_CHUNKS.shape[1:]
+    incomplete = [sequence[:-1] for sequence in EXPECTED_TOKENS]
+
+    full = decode_fast_actions(fast_backend, EXPECTED_TOKENS, action_dim, time_horizon=horizon, relaxed=True)
+    partial = decode_fast_actions(fast_backend, incomplete, action_dim, time_horizon=horizon, relaxed=True)
+    full_coefficients = _dct_coefficients(fast_backend, full)
+    partial_coefficients = _dct_coefficients(fast_backend, partial)
+
+    for index, sequence in enumerate(incomplete):
+        kept = len(fast_backend.bpe_tokenizer.decode(sequence))
+        assert 0 < kept < horizon * action_dim
+        np.testing.assert_array_equal(partial_coefficients[index, :kept], full_coefficients[index, :kept])
+        np.testing.assert_array_equal(partial_coefficients[index, kept:], 0)
+
+
+def test_relaxed_decoding_drops_extra_trailing_coefficients(fast_backend: Any) -> None:
+    horizon, action_dim = ACTION_CHUNKS.shape[1:]
+    oversized = [sequence + sequence for sequence in EXPECTED_TOKENS]
+
+    np.testing.assert_array_equal(
+        decode_fast_actions(fast_backend, oversized, action_dim, time_horizon=horizon, relaxed=True),
+        decode_fast_actions(fast_backend, EXPECTED_TOKENS, action_dim, time_horizon=horizon, relaxed=True),
+    )
+
+
+def test_strict_and_backend_decoding_return_zeros_for_incomplete_sequences(fast_backend: Any) -> None:
+    horizon, action_dim = ACTION_CHUNKS.shape[1:]
+    incomplete = [sequence[:-1] for sequence in EXPECTED_TOKENS]
+    zeros = np.zeros(ACTION_CHUNKS.shape)
+
+    np.testing.assert_array_equal(
+        decode_fast_actions(fast_backend, incomplete, action_dim, time_horizon=horizon), zeros
+    )
+    np.testing.assert_array_equal(
+        fast_backend.decode(incomplete, time_horizon=horizon, action_dim=action_dim), zeros
+    )
+
+
+@pytest.mark.parametrize("relaxed", [True, False])
+def test_out_of_vocabulary_ids_decode_to_zero_actions(fast_backend: Any, relaxed: bool) -> None:
+    horizon, action_dim = ACTION_CHUNKS.shape[1:]
+    unknown = [[len(fast_backend.bpe_tokenizer) + 10], [-1]]
+
+    decoded = decode_fast_actions(fast_backend, unknown, action_dim, time_horizon=horizon, relaxed=relaxed)
+
+    np.testing.assert_array_equal(decoded, np.zeros((2, horizon, action_dim)))
