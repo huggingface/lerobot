@@ -26,7 +26,7 @@ import cv2
 import numpy as np
 import pytest
 
-from lerobot.cameras.configs import ColorMode, Cv2Rotation
+from lerobot.cameras.configs import ColorMode, Cv2Backends, Cv2Rotation
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -386,3 +386,47 @@ def test_rotation(rotation, index_or_path):
             assert camera.width == original_width
             assert camera.height == original_height
             assert img.shape[:2] == (original_height, original_width)
+
+
+class UnopenedVideoCapture:
+    """Stands in for `cv2.VideoCapture`: records what it was opened with and never opens."""
+
+    calls: list[tuple] = []
+
+    def __init__(self, *args):
+        UnopenedVideoCapture.calls.append(args)
+
+    def isOpened(self) -> bool:  # noqa: N802
+        return False
+
+    def release(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize(
+    "system, index_or_path, backend, expected",
+    [
+        ("Linux", Path("/dev/video0"), Cv2Backends.ANY, Cv2Backends.V4L2),
+        ("Linux", "/dev/video2", Cv2Backends.ANY, Cv2Backends.V4L2),
+        ("Linux", Path("/dev/video0"), Cv2Backends.V4L2, Cv2Backends.V4L2),
+        ("Linux", 0, Cv2Backends.ANY, Cv2Backends.ANY),
+        ("Linux", Path("/tmp/clip.mp4"), Cv2Backends.ANY, Cv2Backends.ANY),
+        ("Darwin", Path("/dev/video0"), Cv2Backends.ANY, Cv2Backends.ANY),
+    ],
+)
+def test_connect_opens_a_linux_device_path_with_v4l2(system, index_or_path, backend, expected):
+    """A `/dev/video*` path is a camera, not a stream: with the backend left to OpenCV it is
+    opened with V4L2, so the resolution, fps and fourcc settings apply."""
+    config = OpenCVCameraConfig(index_or_path=index_or_path, backend=backend)
+    camera = OpenCVCamera(config)
+    UnopenedVideoCapture.calls.clear()
+
+    with (
+        patch(f"{OpenCVCamera.__module__}.platform.system", return_value=system),
+        patch(f"{OpenCVCamera.__module__}.cv2.VideoCapture", new=UnopenedVideoCapture),
+        pytest.raises(ConnectionError),
+    ):
+        camera.connect(warmup=False)
+
+    expected_target = str(index_or_path) if isinstance(index_or_path, Path) else index_or_path
+    assert UnopenedVideoCapture.calls == [(expected_target, expected)]
