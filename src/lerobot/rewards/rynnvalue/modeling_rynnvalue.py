@@ -91,9 +91,9 @@ def reduce_remaining_time(
 class RynnValueRewardModel(PreTrainedRewardModel):
     """RynnValue zero-shot reward model.
 
-    A config without `model_config` builds the model from the official checkpoint `model_id`. Saving
-    embeds `model_config`, so a LeRobot checkpoint rebuilds the architecture from its own
-    `config.json` before `from_pretrained()` loads `model.safetensors`.
+    With `pretrained_path` unset, the model loads the official checkpoint `model_id`. Otherwise it
+    builds the empty architecture, from `model_config` or the official config, and the LeRobot
+    checkpoint's `model.safetensors` fills it in `from_pretrained()`. Saving embeds `model_config`.
     """
 
     config: RynnValueConfig
@@ -116,7 +116,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         # Since transformers 5.22, Qwen3-VL passes the value-slot tensors on to the vision tower
         # too, which the official model runs without them, i.e. as plain eager attention.
         model_config.vision_config._attn_implementation = "eager"
-        if config.model_config is None:
+        if config.pretrained_path is None:
             model = RynnValueLangModel.from_pretrained(
                 config.model_id, revision=config.model_revision, config=model_config, dtype=dtype
             )

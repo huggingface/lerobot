@@ -8,7 +8,7 @@ potential = -remaining_time
 
 **Paper**: [RynnValue: Scaling Robotic Value Foundation Models with Temporal Distance](https://arxiv.org/abs/2608.09853)
 **Original code**: [github.com/alibaba-damo-academy/RynnValue](https://github.com/alibaba-damo-academy/RynnValue)
-**Checkpoints**: [RynnValue-4B](https://huggingface.co/Alibaba-DAMO-Academy/RynnValue-4B), [RynnValue-8B](https://huggingface.co/Alibaba-DAMO-Academy/RynnValue-8B)
+**Checkpoints**: [lerobot/RynnValue-4B](https://huggingface.co/lerobot/RynnValue-4B), [lerobot/RynnValue-8B](https://huggingface.co/lerobot/RynnValue-8B), converted from the official [RynnValue-4B](https://huggingface.co/Alibaba-DAMO-Academy/RynnValue-4B) and [RynnValue-8B](https://huggingface.co/Alibaba-DAMO-Academy/RynnValue-8B)
 
 ## LeRobot integration
 
@@ -37,11 +37,13 @@ Or with pip:
 pip install -e ".[rynnvalue]"
 ```
 
-The 4B checkpoint is approximately 10 GB. A CUDA GPU with enough memory for the selected checkpoint is strongly recommended.
+The 4B checkpoint is approximately 10 GB, the 8B approximately 19 GB. A CUDA GPU with enough memory for the selected checkpoint is strongly recommended.
 
 ## Loading
 
-The LeRobot checkpoint [lerobot/RynnValue-4B](https://huggingface.co/lerobot/RynnValue-4B) uses the LeRobot format: `config.json` embeds the native architecture configuration as `model_config`, and `model.safetensors` holds the weights. The tokenizer and image processor load from the official checkpoint named by `model_id`.
+The LeRobot checkpoints use the LeRobot format: `config.json` embeds the native architecture configuration as `model_config`, and `model.safetensors` holds the weights. The tokenizer and image processor load from the official checkpoint named by `model_id`.
+
+`RynnValueConfig` defaults to `pretrained_path="lerobot/RynnValue-4B"`, so `make_reward_model` and `lerobot-score --reward_model.type=rynnvalue` load it. For the 8B model, pass `--reward_model.path=lerobot/RynnValue-8B`.
 
 ```python
 from lerobot.configs.rewards import RewardModelConfig
@@ -58,12 +60,14 @@ config = RewardModelConfig.from_pretrained(
 model = RynnValueRewardModel.from_pretrained("lerobot/RynnValue-4B", config=config)
 ```
 
-A config without `model_config` builds the model from the official checkpoint instead, set by `model_id` (default `Alibaba-DAMO-Academy/RynnValue-4B`) and optionally pinned with `model_revision`. Saving that model writes a LeRobot checkpoint:
+With `pretrained_path=None`, the model loads the official checkpoint instead, set by `model_id` (default `Alibaba-DAMO-Academy/RynnValue-4B`) and optionally pinned with `model_revision`. Saving that model writes a LeRobot checkpoint:
 
 ```python
 from lerobot.rewards.rynnvalue import RynnValueConfig, RynnValueRewardModel
 
-model = RynnValueRewardModel(RynnValueConfig(model_id="Alibaba-DAMO-Academy/RynnValue-8B"))
+model = RynnValueRewardModel(
+    RynnValueConfig(pretrained_path=None, model_id="Alibaba-DAMO-Academy/RynnValue-8B")
+)
 model.save_pretrained("outputs/rynnvalue-8b")
 ```
 

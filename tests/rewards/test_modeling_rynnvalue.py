@@ -260,9 +260,20 @@ def test_predict_remaining_time_requires_encoded_inputs(monkeypatch):
         model.predict_remaining_time({})
 
 
+def test_default_config_builds_the_empty_architecture_for_the_lerobot_checkpoint(monkeypatch):
+    sources = _patch_checkpoint_load(monkeypatch)
+    config = RynnValueConfig(device="cpu")
+    RynnValueRewardModel(config)
+
+    assert config.pretrained_path == "lerobot/RynnValue-4B"
+    assert sources == ["model_config"]
+
+
 def test_lerobot_checkpoint_rebuilds_from_its_embedded_model_config(monkeypatch, tmp_path):
     sources = _patch_checkpoint_load(monkeypatch)
-    model = RynnValueRewardModel(RynnValueConfig(device="cpu", model_id="Alibaba-DAMO-Academy/RynnValue-8B"))
+    model = RynnValueRewardModel(
+        RynnValueConfig(device="cpu", pretrained_path=None, model_id="Alibaba-DAMO-Academy/RynnValue-8B")
+    )
     model.save_pretrained(tmp_path)
     assert (tmp_path / CONFIG_NAME).exists()
     assert (tmp_path / SAFETENSORS_SINGLE_FILE).exists()

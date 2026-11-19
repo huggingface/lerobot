@@ -27,6 +27,7 @@ RYNNVALUE_FEATURE_PREFIX = "observation.rynnvalue."
 class RynnValueConfig(RewardModelConfig):
     """Configuration for the inference-only RynnValue temporal-distance model."""
 
+    pretrained_path: str | None = "lerobot/RynnValue-4B"
     model_id: str = "Alibaba-DAMO-Academy/RynnValue-4B"
     model_revision: str | None = None
     torch_dtype: str = "bfloat16"
