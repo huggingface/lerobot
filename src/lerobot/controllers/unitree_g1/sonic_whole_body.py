@@ -46,7 +46,8 @@ from lerobot.robots.unitree_g1.g1_utils import (
     get_gravity_orientation,
     make_ort_session_options,
 )
-from lerobot.robots.unitree_g1.unitree_g1 import RobotController
+
+from ..controller import RobotController
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,8 @@ class SonicWholeBodyController(RobotController):
     """
 
     control_dt = CONTROL_DT
+    # Re-sending the last token keeps the decoder balancing, unlike a held joystick velocity.
+    supports_position_hold = True
 
     def __init__(self, policy_type: str = "default"):
         self.decoder, self.kp, self.kd, self.default_angles, self.action_scale, self.neutral_token = (
