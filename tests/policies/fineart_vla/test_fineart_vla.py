@@ -44,7 +44,7 @@ from lerobot.policies.fineart_vla.processor_fineart_vla import (  # noqa: E402
     _vqa_answer_to_loc,
 )
 from lerobot.policies.pi05.configuration_pi05 import PI05Config  # noqa: E402
-from lerobot.policies.pi05.modeling_pi05 import PI05Policy  # noqa: E402
+from lerobot.policies.pi05.modeling_pi05 import PI05Policy, prepare_attention_masks_4d  # noqa: E402
 from lerobot.utils.constants import (  # noqa: E402
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -320,3 +320,41 @@ def test_loader_converts_only_pi05_format_checkpoints(tmp_path, native, sharded)
     assert policy.converted is not native
     torch.testing.assert_close(policy.model.weight, source.weight)
     torch.testing.assert_close(policy.model.bias, source.bias)
+
+
+def test_text_only_loss_builds_the_mask_in_the_backbone_dtype():
+    """Text/FAST-only batches keep fp32 prefix embeddings; the mask must still match bf16 queries (#5414)."""
+    q_proj = torch.nn.Linear(4, 4, bias=False).to(torch.bfloat16)
+    seen = {}
+
+    def forward(attention_mask, **kwargs):
+        seen["dtype"] = attention_mask.dtype
+        return (torch.zeros(1), None), None
+
+    backbone = SimpleNamespace(
+        paligemma=SimpleNamespace(
+            model=SimpleNamespace(
+                language_model=SimpleNamespace(
+                    layers=[SimpleNamespace(self_attn=SimpleNamespace(q_proj=q_proj))]
+                )
+            )
+        ),
+        forward=forward,
+    )
+    prefix = (
+        torch.zeros(1, 3, 4),
+        torch.ones(1, 3, dtype=torch.bool),
+        torch.zeros(1, 3, dtype=torch.bool),
+        None,
+        0,
+    )
+    stub = SimpleNamespace(
+        model=SimpleNamespace(
+            paligemma_with_expert=backbone, _prepare_attention_masks_4d=prepare_attention_masks_4d
+        ),
+        _embed_supervised_prefix=lambda *args: prefix,
+        _prefix_ce_losses=lambda *args: (None, None),
+    )
+    FineARTVLAPolicy._compute_text_and_fast_loss(stub, {}, None, None, None, None)
+
+    assert seen["dtype"] == torch.bfloat16
