@@ -19,18 +19,17 @@ from collections import deque
 
 import numpy as np
 import onnxruntime as ort
-from huggingface_hub import hf_hub_download
 
 from lerobot.robots.unitree_g1.g1_utils import (
     REMOTE_AXES,
     REMOTE_BUTTONS,
     REMOTE_KEYS,
     G1_29_JointIndex,
-    get_gravity_orientation,
-    make_ort_session_options,
 )
 
 from ..controller import RobotController
+from ..hub import load_onnx_policy
+from .proprio import read_proprio
 
 logger = logging.getLogger(__name__)
 
@@ -60,28 +59,8 @@ def load_groot_policies(
     Args:
         repo_id: Hugging Face Hub repository ID containing the ONNX policies.
     """
-    logger.info(f"Loading GR00T dual-policy system from the hub ({repo_id})...")
-
-    # Download ONNX policies from Hugging Face Hub
-    balance_path = hf_hub_download(
-        repo_id=repo_id,
-        filename="GR00T-WholeBodyControl-Balance.onnx",
-    )
-    walk_path = hf_hub_download(
-        repo_id=repo_id,
-        filename="GR00T-WholeBodyControl-Walk.onnx",
-    )
-
-    # Load ONNX policies with a capped thread pool. GR00T runs at 50 Hz in a
-    # background thread alongside the (torch) upper-body policy and IK; letting ORT
-    # grab every core starves those and makes the whole rollout stutter. These are
-    # small MLPs, so 1 thread is both enough and lowest-latency.
-    so = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
-    policy_balance = ort.InferenceSession(balance_path, sess_options=so)
-    policy_walk = ort.InferenceSession(walk_path, sess_options=so)
-
-    logger.info("GR00T policies loaded successfully")
-
+    policy_balance, _ = load_onnx_policy(repo_id, "GR00T-WholeBodyControl-Balance.onnx")
+    policy_walk, _ = load_onnx_policy(repo_id, "GR00T-WholeBodyControl-Walk.onnx")
     return policy_balance, policy_walk
 
 
@@ -101,8 +80,6 @@ class GrootLocomotionController(RobotController):
         self.cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # vx, vy, theta_dot
 
         # Robot state
-        self.groot_qj_all = np.zeros(29, dtype=np.float32)
-        self.groot_dqj_all = np.zeros(29, dtype=np.float32)
         self.groot_action = np.zeros(15, dtype=np.float32)
         self.groot_obs_single = np.zeros(86, dtype=np.float32)
         self.groot_obs_history = deque(maxlen=6)
@@ -119,8 +96,6 @@ class GrootLocomotionController(RobotController):
     def reset(self) -> None:
         """Reset internal state for a new episode."""
         self.cmd[:] = 0.0
-        self.groot_qj_all[:] = 0.0
-        self.groot_dqj_all[:] = 0.0
         self.groot_action[:] = 0.0
         self.groot_obs_single[:] = 0.0
         self.groot_obs_stacked[:] = 0.0
@@ -156,25 +131,13 @@ class GrootLocomotionController(RobotController):
         self.cmd[1] = -lx  # Left/right (negated)
         self.cmd[2] = -rx  # Rotation rate (negated)
 
-        # Get joint positions and velocities from lowstate
-        for motor in G1_29_JointIndex:
-            idx = motor.value
-            self.groot_qj_all[idx] = lowstate.motor_state[idx].q
-            self.groot_dqj_all[idx] = lowstate.motor_state[idx].dq
-
-        # Scale joint positions and velocities
-        qj_obs = self.groot_qj_all.copy()
-        dqj_obs = self.groot_dqj_all.copy()
-
-        # Express IMU data in gravity frame of reference
-        quat = lowstate.imu_state.quaternion
-        ang_vel = np.array(lowstate.imu_state.gyroscope, dtype=np.float32)
-        gravity_orientation = get_gravity_orientation(quat)
+        proprio = read_proprio(lowstate)
 
         # Scale joint positions and velocities before policy inference
-        qj_obs = (qj_obs - GROOT_DEFAULT_ANGLES) * DOF_POS_SCALE
-        dqj_obs = dqj_obs * DOF_VEL_SCALE
-        ang_vel_scaled = ang_vel * ANG_VEL_SCALE
+        qj_obs = (proprio.q - GROOT_DEFAULT_ANGLES) * DOF_POS_SCALE
+        dqj_obs = proprio.dq * DOF_VEL_SCALE
+        ang_vel_scaled = proprio.ang_vel * ANG_VEL_SCALE
+        gravity_orientation = proprio.gravity
 
         # Build single frame observation
         self.groot_obs_single[:3] = self.cmd * np.array(CMD_SCALE)

@@ -14,24 +14,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 
 import numpy as np
-import onnx
 import onnxruntime as ort
-from huggingface_hub import hf_hub_download
 
 from lerobot.robots.unitree_g1.g1_utils import (
     REMOTE_AXES,
     REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
-    get_gravity_orientation,
-    make_ort_session_options,
 )
 
 from ..controller import RobotController
+from ..hub import load_onnx_policy
+from .proprio import read_proprio
 
 logger = logging.getLogger(__name__)
 
@@ -78,28 +75,8 @@ def load_policy(
     if policy_type not in POLICY_FILES:
         raise ValueError(f"Unknown policy type: {policy_type}. Choose from: {list(POLICY_FILES.keys())}")
 
-    filename = POLICY_FILES[policy_type]
-    logger.info(f"Loading {policy_type.upper()} policy from: {repo_id}/{filename}")
-    policy_path = hf_hub_download(repo_id=repo_id, filename=filename)
-
-    # Capped thread pool, same reasoning as GR00T: a small MLP stepped at 50 Hz from a
-    # background thread, where letting ORT take every core starves the control loop.
-    so = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
-    policy = ort.InferenceSession(policy_path, sess_options=so)
-    logger.info(f"Policy loaded: {policy.get_inputs()[0].shape} → {policy.get_outputs()[0].shape}")
-
-    # Extract KP/KD from ONNX metadata
-    model = onnx.load(policy_path, load_external_data=False)
-    metadata = {prop.key: prop.value for prop in model.metadata_props}
-
-    if "kp" not in metadata or "kd" not in metadata:
-        raise ValueError("ONNX model must contain 'kp' and 'kd' in metadata")
-
-    kp = np.array(json.loads(metadata["kp"]), dtype=np.float32)
-    kd = np.array(json.loads(metadata["kd"]), dtype=np.float32)
-    logger.info(f"Loaded KP/KD from ONNX ({len(kp)} joints)")
-
-    return policy, kp, kd
+    policy, constants = load_onnx_policy(repo_id, POLICY_FILES[policy_type], metadata_keys=("kp", "kd"))
+    return policy, constants["kp"], constants["kd"]
 
 
 class HolosomaLocomotionController(RobotController):
@@ -118,8 +95,6 @@ class HolosomaLocomotionController(RobotController):
         self.cmd = np.zeros(3, dtype=np.float32)
 
         # Robot state
-        self.qj = np.zeros(29, dtype=np.float32)
-        self.dqj = np.zeros(29, dtype=np.float32)
         self.obs = np.zeros(100, dtype=np.float32)
         self.last_action = np.zeros(29, dtype=np.float32)
 
@@ -133,8 +108,6 @@ class HolosomaLocomotionController(RobotController):
     def reset(self) -> None:
         """Reset internal state for a new episode."""
         self.cmd[:] = 0.0
-        self.qj[:] = 0.0
-        self.dqj[:] = 0.0
         self.obs[:] = 0.0
         self.last_action[:] = 0.0
         self.phase = np.array([[0.0, np.pi]], dtype=np.float32)
@@ -161,27 +134,20 @@ class HolosomaLocomotionController(RobotController):
         lx = np.clip(lx, -0.3, 0.3)
         self.cmd[:] = [ly, -lx, -rx]
 
-        # Get joint positions and velocities from lowstate
-        for motor in G1_29_JointIndex:
-            idx = motor.value
-            self.qj[idx] = lowstate.motor_state[idx].q
-            self.dqj[idx] = lowstate.motor_state[idx].dq
+        proprio = read_proprio(lowstate)
+        qj, dqj = proprio.q, proprio.dq
 
         # Hide arm positions from policy (show DEFAULT_ANGLES instead)
         # This prevents policy from reacting to teleop arm movements
         for arm_joint in G1_29_JointArmIndex:
-            self.qj[arm_joint.value] = DEFAULT_ANGLES[arm_joint.value]
-            self.dqj[arm_joint.value] = 0.0
-
-        # Express IMU data in gravity frame of reference
-        quat = lowstate.imu_state.quaternion
-        ang_vel = np.array(lowstate.imu_state.gyroscope, dtype=np.float32)
-        gravity = get_gravity_orientation(quat)
+            qj[arm_joint.value] = DEFAULT_ANGLES[arm_joint.value]
+            dqj[arm_joint.value] = 0.0
 
         # Scale joint positions and velocities before policy inference
-        qj_obs = (self.qj - DEFAULT_ANGLES) * DOF_POS_SCALE
-        dqj_obs = self.dqj * DOF_VEL_SCALE
-        ang_vel_s = ang_vel * ANG_VEL_SCALE
+        qj_obs = (qj - DEFAULT_ANGLES) * DOF_POS_SCALE
+        dqj_obs = dqj * DOF_VEL_SCALE
+        ang_vel_s = proprio.ang_vel * ANG_VEL_SCALE
+        gravity = proprio.gravity
 
         # Update gait phase
         if np.linalg.norm(self.cmd[:2]) < 0.01 and abs(self.cmd[2]) < 0.01:
