@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
@@ -316,7 +317,7 @@ def _select_value(value: Any, indices: list[int], batch_size: int, path: str) ->
     if isinstance(value, np.ndarray) and value.ndim > 0:
         return value[indices]
     if hasattr(value, "index_select") and hasattr(value, "new_tensor") and getattr(value, "ndim", 0) > 0:
-        return value.index_select(0, value.new_tensor(indices).long())
+        return value.index_select(0, value.new_tensor(indices, dtype=torch.long))
     return value
 
 
