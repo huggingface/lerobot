@@ -379,13 +379,20 @@ def test_predicted_video_splits_the_clip_back_into_cameras(monkeypatch):
         image_size=(16, 32),
         return_predicted_video=True,
         input_features={
-            "observation.images.wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
-            "observation.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+            # Unequal declared widths: the input stacking still resizes each camera to 16 wide.
+            "observation.images.wrist": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 24)),
+            "observation.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 8)),
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
         base_model_id=None,
     )
     policy = FastWAMPolicy(cfg)
+    # Rollout's --use_torch_compile wraps predict_action_chunk, so select_action must go through it.
+    chunk_calls = []
+    predict_action_chunk = policy.predict_action_chunk
+    policy.predict_action_chunk = lambda *args, **kwargs: chunk_calls.append(1) or predict_action_chunk(
+        *args, **kwargs
+    )
     batch = {
         "observation.images.top": torch.zeros(1, 3, 16, 16),
         "observation.images.wrist": torch.zeros(1, 3, 16, 16),
@@ -394,6 +401,7 @@ def test_predicted_video_splits_the_clip_back_into_cameras(monkeypatch):
 
     outputs = [policy.select_action(batch) for _ in range(4)]
 
+    assert chunk_calls == [1]
     assert [isinstance(output, dict) for output in outputs] == [True, False, True, False]
     for output, t in ((outputs[0], 1), (outputs[2], 2)):
         frames = output["prediction"]["observation"]

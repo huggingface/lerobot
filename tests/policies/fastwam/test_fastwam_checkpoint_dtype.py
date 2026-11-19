@@ -266,20 +266,28 @@ def test_fusion_uses_float32_softmax_with_policy_dtype_storage(dtype):
     assert all(torch.isfinite(entry[key].grad).all() for entry in cache for key in ("k", "v"))
 
 
-@pytest.mark.parametrize("flags", [{}, DOT_FLAGS], ids=["default", "fasterwam"])
-def test_predicted_video_pairs_frames_with_unchanged_actions(offline_components, flags):
+@pytest.mark.parametrize("variant", ["default", "fasterwam", "action_conditioned"])
+def test_predicted_video_pairs_frames_with_unchanged_actions(offline_components, variant):
+    flags = DOT_FLAGS if variant == "fasterwam" else {}
+    config = tiny_config(dtype=torch.float32, n_action_steps=4, inference_seed=None, **flags)
+    if variant == "action_conditioned":
+        config.video_dit_config.update(action_conditioned=True, action_dim=3)
     torch.manual_seed(0)
-    policy = FastWAMPolicy(tiny_config(dtype=torch.float32, n_action_steps=4, **flags))
+    policy = FastWAMPolicy(config)
     batch = training_batch()
-    expected = policy.predict_action_chunk(batch)
 
-    policy.config.return_predicted_video = True
-    policy.reset()
-    outputs = [policy.select_action(batch) for _ in range(4)]
+    def rollout(return_predicted_video):
+        policy.config.return_predicted_video = return_predicted_video
+        policy.reset()
+        torch.manual_seed(1)
+        return [policy.select_action(batch) for _ in range(8)]  # two chunks
 
-    assert [isinstance(output, dict) for output in outputs] == [True, False, True, False]
+    expected = torch.stack(rollout(False), 1)
+    outputs = rollout(True)
+
+    assert [isinstance(output, dict) for output in outputs] == [True, False, True, False] * 2
     actions = torch.stack([output["action"] if isinstance(output, dict) else output for output in outputs], 1)
-    torch.testing.assert_close(actions, expected[:, :4], rtol=0, atol=0)
+    torch.testing.assert_close(actions, expected, rtol=0, atol=0)
     frame = outputs[0]["prediction"]["observation"]["observation.images.image"]
     assert frame.shape == (1, 3, 16, 32)
     assert frame.dtype == torch.uint8

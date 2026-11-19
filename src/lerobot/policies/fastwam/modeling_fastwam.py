@@ -314,14 +314,17 @@ class FastWAMPolicy(PreTrainedPolicy):
         Returns:
             Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
         """
-        return self._predict_chunk(batch, noise=noise, with_video=False)[0]
-
-    def _predict_chunk(
-        self, batch: dict[str, Tensor], *, noise: Tensor | None, with_video: bool
-    ) -> tuple[Tensor, Tensor | None]:
-        """Return actions `[B, action_horizon, action_dim]` and, with `with_video`, the predicted
-        clip `[B, model_video_frames, H, W, 3]` (uint8, CPU)."""
         self.eval()
+        per_item = self._per_item_infer_kwargs(batch, noise=noise)
+        action = torch.cat(
+            [_action_from_model_output(self.model.infer_action(**kwargs)) for kwargs in per_item], dim=0
+        )
+        return action.to(device=batch_device(batch), dtype=torch.float32)
+
+    def _per_item_infer_kwargs(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None
+    ) -> list[dict[str, Any]]:
+        """Build the core inference kwargs, one dict per batch item (the core runs batch size 1)."""
         infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
         infer_kwargs["noise"] = noise
         # Encode the task once per episode and reuse it (LingBot-VA parity): swap the raw `prompt`
@@ -334,28 +337,23 @@ class FastWAMPolicy(PreTrainedPolicy):
             infer_kwargs["context"] = context
             infer_kwargs["context_mask"] = context_mask
         batch_size = _infer_kwargs_batch_size(infer_kwargs)
-        per_item = (
-            [infer_kwargs]
-            if batch_size == 1
-            else [
-                _slice_infer_kwargs(infer_kwargs, index=i, batch_size=batch_size) for i in range(batch_size)
+        if batch_size == 1:
+            return [infer_kwargs]
+        return [_slice_infer_kwargs(infer_kwargs, index=i, batch_size=batch_size) for i in range(batch_size)]
+
+    def _predict_video(self, batch: dict[str, Tensor], actions: Tensor) -> Tensor:
+        """Predict the clip `[B, model_video_frames, H, W, 3]` (uint8, CPU) that `actions` lead to."""
+        per_item = self._per_item_infer_kwargs(batch, noise=None)
+        return torch.stack(
+            [
+                self.model.infer_video(
+                    **{key: kwargs[key] for key in _VIDEO_INFER_KEYS},
+                    action=actions[i : i + 1],
+                    num_video_frames=self.config.model_video_frames,
+                )
+                for i, kwargs in enumerate(per_item)
             ]
         )
-        action = torch.cat(
-            [_action_from_model_output(self.model.infer_action(**kwargs)) for kwargs in per_item], dim=0
-        )
-        clip = None
-        if with_video:
-            clip = torch.stack(
-                [
-                    self.model.infer_video(
-                        **{key: kwargs[key] for key in _VIDEO_INFER_KEYS},
-                        num_video_frames=self.config.model_video_frames,
-                    )
-                    for kwargs in per_item
-                ]
-            )
-        return action.to(device=batch_device(batch), dtype=torch.float32), clip
 
     @torch.no_grad()
     def select_action(
@@ -363,8 +361,9 @@ class FastWAMPolicy(PreTrainedPolicy):
     ) -> Tensor | PolicyOutput:
         self.eval()
         if len(self._action_queue) == 0:
-            actions, self._chunk_clip = self._predict_chunk(
-                batch, noise=noise, with_video=self.config.return_predicted_video
+            actions = self.predict_action_chunk(batch, noise=noise)
+            self._chunk_clip = (
+                self._predict_video(batch, actions) if self.config.return_predicted_video else None
             )
             self._action_queue.extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
             self._served = 0
@@ -387,10 +386,10 @@ class FastWAMPolicy(PreTrainedPolicy):
         return {ACTION: action, PREDICTION: {"observation": self._split_cameras(frames)}}
 
     def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
-        """Inverse of the width-wise camera concat in `_stack_video_from_images`."""
+        """Inverse of the width-wise camera concat in `_stack_video_from_images` (equal widths)."""
         keys = sorted(self.config.image_features)
-        widths = [int(self.config.image_features[key].shape[2]) for key in keys]
-        return dict(zip(keys, frames.split(widths, dim=3), strict=True))
+        width = int(self.config.image_size[1]) // len(keys)
+        return dict(zip(keys, frames[..., : width * len(keys)].split(width, dim=3), strict=True))
 
     def _build_core_model(self, config: FastWAMConfig) -> FastWAM:
         """Build the FastWAM core for training / inference.

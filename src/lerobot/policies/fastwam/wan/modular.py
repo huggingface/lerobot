@@ -2232,15 +2232,27 @@ class FastWAM(torch.nn.Module):
         seed: int | None = None,
         rand_device: str = "cpu",
         tiled: bool = False,
+        action: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Denoise the video stream alone; returns uint8 frames `[T, H, W, 3]` on CPU.
 
         Video tokens don't attend to action tokens, so this matches `infer_joint`'s video.
+        `action` `[1, T, a_dim]` conditions the video only when the video expert is action-conditioned.
+        The global RNG is left untouched, so enabling this does not change later action samples.
         """
         self.eval()
         input_image, height, width = self._normalize_infer_input_image(input_image, num_video_frames)
         proprio = self._normalize_infer_proprio(proprio)
-        latents_video = self._make_video_latents(num_video_frames, height, width, seed, rand_device)
+        rng_device = torch.device(rand_device)
+        with torch.random.fork_rng(
+            devices=[] if rng_device.type == "cpu" else [rng_device.index or 0],
+            device_type=rng_device.type,
+        ):
+            latents_video = self._make_video_latents(num_video_frames, height, width, seed, rand_device)
+        if action is not None and getattr(self.video_expert, "action_conditioned", False):
+            action = action.to(device=self.device, dtype=self.torch_dtype)
+        else:
+            action = None
 
         input_image = input_image.to(device=self.device, dtype=self.torch_dtype)
         first_frame_latents = self._encode_input_image_latents_tensor(input_image=input_image, tiled=tiled)
@@ -2261,7 +2273,7 @@ class FastWAM(torch.nn.Module):
                 timestep=timestep_video,
                 context=context,
                 context_mask=context_mask,
-                action=None,
+                action=action,
                 fuse_vae_embedding_in_latents=fuse_flag,
             )
             video_seq_len = int(video_pre["tokens"].shape[1])
