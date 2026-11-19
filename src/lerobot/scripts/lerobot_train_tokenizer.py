@@ -48,7 +48,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import torch
@@ -61,8 +61,11 @@ if TYPE_CHECKING or _transformers_available:
 else:
     AutoProcessor = None
 
-from lerobot.configs import NormalizationMode, parser
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, parser
 from lerobot.datasets import LeRobotDataset
+from lerobot.lerobot_types import TransitionKey
+from lerobot.processor import NormalizerProcessorStep
+from lerobot.processor.converters import create_transition
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.utils import init_logging
 
@@ -136,7 +139,7 @@ def apply_normalization(
     mode: NormalizationMode,
     eps: float = 1e-8,
 ) -> np.ndarray:
-    """Apply normalization to data based on the specified mode.
+    """Normalize fitting inputs with the same processor used by policy training.
 
     Args:
         data: Data to normalize [N, H, D] or [D]
@@ -150,42 +153,31 @@ def apply_normalization(
     if mode == NormalizationMode.IDENTITY:
         return data
 
-    if mode == NormalizationMode.MEAN_STD:
-        mean = stats.get("mean")
-        std = stats.get("std")
-        if mean is None or std is None:
-            raise ValueError("MEAN_STD mode requires 'mean' and 'std' in stats")
-        return (data - mean) / np.maximum(std, eps)
+    required_stats = {
+        NormalizationMode.MEAN_STD: ("mean", "std"),
+        NormalizationMode.MIN_MAX: ("min", "max"),
+        NormalizationMode.QUANTILES: ("q01", "q99"),
+        NormalizationMode.QUANTILE10: ("q10", "q90"),
+    }
+    if mode not in required_stats:
+        raise ValueError(f"Unsupported normalization mode: {mode}")
+    first_stat, second_stat = required_stats[mode]
+    if stats.get(first_stat) is None or stats.get(second_stat) is None:
+        raise ValueError(f"{mode.value} mode requires '{first_stat}' and '{second_stat}' in stats")
 
-    if mode == NormalizationMode.MIN_MAX:
-        min_val = stats.get("min")
-        max_val = stats.get("max")
-        if min_val is None or max_val is None:
-            raise ValueError("MIN_MAX mode requires 'min' and 'max' in stats")
-        denom = np.maximum(max_val - min_val, eps)
-        return 2.0 * (data - min_val) / denom - 1.0
-
-    if mode == NormalizationMode.QUANTILES:
-        q01 = stats.get("q01")
-        q99 = stats.get("q99")
-        if q01 is None or q99 is None:
-            raise ValueError("QUANTILES mode requires 'q01' and 'q99' in stats")
-        denom = np.maximum(q99 - q01, eps)
-        # Clip to quantile range then normalize to [-1, 1]
-        clipped = np.clip(data, q01, q99)
-        return 2.0 * (clipped - q01) / denom - 1.0
-
-    if mode == NormalizationMode.QUANTILE10:
-        q10 = stats.get("q10")
-        q90 = stats.get("q90")
-        if q10 is None or q90 is None:
-            raise ValueError("QUANTILE10 mode requires 'q10' and 'q90' in stats")
-        denom = np.maximum(q90 - q10, eps)
-        # Clip to quantile range then normalize to [-1, 1]
-        clipped = np.clip(data, q10, q90)
-        return 2.0 * (clipped - q10) / denom - 1.0
-
-    raise ValueError(f"Unsupported normalization mode: {mode}")
+    tensor = torch.as_tensor(data)
+    if not tensor.is_floating_point():
+        tensor = tensor.to(torch.float64)
+    norm_map: dict[FeatureType, NormalizationMode] = {FeatureType.ACTION: mode}
+    normalizer = NormalizerProcessorStep(
+        features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(data.shape[-1],))},
+        norm_map=norm_map,
+        stats={ACTION: stats},
+        dtype=tensor.dtype,
+        eps=eps,
+    )
+    normalized = normalizer(create_transition(action=tensor))[TransitionKey.ACTION]
+    return cast(torch.Tensor, normalized).numpy()
 
 
 def process_episode(args):
