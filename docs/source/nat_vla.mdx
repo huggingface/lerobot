@@ -1,0 +1,39 @@
+# NAT VLA
+
+NAT VLA is a 450M-parameter vision-language-action model built on [LFM2-VL-450M](https://huggingface.co/LiquidAI/LFM2-VL-450M) that writes robot actions as NAT action tokens: 14 time-ordered tokens per 32-step chunk of up to 7 action columns. The pretrained checkpoint is [`ahad-j/nat-vla-450m`](https://huggingface.co/ahad-j/nat-vla-450m).
+
+## Install
+
+```bash
+pip install -e ".[nat_vla,training]"
+```
+
+## Fine-tune
+
+```bash
+lerobot-train \
+  --policy.path=ahad-j/nat-vla-450m \
+  --policy.setup="single so100 robotic arm" \
+  --policy.control_mode="absolute joint pose" \
+  --dataset.repo_id=<your/dataset> \
+  --batch_size=64 \
+  --steps=50000 \
+  --accelerator.mixed_precision=bf16 \
+  --output_dir=outputs/nat_vla_finetune
+```
+
+`setup` and `control_mode` describe the robot in the prompt. State is normalized by its 1st and 99th percentiles and actions by their min and max, so the dataset's stats need `q01`/`q99` for `observation.state` and `min`/`max` for `action`.
+
+## Inference
+
+`select_action` generates the chunk greedily among the action tokens with a KV cache. With at most 7 action columns the tokens are time-ordered, so `--policy.n_action_steps=8`, `16` or `24` generates only the 4, 7 or 11 tokens those steps need.
+
+With `--policy.rtc_steps=8` (or another whole number of latents), the next chunk is generated while the current chunk's last `rtc_steps` actions run, and it starts with their tokens, so the robot never waits for a new chunk and consecutive chunks join without a jump (token-prefix real-time chunking). It needs `rtc_steps <= n_action_steps <= chunk_size - rtc_steps` and at most 7 action columns.
+
+## Another NAT tokenizer
+
+A new policy loads its tokenizer from `--policy.action_tokenizer`, a Hub repository or local folder holding a NAT tokenizer's `config.json` and `model.safetensors` (default [`ahad-j/nat-tokenizer-h32-l4-c6400`](https://huggingface.co/ahad-j/nat-tokenizer-h32-l4-c6400)). The policy takes its chunk length, token counts, streaming boundaries and number of action-token rows from that tokenizer and saves the tokenizer in its checkpoint. Set `--policy.chunk_size` and `--policy.n_action_steps` to the tokenizer's time horizon or less.
+
+## License
+
+The checkpoint is a derivative of LFM2-VL-450M and is released under the LFM Open License v1.0.
