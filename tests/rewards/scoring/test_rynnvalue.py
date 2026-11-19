@@ -56,7 +56,13 @@ def test_select_anchor_indices(num_frames, dataset_fps, inference_fps, expected)
 
 @pytest.mark.parametrize(
     ("anchor_index", "max_frames", "expected"),
-    [(2, 8, [0, 1, 2]), (3, None, [0, 1, 2, 3]), (20, 5, [0, 5, 10, 15, 20]), (7, 1, [7])],
+    [
+        (2, 8, [0, 0, 0, 0, 1, 1, 1, 2]),
+        (3, None, [0, 1, 2, 3]),
+        (20, 5, [0, 5, 10, 15, 20]),
+        (853, 8, [0, 121, 243, 365, 487, 609, 731, 853]),
+        (7, 1, [7]),
+    ],
 )
 def test_select_prefix_indices(anchor_index, max_frames, expected):
     assert select_prefix_indices(anchor_index, max_frames).tolist() == expected
@@ -133,6 +139,7 @@ class _FakeModel:
         task_key="task",
         default_task=None,
         max_frames=3,
+        max_image_side=640,
         inference_fps=1.0,
         robot_description="a single-arm robot",
         camera_description=None,
@@ -155,7 +162,7 @@ def test_rynnvalue_frame_scorer_scores_prefixes_and_interpolates_remaining_time(
     result = scorer.score_episode(_FakeDataset([{"dataset_from_index": 0, "dataset_to_index": 5}]), 0)
 
     # At 2 fps, RynnValue runs once a second, on frames 0, 2 and 4, with at most three frames per prefix.
-    assert encoder.prefixes == [[0.0], [0.0, 1.0, 2.0], [0.0, 2.0, 4.0]]
+    assert encoder.prefixes == [[0.0, 0.0, 0.0], [0.0, 1.0, 2.0], [0.0, 2.0, 4.0]]
     np.testing.assert_array_equal(result.frame_indices, np.arange(5))
     np.testing.assert_allclose(result.signals[REMAINING_TIME_SIGNAL], [4.0, 3.0, 2.0, 1.0, 0.0])
     assert result.signals[REMAINING_TIME_SIGNAL].dtype == np.float32
@@ -177,7 +184,7 @@ def test_rynnvalue_frame_scorer_supports_episode_filtered_dataset_views():
 
     result = RynnValueFrameScorer(_FakeModel(), encoder).score_episode(dataset, 1)
 
-    assert encoder.prefixes == [[0.0], [0.0, 1.0, 2.0]]
+    assert encoder.prefixes == [[0.0, 0.0, 0.0], [0.0, 1.0, 2.0]]
     np.testing.assert_allclose(result.signals[REMAINING_TIME_SIGNAL], [4.0, 3.0, 2.0])
 
 

@@ -39,6 +39,7 @@ class RynnValueConfig(RewardModelConfig):
     task_key: str = "task"
     default_task: str | None = None
     max_frames: int | None = 8
+    max_image_side: int | None = 640
     robot_description: str | None = None
     camera_description: str | None = None
     use_meta: bool | None = None
@@ -71,6 +72,8 @@ class RynnValueConfig(RewardModelConfig):
         super().__post_init__()
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
+        if self.max_image_side is not None and self.max_image_side < 1:
+            raise ValueError(f"max_image_side must be >= 1, got {self.max_image_side}")
         if self.inference_fps <= 0:
             raise ValueError(f"inference_fps must be > 0, got {self.inference_fps}")
         if self.image_key not in self.input_features:

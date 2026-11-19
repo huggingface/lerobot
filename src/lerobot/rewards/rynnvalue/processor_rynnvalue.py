@@ -62,13 +62,25 @@ def _expand_text(value: Any, *, batch_size: int, default: str | None, name: str)
 
 
 def _uniform_subsample(video: Tensor, max_frames: int | None) -> Tensor:
-    if max_frames is None or video.shape[0] <= max_frames:
+    """Pick `max_frames` evenly spaced frames, repeating some in shorter videos, as the official inference does."""
+    if max_frames is None:
         return video
-    indices = torch.linspace(0, video.shape[0] - 1, max_frames).round().long()
-    return video[indices]
+    if max_frames == 1:
+        return video[-1:]
+    return video[torch.from_numpy(np.linspace(0, video.shape[0] - 1, max_frames, dtype=np.int64))]
 
 
-def _video_to_pil(video: Tensor, *, max_frames: int | None) -> list[Image.Image]:
+def _shrink_to_max_side(images: list[Image.Image], max_side: int | None) -> list[Image.Image]:
+    """Shrink frames so their longer side is at most `max_side`, as the official inference does."""
+    if max_side is None or not images or max(images[0].size) <= max_side:
+        return images
+    width, height = images[0].size
+    scale = max_side / max(width, height)
+    size = (round(width * scale), round(height * scale))
+    return [image.resize(size, resample=Image.Resampling.BICUBIC) for image in images]
+
+
+def _video_to_pil(video: Tensor, *, max_frames: int | None, max_image_side: int | None) -> list[Image.Image]:
     video = _uniform_subsample(video, max_frames)
     if video.ndim != 4:
         raise ValueError(f"Expected a (T,C,H,W) or (T,H,W,C) video, got {tuple(video.shape)}")
@@ -83,7 +95,7 @@ def _video_to_pil(video: Tensor, *, max_frames: int | None) -> list[Image.Image]
         if array.size and array.max() <= 1.0:
             array = array * 255.0
     array = np.clip(array, 0, 255).astype(np.uint8)
-    return [Image.fromarray(frame).convert("RGB") for frame in array]
+    return _shrink_to_max_side([Image.fromarray(frame).convert("RGB") for frame in array], max_image_side)
 
 
 def _pad_sequences(sequences: list[Tensor], *, padding_value: int) -> Tensor:
@@ -105,6 +117,7 @@ class RynnValueEncoderProcessorStep(ProcessorStep):
     task_key: str = "task"
     default_task: str | None = None
     max_frames: int | None = 8
+    max_image_side: int | None = 640
     robot_description: str | None = None
     camera_description: str | None = None
     use_meta: bool | None = None
@@ -144,7 +157,12 @@ class RynnValueEncoderProcessorStep(ProcessorStep):
         )
         encoded = self.encode_samples(
             [
-                (_video_to_pil(tensor[index], max_frames=self.max_frames), tasks[index])
+                (
+                    _video_to_pil(
+                        tensor[index], max_frames=self.max_frames, max_image_side=self.max_image_side
+                    ),
+                    tasks[index],
+                )
                 for index in range(tensor.shape[0])
             ]
         )
@@ -200,6 +218,7 @@ class RynnValueEncoderProcessorStep(ProcessorStep):
             "task_key": self.task_key,
             "default_task": self.default_task,
             "max_frames": self.max_frames,
+            "max_image_side": self.max_image_side,
             "robot_description": self.robot_description,
             "camera_description": self.camera_description,
             "use_meta": self.use_meta,
@@ -224,6 +243,7 @@ def make_rynnvalue_pre_post_processors(
                 task_key=config.task_key,
                 default_task=config.default_task,
                 max_frames=config.max_frames,
+                max_image_side=config.max_image_side,
                 robot_description=config.robot_description,
                 camera_description=config.camera_description,
                 use_meta=config.use_meta,

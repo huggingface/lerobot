@@ -58,12 +58,15 @@ def select_anchor_indices(num_frames: int, dataset_fps: float, inference_fps: fl
 
 
 def select_prefix_indices(anchor_index: int, max_frames: int | None) -> NDArray[np.int64]:
-    """Return up to `max_frames` evenly spaced frames, in order, of the prefix ending at `anchor_index`."""
-    if max_frames is None or anchor_index < max_frames:
+    """Return `max_frames` evenly spaced frames, in order, of the prefix ending at `anchor_index`.
+
+    Like the official inference, shorter prefixes repeat frames so RynnValue always sees `max_frames`.
+    """
+    if max_frames is None:
         return np.arange(anchor_index + 1, dtype=np.int64)
     if max_frames == 1:
         return np.asarray([anchor_index], dtype=np.int64)
-    return np.unique(np.rint(np.linspace(0, anchor_index, max_frames)).astype(np.int64))
+    return np.linspace(0, anchor_index, max_frames, dtype=np.int64)
 
 
 class RynnValueFrameScorer:
@@ -103,6 +106,7 @@ class RynnValueFrameScorer:
                     "task_key": config.task_key,
                     "default_task": config.default_task,
                     "max_frames": config.max_frames,
+                    "max_image_side": config.max_image_side,
                     "robot_description": config.robot_description,
                     "camera_description": config.camera_description,
                     "use_meta": config.use_meta,

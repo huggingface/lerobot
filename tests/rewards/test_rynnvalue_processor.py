@@ -110,19 +110,27 @@ def _patch_processor(monkeypatch) -> _FakeProcessor:
     return fake
 
 
-def test_uniform_subsample_keeps_history_boundaries():
+def test_uniform_subsample_samples_like_the_official_inference():
     video = torch.arange(10)
     assert _uniform_subsample(video, 4).tolist() == [0, 3, 6, 9]
+    assert _uniform_subsample(torch.arange(854), 8).tolist() == [0, 121, 243, 365, 487, 609, 731, 853]
+    assert _uniform_subsample(torch.arange(3), 8).tolist() == [0, 0, 0, 0, 1, 1, 1, 2]
     assert torch.equal(_uniform_subsample(video, None), video)
 
 
 def test_video_to_pil_accepts_float_chw_frames():
     frames = torch.zeros(5, 3, 8, 8)
     frames[-1, 0].fill_(1.0)
-    images = _video_to_pil(frames, max_frames=3)
+    images = _video_to_pil(frames, max_frames=3, max_image_side=640)
     assert len(images) == 3
     assert images[0].size == (8, 8)
     assert images[-1].getpixel((0, 0))[0] == 255
+
+
+def test_video_to_pil_shrinks_frames_to_the_max_image_side():
+    frames = torch.zeros(2, 3, 720, 1280)
+    assert _video_to_pil(frames, max_frames=None, max_image_side=640)[0].size == (640, 360)
+    assert _video_to_pil(frames, max_frames=None, max_image_side=None)[0].size == (1280, 720)
 
 
 def test_native_processor_truncates_all_sequence_tensors_together():
