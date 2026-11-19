@@ -150,8 +150,20 @@ def _gym_settings(
     control_mode: str,
     state_names: tuple[str, ...] = (),
     action_names: tuple[str, ...] = (),
+    instruction: str | None = None,
 ) -> dict[str, Any]:
-    """Return sim settings for an env that ``gym.make`` builds from ``config.gym_id``."""
+    """Return sim settings for an env that ``gym.make`` builds from ``config.gym_id``.
+
+    ``instruction``, when given, becomes the env's ``task_description``: the language prompt a
+    language-conditioned policy receives. Without it, the env reports its gym id.
+    """
+    kwargs: dict[str, Any] = {
+        "gym_id": config.gym_id,
+        "gym_kwargs": config.gym_kwargs,
+        "disable_env_checker": config.disable_env_checker,
+    }
+    if instruction is not None:
+        kwargs["instruction"] = instruction
     return {
         "type": "gym",
         "task": config.task,
@@ -160,12 +172,20 @@ def _gym_settings(
         "semantics": f"{config.type}-{control_mode.replace('_', '-')}-v1",
         "state_names": state_names,
         "action_names": action_names,
-        "kwargs": {
-            "gym_id": config.gym_id,
-            "gym_kwargs": config.gym_kwargs,
-            "disable_env_checker": config.disable_env_checker,
-        },
+        "kwargs": kwargs,
     }
+
+
+# The instruction each task's reference dataset was recorded with (its `meta/tasks.parquet`), so a
+# language-conditioned policy trained on that dataset is evaluated on the prompt it was trained on.
+_REFERENCE_INSTRUCTIONS = {
+    # lerobot/aloha_sim_transfer_cube_human
+    "AlohaTransferCube-v0": "Pick up the cube with the right arm and transfer it to the left arm.",
+    # lerobot/aloha_sim_insertion_human
+    "AlohaInsertion-v0": "Insert the peg into the socket.",
+    # lerobot/pusht
+    "PushT-v0": "Push the T-shaped block onto the T-shaped target.",
+}
 
 
 @EnvConfig.register_subclass("aloha")
@@ -176,6 +196,8 @@ class AlohaEnvConfig(EnvConfig):
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
+    # Language prompt for language-conditioned policies; None uses the task's reference dataset's.
+    instruction: str | None = None
 
     @property
     def gym_kwargs(self) -> dict:
@@ -187,7 +209,8 @@ class AlohaEnvConfig(EnvConfig):
 
     def sim_settings(self) -> dict[str, Any]:
         joints = tuple(f"joint_{i}.pos" for i in range(14))
-        return {**_gym_settings(self, "position", joints, joints), "robot_type": "aloha"}
+        instruction = self.instruction or (_REFERENCE_INSTRUCTIONS.get(self.task) if self.task else None)
+        return {**_gym_settings(self, "position", joints, joints, instruction), "robot_type": "aloha"}
 
 
 @EnvConfig.register_subclass("pusht")
@@ -200,6 +223,8 @@ class PushtEnvConfig(EnvConfig):
     render_mode: str = "rgb_array"
     visualization_width: int = 384
     visualization_height: int = 384
+    # Language prompt for language-conditioned policies; None uses the task's reference dataset's.
+    instruction: str | None = None
 
     @property
     def gym_kwargs(self) -> dict:
@@ -212,7 +237,8 @@ class PushtEnvConfig(EnvConfig):
         }
 
     def sim_settings(self) -> dict[str, Any]:
-        return _gym_settings(self, "position", ("agent.x", "agent.y"), ("agent.x", "agent.y"))
+        instruction = self.instruction or (_REFERENCE_INSTRUCTIONS.get(self.task) if self.task else None)
+        return _gym_settings(self, "position", ("agent.x", "agent.y"), ("agent.x", "agent.y"), instruction)
 
 
 @dataclass
