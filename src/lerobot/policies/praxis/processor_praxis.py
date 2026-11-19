@@ -87,12 +87,13 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-def droid7_to_pose8(rows: np.ndarray) -> np.ndarray:
+def droid7_to_pose8(rows: np.ndarray, clip_grip: bool = True) -> np.ndarray:
     """Convert ``(..., 7)`` ``[xyz, roll, pitch, yaw, grip]`` rows to float32 pose8 rows.
 
     The quaternion comes from the Euler angles, the matrix and back (`Rotation.matrix_to_quat_xyzw`), with
     the sign of ``scipy.spatial.transform``, as in the praxis DROID data code. The gripper is
-    clipped to [0, 1].
+    clipped to [0, 1] as the DROID data code does, unless ``clip_grip`` is False: the bimanual rig
+    keeps the gripper value of the rig in its proprio, as its training data and the praxis session do.
     """
     a = np.asarray(rows, dtype=np.float64)
     flat = a.reshape(-1, a.shape[-1])
@@ -100,7 +101,7 @@ def droid7_to_pose8(rows: np.ndarray) -> np.ndarray:
         raise ValueError(f"expected rows of 7 values [xyz, rpy, grip], got {a.shape}")
     rot = Rotation.euler_xyz_to_matrix(flat[:, 3:6])
     quat = Rotation.matrix_to_quat_xyzw(rot)[:, [3, 0, 1, 2]]
-    grip = np.clip(flat[:, 6:7], 0.0, 1.0)
+    grip = np.clip(flat[:, 6:7], 0.0, 1.0) if clip_grip else flat[:, 6:7]
     out = np.concatenate([flat[:, :3], quat, grip], axis=1).astype(np.float32)
     return out.reshape(*a.shape[:-1], PRAXIS_POSE_DIM)
 
@@ -135,18 +136,21 @@ def _feature_arms(feature: PolicyFeature) -> int:
 
 
 def _droid_rows_to_pose_tensor(rows: Tensor) -> Tensor:
-    """``(..., 7 * n)`` DROID rows of ``n`` arms as ``(..., 8 * n)`` pose8 rows (float32)."""
+    """``(..., 7 * n)`` DROID rows of ``n`` arms as ``(..., 8 * n)`` pose8 rows (float32).
+
+    The single-arm rig clips the gripper to [0, 1]; the bimanual rig keeps it (`droid7_to_pose8`).
+    """
     n = _arms(rows, PRAXIS_ACTION_DIM)
     if n == 0:
         raise ValueError(f"expected rows of 7 or 14 values, got {tuple(rows.shape)}")
-    arms = [_droid7_to_pose8_tensor(rows[..., 7 * i : 7 * (i + 1)]) for i in range(n)]
+    arms = [_droid7_to_pose8_tensor(rows[..., 7 * i : 7 * (i + 1)], clip_grip=n == 1) for i in range(n)]
     return torch.cat(arms, dim=-1)
 
 
-def _droid7_to_pose8_tensor(rows: Tensor) -> Tensor:
+def _droid7_to_pose8_tensor(rows: Tensor, clip_grip: bool = True) -> Tensor:
     """``(..., 7)`` DROID rows to ``(..., 8)`` pose8 rows, float32 on the same device."""
     values = rows.detach().float().cpu().numpy().reshape(-1, PRAXIS_ACTION_DIM)
-    pose8 = droid7_to_pose8(values).reshape(*rows.shape[:-1], PRAXIS_POSE_DIM)
+    pose8 = droid7_to_pose8(values, clip_grip=clip_grip).reshape(*rows.shape[:-1], PRAXIS_POSE_DIM)
     return torch.from_numpy(pose8).to(rows.device)
 
 
@@ -316,8 +320,8 @@ class PraxisPoseProcessorStep(ProcessorStep):
 
     Applies to the state (``observation.state``) and, in training batches, to the commanded poses
     (``action``): the quaternion comes from the Euler angles with the operations of
-    ``scipy.spatial.transform``, the gripper is clipped to [0, 1] (`droid7_to_pose8`). Rows that
-    are pose8 already pass through.
+    ``scipy.spatial.transform``, the gripper is clipped to [0, 1] for the single-arm rig and kept as
+    it is for the bimanual rig (`droid7_to_pose8`). Rows that are pose8 already pass through.
     """
 
     state_key: str = OBS_STATE
