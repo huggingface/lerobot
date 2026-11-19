@@ -12,8 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Whole-body and locomotion controllers that robots run in their own control loop.
+"""Whole-body and locomotion controllers, and the ``ControlledRobot`` that runs them.
 
-One subpackage per robot. Robots import their controllers lazily by name, so importing a
-robot does not pull in a controller's dependencies (onnxruntime, checkpoints).
+One subpackage per robot. Controllers are imported by name when selected, so importing this package
+does not pull in a controller's dependencies (onnxruntime, checkpoints).
 """
+
+from .controlled_robot import ControlledRobot, LowLevelControl
+from .controller import RobotController
+from .factory import CONTROLLERS, make_robot_controller
+
+__all__ = ["CONTROLLERS", "ControlledRobot", "LowLevelControl", "RobotController", "make_robot_controller"]

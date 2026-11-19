@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -34,11 +33,7 @@ from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
 from .g1_embodiments import get_g1_embodiment
 from .g1_kinematics import G1_29_ArmIK
-from .g1_utils import (
-    NUM_MOTORS,
-    REMOTE_KEYS,
-    default_remote_input,
-)
+from .g1_utils import NUM_MOTORS
 
 if TYPE_CHECKING or _unitree_sdk_available:
     from unitree_sdk2py.core.channel import (
@@ -65,54 +60,6 @@ if TYPE_CHECKING:
     import gymnasium as gym
 
 logger = logging.getLogger(__name__)
-
-
-@runtime_checkable
-class RobotController(Protocol):
-    """Interface for the controllers driving ``UnitreeG1``'s background control thread.
-
-    Covers both locomotion controllers (GR00T, Holosoma) and whole-body ones (SONIC).
-
-    Each tick the robot hands the controller the latest lowstate plus a snapshot of the
-    incoming action, and publishes the absolute joint targets it returns, keyed
-    ``<joint>.q``. It lives here rather than in ``controllers/`` so that importing the
-    robot does not pull in the controller implementations and their onnxruntime dependency.
-
-    Controllers may also expose any of the following, which the robot picks up when present:
-
-    - ``kp`` / ``kd``: ``(29,)`` PD gains published with the targets, overriding the config.
-    - ``default_angles``: ``(29,)`` home pose that residual actions are applied onto.
-    - ``action_ft`` / ``observation_ft``: feature dicts that take over the robot's default
-      29-DoF action space and proprioceptive state (SONIC's 64-D latent token).
-    - ``observation_state()``: current values for the keys advertised in ``observation_ft``.
-    """
-
-    control_dt: float
-    """Control period in seconds; sets the rate of the robot's controller thread."""
-
-    def run_step(self, action: dict, lowstate) -> dict:
-        """Map one lowstate plus action into absolute joint targets keyed ``<joint>.q``."""
-        ...
-
-    def reset(self) -> None:
-        """Drop per-episode state, e.g. history buffers and held commands."""
-        ...
-
-
-def make_robot_controller(name: str | None) -> RobotController | None:
-    """Instantiate a robot controller by class name. Returns None if name is None."""
-    if name is None:
-        return None
-    controllers = {
-        "GrootLocomotionController": "lerobot.controllers.unitree_g1.gr00t_locomotion",
-        "HolosomaLocomotionController": "lerobot.controllers.unitree_g1.holosoma_locomotion",
-        "SonicWholeBodyController": "lerobot.controllers.unitree_g1.sonic_whole_body",
-    }
-    module_path = controllers.get(name)
-    if module_path is None:
-        raise ValueError(f"Unknown controller: {name!r}. Available: {list(controllers)}")
-    module = importlib.import_module(module_path)
-    return getattr(module, name)()
 
 
 # DDS topic names follow Unitree SDK naming conventions
@@ -192,30 +139,22 @@ class UnitreeG1(Robot):
         self._env_wrapper: dict[str, dict[int, gym.vector.VectorEnv]] | None = None
         self._lowstate = None
         self._lowstate_lock = threading.Lock()
-        # Guards the shared lowcmd message: the controller thread, send_action(), reset() and
-        # the shutdown path all publish through it, and a torn update still carries a valid CRC.
+        # Guards the shared lowcmd message: a controller tick, send_action(), reset() and the
+        # shutdown path all publish through it, and a torn update still carries a valid CRC.
         self._lowcmd_lock = threading.Lock()
         # Decides who may drive the joints over a span of time: one controller tick, or a whole
         # reset sweep. Coarser than _lowcmd_lock, which only makes a single command atomic.
-        self._control_lock = threading.Lock()
+        # Reentrant, so a ControlledRobot can hold it across reset() and its controller's reset.
+        self._control_lock = threading.RLock()
         self._shutdown_event = threading.Event()
         self.subscribe_thread: threading.Thread | None = None
 
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
-        # Controller loaded dynamically
-        self.controller: RobotController | None = make_robot_controller(config.controller)
-        # Only a token controller (SONIC) can be held: re-sending the last token keeps the
-        # decoder balancing. Locomotion controllers take joystick velocities, which cannot.
-        self.supports_position_hold = getattr(self.controller, "action_ft", None) is not None
-        # Controller thread state
-        self._controller_thread: threading.Thread | None = None
-        self._controller_action_lock = threading.Lock()
-        self.controller_input = default_remote_input()
-        self.controller_output: RobotAction = {}
         self._ease_in_from: dict[str, float] | None = None
         self._ease_in_start: float | None = None
-        # PD gains, resolved in connect() from the controller when it provides them, else from the config.
+        # PD gains, resolved in connect() from set_gains() (a controller's) when called, else from the config.
+        self._gains: tuple[np.ndarray, np.ndarray] | None = None
         self.kp: np.ndarray
         self.kd: np.ndarray
 
@@ -304,74 +243,41 @@ class UnitreeG1(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        # A controller advertising its own proprio state (SONIC's 64-D token echo) replaces the
-        # raw joint positions rather than extending them, the way action_features hands the
-        # action space over to the controller.
-        controller_ft = getattr(self.controller, "observation_ft", None)
-        proprio_ft = self._motors_ft if controller_ft is None else dict(controller_ft)
-        return {**proprio_ft, **self._cameras_ft}
+        return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        # No controller configured: joint targets for the selected embodiment.
-        if self.controller is None:
-            return {f"{motor.name}.q": float for motor in self.joint_index}
+        return {f"{motor.name}.q": float for motor in self.joint_index}
 
-        # Whole-body controllers (SONIC): 64-D latent token.
-        controller_ft = getattr(self.controller, "action_ft", None)
-        if controller_ft is not None:
-            return dict(controller_ft)
+    # Low-level control, for the controller a ControlledRobot runs (see lerobot.controllers).
 
-        # Locomotion controllers (GR00T / Holosoma): arm joint targets + joystick axes and buttons.
-        # TODO: have GR00T/Holosoma advertise their own action_features too, so every
-        # controller declares its action space and this fallthrough can be dropped.
-        arm_features = {f"{motor.name}.q": float for motor in self.arm_index}
-        remote_features = dict.fromkeys(REMOTE_KEYS, float)
-        return {**arm_features, **remote_features}
+    @property
+    def control_lock(self) -> threading.RLock:
+        return self._control_lock
 
-    def _controller_loop(self):
-        """Background thread that runs controller at policy's control_dt."""
-        control_dt = self.controller.control_dt
-        logger.info(f"Controller loop starting with control_dt={control_dt} ({1.0 / control_dt:.1f}Hz)")
+    @property
+    def passthrough_features(self) -> dict[str, type]:
+        """Arm joint targets: callers keep driving the arms under a locomotion controller."""
+        return {f"{motor.name}.q": float for motor in self.arm_index}
 
-        loop_count = 0
-        last_log_time = time.time()
+    def low_level_state(self) -> G1LowState | None:
+        """The latest lowstate, with the complete 29-slot transport state."""
+        with self._lowstate_lock:
+            return self._lowstate
 
-        while not self._shutdown_event.is_set():
-            start_time = time.time()
+    def write_joint_targets(
+        self,
+        targets: dict[str, float],
+        kp: np.ndarray | list[float] | None = None,
+        kd: np.ndarray | list[float] | None = None,
+    ) -> None:
+        self.publish_lowcmd(targets, kp=kp, kd=kd)
 
-            with self._lowstate_lock:
-                lowstate = self._lowstate
-
-            if lowstate is not None and self.controller is not None:
-                loop_count += 1
-                if time.time() - last_log_time >= 5.0:  # Log every 5 seconds
-                    actual_hz = loop_count / (time.time() - last_log_time)
-                    logger.info(
-                        f"Controller actual rate: {actual_hz:.1f}Hz (target: {1.0 / control_dt:.1f}Hz)"
-                    )
-                    loop_count = 0
-                    last_log_time = time.time()
-                # Read controller input snapshot
-                with self._controller_action_lock:
-                    controller_input = dict(self.controller_input)
-
-                # Run controller step and publish it as one turn of control, so a reset sweep
-                # cannot interleave its own targets with this tick's.
-                with self._control_lock:
-                    controller_action = self.controller.run_step(controller_input, lowstate)
-
-                    # Write controller output snapshot
-                    with self._controller_action_lock:
-                        self.controller_output = dict(controller_action)
-
-                    ctrl_kp = self.controller.kp if hasattr(self.controller, "kp") else None
-                    ctrl_kd = self.controller.kd if hasattr(self.controller, "kd") else None
-                    self.publish_lowcmd(controller_action, kp=ctrl_kp, kd=ctrl_kd)
-
-            elapsed = time.time() - start_time
-            sleep_time = max(0, control_dt - elapsed)
-            time.sleep(sleep_time)
+    def set_gains(self, kp: np.ndarray | list[float], kd: np.ndarray | list[float]) -> None:
+        """Hold the joints with these gains instead of the config's, from connect() on."""
+        self._gains = (np.array(kp, dtype=np.float32), np.array(kd, dtype=np.float32))
+        if self.is_connected:
+            self.kp, self.kd = self._gains
 
     def calibrate(self) -> None:
         # TODO: implement g1_29 calibration
@@ -431,11 +337,10 @@ class UnitreeG1(Robot):
         logger.info("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
-        # Prefer the active controller's gains (e.g. SONIC loads kp/kd from its ONNX);
+        # Prefer the gains set with set_gains() (a controller's: SONIC loads kp/kd from its ONNX);
         # otherwise fall back to the config defaults.
-        if self.controller is not None and hasattr(self.controller, "kp"):
-            self.kp = np.array(self.controller.kp, dtype=np.float32)
-            self.kd = np.array(self.controller.kd, dtype=np.float32)
+        if self._gains is not None:
+            self.kp, self.kd = self._gains
         else:
             self.kp = np.array(self.config.kp, dtype=np.float32)
             self.kd = np.array(self.config.kd, dtype=np.float32)
@@ -446,19 +351,7 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[joint].kd = self.kd[joint.value]
             self.msg.motor_cmd[joint].q = lowstate.motor_state[joint.value].q
 
-        # Ease into the controller's home pose before it takes over, so the first commands
-        # don't snap from the connect-time pose. reset() picks that pose up on its own.
-        if self.controller is not None and hasattr(self.controller, "default_angles"):
-            self.reset()
-        else:
-            self._arm_ease_in()
-
-        # Start controller thread if enabled
-        if self.controller is not None:
-            self._controller_thread = threading.Thread(target=self._controller_loop, daemon=True)
-            self._controller_thread.start()
-            fps = int(1.0 / self.controller.control_dt)
-            logger.info(f"Controller thread started ({fps}Hz)")
+        self._arm_ease_in()
 
     def _send_zero_torque(self) -> None:
         """Send a zero-gain command to make joints passive before shutting down."""
@@ -475,16 +368,9 @@ class UnitreeG1(Robot):
             logger.warning(f"Failed to send zero-torque on disconnect: {e}")
 
     def disconnect(self):
-        # Signal threads to stop and unblock any waits
+        # Signal threads to stop and unblock any waits. A ControlledRobot has already stopped its
+        # controller thread, so zero torque is the robot's last command.
         self._shutdown_event.set()
-
-        # Wait for controller thread to finish. It has to be stopped before going passive,
-        # otherwise a tick already in flight re-stiffens the joints and zero torque is not the
-        # robot's last command.
-        if self._controller_thread is not None:
-            self._controller_thread.join(timeout=2.0)
-            if self._controller_thread.is_alive():
-                logger.warning("Controller thread did not stop cleanly")
 
         # Put robot in passive mode
         if not self.config.is_simulation:
@@ -566,11 +452,6 @@ class UnitreeG1(Robot):
         if lowstate.wireless_remote:
             obs["wireless_remote"] = lowstate.wireless_remote
 
-        # Controller-contributed observation (e.g. SONIC echoes its last decoded token as
-        # observation.state so a token-output VLA closes the loop on its own previous token).
-        if self.controller is not None and hasattr(self.controller, "observation_state"):
-            obs.update(self.controller.observation_state())
-
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
             if getattr(cam, "use_rgb", True):
@@ -581,24 +462,7 @@ class UnitreeG1(Robot):
         return obs
 
     def send_action(self, action: RobotAction) -> RobotAction:
-        action_to_publish = action
-        if self.controller is not None:
-            # Controller thread owns legs/waist. Here we only update joystick inputs
-            # and publish arm targets from the teleoperator.
-            self._update_controller_action(action)
-            arm_prefixes = tuple(j.name for j in self.arm_index)
-            action_to_publish = {
-                key: value
-                for key, value in action.items()
-                if key.endswith(".q") and key.startswith(arm_prefixes)
-            }
-            if not action_to_publish:
-                # Nothing here for the arms, so publishing would only re-send the controller
-                # thread's own last command with a fresh CRC, at the caller's rate on top of the
-                # controller's. Token-only actions (a SONIC policy) hit this on every step.
-                return action
-
-        action_to_publish = self._ease_in(action_to_publish)
+        action_to_publish = self._ease_in(action)
 
         tau: np.ndarray | None = None
         if self.config.gravity_compensation and self.arm_ik is not None:
@@ -616,14 +480,6 @@ class UnitreeG1(Robot):
 
         self.publish_lowcmd(action_to_publish, tau=tau)
         return {**action, **action_to_publish}
-
-    def _update_controller_action(self, action: RobotAction) -> None:
-        """Forward incoming teleop action values into ``controller_input``; each controller
-        reads only the keys it understands."""
-        with self._controller_action_lock:
-            for key, value in action.items():
-                if isinstance(key, str) and value is not None:
-                    self.controller_input[key] = value
 
     @property
     def is_calibrated(self) -> bool:
@@ -650,15 +506,12 @@ class UnitreeG1(Robot):
     ) -> None:  # move robot to default position
         if control_dt is None:
             control_dt = self.config.control_dt
+        # A ControlledRobot passes its controller's home pose: that is what its policy was trained
+        # around (SONIC reads it from the ONNX metadata). The config default is for raw joint teleop.
         if default_positions is None:
-            # Home to the controller's own pose when it has one: that is what its policy was
-            # trained around (SONIC reads it from the ONNX metadata), whereas the config default
-            # is a generic fallback for raw joint teleop.
-            controller_home = getattr(self.controller, "default_angles", None)
-            source = self.config.default_positions if controller_home is None else controller_home
-            default_positions = np.array(source, dtype=np.float32)
+            default_positions = np.array(self.config.default_positions, dtype=np.float32)
 
-        # Hold control authority for the whole sweep. Otherwise the controller thread keeps
+        # Hold control authority for the whole sweep. Otherwise a controller thread keeps
         # publishing its own targets throughout, and the robot is driven by two writers at once.
         with self._control_lock:
             if self.config.is_simulation and self.sim_env is not None:
@@ -695,11 +548,6 @@ class UnitreeG1(Robot):
                     elapsed = time.time() - start_time
                     sleep_time = max(0, control_dt - elapsed)
                     time.sleep(sleep_time)
-
-            # Reset controller internal state (gait phase, obs history, etc.) while the thread
-            # is still held off, so it cannot half-refill the buffers we are clearing.
-            if self.controller is not None and hasattr(self.controller, "reset"):
-                self.controller.reset()
 
             self._arm_ease_in()
 

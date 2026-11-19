@@ -26,6 +26,17 @@ logger = logging.getLogger(__name__)
 
 
 def make_robot_from_config(config: RobotConfig) -> Robot:
+    """Build the robot `config` describes, run by the controller it names (`--robot.controller=...`), if any."""
+    robot = _make_robot(config)
+    controller_name = getattr(config, "controller", None)
+    if controller_name is None:
+        return robot
+    from lerobot.controllers import ControlledRobot, make_robot_controller
+
+    return ControlledRobot(robot, make_robot_controller(config.type, controller_name))
+
+
+def _make_robot(config: RobotConfig) -> Robot:
     # TODO(Steven): Consider just using the make_device_from_device_class for all types
     if config.type == "sim":
         from .sim_robot import SimRobot

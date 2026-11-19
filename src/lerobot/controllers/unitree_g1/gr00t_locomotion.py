@@ -24,11 +24,13 @@ from huggingface_hub import hf_hub_download
 from lerobot.robots.unitree_g1.g1_utils import (
     REMOTE_AXES,
     REMOTE_BUTTONS,
+    REMOTE_KEYS,
     G1_29_JointIndex,
     get_gravity_orientation,
     make_ort_session_options,
 )
-from lerobot.robots.unitree_g1.unitree_g1 import RobotController
+
+from ..controller import RobotController
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,9 @@ class GrootLocomotionController(RobotController):
     """GR00T lower-body locomotion controller for the Unitree G1."""
 
     control_dt = CONTROL_DT
+    # Joystick velocities and buttons; the arms stay the caller's.
+    action_ft = dict.fromkeys(REMOTE_KEYS, float)
+    passthrough = True
 
     def __init__(self):
         # Load policies
