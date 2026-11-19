@@ -807,8 +807,11 @@ def save_annotations_to_dataset(
                 if col not in file_df.columns:
                     file_df[col] = None
             if ep_idx in annotations:
+                # file_df holds only the episodes of this chunk/file, with a local 0-based index;
+                # find this episode's row by its episode_index, not by the global ep_idx.
+                row = file_df.index[file_df["episode_index"] == ep_idx][0]
                 for col in cols:
-                    file_df.at[ep_idx, col] = episodes_df.loc[ep_idx, col]
+                    file_df.at[row, col] = episodes_df.loc[ep_idx, col]
                 if prefix == "sparse":  # Legacy columns
                     for i, legacy in enumerate(
                         [
@@ -819,7 +822,7 @@ def save_annotations_to_dataset(
                             "subtask_end_frames",
                         ]
                     ):
-                        file_df.at[ep_idx, legacy] = episodes_df.loc[ep_idx, cols[i]]
+                        file_df.at[row, legacy] = episodes_df.loc[ep_idx, cols[i]]
             file_df.to_parquet(path, engine="pyarrow", compression="snappy")
 
 
