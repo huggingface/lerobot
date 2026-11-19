@@ -79,3 +79,30 @@ def test_reward_model_revision_defaults_to_none_when_not_given(monkeypatch):
     cfg._resolve_pretrained_from_cli()
 
     assert captured["revision"] is None
+
+
+def _resolve_revision(monkeypatch, extra_args):
+    captured = {}
+
+    def fake_from_pretrained(pretrained_name_or_path, **kwargs):
+        captured["revision"] = kwargs.get("revision")
+        return SimpleNamespace(pretrained_path=None, pretrained_revision=None)
+
+    monkeypatch.setattr(RewardModelConfig, "from_pretrained", fake_from_pretrained)
+    monkeypatch.setattr(sys, "argv", ["lerobot-train", "--reward_model.path=user/reward-model", *extra_args])
+    _bare_train_config()._resolve_pretrained_from_cli()
+    return captured["revision"]
+
+
+def test_reward_model_pretrained_revision_space_separated(monkeypatch):
+    """`--reward_model.pretrained_revision release/v2` (no `=`) must pin the revision too."""
+    revision = _resolve_revision(monkeypatch, ["--reward_model.pretrained_revision", "release/v2"])
+    assert revision == "release/v2"
+
+
+def test_reward_model_pretrained_revision_without_value_is_none(monkeypatch):
+    """A following `--flag` is not mistaken for the revision value."""
+    revision = _resolve_revision(
+        monkeypatch, ["--reward_model.pretrained_revision", "--reward_model.device=cpu"]
+    )
+    assert revision is None

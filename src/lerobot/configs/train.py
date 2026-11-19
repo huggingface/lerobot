@@ -107,18 +107,13 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
 
 
 def _get_override_value(overrides: list[str] | None, name: str) -> str | None:
-    """Return the value of `--<name>=<value>` in a de-nested override list, or None if absent.
+    """Return the value of `--<name>=<value>` or `--<name> <value>` in a de-nested override list.
 
     The list is the one produced by `parser.get_cli_overrides`, whose entries have already had
-    their `--<field>.` prefix stripped.
+    their `--<field>.` prefix stripped. A bare `--<name>` followed by another `--flag` has no value.
     """
-    if not overrides:
-        return None
-    prefix = f"--{name}="
-    for override in overrides:
-        if override.startswith(prefix):
-            return override.removeprefix(prefix)
-    return None
+    # The explicit list stops `parse_arg` from falling back to `sys.argv`.
+    return parser.parse_arg(name, args=overrides or [])
 
 
 @dataclass
