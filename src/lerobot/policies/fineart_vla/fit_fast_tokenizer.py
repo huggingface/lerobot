@@ -26,11 +26,16 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import torch
 from huggingface_hub import snapshot_download
 
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
+from lerobot.processor import NormalizerProcessorStep, RelativeActionsProcessorStep, create_transition
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -74,7 +79,8 @@ def _dataset_signature(
     exclude_episodes: list[int] | None = None,
     action_stats: dict | None = None,
     use_relative_actions: bool = False,
-    relative_action_mask: list[bool] | None = None,
+    relative_exclude_joints: list[str] | None = None,
+    action_names: list[str] | None = None,
     validation_samples: int = 256,
     max_reconstruction_rmse: float = 0.10,
     max_dim_rmse: float = 0.20,
@@ -91,7 +97,8 @@ def _dataset_signature(
         "exclude_episodes": exclude_episodes,
         "action_stats": action_stats,
         "use_relative_actions": use_relative_actions,
-        "relative_action_mask": relative_action_mask,
+        "relative_exclude_joints": relative_exclude_joints,
+        "action_names": action_names,
         "validation_samples": validation_samples,
         "max_reconstruction_rmse": max_reconstruction_rmse,
         "max_dim_rmse": max_dim_rmse,
@@ -108,61 +115,6 @@ def _select_episode_indices(
     allowed = set(episodes) if episodes is not None else set(available_episodes)
     excluded = set(exclude_episodes or [])
     return [episode for episode in available_episodes if episode in allowed and episode not in excluded]
-
-
-def _apply_relative_actions(
-    actions: np.ndarray,
-    states: np.ndarray,
-    relative_action_mask: list[bool] | None,
-) -> np.ndarray:
-    """Match RelativeActionsProcessorStep before tokenizer fitting."""
-    action_dim = actions.shape[-1]
-    mask = list(relative_action_mask) if relative_action_mask is not None else [True] * action_dim
-    if len(mask) < action_dim:
-        mask.extend([True] * (action_dim - len(mask)))
-    mask_array = np.asarray(mask[:action_dim], dtype=np.float32)
-    relative = actions.copy()
-    relative -= states[:, None, :action_dim] * mask_array
-    return relative
-
-
-def _normalize_actions(
-    actions: np.ndarray,
-    normalization_mode: str,
-    action_stats: dict | None = None,
-) -> np.ndarray:
-    """Match the action normalization applied by the training preprocessor."""
-    mode = getattr(normalization_mode, "value", normalization_mode).upper()
-    flat = actions.reshape(-1, actions.shape[-1])
-    stats = action_stats or {}
-
-    def stat(name: str, fallback) -> np.ndarray:
-        value = stats.get(name)
-        if value is None:
-            value = fallback()
-        if hasattr(value, "detach"):
-            value = value.detach().cpu().numpy()
-        return np.asarray(value, dtype=np.float32)
-
-    if mode == "IDENTITY":
-        return actions
-    if mode == "MEAN_STD":
-        mean = stat("mean", lambda: flat.mean(axis=0))
-        std = stat("std", lambda: flat.std(axis=0))
-        return ((actions - mean) / np.where(std == 0, 1e-8, std)).astype(np.float32)
-    if mode in {"QUANTILES", "QUANTILE10"}:
-        low_name, high_name, low_q, high_q = (
-            ("q01", "q99", 0.01, 0.99) if mode == "QUANTILES" else ("q10", "q90", 0.10, 0.90)
-        )
-        low = stat(low_name, lambda: np.quantile(flat, low_q, axis=0))
-        high = stat(high_name, lambda: np.quantile(flat, high_q, axis=0))
-    elif mode == "MIN_MAX":
-        low = stat("min", lambda: flat.min(axis=0))
-        high = stat("max", lambda: flat.max(axis=0))
-    else:
-        raise ValueError(f"Unsupported FAST tokenizer normalization mode: {mode}")
-
-    return (2.0 * (actions - low) / np.where(high == low, 1e-8, high - low) - 1.0).astype(np.float32)
 
 
 def _validate_fast_reconstruction(
@@ -234,7 +186,8 @@ def fit_fast_tokenizer(
     normalization_mode: str = "QUANTILES",
     action_stats: dict | None = None,
     use_relative_actions: bool = False,
-    relative_action_mask: list[bool] | None = None,
+    relative_exclude_joints: list[str] | None = None,
+    action_names: list[str] | None = None,
     validation_samples: int = 256,
     max_reconstruction_rmse: float = 0.10,
     max_dim_rmse: float = 0.20,
@@ -256,6 +209,13 @@ def fit_fast_tokenizer(
             ``policy.chunk_size``). The FAST tokenizer is fit on
             sequences of this length.
         seed: RNG seed for sample selection.
+        normalization_mode: Action normalization mode of the training preprocessor.
+        action_stats: Action statistics of the training preprocessor. Without them,
+            actions stay unnormalized, as in training.
+        use_relative_actions: Convert actions to offsets from the chunk's first state.
+        relative_exclude_joints: Joint names kept absolute, as in
+            ``RelativeActionsProcessorStep``.
+        action_names: Action dimension names used to match ``relative_exclude_joints``.
 
     Returns:
         The local path to the fitted tokenizer. Passed directly to
@@ -281,7 +241,8 @@ def fit_fast_tokenizer(
         exclude_episodes,
         action_stats,
         use_relative_actions,
-        relative_action_mask,
+        relative_exclude_joints,
+        action_names,
         validation_samples,
         max_reconstruction_rmse,
         max_dim_rmse,
@@ -413,8 +374,6 @@ def fit_fast_tokenizer(
         eps_visited += 1
 
     actions = np.stack(actions_buf, axis=0).astype(np.float32)  # (N, H, D)
-    if states is not None:
-        actions = _apply_relative_actions(actions, np.stack(states_buf), relative_action_mask)
     logger.info(
         "FAST fit: collected %d chunks of shape %s from %d episodes",
         actions.shape[0],
@@ -422,7 +381,21 @@ def fit_fast_tokenizer(
         eps_visited,
     )
 
-    actions = _normalize_actions(actions, normalization_mode, action_stats)
+    # Fit on what the model trains on: the training preprocessor's relative-action and
+    # normalization steps, built from the same settings and applied in the same order.
+    relative_step = RelativeActionsProcessorStep(
+        enabled=use_relative_actions,
+        exclude_joints=list(relative_exclude_joints or []),
+        action_names=action_names,
+    )
+    normalizer = NormalizerProcessorStep(
+        features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(actions.shape[-1],))},
+        norm_map={FeatureType.ACTION: NormalizationMode(normalization_mode)},
+        stats={ACTION: action_stats} if action_stats is not None else None,
+    )
+    observation = {OBS_STATE: torch.from_numpy(np.stack(states_buf))} if states is not None else None
+    transition = create_transition(observation=observation, action=torch.from_numpy(actions))
+    actions = cast(torch.Tensor, normalizer(relative_step(transition))[TransitionKey.ACTION]).numpy()
 
     base = _load_fast_fitter(base_tokenizer_name)
     if not hasattr(base, "fit"):
@@ -480,18 +453,6 @@ def resolve_fast_tokenizer(
         )
         return config.action_tokenizer_name
 
-    relative_action_mask = None
-    if getattr(config, "use_relative_actions", False):
-        action_names = getattr(config, "action_feature_names", None)
-        exclude_tokens = [
-            str(name).lower() for name in getattr(config, "relative_exclude_joints", []) if name
-        ]
-        if action_names is not None and exclude_tokens:
-            relative_action_mask = [
-                not any(token == str(name).lower() or token in str(name).lower() for token in exclude_tokens)
-                for name in action_names
-            ]
-
     fit_kwargs = {
         "dataset_repo_id": dataset_repo_id,
         "cache_dir": Path(config.fast_tokenizer_cache_dir).expanduser(),
@@ -505,7 +466,8 @@ def resolve_fast_tokenizer(
         "normalization_mode": config.normalization_mapping.get("ACTION", "QUANTILES"),
         "action_stats": (dataset_stats or {}).get("action"),
         "use_relative_actions": getattr(config, "use_relative_actions", False),
-        "relative_action_mask": relative_action_mask,
+        "relative_exclude_joints": getattr(config, "relative_exclude_joints", []),
+        "action_names": getattr(config, "action_feature_names", None),
     }
     validation_fields = {
         "validation_samples": "fast_tokenizer_validation_samples",

@@ -62,13 +62,17 @@ def _write_dataset(root: Path, episode_lengths: dict[int, int]) -> Path:
     for episode, length in episode_lengths.items():
         episode_indices.extend([episode] * length)
         actions.extend([[episode * 100 + frame, episode * 100 + frame + 0.5] for frame in range(length)])
+    # Each state is half its frame's action, so a chunk's reference state is known from its actions.
+    states = (0.5 * np.asarray(actions)).tolist()
     pq.write_table(
-        pa.table({"episode_index": episode_indices, "action": actions}), data_dir / "file-000.parquet"
+        pa.table({"episode_index": episode_indices, "action": actions, "observation.state": states}),
+        data_dir / "file-000.parquet",
     )
     return root
 
 
 def _fit(root: Path, cache: Path, **kwargs) -> Path:
+    kwargs.setdefault("normalization_mode", "IDENTITY")
     return Path(
         fitting.fit_fast_tokenizer(
             dataset_repo_id="test/local-actions",
@@ -77,7 +81,6 @@ def _fit(root: Path, cache: Path, **kwargs) -> Path:
             chunk_size=4,
             n_samples=6,
             validation_samples=3,
-            normalization_mode="IDENTITY",
             **kwargs,
         )
     )
@@ -150,3 +153,50 @@ def test_empty_selection_fails_before_loading_codec(tmp_path: Path, fitter: Mock
         _fit(root, tmp_path / "cache", exclude_episodes=[0])
 
     fitter.assert_not_called()
+
+
+def test_fitting_applies_relative_actions_then_normalization(tmp_path: Path, fitter: Mock) -> None:
+    root = _write_dataset(tmp_path / "dataset", {0: 8, 3: 8})
+    _fit(root, tmp_path / "raw-cache")
+    raw = fitter.call_args.args[0]
+    # A tiny nonzero std tells runtime's ``std + eps`` apart from dividing by ``std``.
+    mean, std = np.array([1.0, -2.0]), np.array([4.0, 1e-7])
+
+    _fit(
+        root,
+        tmp_path / "cache",
+        normalization_mode="MEAN_STD",
+        action_stats={"mean": mean, "std": std},
+        use_relative_actions=True,
+        relative_exclude_joints=["gripper"],
+        action_names=["shoulder", "gripper"],
+    )
+
+    # Training subtracts the chunk's first state from every non-excluded dimension, then normalizes.
+    first_state = 0.5 * raw[:, :1] * np.array([1.0, 0.0])
+    expected = (raw - first_state - mean) / (std + 1e-8)
+    np.testing.assert_allclose(fitter.call_args.args[0], expected, rtol=1e-5)
+
+
+def test_fitting_without_stats_keeps_actions_unnormalized(tmp_path: Path, fitter: Mock) -> None:
+    root = _write_dataset(tmp_path / "dataset", {0: 8, 3: 8})
+    _fit(root, tmp_path / "raw-cache")
+    raw = fitter.call_args.args[0]
+
+    # Training's normalizer passes actions through when it has no statistics for them.
+    _fit(root, tmp_path / "cache", normalization_mode="QUANTILES")
+
+    np.testing.assert_array_equal(fitter.call_args.args[0], raw)
+
+
+def test_cache_key_tracks_relative_action_settings(tmp_path: Path, fitter: Mock) -> None:
+    root = _write_dataset(tmp_path / "dataset", {0: 8, 3: 8})
+    settings = {"use_relative_actions": True, "action_names": ["shoulder", "gripper"]}
+
+    first = _fit(root, tmp_path / "cache", **settings)
+    reused = _fit(root, tmp_path / "cache", **settings)
+    excluded = _fit(root, tmp_path / "cache", relative_exclude_joints=["gripper"], **settings)
+
+    assert reused == first
+    assert excluded != first
+    assert fitter.call_count == 2
