@@ -574,7 +574,10 @@ fail-under = 52
 output-format = "term-missing"
 color = true
 paths = ["src/lerobot"]
-exclude = ["src/lerobot/policies/molmoact2/molmoact2_hf_model"]
+exclude = [
+    "src/lerobot/policies/molmoact2/molmoact2_hf_model",
+    "src/lerobot/rewards/rynnvalue/rynn_value_lang",
+]
 
 [tool.pytest.ini_options]
 markers = [
@@ -612,9 +615,13 @@ enable_error_code = [
 # check_untyped_defs = true        # 195: most valuable; decide first how Optional dataset metadata is accessed
 
 # One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
-# molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
+# molmoact2_hf_model and rynn_value_lang (kept verbatim so upstream syncs stay clean).
 [[tool.mypy.overrides]]
-module = ["lerobot.rl.*", "lerobot.policies.molmoact2.molmoact2_hf_model.*"]
+module = [
+    "lerobot.rl.*",
+    "lerobot.policies.molmoact2.molmoact2_hf_model.*",
+    "lerobot.rewards.rynnvalue.rynn_value_lang.*",
+]
 ignore_errors = true
 
 # ZeroMQ's public stubs re-export names from Python modules. Follow those modules

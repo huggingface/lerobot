@@ -1,4 +1,4 @@
-# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 Alibaba DAMO Academy and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+# configuration_rynn_value_lang.py
 
 from typing import Literal
 
@@ -44,23 +46,28 @@ class ValueTokenizerConfig(PretrainedConfig):
         self.support_transform = support_transform
         self.encoding = encoding
         self.hl_gauss_sigma_ratio = hl_gauss_sigma_ratio
+        # bin_edges_path is a convenience entry point for YAML configs; the
+        # trainer resolves it into bin_edges before the model is built, so it is
+        # normally None on a constructed / serialized config.
         self.bin_edges_path = bin_edges_path
         self.bin_edges = list(bin_edges) if bin_edges is not None else None
-        if support_transform == "quantile":
+
+        if self.support_transform == "quantile":
             if self.bin_edges is None:
                 raise ValueError(
-                    f"support_transform='quantile' requires explicit bin_edges (length bins+1={bins + 1})."
+                    "support_transform='quantile' requires explicit bin_edges "
+                    f"(length bins+1={self.bins + 1}). Got None. Populate it via "
+                    "bin_edges_path + trainer resolution, or pass bin_edges directly."
                 )
-            if len(self.bin_edges) != bins + 1:
+            if len(self.bin_edges) != self.bins + 1:
                 raise ValueError(
-                    f"bin_edges must have length bins+1 ({bins + 1}), got {len(self.bin_edges)}."
+                    f"bin_edges must have length bins+1 ({self.bins + 1}), got {len(self.bin_edges)}."
                 )
-            if any(
-                self.bin_edges[index + 1] <= self.bin_edges[index] for index in range(len(self.bin_edges) - 1)
-            ):
+            if any(self.bin_edges[i + 1] <= self.bin_edges[i] for i in range(len(self.bin_edges) - 1)):
                 raise ValueError("bin_edges must be strictly increasing.")
-        if encoding not in ("two_hot", "hl_gauss"):
-            raise ValueError(f"Unsupported encoding: {encoding}. Expected 'two_hot' or 'hl_gauss'.")
+
+        if self.encoding not in ("two_hot", "hl_gauss"):
+            raise ValueError(f"Unsupported encoding: {self.encoding}. Expected 'two_hot' or 'hl_gauss'.")
 
 
 class ValueHeadConfig(PretrainedConfig):
@@ -106,28 +113,42 @@ class RynnValueLangConfig(Qwen3VLConfig):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self._attn_implementation = attn_implementation or "pred_slot_isolated_eager"
+        # The value heads require the custom prediction-slot isolation attention,
+        # so default to it when the caller doesn't specify one. to_dict() persists
+        # it and from_dict() re-applies it, so exported models self-select it on
+        # load without any external override.
+        if attn_implementation is None:
+            attn_implementation = "pred_slot_isolated_eager"
+        self._attn_implementation = attn_implementation
+
         if value_tokenizer_config is None:
             value_tokenizer_config = ValueTokenizerConfig()
         elif isinstance(value_tokenizer_config, dict):
             value_tokenizer_config = ValueTokenizerConfig(**value_tokenizer_config)
+
         if relative_value_tokenizer_config is None and relative_value_head_config is not None:
-            raise ValueError("relative_value_head_config is set but relative_value_tokenizer_config is None.")
-        if isinstance(relative_value_tokenizer_config, dict):
+            raise ValueError(
+                "relative_value_head_config is set but relative_value_tokenizer_config is None. "
+                "Please provide an explicit relative_value_tokenizer_config."
+            )
+        elif isinstance(relative_value_tokenizer_config, dict):
             relative_value_tokenizer_config = ValueTokenizerConfig(**relative_value_tokenizer_config)
-        if isinstance(value_head_config, dict):
+
+        if value_head_config is not None and isinstance(value_head_config, dict):
             value_head_config = ValueHeadConfig(**value_head_config)
-        if isinstance(relative_value_head_config, dict):
+
+        if relative_value_head_config is not None and isinstance(relative_value_head_config, dict):
             relative_value_head_config = ValueHeadConfig(**relative_value_head_config)
+
         self.value_tokenizer_config = value_tokenizer_config
         self.relative_value_tokenizer_config = relative_value_tokenizer_config
         self.value_head_config = value_head_config
         self.relative_value_head_config = relative_value_head_config
         self.num_value_heads = int(num_value_heads)
         self.value_token_repeat = int(value_token_repeat)
-        self.relative_value_token_repeat = int(relative_value_token_repeat)
         if self.value_token_repeat < 1:
             raise ValueError(f"value_token_repeat must be >= 1, got {self.value_token_repeat}")
+        self.relative_value_token_repeat = int(relative_value_token_repeat)
         if self.relative_value_token_repeat < 1:
             raise ValueError(
                 f"relative_value_token_repeat must be >= 1, got {self.relative_value_token_repeat}"
@@ -139,34 +160,65 @@ class RynnValueLangConfig(Qwen3VLConfig):
         return self.value_tokenizer_config.bins
 
     @classmethod
-    def from_qwen3vl(cls, source: str | Qwen3VLConfig, **kwargs) -> "RynnValueLangConfig":
+    def from_qwen3vl(
+        cls,
+        source: str | Qwen3VLConfig,
+        value_tokenizer_config: ValueTokenizerConfig | dict | None = None,
+        value_head_config: ValueHeadConfig | dict | None = None,
+        relative_value_head_config: ValueHeadConfig | dict | None = None,
+        relative_value_tokenizer_config: ValueTokenizerConfig | dict | None = None,
+        num_value_heads: int = 1,
+        value_token_repeat: int = 1,
+        relative_value_token_repeat: int = 1,
+        attn_implementation: str | None = None,
+        **kwargs,
+    ) -> "RynnValueLangConfig":
         if isinstance(source, str):
             base_config = Qwen3VLConfig.from_pretrained(source)
         elif isinstance(source, Qwen3VLConfig):
             base_config = source
         else:
             raise TypeError("source must be a pretrained model name/path or a Qwen3VLConfig instance.")
+
+        if attn_implementation is None and hasattr(base_config, "_attn_implementation"):
+            attn_implementation = base_config._attn_implementation
+
         base_dict = base_config.to_dict()
-        for key in (
-            "model_type",
-            "value_tokenizer_config",
-            "relative_value_tokenizer_config",
-            "value_head_config",
-            "relative_value_head_config",
-            "success_head_config",
-            "match_head_config",
-            "architectures",
-            "bins",
-            "num_value_heads",
-            "value_token_repeat",
-            "relative_value_token_repeat",
-        ):
-            base_dict.pop(key, None)
+        base_dict.pop("model_type", None)
+        base_dict.pop("value_tokenizer_config", None)
+        base_dict.pop("relative_value_tokenizer_config", None)
+        base_dict.pop("value_head_config", None)
+        base_dict.pop("relative_value_head_config", None)
+        base_dict.pop("success_head_config", None)
+        base_dict.pop("match_head_config", None)
+        base_dict.pop("architectures", None)
+        base_dict.pop("bins", None)
+        base_dict.pop("num_value_heads", None)
+        base_dict.pop("value_token_repeat", None)
+        base_dict.pop("relative_value_token_repeat", None)
+
+        if attn_implementation is not None:
+            base_dict["attn_implementation"] = attn_implementation
+
         base_dict.update(kwargs)
-        return cls(**base_dict)
+
+        return cls(
+            **base_dict,
+            value_tokenizer_config=value_tokenizer_config,
+            value_head_config=value_head_config,
+            relative_value_head_config=relative_value_head_config,
+            relative_value_tokenizer_config=relative_value_tokenizer_config,
+            num_value_heads=num_value_heads,
+            value_token_repeat=value_token_repeat,
+            relative_value_token_repeat=relative_value_token_repeat,
+        )
 
     @classmethod
     def from_dict(cls, config_dict, **kwargs):
+        # Transformers treats ``attn_implementation`` as a runtime-only kwarg and
+        # drops it when loading a saved config, so it would be lost on reload even
+        # though ``to_dict`` persists it. Re-apply the persisted value unless the
+        # caller explicitly overrode it via kwargs.
         persisted_attn = config_dict.get("attn_implementation")
         outputs = super().from_dict(config_dict, **kwargs)
         config = outputs[0] if isinstance(outputs, tuple) else outputs
@@ -176,26 +228,27 @@ class RynnValueLangConfig(Qwen3VLConfig):
 
     def to_dict(self):
         output = super().to_dict()
-        output.update(
-            architectures=["RynnValueLangModel"],
-            value_tokenizer_config=self.value_tokenizer_config.to_dict(),
-            relative_value_tokenizer_config=(
-                self.relative_value_tokenizer_config.to_dict()
-                if self.relative_value_tokenizer_config is not None
-                else None
-            ),
-            value_head_config=(
-                self.value_head_config.to_dict() if self.value_head_config is not None else None
-            ),
-            relative_value_head_config=(
-                self.relative_value_head_config.to_dict()
-                if self.relative_value_head_config is not None
-                else None
-            ),
-            num_value_heads=self.num_value_heads,
-            value_token_repeat=self.value_token_repeat,
-            relative_value_token_repeat=self.relative_value_token_repeat,
+        output["architectures"] = ["RynnValueLangModel"]
+        output["value_tokenizer_config"] = self.value_tokenizer_config.to_dict()
+        output["relative_value_tokenizer_config"] = (
+            self.relative_value_tokenizer_config.to_dict()
+            if self.relative_value_tokenizer_config is not None
+            else None
         )
-        if getattr(self, "_attn_implementation", None) is not None:
-            output["attn_implementation"] = self._attn_implementation
+        output["value_head_config"] = (
+            self.value_head_config.to_dict() if self.value_head_config is not None else None
+        )
+        output["relative_value_head_config"] = (
+            self.relative_value_head_config.to_dict() if self.relative_value_head_config is not None else None
+        )
+        output["num_value_heads"] = self.num_value_heads
+        output["value_token_repeat"] = self.value_token_repeat
+        output["relative_value_token_repeat"] = self.relative_value_token_repeat
+        # The base to_dict() strips the private ``_attn_implementation`` attribute,
+        # so persist it here; otherwise the custom attention (pred_slot_isolated_eager)
+        # is dropped from config.json and a reloaded model silently falls back to
+        # the default attention.
+        attn_implementation = getattr(self, "_attn_implementation", None)
+        if attn_implementation is not None:
+            output["attn_implementation"] = attn_implementation
         return output

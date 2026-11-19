@@ -1,4 +1,4 @@
-# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 Alibaba DAMO Academy and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# value_heads.py
+
 import math
 
 import torch
-from torch import nn
+import torch.nn as nn
 
 
 def default_init():
@@ -31,21 +33,39 @@ def default_init():
 
 
 class LinearValueHead(nn.Module):
-    def __init__(self, input_dim: int, output_dim: int, device=None, dtype=None) -> None:
+    """Simple linear value head: hidden_states -> logits."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        device=None,
+        dtype=torch.float32,
+    ) -> None:
         super().__init__()
         self.proj = nn.Linear(input_dim, output_dim, device=device, dtype=dtype)
         self.apply(default_init())
 
     @classmethod
     def from_config(cls, config, input_dim: int, output_dim: int, **kwargs):
-        return cls(input_dim=input_dim, output_dim=output_dim, **kwargs)
+        return cls(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            **kwargs,
+        )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         return self.proj(hidden_states)
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, hidden_dims: int, activation=None, device=None, dtype=None) -> None:
+    def __init__(
+        self,
+        hidden_dims: int,
+        activation: nn.Module | None = None,
+        device=None,
+        dtype=None,
+    ) -> None:
         super().__init__()
         self.fc1 = nn.Linear(hidden_dims, hidden_dims, device=device, dtype=dtype)
         self.ln1 = nn.LayerNorm(hidden_dims, device=device, dtype=dtype)
@@ -54,51 +74,80 @@ class ResidualBlock(nn.Module):
         self.ln2 = nn.LayerNorm(hidden_dims, device=device, dtype=dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.ln2(self.fc2(self.act(self.ln1(self.fc1(x)))))
+        res = self.fc1(x)
+        res = self.ln1(res)
+        res = self.act(res)
+        res = self.fc2(res)
+        res = self.ln2(res)
+        return x + res
 
 
 class BroNet(nn.Module):
+    """BRO-style residual MLP network."""
+
     def __init__(
         self,
         input_dim: int,
         hidden_dims: int,
         depth: int,
-        activation=None,
+        activation: nn.Module | None = None,
         output_dim: int = 1,
         device=None,
         dtype=None,
     ) -> None:
         super().__init__()
+
         if depth < 1:
             raise ValueError(f"Unsupported depth: {depth}. Expected depth >= 1.")
+
         self.activation = activation if activation is not None else nn.ReLU()
+
         self.input_layer = nn.Linear(input_dim, hidden_dims, device=device, dtype=dtype)
         self.input_norm = nn.LayerNorm(hidden_dims, device=device, dtype=dtype)
+
         self.blocks = nn.ModuleList(
             [
-                ResidualBlock(hidden_dims, self._make_activation(), device=device, dtype=dtype)
+                ResidualBlock(
+                    hidden_dims=hidden_dims,
+                    activation=self._make_activation(),
+                    device=device,
+                    dtype=dtype,
+                )
                 for _ in range(depth)
             ]
         )
+
         self.final_layer = nn.Linear(hidden_dims, output_dim, device=device, dtype=dtype)
+
         self.apply(default_init())
 
     def _make_activation(self) -> nn.Module:
+        if isinstance(self.activation, nn.ReLU):
+            return nn.ReLU()
+        if isinstance(self.activation, nn.GELU):
+            return nn.GELU()
+        if isinstance(self.activation, nn.SiLU):
+            return nn.SiLU()
+        if isinstance(self.activation, nn.Tanh):
+            return nn.Tanh()
         if isinstance(self.activation, nn.LeakyReLU):
             return nn.LeakyReLU(self.activation.negative_slope)
-        for cls in (nn.ReLU, nn.GELU, nn.SiLU, nn.Tanh):
-            if isinstance(self.activation, cls):
-                return cls()
         return self.activation
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.activation(self.input_norm(self.input_layer(x)))
+        x = self.input_layer(x)
+        x = self.input_norm(x)
+        x = self.activation(x)
+
         for block in self.blocks:
             x = block(x)
+
         return self.final_layer(x)
 
 
 class BroValueHead(nn.Module):
+    """BRO-style residual MLP value head: hidden_states -> logits."""
+
     def __init__(
         self,
         input_dim: int,
@@ -107,11 +156,17 @@ class BroValueHead(nn.Module):
         depth: int = 2,
         activation: str = "relu",
         device=None,
-        dtype=None,
+        dtype=torch.float32,
     ) -> None:
         super().__init__()
         self.proj = BroNet(
-            input_dim, hidden_dims, depth, self._build_activation(activation), output_dim, device, dtype
+            input_dim=input_dim,
+            hidden_dims=hidden_dims,
+            depth=depth,
+            activation=self._build_activation(activation),
+            output_dim=output_dim,
+            device=device,
+            dtype=dtype,
         )
 
     @classmethod
@@ -127,17 +182,18 @@ class BroValueHead(nn.Module):
 
     @staticmethod
     def _build_activation(name: str) -> nn.Module:
-        activations = {
-            "relu": nn.ReLU,
-            "gelu": nn.GELU,
-            "silu": nn.SiLU,
-            "tanh": nn.Tanh,
-            "leaky_relu": nn.LeakyReLU,
-        }
-        try:
-            return activations[name.lower()]()
-        except KeyError as e:
-            raise ValueError(f"Unsupported activation: {name}") from e
+        name = name.lower()
+        if name == "relu":
+            return nn.ReLU()
+        if name == "gelu":
+            return nn.GELU()
+        if name == "silu":
+            return nn.SiLU()
+        if name == "tanh":
+            return nn.Tanh()
+        if name == "leaky_relu":
+            return nn.LeakyReLU()
+        raise ValueError(f"Unsupported activation: {name}")
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         return self.proj(hidden_states)
@@ -145,8 +201,21 @@ class BroValueHead(nn.Module):
 
 def build_value_head(config, input_dim: int, output_dim: int, **kwargs):
     head_type = getattr(config, "head_type", "linear")
+
     if head_type == "linear":
-        return LinearValueHead.from_config(config, input_dim=input_dim, output_dim=output_dim, **kwargs)
+        return LinearValueHead.from_config(
+            config,
+            input_dim=input_dim,
+            output_dim=output_dim,
+            **kwargs,
+        )
+
     if head_type == "bro":
-        return BroValueHead.from_config(config, input_dim=input_dim, output_dim=output_dim, **kwargs)
+        return BroValueHead.from_config(
+            config,
+            input_dim=input_dim,
+            output_dim=output_dim,
+            **kwargs,
+        )
+
     raise ValueError(f"Unsupported value head type: {head_type}")

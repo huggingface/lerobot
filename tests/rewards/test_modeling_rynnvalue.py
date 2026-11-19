@@ -157,27 +157,30 @@ def test_bro_head_preserves_prefix_shape():
     assert head(torch.zeros(3, 12)).shape == (3, 256)
 
 
-def test_bro_head_inherits_active_model_dtype():
-    previous_dtype = torch.get_default_dtype()
-    torch.set_default_dtype(torch.bfloat16)
-    try:
-        head = BroValueHead(input_dim=12, output_dim=256, hidden_dims=16, depth=2)
-    finally:
-        torch.set_default_dtype(previous_dtype)
+def test_bro_head_runs_in_the_model_dtype_once_cast(monkeypatch):
+    head = BroValueHead(input_dim=12, output_dim=256, hidden_dims=16, depth=2)
+    assert next(head.parameters()).dtype == torch.float32
 
-    hidden_states = torch.zeros(3, 12, dtype=torch.bfloat16)
-    assert next(head.parameters()).dtype == torch.bfloat16
-    assert head(hidden_states).dtype == torch.bfloat16
+    _patch_checkpoint_load(monkeypatch)
+    model = RynnValueRewardModel(RynnValueConfig(device="cpu", torch_dtype="bfloat16"))
+    assert next(model.model.parameters()).dtype == torch.bfloat16
+
+    head = head.to(dtype=torch.bfloat16)
+    assert head(torch.zeros(3, 12, dtype=torch.bfloat16)).dtype == torch.bfloat16
 
 
 def test_grouped_query_tokens_are_concatenated():
-    hidden = torch.arange(24, dtype=torch.float32).reshape(4, 6)
-    concatenated, prefix = RynnValueLangModel._concat_slot_tokens(
-        hidden, hidden.shape[:-1], repeat=2, token_name="<value>"
-    )
-    assert prefix == torch.Size([2])
-    assert concatenated.shape == (2, 12)
-    assert torch.equal(concatenated[0], hidden[:2].reshape(-1))
+    model = RynnValueLangModel.__new__(RynnValueLangModel)
+    torch.nn.Module.__init__(model)
+    model.config = SimpleNamespace(value_token_id=7, value_token_repeat=2)
+    model.value_heads = torch.nn.ModuleList([torch.nn.Identity()])
+    model.value_tokenizer = ValueTokenizer(bins=12, min_value=0.0, max_value=1.0)
+    hidden = torch.arange(24, dtype=torch.float32).reshape(1, 4, 6)
+
+    output = model._compute_value_outputs(hidden, torch.tensor([[7, 7, 7, 7]]), value=None)
+
+    assert output.logits.shape == (1, 2, 12)
+    assert torch.equal(output.logits[0, 0], hidden[0, :2].reshape(-1))
 
 
 def test_prediction_slot_ids_isolate_repeated_groups():

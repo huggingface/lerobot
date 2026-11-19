@@ -117,11 +117,13 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         # too, which the official model runs without them, i.e. as plain eager attention.
         model_config.vision_config._attn_implementation = "eager"
         if config.model_config is None:
-            self.model = RynnValueLangModel.from_pretrained(
+            model = RynnValueLangModel.from_pretrained(
                 config.model_id, revision=config.model_revision, config=model_config, dtype=dtype
             )
         else:
-            self.model = RynnValueLangModel._from_config(model_config, dtype=dtype)
+            model = RynnValueLangModel._from_config(model_config, dtype=dtype)
+        # The value heads are built in float32; like the official inference, cast the whole model.
+        self.model = model.to(dtype=dtype)
 
     def predict_remaining_time(self, batch: Mapping[str, Any]) -> RemainingTimeOutput:
         """Predict the seconds until the task is completed, at the last frame of each trajectory.
