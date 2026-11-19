@@ -70,11 +70,13 @@ class RynnValueLangModel(Qwen3VLForConditionalGeneration):
         input_dim = config.text_config.hidden_size
         output_dim = config.value_tokenizer_config.bins
 
-        self.value_tokenizer = ValueTokenizer.from_config(config.value_tokenizer_config)
+        self.value_tokenizer = ValueTokenizer.from_config(config.value_tokenizer_config, device="cpu")
         num_value_heads = config.num_value_heads
 
         if config.relative_value_head_config is not None:
-            self.relative_value_tokenizer = ValueTokenizer.from_config(config.relative_value_tokenizer_config)
+            self.relative_value_tokenizer = ValueTokenizer.from_config(
+                config.relative_value_tokenizer_config, device="cpu"
+            )
             relative_output_dim = config.relative_value_tokenizer_config.bins
         else:
             self.relative_value_tokenizer = self.value_tokenizer
@@ -389,6 +391,7 @@ class RynnValueLangModel(Qwen3VLForConditionalGeneration):
         pixel_values_videos: torch.FloatTensor | None = None,
         image_grid_thw: torch.LongTensor | None = None,
         video_grid_thw: torch.LongTensor | None = None,
+        mm_token_type_ids: torch.IntTensor | None = None,
         cache_position: torch.LongTensor | None = None,
         value: torch.Tensor | None = None,
         relative_value: torch.Tensor | None = None,
@@ -412,6 +415,7 @@ class RynnValueLangModel(Qwen3VLForConditionalGeneration):
             pixel_values_videos=pixel_values_videos,
             image_grid_thw=image_grid_thw,
             video_grid_thw=video_grid_thw,
+            mm_token_type_ids=mm_token_type_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,

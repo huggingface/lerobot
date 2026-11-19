@@ -14,7 +14,11 @@
 
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Mapping
+from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,11 +31,19 @@ from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoTokenizer
+
     from .rynn_value_lang.configuration_rynn_value_lang import RynnValueLangConfig
     from .rynn_value_lang.modeling_rynn_value_lang import RynnValueLangModel
 else:
+    AutoTokenizer = None
     RynnValueLangConfig = None  # type: ignore[assignment]
     RynnValueLangModel = None  # type: ignore[assignment]
+
+# The official inference parses these answers from the generated analysis block.
+_DESCRIPTION_PATTERN = re.compile(r"-\s*Video Description:\s*(.+)", re.IGNORECASE)
+_MATCH_PATTERN = re.compile(r"-\s*Match:\s*(Yes|No)", re.IGNORECASE)
+_SUCCESS_PATTERN = re.compile(r"-\s*Success:\s*(Yes|No)", re.IGNORECASE)
 
 RYNNVALUE_MODEL_INPUT_KEYS = (
     "input_ids",
@@ -42,11 +54,46 @@ RYNNVALUE_MODEL_INPUT_KEYS = (
 )
 
 
+@dataclass(frozen=True)
+class RynnValueSuccessOutput:
+    """Generated success and task-match answers for each trajectory, shaped `(batch,)`.
+
+    `success` and `match` are 1.0 for "Yes", 0.0 for "No" and NaN when the analysis omits the answer.
+    `description` holds each generated video description, or None.
+    """
+
+    success: Tensor
+    match: Tensor
+    description: list[str | None]
+
+
 def _torch_dtype(name: str) -> torch.dtype:
     dtype = getattr(torch, name, None)
     if isinstance(dtype, torch.dtype):
         return dtype
     raise ValueError(f"Unknown torch dtype: {name!r}")
+
+
+def _parse_answer(pattern: re.Pattern[str], text: str) -> str | None:
+    found = pattern.search(text)
+    return found.group(1).strip() if found else None
+
+
+def _yes_no(answer: str | None) -> float:
+    return math.nan if answer is None else float(answer.lower() == "yes")
+
+
+def _left_pad(inputs: dict[str, Any]) -> dict[str, Any]:
+    """Move the preprocessor's right padding to the left, where generation expects it."""
+    attention_mask = inputs["attention_mask"]
+    shifts = (attention_mask.shape[1] - attention_mask.sum(dim=1)).tolist()
+    padded = dict(inputs)
+    for key in ("input_ids", "attention_mask", "mm_token_type_ids"):
+        if key in padded:
+            padded[key] = torch.stack(
+                [torch.roll(row, shift) for row, shift in zip(padded[key], shifts, strict=True)]
+            )
+    return padded
 
 
 def reduce_remaining_time(
@@ -138,21 +185,8 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         Returns:
             `RemainingTimeOutput`: One remaining time per trajectory.
         """
-        inputs: dict[str, Any] = {}
-        for key in RYNNVALUE_MODEL_INPUT_KEYS:
-            batch_key = f"{RYNNVALUE_FEATURE_PREFIX}{key}"
-            if batch_key in batch:
-                inputs[key] = batch[batch_key]
-        if "input_ids" not in inputs:
-            raise KeyError(
-                f"RynnValue batch missing `{RYNNVALUE_FEATURE_PREFIX}input_ids`. "
-                "Make sure RynnValueEncoderProcessorStep ran before predict_remaining_time()."
-            )
-        for required in ("attention_mask", "pixel_values", "image_grid_thw"):
-            if required not in inputs:
-                raise KeyError(f"RynnValue batch missing `{RYNNVALUE_FEATURE_PREFIX}{required}`.")
-
-        outputs = self.model(**inputs)
+        inputs = self._model_inputs(batch)
+        outputs = self.model(**inputs, use_cache=False)
         pred_value = outputs.value.pred_value
         if pred_value is None:
             raise RuntimeError("RynnValue checkpoint did not produce absolute temporal values")
@@ -175,6 +209,71 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             slot_counts=slot_counts,
         )
         return RemainingTimeOutput(remaining_time_s=remaining_time)
+
+    def predict_success(
+        self, batch: Mapping[str, Any], *, max_new_tokens: int = 128
+    ) -> RynnValueSuccessOutput:
+        """Generate RynnValue's trajectory analysis and read whether the task succeeded.
+
+        As in the official inference, greedy decoding writes an analysis block after the encoded trajectory:
+        a video description, whether the video matches the task, and whether the agent completed it. It
+        changes neither the model mode nor gradients: for inference, call it in `eval()` mode under
+        `torch.inference_mode()`.
+
+        Args:
+            batch (`Mapping[str, Any]`):
+                Output of the RynnValue preprocessor.
+            max_new_tokens (`int`, *optional*, defaults to 128):
+                Maximum number of generated tokens, as in the official inference.
+
+        Returns:
+            `RynnValueSuccessOutput`: Success and task match, one per trajectory.
+        """
+        inputs = _left_pad(self._model_inputs(batch))
+        eos_token_id = self._tokenizer.convert_tokens_to_ids("<|im_end|>")
+        sequences = self.model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            num_beams=1,
+            eos_token_id=eos_token_id,
+            pad_token_id=eos_token_id,
+        )
+        prompt_length = inputs["input_ids"].shape[1]
+        texts = self._tokenizer.batch_decode(sequences[:, prompt_length:], skip_special_tokens=True)
+        device = inputs["input_ids"].device
+        return RynnValueSuccessOutput(
+            success=torch.tensor(
+                [_yes_no(_parse_answer(_SUCCESS_PATTERN, text)) for text in texts], device=device
+            ),
+            match=torch.tensor(
+                [_yes_no(_parse_answer(_MATCH_PATTERN, text)) for text in texts], device=device
+            ),
+            description=[_parse_answer(_DESCRIPTION_PATTERN, text) for text in texts],
+        )
+
+    @cached_property
+    def _tokenizer(self) -> Any:
+        """Decodes `predict_success()` generations; loaded on first use from the official checkpoint."""
+        return AutoTokenizer.from_pretrained(
+            self.config.model_id, revision=self.config.model_revision, trust_remote_code=False
+        )
+
+    def _model_inputs(self, batch: Mapping[str, Any]) -> dict[str, Any]:
+        inputs: dict[str, Any] = {}
+        for key in RYNNVALUE_MODEL_INPUT_KEYS:
+            batch_key = f"{RYNNVALUE_FEATURE_PREFIX}{key}"
+            if batch_key in batch:
+                inputs[key] = batch[batch_key]
+        if "input_ids" not in inputs:
+            raise KeyError(
+                f"RynnValue batch missing `{RYNNVALUE_FEATURE_PREFIX}input_ids`. "
+                "Make sure RynnValueEncoderProcessorStep ran before calling the model."
+            )
+        for required in ("attention_mask", "pixel_values", "image_grid_thw"):
+            if required not in inputs:
+                raise KeyError(f"RynnValue batch missing `{RYNNVALUE_FEATURE_PREFIX}{required}`.")
+        return inputs
 
     def _save_pretrained(self, save_directory: Path) -> None:
         self.config.model_config = self.model.config.to_dict()

@@ -74,8 +74,14 @@ class _FakeRynnValueModel(torch.nn.Module):
             else torch.tensor([[8.0, 2.0, 5.0, 1.0]], dtype=torch.float32)
         )
 
-    def forward(self, **kwargs):  # noqa: ARG002
+    def forward(self, **kwargs):
+        self.forward_kwargs = kwargs
         return SimpleNamespace(value=SimpleNamespace(pred_value=self.pred_value))
+
+    def generate(self, **kwargs):
+        self.generate_kwargs = kwargs
+        input_ids = kwargs["input_ids"]
+        return torch.cat([input_ids, torch.full((input_ids.shape[0], 2), 5)], dim=1)
 
 
 def _patch_checkpoint_load(
@@ -241,6 +247,7 @@ def test_predict_remaining_time_returns_native_seconds(monkeypatch):
     prediction = model.predict_remaining_time(_encoded_batch())
     assert isinstance(prediction, RemainingTimeOutput)
     assert torch.equal(prediction.remaining_time_s, torch.tensor([2.0, 1.0]))
+    assert model.model.forward_kwargs["use_cache"] is False
     assert model.is_trainable is False
     with pytest.raises(NotImplementedError, match="predict_remaining_time"):
         model.compute_reward({})
@@ -258,6 +265,48 @@ def test_predict_remaining_time_requires_encoded_inputs(monkeypatch):
     model = RynnValueRewardModel(RynnValueConfig(device="cpu"))
     with pytest.raises(KeyError, match="observation.rynnvalue.input_ids"):
         model.predict_remaining_time({})
+
+
+def test_predict_success_parses_the_generated_analysis(monkeypatch):
+    from lerobot.rewards.rynnvalue import modeling_rynnvalue
+
+    _patch_checkpoint_load(monkeypatch)
+    decoded = []
+    tokenizer = SimpleNamespace(
+        convert_tokens_to_ids=lambda token: 99,
+        batch_decode=lambda sequences, skip_special_tokens: decoded.append(sequences)
+        or [
+            "- Video Description: The arm picks up the cube.\n- Match: Yes\n- Success: no",
+            "- Match: No",
+        ],
+    )
+    loaded = []
+    monkeypatch.setattr(
+        modeling_rynnvalue,
+        "AutoTokenizer",
+        SimpleNamespace(from_pretrained=lambda model_id, **kwargs: loaded.append(model_id) or tokenizer),
+    )
+    model = RynnValueRewardModel(RynnValueConfig(device="cpu"))
+    batch = {
+        f"{RYNNVALUE_FEATURE_PREFIX}input_ids": torch.tensor([[1, 2, 3, 4], [1, 2, 0, 0]]),
+        f"{RYNNVALUE_FEATURE_PREFIX}attention_mask": torch.tensor([[1, 1, 1, 1], [1, 1, 0, 0]]),
+        f"{RYNNVALUE_FEATURE_PREFIX}pixel_values": torch.zeros(2, 4),
+        f"{RYNNVALUE_FEATURE_PREFIX}image_grid_thw": torch.ones(2, 3, dtype=torch.long),
+    }
+
+    output = model.predict_success(batch)
+
+    torch.testing.assert_close(output.success, torch.tensor([0.0, float("nan")]), equal_nan=True)
+    torch.testing.assert_close(output.match, torch.tensor([1.0, 0.0]))
+    assert output.description == ["The arm picks up the cube.", None]
+    assert loaded == ["Alibaba-DAMO-Academy/RynnValue-4B"]
+    generate_kwargs = model.model.generate_kwargs
+    assert generate_kwargs["input_ids"].tolist() == [[1, 2, 3, 4], [0, 0, 1, 2]]
+    assert generate_kwargs["attention_mask"].tolist() == [[1, 1, 1, 1], [0, 0, 1, 1]]
+    assert generate_kwargs["max_new_tokens"] == 128
+    assert generate_kwargs["do_sample"] is False
+    assert generate_kwargs["eos_token_id"] == generate_kwargs["pad_token_id"] == 99
+    assert decoded[0].tolist() == [[5, 5], [5, 5]]
 
 
 def test_default_config_builds_the_empty_architecture_for_the_lerobot_checkpoint(monkeypatch):

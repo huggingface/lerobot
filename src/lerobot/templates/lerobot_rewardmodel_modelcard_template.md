@@ -62,6 +62,7 @@ with torch.inference_mode():
     log_probability = reward_model.compute_log_probability(batch)
 {% elif model_name == "rynnvalue" %}
     remaining_time_s = reward_model.predict_remaining_time(batch).remaining_time_s
+    success = reward_model.predict_success(batch).success
 {% endif %}
 {% endif %}
 ```

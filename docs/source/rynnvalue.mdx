@@ -114,6 +114,20 @@ remaining_time_s = prediction.remaining_time_s
 
 `predict_remaining_time()` changes neither the model mode nor gradients, so call it in `eval()` mode under `torch.inference_mode()` for inference.
 
+## Success and task match
+
+`predict_success()` generates the model's analysis of each trajectory, as the official inference does: a video description, whether the video matches the task, and whether the agent completed it.
+
+```python
+with torch.inference_mode():
+    analysis = model.predict_success(preprocessor(batch))
+analysis.success  # 1.0 for "Yes", 0.0 for "No", NaN if the analysis omits the answer
+analysis.match
+analysis.description
+```
+
+It decodes up to `max_new_tokens` tokens per trajectory (default 128), so it is slower than `predict_remaining_time()`.
+
 ## Offline dataset scoring
 
 Use the shared scoring command rather than a RynnValue-specific dataset script:
@@ -150,11 +164,10 @@ The potential derived from remaining time is a state potential, not a complete t
 r_shape = gamma * potential_next - potential
 ```
 
-The paper combines this term with a sparse task reward. LeRobot does not infer task termination or success from the language generation branch in `predict_remaining_time()`.
+The paper combines this term with a sparse task reward, such as the success answer from `predict_success()`.
 
 ## Limitations
 
 - Inference uses eager custom attention; Flash Attention and SDPA do not implement RynnValue's prediction-slot isolation.
 - The current API scores complete supplied histories and is not a streaming KV-cache reward server.
-- Natural-language video analysis, match, and success generation remain available in the native core model but are not used by `predict_remaining_time()`.
 - Training RynnValue from scratch is outside this integration.

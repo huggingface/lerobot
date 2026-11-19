@@ -15,11 +15,12 @@
 """LeRobot integration for the RynnValue reward model."""
 
 from .configuration_rynnvalue import RynnValueConfig
-from .modeling_rynnvalue import RynnValueRewardModel
+from .modeling_rynnvalue import RynnValueRewardModel, RynnValueSuccessOutput
 from .processor_rynnvalue import make_rynnvalue_pre_post_processors
 
 __all__ = [
     "RynnValueConfig",
     "RynnValueRewardModel",
+    "RynnValueSuccessOutput",
     "make_rynnvalue_pre_post_processors",
 ]
