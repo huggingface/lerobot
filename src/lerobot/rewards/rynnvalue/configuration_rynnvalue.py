@@ -20,6 +20,8 @@ from lerobot.configs.rewards import RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGES
 
 RYNNVALUE_FEATURE_PREFIX = "observation.rynnvalue."
+# LeRobot checkpoints keep RynnValue's tokenizer and image processor in this folder.
+RYNNVALUE_PROCESSOR_SUBFOLDER = "processor"
 
 
 @RewardModelConfig.register_subclass("rynnvalue")
@@ -28,8 +30,6 @@ class RynnValueConfig(RewardModelConfig):
     """Configuration for the inference-only RynnValue temporal-distance model."""
 
     pretrained_path: str | None = "lerobot/RynnValue-4B"
-    model_id: str = "Alibaba-DAMO-Academy/RynnValue-4B"
-    model_revision: str | None = None
     torch_dtype: str = "bfloat16"
     # Native architecture config, embedded on save so a LeRobot checkpoint rebuilds
     # the model from its own `config.json` and `model.safetensors`.
@@ -72,6 +72,10 @@ class RynnValueConfig(RewardModelConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.pretrained_path is None:
+            raise ValueError(
+                "RynnValue loads from a LeRobot checkpoint: set pretrained_path, such as lerobot/RynnValue-4B."
+            )
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
         if self.max_image_side is not None and self.max_image_side < 1:

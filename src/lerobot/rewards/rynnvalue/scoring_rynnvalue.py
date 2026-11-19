@@ -100,8 +100,6 @@ class RynnValueFrameScorer:
             "scorer": {
                 "version": 1,
                 "options": {
-                    "model_id": config.model_id,
-                    "model_revision": config.model_revision,
                     "image_key": config.image_key,
                     "task_key": config.task_key,
                     "default_task": config.default_task,

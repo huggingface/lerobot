@@ -33,7 +33,11 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     policy_action_to_transition,
 )
-from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_PREFIX, RynnValueConfig
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import (
+    RYNNVALUE_FEATURE_PREFIX,
+    RYNNVALUE_PROCESSOR_SUBFOLDER,
+    RynnValueConfig,
+)
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.utils.import_utils import _transformers_available, require_package
 
@@ -112,8 +116,8 @@ def _pad_sequences(sequences: list[Tensor], *, padding_value: int) -> Tensor:
 class RynnValueEncoderProcessorStep(ProcessorStep):
     """Encode trajectory frames and task text with the native RynnValue processor."""
 
-    model_id: str = "Alibaba-DAMO-Academy/RynnValue-4B"
-    model_revision: str | None = None
+    checkpoint_path: str = "lerobot/RynnValue-4B"
+    checkpoint_revision: str | None = None
     image_key: str = "observation.images.top"
     task_key: str = "task"
     default_task: str | None = None
@@ -127,8 +131,9 @@ class RynnValueEncoderProcessorStep(ProcessorStep):
     def __post_init__(self) -> None:
         require_package("transformers", extra="rynnvalue")
         self._processor = RynnValueLangProcessor.from_pretrained(
-            self.model_id,
-            revision=self.model_revision,
+            self.checkpoint_path,
+            revision=self.checkpoint_revision,
+            subfolder=RYNNVALUE_PROCESSOR_SUBFOLDER,
         )
         if self.use_meta is not None:
             self._processor.use_meta = self.use_meta
@@ -214,8 +219,8 @@ class RynnValueEncoderProcessorStep(ProcessorStep):
 
     def get_config(self) -> dict[str, Any]:
         return {
-            "model_id": self.model_id,
-            "model_revision": self.model_revision,
+            "checkpoint_path": self.checkpoint_path,
+            "checkpoint_revision": self.checkpoint_revision,
             "image_key": self.image_key,
             "task_key": self.task_key,
             "default_task": self.default_task,
@@ -239,8 +244,8 @@ def make_rynnvalue_pre_post_processors(
         steps=[
             AddBatchDimensionProcessorStep(),
             RynnValueEncoderProcessorStep(
-                model_id=config.model_id,
-                model_revision=config.model_revision,
+                checkpoint_path=str(config.pretrained_path),
+                checkpoint_revision=config.pretrained_revision,
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,

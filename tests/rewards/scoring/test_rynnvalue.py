@@ -141,8 +141,6 @@ class _FakeModel:
         type="rynnvalue",
         pretrained_path="test/rynnvalue",
         pretrained_revision="model-revision",
-        model_id="fake/rynnvalue",
-        model_revision=None,
         image_key=IMAGE_KEY,
         task_key="task",
         default_task=None,
@@ -184,7 +182,6 @@ def test_rynnvalue_frame_scorer_scores_prefixes_and_interpolates_remaining_time(
     assert scorer.name == "rynnvalue"
     options = scorer.provenance["scorer"]["options"]
     assert options["inference_fps"] == 1.0
-    assert options["model_id"] == "fake/rynnvalue"
     assert options["robot_description"] == "a single-arm robot"
 
 

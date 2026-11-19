@@ -84,31 +84,41 @@ class _FakeRynnValueModel(torch.nn.Module):
         return torch.cat([input_ids, torch.full((input_ids.shape[0], 2), 5)], dim=1)
 
 
+HUB_MODEL_CONFIG = {"model_type": "rynn_value_lang", "hidden_size": 16}
+
+
 def _patch_checkpoint_load(
     monkeypatch,
     pred_value: torch.Tensor | None = None,
     native_config: _FakeNativeConfig | None = None,
 ) -> list[str]:
-    """Replace the native model builds; return each one's source, a `model_id` or `"model_config"`."""
+    """Replace the native model builds and the Hub checkpoint; return one `"model_config"` per build."""
     from lerobot.rewards.rynnvalue import modeling_rynnvalue
 
     sources: list[str] = []
 
     class _FakeCheckpointModel(_FakeRynnValueModel):
         @classmethod
-        def from_pretrained(cls, model_id, *, config, **kwargs):  # noqa: ARG003
-            sources.append(model_id)
-            return cls(pred_value=pred_value, config=native_config or config)
-
-        @classmethod
         def _from_config(cls, config, **kwargs):  # noqa: ARG003
             sources.append("model_config")
             return cls(pred_value=pred_value, config=native_config or config)
 
+    class _FakeProcessor:
+        def save_pretrained(self, directory):
+            directory.mkdir(parents=True)
+            (directory / "processor_config.json").write_text("{}")
+
     monkeypatch.setattr(
-        modeling_rynnvalue.RynnValueLangConfig,
-        "from_pretrained",
-        classmethod(lambda cls, *args, **kwargs: _FakeNativeConfig()),
+        modeling_rynnvalue,
+        "RewardModelConfig",
+        SimpleNamespace(
+            from_pretrained=lambda *args, **kwargs: SimpleNamespace(model_config=HUB_MODEL_CONFIG)
+        ),
+    )
+    monkeypatch.setattr(
+        modeling_rynnvalue,
+        "RynnValueLangProcessor",
+        SimpleNamespace(from_pretrained=lambda *args, **kwargs: _FakeProcessor()),
     )
     monkeypatch.setattr(
         modeling_rynnvalue.RynnValueLangConfig,
@@ -143,6 +153,8 @@ def test_rynnvalue_config_validation():
         RynnValueConfig(device="cpu", inference_fps=0)
     with pytest.raises(ValueError, match="scoring_batch_size"):
         RynnValueConfig(device="cpu", scoring_batch_size=0)
+    with pytest.raises(ValueError, match="pretrained_path"):
+        RynnValueConfig(device="cpu", pretrained_path=None)
 
 
 def test_value_tokenizer_two_hot_symlog_roundtrip():
@@ -287,8 +299,12 @@ def test_predict_success_parses_the_generated_analysis(monkeypatch):
     loaded = []
     monkeypatch.setattr(
         modeling_rynnvalue,
-        "AutoTokenizer",
-        SimpleNamespace(from_pretrained=lambda model_id, **kwargs: loaded.append(model_id) or tokenizer),
+        "RynnValueLangProcessor",
+        SimpleNamespace(
+            from_pretrained=lambda path, **kwargs: (
+                loaded.append((path, kwargs["subfolder"])) or SimpleNamespace(tokenizer=tokenizer)
+            )
+        ),
     )
     model = RynnValueRewardModel(RynnValueConfig(device="cpu"))
     batch = {
@@ -303,7 +319,7 @@ def test_predict_success_parses_the_generated_analysis(monkeypatch):
     torch.testing.assert_close(output.success, torch.tensor([0.0, float("nan")]), equal_nan=True)
     torch.testing.assert_close(output.match, torch.tensor([1.0, 0.0]))
     assert output.description == ["The arm picks up the cube.", None]
-    assert loaded == ["Alibaba-DAMO-Academy/RynnValue-4B"]
+    assert loaded == [("lerobot/RynnValue-4B", "processor")]
     generate_kwargs = model.model.generate_kwargs
     assert generate_kwargs["input_ids"].tolist() == [[1, 2, 3, 4], [0, 0, 1, 2]]
     assert generate_kwargs["attention_mask"].tolist() == [[1, 1, 1, 1], [0, 0, 1, 1]]
@@ -319,28 +335,28 @@ def test_default_config_builds_the_empty_architecture_for_the_lerobot_checkpoint
     RynnValueRewardModel(config)
 
     assert config.pretrained_path == "lerobot/RynnValue-4B"
+    assert config.model_config == HUB_MODEL_CONFIG
     assert sources == ["model_config"]
 
 
 def test_lerobot_checkpoint_rebuilds_from_its_embedded_model_config(monkeypatch, tmp_path):
     sources = _patch_checkpoint_load(monkeypatch)
-    model = RynnValueRewardModel(
-        RynnValueConfig(device="cpu", pretrained_path=None, model_id="Alibaba-DAMO-Academy/RynnValue-8B")
-    )
+    model = RynnValueRewardModel(RynnValueConfig(device="cpu"))
     model.save_pretrained(tmp_path)
     assert (tmp_path / CONFIG_NAME).exists()
     assert (tmp_path / SAFETENSORS_SINGLE_FILE).exists()
+    assert (tmp_path / "processor" / "processor_config.json").exists()
 
     loaded = RynnValueRewardModel.from_pretrained(tmp_path)
-    assert loaded.config.model_config == {"model_type": "rynn_value_lang", "hidden_size": 16}
-    assert sources == ["Alibaba-DAMO-Academy/RynnValue-8B", "model_config"]
+    assert loaded.config.model_config == HUB_MODEL_CONFIG
+    assert sources == ["model_config", "model_config"]
 
 
 def test_checkpoint_roundtrip_through_reward_factories(monkeypatch, tmp_path):
     from lerobot.rewards.rynnvalue import processor_rynnvalue
 
     model_sources = _patch_checkpoint_load(monkeypatch)
-    RynnValueRewardModel(RynnValueConfig(device="cpu", model_revision="abc123")).save_pretrained(tmp_path)
+    RynnValueRewardModel(RynnValueConfig(device="cpu")).save_pretrained(tmp_path)
     model_sources.clear()
 
     class _FakeProcessor:
@@ -361,8 +377,8 @@ def test_checkpoint_roundtrip_through_reward_factories(monkeypatch, tmp_path):
         processor_rynnvalue.RynnValueLangProcessor,
         "from_pretrained",
         classmethod(
-            lambda cls, model_id, **kwargs: (
-                processor_sources.append((model_id, kwargs.get("revision"))) or _FakeProcessor()
+            lambda cls, path, **kwargs: (
+                processor_sources.append((path, kwargs.get("subfolder"))) or _FakeProcessor()
             )
         ),
     )
@@ -380,6 +396,6 @@ def test_checkpoint_roundtrip_through_reward_factories(monkeypatch, tmp_path):
     prediction = model.predict_remaining_time(encoded)
 
     assert model_sources == ["model_config"]
-    assert processor_sources == [("Alibaba-DAMO-Academy/RynnValue-4B", "abc123")]
+    assert processor_sources == [(str(tmp_path), "processor")]
     assert prediction.remaining_time_s.shape == (1,)
     assert torch.isfinite(prediction.remaining_time_s).all()

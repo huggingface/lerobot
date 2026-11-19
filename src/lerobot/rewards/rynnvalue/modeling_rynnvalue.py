@@ -20,25 +20,29 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 from torch import Tensor
 
+from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.prediction import RemainingTimeOutput
 from lerobot.rewards.pretrained import PreTrainedRewardModel
-from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_PREFIX, RynnValueConfig
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import (
+    RYNNVALUE_FEATURE_PREFIX,
+    RYNNVALUE_PROCESSOR_SUBFOLDER,
+    RynnValueConfig,
+)
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoTokenizer
-
     from .rynn_value_lang.configuration_rynn_value_lang import RynnValueLangConfig
     from .rynn_value_lang.modeling_rynn_value_lang import RynnValueLangModel
+    from .rynn_value_lang.processing_rynn_value_lang import RynnValueLangProcessor
 else:
-    AutoTokenizer = None
     RynnValueLangConfig = None  # type: ignore[assignment]
     RynnValueLangModel = None  # type: ignore[assignment]
+    RynnValueLangProcessor = None  # type: ignore[assignment]
 
 # The official inference parses these answers from the generated analysis block.
 _DESCRIPTION_PATTERN = re.compile(r"-\s*Video Description:\s*(.+)", re.IGNORECASE)
@@ -138,9 +142,9 @@ def reduce_remaining_time(
 class RynnValueRewardModel(PreTrainedRewardModel):
     """RynnValue zero-shot reward model.
 
-    With `pretrained_path` unset, the model loads the official checkpoint `model_id`. Otherwise it
-    builds the empty architecture, from `model_config` or the official config, and the LeRobot
-    checkpoint's `model.safetensors` fills it in `from_pretrained()`. Saving embeds `model_config`.
+    The model builds the empty architecture from `model_config`, which the LeRobot checkpoint embeds in its
+    `config.json`, and `from_pretrained()` fills it from `model.safetensors`. Saving embeds `model_config`
+    and the checkpoint's `processor` folder.
     """
 
     config: RynnValueConfig
@@ -154,23 +158,18 @@ class RynnValueRewardModel(PreTrainedRewardModel):
 
         dtype = _torch_dtype(config.torch_dtype)
         if config.model_config is None:
-            model_config = RynnValueLangConfig.from_pretrained(
-                config.model_id, revision=config.model_revision
+            # A fresh config, such as `--reward_model.type=rynnvalue`, takes its checkpoint's architecture.
+            checkpoint_config = RewardModelConfig.from_pretrained(
+                str(config.pretrained_path), revision=config.pretrained_revision
             )
-        else:
-            model_config = RynnValueLangConfig.from_dict(config.model_config)
+            config.model_config = cast(RynnValueConfig, checkpoint_config).model_config
+        model_config = RynnValueLangConfig.from_dict(config.model_config)
         model_config._attn_implementation = "pred_slot_isolated_eager"
         # Since transformers 5.22, Qwen3-VL passes the value-slot tensors on to the vision tower
         # too, which the official model runs without them, i.e. as plain eager attention.
         model_config.vision_config._attn_implementation = "eager"
-        if config.pretrained_path is None:
-            model = RynnValueLangModel.from_pretrained(
-                config.model_id, revision=config.model_revision, config=model_config, dtype=dtype
-            )
-        else:
-            model = RynnValueLangModel._from_config(model_config, dtype=dtype)
         # The value heads are built in float32; like the official inference, cast the whole model.
-        self.model = model.to(dtype=dtype)
+        self.model = RynnValueLangModel._from_config(model_config, dtype=dtype).to(dtype=dtype)
 
     def predict_remaining_time(self, batch: Mapping[str, Any]) -> RemainingTimeOutput:
         """Predict the seconds until the task is completed, at the last frame of each trajectory.
@@ -230,7 +229,8 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             `RynnValueSuccessOutput`: Success and task match, one per trajectory.
         """
         inputs = _left_pad(self._model_inputs(batch))
-        eos_token_id = self._tokenizer.convert_tokens_to_ids("<|im_end|>")
+        tokenizer = self._processor.tokenizer
+        eos_token_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
         sequences = self.model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
@@ -240,7 +240,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             pad_token_id=eos_token_id,
         )
         prompt_length = inputs["input_ids"].shape[1]
-        texts = self._tokenizer.batch_decode(sequences[:, prompt_length:], skip_special_tokens=True)
+        texts = tokenizer.batch_decode(sequences[:, prompt_length:], skip_special_tokens=True)
         device = inputs["input_ids"].device
         return RynnValueSuccessOutput(
             success=torch.tensor(
@@ -253,10 +253,12 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         )
 
     @cached_property
-    def _tokenizer(self) -> Any:
-        """Decodes `predict_success()` generations; loaded on first use from the official checkpoint."""
-        return AutoTokenizer.from_pretrained(
-            self.config.model_id, revision=self.config.model_revision, trust_remote_code=False
+    def _processor(self) -> Any:
+        """The checkpoint's tokenizer and image processor, loaded on first use."""
+        return RynnValueLangProcessor.from_pretrained(
+            str(self.config.pretrained_path),
+            revision=self.config.pretrained_revision,
+            subfolder=RYNNVALUE_PROCESSOR_SUBFOLDER,
         )
 
     def _model_inputs(self, batch: Mapping[str, Any]) -> dict[str, Any]:
@@ -276,5 +278,9 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         return inputs
 
     def _save_pretrained(self, save_directory: Path) -> None:
+        from lerobot.distributed.utils import is_main_process
+
         self.config.model_config = self.model.config.to_dict()
         super()._save_pretrained(save_directory)
+        if is_main_process():
+            self._processor.save_pretrained(save_directory / RYNNVALUE_PROCESSOR_SUBFOLDER)

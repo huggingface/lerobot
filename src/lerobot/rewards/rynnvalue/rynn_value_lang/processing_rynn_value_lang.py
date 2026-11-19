@@ -104,6 +104,7 @@ class RynnValueLangProcessor(Qwen3VLProcessor):
         tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path,
             trust_remote_code=False,
+            fix_mistral_regex=False,
             **load_kwargs,
         )
         image_processor = Qwen2VLImageProcessor.from_pretrained(

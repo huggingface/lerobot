@@ -153,7 +153,7 @@ def test_native_processor_truncates_all_sequence_tensors_together():
 def test_encoder_batches_and_pads_native_processor_outputs(monkeypatch):
     fake = _patch_processor(monkeypatch)
     encoder = RynnValueEncoderProcessorStep(
-        model_id="test/rynnvalue",
+        checkpoint_path="test/rynnvalue",
         max_frames=3,
         robot_description="a test robot",
         camera_description="a front camera",
@@ -201,14 +201,14 @@ def test_encoder_can_override_checkpoint_meta_setting(monkeypatch):
     assert fake.refresh_count == 1
 
 
-def test_processor_loads_assets_from_the_official_checkpoint(monkeypatch):
+def test_processor_loads_assets_from_the_checkpoint_processor_folder(monkeypatch):
     from lerobot.rewards.rynnvalue import processor_rynnvalue
 
     captured = {}
     fake = _FakeProcessor()
 
-    def from_pretrained(cls, model_id, **kwargs):  # noqa: ARG001
-        captured["model_id"] = model_id
+    def from_pretrained(cls, path, **kwargs):  # noqa: ARG001
+        captured["path"] = path
         captured.update(kwargs)
         return fake
 
@@ -217,16 +217,11 @@ def test_processor_loads_assets_from_the_official_checkpoint(monkeypatch):
         "from_pretrained",
         classmethod(from_pretrained),
     )
-    config = RynnValueConfig(
-        device="cpu",
-        model_id="Alibaba-DAMO-Academy/RynnValue-8B",
-        model_revision="abc123",
-        pretrained_path="user/rynnvalue-config",
-        pretrained_revision="config-revision",
-    )
+    config = RynnValueConfig(device="cpu", pretrained_path="user/rynnvalue", pretrained_revision="abc123")
     make_rynnvalue_pre_post_processors(config)
-    assert captured["model_id"] == "Alibaba-DAMO-Academy/RynnValue-8B"
+    assert captured["path"] == "user/rynnvalue"
     assert captured["revision"] == "abc123"
+    assert captured["subfolder"] == "processor"
 
 
 def test_encoder_requires_task_or_default(monkeypatch):
