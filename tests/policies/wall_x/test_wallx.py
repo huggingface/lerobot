@@ -17,7 +17,9 @@
 """Test script to verify Wall-X policy integration with LeRobot"""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
+import numpy as np
 import pytest
 import torch
 
@@ -49,6 +51,51 @@ from lerobot.processor import (  # noqa: E402
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
+
+
+@pytest.mark.parametrize("active_dims", [[0, 1, 2, 3, 4, 5], [0, 2, 4, 6, 8, 10], list(range(20))])
+@pytest.mark.parametrize("with_ground_truth", [False, True])
+def test_fast_prediction_keeps_decoded_dimensions(active_dims: list[int], with_ground_truth: bool) -> None:
+    horizon, padded_dim = 4, 20
+    action_dim = len(active_dims)
+    decoded = np.arange(1, horizon * action_dim + 1, dtype=np.float32).reshape(1, horizon, action_dim)
+    decoder = Mock(return_value=decoded)
+    model = SimpleNamespace(
+        config=SimpleNamespace(output_attentions=False, output_hidden_states=False, use_return_dict=True),
+        device=torch.device("cpu"),
+        processor=SimpleNamespace(
+            tokenizer=SimpleNamespace(
+                init_kwargs={"action_token_start_index": 100}, eos_token_id=3, pad_token_id=0
+            ),
+            batch_decode=lambda *args, **kwargs: [""],
+            action_processor=SimpleNamespace(decode=decoder),
+        ),
+        generate=Mock(return_value=torch.tensor([[100, 101, 3]])),
+    )
+    dof_mask = torch.zeros(1, horizon, padded_dim)
+    dof_mask[:, :, active_dims] = 1
+    ground_truth = torch.arange(horizon * padded_dim, dtype=torch.float32).reshape(1, horizon, padded_dim)
+
+    output = Qwen2_5_VLMoEForAction.predict(
+        model,
+        predict_mode="fast",
+        pred_horizon=horizon,
+        action_dim=action_dim,
+        input_ids=torch.tensor([[1, 2, 9]]),
+        inputs_embeds=torch.zeros(1, 3, 4),
+        position_ids=torch.zeros(3, 1, 3, dtype=torch.long),
+        generation_prompt_ids=torch.tensor([1, 2]),
+        pixel_values=torch.zeros(1, 4),
+        dof_mask=dof_mask,
+        action_chunk=ground_truth if with_ground_truth else None,
+    )
+
+    decoder.assert_called_once_with([[0, 1]], time_horizon=horizon, action_dim=action_dim)
+    torch.testing.assert_close(output["predict_action"], torch.from_numpy(decoded))
+    if with_ground_truth:
+        torch.testing.assert_close(output["gt_action"], ground_truth[:, :, active_dims])
+    else:
+        assert output["gt_action"] is None
 
 
 def test_from_pretrained_logs_non_strict_state_dict_keys(monkeypatch):

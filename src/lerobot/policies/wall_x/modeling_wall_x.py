@@ -1357,8 +1357,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 # Convert discrete tokens to continuous actions
                 predict_action = torch.tensor(predict_action, device=self.device)
                 dof_mask = dof_mask.to(self.device).to(pixel_values.dtype)
-                # removed unnormalization step for now
-                predict_action = predict_action[:, :, dof_mask[0, 0, :].bool()]
+                # Decoding already returns action_dim columns. Apply the padded DOF mask
+                # only to ground-truth actions, which still include padded columns.
                 output["predict_action"] = predict_action
 
             # Process ground truth actions if available

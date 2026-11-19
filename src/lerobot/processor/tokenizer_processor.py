@@ -448,21 +448,27 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         Tokenizes the action tensor and creates a mask.
 
         Args:
-            action: The input action tensor to tokenize. Shape: (B, H, action_dim) or (H, action_dim,)
+            action: The input action tensor to tokenize. Shape: (B, H, D) or (H, D).
 
         Returns:
-            A tuple of (tokens, mask) where:
-            - tokens: Tensor of token IDs with shape (B, max_action_tokens)
-            - mask: Boolean mask with shape (B, max_action_tokens), True for real tokens, False for padding
+            A tuple of (tokens, mask, code_mask). Each tensor has shape
+            (B, max_action_tokens), or (max_action_tokens,) for an unbatched chunk.
+            The boolean mask includes all real tokens; code_mask includes only
+            FAST action codes, excluding wrappers and padding.
+
+        Raises:
+            ValueError: If action is None or does not have rank 2 or 3.
         """
         if action is None:
             raise ValueError("Action cannot be None")
+        if action.dim() not in (2, 3):
+            raise ValueError(f"Expected action shape (H, D) or (B, H, D), got {tuple(action.shape)}.")
 
         # Get the device and dtype of the input action
         device = action.device if isinstance(action, torch.Tensor) else None
 
         # Handle single sample (add batch dimension)
-        single_sample = action.dim() == 1
+        single_sample = action.dim() == 2
         if single_sample:
             action = action.unsqueeze(0)
 
