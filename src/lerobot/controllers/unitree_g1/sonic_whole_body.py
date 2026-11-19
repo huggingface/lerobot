@@ -30,13 +30,10 @@ convert between them. Quaternions are scalar-first ``(w, x, y, z)``.
 
 from __future__ import annotations
 
-import json
 import logging
 
 import numpy as np
-import onnx
 import onnxruntime as ort
-from huggingface_hub import hf_hub_download
 
 from lerobot.robots.unitree_g1.g1_utils import (
     ISAACLAB_TO_MUJOCO,
@@ -44,10 +41,11 @@ from lerobot.robots.unitree_g1.g1_utils import (
     NUM_MOTORS,
     G1_29_JointIndex,
     get_gravity_orientation,
-    make_ort_session_options,
 )
 
 from ..controller import RobotController
+from ..hub import load_onnx_policy
+from .proprio import read_proprio
 
 logger = logging.getLogger(__name__)
 
@@ -90,28 +88,8 @@ def load_policy(
     if policy_type not in POLICY_FILES:
         raise ValueError(f"Unknown policy type: {policy_type}. Choose from: {list(POLICY_FILES.keys())}")
 
-    filename = POLICY_FILES[policy_type]
-    logger.info(f"Loading {policy_type.upper()} SONIC decoder from: {repo_id}/{filename}")
-    decoder_path = hf_hub_download(repo_id=repo_id, filename=filename)
-
-    # Capped thread pool, same reasoning as GR00T: the decoder is stepped at 50 Hz from a
-    # background thread next to the torch VLA, and an ORT pool spanning every core
-    # starves both. One thread is lowest-latency for a model this size.
-    so = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
-    decoder = ort.InferenceSession(decoder_path, sess_options=so)
-    logger.info(f"Decoder loaded: {decoder.get_inputs()[0].shape} → {decoder.get_outputs()[0].shape}")
-
-    # Extract deploy constants from ONNX metadata
-    model = onnx.load(decoder_path, load_external_data=False)
-    metadata = {prop.key: prop.value for prop in model.metadata_props}
-
     required = ("kp", "kd", "default_angles", "action_scale", "neutral_token")
-    missing = [k for k in required if k not in metadata]
-    if missing:
-        raise ValueError(f"ONNX model must contain {list(required)} in metadata (missing {missing})")
-
-    arr = {k: np.array(json.loads(metadata[k]), dtype=np.float32) for k in required}
-    logger.info(f"Loaded SONIC deploy constants from ONNX ({len(arr['kp'])} joints)")
+    decoder, arr = load_onnx_policy(repo_id, POLICY_FILES[policy_type], metadata_keys=required)
     return decoder, arr["kp"], arr["kd"], arr["default_angles"], arr["action_scale"], arr["neutral_token"]
 
 
@@ -183,11 +161,9 @@ class SonicWholeBodyController(RobotController):
             self._last_token = self.neutral_token.copy()
 
         # Read proprioception from lowstate (IsaacLab joint order).
-        q = np.array([lowstate.motor_state[m.value].q for m in G1_29_JointIndex], np.float32)
-        dq = np.array([lowstate.motor_state[m.value].dq for m in G1_29_JointIndex], np.float32)
-        quat = np.array(lowstate.imu_state.quaternion, np.float32)  # (w, x, y, z)
-        quat = quat / (np.linalg.norm(quat) + 1e-8)
-        ang = np.array(lowstate.imu_state.gyroscope, np.float32)
+        proprio = read_proprio(lowstate)
+        q, dq, ang = proprio.q, proprio.dq, proprio.ang_vel
+        quat = proprio.quat / (np.linalg.norm(proprio.quat) + 1e-8)
 
         # Push into the 10-frame history (newest first). The decoder consumes MuJoCo joint
         # order, so reorder q/dq via MUJOCO_TO_ISAACLAB (validated against the ONNX; don't flip).
