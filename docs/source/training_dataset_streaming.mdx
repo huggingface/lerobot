@@ -15,13 +15,23 @@ This feature is independent of `--dataset.streaming_encoding=true`. `streaming_e
 how videos are written while recording; `dataset.streaming` controls how an existing dataset is read
 during training. Recording and rollout encoders are not used by this training path.
 
-## How an epoch is read
+## How the stream covers the dataset
 
-Each distributed rank owns a deterministic, frame-balanced set of complete episodes. One
-exact-coverage pool per DataLoader worker mixes the worker's part of those episodes while visiting
-every selected frame once per coverage epoch. Parquet columns and compressed MP4 byte ranges are prefetched from the
-same byte-aware admission frontier. Temporal history and future windows are resolved inside the
-complete episode, including the same boundary padding masks as map-style loading.
+Each distributed rank owns a deterministic, frame-balanced set of complete episodes.
+Each DataLoader worker mixes its share of those episodes and yields every frame in its share
+once per pass. When you use `StreamingLeRobotDataset` with `repeat=False`, the iterator ends
+after one pass. With a DataLoader that keeps the last batch of each worker (`drop_last=False`),
+this covers every selected frame of the rank exactly once.
+
+`lerobot-train` uses `repeat=True` to keep batches full. Each worker starts its next pass as soon
+as it finishes its share. If workers have different numbers of frames, a worker can repeat frames
+before the rank has seen every frame. Each worker supplies one full batch per turn, so workers
+with smaller shares repeat more often. The `epch` metric divides the number of samples consumed by
+the dataset frame count.
+
+Parquet columns and compressed MP4 byte ranges are prefetched from the same byte-aware admission
+frontier. Temporal history and future windows are resolved inside the complete episode, including
+the same boundary padding masks as map-style loading.
 
 The default map-style `LeRobotDataset` behavior is unchanged when `--dataset.streaming=false`.
 
@@ -154,15 +164,20 @@ All options except `max_num_shards` are `--dataset.*` flags. `max_num_shards` is
 
 For more even episode mixing, opt in with `--dataset.streaming_sampling_strategy=round_robin`.
 Each round shuffles the currently resident episodes and samples one shuffled frame from each;
-episodes admitted during a round join the next one. Both strategies retain exactly-once epoch
-coverage and the same resource bounds. Neither is a global uniform permutation: round-robin
-favors shorter episodes in finite prefixes and can increase decoder churn and reduce throughput.
+episodes admitted during a round join the next one. Both strategies yield every frame in a
+worker's share once per pass and use the same resource bounds. Neither is a global uniform
+permutation: round-robin favors shorter episodes in finite prefixes and can increase decoder
+churn and reduce throughput.
 The order comes from `--seed` (default 1000), together with the policy initialization and the
 other seeded random generators. Different seeds give different episode and anchor orders, and the
-same seed repeats the order. `--seed=null` uses the fixed streaming seed 42. Keep the same strategy,
-`--seed` and pool settings when resuming a checkpoint. The checkpoint stores the seed, so a plain
-`--resume` keeps the order. A checkpoint from a run that started before `--seed` reached the
-streaming dataset used seed 42 for its order: pass `--seed=42` when you resume it to keep that order.
+same seed repeats the order. `--seed=null` uses the fixed streaming seed 42.
+
+To resume the same frame order from a checkpoint, keep the same dataset and episode selection,
+`--seed`, sampling strategy, pool settings, batch size, DataLoader worker count, and data-parallel
+world size. The trainer uses the completed step count to locate the next batch in the repeating
+stream. The checkpoint config stores the seed.
+If the run started before LeRobot passed the training seed to the streaming dataset, use
+`--seed=42` to restore the frame order.
 
 The active episode set is capped by both episode count and the exact synthesized mini-MP4 sizes
 computed from the sidecar. An episode larger than the complete rank budget fails before training
