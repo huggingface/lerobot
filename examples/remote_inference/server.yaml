@@ -7,6 +7,7 @@ model:
   repo_or_path: /absolute/path/to/checkpoint
   revision: null  # For Hub checkpoints, pin a commit before validating a deployment.
   device: cuda
+  trust_remote_code: false  # Set true, after reviewing it, for custom tokenizer code (PI0-FAST, FineART, WALL-X).
 execution:
   supported_modes: [chunk]
   action_fps: 30.0

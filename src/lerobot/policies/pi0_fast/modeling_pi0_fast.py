@@ -790,7 +790,16 @@ class PI0FastPolicy(PreTrainedPolicy):
         except Exception as e:
             logging.error(f"Failed to load FAST tokenizer for action detokenization: {e}")
             logging.error("Tokenizer loading is required for proper policy initialization; aborting.")
-            raise RuntimeError("Failed to load required tokenizers for PI0FastPolicy initialization") from e
+            hint = (
+                ""
+                if config.trust_remote_code
+                else " The FAST action tokenizer runs custom code: after reviewing it, pass "
+                "--policy.trust_remote_code=true (--model.trust_remote_code=true for lerobot-policy-server) "
+                "or trust_remote_code=True in Python."
+            )
+            raise RuntimeError(
+                f"Failed to load required tokenizers for PI0FastPolicy initialization.{hint}"
+            ) from e
 
         # Initialize the core PI0Fast model
         self.init_rtc_processor()

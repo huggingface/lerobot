@@ -59,6 +59,13 @@ from lerobot.utils.hub import HubMixin
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
 
+# Shared by the consent errors: the pipeline cannot tell which CLI scope loaded it.
+_TRUST_REMOTE_CODE_HINT = (
+    "After reviewing the checkpoint, pass --policy.trust_remote_code=true "
+    "(--reward_model.trust_remote_code=true for reward models, --model.trust_remote_code=true for "
+    "lerobot-policy-server) or trust_remote_code=True in Python."
+)
+
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
@@ -1227,8 +1234,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
             if not (trust_remote_code or is_lerobot_module):
                 raise ValueError(
-                    f"Importing '{module_path}' requires `trust_remote_code=True` "
-                    "(CLI: --policy.trust_remote_code=true)."
+                    f"Importing '{module_path}' requires `trust_remote_code=True`. {_TRUST_REMOTE_CODE_HINT}"
                 )
 
             try:
@@ -1300,7 +1306,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         merged_cfg = {**saved_cfg, **step_overrides}
 
         if not trust_remote_code and merged_cfg.get("trust_remote_code", False):
-            raise ValueError(f"Step '{step_key}' requests trust_remote_code=True without pipeline consent.")
+            raise ValueError(
+                f"Step '{step_key}' needs custom code, which requires `trust_remote_code=True`. "
+                f"{_TRUST_REMOTE_CODE_HINT}"
+            )
 
         # Enforce caller consent even when a registered step defaults to True,
         # and let explicit pipeline/step consent take precedence over saved values.

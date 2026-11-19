@@ -106,7 +106,6 @@ def test_action_tokenizer_config_preserves_token_mapping():
     processor.action_tokenizer_input_object = None
 
     assert processor.get_config() == {
-        "trust_remote_code": True,
         "max_action_tokens": 384,
         "fast_skip_tokens": 64,
         "paligemma_tokenizer_name": "custom/paligemma",

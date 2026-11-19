@@ -544,7 +544,7 @@ def test_step_cannot_grant_its_own_consent(load_pipeline, monkeypatch, consent, 
     if requested == "config":
         step["config"]["trust_remote_code"] = True
     if not consent and requested != "default":
-        with pytest.raises(ValueError, match="without pipeline consent"):
+        with pytest.raises(ValueError, match="needs custom code"):
             load_pipeline(step, overrides=overrides)
         loader.assert_not_called()
     else:
