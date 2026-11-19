@@ -118,6 +118,12 @@ def test_uniform_subsample_samples_like_the_official_inference():
     assert torch.equal(_uniform_subsample(video, None), video)
 
 
+def test_uniform_subsample_selects_frames_on_the_video_device():
+    selected = _uniform_subsample(torch.empty(300, 3, 4, 4, device="meta"), 8)
+    assert selected.device.type == "meta"
+    assert selected.shape == (8, 3, 4, 4)
+
+
 def test_video_to_pil_accepts_float_chw_frames():
     frames = torch.zeros(5, 3, 8, 8)
     frames[-1, 0].fill_(1.0)

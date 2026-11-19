@@ -67,7 +67,8 @@ def _uniform_subsample(video: Tensor, max_frames: int | None) -> Tensor:
         return video
     if max_frames == 1:
         return video[-1:]
-    return video[torch.from_numpy(np.linspace(0, video.shape[0] - 1, max_frames, dtype=np.int64))]
+    indices = np.linspace(0, video.shape[0] - 1, max_frames, dtype=np.int64)
+    return video[torch.as_tensor(indices, device=video.device)]
 
 
 def _shrink_to_max_side(images: list[Image.Image], max_side: int | None) -> list[Image.Image]:
@@ -141,7 +142,8 @@ class RynnValueEncoderProcessorStep(ProcessorStep):
         if self.image_key not in observation:
             raise KeyError(f"RynnValue expected image key {self.image_key!r} in observation")
         frames = observation[self.image_key]
-        tensor = frames.detach().cpu() if isinstance(frames, Tensor) else torch.as_tensor(frames)
+        # Frames stay on their device until `_video_to_pil` has picked the ones RynnValue sees.
+        tensor = frames.detach() if isinstance(frames, Tensor) else torch.as_tensor(frames)
         if tensor.ndim == 4:
             tensor = tensor.unsqueeze(0)
         elif tensor.ndim != 5:

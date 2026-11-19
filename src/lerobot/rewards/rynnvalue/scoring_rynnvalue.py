@@ -129,19 +129,28 @@ class RynnValueFrameScorer:
         task = dataset[positions[0]].get(config.task_key)
 
         anchors = select_anchor_indices(num_frames, float(dataset.fps), config.inference_fps)
+        prefixes = [select_prefix_indices(int(anchor), config.max_frames) for anchor in anchors]
+        # Without `max_frames`, prefixes differ in length and can't share a batch.
+        batch_size = config.scoring_batch_size if config.max_frames is not None else 1
         remaining_time: NDArray[np.float64] = np.empty(len(anchors), dtype=np.float64)
 
         self.model.eval()
         with torch.inference_mode():
-            for i, anchor in enumerate(anchors):
-                frames = torch.stack(
-                    [
-                        dataset[positions[index]][config.image_key]
-                        for index in select_prefix_indices(int(anchor), config.max_frames)
-                    ]
+            for start in range(0, len(anchors), batch_size):
+                batch_prefixes = prefixes[start : start + batch_size]
+                # Prefixes share frames, and short ones repeat them: decode each frame once per batch.
+                frames = {
+                    index: dataset[positions[index]][config.image_key]
+                    for index in np.unique(np.concatenate(batch_prefixes)).tolist()
+                }
+                videos = torch.stack(
+                    [torch.stack([frames[index] for index in prefix.tolist()]) for prefix in batch_prefixes]
                 )
-                encoded = self.preprocessor({config.image_key: frames.unsqueeze(0), config.task_key: task})
-                remaining_time[i] = self.model.predict_remaining_time(encoded).remaining_time_s.item()
+                encoded = self.preprocessor({config.image_key: videos, config.task_key: task})
+                prediction = self.model.predict_remaining_time(encoded)
+                remaining_time[start : start + len(batch_prefixes)] = (
+                    prediction.remaining_time_s.float().cpu().numpy()
+                )
 
         return FrameSignals(
             frame_indices=np.arange(num_frames, dtype=np.int64),

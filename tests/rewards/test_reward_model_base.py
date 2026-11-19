@@ -185,7 +185,7 @@ def _rynnvalue_config(**kwargs):
         (_robometer_config, {"num_subsampled_frames": 2, "scoring_batch_size": 8}),
         (_sarm_config, {"head_mode": "both", "stride": 5, "scoring_batch_size": 8}),
         (_topreward_config, {"num_samples": 3}),
-        (_rynnvalue_config, {"inference_fps": 2.0}),
+        (_rynnvalue_config, {"inference_fps": 2.0, "scoring_batch_size": 8}),
     ],
     ids=["robometer", "sarm", "topreward", "rynnvalue"],
 )

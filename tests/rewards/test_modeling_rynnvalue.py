@@ -141,6 +141,8 @@ def test_rynnvalue_config_validation():
         RynnValueConfig(device="cpu", max_image_side=0)
     with pytest.raises(ValueError, match="inference_fps must be > 0"):
         RynnValueConfig(device="cpu", inference_fps=0)
+    with pytest.raises(ValueError, match="scoring_batch_size"):
+        RynnValueConfig(device="cpu", scoring_batch_size=0)
 
 
 def test_value_tokenizer_two_hot_symlog_roundtrip():

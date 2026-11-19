@@ -45,9 +45,11 @@ class RynnValueConfig(RewardModelConfig):
     use_meta: bool | None = None
 
     # Offline scoring (`lerobot-score`): run RynnValue on about this many frames per second of
-    # video and interpolate the frames in between. Not saved with checkpoints.
+    # video and interpolate the frames in between, and the number of prefixes scored together.
+    # Not saved with checkpoints.
     inference_fps: float = 1.0
-    _scoring_fields: ClassVar[tuple[str, ...]] = ("inference_fps",)
+    scoring_batch_size: int = 4
+    _scoring_fields: ClassVar[tuple[str, ...]] = ("inference_fps", "scoring_batch_size")
 
     license: str | None = "apache-2.0"
     tags: list[str] | None = field(
@@ -76,6 +78,8 @@ class RynnValueConfig(RewardModelConfig):
             raise ValueError(f"max_image_side must be >= 1, got {self.max_image_side}")
         if self.inference_fps <= 0:
             raise ValueError(f"inference_fps must be > 0, got {self.inference_fps}")
+        if self.scoring_batch_size < 1:
+            raise ValueError(f"scoring_batch_size must be >= 1, got {self.scoring_batch_size}")
         if self.image_key not in self.input_features:
             self.input_features[self.image_key] = PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL)
         self.output_features.setdefault(

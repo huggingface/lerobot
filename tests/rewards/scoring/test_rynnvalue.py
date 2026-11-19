@@ -95,8 +95,10 @@ class _FakeDataset:
 
     def __init__(self, episodes):
         self.meta = SimpleNamespace(episodes=episodes)
+        self.loads: list[int] = []
 
     def __getitem__(self, position: int):
+        self.loads.append(position)
         return {IMAGE_KEY: torch.full((3, 2, 2), float(position)), "task": "pick up the cube"}
 
 
@@ -105,11 +107,13 @@ class _PrefixEncoderStep(ProcessorStep):
     """Stand in for RynnValue's encoder: record each prefix's frames and write its last one."""
 
     prefixes: list[list[float]] = field(default_factory=list)
+    batch_sizes: list[int] = field(default_factory=list)
 
     def __call__(self, transition):
         observation = dict(transition[TransitionKey.OBSERVATION])
         frames = observation[IMAGE_KEY]
-        self.prefixes.append(frames[0, :, 0, 0, 0].tolist())
+        self.prefixes.extend(frames[:, :, 0, 0, 0].tolist())
+        self.batch_sizes.append(frames.shape[0])
         observation["observation.last_frame"] = frames[:, -1, 0, 0, 0]
         return {**transition, TransitionKey.OBSERVATION: observation}
 
@@ -127,6 +131,10 @@ class _FakeEncoder(PolicyProcessorPipeline):
     def prefixes(self) -> list[list[float]]:
         return self.steps[0].prefixes
 
+    @property
+    def batch_sizes(self) -> list[int]:
+        return self.steps[0].batch_sizes
+
 
 class _FakeModel:
     config = SimpleNamespace(
@@ -141,6 +149,7 @@ class _FakeModel:
         max_frames=3,
         max_image_side=640,
         inference_fps=1.0,
+        scoring_batch_size=2,
         robot_description="a single-arm robot",
         camera_description=None,
         use_meta=None,
@@ -159,10 +168,14 @@ def test_rynnvalue_frame_scorer_scores_prefixes_and_interpolates_remaining_time(
     encoder = _FakeEncoder()
     scorer = RynnValueFrameScorer(_FakeModel(), encoder)
 
-    result = scorer.score_episode(_FakeDataset([{"dataset_from_index": 0, "dataset_to_index": 5}]), 0)
+    dataset = _FakeDataset([{"dataset_from_index": 0, "dataset_to_index": 5}])
+    result = scorer.score_episode(dataset, 0)
 
-    # At 2 fps, RynnValue runs once a second, on frames 0, 2 and 4, with at most three frames per prefix.
+    # At 2 fps, RynnValue runs once a second, on frames 0, 2 and 4, with three frames per prefix.
     assert encoder.prefixes == [[0.0, 0.0, 0.0], [0.0, 1.0, 2.0], [0.0, 2.0, 4.0]]
+    # Two prefixes per batch, each batch decoding its frames once, after the task lookup.
+    assert encoder.batch_sizes == [2, 1]
+    assert dataset.loads == [0, 0, 1, 2, 0, 2, 4]
     np.testing.assert_array_equal(result.frame_indices, np.arange(5))
     np.testing.assert_allclose(result.signals[REMAINING_TIME_SIGNAL], [4.0, 3.0, 2.0, 1.0, 0.0])
     assert result.signals[REMAINING_TIME_SIGNAL].dtype == np.float32
