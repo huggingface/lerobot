@@ -34,6 +34,7 @@ import logging
 
 import numpy as np
 import onnxruntime as ort
+import torch
 
 from lerobot.robots.unitree_g1.g1_utils import (
     ISAACLAB_TO_MUJOCO,
@@ -44,7 +45,9 @@ from lerobot.robots.unitree_g1.g1_utils import (
 )
 
 from ..controller import RobotController
+from ..history import FrameHistory
 from ..hub import load_onnx_policy
+from ..processors import make_controller_processors
 from .proprio import read_proprio
 
 logger = logging.getLogger(__name__)
@@ -110,12 +113,30 @@ class SonicWholeBodyController(RobotController):
             load_policy(policy_type=policy_type)
         )
         self.decoder_input = self.decoder.get_inputs()[0].name
-        self.default_angles_mj = self.default_angles[MUJOCO_TO_ISAACLAB]
+
+        # The decoder consumes MuJoCo joint order: q/dq are reordered via MUJOCO_TO_ISAACLAB and its
+        # residual back via ISAACLAB_TO_MUJOCO (validated against the ONNX; don't flip).
+        self.preprocessor, self.postprocessor = make_controller_processors(
+            observation_stats={"observation.joint_pos": (self.default_angles, np.ones(NUM_MOTORS))},
+            action_stats=(self.default_angles, self.action_scale),
+            observation_order={
+                "observation.joint_pos": MUJOCO_TO_ISAACLAB,
+                "observation.joint_vel": MUJOCO_TO_ISAACLAB,
+            },
+            action_order=ISAACLAB_TO_MUJOCO,
+        )
 
         # 64-D latent-token action space; rollout maps the policy's 64-D output onto these keys.
         self.action_ft = {f"{TOKEN_ACTION_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
         # 64-D token proprio state, aggregated by rollout into observation.state (last token).
         self.observation_ft = {f"{TOKEN_STATE_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
+
+        # 10-frame proprioception history, in MuJoCo joint order.
+        self.h_q_mj = FrameHistory(HISTORY_LEN, np.zeros(NUM_MOTORS, np.float32))
+        self.h_dq_mj = FrameHistory(HISTORY_LEN, np.zeros(NUM_MOTORS, np.float32))
+        self.h_ang = FrameHistory(HISTORY_LEN, np.zeros(3, np.float32))
+        self.h_act_mj = FrameHistory(HISTORY_LEN, np.zeros(NUM_MOTORS, np.float32))
+        self.h_quat = FrameHistory(HISTORY_LEN, np.array([1, 0, 0, 0], np.float32))
 
         self.reset()
         logger.info("SonicWholeBodyController initialized")
@@ -123,11 +144,8 @@ class SonicWholeBodyController(RobotController):
     def reset(self) -> None:
         """Reset internal state for a new episode: held token and proprioception history."""
         self.last_action_mj: np.ndarray = np.zeros(NUM_MOTORS, np.float32)
-        self.h_q_mj: list[np.ndarray] = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_dq_mj: list[np.ndarray] = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_ang: list[np.ndarray] = [np.zeros(3, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_act_mj: list[np.ndarray] = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_quat = [np.array([1, 0, 0, 0], np.float32) for _ in range(HISTORY_LEN)]
+        for history in (self.h_q_mj, self.h_dq_mj, self.h_ang, self.h_act_mj, self.h_quat):
+            history.reset()
         self._last_token: np.ndarray | None = None  # neutral token is re-seeded on the first tick
 
     def observation_state(self) -> dict[str, float]:
@@ -160,40 +178,34 @@ class SonicWholeBodyController(RobotController):
         elif self._last_token is None:
             self._last_token = self.neutral_token.copy()
 
-        # Read proprioception from lowstate (IsaacLab joint order).
+        # Read proprioception from lowstate (IsaacLab joint order) into the decoder's MuJoCo order.
         proprio = read_proprio(lowstate)
-        q, dq, ang = proprio.q, proprio.dq, proprio.ang_vel
+        mj = self.preprocessor({"observation.joint_pos": proprio.q, "observation.joint_vel": proprio.dq})
         quat = proprio.quat / (np.linalg.norm(proprio.quat) + 1e-8)
 
-        # Push into the 10-frame history (newest first). The decoder consumes MuJoCo joint
-        # order, so reorder q/dq via MUJOCO_TO_ISAACLAB (validated against the ONNX; don't flip).
-        self.h_q_mj = [q[MUJOCO_TO_ISAACLAB] - self.default_angles_mj] + self.h_q_mj[:-1]
-        self.h_dq_mj = [dq[MUJOCO_TO_ISAACLAB]] + self.h_dq_mj[:-1]
-        self.h_ang = [ang] + self.h_ang[:-1]
-        self.h_act_mj = [self.last_action_mj.copy()] + self.h_act_mj[:-1]
-        self.h_quat = [quat] + self.h_quat[:-1]
+        self.h_q_mj.push(mj["observation.joint_pos"])
+        self.h_dq_mj.push(mj["observation.joint_vel"])
+        self.h_ang.push(proprio.ang_vel)
+        self.h_act_mj.push(self.last_action_mj)
+        self.h_quat.push(quat)
 
         # Assemble the 994-D decoder input: token + oldest->newest history + gravity.
-        obs: np.ndarray = np.zeros(DECODER_INPUT_DIM, np.float32)
-        obs[:TOKEN_DIM] = self._last_token
-        off = TOKEN_DIM
-        for hist, sz in (
-            (self.h_ang, 3),
-            (self.h_q_mj, NUM_MOTORS),
-            (self.h_dq_mj, NUM_MOTORS),
-            (self.h_act_mj, NUM_MOTORS),
-        ):
-            for frame in reversed(hist):
-                obs[off : off + sz] = frame
-                off += sz
-        for hquat in reversed(self.h_quat):
-            obs[off : off + 3] = get_gravity_orientation(hquat)
-            off += 3
+        gravity = [get_gravity_orientation(hquat) for hquat in self.h_quat]
+        obs: np.ndarray = np.concatenate(
+            [
+                self._last_token,
+                self.h_ang.stacked(),
+                self.h_q_mj.stacked(),
+                self.h_dq_mj.stacked(),
+                self.h_act_mj.stacked(),
+                *gravity,
+            ]
+        ).astype(np.float32)
 
         # Decode -> residual action (MuJoCo order) added onto the standing pose.
         action_mj = (
             self.decoder.run(None, {self.decoder_input: obs.reshape(1, -1)})[0].squeeze().astype(np.float32)
         )
         self.last_action_mj = action_mj.copy()
-        target = self.default_angles + action_mj[ISAACLAB_TO_MUJOCO] * self.action_scale
+        target = self.postprocessor(torch.from_numpy(action_mj)).numpy()
         return {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}

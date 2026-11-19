@@ -18,6 +18,7 @@ import logging
 
 import numpy as np
 import onnxruntime as ort
+import torch
 
 from lerobot.robots.unitree_g1.g1_utils import (
     REMOTE_AXES,
@@ -28,6 +29,7 @@ from lerobot.robots.unitree_g1.g1_utils import (
 
 from ..controller import RobotController
 from ..hub import load_onnx_policy
+from ..processors import make_controller_processors
 from .proprio import read_proprio
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,17 @@ class HolosomaLocomotionController(RobotController):
         self.phase_dt = 2 * np.pi / ((1.0 / CONTROL_DT) * GAIT_PERIOD)
         self.is_standing = True
 
+        # Scaled proprioception in; the policy acts on all 29 joints, the leg and waist targets (0-14) go out.
+        self.preprocessor, self.postprocessor = make_controller_processors(
+            observation_stats={
+                "observation.joint_pos": (DEFAULT_ANGLES, np.full(29, 1 / DOF_POS_SCALE)),
+                "observation.joint_vel": (np.zeros(29), np.full(29, 1 / DOF_VEL_SCALE)),
+                "observation.ang_vel": (np.zeros(3), np.full(3, 1 / ANG_VEL_SCALE)),
+            },
+            action_stats=(DEFAULT_ANGLES[:15], np.full(15, ACTION_SCALE)),
+            action_order=range(15),
+        )
+
         logger.info("HolosomaLocomotionController initialized")
 
     def reset(self) -> None:
@@ -143,11 +156,13 @@ class HolosomaLocomotionController(RobotController):
             qj[arm_joint.value] = DEFAULT_ANGLES[arm_joint.value]
             dqj[arm_joint.value] = 0.0
 
-        # Scale joint positions and velocities before policy inference
-        qj_obs = (qj - DEFAULT_ANGLES) * DOF_POS_SCALE
-        dqj_obs = dqj * DOF_VEL_SCALE
-        ang_vel_s = proprio.ang_vel * ANG_VEL_SCALE
-        gravity = proprio.gravity
+        obs = self.preprocessor(
+            {
+                "observation.joint_pos": qj,
+                "observation.joint_vel": dqj,
+                "observation.ang_vel": proprio.ang_vel,
+            }
+        )
 
         # Update gait phase
         if np.linalg.norm(self.cmd[:2]) < 0.01 and abs(self.cmd[2]) < 0.01:
@@ -164,13 +179,13 @@ class HolosomaLocomotionController(RobotController):
 
         # Build observations
         self.obs[0:29] = self.last_action
-        self.obs[29:32] = ang_vel_s
+        self.obs[29:32] = obs["observation.ang_vel"]
         self.obs[32] = self.cmd[2]
         self.obs[33:35] = self.cmd[:2]
         self.obs[35:37] = cos_ph
-        self.obs[37:66] = qj_obs
-        self.obs[66:95] = dqj_obs
-        self.obs[95:98] = gravity
+        self.obs[37:66] = obs["observation.joint_pos"]
+        self.obs[66:95] = obs["observation.joint_vel"]
+        self.obs[95:98] = proprio.gravity
         self.obs[98:100] = sin_ph
 
         # Run policy inference
@@ -179,10 +194,9 @@ class HolosomaLocomotionController(RobotController):
         policy_action = np.clip(raw_action, -100.0, 100.0)
         self.last_action = policy_action.copy()
 
-        # Transform action back to target joint positions
-        target = DEFAULT_ANGLES + policy_action * ACTION_SCALE
+        # Transform action back to target joint positions (first 15 joints only)
+        target = self.postprocessor(torch.as_tensor(policy_action)).numpy()
 
-        # Build action dict (first 15 joints only)
         action_dict = {}
         for i in range(15):
             motor_name = G1_29_JointIndex(i).name
