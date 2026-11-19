@@ -29,6 +29,7 @@ from lerobot.scripts.lerobot_edit_dataset import (
     OperationConfig,
     ReencodeVideosConfig,
     RemoveFeatureConfig,
+    RenameFeatureConfig,
     SplitConfig,
     _validate_config,
 )
@@ -51,6 +52,7 @@ class TestOperationTypeParsing:
             ("split", SplitConfig),
             ("merge", MergeConfig),
             ("remove_feature", RemoveFeatureConfig),
+            ("rename_feature", RenameFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
             ("info", InfoConfig),
@@ -95,6 +97,7 @@ class TestOperationTypeParsing:
             ("split", SplitConfig),
             ("merge", MergeConfig),
             ("remove_feature", RemoveFeatureConfig),
+            ("rename_feature", RenameFeatureConfig),
             ("modify_tasks", ModifyTasksConfig),
             ("convert_image_to_video", ConvertImageToVideoConfig),
             ("info", InfoConfig),
