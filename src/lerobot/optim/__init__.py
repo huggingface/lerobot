@@ -21,6 +21,7 @@ from .optimizers import (
     AdamWConfig as AdamWConfig,
     MultiAdamConfig as MultiAdamConfig,
     OptimizerConfig as OptimizerConfig,
+    PraxisAdamWConfig as PraxisAdamWConfig,
     SGDConfig as SGDConfig,
     XVLAAdamWConfig as XVLAAdamWConfig,
     load_optimizer_state,
@@ -45,6 +46,7 @@ __all__ = [
     "AdamWConfig",
     "MultiAdamConfig",
     "OptimizerConfig",
+    "PraxisAdamWConfig",
     "SGDConfig",
     "XVLAAdamWConfig",
     # Scheduler configs

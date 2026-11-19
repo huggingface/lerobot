@@ -37,6 +37,7 @@ from lerobot.lerobot_types import PolicyAction
 from lerobot.processor import (
     PolicyProcessorPipeline,
     load_pretrained_policy_processors,
+    rename_keys,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -333,7 +334,7 @@ def make_policy(
         features = env_to_policy_features(env_cfg)
 
     if rename_map:
-        features = {rename_map.get(key, key): feature for key, feature in features.items()}
+        features = rename_keys(features, rename_map)
 
     if ds_meta is not None or not cfg.output_features:
         cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
@@ -363,10 +364,7 @@ def make_policy(
         if callable(set_dataset_feature_metadata):
             ds_feature = ds_meta.features
             if rename_map:  # use the policy-side (renamed) keys
-                ds_feature = {
-                    rename_map.get(dataset_key, dataset_key): feature
-                    for dataset_key, feature in ds_meta.features.items()
-                }
+                ds_feature = rename_keys(ds_meta.features, rename_map)
             set_dataset_feature_metadata(ds_feature)
         cfg._runtime_dataset_meta = ds_meta
 

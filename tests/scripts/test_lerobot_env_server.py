@@ -15,8 +15,10 @@
 """lerobot-env-server: configuration overrides, Docker launch, and the shipped server configurations."""
 
 import signal
+import socket
 import subprocess
 import sys
+import textwrap
 import time
 import types
 from dataclasses import asdict
@@ -28,7 +30,8 @@ import pytest
 import yaml
 
 from lerobot.env_server import EnvClient, EnvServerConfig
-from lerobot.envs.configs import EnvConfig, check_served
+from lerobot.envs.configs import EnvConfig
+from lerobot.envs.factory import check_served
 from lerobot.scripts import lerobot_env_server
 from lerobot.scripts.lerobot_env_server import EnvServerLaunchConfig
 from lerobot.sim import SimSettings
@@ -120,6 +123,7 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     argv = [
         "lerobot-env-server",
         "--envhub=User/My-Env@v1",
+        "--trust_remote_code=true",
         "--sim.fps=50",
         "--sim.kwargs={make_env_kwargs: {episode_length: 900}}",
         "--docker=true",
@@ -139,9 +143,9 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     assert mounted["deployment"] == "envhub"
     assert mounted["sim"]["kwargs"] == {
         "hub_path": lerobot_env_server.ENVHUB_IMAGE_DIR,
-        "trust_remote_code": True,
         "make_env_kwargs": {"episode_length": 900},
     }
+    assert mounted["trust_remote_code"] is True
     assert mounted["sim"]["fps"] == 50
 
 
@@ -151,7 +155,13 @@ def test_docker_launch_builds_a_local_envhub_directory(tmp_path, monkeypatch):
         lerobot_env_server.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs))
     )
     (tmp_path / "custom.py").write_text("")
-    argv = ["lerobot-env-server", f"--envhub={tmp_path}:custom.py", "--docker=true", "--build=true"]
+    argv = [
+        "lerobot-env-server",
+        f"--envhub={tmp_path}:custom.py",
+        "--trust_remote_code=true",
+        "--docker=true",
+        "--build=true",
+    ]
     monkeypatch.setattr(sys, "argv", argv)
     lerobot_env_server.main()
     env = calls[-1][1]["env"]
@@ -159,6 +169,45 @@ def test_docker_launch_builds_a_local_envhub_directory(tmp_path, monkeypatch):
     assert env["SIM_TAG"] == f"local-{tmp_path.name.lower()}"
     hub_path = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())["sim"]["kwargs"]["hub_path"]
     assert hub_path == f"{lerobot_env_server.ENVHUB_IMAGE_DIR}:custom.py"
+
+
+def test_serving_an_envhub_repository_needs_explicit_consent(tmp_path):
+    with pytest.raises(ValueError, match="pin the commit you read.*--trust_remote_code=true"):
+        EnvServerLaunchConfig(envhub="user/repo")
+    # A local folder needs the same consent, but has no commit to pin.
+    with pytest.raises(ValueError, match="packages.txt, then pass --trust_remote_code=true"):
+        EnvServerLaunchConfig(envhub=str(tmp_path))
+    assert EnvServerLaunchConfig(envhub="user/repo", trust_remote_code=True).sim.kwargs["trust_remote_code"]
+    # Stopping the server runs nothing.
+    EnvServerLaunchConfig(envhub="user/repo", docker=True, stop=True)
+
+
+def test_an_envhub_yaml_needs_consent_before_anything_is_built(tmp_path, monkeypatch):
+    # A Docker build installs the repository's packages, so consent is checked before it starts.
+    calls = []
+    monkeypatch.setattr(lerobot_env_server.subprocess, "run", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(lerobot_env_server, "snapshot_download", lambda *args, **kwargs: calls.append(args))
+    config = tmp_path / "envhub.yaml"
+    sim = {"type": "envhub", "kwargs": {"hub_path": "user/repo"}}
+    config.write_text(yaml.safe_dump({"deployment": "envhub", "sim": sim}))
+    monkeypatch.setattr(sys, "argv", ["lerobot-env-server", f"--config_path={config}", "--docker=true"])
+    with pytest.raises(Exception) as error:
+        lerobot_env_server.main()
+    assert "--trust_remote_code=true" in f"{error.value} {error.value.__cause__}"
+    assert calls == []
+    # Consent from the command line, or from the YAML's top level: one field.
+    cfg = draccus.parse(EnvServerLaunchConfig, config_path=str(config), args=["--trust_remote_code=true"])
+    assert cfg.sim.kwargs["trust_remote_code"] is True
+    config.write_text(yaml.safe_dump({"deployment": "envhub", "trust_remote_code": True, "sim": sim}))
+    assert draccus.parse(EnvServerLaunchConfig, config_path=str(config), args=[]).sim.kwargs[
+        "trust_remote_code"
+    ]
+    # Not from the simulator's options, where it would be a second consent.
+    sim["kwargs"]["trust_remote_code"] = True
+    config.write_text(yaml.safe_dump({"deployment": "envhub", "sim": sim}))
+    with pytest.raises(Exception) as error:
+        draccus.parse(EnvServerLaunchConfig, config_path=str(config), args=["--trust_remote_code=true"])
+    assert "not in sim.kwargs" in f"{error.value} {error.value.__cause__}"
 
 
 def test_build_and_stop_require_docker():
@@ -200,7 +249,7 @@ def test_native_server_listens_on_localhost_unless_told_otherwise(tmp_path, monk
         def __init__(self, config):
             configs.append(config)
 
-        def serve(self):
+        def serve(self, should_stop=None):
             pass
 
         def stop(self):
@@ -215,18 +264,80 @@ def test_native_server_listens_on_localhost_unless_told_otherwise(tmp_path, monk
     assert configs[0].zenoh.listen_endpoints == ["tcp/127.0.0.1:7999"]
 
 
-def test_the_server_runs_in_its_own_process_and_stops_on_sigterm(tmp_path):
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal delivery")
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT], ids=["sigterm", "sigint"])
+@pytest.mark.parametrize("inside_wait", [False, True], ids=["ordinary", "wait-lock-held"])
+def test_the_server_runs_in_its_own_process_and_stops_on_signal(tmp_path, signum, inside_wait):
     # As in its Docker image: the CLI in its own process, stopped by `docker stop`.
     pytest.importorskip("zenoh")
     pytest.importorskip("msgpack")
-    endpoint = f"tcp/127.0.0.1:{free_port()}"
+    port = free_port()
+    endpoint = f"tcp/127.0.0.1:{port}"
     config = tmp_path / "toy.yaml"
     config.write_text(yaml.safe_dump({"deployment": "toy", "sim": ToyEnvConfig().sim_settings()}))
-    # Importing the toy fixture registers its simulator integration in the server process.
-    code = "import tests.fixtures.toy_env\nfrom lerobot.scripts.lerobot_env_server import main\nmain()"
+    # The real CLI and Toy integration run in the child. Only lifecycle recording and
+    # the signal's timing are instrumented; Event.wait/set and server methods stay intact.
+    code = textwrap.dedent("""
+        import faulthandler
+        import inspect
+        import signal
+        import sys
+        import threading
+        from pathlib import Path
+
+        from lerobot.env_server import EnvServer
+        from lerobot.scripts.lerobot_env_server import main
+        from tests.fixtures.toy_env import ToyEnv
+
+        output = Path(sys.argv.pop(1))
+        signum = int(sys.argv.pop(1))
+        inside_wait = sys.argv.pop(1) == "1"
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+        closed = []
+        original_close = ToyEnv.close
+
+        def close(self):
+            original_close(self)
+            closed.append(id(self))
+
+        ToyEnv.close = close
+        lines, first = inspect.getsourcelines(threading.Event.wait)
+        locked_line = first + next(i for i, line in enumerate(lines) if "signaled = self._flag" in line)
+        fired = False
+
+        def trace(frame, event, arg):
+            global fired
+            if frame.f_code is not threading.Event.wait.__code__:
+                return None
+            caller = frame.f_back
+            if (not fired and event == "line" and frame.f_lineno == locked_line
+                and caller is not None and caller.f_code is EnvServer.serve.__code__
+                and (output / "arm").exists()):
+                owner = caller.f_locals["self"]
+                assert frame.f_locals["self"] is owner._stop
+                assert owner._stop._cond._is_owned()
+                assert len(owner.sessions) == 1
+                fired = True
+                (output / "injected").write_text("active session; owner Event condition held")
+                faulthandler.dump_traceback_later(2)
+                signal.raise_signal(signum)
+            return trace
+
+        if inside_wait:
+            sys.settrace(trace)
+        try:
+            main()
+        finally:
+            sys.settrace(None)
+            faulthandler.cancel_dump_traceback_later()
+        assert ToyEnv.builds == len(closed) == len(set(closed)) > 0
+        assert all(signal.getsignal(sig) == handler for sig, handler in previous.items())
+        (output / "checked").write_text("all envs closed once; handlers restored")
+    """)
     args = [f"--config_path={config}", f"--zenoh.listen_endpoints=[{endpoint}]"]
     with (tmp_path / "server.log").open("w+") as log:
-        server = subprocess.Popen([sys.executable, "-c", code, *args], cwd=ROOT, stdout=log, stderr=log)
+        command = [sys.executable, "-c", code, str(tmp_path), str(int(signum)), str(int(inside_wait)), *args]
+        server = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log)
         client = EnvClient(endpoint, "toy", handshake_timeout_s=1)
         try:
             deadline = time.monotonic() + 60
@@ -241,12 +352,27 @@ def test_the_server_runs_in_its_own_process_and_stops_on_sigterm(tmp_path):
                         pytest.fail(f"lerobot-env-server did not start:\n{log.read()}")
             client.open(1, seeds=[0])
             assert client.request("step", actions=np.zeros((1, 2), np.float32)).elapsed_steps[0] == 1
-        finally:
-            client.close()
-            server.send_signal(signal.SIGTERM)
+            if inside_wait:
+                (tmp_path / "arm").touch()
+            else:
+                server.send_signal(signum)
             try:
                 exit_code = server.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 server.kill()
-                raise
-        assert exit_code == 0
+                server.wait(timeout=5)
+                log.seek(0)
+                pytest.fail(f"lerobot-env-server did not stop:\n{log.read()}")
+            log.seek(0)
+            assert exit_code == 0, log.read()
+            if inside_wait:
+                assert (tmp_path / "injected").read_text() == "active session; owner Event condition held"
+            assert (tmp_path / "checked").read_text() == "all envs closed once; handlers restored"
+            with socket.socket() as sock:
+                assert sock.connect_ex(("127.0.0.1", port)) != 0
+        finally:
+            if server.poll() is None:
+                server.kill()
+                server.wait(timeout=5)
+            # Keep the session active through shutdown; disconnect must not do its cleanup first.
+            client.close()
