@@ -375,7 +375,6 @@ def fit_fast_tokenizer(
         for ep in range(len(boundaries) - 1)
         if boundaries[ep] < boundaries[ep + 1]
     }
-    num_episodes = len(ep_to_slice)
     # ``acts`` is in original (un-sorted-by-episode) row order; reorder
     # so per-episode slices are contiguous.
     acts = acts[order]
@@ -385,20 +384,24 @@ def fit_fast_tokenizer(
     ep_indices = _select_episode_indices(list(ep_to_slice), episodes, exclude_episodes)
     if not ep_indices:
         raise RuntimeError("FAST fit: episode selection is empty after applying exclusions.")
+    # Split the sample budget only across episodes with at least ``chunk_size`` frames.
+    long_episodes = [ep for ep in ep_indices if ep_to_slice[ep][1] - ep_to_slice[ep][0] >= chunk_size]
+    if not long_episodes:
+        raise RuntimeError(
+            f"FAST fit collected zero action chunks from {dataset_repo_id!r}: "
+            f"all {len(ep_indices)} selected episodes are shorter than chunk_size={chunk_size}. "
+            "Lower ``chunk_size`` to match your episode lengths."
+        )
     total_samples = n_samples + validation_samples
-    samples_per_episode = max(1, (total_samples + len(ep_indices) - 1) // len(ep_indices))
+    samples_per_episode = max(1, (total_samples + len(long_episodes) - 1) // len(long_episodes))
     collected = 0
     eps_visited = 0
-    short_episodes = 0
     states_buf: list[np.ndarray] = []
-    for ep_idx in rng.permutation(ep_indices):
+    for ep_idx in rng.permutation(long_episodes):
         if collected >= total_samples:
             break
         start, stop = ep_to_slice[int(ep_idx)]
         ep_actions = acts[start:stop]
-        if ep_actions.shape[0] < chunk_size:
-            short_episodes += 1
-            continue
         starts = rng.integers(0, ep_actions.shape[0] - chunk_size + 1, size=samples_per_episode)
         for s in starts:
             actions_buf.append(ep_actions[int(s) : int(s) + chunk_size])
@@ -408,15 +411,6 @@ def fit_fast_tokenizer(
             if collected >= total_samples:
                 break
         eps_visited += 1
-
-    if not actions_buf:
-        raise RuntimeError(
-            f"FAST fit collected zero action chunks from {dataset_repo_id!r}: "
-            f"all {num_episodes} episodes were shorter than chunk_size="
-            f"{chunk_size} ({short_episodes} too short) or had an unreadable "
-            "``action`` column. Lower ``chunk_size`` to match your episode "
-            "lengths."
-        )
 
     actions = np.stack(actions_buf, axis=0).astype(np.float32)  # (N, H, D)
     if states is not None:
@@ -438,11 +432,6 @@ def fit_fast_tokenizer(
             "to the current ``physical-intelligence/fast`` revision."
         )
 
-    if actions.shape[0] < total_samples:
-        raise RuntimeError(
-            f"FAST fit collected {actions.shape[0]} chunks, but {total_samples} are required "
-            f"for {n_samples} fit and {validation_samples} validation chunks."
-        )
     fit_actions = actions[:n_samples]
     validation_actions = actions[n_samples:total_samples]
     fitted = base.fit(fit_actions)
