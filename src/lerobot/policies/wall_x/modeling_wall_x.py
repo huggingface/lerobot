@@ -49,6 +49,7 @@ from safetensors.torch import load_file
 from torch import Tensor
 from torch.nn import CrossEntropyLoss
 
+from lerobot.processor import decode_fast_actions
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
@@ -1336,6 +1337,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
 
         # Convert tokens to actions for fast prediction mode
         if predict_mode == "fast":
+            if pred_horizon is None or action_dim is None:
+                raise ValueError("Fast action prediction requires pred_horizon and action_dim.")
             action_id = []
             # Extract action tokens from generated sequence
             for token_id_i in predict_output_ids[0]:
@@ -1344,8 +1347,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                         token_id_i.item() - self.processor.tokenizer.init_kwargs["action_token_start_index"]
                     )
 
-            predict_action = self.processor.action_processor.decode(
-                [action_id], time_horizon=pred_horizon, action_dim=action_dim
+            predict_action = decode_fast_actions(
+                self.processor.action_processor, [action_id], action_dim, time_horizon=pred_horizon
             )
             # Handle action decoding errors
             if np.sum(predict_action) == 0:

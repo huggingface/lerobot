@@ -47,6 +47,7 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
+    encode_fast_actions,
     load_pretrained_policy_processors,
     policy_action_to_transition,
     transition_to_policy_action,
@@ -428,28 +429,12 @@ def _as_text_list(value: Any, batch_size: int) -> list[str]:
     raise ValueError(f"Expected {batch_size} task strings, got {len(texts)}.")
 
 
-def _tokenize_discrete_action(action: np.ndarray, processor: Any) -> list[int]:
-    arr = np.asarray(action, dtype=np.float32)
-    if arr.ndim == 2:
-        arr = arr[None, :, :]
-    elif arr.ndim == 1:
-        arr = arr[None, None, :]
-    tokens_out = processor(arr)
-    if isinstance(tokens_out, dict):
-        tokens_out = tokens_out.get("input_ids", next(iter(tokens_out.values())))
-    if isinstance(tokens_out, np.ndarray):
-        tokens_out = tokens_out.tolist()
-    if torch.is_tensor(tokens_out):
-        tokens_out = tokens_out.detach().cpu().tolist()
-    if not isinstance(tokens_out, list):
-        raise TypeError(f"Unexpected discrete action tokenizer output type: {type(tokens_out)}")
-    if tokens_out and isinstance(tokens_out[0], (list, tuple, np.ndarray)):
-        tokens_out = tokens_out[0]
-    return [int(token_id) for token_id in tokens_out]
-
-
 def _build_discrete_action_string(action: np.ndarray, processor: Any) -> str:
-    token_ids = _tokenize_discrete_action(action, processor)
+    chunk = np.asarray(action, dtype=np.float32)
+    if chunk.ndim == 1:
+        # A single action step is a one-step chunk.
+        chunk = chunk[None]
+    (token_ids,) = encode_fast_actions(processor, chunk[None])
     pieces = "".join(f"{ACTION_TOKEN_PREFIX}{int(token_id)}>" for token_id in token_ids)
     return f"{ACTION_START_TOKEN}{pieces}{ACTION_END_TOKEN}"
 

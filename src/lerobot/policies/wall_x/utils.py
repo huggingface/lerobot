@@ -43,6 +43,7 @@ else:
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as tv_functional
 
+from lerobot.processor import encode_fast_actions
 from lerobot.utils.constants import OBS_IMAGES
 
 from .constant import (
@@ -625,23 +626,18 @@ def get_action_tokens(normalized_actions: torch.Tensor | list, action_tokenizer)
     """Convert normalized actions to action token strings.
 
     Args:
-        normalized_actions: Normalized action arrays/tensors
-        action_tokenizer: Tokenizer for converting actions to tokens
+        normalized_actions: Normalized action chunks of shape (H, D). D can differ between
+            samples, since each keeps only its active DOFs.
+        action_tokenizer: FAST tokenizer for converting actions to tokens
 
     Returns:
         List of action token string lists for each sample
     """
-    if isinstance(normalized_actions, torch.Tensor):
-        normalized_actions = normalized_actions.cpu().numpy()
-
     all_action_tokens = []
-    for i in range(len(normalized_actions)):
-        if isinstance(normalized_actions[i], torch.Tensor):
-            normalized_actions[i] = normalized_actions[i].cpu().numpy()
-
-        token_id = action_tokenizer(normalized_actions[i])
-        action_tokens = [f"<|action_token_{j}|>" for j in token_id[0]]
-        all_action_tokens.append(action_tokens)
+    for action in normalized_actions:
+        # Chunks can have different widths, so each one is encoded on its own.
+        (token_ids,) = encode_fast_actions(action_tokenizer, action[None])
+        all_action_tokens.append([f"<|action_token_{j}|>" for j in token_ids])
 
     return all_action_tokens
 
@@ -689,8 +685,8 @@ def replace_action_token(
     if action_tokenizer is not None and norm_action is not None:
         if dof_masks is None:
             raise ValueError("dof_masks are required to tokenize actions.")
-        # Extract actions based on chunk sizes and DOF masks
-        norm_action = [action[:32, dof_masks[i, 0].bool()] for i, action in enumerate(norm_action)]
+        # Keep each sample's active DOFs; encode the whole chunk, which decoding expects.
+        norm_action = [action[:, dof_masks[i, 0].bool()] for i, action in enumerate(norm_action)]
 
         # Convert to action tokens and pad
         actions_fast_tokens = get_action_tokens(norm_action, action_tokenizer)

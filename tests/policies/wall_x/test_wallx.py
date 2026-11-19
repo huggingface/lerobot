@@ -41,7 +41,11 @@ from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
     make_wall_x_pre_post_processors,
 )
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
-from lerobot.policies.wall_x.utils import get_wallx_normal_text, preprocesser_call  # noqa: E402
+from lerobot.policies.wall_x.utils import (  # noqa: E402
+    get_wallx_normal_text,
+    preprocesser_call,
+    replace_action_token,
+)
 from lerobot.processor import (  # noqa: E402
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
@@ -55,11 +59,14 @@ from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
 @pytest.mark.parametrize("active_dims", [[0, 1, 2, 3, 4, 5], [0, 2, 4, 6, 8, 10], list(range(20))])
 @pytest.mark.parametrize("with_ground_truth", [False, True])
-def test_fast_prediction_keeps_decoded_dimensions(active_dims: list[int], with_ground_truth: bool) -> None:
+def test_fast_prediction_keeps_decoded_dimensions(
+    active_dims: list[int], with_ground_truth: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     horizon, padded_dim = 4, 20
     action_dim = len(active_dims)
     decoded = np.arange(1, horizon * action_dim + 1, dtype=np.float32).reshape(1, horizon, action_dim)
     decoder = Mock(return_value=decoded)
+    monkeypatch.setattr(modeling_wall_x, "decode_fast_actions", decoder)
     model = SimpleNamespace(
         config=SimpleNamespace(output_attentions=False, output_hidden_states=False, use_return_dict=True),
         device=torch.device("cpu"),
@@ -68,7 +75,7 @@ def test_fast_prediction_keeps_decoded_dimensions(active_dims: list[int], with_g
                 init_kwargs={"action_token_start_index": 100}, eos_token_id=3, pad_token_id=0
             ),
             batch_decode=lambda *args, **kwargs: [""],
-            action_processor=SimpleNamespace(decode=decoder),
+            action_processor=object(),
         ),
         generate=Mock(return_value=torch.tensor([[100, 101, 3]])),
     )
@@ -90,12 +97,34 @@ def test_fast_prediction_keeps_decoded_dimensions(active_dims: list[int], with_g
         action_chunk=ground_truth if with_ground_truth else None,
     )
 
-    decoder.assert_called_once_with([[0, 1]], time_horizon=horizon, action_dim=action_dim)
+    decoder.assert_called_once_with(
+        model.processor.action_processor, [[0, 1]], action_dim, time_horizon=horizon
+    )
     torch.testing.assert_close(output["predict_action"], torch.from_numpy(decoded))
     if with_ground_truth:
         torch.testing.assert_close(output["gt_action"], ground_truth[:, :, active_dims])
     else:
         assert output["gt_action"] is None
+
+
+@pytest.mark.parametrize("chunk_size", [16, 32, 50])
+def test_fast_encoding_covers_the_whole_action_chunk(chunk_size: int) -> None:
+    active_dims = [0, 2, 4]
+    dof_masks = torch.zeros(1, chunk_size, 20)
+    dof_masks[:, :, active_dims] = 1
+    actions = torch.rand(1, chunk_size, 20)
+    encoded = []
+
+    def tokenizer(chunks):
+        encoded.append(chunks)
+        return [[7] for _ in chunks]
+
+    text = replace_action_token(["<|action_fast|><|im_end|>\n"], actions, tokenizer, dof_masks)
+
+    # Decoding expects chunk_size steps, so encoding must not drop any.
+    assert len(encoded) == 1
+    np.testing.assert_array_equal(encoded[0], actions[:, :, active_dims].numpy())
+    assert text == ["<|action_token_7|><|im_end|>\n"]
 
 
 def test_from_pretrained_logs_non_strict_state_dict_keys(monkeypatch):

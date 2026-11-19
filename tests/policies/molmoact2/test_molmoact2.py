@@ -3534,19 +3534,22 @@ def test_discrete_root_token_weighting_matches_old_loss_mask_scaling():
     assert torch.allclose(z_loss, expected_z)
 
 
-class _DummyActionTokenizer:
-    def decode(self, tokens, *, time_horizon=None, action_dim=None):
-        decoded = []
-        for token_row in tokens:
-            decoded.append(np.full((time_horizon, action_dim), sum(token_row), dtype=np.float32))
-        return np.stack(decoded)
+@pytest.fixture
+def fake_fast_decode(monkeypatch):
+    """Decode each row of FAST IDs to a chunk filled with the sum of its IDs."""
+
+    def decode(tokenizer, tokens, action_dim, *, time_horizon, relaxed=False):
+        return np.stack([np.full((time_horizon, action_dim), sum(row), dtype=np.float32) for row in tokens])
+
+    monkeypatch.setattr(molmoact2_modeling, "decode_fast_actions", decode)
 
 
+@pytest.mark.usefixtures("fake_fast_decode")
 def test_discrete_decode_extracts_action_bins_for_each_batch():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
     policy.config = SimpleNamespace(chunk_size=2)
-    policy.action_tokenizer = _DummyActionTokenizer()
+    policy.action_tokenizer = object()
     policy.model = torch.nn.Module()
     policy.model.config = SimpleNamespace(
         action_start_token_id=10,
@@ -3571,6 +3574,7 @@ def test_discrete_decode_extracts_action_bins_for_each_batch():
     assert torch.equal(actions[1], torch.full((2, 2), 5.0))
 
 
+@pytest.mark.usefixtures("fake_fast_decode")
 def test_discrete_predict_action_chunk_uses_hf_cached_generation_path():
     class DummyOutput:
         def __init__(self, token_id, batch_size):
@@ -3625,7 +3629,7 @@ def test_discrete_predict_action_chunk_uses_hf_cached_generation_path():
     )
     policy._checkpoint_action_mode = None
     policy.model = DummyModel()
-    policy.action_tokenizer = _DummyActionTokenizer()
+    policy.action_tokenizer = object()
 
     actions = policy.predict_action_chunk(
         {
@@ -3639,6 +3643,7 @@ def test_discrete_predict_action_chunk_uses_hf_cached_generation_path():
     assert torch.equal(actions, torch.ones(1, 1, 2))
 
 
+@pytest.mark.usefixtures("fake_fast_decode")
 def test_discrete_predict_action_chunk_uses_graph_backed_ar_decode_when_enabled():
     class DummyOutput:
         def __init__(self, token_id, past_key_values):
@@ -3722,7 +3727,7 @@ def test_discrete_predict_action_chunk_uses_graph_backed_ar_decode_when_enabled(
     )
     policy._checkpoint_action_mode = None
     policy.model = DummyModel()
-    policy.action_tokenizer = _DummyActionTokenizer()
+    policy.action_tokenizer = object()
     torch.nn.Module.train(policy, False)
 
     actions = policy.predict_action_chunk(
