@@ -482,23 +482,24 @@ def make_fineart_vla_pre_post_processors(
 
     # Add FAST action-token supervision only when explicitly enabled.
     if getattr(config, "enable_fast_action_loss", False):
-        input_steps.append(
-            ActionTokenizerProcessorStep(
-                action_tokenizer_name=resolve_fast_tokenizer(
-                    config,
-                    dataset_repo_id,
-                    dataset_root,
-                    dataset_stats,
-                    dataset_revision,
-                    episodes,
-                    exclude_episodes,
-                ),
-                max_action_tokens=config.max_action_tokens,
-                fast_skip_tokens=config.fast_skip_tokens,
-                paligemma_tokenizer_name=config.text_tokenizer_name,
-                allow_truncation=True,
-            )
+        action_tokenizer_step = ActionTokenizerProcessorStep(
+            action_tokenizer_name=resolve_fast_tokenizer(
+                config,
+                dataset_repo_id,
+                dataset_root,
+                dataset_stats,
+                dataset_revision,
+                episodes,
+                exclude_episodes,
+            ),
+            max_action_tokens=config.max_action_tokens,
+            fast_skip_tokens=config.fast_skip_tokens,
+            paligemma_tokenizer_name=config.text_tokenizer_name,
+            allow_truncation=True,
         )
+        # Saved with the checkpoint so text generation can block every FAST ID.
+        config.fast_vocab_size = len(action_tokenizer_step.action_tokenizer.bpe_tokenizer)
+        input_steps.append(action_tokenizer_step)
 
     input_steps.append(DeviceProcessorStep(device=config.device))
 

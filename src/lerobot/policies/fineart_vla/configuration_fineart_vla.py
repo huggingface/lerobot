@@ -95,6 +95,10 @@ class FineARTVLAConfig(PI05Config):
     fast_skip_tokens: int = 1152
     """Reserved vocabulary IDs skipped by FAST token mapping."""
 
+    fast_vocab_size: int | None = None
+    """Number of FAST token IDs, recorded from the tokenizer when the processor is built.
+    Text generation blocks these IDs. ``None`` (checkpoints saved before this field) blocks 1024."""
+
     fast_action_loss_weight: float = 1.0
     """FAST action-token loss weight."""
 

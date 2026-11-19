@@ -259,9 +259,9 @@ class FineARTVLAPytorch(PI05Pytorch):  # see openpi `PI0Pytorch`
         return prefix_embs, prefix_pad, prefix_att
 
 
-# The universal `physical-intelligence/fast` tokenizer (and dataset refits of it)
-# uses 1024 BPE codes; text generation must mask any that map below the <loc> range.
-_FAST_ACTION_VOCAB_SIZE = 1024
+# FAST vocabulary size blocked during text generation for checkpoints saved without
+# `fast_vocab_size`. Dataset-fitted tokenizers have up to 1024 IDs.
+_LEGACY_FAST_VOCAB_SIZE = 1024
 
 
 _HF_KERNELS_ENABLED = False
@@ -1415,7 +1415,10 @@ class FineARTVLAPolicy(PI05Policy):
             # Suppress FAST-only vocabulary that otherwise leaks into generated text.
             vocab_size = logits_step.shape[-1]
             fast_skip = int(getattr(self.config, "fast_skip_tokens", 128))
-            fast_lo = vocab_size - 1 - fast_skip - (_FAST_ACTION_VOCAB_SIZE - 1)
+            fast_vocab_size = self.config.fast_vocab_size
+            if fast_vocab_size is None:
+                fast_vocab_size = _LEGACY_FAST_VOCAB_SIZE
+            fast_lo = vocab_size - 1 - fast_skip - (fast_vocab_size - 1)
             if 0 < fast_lo < 256000:
                 logits_step[..., fast_lo:256000] = float("-inf")
             if suppress_loc_tokens:
