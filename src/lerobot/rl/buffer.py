@@ -29,6 +29,25 @@ from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD
 from lerobot.utils.transition import Transition
 
 
+def _to_transition_tensor(val: torch.Tensor, key: str) -> torch.Tensor:
+    """Convert a dataset sample to a transition tensor, normalizing image scale.
+
+    Datasets created with ``return_uint8=True`` yield 0-255 uint8 images, while
+    online observations arrive as 0-1 float32 after the observation processor.
+    Mixing both in one batch feeds the policy inconsistent inputs, and writing
+    0-255 floats back through the image writer (which expects float in [0, 1]
+    or uint8) fails. Normalize image keys to 0-1 float32 here so offline and
+    online transitions share one scale.
+    """
+    out = val.unsqueeze(0)  # Add batch dimension
+    if key.startswith(OBS_IMAGE):
+        if out.dtype == torch.uint8:
+            out = out.to(torch.float32) / 255.0
+        elif out.is_floating_point() and out.max() > 1.0:
+            out = out / 255.0
+    return out
+
+
 class BatchTransition(TypedDict):
     state: dict[str, torch.Tensor]
     action: torch.Tensor
@@ -662,7 +681,7 @@ class ReplayBuffer:
             current_state: dict[str, torch.Tensor] = {}
             for key in state_keys:
                 val = current_sample[key]
-                current_state[key] = val.unsqueeze(0)  # Add batch dimension
+                current_state[key] = _to_transition_tensor(val, key)
 
             # ----- 2) Action -----
             action = current_sample[ACTION].unsqueeze(0)  # Add batch dimension
@@ -697,7 +716,7 @@ class ReplayBuffer:
                     next_state_data: dict[str, torch.Tensor] = {}
                     for key in state_keys:
                         val = next_sample[key]
-                        next_state_data[key] = val.unsqueeze(0)  # Add batch dimension
+                        next_state_data[key] = _to_transition_tensor(val, key)
                     next_state = next_state_data
 
             # ----- 5) Complementary info (if available) -----
