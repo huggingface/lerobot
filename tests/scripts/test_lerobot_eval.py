@@ -213,8 +213,14 @@ def test_eval_info_keeps_what_the_environment_measures():
     json.dumps(info)  # eval_info.json must stay serializable
 
 
-def test_eval_info_is_unchanged_when_the_environment_measures_nothing():
-    assert "per_episode" not in _eval_all(_TwoStepEnv)["per_task"][0]["metrics"]
+def test_eval_info_keeps_each_episode_seed_when_the_environment_measures_nothing():
+    # Pairing two runs episode by episode needs each episode's seed and success, for every benchmark.
+    info = _eval_all(_TwoStepEnv)
+    metrics = info["per_task"][0]["metrics"]
+    (episode,) = metrics["per_episode"]
+    assert episode["seed"] == 0 and episode["success"] == metrics["successes"][0]
+    assert "metrics" not in episode
+    json.dumps(info)  # eval_info.json must stay serializable
 
 
 def test_rollout_ends_at_the_step_cap_below_the_env_limit():

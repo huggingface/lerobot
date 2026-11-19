@@ -62,7 +62,7 @@ from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 from pprint import pformat
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import einops
 import gymnasium as gym
@@ -949,8 +949,8 @@ class TaskMetrics(TypedDict):
     successes: list[bool]
     video_paths: list[str]
     predicted_video_paths: list[str]
-    # Only for benchmarks that report their own numbers in info["metrics"].
-    per_episode: NotRequired[list[dict[str, Any]]]
+    # One entry per episode: seed, success, rewards, and info["metrics"] if the benchmark reports any.
+    per_episode: list[dict[str, Any]]
 
 
 ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths", "predicted_video_paths")
@@ -1005,9 +1005,8 @@ def eval_one(
         successes=[ep["success"] for ep in per_episode],
         video_paths=task_result.get("video_paths", []),
         predicted_video_paths=task_result.get("predicted_video_paths", []),
+        per_episode=per_episode,
     )
-    if any("metrics" in episode for episode in per_episode):
-        metrics["per_episode"] = per_episode
     return metrics
 
 
