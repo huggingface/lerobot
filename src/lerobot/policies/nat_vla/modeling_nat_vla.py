@@ -1,30 +1,42 @@
-# Copyright (c) 2026 Ahad Jawaid
+# Copyright 2026 Ahad Jawaid. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """NAT VLA: a vision-language model writing NAT action tokens, decoded into actions as they are generated."""
 
 import json
 import threading
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
-from huggingface_hub import snapshot_download
-from safetensors.torch import load_file
+from safetensors.torch import load_file, load_model
 from torch import Tensor
 from torch.nn import functional
 
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from .configuration_nat_vla import NATVLAConfig
+from .configuration_nat_vla import NATVLAConfig, downloaded
 from .nat_tokenizer import NATTokenizer, StreamingDecoder
+from .processor_nat_vla import IMAGE_INPUTS, Vocabulary, padded_token_ids, vlm_config_of
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoConfig, AutoProcessor, Lfm2VlForConditionalGeneration
+    from transformers import AutoConfig, Lfm2VlForConditionalGeneration
     from transformers.generation.streamers import BaseStreamer
 else:
-    AutoConfig = AutoProcessor = Lfm2VlForConditionalGeneration = None
+    AutoConfig = Lfm2VlForConditionalGeneration = None
     BaseStreamer = object
 
 
@@ -41,11 +53,9 @@ class NATVLAPolicy(PreTrainedPolicy):
             raise ValueError("NAT VLA needs an 'action' output feature.")
         self.config, self.action_dim = config, config.action_feature.shape[0]
 
-        tokenizer_folder = None if config.action_tokenizer_config else Path(config.action_tokenizer)
-        if tokenizer_folder is not None:
-            if not tokenizer_folder.is_dir():
-                files = ["config.json", "model.safetensors"]
-                tokenizer_folder = Path(snapshot_download(str(tokenizer_folder), allow_patterns=files))
+        tokenizer_folder = None
+        if config.action_tokenizer_config is None:
+            tokenizer_folder = downloaded(config.action_tokenizer, ["config.json", "model.safetensors"])
             config.action_tokenizer_config = json.loads((tokenizer_folder / "config.json").read_text())
 
         self.action_tokenizer = NATTokenizer(config.action_tokenizer_config).float().requires_grad_(False)
@@ -63,11 +73,15 @@ class NATVLAPolicy(PreTrainedPolicy):
         if config.rtc_steps and self.action_dim > tokenizer.group_width:
             raise ValueError(f"rtc_steps needs actions of at most {tokenizer.group_width} columns")
 
-        vlm_config = AutoConfig.from_pretrained(config.vlm, subfolder="vlm")
-        self.vocabulary = Vocabulary(
-            vlm_config.text_config.vocab_size, config.state_bins, tokenizer.vocab_size
-        )
-        vlm_config.text_config.vocab_size = self.vocabulary.size
+        starts_from_pretrained = config.vlm_config is None and config.pretrained_path is None
+        if config.vlm_config is None:
+            config.vlm_config = vlm_config_of(downloaded(config.vlm, ["vlm/*"]) / "vlm")
+
+        vlm_config = AutoConfig.for_model(**config.vlm_config)
+        text_config = vlm_config.text_config
+        self.vocabulary = Vocabulary(text_config.vocab_size, config.state_bins, tokenizer.vocab_size)
+        self.eos_token_id, self.pad_token_id = text_config.eos_token_id, text_config.pad_token_id
+        text_config.vocab_size = self.vocabulary.size
         self.vlm = Lfm2VlForConditionalGeneration._from_config(
             vlm_config, attn_implementation="sdpa", dtype=config.dtype
         )
@@ -75,7 +89,8 @@ class NATVLAPolicy(PreTrainedPolicy):
             partial(added_rows_only_gradient_hook, first_added_row=self.vocabulary.setup_start)
         )
 
-        self.processor = AutoProcessor.from_pretrained(config.vlm, subfolder="vlm")
+        if starts_from_pretrained:
+            load_model(self, downloaded(config.vlm, ["model.safetensors"]) / "model.safetensors")
         self.reset()
 
     @property
@@ -89,6 +104,10 @@ class NATVLAPolicy(PreTrainedPolicy):
 
         self._stream = self._next_stream = None
         self._chunk_step = self._chunk_end_step = 0
+
+    def supports_rtc(self) -> bool:
+        """Real-time chunking through the tokens: the executing actions start the next chunk as a token prefix."""
+        return self.action_dim <= self.action_tokenizer.group_width
 
     def get_optim_params(self) -> list[dict]:
         vision_modules = (self.vlm.model.vision_tower, self.vlm.model.multi_modal_projector)
@@ -105,21 +124,27 @@ class NATVLAPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         prompts, image_inputs = self.prompts_and_image_inputs(batch)
-        vocabulary = self.vocabulary
-        action_tokens = self.action_tokenizer.encode(batch[ACTION]) + vocabulary.first_action_token
+        vocabulary, actions = self.vocabulary, batch[ACTION]
+        action_tokens = self.action_tokenizer.encode(actions) + vocabulary.first_action_token
+        padded_steps = batch.get(f"{ACTION}_is_pad", torch.zeros_like(actions[..., 0], dtype=torch.bool))
+        tokens_with_actions = self.action_tokenizer.tokens_with_actions(~padded_steps, self.action_dim)
+
         outputs = [
-            [vocabulary.action_start, *tokens, vocabulary.action_end, self.processor.tokenizer.eos_token_id]
+            [vocabulary.action_start, *tokens, vocabulary.action_end, self.eos_token_id]
             for tokens in action_tokens.tolist()
         ]
+        output_masks = [[True, *mask, True, True] for mask in tokens_with_actions.tolist()]
         input_ids, attention_mask = padded_token_ids(
-            [prompt + output for prompt, output in zip(prompts, outputs, strict=True)], "right"
+            [prompt + output for prompt, output in zip(prompts, outputs, strict=True)],
+            "right",
+            self.pad_token_id,
         )
 
         hidden_states = self.vlm.model(
             input_ids=input_ids.to(self.device), attention_mask=attention_mask.to(self.device), **image_inputs
         ).last_hidden_state
 
-        samples, positions, weights = output_token_positions(prompts, outputs)
+        samples, positions, weights = output_token_positions(prompts, outputs, output_masks)
         logits = self.vlm.lm_head(hidden_states[samples, positions]).float()
         weights = weights.to(logits.device)
         cross_entropy = functional.cross_entropy(
@@ -131,14 +156,30 @@ class NATVLAPolicy(PreTrainedPolicy):
         return cross_entropy + z_loss, {"cross_entropy": cross_entropy.item(), "z_loss": z_loss.item()}
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], steps: int | None = None) -> Tensor:
-        """Actions for the first `steps` steps, rounded up to whole NAT latents."""
-        steps = self.action_tokenizer.token_count(steps or self.config.chunk_size, self.action_dim)[1]
-        stream = self.stream_action_chunk(batch, steps)
-        actions = torch.stack([stream.action(step) for step in range(steps)], 1)
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        steps: int | None = None,
+        inference_delay: int | None = None,
+        prev_chunk_left_over: Tensor | None = None,
+    ) -> Tensor:
+        """Actions for the first `steps` steps (the whole chunk by default), rounded up to whole NAT latents. With
+        real-time chunking, the chunk starts with the tokens of the previous chunk's actions that run during
+        inference_delay steps, rounded up to whole latents."""
+        tokenizer = self.action_tokenizer
+        steps = tokenizer.token_count(steps or self.config.chunk_size, self.action_dim)[1]
+        executing_actions = None
+        if inference_delay and prev_chunk_left_over is not None and self.supports_rtc():
+            left_over = prev_chunk_left_over.reshape(-1, *prev_chunk_left_over.shape[-2:])
+            covering_steps = [count for count in tokenizer.prefix_token_counts if count >= inference_delay]
+            if covering_steps and covering_steps[0] < steps and covering_steps[0] <= left_over.shape[1]:
+                executing_actions = left_over[:, : covering_steps[0], : self.action_dim].to(self.device)
 
+        stream = self.stream_action_chunk(batch, steps, executing_actions)
         stream.thread.join()
-        return actions
+        if stream.error is not None:
+            raise stream.error
+        return tokenizer.decode(stream.decoder.tokens, self.action_dim)[:, :steps]
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -172,12 +213,11 @@ class NATVLAPolicy(PreTrainedPolicy):
         """Generates the chunk's first `steps` steps in a background thread, handing over each latent's
         actions once decoded. With executing_actions, the chunk starts with their tokens and their actions are
         not handed over again."""
-        self.eval()
         tokenizer, vocabulary = self.action_tokenizer, self.vocabulary
         token_count = tokenizer.token_count(steps, self.action_dim)[0]
 
         first_tokens = None
-        prefixes: list[list[int]] = [[] for _ in batch["task"]]
+        prefixes: list[list[int]] = [[] for _ in batch["input_ids"]]
         if executing_actions is not None:
             first_tokens = tokenizer.tokens_starting_with(executing_actions)
             prefixes = (first_tokens + vocabulary.first_action_token).tolist()
@@ -189,6 +229,7 @@ class NATVLAPolicy(PreTrainedPolicy):
                 for prompt, prefix in zip(prompts, prefixes, strict=True)
             ],
             "left",
+            self.pad_token_id,
         )
 
         stream = ActionStreamHook(
@@ -201,7 +242,7 @@ class NATVLAPolicy(PreTrainedPolicy):
             **image_inputs,
             max_new_tokens=token_count - len(prefixes[0]),
             do_sample=False,
-            pad_token_id=0,
+            pad_token_id=self.pad_token_id,
             logits_processor=[
                 partial(action_tokens_only_hook, first_action_token=vocabulary.first_action_token)
             ],
@@ -211,84 +252,14 @@ class NATVLAPolicy(PreTrainedPolicy):
         return stream
 
     def prompts_and_image_inputs(self, batch: dict[str, Tensor]) -> tuple[list[list[int]], dict[str, Tensor]]:
-        cameras = [
-            (batch[key] * 255).round().clamp(0, 255).to(torch.uint8) for key in self.config.image_features
-        ]
-        frames = [camera[sample] for sample in range(len(batch["task"])) for camera in cameras]
-        processed_images = self.processor.image_processor(
-            frames, return_row_col_info=True, return_tensors="pt"
-        )
-        image_prompts = [
-            self.processor.replace_image_token(processed_images, index, use_image_special_tokens=True)
-            for index in range(len(frames))
-        ]
-
-        states = batch.get(OBS_STATE, [None] * len(frames))
+        """The prompt token ids and image inputs the preprocessor built."""
         prompts = [
-            self.prompt_tokens(
-                task, image_prompts[sample * len(cameras) : (sample + 1) * len(cameras)], states[sample]
-            )
-            for sample, task in enumerate(batch["task"])
+            ids[mask.bool()].tolist()
+            for ids, mask in zip(batch["input_ids"], batch["attention_mask"], strict=True)
         ]
-
-        image_input_names = ("pixel_values", "pixel_attention_mask", "spatial_shapes")
-        image_inputs = {name: processed_images[name].to(self.device) for name in image_input_names}
+        image_inputs = {name: batch[name].to(self.device) for name in IMAGE_INPUTS}
         image_inputs["pixel_values"] = image_inputs["pixel_values"].to(self.vlm.dtype)
         return prompts, image_inputs
-
-    def prompt_tokens(self, task: str, image_prompts: list[str], state: Tensor | None) -> list[int]:
-        vocabulary, tokenizer = self.vocabulary, self.processor.tokenizer
-        images = "".join(f"Image {number}{prompt}" for number, prompt in enumerate(image_prompts, 1))
-
-        prompt_parts: list[str | int] = [
-            f"{tokenizer.bos_token}{images}<|im_start|>user\nThe task is to {task}. The setup is "
-        ]
-        if self.config.setup:
-            prompt_parts += [vocabulary.setup_start, self.config.setup, vocabulary.setup_end]
-
-        if state is not None:
-            state_tokens = (
-                state_bin_indices(state, self.config.state_bins) + vocabulary.first_state_bin
-            ).tolist()
-            prompt_parts += [
-                ". The current state of the robot is ",
-                vocabulary.state_start,
-                *state_tokens,
-                vocabulary.state_end,
-            ]
-
-        prompt_parts.append(". The expected control mode is ")
-        if self.config.control_mode:
-            prompt_parts += [vocabulary.control_start, self.config.control_mode, vocabulary.control_end]
-
-        prompt_parts += [
-            ". Given these, what action should the robot take to complete the task?"
-            f"{tokenizer.eos_token}\n<|im_start|>assistant\n",
-            vocabulary.action_output,
-        ]
-
-        encoded_parts = (
-            [part] if isinstance(part, int) else tokenizer.encode(part, add_special_tokens=False)
-            for part in prompt_parts
-        )
-        return [token for part in encoded_parts for token in part]
-
-
-class Vocabulary:
-    """Token ids of the VLM's text vocabulary followed by the added ones: prompt markers, state bins and NAT
-    action tokens."""
-
-    def __init__(self, text_vocabulary_size: int, state_bins: int, action_tokens: int):
-        start = text_vocabulary_size
-        self.setup_start, self.setup_end, self.control_start, self.control_end = range(start, start + 4)
-        self.state_start, self.state_end, self.first_state_bin = range(start + 4, start + 7)
-
-        self.action_output = self.first_state_bin + state_bins
-        self.action_start, self.action_end, self.first_action_token = range(
-            self.action_output + 1, self.action_output + 4
-        )
-
-        self.size = self.first_action_token + action_tokens
 
 
 class ActionStreamHook(BaseStreamer):
@@ -305,11 +276,7 @@ class ActionStreamHook(BaseStreamer):
     def start(self, generate, device: torch.device):
         def generated():
             try:
-                with (
-                    torch.no_grad(),
-                    torch.autocast(device.type, torch.bfloat16, enabled=device.type == "cuda"),
-                ):
-                    generate(streamer=self)
+                generate(streamer=self)
             except BaseException as error:
                 self.error = error
             with self.arrived:
@@ -324,9 +291,7 @@ class ActionStreamHook(BaseStreamer):
             self.prompt_seen = True
             return
 
-        with torch.autocast(self.device.type, enabled=False):
-            actions = self.decoder.push(value.to(self.device) - self.first_action_token)
-
+        actions = self.decoder.push(value.to(self.device) - self.first_action_token)
         if actions is not None:
             with self.arrived:
                 self.actions.extend(actions.unbind(1))
@@ -356,28 +321,18 @@ def added_rows_only_gradient_hook(gradient: Tensor, first_added_row: int) -> Ten
     return torch.cat([torch.zeros_like(gradient[:first_added_row]), gradient[first_added_row:]])
 
 
-def padded_token_ids(sequences: list[list[int]], side: str) -> tuple[Tensor, Tensor]:
-    """Token id sequences padded with 0 on `side`, and their attention mask."""
-    lengths = torch.tensor([len(sequence) for sequence in sequences])
-    positions = torch.arange(int(lengths.max()))
-    mask = positions >= len(positions) - lengths[:, None] if side == "left" else positions < lengths[:, None]
-
-    ids = torch.zeros(mask.shape, dtype=torch.long)
-    ids[mask] = torch.tensor([token for sequence in sequences for token in sequence])
-    return ids, mask.long()
-
-
 def output_token_positions(
-    prompts: list[list[int]], outputs: list[list[int]]
+    prompts: list[list[int]], outputs: list[list[int]], output_masks: list[list[bool]]
 ) -> tuple[Tensor, Tensor, Tensor]:
-    """Each output token's sample, the position predicting it, and its loss weight."""
+    """Each output token's sample, the position predicting it, and its loss weight: one over the square root of
+    the sample's trained tokens, and zero for action tokens that describe only padded steps."""
     samples: list[int] = []
     positions: list[int] = []
     weights: list[float] = []
-    for sample, (prompt, output) in enumerate(zip(prompts, outputs, strict=True)):
+    for sample, (prompt, output, mask) in enumerate(zip(prompts, outputs, output_masks, strict=True)):
         samples += [sample] * len(output)
         positions += range(len(prompt) - 1, len(prompt) + len(output) - 1)
-        weights += [len(output) ** -0.5] * len(output)
+        weights += [kept / sum(mask) ** 0.5 for kept in mask]
 
     return torch.tensor(samples), torch.tensor(positions), torch.tensor(weights)
 
@@ -386,9 +341,3 @@ def action_tokens_only_hook(input_ids: Tensor, scores: Tensor, first_action_toke
     """Generation hook: before each token is picked, sets the score of every non-action token to -inf."""
     scores[:, :first_action_token] = -torch.inf
     return scores
-
-
-def state_bin_indices(state: Tensor, bins: int) -> Tensor:
-    """State in [-1, 1] as bin indices."""
-    state = torch.nan_to_num(state.float(), nan=0.0, posinf=1.0, neginf=-1.0).clamp(-1, 1)
-    return torch.round((state + 1) / 2 * (bins - 1)).long()

@@ -1,4 +1,17 @@
-# Copyright (c) 2026 Ahad Jawaid
+# Copyright 2026 Ahad Jawaid. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """NAT tokenizer: action chunks to time-ordered tokens and back."""
 
 import math
@@ -20,7 +33,7 @@ class NATTokenizer(nn.Module):
         values_per_latent = math.prod(encoder["downsampling_ratios"])
         if values_per_latent % self.group_width or self.time_horizon * self.group_width % values_per_latent:
             raise ValueError("each latent must cover whole steps and the chunk whole latents")
-        steps_per_latent = values_per_latent // self.group_width
+        self.steps_per_latent = steps_per_latent = values_per_latent // self.group_width
         latents = self.time_horizon // steps_per_latent
 
         self.encoder = ActionEncoder(encoder)
@@ -29,6 +42,10 @@ class NATTokenizer(nn.Module):
 
         self.vocab_size = len(quantizer["scales"]) * self.quantizer.codebook_size
         self.tokens_per_chunk = len(self.quantizer.token_order)
+        self.token_latent_spans = [
+            (start, min(start + quantizer["scales"][scale], latents))
+            for start, scale, _ in self.quantizer.token_order
+        ]
         self.prefix_token_counts = {
             (latent + 1) * steps_per_latent: sum(
                 start <= latent for start, _, _ in self.quantizer.token_order
@@ -37,24 +54,29 @@ class NATTokenizer(nn.Module):
         }
 
     def encode(self, actions: Tensor) -> Tensor:
-        """(batch, time_horizon, action_dim) actions in [-1, 1] to (batch, tokens) token ids."""
+        """(batch, time_horizon, action_dim) actions in [-1, 1] to (batch, tokens) token ids, computed in float32
+        under any autocast."""
         groups = -(-actions.shape[-1] // self.group_width)
         packed = functional.pad(
             actions.float().clamp(-1, 1), (0, groups * self.group_width - actions.shape[-1])
         )
         packed = packed.unflatten(-1, (groups, self.group_width)).transpose(1, 2).flatten(0, 1)
 
-        tokens = self.quantizer.tokens(self.encoder(packed.reshape(len(packed), 1, -1)))
+        with torch.autocast(actions.device.type, enabled=False):
+            tokens = self.quantizer.tokens(self.encoder(packed.reshape(len(packed), 1, -1)))
         return tokens.reshape(len(actions), -1)
 
     def decode(self, tokens: Tensor, action_dim: int) -> Tensor:
         """(batch, tokens) token ids, whole chunks or one group's first latents, to (batch, time_horizon,
-        action_dim) actions."""
+        action_dim) actions, computed in float32 under any autocast."""
         groups = -(-action_dim // self.group_width)
         tokens = functional.pad(tokens, (0, groups * self.tokens_per_chunk - tokens.shape[1]))
         tokens = tokens.reshape(-1, self.tokens_per_chunk)
 
-        actions = self.decoder(self.quantizer.features(tokens)).reshape(len(tokens), self.time_horizon, -1)
+        with torch.autocast(tokens.device.type, enabled=False):
+            actions = self.decoder(self.quantizer.features(tokens)).reshape(
+                len(tokens), self.time_horizon, -1
+            )
         actions = actions.clamp(-1, 1).unflatten(0, (-1, groups)).transpose(1, 2).flatten(2)
         return actions[..., :action_dim]
 
@@ -65,6 +87,15 @@ class NATTokenizer(nn.Module):
         if groups > 1:
             return groups * self.tokens_per_chunk, self.time_horizon
         return next((count, prefix) for prefix, count in self.prefix_token_counts.items() if prefix >= steps)
+
+    def tokens_with_actions(self, real_steps: Tensor, action_dim: int) -> Tensor:
+        """(batch, time_horizon) whether each step is a real action, to (batch, tokens): whether each token
+        describes at least one real step."""
+        real_latents = real_steps.unflatten(1, (-1, self.steps_per_latent)).any(-1)
+        has_actions = torch.stack(
+            [real_latents[:, start:end].any(1) for start, end in self.token_latent_spans], 1
+        )
+        return has_actions.repeat(1, -(-action_dim // self.group_width))
 
     def tokens_starting_with(self, actions: Tensor) -> Tensor:
         """The first tokens of a chunk that starts with these (batch, steps, action_dim) actions, for real-

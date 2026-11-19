@@ -1,6 +1,23 @@
-# Copyright (c) 2026 Ahad Jawaid
+# Copyright 2026 Ahad Jawaid. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+import torch
+from huggingface_hub import snapshot_download
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
@@ -11,20 +28,24 @@ from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 @PreTrainedConfig.register_subclass("nat_vla")
 @dataclass
 class NATVLAConfig(PreTrainedConfig):
-    """vlm: Hub repository or folder whose vlm/ subfolder holds the VLM's config, tokenizer and image
-    processor. action_tokenizer: Hub repository or folder of the NAT tokenizer. rtc_steps: actions of a chunk
-    that run while the next chunk is generated, which then starts with their tokens (0 turns this off)."""
+    """vlm: Hub repository or folder of the pretrained NAT VLA, whose weights a new policy starts from and whose
+    vlm/ subfolder holds the VLM's config, tokenizer and image processor. vlm_config: the VLM's architecture,
+    read from vlm/ when the policy is first built and kept in its checkpoints. action_tokenizer: Hub repository
+    or folder of the NAT tokenizer. rtc_steps: actions of a chunk that run while the next chunk is generated,
+    which then starts with their tokens (0 turns this off)."""
 
     vlm: str = "ahad-j/nat-vla-450m"
     action_tokenizer: str = "ahad-j/nat-tokenizer-h32-l4-c6400"
     setup: str = ""
     control_mode: str = ""
     n_obs_steps: int = 1
+    dtype: torch.dtype | None = torch.bfloat16
     chunk_size: int = 32
     n_action_steps: int = 32
     rtc_steps: int = 0
     state_bins: int = 256
     z_loss_scale: float = 1e-4
+    vlm_config: dict[str, Any] | None = None
     action_tokenizer_config: dict[str, Any] | None = None
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -86,3 +107,9 @@ class NATVLAConfig(PreTrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
+
+
+def downloaded(repository: str, patterns: list[str]) -> Path:
+    """A local directory, or the files of a Hub repository matching patterns, downloaded."""
+    folder = Path(repository)
+    return folder if folder.is_dir() else Path(snapshot_download(repository, allow_patterns=patterns))
