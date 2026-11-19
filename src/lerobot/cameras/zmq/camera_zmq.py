@@ -161,28 +161,27 @@ class ZMQCamera(Camera):
 
     def _cleanup(self):
         """Stop background reads and release the ZMQ socket/context, including after partial setup."""
-        read_thread = self.thread
         socket = self.socket
         context = self.context
 
+        reader_stopped = True
         try:
-            self._stop_read_thread()
+            reader_stopped = self._stop_read_thread()
         finally:
             self._connected = False
             self.socket = None
             self.context = None
-            try:
-                if socket is not None:
-                    socket.close()
-                if context is not None:
-                    context.term()
-            finally:
-                # Closing the socket may unblock a recv that outlived the first
-                # bounded join in _stop_read_thread().
-                if read_thread is not None and read_thread.is_alive():
-                    read_thread.join(timeout=2.0)
-                    if read_thread.is_alive():  # pragma: no cover
-                        logger.warning(f"{self} read thread remained alive after closing the socket.")
+            if not reader_stopped:
+                # Closing a socket another thread is blocked on in recv is unsafe, so leave it to
+                # be released once the reader returns and drops its reference.
+                logger.warning(f"{self} read thread is still running; skipping socket/context close.")
+            else:
+                try:
+                    if socket is not None:
+                        socket.close()
+                finally:
+                    if context is not None:
+                        context.term()
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
@@ -302,22 +301,31 @@ class ZMQCamera(Camera):
         self.thread.start()
         time.sleep(0.1)
 
-    def _stop_read_thread(self) -> None:
+    def _stop_read_thread(self) -> bool:
+        """Stop the read thread and return True if it has exited (or never ran).
+
+        The reader may be blocked in `recv_string()` for up to `timeout_ms`, so the join must
+        outlast that, otherwise the caller would dispose of the socket while it is still in use.
+        """
+        stopped = True
         if self.stop_event is not None:
             self.stop_event.set()
 
         if self.thread is not None and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=self.timeout_ms / 1000.0 + 2.0)
             if self.thread.is_alive():
+                stopped = False
                 logger.warning(f"{self} read thread did not terminate within timeout.")
 
-        self.thread = None
-        self.stop_event = None
+        if stopped:
+            self.thread = None
+            self.stop_event = None
 
         with self.frame_lock:
             self.latest_frame = None
             self.latest_timestamp = None
             self.new_frame_event.clear()
+        return stopped
 
     @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:

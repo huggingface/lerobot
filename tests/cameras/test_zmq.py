@@ -19,9 +19,13 @@
 # pytest tests/cameras/test_zmq.py::test_failed_connect_stops_the_read_thread
 # ```
 
+import time
+from threading import Event
+from unittest.mock import MagicMock
+
 import pytest
 
-pytest.importorskip("zmq", reason="pyzmq is required (install lerobot[pyzmq-dep])")
+zmq = pytest.importorskip("zmq", reason="pyzmq is required (install lerobot[pyzmq-dep])")
 
 from lerobot.cameras.zmq import ZMQCamera, ZMQCameraConfig  # noqa: E402
 
@@ -54,3 +58,48 @@ def test_failed_connect_stops_the_read_thread():
     assert camera.stop_event is None
     assert not camera.is_connected
     assert camera.latest_frame is None
+
+
+@pytest.mark.parametrize("read_outlasts_first_join", [True, False])
+def test_cleanup_does_not_close_socket_during_receive(read_outlasts_first_join):
+    """`_cleanup()` must not close the socket while the reader is inside `recv_string()`.
+
+    The receive timeout (`timeout_ms`) can be longer than the old fixed 2 s join, so a
+    reader still blocked in recv outlived the join and the socket was closed under it.
+    The mock receive "returns" (zmq.Again, like a real RCVTIMEO expiry) after
+    `recv_duration_s`, which exceeds 2 s in the outstanding-read case.
+    """
+    recv_duration_s = 2.6 if read_outlasts_first_join else 0.1
+    camera = ZMQCamera(
+        ZMQCameraConfig(server_address="127.0.0.1", port=_SILENT_PORT, width=640, height=480, timeout_ms=3000)
+    )
+    receiving = Event()
+    entered = Event()
+    closed_while_receiving: list[bool] = []
+
+    def recv_string():
+        receiving.set()
+        entered.set()
+        try:
+            time.sleep(recv_duration_s)
+            raise zmq.Again()
+        finally:
+            receiving.clear()
+
+    def close():
+        closed_while_receiving.append(receiving.is_set())
+
+    camera.socket = MagicMock(recv_string=recv_string, close=close)
+    camera.context = MagicMock()
+    camera._connected = True
+    camera._start_read_thread()
+    worker = camera.thread
+    try:
+        assert entered.wait(2)
+        camera._cleanup()
+        assert not worker.is_alive()
+        assert closed_while_receiving == [False]
+    finally:
+        if camera.stop_event is not None:
+            camera.stop_event.set()
+        worker.join(5)
