@@ -233,6 +233,42 @@ class XVLAAdamWConfig(OptimizerConfig):
         )
 
 
+@OptimizerConfig.register_subclass("praxis_adamw")
+@dataclass
+class PraxisAdamWConfig(OptimizerConfig):
+    """AdamW for the bfloat16 Praxis-1 weights, with stochastic rounding.
+
+    The defaults are the praxis fine-tuning recipe. A plain AdamW step rounds the new bfloat16
+    value to the nearest representable one, which at a learning rate of 3e-6 drops almost every
+    update; this optimizer rounds at random with the expected value kept. The optimizer itself
+    (``lerobot.policies.praxis.praxis_core.train.optim.AdamW``) also handles the FSDP2 shards.
+    `seed` fixes the rounding noise.
+
+    Attributes:
+        lr: The peak learning rate.
+        betas: AdamW moment coefficients.
+        eps: AdamW epsilon.
+        weight_decay: Decoupled weight decay (`lr * weight_decay` below about 3e-8 rounds to no decay).
+        grad_clip_norm: Gradient norm clip applied by the training loop.
+        seed: Seed of the stochastic rounding noise.
+    """
+
+    lr: float = 3e-6
+    betas: tuple[float, float] = (0.9, 0.95)
+    eps: float = 1e-8
+    weight_decay: float = 1e-4
+    grad_clip_norm: float = 1.0
+    seed: int = 0
+
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        # The stochastic rounding is Praxis code; it stays in the policy package.
+        from lerobot.policies.praxis.praxis_core.train.optim import AdamW
+
+        kwargs = asdict(self)
+        kwargs.pop("grad_clip_norm")
+        return AdamW(params, **kwargs)
+
+
 @OptimizerConfig.register_subclass("multi_adam")
 @dataclass
 class MultiAdamConfig(OptimizerConfig):

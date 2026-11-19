@@ -62,7 +62,7 @@ from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 from pprint import pformat
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 import einops
 import gymnasium as gym
@@ -82,6 +82,7 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
+from lerobot.envs.factory import descriptor_features
 from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoint
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -372,10 +373,15 @@ def rollout(
             else:
                 successes = [False] * env.num_envs
 
+            episode_ends = terminated | truncated
+            # The rollout can end before the simulator declares the episode over.
+            # Use the same boundary in the recorded datasets and returned transitions.
+            if step + 1 == max_steps:
+                episode_ends = np.ones_like(episode_ends, dtype=bool)
+
             if recording_datasets is not None and raw_observation is not None:
-                prev_done = done.copy()
                 for env_idx in range(env.num_envs):
-                    if prev_done[env_idx]:
+                    if done[env_idx]:
                         continue
                     frame = _build_raw_frame(
                         raw_observation,
@@ -383,22 +389,16 @@ def rollout(
                         action_numpy[env_idx],
                         reward[env_idx],
                         successes[env_idx],
-                        bool(terminated[env_idx] | truncated[env_idx]),
+                        bool(episode_ends[env_idx]),
                         task_desc,
                         recording_datasets[env_idx].features,
                     )
                     recording_datasets[env_idx].add_frame(frame)
-                    if terminated[env_idx] or truncated[env_idx]:
+                    if episode_ends[env_idx]:
                         recording_datasets[env_idx].save_episode()
                 raw_observation = deepcopy(observation)
 
-            # Keep track of which environments are done so far.
-            # Mark the episode as done if we reach the maximum step limit.
-            # This ensures that the rollout always terminates cleanly at `max_steps`,
-            # and allows logging/saving (e.g., videos) to be triggered consistently.
-            done = terminated | truncated | done
-            if step + 1 == max_steps:
-                done = np.ones_like(done, dtype=bool)
+            done = episode_ends | done
 
             all_actions.append(torch.from_numpy(action_numpy))
             all_rewards.append(torch.from_numpy(reward))
@@ -839,7 +839,6 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         cfg.env,
         n_envs=cfg.eval.batch_size,
         use_async_envs=cfg.eval.use_async_envs,
-        trust_remote_code=cfg.trust_remote_code,
     )
 
     # Environment-specific preprocessor and postprocessor (e.g. for LIBERO environments), built before
@@ -851,6 +850,8 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     first_env = next(env for tasks in envs.values() for env in tasks.values())
     descriptor = getattr(first_env, "descriptor", None)
     if descriptor is not None:
+        # The policy and the recording datasets take the env's features; envs without a descriptor declare them.
+        cfg.env.features = descriptor_features(descriptor)
         validate_checkpoint(
             descriptor,
             cfg.policy,
@@ -948,6 +949,8 @@ class TaskMetrics(TypedDict):
     successes: list[bool]
     video_paths: list[str]
     predicted_video_paths: list[str]
+    # Only for benchmarks that report their own numbers in info["metrics"].
+    per_episode: NotRequired[list[dict[str, Any]]]
 
 
 ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths", "predicted_video_paths")
@@ -996,13 +999,16 @@ def eval_one(
     )
 
     per_episode = task_result["per_episode"]
-    return TaskMetrics(
+    metrics = TaskMetrics(
         sum_rewards=[ep["sum_reward"] for ep in per_episode],
         max_rewards=[ep["max_reward"] for ep in per_episode],
         successes=[ep["success"] for ep in per_episode],
         video_paths=task_result.get("video_paths", []),
         predicted_video_paths=task_result.get("predicted_video_paths", []),
     )
+    if any("metrics" in episode for episode in per_episode):
+        metrics["per_episode"] = per_episode
+    return metrics
 
 
 def run_one(

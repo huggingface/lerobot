@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import inspect
 import logging
 import os
+import random
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from functools import partial
@@ -63,6 +65,10 @@ DEFAULT_EPISODE_LENGTH = 1200
 OFFICIAL_INSTRUCTION_ENV = "LEROBOT_ROBOTWIN_OFFICIAL_INSTRUCTION"
 OFFICIAL_INSTRUCTION_TYPE_ENV = "LEROBOT_ROBOTWIN_INSTRUCTION_TYPE"
 OFFICIAL_INSTRUCTION_MAX_ENV = "LEROBOT_ROBOTWIN_INSTRUCTION_MAX"
+# Candidate count passed to RoboTwin's generator, matching its own collect/eval scripts. The block-ranking
+# templates have no object-description placeholders, so every template fills to one fixed sentence and a
+# larger pool only repeats the same small set of sentences.
+DEFAULT_OFFICIAL_INSTRUCTION_MAX = 100
 
 
 def _compose_eef_pose(new_pose: np.ndarray, init_pose: np.ndarray) -> np.ndarray:
@@ -124,8 +130,28 @@ def _robotwin_blocks_episode_info(task_name: str, env: Any) -> dict[str, str] | 
     return None
 
 
-def _generate_robotwin_official_instruction(task_name: str, env: Any) -> str:
-    """Generate language with RoboTwin's official task templates, matching its eval client."""
+def _official_instruction_max() -> int:
+    raw = os.environ.get(OFFICIAL_INSTRUCTION_MAX_ENV)
+    if raw is None:
+        return DEFAULT_OFFICIAL_INSTRUCTION_MAX
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(f"{OFFICIAL_INSTRUCTION_MAX_ENV} must be a positive integer, got {raw!r}")
+    return value
+
+
+def _generate_robotwin_official_instruction(task_name: str, env: Any, seed: int) -> str:
+    """Generate language with RoboTwin's official task templates, matching its eval client.
+
+    The final pick uses a dedicated ``random.Random(f"{seed}:select")`` stream, the same convention as
+    RoboTwin's ``eval_policy_xpolicylab.py``, and no longer advances the global NumPy RNG. On RoboTwin
+    versions whose generator accepts ``seed`` it is passed through, so the instruction depends only on
+    ``seed`` and the scene. Older versions remain callable, but their candidate order still depends on
+    the global Python RNG.
+    """
     fallback = task_name.replace("_", " ")
     episode_info = _robotwin_blocks_episode_info(task_name, env)
     if episode_info is None:
@@ -146,12 +172,15 @@ def _generate_robotwin_official_instruction(task_name: str, env: Any) -> str:
         return fallback
 
     instruction_type = os.environ.get(OFFICIAL_INSTRUCTION_TYPE_ENV, "seen")
-    try:
-        max_descriptions = int(os.environ.get(OFFICIAL_INSTRUCTION_MAX_ENV, "1000000"))
-    except ValueError:
-        max_descriptions = 1000000
+    max_descriptions = _official_instruction_max()
 
-    results = generate_episode_descriptions(task_name, [episode_info], max_descriptions=max_descriptions)
+    # RoboTwin added ``seed`` in 724b05e; older checkouts draw from the global ``random`` module instead.
+    seed_kwargs = (
+        {"seed": seed} if "seed" in inspect.signature(generate_episode_descriptions).parameters else {}
+    )
+    results = generate_episode_descriptions(
+        task_name, [episode_info], max_descriptions=max_descriptions, **seed_kwargs
+    )
     if not results:
         logger.warning(
             "RoboTwin generated no official instructions for task=%s; using %r.", task_name, fallback
@@ -168,7 +197,7 @@ def _generate_robotwin_official_instruction(task_name: str, env: Any) -> str:
         )
         return fallback
 
-    return str(np.random.choice(options))
+    return str(random.Random(f"{seed}:select").choice(options))
 
 
 # D435 dims from task_config/_camera_config.yml (what demo_clean.yml selects).
@@ -478,7 +507,9 @@ class RoboTwinEnv(gym.Env):
 
         use_official_instruction = self.task_name in {"blocks_ranking_rgb", "blocks_ranking_size"}
         if _env_flag(OFFICIAL_INSTRUCTION_ENV, default=use_official_instruction):
-            self.task_description = _generate_robotwin_official_instruction(self.task_name, self._env)
+            self.task_description = _generate_robotwin_official_instruction(
+                self.task_name, self._env, actual_seed
+            )
             if hasattr(self._env, "set_instruction"):
                 self._env.set_instruction(instruction=self.task_description)
             logger.info("RoboTwin official instruction | task=%s | %s", self.task_name, self.task_description)

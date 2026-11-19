@@ -23,6 +23,7 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
 from lerobot.utils import ACTION, OBS_STATE
@@ -207,13 +208,13 @@ class LaWAMPolicy(PreTrainedPolicy):
         self.reset()
 
     @classmethod
-    def _load_as_safetensor(
-        cls, model: LaWAMPolicy, model_file: str, map_location: str, strict: bool
+    def _load_checkpoint(
+        cls, model: LaWAMPolicy, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
     ) -> LaWAMPolicy:
         """Stage LaWAM checkpoint loading on CPU to avoid duplicate accelerator weights."""
         del map_location
         model.to("cpu")
-        return super()._load_as_safetensor(model, model_file, "cpu", strict)
+        return super()._load_checkpoint(model, checkpoint, "cpu", strict)
 
     def reset(self) -> None:
         """Clear the queued action chunk used by step-wise inference."""

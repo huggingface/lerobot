@@ -23,7 +23,7 @@ from functools import partial
 from typing import Any
 
 import gymnasium as gym
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import snapshot_download
 
 from .utils import canonical_observation
 
@@ -75,17 +75,26 @@ def _download_hub_file(
     trust_remote_code: bool,
     hub_cache_dir: str | None,
 ) -> tuple[str, str, str, str | None]:
-    """Find (downloading if needed) the `env.py` `cfg_str` points to; needs `trust_remote_code`."""
-    if not trust_remote_code:
-        raise RuntimeError(
-            f"Refusing to execute remote code from the Hub for '{cfg_str}'. "
-            "Executing hub env modules runs arbitrary Python code from third-party repositories. "
-            "If you trust this repo and understand the risks, call `make_env(..., trust_remote_code=True)` "
-            "and prefer pinning to a specific revision: 'user/repo@<commit-hash>:env.py'."
-        )
+    """Find the `env.py` `cfg_str` points to, downloading its whole repository; needs `trust_remote_code`.
 
+    The repository's other files (scenes, models, configs) sit next to `env.py`, at the same revision, as
+    they do in a local directory and in a simulator image.
+    """
     # A local copy of the repository, e.g. one baked into a simulator Docker image.
     directory, _, local_path = cfg_str.partition(":")
+    if not trust_remote_code:
+        # A local folder has no commit to pin.
+        read = (
+            "Read its env.py"
+            if os.path.isdir(directory)
+            else "Read its env.py, pin the commit you read (user/repo@<commit>)"
+        )
+        raise RuntimeError(
+            f"Refusing to run the EnvHub environment '{cfg_str}': loading it runs its env.py in this process. {read}, "
+            "then pass --env.trust_remote_code=true (--robot.env.trust_remote_code=true for a sim robot, "
+            "HubEnvConfig(..., trust_remote_code=True) in Python), or serve it with lerobot-env-server, which "
+            "runs it there."
+        )
     if os.path.isdir(directory):
         file_path = local_path or "env.py"
         return (
@@ -97,17 +106,10 @@ def _download_hub_file(
 
     repo_id, revision, file_path = _parse_hub_url(cfg_str)
 
-    try:
-        local_file = hf_hub_download(
-            repo_id=repo_id, filename=file_path, revision=revision, cache_dir=hub_cache_dir
-        )
-    except Exception as e:
-        snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
-        local_file = os.path.join(snapshot_dir, file_path)
-        if not os.path.exists(local_file):
-            raise FileNotFoundError(
-                f"Could not find {file_path} in repository {repo_id}@{revision or 'main'}"
-            ) from e
+    snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
+    local_file = os.path.join(snapshot_dir, file_path)
+    if not os.path.isfile(local_file):
+        raise FileNotFoundError(f"Could not find {file_path} in repository {repo_id}@{revision or 'main'}")
 
     return repo_id, file_path, local_file, revision
 

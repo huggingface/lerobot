@@ -1,4 +1,4 @@
-"""Tests for the benchmark dispatch refactor (create_envs / get_env_processors on EnvConfig)."""
+"""Tests for env dispatch: make_env builds every env from its config; get_env_processors stays on EnvConfig."""
 
 from __future__ import annotations
 
@@ -54,21 +54,6 @@ def test_identity_processors():
     cfg = make_env_config("aloha")
     pre, post = cfg.get_env_processors()
     assert len(pre.steps) == 0 and len(post.steps) == 0
-
-
-def test_delegation():
-    """make_env() should call cfg.create_envs(), not use if/elif dispatch."""
-    sentinel = {"delegated": {0: "marker"}}
-    fake = type(
-        "Fake",
-        (),
-        {
-            "hub_path": None,
-            "create_envs": lambda self, n_envs, use_async_envs=False: sentinel,
-        },
-    )()
-    result = make_env(fake, n_envs=1)
-    assert result is sentinel
 
 
 def test_processors_delegation():
@@ -128,8 +113,8 @@ def test_libero_processor_flattens_state_to_raw_8_dim():
     assert torch.allclose(state, torch.tensor([[1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 4.0, 5.0]]))
 
 
-def test_base_create_envs():
-    """Base class create_envs() should build a single-task LocalVectorEnv via gym.make()."""
+def test_base_sim_settings_build_a_gym_env():
+    """The base sim_settings() builds a single-task env via gym.make()."""
     gym_id = "_dispatch_test/CartPole-v99"
     if gym_id not in gym_registry:
         register(id=gym_id, entry_point=DictObservationEnv)
@@ -154,7 +139,7 @@ def test_base_create_envs():
             return {}
 
     try:
-        envs = _Env().create_envs(n_envs=2)
+        envs = make_env(_Env(), n_envs=2)
         # One suite, named by the gym task.
         assert list(envs) == ["CartPole-v99"]
         env = envs["CartPole-v99"][0]
@@ -166,28 +151,19 @@ def test_base_create_envs():
             del gym_registry[gym_id]
 
 
-def test_custom_create_envs_override():
-    """A custom EnvConfig subclass can override create_envs()."""
-    mock_vec = gym.vector.SyncVectorEnv([lambda: gym.make("CartPole-v1")])
+def test_custom_create_envs_override_is_refused():
+    """make_env refuses a config that still overrides create_envs(), and says what to do instead."""
 
     @EnvConfig.register_subclass("_dispatch_custom_test")
     @dataclass
     class _Env(EnvConfig):
         task: str = "x"
-        features: dict[str, PolicyFeature] = field(default_factory=dict)
-
-        @property
-        def gym_kwargs(self):
-            return {}
 
         def create_envs(self, n_envs, use_async_envs=False):
-            return {"custom_suite": {0: mock_vec}}
+            return {}
 
-    try:
-        result = make_env(_Env(), n_envs=1)
-        assert "custom_suite" in result
-    finally:
-        mock_vec.close()
+    with pytest.raises(TypeError, match="sim_settings"):
+        make_env(_Env(), n_envs=1)
 
 
 def test_custom_get_env_processors_override():
