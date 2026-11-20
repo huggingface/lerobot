@@ -568,6 +568,26 @@ class TestReencodeVideo:
         assert info["video.g"] == 6
         assert info["video.crf"] == 23
 
+    @require_libsvtav1
+    def test_reencode_video_honours_longer_gop(self, tmp_path):
+        src = tmp_path / "src_g2.mp4"
+        with av.open(str(src), "w") as container:
+            stream = container.add_stream("libsvtav1", 30, options={"g": "2"})
+            stream.width, stream.height, stream.pix_fmt = 64, 64, "yuv420p"
+            rng = np.random.default_rng(0)
+            for _ in range(60):
+                img = rng.integers(0, 255, (64, 64, 3), dtype=np.uint8)
+                frame = av.VideoFrame.from_ndarray(img, format="rgb24").reformat(format="yuv420p")
+                container.mux(stream.encode(frame))
+            container.mux(stream.encode())
+
+        out = tmp_path / "out_g30.mp4"
+        reencode_video(src, out, video_encoder=RGBEncoderConfig(g=30), overwrite=True)
+
+        with av.open(str(out)) as container:
+            keyframes = sum(p.is_keyframe for p in container.demux(video=0) if p.size)
+        assert keyframes == 2
+
     @require_h264
     def test_reencode_video_trim_window(self, tmp_path):
         src = TEST_ARTIFACTS_DIR / "clip_6frames.mp4"
