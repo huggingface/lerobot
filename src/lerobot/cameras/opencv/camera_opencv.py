@@ -36,6 +36,7 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..camera import Camera
+from ..configs import Cv2Backends
 from ..utils import get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
@@ -166,7 +167,7 @@ class OpenCVCamera(Camera):
         index_or_path = (
             str(self.index_or_path) if isinstance(self.index_or_path, Path) else self.index_or_path
         )
-        self.videocapture = cv2.VideoCapture(index_or_path, self.backend)
+        self.videocapture = cv2.VideoCapture(index_or_path, self._resolve_backend(index_or_path))
 
         if not self.videocapture.isOpened():
             self.videocapture.release()
@@ -196,6 +197,27 @@ class OpenCVCamera(Camera):
             raise
 
         logger.info(f"{self} connected.")
+
+    def _resolve_backend(self, index_or_path: int | str) -> int:
+        """The OpenCV backend `connect` opens the camera with.
+
+        OpenCV picks the backend for a *string* argument from its stream (file) list, where
+        FFMPEG comes before V4L2. An FFMPEG built with libavdevice, as the opencv-python
+        wheels since 4.13 are, opens a `/dev/video*` device itself, and the capture then
+        ignores `CAP_PROP_FRAME_WIDTH`, `CAP_PROP_FPS` and `CAP_PROP_FOURCC`: `connect` fails
+        with "failed to set capture_width". An integer index goes through the camera list,
+        where V4L2 comes first, so a Linux device path is given the V4L2 backend explicitly
+        when the config leaves the choice to OpenCV.
+        """
+        if (
+            self.backend == Cv2Backends.ANY
+            and platform.system() == "Linux"
+            and isinstance(index_or_path, str)
+            and index_or_path.startswith("/dev/video")
+        ):
+            logger.debug(f"{self}: device path on Linux, opening with the V4L2 backend.")
+            return Cv2Backends.V4L2
+        return self.backend
 
     @check_if_not_connected
     def _configure_capture_settings(self) -> None:
