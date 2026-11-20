@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
 import gymnasium as gym
 import numpy as np
 import pytest
@@ -20,12 +22,16 @@ from torch import nn
 
 pytest.importorskip("datasets")
 
-from lerobot.envs.factory import make_env
+from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.envs import make_env
 from lerobot.lerobot_types import TransitionKey
+from lerobot.policies import PreTrainedPolicy
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
-from lerobot.scripts.lerobot_eval import rollout
+from lerobot.scripts.lerobot_eval import eval_policy_all, rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.fixtures import toy_env
 from tests.fixtures.toy_env import ToyEnvConfig
@@ -68,8 +74,10 @@ class _TwoStepEnv(gym.Env):
 class _RecordingPolicy(nn.Module):
     def reset(self):
         self.inputs = []
+        self.tasks = []
 
     def select_action(self, observation):
+        self.tasks.append(list(observation["task"]))
         self.inputs.append(
             {key: value.clone() for key, value in observation.items() if torch.is_tensor(value)}
         )
@@ -88,17 +96,8 @@ def test_rollout_receives_wrapped_environment_instructions(monkeypatch, use_asyn
         toy_env, "env_fns", lambda task, n_envs, **kwargs: {task: {0: [_wrapped_instruction_env] * n_envs}}
     )
 
-    class _InstructionPolicy(_RecordingPolicy):
-        def reset(self) -> None:
-            super().reset()
-            self.tasks = []
-
-        def select_action(self, observation):
-            self.tasks.append(list(observation["task"]))
-            return super().select_action(observation)
-
     env = make_env(ToyEnvConfig(), n_envs=2, use_async_envs=use_async_envs)["reach"][0]
-    policy = _InstructionPolicy()
+    policy = _RecordingPolicy()
     pre, post = make_policy_processor_pipelines([], [])
     try:
         assert env.use_async_envs == use_async_envs
@@ -212,6 +211,51 @@ def test_rollout_reports_what_the_environment_measures():
     assert result["metrics"]["tick"].tolist() == [[1.0, 2.0]]
 
 
+def _eval_all(env_cls) -> dict:
+    """Run `eval_policy_all`, which is what `lerobot-eval` writes to eval_info.json."""
+
+    class _Policy(_RecordingPolicy):
+        pass
+
+    PreTrainedPolicy.register(_Policy)  # eval_policy checks the type; no weights are needed here
+    preprocessor, postprocessor = make_policy_processor_pipelines([], [])
+    env = gym.vector.SyncVectorEnv([env_cls])
+    try:
+        return eval_policy_all(
+            {"move": {0: env}},
+            _Policy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            n_episodes=1,
+            start_seed=0,
+        )
+    finally:
+        env.close()
+
+
+def test_eval_info_keeps_what_the_environment_measures():
+    class _MeasuringEnv(_TwoStepEnv):
+        def step(self, action):
+            observation, reward, terminated, truncated, _ = super().step(action)
+            return observation, reward, terminated, truncated, {"metrics": {"tick": float(self.tick)}}
+
+    info = _eval_all(_MeasuringEnv)
+    assert info["per_task"][0]["metrics"]["per_episode"][0]["metrics"] == {"tick": 2.0}
+    json.dumps(info)  # eval_info.json must stay serializable
+
+
+def test_eval_info_keeps_each_episode_seed_when_the_environment_measures_nothing():
+    # Pairing two runs episode by episode needs each episode's seed and success, for every benchmark.
+    info = _eval_all(_TwoStepEnv)
+    metrics = info["per_task"][0]["metrics"]
+    (episode,) = metrics["per_episode"]
+    assert episode["seed"] == 0 and episode["success"] == metrics["successes"][0]
+    assert "metrics" not in episode
+    json.dumps(info)  # eval_info.json must stay serializable
+
+
 def test_rollout_ends_at_the_step_cap_below_the_env_limit():
     class _LongEnv(_TwoStepEnv):
         _max_episode_steps = 500
@@ -240,3 +284,38 @@ def test_eval_consent_is_the_env_own():
 
     with pytest.raises(ValueError, match="--env.trust_remote_code=true"):
         EvalPipelineConfig(env=PushtEnvConfig(), trust_remote_code=True)
+
+
+def test_rollout_saves_recordings_at_the_step_cap(tmp_path):
+    class _Policy(_RecordingPolicy):
+        def select_action(self, observation):
+            return torch.tensor([[2.0, 0.0], [0.0, 0.0]])
+
+    env = make_env(ToyEnvConfig(), n_envs=2)["reach"][0]
+    preprocessor, postprocessor = make_policy_processor_pipelines([], [])
+    try:
+        result = rollout(
+            env,
+            _Policy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            seeds=[4, 5],
+            recording_dir=tmp_path / "recordings",
+            env_features={
+                OBS_STATE: PolicyFeature(FeatureType.STATE, (2,)),
+                ACTION: PolicyFeature(FeatureType.ACTION, (2,)),
+            },
+            max_episode_steps=3,
+        )
+    finally:
+        env.close()
+
+    assert result["done"].tolist() == [[True, True, True], [False, False, True]]
+    for index, expected in enumerate(([True], [False, False, True])):
+        root = tmp_path / "recordings" / f"env_{index}"
+        assert load_info(root).total_episodes == 1
+        dataset = LeRobotDataset(repo_id=f"eval_recording_env_{index}", root=root)
+        assert [bool(dataset[i]["next.done"].item()) for i in range(len(dataset))] == expected
+        assert bool(dataset[len(dataset) - 1]["next.success"].item()) == (index == 0)

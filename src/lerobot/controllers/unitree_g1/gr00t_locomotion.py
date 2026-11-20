@@ -21,14 +21,14 @@ import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from ..g1_utils import (
+from lerobot.robots.unitree_g1.g1_utils import (
     REMOTE_AXES,
     REMOTE_BUTTONS,
     G1_29_JointIndex,
     get_gravity_orientation,
     make_ort_session_options,
 )
-from ..unitree_g1 import RobotController
+from lerobot.robots.unitree_g1.unitree_g1 import RobotController
 
 logger = logging.getLogger(__name__)
 

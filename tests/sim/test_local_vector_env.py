@@ -17,6 +17,7 @@
 import os
 import sys
 import types
+from collections.abc import Callable
 from dataclasses import replace
 from functools import partial
 from typing import Any
@@ -33,7 +34,7 @@ from lerobot.envs.factory import descriptor_features, make_env, make_task_env
 from lerobot.sim import SimConfig
 from lerobot.sim.integrations.utils import canonical_observation
 from lerobot.sim.local_vector_env import LocalVectorEnv, _ProcessEnv
-from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
+from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig, ToyVectorEnv
 
 
 def _register_integration(monkeypatch, name, env_fns, adapter=canonical_observation):
@@ -263,111 +264,111 @@ class _BrokenDescriptionReach(_Reach):
         raise ValueError("Instruction lookup failed")
 
 
-def _instruction_env(kind: str, outer_attrs: dict[str, Any]) -> Any:
-    if kind == "native":
-        return _NativeEnv()
-    base = _UnusedTaskReach() if kind in ("lazy", "plain-lazy") else _Reach()
-    if kind not in ("task-only", "absent", "lazy", "plain-lazy"):
-        base.task_description = "Inner instruction"
-    if kind == "task-only":
-        base.task = "inner-task"
-    if kind in ("plain", "plain-lazy"):
-        return base
-    env = gym.wrappers.OrderEnforcing(base)
-    if kind != "order":
-        env = gym.wrappers.TimeLimit(gym.wrappers.TimeLimit(env, 8), 5)
-    for name, value in outer_attrs.items():
+def _instruction_env(
+    make: Callable[[], Any], inner: dict[str, Any], limits: tuple[int | None, ...], outer: dict[str, Any]
+) -> Any:
+    env = make()
+    for name, value in inner.items():
         setattr(env, name, value)
-    # Even an outer override may itself sit below another wrapper.
-    return gym.wrappers.OrderEnforcing(env)
+    for limit in limits:
+        env = gym.wrappers.OrderEnforcing(env) if limit is None else gym.wrappers.TimeLimit(env, limit)
+    for name, value in outer.items():
+        setattr(env, name, value)
+    return gym.wrappers.OrderEnforcing(env) if limits else env
+
+
+_INSTRUCTION_CASES = [
+    ("plain", _Reach, {"task_description": "A"}, (), {}, "A"),
+    ("native", lambda: _NativeEnv(), {}, (), {}, "Pick the object"),
+    ("order", _Reach, {"task_description": "A"}, (None,), {}, "A"),
+    ("nested", _Reach, {"task_description": "A"}, (None, 8, 5), {}, "A"),
+    ("outer-description", _Reach, {"task_description": "A"}, (5,), {"task_description": "B"}, "B"),
+    ("outer-task-inner-description", _Reach, {"task_description": "A"}, (5,), {"task": "B"}, "A"),
+    ("task-only", _Reach, {"task": "A"}, (5,), {}, "A"),
+    ("absent", _Reach, {}, (5,), {}, "reach"),
+    ("lazy-lower-priority", _UnusedTaskReach, {}, (5,), {}, "Inner instruction"),
+    ("plain-lazy", _UnusedTaskReach, {}, (), {}, "Inner instruction"),
+] + [
+    (f"{name}-{value!r}", _Reach, {}, (5,), {name: value}, str(value))
+    for name in ("task_description", "task")
+    for value in ("", None, False, 0)
+]
 
 
 @pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
 @pytest.mark.parametrize(
-    "kind, outer_attrs, expected",
-    [
-        ("plain", {}, "Inner instruction"),
-        ("native", {}, "Pick the object"),
-        ("order", {}, "Inner instruction"),
-        ("nested", {}, "Inner instruction"),
-        ("override", {"task_description": "Outer instruction"}, "Outer instruction"),
-        ("override", {"task_description": ""}, ""),
-        ("override", {"task_description": None}, "None"),
-        ("override", {"task_description": False}, "False"),
-        ("override", {"task_description": 0}, "0"),
-        ("override", {"task": "outer-task"}, "Inner instruction"),
-        ("task-only", {}, "inner-task"),
-        ("absent", {}, "reach"),
-        ("lazy", {}, "Inner instruction"),
-        ("plain-lazy", {}, "Inner instruction"),
-    ],
+    "case, make, inner, limits, outer, expected",
+    _INSTRUCTION_CASES,
+    ids=[case[0] for case in _INSTRUCTION_CASES],
 )
 def test_task_instructions_respect_wrappers_and_fallback(
-    monkeypatch, use_async_envs: bool, kind: str, outer_attrs: dict[str, Any], expected: str
+    monkeypatch, use_async_envs: bool, case: str, make, inner, limits, outer, expected: str
 ) -> None:
-    make = partial(_instruction_env, kind, outer_attrs)
+    make = partial(_instruction_env, make, inner, limits, outer)
     _register_integration(monkeypatch, "instructions", lambda task, n_envs: {task: {0: [make] * n_envs}})
     env = LocalVectorEnv(SimConfig(type="instructions", task="reach"), use_async_envs=use_async_envs)
     try:
         env.reset(seed=0)
-        assert env.latest.task == (expected,)
+        assert env.latest.task == env.call("task_description") == (expected,)
         env.step(np.zeros((1, env.single_action_space.shape[0]), np.float32))
-        assert env.call("task_description") == (expected,)
-        if kind == "nested":
+        assert env.latest.task == env.call("task_description") == (expected,)
+        if case == "nested":
             assert env.call("_max_episode_steps") == (5,)
     finally:
         env.close()
 
 
 class _ResetInstructionReach(_Reach):
+    def __getattr__(self, name: str) -> Any:
+        if name == "task_description" and self.__dict__.get("broken", False):
+            raise ValueError("Instruction lookup failed")
+        raise AttributeError(name)
+
     def reset(self, seed=None, options=None):
-        self.task_description = "Episode A" if seed == 0 else "Episode B"
+        self.broken = seed == 5
+        for name in ("task_description", "task"):
+            self.__dict__.pop(name, None)
+        if seed in (1, 2, 3):
+            setattr(self, "task" if seed == 3 else "task_description", ("A", "B", "C")[seed - 1])
         return super().reset(seed=seed, options=options)
 
 
-def _reset_instruction_env(has_instruction: bool) -> gym.Env:
-    base = _ResetInstructionReach() if has_instruction else _Reach()
-    return gym.wrappers.OrderEnforcing(gym.wrappers.TimeLimit(base, 5))
-
-
-@pytest.mark.parametrize("has_instruction", [False, True])
-def test_worker_task_attributes_appear_on_reset_and_refresh(has_instruction: bool) -> None:
-    env = _ProcessEnv(partial(_reset_instruction_env, has_instruction))
-    try:
-        env.ready()
-        assert not hasattr(env, "task_description") and not hasattr(env, "task")
-        for seed, expected in ((0, "Episode A"), (1, "Episode B")):
-            env.reset(seed=seed)
-            assert getattr(env, "task_description", None) == (expected if has_instruction else None)
-            env.step(np.zeros(2, np.float32))
-    finally:
-        env.close()
-
-
 @pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
-@pytest.mark.parametrize("has_instruction", [False, True])
-def test_task_instructions_refresh_on_reset(monkeypatch, use_async_envs: bool, has_instruction: bool) -> None:
-    make = partial(_reset_instruction_env, has_instruction)
+def test_task_instructions_refresh_on_reset(monkeypatch, use_async_envs: bool) -> None:
+    make = partial(_instruction_env, _ResetInstructionReach, {}, (None, 5), {})
     _register_integration(monkeypatch, "instructions", lambda task, n_envs: {task: {0: [make] * n_envs}})
     env = LocalVectorEnv(
         SimConfig(type="instructions", task="reach"), num_envs=2, use_async_envs=use_async_envs
     )
     try:
-        for seed, instruction in ((0, "Episode A"), (1, "Episode B")):
-            expected = (instruction if has_instruction else "reach",) * 2
+        if use_async_envs:
+            assert all(
+                not hasattr(worker, name) for worker in env._envs for name in ("task_description", "task")
+            )
+        for seed, instruction in ((0, "reach"), (1, "A"), (2, "B"), (3, "C"), (4, "reach"), (1, "A")):
             env.reset(seed=[seed, seed])
-            assert env.latest.task == expected
+            assert env.latest.task == env.call("task_description") == (instruction,) * 2
             env.step(np.zeros((2, 2), np.float32))
-            assert env.latest.task == expected
+            assert env.latest.task == env.call("task_description") == (instruction,) * 2
+        if use_async_envs:
+            # Consume each failed reply, so recovery cannot read another worker's pending reset.
+            for worker in env._envs:
+                with pytest.raises(RuntimeError, match="Instruction lookup failed"):
+                    worker.reset(seed=5)
+                assert worker.task_description == "A"
+        else:
+            with pytest.raises(ValueError, match="Instruction lookup failed"):
+                env.reset(seed=[5, 5])
+        env.reset(seed=[1, 1])
+        env.step(np.zeros((2, 2), np.float32))
+        assert env.latest.task == env.call("task_description") == ("A",) * 2
     finally:
         env.close()
 
 
 @pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
 def test_task_instruction_lookup_errors_are_reported(monkeypatch, use_async_envs: bool) -> None:
-    def make():
-        return gym.wrappers.OrderEnforcing(_BrokenDescriptionReach())
-
+    make = partial(_instruction_env, _BrokenDescriptionReach, {}, (None,), {})
     _register_integration(monkeypatch, "instructions", lambda task, n_envs: {task: {0: [make] * n_envs}})
     env = None
     try:
@@ -468,5 +469,41 @@ def test_a_new_simulator_needs_only_its_factories_and_observation_adapter(monkey
         np.testing.assert_array_equal(obs["observation.state"], [[0.25]])
         # Once to describe the observations, once for the reset.
         assert len(adapted) == 2
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("end", ["terminated", "truncated"])
+def test_batched_simulator_can_reuse_observation_storage(monkeypatch, end):
+    # A native vector simulator can step finished rows because it steps the whole batch.
+    # Its output array may also be a reusable buffer.
+    def observe(self):
+        return {"agent_pos": self.state}
+
+    monkeypatch.setattr(ToyVectorEnv, "_obs", observe)
+    if end == "truncated":
+        step = ToyVectorEnv.step
+
+        def truncate(self, actions):
+            obs, reward, done, _, info = step(self, actions)
+            return obs, reward, np.zeros_like(done), done, info
+
+        monkeypatch.setattr(ToyVectorEnv, "step", truncate)
+    config = replace(ToyEnvConfig().sim_config(), type="toy_vector")
+    env = LocalVectorEnv(config, num_envs=2)
+    try:
+        env.reset(seed=[4, 5])
+        terminal_obs, _, terminated, truncated, _ = env.step(np.array([[2, 0], [0, 0]], np.float32))
+        assert terminated.tolist() == [end == "terminated", False]
+        assert truncated.tolist() == [end == "truncated", False]
+
+        obs, reward, terminated, truncated, _ = env.step(np.array([[-1, 0], [0.25, 0]], np.float32))
+        actual = obs["observation.state"]
+        previous = terminal_obs["observation.state"]
+        np.testing.assert_array_equal(actual[0], previous[0])
+        assert actual[1, 0] == pytest.approx(previous[1, 0] + 0.25)
+        assert reward[0] == 0.0
+        assert terminated.tolist() == [end == "terminated", False]
+        assert truncated.tolist() == [end == "truncated", False]
     finally:
         env.close()
