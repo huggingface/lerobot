@@ -482,8 +482,13 @@ class Policy(nn.Module):
         else:
             std = self.fixed_std.expand_as(means)
 
-        # Build transformed distribution
-        dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
+        # Build the sampling distribution: tanh-squashed by default
+        # (bounded actions, as used by SAC); the plain diagonal Gaussian when
+        # squashing is disabled via policy_kwargs.use_tanh_squash (#4727).
+        if self.use_tanh_squash:
+            dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
+        else:
+            dist = MultivariateNormal(loc=means, scale_tril=torch.diag_embed(std))
 
         # Sample actions (reparameterized)
         actions = dist.rsample()
