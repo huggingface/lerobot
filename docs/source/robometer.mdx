@@ -121,7 +121,11 @@ encoder = RobometerEncoderProcessorStep(
 )
 
 encoded = encoder.encode_samples([(frames, task)])
-batch = {f"{ROBOMETER_FEATURE_PREFIX}{key}": value for key, value in encoded.items()}
+# `predict_progress` expects inputs on the model's device, as the full preprocessor produces them.
+batch = {
+    f"{ROBOMETER_FEATURE_PREFIX}{key}": value.to(cfg.device) if isinstance(value, torch.Tensor) else value
+    for key, value in encoded.items()
+}
 
 reward_model.eval()
 with torch.inference_mode():
