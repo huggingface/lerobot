@@ -404,6 +404,20 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             add_bos_token=False,
         )
 
+        self._cache_affix_tokens()
+
+    def _cache_affix_tokens(self) -> None:
+        """Cache constant token sequences to avoid recomputing them every iteration."""
+        self._prefix_tokens = torch.tensor(
+            [self._paligemma_tokenizer.bos_token_id]
+            + self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False),
+            dtype=torch.long,
+        )
+        self._suffix_tokens = torch.tensor(
+            self._paligemma_tokenizer.encode("|"),
+            dtype=torch.long,
+        )
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
         Applies action tokenization to the transition.
@@ -458,7 +472,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         if action is None:
             raise ValueError("Action cannot be None")
 
-        # Get the device and dtype of the input action
+        # Get the device of the input action
         device = action.device if isinstance(action, torch.Tensor) else None
 
         # Handle single sample (add batch dimension)
@@ -468,47 +482,47 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
 
         batch_size = action.shape[0]
 
-        # Tokenize the action batch
-        # The fast tokenizer expects action data and returns token IDs
+        # Cached in __post_init__; rebuilt here if the step was constructed without
+        # running __post_init__.
+        if getattr(self, "_prefix_tokens", None) is None:
+            self._cache_affix_tokens()
+
+        # Move entire batch to CPU once to avoid per-sample GPU-CPU synchronization.
+        # The tokenizer uses scipy/numpy internally and requires CPU tensors.
+        action_cpu = action.cpu()
+
+        # Tokenize the action batch. All work is done on CPU; the result is
+        # transferred to the target device in a single bulk operation at the end.
         tokens_list = []
         masks_list = []
         code_masks_list = []
 
         for i in range(batch_size):
-            # Tokenize single action (move to CPU first as tokenizer uses scipy which requires numpy)
-            action_cpu = action[i : i + 1].cpu()
-            tokens = self.action_tokenizer(action_cpu)
+            tokens = self.action_tokenizer(action_cpu[i : i + 1])
 
-            # Convert to numpy array if it's a list
             if isinstance(tokens, list) or not isinstance(tokens, torch.Tensor):
-                tokens = torch.tensor(tokens, dtype=torch.long, device=action.device)
+                tokens = torch.tensor(tokens, dtype=torch.long)
             else:
-                # Move tokens back to the same device as input action
-                tokens = tokens.to(device=action.device)
+                tokens = tokens.to(dtype=torch.long)
 
             # Flatten to 1D if needed
             if tokens.dim() > 1:
                 tokens = tokens.flatten()
 
             action_code_tokens = self._act_tokens_to_paligemma_tokens(tokens)
-            bos_id = self._paligemma_tokenizer.bos_token_id
-            prompt_tokens = torch.tensor(
-                self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False),
-                device=action.device,
-            )
-            end_tokens = torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device)
 
-            code_start = 1 + len(prompt_tokens)
+            # Prepend prefix (bos + "Action: ") and append suffix ("|"),
+            # using cached constant tensors.
+            code_start = len(self._prefix_tokens)
             code_end = code_start + len(action_code_tokens)
             tokens = torch.cat(
                 [
-                    torch.tensor([bos_id], device=action.device),
-                    prompt_tokens,
+                    self._prefix_tokens,
                     action_code_tokens,
-                    end_tokens,
+                    self._suffix_tokens,
                 ]
             )
-            code_mask = torch.zeros(len(tokens), dtype=torch.bool, device=action.device)
+            code_mask = torch.zeros(len(tokens), dtype=torch.bool)
             code_mask[code_start:code_end] = True
 
             # Truncate or pad to max_action_tokens
@@ -524,15 +538,11 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
                 )
                 tokens = tokens[: self.max_action_tokens]
                 code_mask = code_mask[: self.max_action_tokens]
-                mask = torch.ones(self.max_action_tokens, dtype=torch.bool, device=action.device)
+                mask = torch.ones(self.max_action_tokens, dtype=torch.bool)
             else:
                 pad_len = self.max_action_tokens - len(tokens)
-                mask = torch.cat(
-                    [
-                        torch.ones(len(tokens), dtype=torch.bool, device=action.device),
-                        torch.zeros(pad_len, dtype=torch.bool, device=action.device),
-                    ]
-                )
+                mask = torch.zeros(self.max_action_tokens, dtype=torch.bool)
+                mask[: len(tokens)] = True
                 code_mask = torch.nn.functional.pad(code_mask, (0, pad_len), value=False)
                 # Pad tokens with zeros
                 tokens = torch.nn.functional.pad(tokens, (0, pad_len), value=0)
@@ -541,7 +551,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             masks_list.append(mask)
             code_masks_list.append(code_mask)
 
-        # Stack into batched tensors
+        # Stack into batched tensors and move to the target device in one transfer.
         tokens_batch = torch.stack(tokens_list, dim=0)  # (B, max_action_tokens)
         masks_batch = torch.stack(masks_list, dim=0)  # (B, max_action_tokens)
         code_masks_batch = torch.stack(code_masks_list, dim=0)  # (B, max_action_tokens)
@@ -552,7 +562,6 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             masks_batch = masks_batch.squeeze(0)
             code_masks_batch = code_masks_batch.squeeze(0)
 
-        # Move to the same device as the input
         if device is not None:
             tokens_batch = tokens_batch.to(device)
             masks_batch = masks_batch.to(device)
