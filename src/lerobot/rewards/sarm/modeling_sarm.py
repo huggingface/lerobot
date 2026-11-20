@@ -22,12 +22,12 @@ Paper: https://arxiv.org/abs/2509.25358
 - SubtaskTransformer: Predicts within-stage progress (tau) conditioned on stage
 """
 
-import json
 import logging
 import random
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
@@ -37,6 +37,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 from lerobot.utils.constants import OBS_STR
+from lerobot.utils.io_utils import load_json
 
 from ..prediction import ProgressOutput
 from ..pretrained import PreTrainedRewardModel
@@ -362,12 +363,11 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
 class SARMOutput(ProgressOutput):
     """SARM frame signals on the encoded input device.
 
-    ``progress``, ``stage_confidence``, and ``valid_mask`` have shape
-    ``(batch, time)``.
-    ``stage_probabilities`` has shape ``(batch, time, stages)``.
+    `progress` (task progress from 0 to 1), `stage_confidence` and `valid_mask` have shape
+    `(batch, time)`; `stage_probabilities` has shape `(batch, time, stages)`.
 
-    Values at positions where ``valid_mask`` is false are padding artifacts and
-    must not be consumed as predictions.
+    Values at positions where `valid_mask` is false are padding artifacts and must not be
+    consumed as predictions.
     """
 
     stage_probabilities: Tensor
@@ -446,15 +446,14 @@ class SARMRewardModel(PreTrainedRewardModel):
 
         logging.info(f"SARM initialized on {self.device}")
 
-    def _load_proportions_from_json(self, path, annotation_type: str) -> tuple[list[str], list[float]]:
+    def _load_proportions_from_json(self, path: Path, annotation_type: str) -> tuple[list[str], list[float]]:
         """Load temporal proportions from a JSON file (preserving order)."""
         if not path.exists():
             raise ValueError(
                 f"{annotation_type.capitalize()} temporal proportions not found at {path}. "
                 f"Run the subtask annotation tool with --{annotation_type}-subtasks to generate annotations."
             )
-        with open(path) as f:
-            proportions_dict = json.load(f)
+        proportions_dict = load_json(path)
         names = list(proportions_dict.keys())
         logging.info(f"Loaded {len(names)} {annotation_type} subtasks: {names}")
         logging.info(f"{annotation_type.capitalize()} temporal proportions: {proportions_dict}")
@@ -502,18 +501,25 @@ class SARMRewardModel(PreTrainedRewardModel):
     ) -> SARMOutput:
         """Predict progress and stage signals for every encoded frame.
 
-        Args:
-            batch: Processor output containing ``text_features`` and
-                ``video_features``, plus optional ``state_features`` and
-                ``lengths``.
-            head_mode: Annotation head to evaluate.
+        The caller controls model mode (`eval()`) and gradient context (`torch.inference_mode()`).
 
-        The caller controls model mode and gradient context.
+        Args:
+            batch (`Mapping[str, Any]`):
+                Output of the SARM preprocessor, with tensors already on the model's device. Contains
+                `text_features` and `video_features`, plus optional `state_features` and `lengths`.
+            head_mode (`Literal["sparse", "dense"]`, *optional*, defaults to `"sparse"`):
+                Annotation head to evaluate.
 
         Returns:
-            Batched float32 tensors on the encoded input device, plus a boolean
-            ``valid_mask`` derived from ``lengths``. Consumers select a valid
-            frame that corresponds to their sampling strategy.
+            `SARMOutput`: Float32 tensors on the device of `video_features`, plus a boolean
+            `valid_mask` derived from `lengths`. The caller selects the valid frame that matches its
+            sampling strategy.
+
+        Raises:
+            KeyError: If `batch` has no `text_features` or `video_features`, because
+                `SARMEncodingProcessorStep` did not run.
+            ValueError: If `head_mode` is unknown or the selected head has no stages, or if `lengths` is
+                not shaped `(batch,)` with values between 1 and the number of frames.
         """
         if "text_features" not in batch:
             raise KeyError("SARM batch missing `text_features` (run SARMEncodingProcessorStep first)")
@@ -577,7 +583,7 @@ class SARMRewardModel(PreTrainedRewardModel):
                 dtype=video_embeddings.dtype,
             )
         )
-        lens = lengths
+        lens = lengths.to(device)
 
         # Pad state to max_state_dim
         state = pad_state_to_max_dim(state, self.config.max_state_dim)

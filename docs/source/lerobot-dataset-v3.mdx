@@ -84,6 +84,7 @@ A core v3 principle is **decoupling storage from the user API**: data is stored 
 - **`meta/episodes/`**: per‑episode records (lengths, tasks, offsets) stored as **chunked Parquet** for scalability.
 - **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
 - **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
+- **`scores/`** (optional): named Parquet files of per-frame scores, such as reward-model predictions, stored without modifying `data/`. See [Dataset scores](#dataset-scores).
 
 ## Load a dataset for training
 
@@ -131,6 +132,55 @@ for batch in data_loader:
     images = batch["observation.images.front_left"].to(device)
     # model.forward(batch)
 ```
+
+## Dataset scores
+
+Scores are values computed for frames, such as a reward model's progress prediction. Each named
+set of scores is stored in its own Parquet file, `scores/<name>.parquet`, next to `data/`, which
+is not modified.
+
+The usual way to write scores is to score the dataset with a reward model:
+
+```python
+from lerobot.datasets import LeRobotDataset
+from lerobot.rewards import score_dataset
+from lerobot.rewards.robometer import RobometerRewardModel
+from lerobot.rewards.robometer.scoring_robometer import make_robometer_frame_scorer
+
+# Scores need a writable local copy of the dataset, not the Hub cache.
+dataset = LeRobotDataset("user/my_dataset", root="/path/to/local/dataset")
+model = RobometerRewardModel.from_pretrained("lerobot/Robometer-4B")
+
+score_dataset(dataset, make_robometer_frame_scorer(model), name="robometer")
+```
+
+This writes `scores/robometer.parquet` with one row per scored frame. The values below are
+illustrative:
+
+| index | episode_index | frame_index | reward.robometer.progress | reward.robometer.success_probability |
+| ----- | ------------- | ----------- | ------------------------- | ------------------------------------ |
+| 0     | 0             | 0           | 0.02                      | 0.01                                 |
+| 1     | 0             | 1           | 0.05                      | 0.01                                 |
+| ...   | ...           | ...         | ...                       | ...                                  |
+| 300   | 1             | 0           | 0.03                      | 0.02                                 |
+
+`episode_index` and `frame_index` identify the frame. `index` is the frame's position in the whole
+dataset when it was scored. Read scores back with `load_scores`:
+
+```python
+from lerobot.datasets.scores import list_scores, load_scores
+
+list_scores(dataset)  # ["robometer"]
+scores = load_scores(dataset, "robometer")  # a datasets.Dataset
+
+# Load only the columns you need.
+progress = load_scores(
+    dataset, "robometer", columns=["episode_index", "frame_index", "reward.robometer.progress"]
+)
+```
+
+See [Offline Reward-Model Scoring](./reward_scoring) for the `lerobot-score` command, resuming an
+interrupted run, scoring in parallel and uploading scores.
 
 ## Stream a dataset during training
 

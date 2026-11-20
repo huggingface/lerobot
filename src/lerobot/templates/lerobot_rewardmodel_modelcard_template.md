@@ -43,23 +43,29 @@ from lerobot.rewards import make_reward_model
 config = RewardModelConfig.from_pretrained("{{ reward_model_repo_id | default('<hf_user>/<reward_model_repo_id>', true) }}")
 reward_model = make_reward_model(config)
 reward_model.eval()
-
 {% if model_name in ["reward_classifier", "sarm", "robometer", "topreward"] %}
+{%- if model_name == "sarm" %}
+# `preprocessor` is this model's preprocessor. Turn off its training augmentations
+# (rewind, language perturbation) before building `batch`.
+for step in preprocessor.steps:
+    if hasattr(step, "eval"):
+        step.eval()
+{% endif %}
 # `batch` is the output of this model's preprocessor.
 with torch.inference_mode():
-{% if model_name == "reward_classifier" %}
+{%- if model_name == "reward_classifier" %}
     reward = reward_model.predict_reward(batch)
-{% elif model_name == "sarm" %}
+{%- elif model_name == "sarm" %}
     prediction = reward_model.predict_progress(batch, head_mode="sparse")
     progress = prediction.progress
-{% elif model_name == "robometer" %}
+{%- elif model_name == "robometer" %}
     prediction = reward_model.predict_progress(batch)
     progress = prediction.progress
     success_probability = prediction.success_probability
-{% elif model_name == "topreward" %}
+{%- elif model_name == "topreward" %}
     log_probability = reward_model.compute_log_probability(batch)
-{% endif %}
-{% endif %}
+{%- endif %}
+{%- endif %}
 ```
 {% if model_name not in ["robometer", "topreward"] %}
 ### Train from scratch

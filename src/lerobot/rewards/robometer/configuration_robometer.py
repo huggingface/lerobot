@@ -57,6 +57,9 @@ class RobometerConfig(RewardModelConfig):
 
     max_frames: int | None = 8
 
+    # Offline scoring (`lerobot-score`): frames sampled from the prefix ending at each target frame.
+    num_subsampled_frames: int = 4
+
     license: str | None = "apache-2.0"
     tags: list[str] | None = field(
         default_factory=lambda: ["reward-model", "vision-language", "qwen3-vl", "zero-shot"]
@@ -91,6 +94,8 @@ class RobometerConfig(RewardModelConfig):
         super().__post_init__()
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
+        if self.num_subsampled_frames < 1:
+            raise ValueError(f"num_subsampled_frames must be >= 1, got {self.num_subsampled_frames}")
         if self.frame_pooling not in {"mean", "boundary", "attention"}:
             raise ValueError(f"frame_pooling must be mean/boundary/attention; got {self.frame_pooling!r}")
         if self.frame_pooling_attn_temperature <= 0:

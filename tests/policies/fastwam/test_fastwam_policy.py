@@ -243,21 +243,44 @@ def test_forward_returns_per_sample_losses_under_reduction_none(monkeypatch):
     assert per_sample_loss.shape == (2,)
 
 
-def test_rabc_sample_weighter_uses_the_full_action_horizon(tmp_path):
-    pd = pytest.importorskip("pandas")
+@pytest.mark.dataset
+def test_rabc_sample_weighter_uses_the_full_action_horizon(monkeypatch):
+    hf_datasets = pytest.importorskip("datasets")
     from types import SimpleNamespace
 
+    from lerobot.rewards.sarm import rabc
+    from lerobot.rewards.scoring import SignalDescriptor
     from lerobot.utils.sample_weighting import SampleWeightingConfig, make_sample_weighter
 
-    progress = tmp_path / "sarm_progress.parquet"
-    pd.DataFrame({"index": range(40), "episode_index": [0] * 40, "progress_sparse": [0.0] * 40}).to_parquet(
-        progress
+    scores = hf_datasets.Dataset.from_dict(
+        {
+            "index": list(range(40)),
+            "episode_index": [0] * 40,
+            "frame_index": list(range(40)),
+            "progress": [0.0] * 40,
+        }
     )
+    monkeypatch.setattr(rabc, "load_scores", lambda dataset, name, columns: scores.select_columns(columns))
+    monkeypatch.setattr(
+        rabc,
+        "load_signal_descriptors",
+        lambda dataset, name: {
+            "progress": SignalDescriptor(description="Task progress.", greater_is_better=True)
+        },
+    )
+
     cfg = FastWAMConfig(action_horizon=16, n_action_steps=4, base_model_id=None)
     weighter = make_sample_weighter(
-        SampleWeightingConfig(type="rabc", progress_path=str(progress)),
+        SampleWeightingConfig(type="rabc", score_name="sarm", signal_name="progress"),
         SimpleNamespace(config=cfg),
         torch.device("cpu"),
+        dataset=SimpleNamespace(
+            meta=SimpleNamespace(
+                total_frames=40,
+                total_episodes=1,
+                episodes=[{"dataset_from_index": 0, "dataset_to_index": 40}],
+            )
+        ),
     )
     assert weighter.chunk_size == 16
 

@@ -335,3 +335,23 @@ def normalize_stage_tau(
         stage = int(x)
         tau = x - stage
         return breakpoints[stage] + tau * (breakpoints[stage + 1] - breakpoints[stage])
+
+
+def interpolate_progress(
+    computed_indices: np.ndarray,
+    computed_values: np.ndarray,
+    all_indices: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate values to fill in gaps (robust to NaNs / edge cases)."""
+    computed_indices = np.asarray(computed_indices)
+    computed_values = np.asarray(computed_values)
+    all_indices = np.asarray(all_indices)
+
+    mask = np.isfinite(computed_values)
+    if mask.sum() == 0:
+        return np.full(all_indices.shape, np.nan, dtype=np.float32)
+    if mask.sum() == 1:
+        return np.full(all_indices.shape, float(computed_values[mask][0]), dtype=np.float32)
+
+    out = np.interp(all_indices, computed_indices[mask], computed_values[mask])
+    return out.astype(np.float32)

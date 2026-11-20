@@ -40,6 +40,7 @@ from .storage import (
     make_dataset_reader,
 )
 from .utils import (
+    SCORES_DIR,
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
@@ -683,7 +684,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 f"push_to_hub is not supported for storage_format={self.meta.storage_format!r}: "
                 "the data files are not managed by LeRobotDataset."
             )
-        ignore_patterns = ["images/"]
+        # Hidden entries under scores/ are unpublished parts of an interrupted scoring run.
+        ignore_patterns = ["images/", f"{SCORES_DIR}/.*"]
         if not push_videos:
             ignore_patterns.append("videos/")
 
@@ -724,7 +726,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def _download(self, download_videos: bool = True, *, token: str | bool | None = None) -> None:
         """Downloads the dataset from the given 'repo_id' at the provided version."""
-        ignore_patterns = None if download_videos else "videos/"
+        # Scores are fetched by name when a consumer explicitly loads them.
+        ignore_patterns = [f"{SCORES_DIR}/"]
+        if not download_videos:
+            ignore_patterns.append("videos/")
         files = None
         token_kwargs = {} if token is None else {"token": token}
         # Only the default format downloads data; __init__ builds its DatasetReader before _download.

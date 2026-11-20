@@ -114,10 +114,14 @@ class TOPRewardModel(PreTrainedRewardModel):
 
         Args:
             batch (`Mapping[str, Any]`):
-                Output of the TOPReward preprocessor.
+                Output of the TOPReward preprocessor, with tensors already on the model's device.
 
         Returns:
             `Tensor`: One float32 log-probability per sample, shaped `(batch,)`.
+
+        Raises:
+            KeyError: If `batch` is missing an encoded input, because `TOPRewardEncoderProcessorStep`
+                did not run.
         """
         inputs: dict[str, Any] = {}
         for key in TOPREWARD_INPUT_KEYS:
