@@ -10,7 +10,8 @@ Qwen3.5-2B text encoder are frozen and come from their public weights. The relea
 with an exterior camera and a wrist camera. An earlier, unreleased DROID checkpoint
 has the same architecture with other weights and another camera canvas; the checkpoint's `config.json`
 tells them apart (see "The checkpoints"). `praxis-1-yam`, the bimanual checkpoint for two YAM arms,
-ships in the same layout (see "The bimanual YAM checkpoint"). `praxis-1-base`, the video backbone and
+ships in the same layout (see "The bimanual YAM checkpoint"), and so does `praxis-1-so101`, a
+joint-space checkpoint for an SO-100 / SO-101 arm (see "The SO-100 / SO-101 checkpoint"). `praxis-1-base`, the video backbone and
 action-expert trunk without the heads of a rig, is the start of a fine-tune for a new single-arm rig
 (see "Fine-tune the base checkpoint").
 
@@ -26,7 +27,8 @@ Resources:
 | Text encoder | [Qwen/Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B)                                      | Frozen                                                                |
 
 The model code lives in-tree under `lerobot/policies/praxis/praxis_core` (vendored from the praxis
-repository at commit 8dad1a4 plus the canvas rule of `praxis-1-droid`, import paths rewritten; the file headers
+repository at commit 8dad1a4 plus the canvas rule of `praxis-1-droid`, the sampler's skipped passes of
+a8eb983 and bd0b693, and the so101 rig of afef2e1, import paths rewritten; the file headers
 name the upstream commits). The MuJoCo simulation is the `praxis-sim` package on PyPI (developed in
 the praxis repository's `packages/praxis-sim`, no torch); LeRobot has no environment for it.
 
@@ -149,12 +151,13 @@ the CPU: nothing crosses the device boundary twice.
 
 ## The checkpoints
 
-| Checkpoint                                | Tiles                  | Resize                                         | Recommended sampler (`PraxisConfig` defaults for `praxis-1-droid`)                                                                         |
-| ----------------------------------------- | ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `praxis-1-droid` (released)               | 224 x 416              | antialiased fit rule (`video.antialias: true`) | 2 Euler steps, flow shift 12.5, text guidance 4.0 on the video and none on the actions (1.0), 1 context chunk                              |
-| YAM, `praxis-1-yam` (bimanual, released)  | 256 x 416, three tiles | YAM fit rule (`video.antialias: true`)         | 2 steps, flow shift 1.0, no text guidance, 1 context chunk (the converter writes them)                                                     |
-| Base, `praxis-1-base` (no heads)          | set by `init_heads.py` | set by `init_heads.py`                         | the fine-tune's choice; the DROID rig takes `praxis-1-droid`'s                                                                             |
-| The earlier DROID checkpoint (unreleased) | 256 x 416              | plain bilinear resize                          | 2 steps, shift 8.0, no text guidance, 3 context chunks (praxis); the results below used shift 1.0, action guidance 3.0 and 1 context chunk |
+| Checkpoint                                  | Tiles                                              | Resize                                                       | Recommended sampler (`PraxisConfig` defaults for `praxis-1-droid`)                                                                         |
+| ------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `praxis-1-droid` (released)                 | 224 x 416                                          | antialiased fit rule (`video.antialias: true`)               | 2 Euler steps, flow shift 12.5, text guidance 4.0 on the video and none on the actions (1.0), 1 context chunk                              |
+| YAM, `praxis-1-yam` (bimanual, released)    | 256 x 416, three tiles                             | YAM fit rule (`video.antialias: true`)                       | 2 steps, flow shift 1.0, no text guidance, 1 context chunk (the converter writes them)                                                     |
+| SO-101, `praxis-1-so101` (joints, released) | 288 x 416 for a 640 x 480 camera, one or two tiles | fit rule, tiles follow the cameras (`video.antialias: true`) | 4 steps, flow shift 12.5, text guidance 4.0 on the video, 1 context chunk (the converter writes them)                                      |
+| Base, `praxis-1-base` (no heads)            | set by `init_heads.py`                             | set by `init_heads.py`                                       | the fine-tune's choice; the DROID rig takes `praxis-1-droid`'s                                                                             |
+| The earlier DROID checkpoint (unreleased)   | 256 x 416                                          | plain bilinear resize                                        | 2 steps, shift 8.0, no text guidance, 3 context chunks (praxis); the results below used shift 1.0, action guidance 3.0 and 1 context chunk |
 
 The canvas comes from the checkpoint's `config.json` (`video.tile_height`, `video.antialias`) through the
 converter; the sampler settings are `PraxisConfig` fields, so a run of the earlier DROID checkpoint passes its own
@@ -171,7 +174,9 @@ python examples/praxis/convert_checkpoint.py \
 ```
 
 The rig comes from the checkpoint's `embodiment`: the bimanual checkpoint gets its three camera
-keys (`--camera-keys` to rename them) and the serve settings of its checkpoint.
+keys (`--camera-keys` to rename them) and the serve settings of its checkpoint; an so101 checkpoint
+gets one or two camera keys (exterior, then wrist), the six joints as state and action, and its
+serve settings.
 The base checkpoint gets a directory without processors that `init_heads.py` completes.
 `runwayml/praxis-1-droid-lerobot` and the other converted checkpoints are this script's output.
 
@@ -373,6 +378,64 @@ the check on the CPU against the praxis `Session`.
 Limits: there is no simulation of the YAM rig, so no closed-loop suite; `forward` (fine-tuning) is
 single-arm only, since the praxis repository has no bimanual training recipe yet.
 
+## The SO-100 / SO-101 checkpoint
+
+`praxis-1-so101` (`"embodiment": "so101"`, [`runwayml/praxis-1-so101`](https://huggingface.co/runwayml/praxis-1-so101))
+drives an SO-100 / SO-101 follower arm, LeRobot's `so100_follower` / `so101_follower`, with one or
+two cameras. The same model runs it; the checkpoint has a 6-D joint-space head (the five arm joints and
+the gripper), the fit-rule canvas of training and its own normalization. The LeRobot adapter follows
+the praxis repository's `praxis/so101.py` (vendored as `praxis_core/so101.py`):
+
+| Key                                                       | Shape | Meaning                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `observation.images.exterior`, `observation.images.wrist` | RGB   | One or two views in canvas order (`camera_keys`; a 1-view policy reads the first). Any size: the processor makes the tiles with the fit rule of training (each view scaled down to fit 416 x 416 with its aspect kept, the views to one common height, then a 32 px trim), so the tiles follow the cameras: a 640 x 480 camera gives 288 x 416. |
+| `observation.state`                                       | (6,)  | `shoulder_pan.pos`, `shoulder_lift.pos`, `elbow_flex.pos`, `wrist_flex.pos`, `wrist_roll.pos` in degrees and `gripper.pos` in 0..100: the follower's readings with `use_degrees=True` (the LeRobot default). A joint past 200 degrees is refused as a raw motor reading.                                                                        |
+| `action`                                                  | (6,)  | The same six values: the absolute joint targets of the next 15 Hz tick, as `send_action` takes them.                                                                                                                                                                                                                                            |
+
+There is no pose or command processor step: the state and the actions are the follower's own values.
+Inside the session the joints become radians relative to the start of each chunk, and the gripper a
+closure, `1 - (gripper.pos - grip_closed) / (grip_open - grip_closed)` clipped to [0, 1].
+`grip_closed` and `grip_open` (`PraxisConfig`, default 1.4 and 42.1, the medians of the training
+data) are your follower's `gripper.pos` when fully closed and fully open: measure them and pass
+`--policy.grip_closed` and `--policy.grip_open`. A gripper whose reading grows as it closes takes
+`grip_closed > grip_open`.
+
+The checkpoint's serve settings (the praxis repository's `configs/serve_so101.yaml`: 4 Euler steps,
+flow shift 12.5, video guidance 4.0 and no action guidance, 1 context chunk) are what the converter
+writes into the config. Convert the checkpoint and run it on the arm at 15 Hz, one policy call per
+tick; `--interpolation_multiplier=2` sends the arm the 15 Hz targets interpolated at 30 Hz, as the
+praxis repository's SO-101 client does:
+
+```bash
+hf download runwayml/praxis-1-so101 --local-dir checkpoints/praxis-1-so101
+python examples/praxis/convert_checkpoint.py \
+    --checkpoint checkpoints/praxis-1-so101 --out outputs/praxis-1-so101 --link
+# one camera: add --camera-keys observation.images.exterior
+
+lerobot-rollout --strategy.type=base --policy.path=outputs/praxis-1-so101 \
+    --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=my_so101 \
+    --robot.cameras="{exterior: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}" \
+    --policy.grip_closed=<closed> --policy.grip_open=<open> \
+    --fps=15 --interpolation_multiplier=2 \
+    --task="Pick up the red cube and put it in the box." --duration=60
+```
+
+The training episodes start from the folded rest pose of the arm (`shoulder_lift` about -100
+degrees, `elbow_flex` about 95 degrees); start the arm there (the praxis client moves it there before
+the first chunk, `lerobot-rollout` does not). The task goes to the text encoder verbatim: a short
+imperative sentence, as in the serve preset.
+
+`lerobot-rollout` calls the policy in its control loop, so the arm holds while a chunk is sampled,
+once every 24 ticks. The praxis server's real-time chunking, which removes this stop, is not ported.
+
+Parity: on the tiny model, the LeRobot policy and the praxis `Session` with its `So101ServeSession`
+give bitwise equal joint targets through the saved pipelines, with one and with two cameras, and on
+raw frames without the pipelines (`tests/policies/praxis/test_praxis_so101.py`).
+
+Limits: no fine-tuning (`forward` is single-arm only); the praxis server's real-time chunking and
+the routed NVFP4 inference of `runwayml/praxis-1-so101-nvfp4` (an NVFP4 quantization-aware fine-tune
+of this checkpoint) are not ported.
+
 ## Training
 
 `lerobot-train` fine-tunes the policy with the objective of the praxis repository (`praxis/train`):
@@ -539,11 +602,12 @@ ported.
 
 ## Known limits
 
-- Two rigs: the single-arm DROID checkpoint (`embodiment: single_arm`) and the bimanual YAM one
-  (`bimanual`). Fine-tuning and the simulation are single-arm.
-- Praxis outputs Cartesian pose targets for an arm with an impedance controller; LeRobot's robot
-  classes do not include a Franka, so real-robot use goes through a client that executes
-  Cartesian targets.
+- Three rigs: the single-arm DROID checkpoint (`embodiment: single_arm`), the bimanual YAM one
+  (`bimanual`) and the SO-100 / SO-101 one (`so101`). Fine-tuning and the simulation are single-arm.
+- The DROID and YAM checkpoints output Cartesian pose targets for an arm with an impedance
+  controller; LeRobot's robot classes do not include a Franka, so real-robot use goes through a
+  client that executes Cartesian targets. The SO-101 checkpoint outputs the joint targets of
+  LeRobot's SO-100 / SO-101 follower and runs on it with `lerobot-rollout`.
 - A `select_action` batch runs its environments sequentially (one model call per environment).
 - Remote serving is not supported. The default chunk runner (`lerobot/inference/policy_runner.py`)
   refuses a policy that conditions on past observations, and Praxis conditions on the frames of the

@@ -336,3 +336,90 @@ def make_tiny_bimanual_policy(seed: int = 0, **overrides) -> PraxisPolicy:
     policy.vae = FakeAutoencoder()
     policy.text_encoder = FakeTextEncoder()
     return policy.eval()
+
+
+SO101_CAMERA_KEYS = ("observation.images.exterior", "observation.images.wrist")
+SO101_IMAGE_SHAPE = (3, 480, 640)  # the native SO-101 camera: the fit rule makes the 288 x 416 tile
+#: The folded rest pose of the SO-101 training episodes, in LeRobot units (degrees, gripper.pos).
+SO101_REST = (0.0, -100.0, 95.0, 70.0, 0.0, 2.0)
+
+
+def tiny_so101_praxis_config() -> dict:
+    """The tiny config as an so101 checkpoint: the 6-D joint head and the 288 x 416 tile of a 480 x 640 view.
+
+    The tile is the checkpoint's (the so101 session checks it against the fit rule of the native view);
+    the dims of the networks stay tiny.
+    """
+    config = tiny_praxis_config()
+    config["embodiment"] = "so101"
+    config["pose_frame"] = "joints"
+    config["action_space"] = {"dim": 6}
+    config["action_expert"]["action_patch_dim"] = 24
+    config["action_expert"]["proprio_patch_dim"] = 6
+    config["video"] = {
+        "canvas": "tiles",
+        "views": ["exterior", "wrist"],
+        "tile_height": 288,
+        "tile_width": 416,
+        "height": 288,
+        "width": 832,
+        "aspect_tol": 0.03,
+        "antialias": True,
+    }
+    config["normalization"] = {
+        "action_q01": [-0.9, -1.55, -1.33, -0.89, -0.83, 0.0],
+        "action_q99": [0.92, 1.44, 1.51, 0.92, 0.92, 1.0],
+        "q99_normed_dims": [0, 1, 2, 3, 4, 5],
+        "proprio_mean": [-0.05, -0.29, 0.44, 1.0, -0.2, 0.66],
+        "proprio_std": [0.53, 0.86, 0.81, 0.69, 1.06, 0.33],
+    }
+    return config
+
+
+def tiny_so101_lerobot_config(
+    n_views: int = 2, image_shape: tuple[int, int, int] = SO101_IMAGE_SHAPE, **overrides
+) -> PraxisConfig:
+    """An so101 ``PraxisConfig`` on the CPU: one or two cameras, the 6 joints as state and action."""
+    keys = list(SO101_CAMERA_KEYS[:n_views])
+    kwargs = {
+        "text_encoder_id": "",
+        "model_config": tiny_so101_praxis_config(),
+        "camera_keys": keys,
+        "input_features": {
+            **{key: PolicyFeature(type=FeatureType.VISUAL, shape=image_shape) for key in keys},
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+        },
+        "output_features": {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+        "device": "cpu",
+        "dtype": torch.bfloat16,
+        "attention_backend": "eager",
+    }
+    kwargs.update(overrides)
+    return PraxisConfig(**kwargs)
+
+
+def fake_so101_observation(
+    step: int, seed: int = 0, n_views: int = 2, image_shape: tuple[int, int, int] = SO101_IMAGE_SHAPE
+) -> dict:
+    """One LeRobot observation of the so101 rig: random views, the joints moving from the rest pose."""
+    rng = np.random.default_rng(seed * 100_003 + step)
+    obs: dict = {}
+    for key in SO101_CAMERA_KEYS[:n_views]:
+        obs[key] = (torch.from_numpy(rng.integers(0, 256, size=image_shape, dtype=np.uint8)).float() / 255)[
+            None
+        ]
+    drift = np.array([0.4, 0.5, -0.5, 0.2, 0.1, 1.1]) * step
+    obs[OBS_STATE] = torch.from_numpy((np.array(SO101_REST) + drift).astype(np.float32))[None]
+    obs["task"] = ["Pick up the red cube and put it in the box."]
+    return obs
+
+
+def make_tiny_so101_policy(seed: int = 0, n_views: int = 2, **overrides) -> PraxisPolicy:
+    """A random tiny so101 policy on the CPU with the fake autoencoder and text encoder."""
+    from lerobot.policies.praxis.modeling_praxis import PraxisPolicy
+
+    policy = PraxisPolicy(tiny_so101_lerobot_config(n_views=n_views, **overrides))
+    randomize_(policy.model, seed)
+    policy.vae = FakeAutoencoder()
+    policy.text_encoder = FakeTextEncoder()
+    return policy.eval()

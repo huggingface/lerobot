@@ -80,11 +80,33 @@ def _praxis_session_cls():
     return pipeline.Session
 
 
+#: Options of the praxis repository's own sampler that its newer ``Session`` passes to
+#: ``sample_window_joint`` (a context cache, the expert passes on a side stream, paired guidance
+#: passes). Each gives the same bits there; the vendored sampler does not have them. The parity tests
+#: compare the glue around one model (the LeRobot one), so the reference model drops them.
+REFERENCE_ONLY_SAMPLER_OPTIONS = ("ctx_cache", "overlap_expert", "pair_cfg")
+
+
+class _ReferenceModel:
+    """The LeRobot model as the reference ``Session`` calls it."""
+
+    def __init__(self, model: torch.nn.Module) -> None:
+        self._model = model
+
+    def __getattr__(self, name: str):  # noqa: ANN204
+        return getattr(self._model, name)
+
+    def sample_window_joint(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+        for name in REFERENCE_ONLY_SAMPLER_OPTIONS:
+            kwargs.pop(name, None)
+        return self._model.sample_window_joint(*args, **kwargs)
+
+
 class _ReferencePipeline:
     """What the praxis repository's ``PraxisPipeline`` exposes to a ``Session``, with the same parts."""
 
     def __init__(self, policy: PraxisPolicy) -> None:
-        self.policy = policy.model
+        self.policy = _ReferenceModel(policy.model)
         self.vae = FakeAutoencoder()
         self.text = FakeTextEncoder()
         self.device = torch.device("cpu")

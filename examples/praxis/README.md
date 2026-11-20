@@ -4,7 +4,8 @@
 17 safetensors shards, `model.safetensors.index.json`, `SHA256SUMS`) into a LeRobot policy
 directory: the LeRobot `config.json`, the shards (linked with `--link` instead of copying 54 GB)
 and the two processor pipelines, with the canvas of the checkpoint (`video.tile_height`,
-`video.antialias`) and the recommended sampler settings. The directory gets its own `SHA256SUMS`. A
+`video.antialias`), the features of its rig (`embodiment`: the single-arm, bimanual or so101 rig) and
+the recommended sampler settings. The directory gets its own `SHA256SUMS`. A
 base checkpoint (`"embodiment": "base"`, no action heads) gets no processors; `init_heads.py` below
 completes it.
 

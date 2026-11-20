@@ -1,7 +1,7 @@
 {
   "format_version": 2,
   "model_type": "praxis",
-  "embodiment": "single_arm",
+  "embodiment": "so101",
   "torch_dtype": "bfloat16",
   "fp32_tensors": [
     "*.ffn.expert_bias"
@@ -122,8 +122,8 @@
     "num_heads": 16,
     "head_dim": 64,
     "trunk_dim": 3072,
-    "action_patch_dim": 40,
-    "proprio_patch_dim": 10,
+    "action_patch_dim": 24,
+    "proprio_patch_dim": 6,
     "num_future_per_chunk": 8,
     "max_chunks": 16,
     "max_action_tokens": 64,
@@ -191,7 +191,7 @@
     "proprio_frames": 1
   },
   "video": {
-    "height": 256,
+    "height": 288,
     "width": 832,
     "views": [
       "exterior",
@@ -200,17 +200,17 @@
     "canvas": "tiles",
     "layout": "hstack",
     "keep_aspect": true,
-    "antialias": false,
+    "antialias": true,
     "tile_bounds_rows_cols": {
       "exterior": [
         0,
-        256,
+        288,
         0,
         416
       ],
       "wrist": [
         0,
-        256,
+        288,
         416,
         832
       ]
@@ -228,7 +228,7 @@
       2,
       2
     ],
-    "tile_height": 256,
+    "tile_height": 288,
     "tile_width": 416,
     "aspect_tol": 0.03,
     "vae_encode_impl": "megakernel",
@@ -244,68 +244,54 @@
     "blank_caption": " "
   },
   "action_space": {
-    "dim": 10,
-    "layout": "[xyz(3) rot6d(6) grip(1)]",
-    "pose_layout": "[xyz(3) quat_wxyz(4) grip(1)]"
+    "dim": 6,
+    "layout": "[q0..q4 rad (LeRobot use_degrees zero, deg*pi/180) relative to the chunk anchor | gripper closure 0..1 (1 = closed) absolute]",
+    "pose_layout": "[shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll (rad), gripper closure 0..1]"
   },
   "normalization": {
-    "domain": "droid",
+    "domain": "so101",
     "action_q01": [
-      -0.1485469937324524,
-      -0.19603200256824493,
-      -0.2031259983778,
-      0.6827049851417542,
-      -0.5835009813308716,
-      -0.3863309919834137,
-      -0.5673199892044067,
-      0.6868450045585632,
-      -0.39503800868988037,
+      -0.903174,
+      -1.5543,
+      -1.32959,
+      -0.888921,
+      -0.831841,
       0.0
     ],
     "action_q99": [
-      0.18577100336551666,
-      0.19784800708293915,
-      0.19871099293231964,
-      1.0,
-      0.5795639753341675,
-      0.4474309980869293,
-      0.5877500176429749,
-      1.0,
-      0.39563798904418945,
+      0.920626,
+      1.43923,
+      1.50507,
+      0.922517,
+      0.920434,
       1.0
     ],
     "q99_normed_dims": [
       0,
       1,
       2,
-      9
+      3,
+      4,
+      5
     ],
     "proprio_mean": [
-      0.5195770263671875,
-      -0.006078170146793127,
-      0.3168239891529083,
-      0.7413139939308167,
-      -0.04902319982647896,
-      0.08595360070466995,
-      -0.06293799728155136,
-      -0.7607250213623047,
-      0.008901899680495262,
-      0.39361199736595154
+      -0.0458334,
+      -0.29164,
+      0.436823,
+      0.996258,
+      -0.196116,
+      0.655783
     ],
     "proprio_std": [
-      0.1195869967341423,
-      0.17830400168895721,
-      0.1687529981136322,
-      0.32760199904441833,
-      0.4835300147533417,
-      0.3154970109462738,
-      0.4926550090312958,
-      0.33570900559425354,
-      0.24869099259376526,
-      0.4135879874229431
+      0.528881,
+      0.863414,
+      0.809951,
+      0.693115,
+      1.06372,
+      0.327085
     ],
     "action_formula": "clip(2 * (a - q01) / (q99 - q01 + 1e-8) - 1, -1, 1) on q99_normed_dims, identity on the other dims",
     "proprio_formula": "(p - mean) / max(std, 1e-6) on all dims"
   },
-  "pose_frame": "flange"
+  "pose_frame": "joints"
 }

@@ -1,5 +1,6 @@
-# Vendored from the praxis repository (main, praxis/bimanual.py) with the LeRobot reductions noted
-# in the module docstring; import paths rewritten to the LeRobot package.
+# Vendored from runwayml/praxis-1-oss, original path praxis/bimanual.py: the chunk-grid session, with the
+# helper names of afef2e1 (resize_frames, trim_centre) and the LeRobot reductions noted in the module
+# docstring; import paths rewritten to the LeRobot package.
 """Robot input and output glue for the bimanual (YAM) rig. No neural networks.
 
 The bimanual checkpoint (``"embodiment": "bimanual"``) is the model variant of
@@ -309,7 +310,7 @@ def fit_row_sizes(
     return resize, trimmed
 
 
-def _resize(fr: torch.Tensor, h: int, w: int) -> torch.Tensor:
+def resize_frames(fr: torch.Tensor, h: int, w: int) -> torch.Tensor:
     """Return the uint8 ``(T, 3, h, w)`` antialiased bilinear resize of ``fr``.
 
     The resize runs in float32 with ``align_corners=False``, then a round and a
@@ -334,7 +335,7 @@ def _resize(fr: torch.Tensor, h: int, w: int) -> torch.Tensor:
     )
 
 
-def _trim(fr: torch.Tensor, h: int, w: int) -> torch.Tensor:
+def trim_centre(fr: torch.Tensor, h: int, w: int) -> torch.Tensor:
     """Return the centre trim of ``fr`` to ``h x w``."""
     fh, fw = fr.shape[-2], fr.shape[-1]
     if h > fh or w > fw:
@@ -385,7 +386,9 @@ def canvas_clip(
                 "example 1920x1200 or 960x600) at their native aspect; other "
                 "aspects are not supported yet"
             )
-        tiles = [_trim(_resize(f, *r), tile_h, tile_w) for f, r in zip(frames, resize, strict=True)]
+        tiles = [
+            trim_centre(resize_frames(f, *r), tile_h, tile_w) for f, r in zip(frames, resize, strict=True)
+        ]
     else:
         tiles = [_tile_view(s, tile_h, tile_w, tol) for s in stacks]
     canvas = torch.cat(tiles, dim=-1).float()
