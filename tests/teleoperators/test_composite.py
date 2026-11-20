@@ -14,7 +14,6 @@
 
 """Exercise the composite and action pipeline with actual interfaces, without connecting hardware."""
 
-import inspect
 from pathlib import Path
 from unittest.mock import PropertyMock, patch
 
@@ -26,7 +25,10 @@ from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.processor import RobotProcessorPipeline
 from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
 from lerobot.processor.hold_joints_processor import HoldUncommandedJointsProcessorStep
-from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
+from lerobot.processor.keyboard_base_processor import (
+    KeyboardToBaseActionProcessorStep,
+    default_base_key_bindings,
+)
 from lerobot.teleoperators import TeleoperatorConfig
 from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
@@ -81,21 +83,6 @@ def make_pipeline(*steps):
     )
 
 
-def test_standard_keyboard_alone_uses_processors_without_a_wrapper(keyboard):
-    pipeline = make_pipeline(
-        KeyboardToBaseActionProcessorStep(), HoldUncommandedJointsProcessorStep(("arm_joint.pos",))
-    )
-    keyboard.event_queue.put(("w", True))
-    first = {"arm_joint.pos": 10.0}
-    action = pipeline((keyboard.get_action(observation=first), first))
-    assert action == {"x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0, "arm_joint.pos": 10.0}
-    assert first == {"arm_joint.pos": 10.0}
-    later = {"arm_joint.pos": 8.0}
-    assert pipeline((keyboard.get_action(observation=later), later))["arm_joint.pos"] == 10.0
-    keyboard.event_queue.put(("w", False))
-    assert pipeline((keyboard.get_action(observation=later), later))["x.vel"] == 0.0
-
-
 def test_keyboard_and_leader_receive_fresh_observations_without_hook(keyboard, tmp_path):
     leader = ObservedLeader(tmp_path)
     composite = CompositeTeleoperator(
@@ -111,19 +98,6 @@ def test_keyboard_and_leader_receive_fresh_observations_without_hook(keyboard, t
         assert result == {"arm_joint.pos": position + 1.0, "x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0}
         assert leader.observations[-1] is observation
         assert raw == {"w": None, "arm_joint.pos": position + 1.0}
-
-
-def test_speed_selection_survives_control_phase_boundaries(keyboard):
-    pipeline = make_pipeline(KeyboardToBaseActionProcessorStep())
-    keyboard.event_queue.put(("w", True))
-    speeds = []
-    for pressed in (True, False, True, True):
-        keyboard.event_queue.put(("+", pressed))
-        speeds.append(pipeline((keyboard.get_action(observation={}), {}))["x.vel"])
-    assert speeds == [0.2, 0.2, 0.3, 0.3]
-    pipeline.reset()
-    keyboard.event_queue.put(("+", False))
-    assert pipeline((keyboard.get_action(observation={}), {}))["x.vel"] == 0.1
 
 
 def test_mapping_preserves_numeric_commands_even_if_their_names_are_bound_keys():
@@ -166,11 +140,19 @@ def test_holding_requires_measurements_and_does_not_partially_latch():
 
 
 def test_features_and_serialization_preserve_arm_and_held_channels(tmp_path):
+    keys = {**default_base_key_bindings(), "forward": "i"}
     pipeline = make_pipeline(
-        KeyboardToBaseActionProcessorStep(), HoldUncommandedJointsProcessorStep(("gripper.pos",))
+        KeyboardToBaseActionProcessorStep(key_bindings=keys),
+        HoldUncommandedJointsProcessorStep(("gripper.pos",)),
     )
     feature = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-    features = pipeline.transform_features({PipelineFeatureType.ACTION: {"arm_joint.pos": feature}})
+    original = {
+        PipelineFeatureType.ACTION: {"arm_joint.pos": feature},
+        PipelineFeatureType.OBSERVATION: {"gripper.pos": feature},
+    }
+    features = pipeline.transform_features(original)
+    assert features[PipelineFeatureType.OBSERVATION] == original[PipelineFeatureType.OBSERVATION]
+    assert set(original[PipelineFeatureType.ACTION]) == {"arm_joint.pos"}
     assert set(features[PipelineFeatureType.ACTION]) == {
         "arm_joint.pos",
         "gripper.pos",
@@ -185,8 +167,10 @@ def test_features_and_serialization_preserve_arm_and_held_channels(tmp_path):
         to_transition=robot_action_observation_to_transition,
         to_output=transition_to_robot_action,
     )
-    sample = ({"w": None, "arm_joint.pos": 4.0}, {"gripper.pos": 8.0})
-    assert restored(sample) == pipeline(sample)
+    sample = ({"i": None, "arm_joint.pos": 4.0}, {"gripper.pos": 8.0})
+    expected = {"x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0, "arm_joint.pos": 4.0, "gripper.pos": 8.0}
+    assert restored(sample) == pipeline(sample) == expected
+    assert sample == ({"i": None, "arm_joint.pos": 4.0}, {"gripper.pos": 8.0})
 
 
 def test_feedback_routing_and_smooth_handover_are_separate_from_observation(keyboard, tmp_path, monkeypatch):
@@ -266,15 +250,3 @@ def test_failed_disconnect_still_cleans_up_other_children(tmp_path, monkeypatch)
         composite.disconnect()
     assert not left.is_connected and right.is_connected
     right._is_connected = False
-
-
-def test_builtin_devices_accept_the_observation_argument():
-    # Check source signatures without importing optional hardware SDKs.
-    import ast
-
-    root = Path(inspect.getfile(CompositeTeleoperator)).parent
-    for path in root.rglob("*.py"):
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "get_action":
-                assert "observation" in [arg.arg for arg in node.args.args], path

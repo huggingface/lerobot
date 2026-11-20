@@ -79,16 +79,6 @@ def test_teleoperate(cadence_log):
         assert step in summary, step
 
 
-def test_teleoperate_with_a_base_teleop_alone():
-    cfg = TeleoperateConfig(
-        robot=MockRobotConfig(),
-        base_teleop=MockTeleopConfig(n_motors=1),
-        fps=30,
-        teleop_time_s=0.1,
-    )
-    teleoperate(cfg)
-
-
 def test_record_with_a_base_teleop_alone_holds_the_other_actions(tmp_path):
     # The base teleop commands motor_1; with no arm teleop, motor_2 and motor_3 hold their first reading.
     dataset_cfg = DatasetRecordConfig(

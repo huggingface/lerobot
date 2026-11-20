@@ -241,10 +241,10 @@ python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
 
 The host stops after `--host.connection_time_s` seconds (30 by default). For longer sessions, such as recording a dataset, increase it, e.g. `--host.connection_time_s=600`.
 
-Then on your laptop, run the API example with the robot IP and leader serial port. Omit `--leader-port` for keyboard-only control.
+Then on your laptop, set the robot IP and leader serial port in `examples/lekiwi/teleoperate.py` and run it. Set `teleop_arm_config = None` for keyboard-only control.
 
 ```bash
-uv run examples/lekiwi/teleoperate.py --remote-ip 172.18.134.136 --leader-port /dev/tty.usbmodem585A0077581
+python examples/lekiwi/teleoperate.py
 ```
 
 Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (+,-) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
@@ -267,7 +267,7 @@ Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward,
 | -   | Decrease speed |
 
 > [!TIP]
-> To customize the API example's controls, set `key_bindings`, `linear_speeds` (m/s), and `angular_speeds` (deg/s) on its `KeyboardToBaseActionProcessorStep`.
+> To customize controls in the API example, pass a `KeyboardToBaseActionProcessorStep` as `keyboard_mapping` to `make_mobile_teleop`. It accepts `key_bindings`, `linear_speeds` (m/s), and `angular_speeds` (deg/s).
 
 ### From the command line
 

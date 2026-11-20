@@ -19,10 +19,9 @@ from math import isfinite
 from typing import Any
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.lerobot_types import RobotAction
 
-from .converters import robot_action_observation_to_transition, transition_to_robot_action
-from .pipeline import ProcessorStepRegistry, RobotActionProcessorStep, RobotProcessorPipeline
+from .pipeline import ProcessorStepRegistry, RobotActionProcessorStep
 
 
 def default_base_key_bindings() -> dict[str, str]:
@@ -108,14 +107,3 @@ class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
                 },
             },
         }
-
-
-def make_keyboard_base_processor(
-    step: KeyboardToBaseActionProcessorStep,
-) -> RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]:
-    """Build a pipeline usable on its own or before combining base and arm actions."""
-    return RobotProcessorPipeline(
-        steps=[step],
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
-    )

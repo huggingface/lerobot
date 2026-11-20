@@ -12,21 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keyboard mapping, configuration, and pipeline persistence without hardware."""
+"""Keyboard mapping and configuration without hardware."""
 
 from dataclasses import dataclass, field
 
 import draccus
 import pytest
 
-from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.processor import RobotProcessorPipeline
-from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
-from lerobot.processor.keyboard_base_processor import (
-    KeyboardToBaseActionProcessorStep,
-    default_base_key_bindings,
-    make_keyboard_base_processor,
-)
+from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 
 
 @dataclass
@@ -91,37 +84,9 @@ def test_invalid_mapping_config_is_rejected(kwargs):
         KeyboardToBaseActionProcessorStep(**kwargs)
 
 
-def test_processor_config_supports_custom_bindings_and_speeds():
+def test_processor_config_supports_custom_speeds():
     config = draccus.parse(
         _Config, args=["--mapping.linear_speeds=[0.4,0.8]", "--mapping.angular_speeds=[10,20]"]
     )
     assert config.mapping.action({"w": None})["x.vel"] == 0.4
     assert config.mapping.action({"w": None, "+": None})["x.vel"] == 0.8
-
-
-def test_pipeline_roundtrip_and_feature_mapping(tmp_path):
-    keys = {**default_base_key_bindings(), "forward": "i"}
-    pipeline = make_keyboard_base_processor(KeyboardToBaseActionProcessorStep(key_bindings=keys))
-    raw = {"i": None}
-    obs = {"arm_shoulder.pos": 10.0}
-    expected = {"x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0}
-    assert pipeline((raw, obs)) == expected
-    assert raw == {"i": None} and obs == {"arm_shoulder.pos": 10.0}
-    pipeline.save_pretrained(tmp_path, config_filename="processor.json")
-    restored = RobotProcessorPipeline.from_pretrained(
-        tmp_path,
-        config_filename="processor.json",
-        to_transition=robot_action_observation_to_transition,
-        to_output=transition_to_robot_action,
-    )
-    assert restored((raw, obs)) == expected
-    features = {
-        PipelineFeatureType.ACTION: {},
-        PipelineFeatureType.OBSERVATION: {
-            "arm_shoulder.pos": PolicyFeature(type=FeatureType.STATE, shape=(1,))
-        },
-    }
-    output = pipeline.steps[0].transform_features(features)
-    assert set(output[PipelineFeatureType.ACTION]) == set(expected)
-    assert output[PipelineFeatureType.OBSERVATION] == features[PipelineFeatureType.OBSERVATION]
-    assert features[PipelineFeatureType.ACTION] == {}
