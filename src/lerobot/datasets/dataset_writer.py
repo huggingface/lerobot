@@ -42,6 +42,7 @@ from lerobot.configs import (
 
 from .compute_stats import compute_episode_stats
 from .dataset_metadata import LeRobotDatasetMetadata
+from .distributed import DistributedEpisodeResult, DistributedEpisodeSpec, artifact_digest
 from .feature_utils import (
     get_hf_features_from_features,
     validate_episode_buffer,
@@ -65,6 +66,7 @@ from .video_utils import (
     concatenate_video_files,
     encode_video_frames,
     get_video_duration_in_s,
+    get_video_info,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,8 +79,9 @@ def _encode_video_worker(
     fps: int,
     video_encoder: VideoEncoderConfig | None = None,
     encoder_threads: int | None = None,
+    temporary_root: Path | None = None,
 ) -> Path:
-    temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
+    temp_path = Path(tempfile.mkdtemp(dir=temporary_root or root)) / f"{video_key}_{episode_index:03d}.mp4"
     path_template = (
         DEFAULT_DEPTH_PATH
         if video_encoder is not None and isinstance(video_encoder, DepthEncoderConfig)
@@ -115,6 +118,8 @@ class DatasetWriter:
         batch_encoding_size: int,
         streaming_encoder: StreamingVideoEncoder | None = None,
         initial_frames: int = 0,
+        initial_file_indices: tuple[int, int] | None = None,
+        single_file: bool = False,
     ):
         """Initialize the writer with metadata, codec, and encoder config.
 
@@ -134,6 +139,10 @@ class DatasetWriter:
             streaming_encoder: Optional pre-built :class:`StreamingVideoEncoder`
                 for real-time encoding. ``None`` disables streaming mode.
             initial_frames: Starting frame count (non-zero when resuming).
+            initial_file_indices: Exclusive starting file slot for a distributed
+                shard in private staging. Ordinary recording leaves this unset.
+            single_file: Keep this task's episodes in one file per stream. The
+                distributed caller checks soft size targets after each episode.
         """
         self._meta = meta
         self._root = root
@@ -152,6 +161,9 @@ class DatasetWriter:
         self._episodes_since_last_encoding: int = 0
         self._recorded_frames: int = initial_frames
         self._finalized = False
+        self._distributed_episode_started = False
+        self._initial_file_indices = initial_file_indices
+        self._single_file = single_file
 
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self._meta.total_episodes if episode_index is None else episode_index
@@ -393,6 +405,159 @@ class DatasetWriter:
                 self._delete_camera_frame_dirs(self._meta.image_keys)
             self.episode_buffer = self._create_episode_buffer()
 
+    def save_distributed_episode(
+        self, spec: DistributedEpisodeSpec, parallel_encoding: bool = True
+    ) -> DistributedEpisodeResult:
+        """Write one preallocated episode without updating global metadata.
+
+        Every distributed specification owns a unique data file, so this
+        method never appends to a shared Parquet writer or mutates
+        ``LeRobotDatasetMetadata``.
+        """
+        del parallel_encoding
+        episode_buffer = self.episode_buffer
+        if not self._distributed_episode_started:
+            raise RuntimeError(
+                "Call start_distributed_episode() before add_frame() and save_distributed_episode()."
+            )
+        if self._get_episode_buffer_index() != spec.episode_index:
+            raise ValueError(
+                f"Distributed worker buffer is assigned to episode {self._get_episode_buffer_index()}, "
+                f"but received specification for episode {spec.episode_index}. "
+                "Call start_distributed_episode() before add_frame()."
+            )
+        if episode_buffer["size"] != spec.length:
+            raise ValueError(
+                f"Distributed episode {spec.episode_index} length {episode_buffer['size']} "
+                f"does not match planned length {spec.length}."
+            )
+        if tuple(episode_buffer["task"]) != spec.tasks:
+            raise ValueError(
+                f"Distributed episode {spec.episode_index} task sequence does not match its plan."
+            )
+
+        episode_length = episode_buffer.pop("size")
+        episode_buffer.pop("task")
+        episode_buffer["index"] = np.arange(spec.dataset_from_index, spec.dataset_to_index, dtype=np.int64)
+        episode_buffer["episode_index"] = np.full((episode_length,), spec.episode_index, dtype=np.int64)
+        episode_buffer["task_index"] = np.asarray(spec.task_indices, dtype=np.int64)
+
+        for key, feature in self._meta.features.items():
+            if key in {"index", "episode_index", "task_index"} or feature["dtype"] in {"image", "video"}:
+                continue
+            values = np.stack(episode_buffer[key])
+            if tuple(feature["shape"]) == (1,) and feature["dtype"] != "string":
+                values = values.reshape(episode_length)
+            episode_buffer[key] = values
+
+        self._wait_image_writer()
+        stats = compute_episode_stats(episode_buffer, self._meta.features)
+        hf_features = get_hf_features_from_features(self._meta.features)
+        episode_dataset = datasets.Dataset.from_dict(
+            {key: episode_buffer[key] for key in hf_features},
+            features=hf_features,
+            split="train",
+        )
+        episode_dataset = embed_images(episode_dataset)
+        data_path = self._root / self._meta.data_path.format(
+            chunk_index=spec.data_chunk_index,
+            file_index=spec.data_file_index,
+        )
+        data_path.parent.mkdir(parents=True, exist_ok=True)
+        if data_path.exists():
+            raise FileExistsError(f"Distributed episode output already exists: {data_path}")
+
+        video_metadata: dict[str, object] = {}
+        video_info: dict[str, dict] = {}
+        video_paths: list[Path] = []
+        temporary_video_paths: list[Path] = []
+        try:
+            pq.write_table(
+                episode_dataset.with_format("arrow")[:],
+                data_path,
+                compression="snappy",
+                use_dictionary=True,
+            )
+            for video_key in self._meta.video_keys:
+                temporary_video_path = self._encode_temporary_episode_video(video_key, spec.episode_index)
+                temporary_video_paths.append(temporary_video_path)
+                video_path = self._root / self._meta.video_path.format(
+                    video_key=video_key,
+                    chunk_index=spec.data_chunk_index,
+                    file_index=spec.data_file_index,
+                )
+                video_path.parent.mkdir(parents=True, exist_ok=True)
+                if video_path.exists():
+                    raise FileExistsError(f"Distributed episode video output already exists: {video_path}")
+                video_duration_s = get_video_duration_in_s(temporary_video_path)
+                shutil.move(str(temporary_video_path), str(video_path))
+                temporary_video_paths.remove(temporary_video_path)
+                video_paths.append(video_path)
+                shutil.rmtree(temporary_video_path.parent, ignore_errors=True)
+                video_info[video_key] = get_video_info(
+                    video_path,
+                    video_encoder=self._depth_encoder
+                    if video_key in self._meta.depth_keys
+                    else self._rgb_encoder,
+                )
+                video_metadata.update(
+                    {
+                        f"videos/{video_key}/chunk_index": spec.data_chunk_index,
+                        f"videos/{video_key}/file_index": spec.data_file_index,
+                        f"videos/{video_key}/from_timestamp": 0.0,
+                        f"videos/{video_key}/to_timestamp": video_duration_s,
+                    }
+                )
+        except Exception:
+            data_path.unlink(missing_ok=True)
+            for video_path in video_paths:
+                video_path.unlink(missing_ok=True)
+            for temporary_video_path in temporary_video_paths:
+                temporary_video_path.unlink(missing_ok=True)
+                shutil.rmtree(temporary_video_path.parent, ignore_errors=True)
+            self._delete_camera_frame_dirs(self._meta.camera_keys)
+            self.episode_buffer = self._create_episode_buffer(spec.episode_index)
+            self._distributed_episode_started = False
+            raise
+        finally:
+            shutil.rmtree(
+                self._root / ".distributed-video-tmp" / f"episode-{spec.episode_index:06d}",
+                ignore_errors=True,
+            )
+
+        if self._meta.image_keys:
+            self._delete_camera_frame_dirs(self._meta.image_keys)
+        self.episode_buffer = self._create_episode_buffer(spec.episode_index + 1)
+        self._distributed_episode_started = False
+        return DistributedEpisodeResult(
+            episode_index=spec.episode_index,
+            dataset_from_index=spec.dataset_from_index,
+            dataset_to_index=spec.dataset_to_index,
+            tasks=spec.tasks,
+            task_indices=spec.task_indices,
+            data_chunk_index=spec.data_chunk_index,
+            data_file_index=spec.data_file_index,
+            data_path=data_path,
+            video_metadata=video_metadata,
+            video_info=video_info,
+            stats=stats,
+            artifact_digests={
+                str(path.relative_to(self._root)): artifact_digest(path) for path in [data_path, *video_paths]
+            },
+            depth_units={
+                key: self._meta.features[key]["info"]["depth_unit"]
+                for key in self._meta.depth_keys
+                if (self._meta.features[key].get("info") or {}).get("depth_unit") is not None
+            },
+        )
+
+    def start_distributed_episode(self, spec: DistributedEpisodeSpec) -> None:
+        """Assign the next frame buffer and staging paths to one worker-owned episode."""
+        if self.episode_buffer["size"] != 0:
+            raise RuntimeError("Cannot start a distributed episode while the current buffer has frames.")
+        self.episode_buffer = self._create_episode_buffer(spec.episode_index)
+        self._distributed_episode_started = True
+
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """Batch save videos for multiple episodes."""
         if end_episode is None:
@@ -451,6 +616,10 @@ class DatasetWriter:
             chunk_idx, file_idx = 0, 0
             global_frame_index = 0
             self._current_file_start_frame = 0
+            if self._initial_file_indices is not None:
+                chunk_idx, file_idx = self._initial_file_indices
+                global_frame_index = self._meta.total_frames
+                self._current_file_start_frame = global_frame_index
             if self._meta.episodes is not None and len(self._meta.episodes) > 0:
                 latest_ep = self._meta.episodes[-1]
                 global_frame_index = latest_ep["dataset_to_index"]
@@ -473,7 +642,10 @@ class DatasetWriter:
                 latest_size_in_mb / frames_in_current_file if frames_in_current_file > 0 else 0
             )
 
-            if latest_size_in_mb + av_size_per_frame * ep_num_frames >= self._meta.data_files_size_in_mb:
+            if (
+                not self._single_file
+                and latest_size_in_mb + av_size_per_frame * ep_num_frames >= self._meta.data_files_size_in_mb
+            ):
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self._meta.chunks_size)
                 self.close_writer()
                 self._current_file_start_frame = global_frame_index
@@ -531,6 +703,8 @@ class DatasetWriter:
             or f"videos/{video_key}/chunk_index" not in self._meta.latest_episode
         ):
             chunk_idx, file_idx = 0, 0
+            if self._initial_file_indices is not None:
+                chunk_idx, file_idx = self._initial_file_indices
             if self._meta.episodes is not None and len(self._meta.episodes) > 0:
                 old_chunk_idx = self._meta.episodes[-1][f"videos/{video_key}/chunk_index"]
                 old_file_idx = self._meta.episodes[-1][f"videos/{video_key}/file_index"]
@@ -554,7 +728,10 @@ class DatasetWriter:
             latest_size_in_mb = get_file_size_in_mb(latest_path)
             latest_duration_in_s = latest_ep[f"videos/{video_key}/to_timestamp"][0]
 
-            if latest_size_in_mb + ep_size_in_mb >= self._meta.video_files_size_in_mb:
+            if (
+                not self._single_file
+                and latest_size_in_mb + ep_size_in_mb >= self._meta.video_files_size_in_mb
+            ):
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self._meta.chunks_size)
                 new_path = self._root / video_path_template.format(
                     video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
@@ -572,7 +749,7 @@ class DatasetWriter:
         shutil.rmtree(str(ep_path.parent))
 
         # Update video info (only needed when first episode is encoded)
-        if episode_index == 0:
+        if episode_index == 0 and self._initial_file_indices is None:
             self._meta.update_video_info(
                 video_key,
                 video_encoder=self._depth_encoder
@@ -637,6 +814,10 @@ class DatasetWriter:
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """Use ffmpeg to convert frames stored as png/tiff into mp4 videos."""
         is_depth = video_key in self._meta.depth_keys
+        temporary_root = None
+        if self._distributed_episode_started:
+            temporary_root = self._root / ".distributed-video-tmp" / f"episode-{episode_index:06d}"
+            temporary_root.mkdir(parents=True, exist_ok=True)
         return _encode_video_worker(
             video_key,
             episode_index,
@@ -644,6 +825,7 @@ class DatasetWriter:
             self._meta.fps,
             self._depth_encoder if is_depth else self._rgb_encoder,
             self._encoder_threads,
+            temporary_root=temporary_root,
         )
 
     def close_writer(self) -> None:

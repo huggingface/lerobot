@@ -1,0 +1,267 @@
+# Distributed Datasets
+
+LeRobot supports distributed writing for new v3 datasets and appending to existing
+datasets. Episodes stay whole: one worker handles all frames of an episode.
+A task packs one or more episodes into **one Parquet file and one MP4 per video
+feature**. One driver publishes the global metadata.
+
+The output keeps the v3 layout, per-episode row groups, task indices, statistics,
+and video timestamp offsets. Existing readers require no changes.
+
+## Task boundaries and soft size targets
+
+`create_distributed_write_plan()` assigns global episode/frame indices and
+reserves disjoint file slots. It groups consecutive episodes into initial
+`DistributedShardSpec` tasks, without binding tasks to particular workers.
+`max_frames_per_worker` controls this initial grouping and defaults to 100,000
+frames. An episode longer than the budget stays whole in its own group.
+
+Inside a task, the worker uses the serial writer's serialization, statistics,
+image embedding, and video concatenation code, with file rollover disabled.
+After each **complete episode**, it checks:
+
+- The currently written Parquet bytes against `data_files_size_in_mb`.
+- Each packed MP4 against `video_files_size_in_mb`.
+
+If any target is reached, the worker closes this task. The episode that crossed
+the target stays in the task; file size limits are **soft targets**, not hard
+caps. A large episode can exceed a target, and closing a Parquet file also adds
+footer metadata. The worker never opens a second output file for this task and
+never starts, encodes, or prefetches the next episode to decide whether it fits.
+
+The exact completed episode prefix is persisted before any final artifacts are
+published. Its unstarted suffix becomes a new task exposed by
+`session.pending_shards()`, ready for any idle worker. Data and all video
+features end at the same task boundary.
+
+For example, if a task receives episodes 0–9 and crosses a target after episode 2:
+
+- The completed task owns episodes 0–2 and writes one Parquet plus one MP4 per camera.
+- Episodes 3–9 form a new task. No frames from those episodes have been consumed.
+- The next worker may stop this continuation early as well, producing another task.
+- Retrying the original task preserves its recorded 0–2 boundary even if later
+  tasks have already completed.
+
+The output slot is the reserved slot of the task's first episode. Unused slots
+are allowed in the v3 layout. Workers never share writable files.
+
+This policy intentionally differs from serial v3's pre-append size checks and
+independent Parquet/video rollover. It guarantees whole-episode execution and
+one file per stream per task; it does not guarantee identical file boundaries
+or a strict upper bound on final file bytes.
+
+## Worker API
+
+Assume `all_episodes` contains frame dictionaries for this batch. Every frame
+includes the declared features and a string-valued `task`.
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+
+def write_task(root, repo_id, task, episode_inputs, session):
+    worker = LeRobotDataset.open_distributed_writer(
+        repo_id, root=root, session=session,
+    )
+    try:
+        return worker.write_distributed_shard(task, episode_inputs)
+    finally:
+        worker.finalize()
+```
+
+`episode_inputs` may be an iterable of frame iterables. Inputs are consumed in
+task order and stop at a complete episode boundary. The returned list contains
+only the episodes completed by this task, which may be a prefix of the supplied
+specification. Unused input is not consumed. The scheduler must be able to reopen
+the immutable source for a continuation or retry.
+
+A verified successful task is reused without consuming input. Do not change
+source data, feature schema, task indices, encoder settings, or dataset settings
+while a plan is active.
+
+## Dynamic scheduling with three workers
+
+Use more initial tasks than workers when possible to reduce tail latency.
+For example, 30 episodes of 1,000 frames with a 5,000-frame budget create six
+initial tasks. Three workers take tasks as they become free. Re-scan pending
+tasks after completions because a worker can release a continuation.
+
+The following scheduler maintains at most three running tasks and waits for
+the first completion, without waiting for a whole batch. Place `write_task`
+and `run_tasks` at module scope; create the driver and executor under a main guard.
+
+```python
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from multiprocessing import get_context
+
+
+def run_tasks(session, repo_id, all_episodes, max_workers=3):
+    base_episode = session.plan.episodes[0].episode_index
+    with ProcessPoolExecutor(
+        max_workers=max_workers, mp_context=get_context("spawn"),
+    ) as executor:
+        running = {}
+        while True:
+            running_ids = {task.shard_index for task in running.values()}
+            for task in session.pending_shards():
+                if len(running) == max_workers:
+                    break
+                if task.shard_index in running_ids:
+                    continue
+                inputs = [
+                    all_episodes[spec.episode_index - base_episode]
+                    for spec in task.episodes
+                ]
+                future = executor.submit(
+                    write_task, session.root, repo_id, task, inputs, session,
+                )
+                running[future] = task
+                running_ids.add(task.shard_index)
+
+            if not running:
+                return
+
+            completed, _ = wait(running, return_when=FIRST_COMPLETED)
+            for future in completed:
+                running.pop(future)
+                future.result()  # Propagate failure; the session remains resumable.
+
+
+if __name__ == "__main__":
+    driver = LeRobotDataset.create(
+        "my-org/dataset",
+        root="/shared/dataset",
+        fps=30,
+        features=features,
+        data_files_size_in_mb=100,
+        video_files_size_in_mb=200,
+    )
+    plan = driver.create_distributed_write_plan(
+        episode_lengths=[len(episode) for episode in all_episodes],
+        episode_tasks=[[frame["task"] for frame in episode] for episode in all_episodes],
+        max_frames_per_worker=5_000,
+    )
+    session = driver.create_distributed_write_session(plan)
+    run_tasks(session, "my-org/dataset", all_episodes, max_workers=3)
+    driver.commit_distributed_results(plan, session.load_results())
+    driver.finalize()
+```
+
+This in-memory example passes the candidate episode list to a worker. For large
+jobs, pass source locations and construct lazy episode/frame iterators inside
+the worker to avoid transferring unconsumed frames.
+
+Ray or another scheduler can use the same protocol: submit pending tasks, track
+in-flight task IDs, wait for any completion, then discover and submit newly
+released tasks. A Daft integration must likewise re-enqueue continuations;
+mapping over the initial `plan.shards` once is not sufficient.
+
+`pending_shards()` is a discovery API, not a claim operation. It can include
+currently running tasks whose result has not yet been published. Track running
+IDs in the scheduler; the task lock provides exclusion if duplicate attempts
+are submitted. A durable boundary can expose a continuation before the preceding
+task returns, because their output files are disjoint.
+
+Worker count and task count are independent. The library does not split the
+initial plan automatically based on executor size, migrate a running task,
+or split an episode between workers. Local subprocess tests exercise dynamic
+scheduling; multi-node Ray/Daft execution has not been validated.
+
+Pending-task discovery currently revalidates completed artifacts, including
+their checksums, on each scan. Its cost grows with completed data; large-scale
+scheduling throughput has not been benchmarked.
+
+## Appending to an existing dataset
+
+Open the driver with `LeRobotDataset.resume(REPO_ID, root=ROOT)` instead of
+`create()`, then create the plan and session as above. Frame/episode indices
+start after the published totals, existing task indices are preserved, and file
+reservations start after occupied data, video, and episode-metadata files.
+
+Published files are not rewritten. Commit combines new episode metadata, tasks,
+and statistics with the previous dataset. After commit, the driver can create
+the next append plan.
+
+Use one driver. Concurrent drivers or mixing serial recording with active
+distributed workers are not supported.
+
+## Failure recovery
+
+A persistent `DistributedWriteSession` is required. A task acquires an exclusive
+lock and writes privately under `<root>/.distributed-shards/`. Its protocol is:
+
+1. Consume complete episodes until reaching a soft size target or frame budget.
+2. Close all writers and persist the exact task boundary.
+3. Move the one Parquet and per-feature MP4 files to the task's reserved slot.
+4. Publish one atomic success record containing locations, video intervals,
+   statistics, and artifact SHA-256 digests.
+
+Task boundaries are immutable. They survive failed publication and corrupt
+result records, so recovery of an earlier task cannot absorb, delete, or
+overwrite a continuation that has already run.
+
+- Before a boundary is persisted, a failed attempt can retry its original candidate task.
+- After a boundary is persisted, retries must rewrite exactly that recorded
+  episode range, even if regenerated file sizes differ.
+- Cleanup removes only the failed task's output slot and private staging;
+  successful continuations and committed data remain intact.
+- A corrupt boundary fails closed rather than guessing which files may be removed.
+- A duplicate attempt raises `filelock.Timeout` while the owner holds its lock.
+- A successful task is reused, including after metadata commit through the
+  retained commit receipt.
+
+After interruption, resume the session before reopening the driver:
+
+```python
+session = LeRobotDataset.resume_distributed_write_session(ROOT)
+
+# Optional global cleanup; stop active workers first.
+# Each worker retry also cleans its own task under its exclusive lock.
+session.cleanup_orphaned_artifacts()
+
+driver = LeRobotDataset.resume(REPO_ID, root=ROOT)
+run_tasks(session, REPO_ID, all_episodes, max_workers=3)
+driver.commit_distributed_results(session.plan, session.load_results())
+driver.finalize()
+```
+
+Corrupt artifacts or result records cause `load_results()` and
+`pending_shards()` to fail until cleanup or a worker retry repairs them.
+Do not commit until every planned episode has a valid result.
+
+Metadata publication uses a recovery journal and commit receipt. Session resume
+recovers an interrupted metadata swap. Repeating the same commit is idempotent;
+conflicting results for an already committed plan are rejected. After successful
+commit, active session state and obsolete task staging are removed.
+
+These guarantees cover process interruption. Publishing `meta/` uses two
+directory renames and can briefly leave it absent. Concurrent readers during
+writing are not supported. This is not a transaction across all dataset files
+or a guarantee against filesystem failure or machine power loss.
+
+## Storage and codec requirements
+
+All workers and the driver must use the same shared filesystem at the same
+absolute path. Storage must provide cross-node visibility of closed files,
+atomic file replacement and directory rename, and advisory file locks released
+when the owning process exits.
+
+Only the default local-path storage format is supported. Direct object-store
+URIs and alternate backends such as Lance are not supported. A shared mount is
+suitable only if it provides the required visibility, rename, and lock semantics.
+
+Run compatible LeRobot, PyArrow, PyAV, and FFmpeg versions on every worker.
+Use consistent encoder settings and depth units. Local HEVC tests reproduced
+a boundary-frame decoding issue with the default GOP setting in both serial
+and distributed concatenation. Depth packing tests use
+`DepthEncoderConfig(g=1, use_log=False)`; upstream encoder defaults are unchanged.
+
+## Explicit episode-at-a-time mode
+
+`pack_episodes=False` retains the earlier one-file-per-episode protocol:
+`plan.episodes`, `start_distributed_episode()`, `add_frame()`,
+`save_distributed_episode()`, and `pending_specs()`.
+
+Packed plans default to task execution through `write_distributed_shard()` and
+the evolving `pending_shards()` queue. Episode-level writes are rejected for
+packed sessions.
