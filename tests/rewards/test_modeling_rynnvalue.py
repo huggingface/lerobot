@@ -291,13 +291,13 @@ def test_predict_remaining_time_returns_native_seconds(monkeypatch):
 
 @pytest.mark.parametrize(
     ("attn_implementation", "expected"),
-    [(None, "sdpa"), ("pred_slot_isolated_eager", "pred_slot_isolated_eager"), ("eager", "eager")],
+    [(None, "pred_slot_isolated_eager"), ("sdpa", "sdpa"), ("eager", "eager")],
 )
 def test_attention_setting_applies_to_the_language_model_only(monkeypatch, attn_implementation, expected):
     _patch_checkpoint_load(monkeypatch)
     kwargs = {} if attn_implementation is None else {"attn_implementation": attn_implementation}
     native_config = RynnValueRewardModel(RynnValueConfig(device="cpu", **kwargs)).model.config
-    # The official model card queries RynnValue with a causal mask by default.
+    # Value isolation by default: per-frame remaining times need the training-time mask.
     assert native_config._attn_implementation == expected
     assert native_config.vision_config._attn_implementation == "eager"
 
@@ -477,7 +477,9 @@ def tiny_model_config() -> dict:
     ).to_dict()
 
 
-def _tiny_config(model_config: dict, attn_implementation: str = "sdpa") -> RynnValueConfig:
+def _tiny_config(
+    model_config: dict, attn_implementation: str = "pred_slot_isolated_eager"
+) -> RynnValueConfig:
     return RynnValueConfig(
         device="cpu",
         torch_dtype="float32",
@@ -488,7 +490,9 @@ def _tiny_config(model_config: dict, attn_implementation: str = "sdpa") -> RynnV
     )
 
 
-def _tiny_model(model_config: dict, attn_implementation: str = "sdpa") -> RynnValueRewardModel:
+def _tiny_model(
+    model_config: dict, attn_implementation: str = "pred_slot_isolated_eager"
+) -> RynnValueRewardModel:
     torch.manual_seed(0)
     return RynnValueRewardModel(_tiny_config(model_config, attn_implementation)).eval()
 

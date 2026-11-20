@@ -20,7 +20,7 @@ The integration ports the released architecture into LeRobot rather than executi
 - Symlog-spaced, two-hot value decoding.
 - Value-isolation attention (`pred_slot_isolated_eager`).
 
-RynnValue is trained with value-isolation attention but, following the official model card, LeRobot queries it with a causal mask through SDPA (`attn_implementation="sdpa"`). The model card reports better policy rankings with the causal mask (Kendall's τ 0.679 instead of 0.614 at 4B, 0.704 instead of 0.646 at 8B). Set `--reward_model.attn_implementation=pred_slot_isolated_eager` to use the training-time mask, as the official `rynn_infer/inference.py` script does, or `eager` for the causal mask through the eager kernel.
+RynnValue is trained with value-isolation attention, and LeRobot queries it the same way by default (`attn_implementation="pred_slot_isolated_eager"`), as the official `rynn_infer/inference.py` script does. The official model card ranks policies by their final score with a causal mask instead, `--reward_model.attn_implementation=sdpa` (or `eager`, the same mask through a slower kernel), and reports better rankings with it. Per-frame scores need value isolation: on successful LIBERO-10 demonstrations, `lerobot/RynnValue-4B` predicts a remaining time that falls toward zero with it (for example from 10.7 s to 0.7 s), but stays between about 1 and 4 s throughout with the causal mask.
 
 The integration is inference-only. It does not reproduce the paper's 7,000-hour data mixture, temporal sampling augmentations, or training pipeline.
 

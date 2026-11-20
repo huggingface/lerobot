@@ -32,9 +32,9 @@ class RynnValueConfig(RewardModelConfig):
     pretrained_path: str | None = "lerobot/RynnValue-4B"
     torch_dtype: str = "bfloat16"
     # Language-model attention. RynnValue is trained with value-isolation attention
-    # ("pred_slot_isolated_eager") but, per the official model card, queried with a causal mask:
-    # "sdpa" (or "eager", the same mask through a slower kernel) gives the reported rankings.
-    attn_implementation: str = "sdpa"
+    # ("pred_slot_isolated_eager"), which per-frame remaining times need. The official model card
+    # ranks policies by their final score with a causal mask: "sdpa", or "eager" (slower kernel).
+    attn_implementation: str = "pred_slot_isolated_eager"
     # Native architecture config, embedded on save so a LeRobot checkpoint rebuilds
     # the model from its own `config.json` and `model.safetensors`.
     model_config: dict[str, Any] | None = None
