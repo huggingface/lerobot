@@ -52,6 +52,51 @@ else:
     AutoProcessor = None
     AutoTokenizer = None
 
+logger = logging.getLogger(__name__)
+
+
+def _resolve_local_snapshot(repo_id: str) -> str | None:
+    """Return the locally cached snapshot directory for `repo_id`, or None.
+
+    Returns None whenever the repo cannot be resolved from the local hub cache
+    (not cached, partial snapshot, unknown repo id, or `repo_id` is already a
+    local path), so callers can fall back to the default loading behavior.
+    """
+    if Path(repo_id).exists():
+        # Already a local directory; there is nothing to resolve.
+        return None
+    try:
+        from huggingface_hub import snapshot_download
+
+        return snapshot_download(repo_id, local_files_only=True)
+    except Exception:
+        logger.debug("Could not resolve '%s' from the local hub cache.", repo_id, exc_info=True)
+        return None
+
+
+def _load_tokenizer_from_pretrained(tokenizer_name: str, **kwargs) -> Any:
+    """Load a tokenizer, falling back to the local snapshot when hub resolution fails.
+
+    transformers >= 5 probes `config.json` through `AutoConfig`/`PreTrainedConfig`
+    before it reads `tokenizer_config.json`, so tokenizer-only repos (e.g.
+    `google/paligemma-3b-pt-224`) raise `OSError` in offline mode even when every
+    tokenizer file is cached (#4131). If the repo id resolves to a local snapshot,
+    retry the load from that path; otherwise re-raise the original error so
+    behavior is unchanged whenever no usable snapshot exists.
+    """
+    try:
+        return AutoTokenizer.from_pretrained(tokenizer_name, **kwargs)
+    except Exception:
+        local_snapshot = _resolve_local_snapshot(tokenizer_name)
+        if local_snapshot is None:
+            raise
+        logger.info(
+            "Hub resolution of tokenizer '%s' failed; loading from local snapshot %s.",
+            tokenizer_name,
+            local_snapshot,
+        )
+        return AutoTokenizer.from_pretrained(local_snapshot, **kwargs)
+
 
 @dataclass
 @ProcessorStepRegistry.register(name="tokenizer_processor")
@@ -110,7 +155,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         elif self.tokenizer_name is not None:
             if AutoTokenizer is None:
                 raise ImportError("AutoTokenizer is not available")
-            self.input_tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+            self.input_tokenizer = _load_tokenizer_from_pretrained(self.tokenizer_name)
         else:
             raise ValueError(
                 "Either 'tokenizer' or 'tokenizer_name' must be provided. "
@@ -397,7 +442,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
                 "Pass a tokenizer object directly or a tokenizer name to auto-load."
             )
 
-        self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
+        self._paligemma_tokenizer = _load_tokenizer_from_pretrained(
             self.paligemma_tokenizer_name,
             trust_remote_code=self.trust_remote_code,
             add_eos_token=True,

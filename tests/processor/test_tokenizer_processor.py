@@ -1576,3 +1576,126 @@ def test_subtask_not_added_for_unsupported_types():
 
     # But main task tokens should still be present
     assert f"{OBS_LANGUAGE}.tokens" in observation
+
+
+def _make_tokenizer_only_hub_cache(repo_id: str, cache_dir: Path) -> Path:
+    """Lay out an HF hub cache that holds only tokenizer files (no config.json).
+
+    This reproduces the cache shape from #4131: a tokenizer-only repo snapshot
+    (e.g. `google/paligemma-3b-pt-224`) where every tokenizer artifact is present
+    but `config.json` does not exist.
+    """
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    word_level = models.WordLevel(
+        vocab={"<pad>": 0, "<unk>": 1, "hello": 2, "robot": 3, "world": 4},
+        unk_token="<unk>",
+    )
+    tokenizer_object = Tokenizer(word_level)
+    tokenizer_object.pre_tokenizer = pre_tokenizers.Whitespace()
+    build_dir = cache_dir / "build"
+    PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer_object, unk_token="<unk>", pad_token="<pad>"
+    ).save_pretrained(build_dir)
+    assert not (build_dir / "config.json").exists()
+
+    namespace, name = repo_id.split("/")
+    commit = "0123456789abcdef" * 5
+    snapshot = cache_dir / f"models--{namespace}--{name}" / "snapshots" / commit
+    snapshot.mkdir(parents=True)
+    for artifact in build_dir.iterdir():
+        (snapshot / artifact.name).write_bytes(artifact.read_bytes())
+    refs_dir = cache_dir / f"models--{namespace}--{name}" / "refs"
+    refs_dir.mkdir(parents=True)
+    (refs_dir / "main").write_text(commit)
+    return snapshot
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor._resolve_local_snapshot")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_tokenizer_falls_back_to_local_snapshot_on_hub_failure(mock_auto_tokenizer, mock_resolve):
+    """Hub load failure retries from the resolved local snapshot, preserving kwargs."""
+    fallback_tokenizer = MockTokenizer(vocab_size=100)
+    mock_auto_tokenizer.from_pretrained.side_effect = [OSError("offline and not cached"), fallback_tokenizer]
+    mock_resolve.return_value = "/cached/snapshots/abc"
+
+    processor = TokenizerProcessorStep(tokenizer_name="org/tokenizer-only", max_length=10)
+
+    assert processor.input_tokenizer is fallback_tokenizer
+    assert mock_auto_tokenizer.from_pretrained.call_args_list == [
+        (("org/tokenizer-only",), {}),
+        (("/cached/snapshots/abc",), {}),
+    ]
+    mock_resolve.assert_called_once_with("org/tokenizer-only")
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor._resolve_local_snapshot")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_tokenizer_reraises_when_no_local_snapshot(mock_auto_tokenizer, mock_resolve):
+    """Without a resolvable snapshot the original hub error propagates unchanged."""
+    mock_auto_tokenizer.from_pretrained.side_effect = OSError("offline and not cached")
+    mock_resolve.return_value = None
+
+    with pytest.raises(OSError, match="offline and not cached"):
+        TokenizerProcessorStep(tokenizer_name="org/not-cached", max_length=10)
+
+    mock_auto_tokenizer.from_pretrained.assert_called_once_with("org/not-cached")
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_paligemma_falls_back_with_kwargs(mock_auto_tokenizer):
+    """The paligemma tokenizer load keeps its kwargs when falling back to a snapshot."""
+    fallback_tokenizer = MockTokenizer(vocab_size=100)
+    fallback_tokenizer.bos_token_id = 2
+    fallback_tokenizer.encode = lambda text, **_kwargs: [10, 11]
+    mock_auto_tokenizer.from_pretrained.side_effect = [OSError("offline and not cached"), fallback_tokenizer]
+
+    processor = object.__new__(ActionTokenizerProcessorStep)
+    with patch("lerobot.processor.tokenizer_processor._resolve_local_snapshot") as mock_resolve:
+        mock_resolve.return_value = "/cached/snapshots/abc"
+        processor.action_tokenizer_name = None
+        processor.action_tokenizer_input_object = MockTokenizer(vocab_size=100)
+        processor.trust_remote_code = True
+        processor.max_action_tokens = 256
+        processor.fast_skip_tokens = 128
+        processor.paligemma_tokenizer_name = "org/tokenizer-only"
+        processor.allow_truncation = True
+        ActionTokenizerProcessorStep.__post_init__(processor)
+
+    assert processor._paligemma_tokenizer is fallback_tokenizer
+    retry_call = mock_auto_tokenizer.from_pretrained.call_args_list[1]
+    assert retry_call.args[0] == "/cached/snapshots/abc"
+    assert retry_call.kwargs == {
+        "trust_remote_code": True,
+        "add_eos_token": True,
+        "add_bos_token": False,
+    }
+
+
+@skip_if_package_missing("transformers")
+def test_tokenizer_name_loads_offline_from_tokenizer_only_cache(tmp_path, monkeypatch):
+    """End-to-end #4131 scenario: offline load of a tokenizer-only cached repo.
+
+    transformers >= 5 probes `config.json` before reading `tokenizer_config.json`,
+    which previously made `TokenizerProcessorStep(tokenizer_name=...)` raise in
+    offline mode even though every tokenizer file was cached.
+    """
+    import huggingface_hub.constants
+
+    repo_id = "acme/tiny-tokenizer-only"
+    cache_dir = tmp_path / "hub"
+    _make_tokenizer_only_hub_cache(repo_id, cache_dir)
+
+    # Make the hub constants resolve offline against the synthetic cache at call time.
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", True)
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(cache_dir))
+
+    processor = TokenizerProcessorStep(tokenizer_name=repo_id, max_length=8)
+
+    assert processor.input_tokenizer.vocab_size == 5
+    encoded = processor.input_tokenizer("hello robot")["input_ids"]
+    assert encoded == [2, 3]
