@@ -21,7 +21,13 @@ from dataclasses import asdict
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
+from torch.distributions import (
+    MultivariateNormal,
+    TanhTransform,
+    Transform,
+    TransformedDistribution,
+    constraints,
+)
 
 from lerobot.configs import PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
@@ -627,12 +633,20 @@ class SpatialLearnedEmbeddings(nn.Module):
 
 
 class RescaleFromTanh(Transform):
+    domain = constraints.interval(-1.0, 1.0)
+    bijective = True
+    sign = 1
+
     def __init__(self, low: float = -1, high: float = 1):
         super().__init__()
 
-        self.low = low
+        self.low = torch.as_tensor(low)
 
-        self.high = high
+        self.high = torch.as_tensor(high)
+
+    @property
+    def codomain(self) -> constraints.Constraint:
+        return constraints.interval(self.low, self.high)
 
     def _call(self, x):
         # Rescale from (-1, 1) to (low, high)
@@ -645,11 +659,11 @@ class RescaleFromTanh(Transform):
         return 2.0 * (y - self.low) / (self.high - self.low) - 1.0
 
     def log_abs_det_jacobian(self, x, y):
-        # log|d(rescale)/dx| = sum(log(0.5 * (high - low)))
+        # Return elementwise log-Jacobians; TransformedDistribution sums event dimensions.
 
         scale = 0.5 * (self.high - self.low)
 
-        return torch.sum(torch.log(scale), dim=-1)
+        return torch.log(scale).expand_as(x)
 
 
 class TanhMultivariateNormalDiag(TransformedDistribution):
@@ -659,11 +673,11 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
         transforms = [TanhTransform(cache_size=1)]
 
         if low is not None and high is not None:
-            low = torch.as_tensor(low)
+            low = torch.as_tensor(low, device=loc.device, dtype=loc.dtype)
 
-            high = torch.as_tensor(high)
+            high = torch.as_tensor(high, device=loc.device, dtype=loc.dtype)
 
-            transforms.insert(0, RescaleFromTanh(low, high))
+            transforms.append(RescaleFromTanh(low, high))
 
         super().__init__(base_dist, transforms)
 
