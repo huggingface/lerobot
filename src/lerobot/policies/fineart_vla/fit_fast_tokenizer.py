@@ -34,7 +34,13 @@ from huggingface_hub import snapshot_download
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import NormalizerProcessorStep, RelativeActionsProcessorStep, create_transition
+from lerobot.processor import (
+    NormalizerProcessorStep,
+    RelativeActionsProcessorStep,
+    create_transition,
+    decode_fast_actions,
+    encode_fast_actions,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
 
@@ -84,6 +90,8 @@ def _dataset_signature(
     validation_samples: int = 256,
     max_reconstruction_rmse: float = 0.10,
     max_dim_rmse: float = 0.20,
+    seed: int = 42,
+    dataset_root: str | Path | None = None,
 ) -> str:
     """Hash every input that changes the fitted action distribution."""
     payload = {
@@ -102,6 +110,8 @@ def _dataset_signature(
         "validation_samples": validation_samples,
         "max_reconstruction_rmse": max_reconstruction_rmse,
         "max_dim_rmse": max_dim_rmse,
+        "seed": seed,
+        "dataset_root": str(Path(dataset_root).expanduser().resolve()) if dataset_root is not None else None,
     }
     encoded = json.dumps(_jsonable(payload), sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -124,7 +134,9 @@ def _validate_fast_reconstruction(
     max_dim_rmse: float,
 ) -> tuple[dict[str, Any], np.ndarray]:
     """Decode held-out chunks and reject tokenizers with excessive quantization error."""
-    decoded = np.asarray(tokenizer.decode(tokenizer(actions)), dtype=np.float32)
+    tokens = encode_fast_actions(tokenizer, actions)
+    decoded = decode_fast_actions(tokenizer, tokens, actions.shape[-1], time_horizon=actions.shape[1])
+    decoded = decoded.astype(np.float32)
     if decoded.shape != actions.shape:
         raise RuntimeError(
             f"FAST tokenizer reconstruction shape mismatch: expected {actions.shape}, got {decoded.shape}."
@@ -246,6 +258,8 @@ def fit_fast_tokenizer(
         validation_samples,
         max_reconstruction_rmse,
         max_dim_rmse,
+        seed,
+        dataset_root,
     )
     out_dir = cache_dir / sig
 

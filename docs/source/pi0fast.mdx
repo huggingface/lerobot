@@ -170,7 +170,7 @@ The model takes images, text instructions, and robot state as input, and outputs
 
 Decoding has two modes. `relaxed=True` (π₀-FAST) zero-fills missing DCT coefficients and drops extra ones. The default strict mode (WALL-X, MolmoAct2) matches the tokenizer's own `decode()`. A sequence that cannot be decoded becomes a chunk of zeros.
 
-Raw FAST IDs range over `len(tokenizer.bpe_tokenizer)`. The tokenizer's `vocab_size` attribute is the size requested when fitting, not the real one. Each policy maps raw IDs into its language model's vocabulary: PaliGemma policies use `vocab_size - 1 - fast_skip_tokens - id` (`fast_skip_tokens` is `128` for π₀-FAST and `1152` for FineART-VLA), WALL-X adds `action_token_start_index`, and MolmoAct2 uses indexed action tokens. The quantization scale and token offset (`scale`, `min_token`) are stored with the tokenizer. π₀-FAST and FineART-VLA save the tokenizer inside each checkpoint's processor files; WALL-X and MolmoAct2 load it from the Hub repository named in their config.
+Raw FAST IDs range over `len(tokenizer.bpe_tokenizer)`. The tokenizer's `vocab_size` attribute is the size requested when fitting, not the real one. Each policy maps raw IDs into its language model's vocabulary: PaliGemma policies use `vocab_size - 1 - fast_skip_tokens - id` (`fast_skip_tokens` is `128` for π₀-FAST and `1152` for FineART-VLA), WALL-X uses its `<|action_token_i|>` tokens, and MolmoAct2 its `<action_i>` tokens. The quantization scale and token offset (`scale`, `min_token`) are stored with the tokenizer. π₀-FAST and FineART-VLA save the tokenizer inside each checkpoint's processor files; WALL-X and MolmoAct2 load it from the Hub repository named in their config.
 
 ## Configuration Options
 

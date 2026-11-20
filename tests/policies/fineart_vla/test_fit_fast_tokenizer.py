@@ -34,12 +34,6 @@ pytestmark = pytest.mark.dataset
 class _IdentityTokenizer:
     """Stub only the codec; use real sampling, validation and artifact publication."""
 
-    def __call__(self, actions: np.ndarray) -> np.ndarray:
-        return actions.copy()
-
-    def decode(self, tokens: np.ndarray) -> np.ndarray:
-        return tokens.copy()
-
     def save_pretrained(self, directory: str) -> None:
         path = Path(directory)
         path.mkdir(parents=True)
@@ -50,6 +44,11 @@ class _IdentityTokenizer:
 def fitter(monkeypatch: pytest.MonkeyPatch) -> Mock:
     fit = Mock(return_value=_IdentityTokenizer())
     monkeypatch.setattr(fitting, "_load_fast_fitter", Mock(return_value=SimpleNamespace(fit=fit)))
+    # Encoding and decoding are identities, so validation sees a perfect reconstruction.
+    monkeypatch.setattr(fitting, "encode_fast_actions", lambda tokenizer, actions: actions.copy())
+    monkeypatch.setattr(
+        fitting, "decode_fast_actions", lambda tokenizer, tokens, action_dim, *, time_horizon: tokens.copy()
+    )
     monkeypatch.setenv("RANK", "0")
     return fit
 
@@ -200,3 +199,16 @@ def test_cache_key_tracks_relative_action_settings(tmp_path: Path, fitter: Mock)
     assert reused == first
     assert excluded != first
     assert fitter.call_count == 2
+
+
+def test_cache_key_tracks_seed_and_dataset_copy(tmp_path: Path, fitter: Mock) -> None:
+    first_copy = _write_dataset(tmp_path / "first", {0: 8, 3: 8})
+    second_copy = _write_dataset(tmp_path / "second", {0: 8, 3: 8})
+    cache = tmp_path / "cache"
+
+    first = _fit(first_copy, cache, seed=1)
+    other_seed = _fit(first_copy, cache, seed=2)
+    other_copy = _fit(second_copy, cache, seed=1)
+
+    assert len({first, other_seed, other_copy}) == 3
+    assert fitter.call_count == 3
