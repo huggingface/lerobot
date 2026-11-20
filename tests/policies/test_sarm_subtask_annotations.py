@@ -23,6 +23,7 @@ from lerobot.data_processing.sarm_annotations.subtask_annotation import (
     SubtaskAnnotation,
     Timestamp,
     compute_temporal_proportions,
+    save_annotations_to_dataset,
 )
 
 
@@ -132,3 +133,78 @@ class TestComputeTemporalProportions:
 
         for name in ["a", "b", "c", "d"]:
             assert abs(result[name] - 0.25) < 1e-6
+
+
+class TestSaveAnnotationsToDataset:
+    """Regression test for #2742: episodes metadata split over more than one parquet file."""
+
+    @staticmethod
+    def write_episodes_file(root, file_index: int, episodes: list[int]):
+        import pandas as pd
+
+        path = root / "meta" / "episodes" / "chunk-000" / f"file-{file_index:03d}.parquet"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            {
+                "episode_index": episodes,
+                "meta/episodes/chunk_index": [0] * len(episodes),
+                "meta/episodes/file_index": [file_index] * len(episodes),
+                "length": [30] * len(episodes),
+            }
+        ).to_parquet(path)
+        return path
+
+    def test_annotates_episode_stored_in_second_file(self, tmp_path):
+        import pandas as pd
+
+        self.write_episodes_file(tmp_path, 0, [0, 1])
+        second = self.write_episodes_file(tmp_path, 1, [2])
+
+        save_annotations_to_dataset(tmp_path, {2: make_annotation([("reach", 0, 1)])}, fps=30)
+
+        df = pd.read_parquet(second)
+        assert len(df) == 1  # no row appended for the global index
+        assert df.loc[0, "episode_index"] == 2
+        assert list(df.loc[0, "sparse_subtask_names"]) == ["reach"]
+        assert list(df.loc[0, "sparse_subtask_end_frames"]) == [30]
+
+    @pytest.mark.parametrize("prefix", ["sparse", "dense"])
+    def test_saved_annotations_reload_across_files(self, tmp_path, prefix):
+        from lerobot.data_processing.sarm_annotations.subtask_annotation import load_annotations_from_dataset
+
+        self.write_episodes_file(tmp_path, 0, [0, 1])
+        self.write_episodes_file(tmp_path, 1, [2])
+        annotation = make_annotation([("reach", 0, 1)])
+        save_annotations_to_dataset(tmp_path, {2: annotation}, fps=30, prefix=prefix)
+
+        restored = load_annotations_from_dataset(tmp_path, prefix=prefix)
+        assert restored == {2: annotation}
+
+    def test_dense_save_keeps_earlier_sparse_annotations_loadable(self, tmp_path):
+        from lerobot.data_processing.sarm_annotations.subtask_annotation import load_annotations_from_dataset
+
+        self.write_episodes_file(tmp_path, 0, [0, 1])
+        self.write_episodes_file(tmp_path, 1, [2])
+        sparse = make_annotation([("task", 0, 1)])
+        dense = make_annotation([("reach", 0, 1)])
+        save_annotations_to_dataset(tmp_path, {2: sparse}, fps=30, prefix="sparse")
+        save_annotations_to_dataset(tmp_path, {2: dense}, fps=30, prefix="dense")
+
+        assert load_annotations_from_dataset(tmp_path, prefix="sparse") == {2: sparse}
+        assert load_annotations_from_dataset(tmp_path, prefix="dense") == {2: dense}
+
+    @pytest.mark.parametrize("first,second", [("sparse", "dense"), ("dense", "sparse")])
+    def test_incremental_saves_preserve_both_prefixes(self, tmp_path, first, second):
+        from lerobot.data_processing.sarm_annotations.subtask_annotation import load_annotations_from_dataset
+
+        self.write_episodes_file(tmp_path, 0, [0, 1])
+        self.write_episodes_file(tmp_path, 1, [2])
+        original = make_annotation([("reach", 0, 1)])
+        added = make_annotation([("grasp", 0, 1)])
+        other = make_annotation([("task", 0, 1)])
+        save_annotations_to_dataset(tmp_path, {2: original}, fps=30, prefix=first)
+        save_annotations_to_dataset(tmp_path, {1: other}, fps=30, prefix=second)
+        save_annotations_to_dataset(tmp_path, {0: added}, fps=30, prefix=first)
+
+        assert load_annotations_from_dataset(tmp_path, prefix=first) == {0: added, 2: original}
+        assert load_annotations_from_dataset(tmp_path, prefix=second) == {1: other}

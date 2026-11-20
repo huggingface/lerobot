@@ -71,6 +71,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import torch
 from pydantic import BaseModel, Field
 from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
@@ -807,8 +809,11 @@ def save_annotations_to_dataset(
                 if col not in file_df.columns:
                     file_df[col] = None
             if ep_idx in annotations:
+                # file_df holds only the episodes of this chunk/file, with a local 0-based index;
+                # find this episode's row by its episode_index, not by the global ep_idx.
+                row = file_df.index[file_df["episode_index"] == ep_idx][0]
                 for col in cols:
-                    file_df.at[ep_idx, col] = episodes_df.loc[ep_idx, col]
+                    file_df.at[row, col] = episodes_df.loc[ep_idx, col]
                 if prefix == "sparse":  # Legacy columns
                     for i, legacy in enumerate(
                         [
@@ -819,8 +824,24 @@ def save_annotations_to_dataset(
                             "subtask_end_frames",
                         ]
                     ):
-                        file_df.at[ep_idx, legacy] = episodes_df.loc[ep_idx, cols[i]]
-            file_df.to_parquet(path, engine="pyarrow", compression="snappy")
+                        file_df.at[row, legacy] = episodes_df.loc[ep_idx, cols[i]]
+            # Write list types even when every row of this file is None: an all-null column is stored
+            # as type null and then fails to concatenate with the list columns of the other files on load.
+            # This also covers columns written by an earlier save with the other prefix.
+            item_types = {
+                "subtask_names": pa.string(),
+                "subtask_start_times": pa.float64(),
+                "subtask_end_times": pa.float64(),
+                "subtask_start_frames": pa.int64(),
+                "subtask_end_frames": pa.int64(),
+            }
+            table = pa.Table.from_pandas(file_df)
+            for col in table.column_names:
+                item_type = item_types.get(col.removeprefix("sparse_").removeprefix("dense_"))
+                if item_type is not None:
+                    values = pa.array(file_df[col].tolist(), type=pa.list_(item_type))
+                    table = table.set_column(table.schema.get_field_index(col), col, values)
+            pq.write_table(table, path, compression="snappy")
 
 
 def generate_auto_sparse_annotations(
