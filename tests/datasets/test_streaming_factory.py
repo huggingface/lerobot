@@ -8,19 +8,23 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+import logging
 from itertools import islice
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.configs.default import DatasetConfig
+from lerobot.configs.rewards import RewardModelConfig
 from lerobot.datasets import factory
 from lerobot.datasets.storage import is_bucket_root
 from lerobot.datasets.streaming_dataset import DEFAULT_STREAMING_SEED, StreamingLeRobotDataset
+from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT, REWARD
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 pytestmark = pytest.mark.dataset
@@ -198,3 +202,53 @@ def test_is_bucket_root() -> None:
         is_bucket_root("owner/data", "hf://buckets/owner/data/sub")
     with pytest.raises(ValueError, match="does not match repo_id"):
         is_bucket_root("owner/data", "hf://buckets/owner/other")
+
+
+def test_check_dataset_features_contract(caplog: pytest.LogCaptureFixture) -> None:
+    cameras = ["observation.images.laptop", "observation.images.phone"]
+    language = [LANGUAGE_PERSISTENT, LANGUAGE_EVENTS]
+    meta = SimpleNamespace(
+        full_features=dict.fromkeys([*cameras, "action", *language, REWARD], {}),
+        features=dict.fromkeys([cameras[0], "action", LANGUAGE_PERSISTENT], {}),
+    )
+    policy = SimpleNamespace(input_features=dict.fromkeys(cameras), output_features={"action": None})
+
+    def recipe(binding: str) -> dict:
+        turn = {"role": "assistant", "content": f"${{{binding}}}", "stream": "high_level", "target": True}
+        return {"messages": [turn]}
+
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.factory"):
+        factory.check_dataset_features_contract(policy, meta)
+    assert "observation.images.phone" in caplog.text
+    # A sample with no language rows left falls back to task supervision, so a rendered recipe needs
+    # every declared language column, even one its bindings never read (`subtask` reads only the
+    # persistent column). Nothing is required when language training is off (G0.5 / WALL-OSS).
+    with pytest.raises(ValueError, match=LANGUAGE_EVENTS):
+        factory.check_dataset_features_contract(
+            SimpleNamespace(**vars(policy), recipe=recipe("subtask")), meta
+        )
+    factory.check_dataset_features_contract(
+        SimpleNamespace(**vars(policy), recipe=recipe("vqa"), use_language_recipe=False), meta
+    )
+    with_language = SimpleNamespace(
+        full_features=meta.full_features, features={**meta.features, LANGUAGE_EVENTS: {}}
+    )
+    factory.check_dataset_features_contract(
+        SimpleNamespace(**vars(policy), recipe=recipe("subtask")), with_language
+    )
+    with pytest.raises(ValueError, match=REWARD):
+        factory.check_dataset_features_contract(
+            SimpleNamespace(**vars(policy), reward_delta_indices=[1]), meta
+        )
+    # A reward model is supervised by the reward column even without `reward_delta_indices`.
+    reward_model = Mock(
+        spec=RewardModelConfig, input_features={}, output_features={}, reward_delta_indices=None
+    )
+    with pytest.raises(ValueError, match=REWARD):
+        factory.check_dataset_features_contract(reward_model, meta)
+    # The reward is checked under its dataset name when `rename_map` renames it.
+    renamed = SimpleNamespace(full_features={**meta.full_features, "score": {}}, features=meta.features)
+    with pytest.raises(ValueError, match="score"):
+        factory.check_dataset_features_contract(
+            SimpleNamespace(**vars(policy), reward_delta_indices=[1]), renamed, rename_map={"score": REWARD}
+        )

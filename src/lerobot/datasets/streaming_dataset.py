@@ -17,7 +17,7 @@ import io
 import os
 import warnings
 from collections import deque
-from collections.abc import Callable, Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack, closing
 from dataclasses import dataclass
@@ -241,6 +241,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         native_http_subranges: int = 1,
         sidecar_lock_timeout_s: float = 30 * 60,
         sampling_strategy: StreamingSamplingStrategy | str = StreamingSamplingStrategy.REMAINING,
+        features: Sequence[str] | None = None,
     ) -> None:
         """Initialize an episode-scoped streaming reader.
 
@@ -319,6 +320,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             sampling_strategy (`StreamingSamplingStrategy | str`, *optional*, defaults to `"remaining"`):
                 Weight episodes by remaining anchors, or draw one anchor per episode each
                 shuffled round. Neither strategy is a global uniform shuffle.
+            features (`Sequence[str] | None`, *optional*):
+                Dataset feature keys to load, named as in ``meta/info.json`` (before any ``rename_map``).
+                The bookkeeping columns are always kept; dropped Parquet columns are never read and
+                dropped cameras are never fetched or indexed. None loads every feature.
         """
         super().__init__()
         if is_bucket_root(repo_id, root):
@@ -398,6 +403,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         self.root = self.meta.root
         self.revision = self.meta.revision
         self.meta.rescale_depth_stats(self._depth_output_unit)
+        if features is not None:
+            self.meta = self.meta.select(features)
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
         self.video_decoder_cache_size = (

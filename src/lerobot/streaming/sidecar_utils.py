@@ -124,7 +124,12 @@ class SidecarSpec:
         )
 
     def matches(self, candidate: SidecarSpec) -> bool:
-        """Return whether a candidate satisfies this expected specification."""
+        """Return whether a candidate satisfies this expected specification.
+
+        The candidate may index more source files than expected: a full-dataset sidecar serves
+        every camera selection. Every expected file must be present with the same size and
+        fingerprint.
+        """
         # Tags/branches may name the same immutable payload snapshot. Other roots still
         # require the metadata revision to match; source paths/sizes/fingerprints always do.
         pinned_repository = StorageLocation.parse(self.data_root).pinned_commit is not None
@@ -133,12 +138,14 @@ class SidecarSpec:
             or self.repo_id != candidate.repo_id
             or (self.revision != candidate.revision and not pinned_repository)
             or self.data_root != candidate.data_root
-            or self.source_fingerprints != candidate.source_fingerprints
         ):
+            return False
+        fingerprints = dict(candidate.source_fingerprints)
+        if any(fingerprints.get(path) != value for path, value in self.source_fingerprints):
             return False
         expected = dict(self.source_files)
         actual = dict(candidate.source_files)
-        if expected.keys() != actual.keys():
+        if not expected.keys() <= actual.keys():
             return False
         return all(size is None or actual[path] == size for path, size in expected.items())
 

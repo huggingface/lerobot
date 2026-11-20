@@ -135,6 +135,7 @@ class DatasetWriter:
                 for real-time encoding. ``None`` disables streaming mode.
             initial_frames: Starting frame count (non-zero when resuming).
         """
+        meta.require_full_features("Recording")
         self._meta = meta
         self._root = root
         self._rgb_encoder = rgb_encoder or rgb_encoder_defaults()

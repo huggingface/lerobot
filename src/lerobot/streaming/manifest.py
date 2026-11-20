@@ -418,9 +418,13 @@ class EpisodeVideoManifest:
 
     @staticmethod
     def validate_file_sidecar(
-        sidecar_path: str | Path, spec: SidecarSpec, *, prepare_cache: bool = True
+        sidecar_path: str | Path, spec: SidecarSpec, *, prepare_cache: bool = True, arrays: bool = True
     ) -> bool:
-        """Return whether a sidecar matches its expected source specification."""
+        """Return whether a sidecar matches its expected source specification.
+
+        ``arrays=False`` checks the identity and file list only, for a caller that validates the
+        arrays later; ``prepare_cache`` chooses between preparing the mapped index and a plain read.
+        """
         try:
             path = Path(sidecar_path).expanduser()
             payload = sidecar_payload(path)
@@ -431,9 +435,9 @@ class EpisodeVideoManifest:
             actual = {item["file_path"]: int(item["file_size"]) for item in payload["files"]}
             if actual != expected:
                 return False
-            if prepare_cache:
+            if arrays and prepare_cache:
                 mapped_sidecar(path)
-            else:
+            elif arrays:
                 validate_source_arrays(path, payload)
         except OSError as exc:
             if exc.errno in (errno.EACCES, errno.EROFS, errno.ENOSPC, errno.EDQUOT, errno.ENOTDIR):

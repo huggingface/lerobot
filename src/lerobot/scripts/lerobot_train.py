@@ -68,7 +68,7 @@ from lerobot.datasets import (
     StreamingLeRobotDataset,
     compute_sampler_state,
 )
-from lerobot.datasets.factory import make_train_eval_datasets
+from lerobot.datasets.factory import check_dataset_features_contract, make_train_eval_datasets
 from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.distributed import (
     ParallelDims,
@@ -633,6 +633,7 @@ def train(cfg: TrainPipelineConfig) -> None:
             defer_weight_load=defer_weight_load,
             pretrained_path=resume_pretrained_dir,
         )
+    check_dataset_features_contract(active_cfg, dataset.meta, cfg.rename_map)
 
     peft_model = None
     if cfg.peft is not None:
