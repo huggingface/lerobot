@@ -118,6 +118,13 @@ class ACTConfig(PreTrainedConfig):
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
     temporal_ensemble_coeff: float | None = None
 
+    # Reactive Watchdog / Recovery.
+    # When set, monitors tracking discrepancy (max absolute error between observed state and previous
+    # commanded action). If discrepancy exceeds this threshold, the active action queue or stale temporal
+    # ensemble is flushed immediately, forcing the policy to re-plan from the actual perturbed state.
+    watchdog_tracking_threshold: float | None = None
+    watchdog_replan_mode: str = "flush"
+
     # Training and loss computation.
     dropout: float = 0.1
     kl_weight: float = 10.0
@@ -149,6 +156,14 @@ class ACTConfig(PreTrainedConfig):
         if self.n_obs_steps != 1:
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
+            )
+        if self.watchdog_tracking_threshold is not None and self.watchdog_tracking_threshold <= 0:
+            raise ValueError(
+                f"`watchdog_tracking_threshold` must be positive. Got {self.watchdog_tracking_threshold}."
+            )
+        if self.watchdog_replan_mode not in ("flush", "adaptive"):
+            raise ValueError(
+                f"`watchdog_replan_mode` must be 'flush' or 'adaptive'. Got {self.watchdog_replan_mode}."
             )
 
     def get_optimizer_preset(self) -> AdamWConfig:

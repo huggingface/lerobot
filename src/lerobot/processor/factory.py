@@ -121,6 +121,8 @@ def make_default_policy_processor_steps(
             "PreTrainedConfig.device, input_features and output_features must be resolved before "
             "building the default policy processor steps."
         )
+    if dataset_stats is not None:
+        config.dataset_stats = dataset_stats
     return DefaultPolicyProcessorSteps(
         rename_observations=RenameObservationsProcessorStep(rename_map={}),
         add_batch_dim=AddBatchDimensionProcessorStep(),

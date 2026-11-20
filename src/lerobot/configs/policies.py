@@ -59,6 +59,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # `input_features` can be set to None/null in order to infer those values from the dataset.
     input_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
+    dataset_stats: dict[str, dict[str, Any]] | None = field(default=None)
 
     device: str | None = None  # e.g. "cuda", "cuda:0", "cpu", or "mps"
     # Parameter storage dtype. None uses PyTorch's default when constructing a policy.

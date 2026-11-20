@@ -17,31 +17,41 @@ from lerobot.utils.feature_spec import FeatureSpec
 
 from .act.configuration_act import ACTConfig as ACTConfig
 from .chunk import ChunkPolicySpec, ExecutionMode
-from .cosmos3.configuration_cosmos3 import (
-    Cosmos3EdgeConfig as Cosmos3EdgeConfig,
-    Cosmos3NanoConfig as Cosmos3NanoConfig,
-)
-from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
-from .dm05.configuration_dm05 import DM05Config as DM05Config
-from .eo1.configuration_eo1 import EO1Config as EO1Config
-from .evo1.configuration_evo1 import Evo1Config as Evo1Config
+def _safe_import(module_path: str, class_name: str):
+    try:
+        import importlib
+        mod = importlib.import_module(module_path, package=__package__)
+        return getattr(mod, class_name)
+    except Exception:
+        return None
+
+Cosmos3EdgeConfig = _safe_import(".cosmos3.configuration_cosmos3", "Cosmos3EdgeConfig")
+Cosmos3NanoConfig = _safe_import(".cosmos3.configuration_cosmos3", "Cosmos3NanoConfig")
+DiffusionConfig = _safe_import(".diffusion.configuration_diffusion", "DiffusionConfig")
+DM05Config = _safe_import(".dm05.configuration_dm05", "DM05Config")
+EO1Config = _safe_import(".eo1.configuration_eo1", "EO1Config")
+Evo1Config = _safe_import(".evo1.configuration_evo1", "Evo1Config")
+FastWAMConfig = _safe_import(".fastwam.configuration_fastwam", "FastWAMConfig")
+FineARTVLAConfig = _safe_import(".fineart_vla.configuration_fineart_vla", "FineARTVLAConfig")
+Flux3Config = _safe_import(".flux3.configuration_flux3", "Flux3Config")
+G05Config = _safe_import(".g05.configuration_g05", "G05Config")
+GaussianActorConfig = _safe_import(".gaussian_actor.configuration_gaussian_actor", "GaussianActorConfig")
+GrootConfig = _safe_import(".groot.configuration_groot", "GrootConfig")
+LaWAMConfig = _safe_import(".lawam.configuration_lawam", "LaWAMConfig")
+LingBotVAConfig = _safe_import(".lingbot_va.configuration_lingbot_va", "LingBotVAConfig")
+LingbotVLAV2Config = _safe_import(".lingbot_vla_v2.configuration_lingbot_vla_v2", "LingbotVLAV2Config")
+LongWAMConfig = _safe_import(".longwam.configuration_longwam", "LongWAMConfig")
+MolmoAct2Config = _safe_import(".molmoact2.configuration_molmoact2", "MolmoAct2Config")
+MultiTaskDiTConfig = _safe_import(".multi_task_dit.configuration_multi_task_dit", "MultiTaskDiTConfig")
+PI0Config = _safe_import(".pi0.configuration_pi0", "PI0Config")
+PI0FastConfig = _safe_import(".pi0_fast.configuration_pi0_fast", "PI0FastConfig")
+PI05Config = _safe_import(".pi05.configuration_pi05", "PI05Config")
+PraxisConfig = _safe_import(".praxis.configuration_praxis", "PraxisConfig")
+SmolVLAConfig = _safe_import(".smolvla.configuration_smolvla", "SmolVLAConfig")
+TDMPCConfig = _safe_import(".tdmpc.configuration_tdmpc", "TDMPCConfig")
+VLAJEPAConfig = _safe_import(".vla_jepa.configuration_vla_jepa", "VLAJEPAConfig")
+
 from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
-from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
-from .fineart_vla.configuration_fineart_vla import FineARTVLAConfig as FineARTVLAConfig
-from .flux3.configuration_flux3 import Flux3Config as Flux3Config
-from .g05.configuration_g05 import G05Config as G05Config
-from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
-from .groot.configuration_groot import GrootConfig as GrootConfig
-from .lawam.configuration_lawam import LaWAMConfig as LaWAMConfig
-from .lingbot_va.configuration_lingbot_va import LingBotVAConfig as LingBotVAConfig
-from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config as LingbotVLAV2Config
-from .longwam.configuration_longwam import LongWAMConfig as LongWAMConfig
-from .molmoact2.configuration_molmoact2 import MolmoAct2Config as MolmoAct2Config
-from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as MultiTaskDiTConfig
-from .pi0.configuration_pi0 import PI0Config as PI0Config
-from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
-from .pi05.configuration_pi05 import PI05Config as PI05Config
-from .praxis.configuration_praxis import PraxisConfig as PraxisConfig
 from .pretrained import PreTrainedPolicy as PreTrainedPolicy
 from .rtc import (
     ActionQueue,
@@ -54,10 +64,10 @@ from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
 from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig as VLAJEPAConfig
-from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
-from .wall_oss_05.configuration_wall_oss_05 import WallOSS05Config as WallOSS05Config
-from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
-from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
+VQBeTConfig = _safe_import(".vqbet.configuration_vqbet", "VQBeTConfig")
+WallOSS05Config = _safe_import(".wall_oss_05.configuration_wall_oss_05", "WallOSS05Config")
+WallXConfig = _safe_import(".wall_x.configuration_wall_x", "WallXConfig")
+XVLAConfig = _safe_import(".xvla.configuration_xvla", "XVLAConfig")
 
 # NOTE: Policy modeling classes (e.g., GaussianActorPolicy) are intentionally NOT re-exported here.
 # They have heavy optional dependencies and are loaded lazily via get_policy_class().

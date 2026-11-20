@@ -99,6 +99,8 @@ class DiffusionPolicy(PreTrainedPolicy):
             self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
         if self.config.env_state_feature:
             self._queues[OBS_ENV_STATE] = deque(maxlen=self.config.n_obs_steps)
+        self._last_commanded_action: Tensor | None = None
+        self.watchdog_stats: dict[str, Any] = {"triggers": 0, "last_discrepancy": 0.0}
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
@@ -156,11 +158,37 @@ class DiffusionPolicy(PreTrainedPolicy):
         # NOTE: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
+        # Check for state tracking discrepancy / external disturbance watchdog trigger
+        if (
+            self.config.watchdog_tracking_threshold is not None
+            and self._last_commanded_action is not None
+            and OBS_STATE in batch
+        ):
+            current_state = batch[OBS_STATE]
+            last_cmd = self._last_commanded_action.to(device=current_state.device)
+            if current_state.ndim > last_cmd.ndim:
+                last_cmd = last_cmd.unsqueeze(0)
+            elif last_cmd.ndim > current_state.ndim:
+                current_state = current_state.unsqueeze(0)
+
+            aligned_cmd = self.align_action_to_observation_state(last_cmd)
+
+            dim_to_compare = min(current_state.shape[-1], aligned_cmd.shape[-1])
+            discrepancy = torch.max(
+                torch.abs(current_state[..., :dim_to_compare] - aligned_cmd[..., :dim_to_compare])
+            ).item()
+
+            if discrepancy > self.config.watchdog_tracking_threshold:
+                self.watchdog_stats["triggers"] += 1
+                self.watchdog_stats["last_discrepancy"] = discrepancy
+                self._queues[ACTION].clear()
+
         if len(self._queues[ACTION]) == 0:
             actions = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1))
 
         action = self._queues[ACTION].popleft()
+        self._last_commanded_action = action.clone().detach()
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, None]:
