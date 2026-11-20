@@ -57,6 +57,8 @@ class RealSenseCameraConfig(CameraConfig):
             white balance is disabled and this fixed value is used. Valid ranges are
             camera-model specific and reported if the value is rejected. Defaults to None
             (leave unchanged).
+        json_config_path: Optional path to a native RealSense JSON preset. The preset
+            is applied before frames are read; explicit color controls override it.
 
     Note:
         - Either name or serial_number must be specified.
@@ -75,6 +77,7 @@ class RealSenseCameraConfig(CameraConfig):
     exposure: int | None = None
     gain: int | None = None
     white_balance: int | None = None
+    json_config_path: str | None = None
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
