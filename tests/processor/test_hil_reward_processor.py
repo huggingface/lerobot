@@ -24,16 +24,25 @@ from lerobot.processor.hil_processor import RewardClassifierProcessorStep
 from lerobot.processor.pipeline import DataProcessorPipeline
 
 
-@pytest.mark.parametrize("override_path", [None, "local/other-classifier"])
+@pytest.mark.parametrize("override_checkpoint", [False, True])
 def test_reward_classifier_checkpoint_survives_pipeline_save_load(
-    tmp_path: Path, override_path: str | None
+    tmp_path: Path, override_checkpoint: bool
 ) -> None:
+    checkpoint = tmp_path / "classifier"
+    checkpoint.mkdir()
+    expected_checkpoint = checkpoint
+    overrides = None
+    if override_checkpoint:
+        expected_checkpoint = tmp_path / "other-classifier"
+        expected_checkpoint.mkdir()
+        overrides = {"reward_classifier_processor": {"pretrained_path": str(expected_checkpoint)}}
+
     classifier = MagicMock()
     classifier.predict_reward.return_value = 1.0
     with patch(
         "lerobot.rewards.classifier.modeling_classifier.Classifier.from_pretrained", return_value=classifier
     ) as load_classifier:
-        step = RewardClassifierProcessorStep(pretrained_path="local/classifier", success_reward=2.0)
+        step = RewardClassifierProcessorStep(pretrained_path=str(checkpoint), success_reward=2.0)
         pipeline = DataProcessorPipeline(
             [step], name="reward", to_transition=identity_transition, to_output=identity_transition
         )
@@ -41,11 +50,6 @@ def test_reward_classifier_checkpoint_survives_pipeline_save_load(
         expected = pipeline(transition)
         pipeline.save_pretrained(tmp_path)
 
-        overrides = (
-            {"reward_classifier_processor": {"pretrained_path": override_path}}
-            if override_path is not None
-            else None
-        )
         restored = DataProcessorPipeline.from_pretrained(
             tmp_path,
             config_filename="reward.json",
@@ -56,7 +60,7 @@ def test_reward_classifier_checkpoint_survives_pipeline_save_load(
         actual = restored(transition)
 
     assert load_classifier.call_count == 2
-    load_classifier.assert_called_with(override_path or "local/classifier")
+    assert load_classifier.call_args.args[0] == str(expected_checkpoint)
     assert actual[TransitionKey.REWARD] == expected[TransitionKey.REWARD] == 2.0
     assert actual[TransitionKey.DONE] is expected[TransitionKey.DONE] is True
 
