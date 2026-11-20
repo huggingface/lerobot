@@ -100,6 +100,8 @@ def test_fast_prediction_keeps_decoded_dimensions(
     decoder.assert_called_once_with(
         model.processor.action_processor, [[0, 1]], action_dim, time_horizon=horizon
     )
+    # Each FAST token covers at least one DCT coefficient: a whole chunk fits in H * D tokens + EOS.
+    assert model.generate.call_args.kwargs["max_new_tokens"] == horizon * action_dim + 1
     torch.testing.assert_close(output["predict_action"], torch.from_numpy(decoded))
     if with_ground_truth:
         torch.testing.assert_close(output["gt_action"], ground_truth[:, :, active_dims])

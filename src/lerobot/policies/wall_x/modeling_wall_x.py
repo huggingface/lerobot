@@ -1310,10 +1310,17 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 "proprioception": proprioception,
             }
 
+            # A FAST token covers at least one DCT coefficient, so a whole action chunk fits in
+            # pred_horizon * action_dim tokens, plus the end-of-sequence token.
+            if predict_mode == "fast" and pred_horizon is not None and action_dim is not None:
+                max_new_tokens = pred_horizon * action_dim + 1
+            else:
+                max_new_tokens = 100
+
             # Generate output tokens
             predict_output_ids = self.generate(
                 **batch,
-                max_new_tokens=100,
+                max_new_tokens=max_new_tokens,
                 eos_token_id=[self.processor.tokenizer.eos_token_id],
                 use_cache=True,
                 pad_token_id=self.processor.tokenizer.pad_token_id,
