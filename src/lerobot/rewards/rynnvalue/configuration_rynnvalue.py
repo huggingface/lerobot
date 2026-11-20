@@ -31,6 +31,10 @@ class RynnValueConfig(RewardModelConfig):
 
     pretrained_path: str | None = "lerobot/RynnValue-4B"
     torch_dtype: str = "bfloat16"
+    # Language-model attention. RynnValue is trained with value-isolation attention
+    # ("pred_slot_isolated_eager") but, per the official model card, queried with a causal mask:
+    # "sdpa" (or "eager", the same mask through a slower kernel) gives the reported rankings.
+    attn_implementation: str = "sdpa"
     # Native architecture config, embedded on save so a LeRobot checkpoint rebuilds
     # the model from its own `config.json` and `model.safetensors`.
     model_config: dict[str, Any] | None = None
@@ -72,6 +76,11 @@ class RynnValueConfig(RewardModelConfig):
         if self.pretrained_path is None:
             raise ValueError(
                 "RynnValue loads from a LeRobot checkpoint: set pretrained_path, such as lerobot/RynnValue-4B."
+            )
+        if self.attn_implementation not in ("sdpa", "eager", "pred_slot_isolated_eager"):
+            raise ValueError(
+                "attn_implementation must be 'sdpa', 'eager' or 'pred_slot_isolated_eager', "
+                f"got {self.attn_implementation!r}"
             )
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")

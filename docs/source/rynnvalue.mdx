@@ -18,7 +18,9 @@ The integration ports the released architecture into LeRobot rather than executi
 - Eight-token grouped representations concatenated before each value head.
 - Distributional absolute and relative temporal heads.
 - Symlog-spaced, two-hot value decoding.
-- Value-isolation attention during inference.
+- Value-isolation attention (`pred_slot_isolated_eager`).
+
+RynnValue is trained with value-isolation attention but, following the official model card, LeRobot queries it with a causal mask through SDPA (`attn_implementation="sdpa"`). The model card reports better policy rankings with the causal mask (Kendall's τ 0.679 instead of 0.614 at 4B, 0.704 instead of 0.646 at 8B). Set `--reward_model.attn_implementation=pred_slot_isolated_eager` to use the training-time mask, as the official `rynn_infer/inference.py` script does, or `eager` for the causal mask through the eager kernel.
 
 The integration is inference-only. It does not reproduce the paper's 7,000-hour data mixture, temporal sampling augmentations, or training pipeline.
 
@@ -156,6 +158,5 @@ The paper combines this term with a sparse task reward, such as the success answ
 
 ## Limitations
 
-- Inference uses eager custom attention; Flash Attention and SDPA do not implement RynnValue's prediction-slot isolation.
 - The current API scores complete supplied histories and is not a streaming KV-cache reward server.
 - Training RynnValue from scratch is outside this integration.

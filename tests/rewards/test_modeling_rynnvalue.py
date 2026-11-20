@@ -156,6 +156,8 @@ def test_rynnvalue_config_validation():
         RynnValueConfig(device="cpu", inference_fps=0)
     with pytest.raises(ValueError, match="pretrained_path"):
         RynnValueConfig(device="cpu", pretrained_path=None)
+    with pytest.raises(ValueError, match="attn_implementation"):
+        RynnValueConfig(device="cpu", attn_implementation="flash_attention_2")
 
 
 @pytest.mark.parametrize("repo_id", ["lerobot/RynnValue-4B", "lerobot/RynnValue-8B"])
@@ -283,10 +285,16 @@ def test_predict_remaining_time_returns_native_seconds(monkeypatch):
         model.compute_reward({})
 
 
-def test_value_slot_attention_applies_to_the_language_model_only(monkeypatch):
+@pytest.mark.parametrize(
+    ("attn_implementation", "expected"),
+    [(None, "sdpa"), ("pred_slot_isolated_eager", "pred_slot_isolated_eager"), ("eager", "eager")],
+)
+def test_attention_setting_applies_to_the_language_model_only(monkeypatch, attn_implementation, expected):
     _patch_checkpoint_load(monkeypatch)
-    native_config = RynnValueRewardModel(RynnValueConfig(device="cpu")).model.config
-    assert native_config._attn_implementation == "pred_slot_isolated_eager"
+    kwargs = {} if attn_implementation is None else {"attn_implementation": attn_implementation}
+    native_config = RynnValueRewardModel(RynnValueConfig(device="cpu", **kwargs)).model.config
+    # The official model card queries RynnValue with a causal mask by default.
+    assert native_config._attn_implementation == expected
     assert native_config.vision_config._attn_implementation == "eager"
 
 
