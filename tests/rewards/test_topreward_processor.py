@@ -63,6 +63,22 @@ def test_prepare_video_batch_max_frames_tail_crops_recent_frames():
     assert int(tensor[0, -1, 0, 0, 0]) == 255
 
 
+def test_prepare_video_batch_pads_short_videos_with_last_frame():
+    video = torch.stack([torch.full((1, 3, 4, 4), 0.0), torch.full((1, 3, 4, 4), 1.0)], dim=1)
+
+    tensor = _prepare_video_batch(video[:, -1:], max_frames=None, min_frames=2)
+    assert tensor.shape == (1, 2, 3, 4, 4)
+    assert tensor.eq(255).all()
+
+    single = _prepare_video_batch(torch.ones(2, 3, 4, 4), max_frames=None, min_frames=2)
+    assert single.shape == (2, 2, 3, 4, 4)
+
+
+def test_prepare_video_batch_min_frames_keeps_long_videos():
+    video = torch.rand(1, 3, 3, 4, 4)
+    assert _prepare_video_batch(video, max_frames=None, min_frames=2).shape == (1, 3, 3, 4, 4)
+
+
 def test_prepare_video_batch_rejects_3d_input():
     with pytest.raises(ValueError, match="Expected TOPReward frames"):
         _prepare_video_batch(torch.zeros(4, 8, 8), max_frames=None)
@@ -202,6 +218,37 @@ def test_encoder_step_emits_input_ids_and_labels(monkeypatch):
     assert labels.shape == (2, 10)
     assert labels[:, :-1].eq(-100).all()
     assert labels[:, -1].equal(input_ids[:, -1])
+
+
+@_skip_if_topreward_extras_missing
+def test_encoder_step_pads_single_frame_to_temporal_patch(monkeypatch):
+    """Qwen3-VL needs at least ``temporal_patch_size`` frames, e.g. for the first
+    prefix of ``compute_rabc_weights`` or a single-frame ``compute_reward``."""
+    seen = []
+
+    class _VideoProcessor:
+        temporal_patch_size = 2
+
+    class _RecordingProcessor(_FakeAutoProcessor):
+        video_processor = _VideoProcessor()
+
+        def __call__(self, text=None, images=None, videos=None, **kwargs):
+            seen.append((videos.shape, kwargs["video_metadata"][0]["total_num_frames"]))
+            return super().__call__(text=text, images=images, videos=videos, **kwargs)
+
+    from lerobot.rewards.topreward import processor_topreward
+
+    monkeypatch.setattr(processor_topreward, "AutoProcessor", _RecordingProcessor)
+    step = processor_topreward.TOPRewardEncoderProcessorStep()
+
+    step(
+        _make_transition(
+            observation={"observation.images.top": torch.zeros(1, 1, 3, 8, 8)},
+            complementary={"task": "pick"},
+        )
+    )
+
+    assert seen == [((1, 2, 3, 8, 8), 2)]
 
 
 @_skip_if_topreward_extras_missing

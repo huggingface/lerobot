@@ -65,8 +65,11 @@ TOPREWARD_VLM_INPUT_KEYS = (
 TOPREWARD_INPUT_KEYS = TOPREWARD_VLM_INPUT_KEYS + ("labels",)
 
 
-def _prepare_video_batch(video: Tensor, *, max_frames: int | None) -> Tensor:
-    """Return videos as ``(B, T, C, H, W)`` uint8 tensors for Qwen3-VL."""
+def _prepare_video_batch(video: Tensor, *, max_frames: int | None, min_frames: int = 1) -> Tensor:
+    """Return videos as ``(B, T, C, H, W)`` uint8 tensors for Qwen3-VL.
+
+    Videos shorter than ``min_frames`` are padded by repeating their last frame.
+    """
     if video.ndim == 4:
         video = video.unsqueeze(1)
     elif video.ndim != 5:
@@ -76,6 +79,9 @@ def _prepare_video_batch(video: Tensor, *, max_frames: int | None) -> Tensor:
 
     if max_frames is not None:
         video = video[:, -max_frames:]
+    if video.shape[1] < min_frames:
+        pad = video[:, -1:].expand(-1, min_frames - video.shape[1], -1, -1, -1)
+        video = torch.cat([video, pad], dim=1)
     if video.shape[-1] in (1, 3):
         video = video.permute(0, 1, 4, 2, 3)
     elif video.shape[2] not in (1, 3):
@@ -152,7 +158,9 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
         frames = observation[self.image_key]
         videos = frames.detach().cpu() if isinstance(frames, Tensor) else torch.as_tensor(frames)
-        videos = _prepare_video_batch(videos, max_frames=self.max_frames)
+        # Qwen3-VL rejects videos shorter than its temporal patch (2 frames).
+        min_frames = getattr(getattr(self._processor, "video_processor", None), "temporal_patch_size", 1)
+        videos = _prepare_video_batch(videos, max_frames=self.max_frames, min_frames=min_frames)
 
         batch_size = videos.shape[0]
         tasks = _expand_tasks(
