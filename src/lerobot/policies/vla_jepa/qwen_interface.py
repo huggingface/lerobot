@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
@@ -35,11 +36,11 @@ class Qwen3VLInterface(torch.nn.Module):
     def __init__(self, config: VLAJEPAConfig) -> None:
         super().__init__()
         self.config = config
+        repo_id, revision = split_hub_reference(config.qwen_model_name)
         self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-            config.qwen_model_name,
-            torch_dtype=config.dtype,
+            repo_id, torch_dtype=config.dtype, revision=revision
         )
-        self.processor = AutoProcessor.from_pretrained(config.qwen_model_name)
+        self.processor = AutoProcessor.from_pretrained(repo_id, revision=revision, code_revision=revision)
         self.processor.tokenizer.padding_side = config.tokenizer_padding_side
         self.model.config.hidden_size = self.model.config.text_config.hidden_size
 
