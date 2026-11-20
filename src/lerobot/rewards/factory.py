@@ -147,7 +147,7 @@ def make_reward_model(
     return reward_model
 
 
-def make_frame_scorer(model: PreTrainedRewardModel, *, batch_size: int = 32) -> "FrameScorer":
+def make_frame_scorer(model: PreTrainedRewardModel, *, batch_size: int | None = None) -> "FrameScorer":
     """
     Create the standard offline frame scorer for a reward model.
 
@@ -158,8 +158,8 @@ def make_frame_scorer(model: PreTrainedRewardModel, *, batch_size: int = 32) -> 
 
     Args:
         model: The reward model the scorer will run.
-        batch_size: Number of predictions computed together. Scorers that cannot batch
-            their inputs ignore it.
+        batch_size: Number of predictions computed together. Defaults to the scorer's own
+            default. Scorers that cannot batch their inputs ignore it.
 
     Returns:
         A frame scorer that can be passed to :func:`lerobot.rewards.scoring.score_dataset`.
@@ -295,7 +295,7 @@ def _make_processors_from_reward_model_config(
 def _make_frame_scorer_from_reward_model_config(
     config: RewardModelConfig,
     model: PreTrainedRewardModel,
-    batch_size: int,
+    batch_size: int | None,
 ) -> "FrameScorer":
     """Create a frame scorer from a reward model configuration using dynamic imports.
 
@@ -305,7 +305,7 @@ def _make_frame_scorer_from_reward_model_config(
     Args:
         config: The reward model configuration object.
         model: The reward model the scorer will run.
-        batch_size: Number of predictions computed together.
+        batch_size: Number of predictions computed together, or `None` for the scorer's default.
 
     Returns:
         The frame scorer returned by ``make_<type>_frame_scorer``.
@@ -317,4 +317,4 @@ def _make_frame_scorer_from_reward_model_config(
     function = getattr(module, f"make_{config.type}_frame_scorer", None)
     if function is None:
         raise ValueError(f"Frame scorer for reward model type '{config.type}' is not implemented.")
-    return function(model=model, batch_size=batch_size)
+    return function(model=model) if batch_size is None else function(model=model, batch_size=batch_size)

@@ -151,8 +151,6 @@ def test_rynnvalue_config_validation():
         RynnValueConfig(device="cpu", max_image_side=0)
     with pytest.raises(ValueError, match="inference_fps must be > 0"):
         RynnValueConfig(device="cpu", inference_fps=0)
-    with pytest.raises(ValueError, match="scoring_batch_size"):
-        RynnValueConfig(device="cpu", scoring_batch_size=0)
     with pytest.raises(ValueError, match="pretrained_path"):
         RynnValueConfig(device="cpu", pretrained_path=None)
 
@@ -290,11 +288,13 @@ def test_predict_success_parses_the_generated_analysis(monkeypatch):
     decoded = []
     tokenizer = SimpleNamespace(
         convert_tokens_to_ids=lambda token: 99,
-        batch_decode=lambda sequences, skip_special_tokens: decoded.append(sequences)
-        or [
-            "- Video Description: The arm picks up the cube.\n- Match: Yes\n- Success: no",
-            "- Match: No",
-        ],
+        batch_decode=lambda sequences, skip_special_tokens: (
+            decoded.append(sequences)
+            or [
+                "- Video Description: The arm picks up the cube.\n- Match: Yes\n- Success: no",
+                "- Match: No",
+            ]
+        ),
     )
     loaded = []
     monkeypatch.setattr(

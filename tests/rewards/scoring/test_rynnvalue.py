@@ -25,7 +25,7 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.scores import load_scores, load_scores_info
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
-from lerobot.rewards import load_signal_descriptors, score_dataset
+from lerobot.rewards import load_signal_descriptors, make_frame_scorer, score_dataset
 from lerobot.rewards.prediction import RemainingTimeOutput
 from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig
 from lerobot.rewards.rynnvalue.scoring_rynnvalue import (
@@ -89,6 +89,27 @@ def test_make_rynnvalue_frame_scorer_builds_processor_without_frame_cap(monkeypa
     assert model.config.max_frames == 8
 
 
+@pytest.mark.parametrize(("batch_size", "expected"), [(None, 1), (4, 4)])
+def test_make_frame_scorer_builds_the_rynnvalue_scorer(monkeypatch, batch_size, expected):
+    import lerobot.rewards.rynnvalue.scoring_rynnvalue as scoring_rynnvalue
+
+    monkeypatch.setattr(
+        scoring_rynnvalue, "make_rynnvalue_pre_post_processors", lambda config: (object(), object())
+    )
+    model = SimpleNamespace(config=RynnValueConfig(device="cpu"))
+
+    scorer = make_frame_scorer(model, batch_size=batch_size)
+
+    # Without a batch size, RynnValue's own default of 1 applies.
+    assert isinstance(scorer, RynnValueFrameScorer)
+    assert scorer.batch_size == expected
+
+
+def test_rynnvalue_frame_scorer_rejects_invalid_batch_size():
+    with pytest.raises(ValueError, match="batch_size"):
+        RynnValueFrameScorer(SimpleNamespace(config=None), object(), batch_size=0)
+
+
 class _FakeDataset:
     absolute_to_relative_idx: dict[int, int] | None = None
     fps = 2.0
@@ -137,20 +158,13 @@ class _FakeEncoder(PolicyProcessorPipeline):
 
 
 class _FakeModel:
-    config = SimpleNamespace(
-        type="rynnvalue",
+    config = RynnValueConfig(
+        device="cpu",
         pretrained_path="test/rynnvalue",
         pretrained_revision="model-revision",
         image_key=IMAGE_KEY,
-        task_key="task",
-        default_task=None,
         max_frames=3,
-        max_image_side=640,
-        inference_fps=1.0,
-        scoring_batch_size=2,
         robot_description="a single-arm robot",
-        camera_description=None,
-        use_meta=None,
     )
 
     def eval(self):
@@ -164,7 +178,7 @@ class _FakeModel:
 
 def test_rynnvalue_frame_scorer_scores_prefixes_and_interpolates_remaining_time():
     encoder = _FakeEncoder()
-    scorer = RynnValueFrameScorer(_FakeModel(), encoder)
+    scorer = RynnValueFrameScorer(_FakeModel(), encoder, batch_size=2)
 
     dataset = _FakeDataset([{"dataset_from_index": 0, "dataset_to_index": 5}])
     result = scorer.score_episode(dataset, 0)

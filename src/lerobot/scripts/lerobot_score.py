@@ -83,14 +83,14 @@ class ScoreConfig:
     dataset_revision: str | None = None
     name: str | None = None
     episodes: list[int] | None = None
-    # Number of predictions computed together; lower it if the GPU runs out of memory.
-    batch_size: int = 32
+    # Predictions computed together; defaults to the model's own.
+    batch_size: int | None = None
     resume: bool = True
     overwrite: bool = False
     push_to_hub: bool = False
 
     def __post_init__(self) -> None:
-        if self.batch_size < 1:
+        if self.batch_size is not None and self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
         reward_model_path = parser.get_path_arg("reward_model")
         if reward_model_path:

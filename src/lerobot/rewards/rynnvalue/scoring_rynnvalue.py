@@ -25,7 +25,7 @@ from numpy.typing import NDArray
 
 from lerobot.processor import PolicyProcessorPipeline
 
-from ..scoring import FrameSignals, SignalDescriptor
+from ..scoring import FrameSignals, SignalDescriptor, scoring_options
 from .modeling_rynnvalue import RynnValueRewardModel
 from .processor_rynnvalue import make_rynnvalue_pre_post_processors
 
@@ -78,9 +78,14 @@ class RynnValueFrameScorer:
         self,
         model: RynnValueRewardModel,
         preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+        *,
+        batch_size: int = 1,
     ) -> None:
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
         self.model = model
         self.preprocessor = preprocessor
+        self.batch_size = batch_size
 
     @property
     def descriptors(self) -> dict[str, SignalDescriptor]:
@@ -99,17 +104,7 @@ class RynnValueFrameScorer:
             },
             "scorer": {
                 "version": 1,
-                "options": {
-                    "image_key": config.image_key,
-                    "task_key": config.task_key,
-                    "default_task": config.default_task,
-                    "max_frames": config.max_frames,
-                    "max_image_side": config.max_image_side,
-                    "robot_description": config.robot_description,
-                    "camera_description": config.camera_description,
-                    "use_meta": config.use_meta,
-                    "inference_fps": config.inference_fps,
-                },
+                "options": scoring_options(config),
             },
         }
 
@@ -129,7 +124,7 @@ class RynnValueFrameScorer:
         anchors = select_anchor_indices(num_frames, float(dataset.fps), config.inference_fps)
         prefixes = [select_prefix_indices(int(anchor), config.max_frames) for anchor in anchors]
         # Without `max_frames`, prefixes differ in length and can't share a batch.
-        batch_size = config.scoring_batch_size if config.max_frames is not None else 1
+        batch_size = self.batch_size if config.max_frames is not None else 1
         remaining_time: NDArray[np.float64] = np.empty(len(anchors), dtype=np.float64)
 
         self.model.eval()
@@ -160,8 +155,8 @@ class RynnValueFrameScorer:
         )
 
 
-def make_rynnvalue_frame_scorer(model: RynnValueRewardModel) -> RynnValueFrameScorer:
-    """Construct the standard RynnValue offline frame scorer."""
+def make_rynnvalue_frame_scorer(model: RynnValueRewardModel, *, batch_size: int = 1) -> RynnValueFrameScorer:
+    """Construct the standard RynnValue offline frame scorer, scoring `batch_size` prefixes together."""
     # The scorer picks each prefix's frames, so the processor must not subsample them again.
     preprocessor, _ = make_rynnvalue_pre_post_processors(replace(model.config, max_frames=None))
-    return RynnValueFrameScorer(model, preprocessor)
+    return RynnValueFrameScorer(model, preprocessor, batch_size=batch_size)
