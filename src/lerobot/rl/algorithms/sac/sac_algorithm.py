@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable, Iterator
 from dataclasses import asdict
@@ -60,6 +61,7 @@ class SACAlgorithm(RLAlgorithm):
         self.policy = policy
         self.optimizers: dict[str, Optimizer] = {}
         self._optimization_step: int = 0
+        self._warned_out_of_range_discrete_action: bool = False
 
         action_dim = self.policy.config.output_features[ACTION].shape[0]
         self._init_critics(action_dim)
@@ -332,6 +334,26 @@ class SACAlgorithm(RLAlgorithm):
         ).sum()
         return critics_loss
 
+    def _clamp_discrete_actions(self, actions_discrete: Tensor) -> Tensor:
+        """Clamp stored discrete actions to valid indices of the discrete critic.
+
+        The stored action is used as a ``torch.gather`` index. An out-of-range value raises on CPU
+        and is a device-side assert on CUDA, which kills the learner. Such values can reach the
+        replay buffer from teleop interventions or recorded datasets, so clamp them and warn once.
+        """
+        num_discrete_actions = self.policy_config.num_discrete_actions
+        if not self._warned_out_of_range_discrete_action:
+            out_of_range = (actions_discrete < 0) | (actions_discrete >= num_discrete_actions)
+            if out_of_range.any():
+                self._warned_out_of_range_discrete_action = True
+                bad_values = sorted(actions_discrete[out_of_range].unique().tolist())
+                logging.warning(
+                    f"Discrete critic received out-of-range discrete action(s) {bad_values} outside the "
+                    f"valid range [0, {num_discrete_actions - 1}]; training these samples with the nearest "
+                    "valid action index (warned once), check the dataset's action encoding."
+                )
+        return actions_discrete.clamp(0, num_discrete_actions - 1)
+
     def _compute_loss_discrete_critic(self, batch: dict[str, Any]) -> Tensor:
         observations = batch["state"]
         actions = batch[ACTION]
@@ -347,7 +369,7 @@ class SACAlgorithm(RLAlgorithm):
         # We need to split them before concatenating them in the critic forward
         actions_discrete: Tensor = actions[:, DISCRETE_DIMENSION_INDEX:].clone()
         actions_discrete = torch.round(actions_discrete)
-        actions_discrete = actions_discrete.long()
+        actions_discrete = self._clamp_discrete_actions(actions_discrete.long())
 
         discrete_penalties: Tensor | None = None
         if complementary_info is not None:
