@@ -16,16 +16,19 @@
 """Lance storage backend: LeRobotDataset over a Lance root must return the same
 items as over the default parquet/mp4 layout, through the same public class."""
 
+import importlib
 import json
 import pickle
 import weakref
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
+from torchvision.transforms import v2
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 pytest.importorskip("lancedb")
@@ -52,8 +55,12 @@ from lerobot.datasets.language import (
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.storage import localize_remote_root
-from lerobot.datasets.video_utils import FrameTimestampError
+from lerobot.datasets.video_utils import (
+    FrameTimestampError,
+    decode_video_frames_pyav,
+)
 from lerobot.policies.factory import make_policy_config
+from lerobot.utils import import_utils
 from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
@@ -87,7 +94,7 @@ def dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
     return src_root, lance_root
 
 
-def assert_items_equal(actual: dict, expected: dict) -> None:
+def assert_items_equal(actual: dict, expected: dict, atol: float = 0.0) -> None:
     assert set(actual) == set(expected)
     for key, expected_val in expected.items():
         if isinstance(expected_val, str):
@@ -95,7 +102,23 @@ def assert_items_equal(actual: dict, expected: dict) -> None:
         else:
             assert actual[key].dtype == expected_val.dtype, key
             assert actual[key].shape == expected_val.shape, key
-            torch.testing.assert_close(actual[key], expected_val, rtol=0, atol=0, msg=key)
+            torch.testing.assert_close(actual[key], expected_val, rtol=0, atol=atol, msg=key)
+
+
+class _ImportlibProxy:
+    """``importlib`` with selected lookups replaced; every other attribute stays real.
+
+    Tests replace only the lookup they exercise, so unrelated callers such as
+    :func:`lerobot.utils.import_utils.require_package` keep ``importlib.metadata``.
+    """
+
+    def __init__(self, **overrides: object) -> None:
+        self._overrides = overrides
+
+    def __getattr__(self, name: str) -> object:
+        if name in self._overrides:
+            return self._overrides[name]
+        return getattr(importlib, name)
 
 
 class _FakeRGBDecoder:
@@ -218,7 +241,15 @@ def video_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
     return src_root, lance_root
 
 
+def _require_working_torchcodec() -> None:
+    """Skip when TorchCodec is missing or cannot load FFmpeg, so parity has no reference."""
+    core = pytest.importorskip("torchcodec._core", reason="torchcodec is required for parity")
+    if core.ffmpeg_major_version is None:
+        pytest.skip("torchcodec cannot load the FFmpeg shared libraries")
+
+
 def test_video_parity(video_dataset_roots):
+    _require_working_torchcodec()
     src_root, lance_root = video_dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="torchcodec")
     lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
@@ -275,6 +306,170 @@ def test_video_parity(video_dataset_roots):
         assert_items_equal(item, lance_u8[idx])
 
 
+# TorchCodec and PyAV both decode through libavcodec. The same MP4 maps to the same
+# rgb24 pixels on one FFmpeg build; another build may differ by float rounding of the
+# integer RGB conversion, so allow 1e-6 (0.00026 of one uint8 level). Frame-selection
+# or normalization bugs are orders of magnitude larger.
+_DECODE_ATOL = 1e-6
+
+
+def test_pyav_video_backend_matches_torchcodec(video_dataset_roots):
+    _require_working_torchcodec()
+    src_root, lance_root = video_dataset_roots
+    transforms = v2.Resize((32, 32))
+    torchcodec_ds = LeRobotDataset(
+        DUMMY_REPO_ID, root=src_root, video_backend="torchcodec", image_transforms=transforms
+    )
+    pyav_ds = LeRobotDataset(
+        DUMMY_REPO_ID, root=lance_root, video_backend="pyav", image_transforms=transforms
+    )
+    for idx in [0, len(torchcodec_ds) // 2, len(torchcodec_ds) - 1]:
+        assert_items_equal(pyav_ds[idx], torchcodec_ds[idx], atol=_DECODE_ATOL)
+
+    # Delta windows keep frame selection, order and padding on the PyAV path.
+    fps = torchcodec_ds.meta.fps
+    delta_timestamps = {key: [-1 / fps, 0.0, 1 / fps] for key in torchcodec_ds.meta.video_keys}
+    torchcodec_d = LeRobotDataset(
+        DUMMY_REPO_ID, root=src_root, video_backend="torchcodec", delta_timestamps=delta_timestamps
+    )
+    pyav_d = LeRobotDataset(
+        DUMMY_REPO_ID, root=lance_root, video_backend="pyav", delta_timestamps=delta_timestamps
+    )
+    ep_start = int(torchcodec_d.meta.episodes[1]["dataset_from_index"])
+    for idx in [0, ep_start - 1, ep_start]:
+        assert_items_equal(pyav_d[idx], torchcodec_d[idx], atol=_DECODE_ATOL)
+
+    # Raw uint8 frames keep TorchCodec's dtype and values.
+    torchcodec_u8 = LeRobotDataset(
+        DUMMY_REPO_ID, root=src_root, video_backend="torchcodec", return_uint8=True
+    )
+    pyav_u8 = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, video_backend="pyav", return_uint8=True)
+    for idx in [0, len(torchcodec_u8) - 1]:
+        assert_items_equal(pyav_u8[idx], torchcodec_u8[idx])
+
+
+def test_pyav_video_backend_decodes_blob_without_torchcodec(video_dataset_roots, monkeypatch):
+    src_root, lance_root = video_dataset_roots
+    real_import_module = importlib.import_module
+
+    def import_module(name, *args, **kwargs):
+        assert name != "torchcodec", "an explicit pyav backend must not need torchcodec"
+        return real_import_module(name, *args, **kwargs)
+
+    # LanceDatasetReader only looks torchcodec up through its module-level importlib.
+    monkeypatch.setattr(lance_backend, "importlib", _ImportlibProxy(import_module=import_module))
+
+    rgb_pyav_calls = []
+    real_decode = lance_backend.decode_video_frames_pyav
+
+    def decode(source, timestamps, tolerance_s, **kwargs):
+        if not kwargs.get("is_depth", False):
+            rgb_pyav_calls.append(timestamps)
+        return real_decode(source, timestamps, tolerance_s, **kwargs)
+
+    monkeypatch.setattr(lance_backend, "decode_video_frames_pyav", decode)
+
+    expected = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="pyav")[0]
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, video_backend="pyav")
+    assert_items_equal(dataset[0], expected)
+    assert rgb_pyav_calls, "RGB frames must decode from the Lance blob through PyAV"
+
+
+@pytest.mark.parametrize("torchcodec_state", ["not_installed", "ffmpeg_missing"])
+def test_default_video_backend_falls_back_to_pyav(video_dataset_roots, monkeypatch, torchcodec_state):
+    src_root, lance_root = video_dataset_roots
+    real_import_module = importlib.import_module
+
+    def find_spec(name, *args, **kwargs):
+        if torchcodec_state == "not_installed" and name == "torchcodec":
+            return None
+        return importlib.util.find_spec(name, *args, **kwargs)
+
+    def import_module(name, *args, **kwargs):
+        # A TorchCodec that imports but cannot dlopen the FFmpeg shared libraries.
+        if name == "torchcodec._core":
+            raise OSError("libavcodec.so.61: cannot open shared object file")
+        return real_import_module(name, *args, **kwargs)
+
+    monkeypatch.setattr(
+        import_utils,
+        "importlib",
+        _ImportlibProxy(util=SimpleNamespace(find_spec=find_spec), import_module=import_module),
+    )
+
+    expected = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="pyav")[0]
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    assert dataset.reader._video_backend == "pyav"
+    assert_items_equal(dataset[0], expected)
+
+
+def test_pyav_decodes_sparse_mp4_blob_ranges(video_dataset_roots):
+    src_root, lance_root = video_dataset_roots
+    meta = LeRobotDatasetMetadata(DUMMY_REPO_ID, root=lance_root)
+    reader = LanceDatasetReader(meta, root=lance_root)
+    reader._ensure_open()
+
+    key = next(key for key in meta.video_keys if key not in meta.depth_keys)
+    file_key = reader._video_file_key(key, 0)
+    file_meta = reader._load_file_meta([file_key])[file_key]
+    source = lance_utils._SparseBlobSource(file_meta["file_size"], partial(reader._blob_handle, file_key))
+    # Prefetch only a head range: the moov box, keyframe and packets must come from the
+    # blob's ranged reads, as they would from an object store.
+    reader._fetch_spans({file_key: [(0, 1024)]}, {file_key: source})
+    assert source.covers(0, 1024)
+
+    timestamps = [0.0, 1 / meta.fps, 2 / meta.fps]
+    source.seek(0)
+    frames = decode_video_frames_pyav(source, timestamps, reader.tolerance_s)
+    expected = decode_video_frames_pyav(
+        src_root / meta.get_video_file_path(0, key), timestamps, reader.tolerance_s
+    )
+    assert source.fallback_bytes > 0
+    torch.testing.assert_close(frames, expected, rtol=0, atol=0)
+
+
+def test_explicit_torchcodec_decode_errors_are_not_retried_with_pyav(video_dataset_roots, monkeypatch):
+    _, lance_root = video_dataset_roots
+    _require_working_torchcodec()
+    decoders = importlib.import_module("torchcodec.decoders")
+
+    def fail(self, indices):
+        raise RuntimeError("torchcodec rejected the stream")
+
+    monkeypatch.setattr(decoders.VideoDecoder, "get_frames_at", fail)
+    real_decode = lance_backend.decode_video_frames_pyav
+
+    def decode(source, timestamps, tolerance_s, **kwargs):
+        assert kwargs.get("is_depth", False), "a torchcodec decode error must not fall back to PyAV"
+        return real_decode(source, timestamps, tolerance_s, **kwargs)
+
+    monkeypatch.setattr(lance_backend, "decode_video_frames_pyav", decode)
+
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, video_backend="torchcodec")
+    with pytest.raises(RuntimeError, match="torchcodec rejected the stream"):
+        dataset[0]
+
+
+def test_explicit_torchcodec_that_cannot_be_imported_fails_at_open(video_dataset_roots, monkeypatch):
+    _, lance_root = video_dataset_roots
+    real_import_module = importlib.import_module
+
+    def import_module(name, *args, **kwargs):
+        if name == "torchcodec":
+            raise ImportError("torchcodec is not installed")
+        return real_import_module(name, *args, **kwargs)
+
+    monkeypatch.setattr(lance_backend, "importlib", _ImportlibProxy(import_module=import_module))
+    with pytest.raises(ImportError, match="video_backend='pyav'"):
+        LeRobotDataset(DUMMY_REPO_ID, root=lance_root, video_backend="torchcodec")
+
+
+def test_reader_rejects_unknown_video_backend(video_dataset_roots):
+    _, lance_root = video_dataset_roots
+    with pytest.raises(ValueError, match="Unsupported video backend: ffmpeg"):
+        LeRobotDataset(DUMMY_REPO_ID, root=lance_root, video_backend="ffmpeg")
+
+
 @pytest.mark.parametrize(
     ("shape", "bytes_per_value", "expected_frames"),
     [
@@ -310,6 +505,7 @@ def test_rgb_batch_decode_deduplicates_overlapping_frames():
     reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
     reader.return_uint8 = True
     reader.tolerance_s = 1e-4
+    reader._video_backend = "torchcodec"
     reader._build_video_requests = lambda *args: {file_key: file_requests}
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
@@ -346,6 +542,7 @@ def test_rgb_batch_decode_limits_and_releases_chunks():
     reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
     reader.return_uint8 = True
     reader.tolerance_s = 1e-4
+    reader._video_backend = "torchcodec"
     reader._build_video_requests = lambda *args: {file_key: file_requests}
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
@@ -380,6 +577,7 @@ def test_rgb_batch_decode_rejects_bad_pts_after_chunk_scatter():
     reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
     reader.return_uint8 = True
     reader.tolerance_s = 1e-4
+    reader._video_backend = "torchcodec"
     reader._build_video_requests = lambda *args: {file_key: file_requests}
 
     with (
@@ -403,6 +601,7 @@ def test_rgb_batch_decode_respects_byte_limit_for_float_output():
     reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (1024, 1024, 3)}})
     reader.return_uint8 = False
     reader.tolerance_s = 1e-4
+    reader._video_backend = "torchcodec"
     reader._build_video_requests = lambda *args: {file_key: file_requests}
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
@@ -434,6 +633,7 @@ def test_rgb_single_request_keeps_direct_decode_result():
     reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
     reader.return_uint8 = True
     reader.tolerance_s = 1e-4
+    reader._video_backend = "torchcodec"
     reader._build_video_requests = lambda *args: {file_key: [(0, [0.1, 0.2])]}
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
