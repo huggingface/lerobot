@@ -18,6 +18,7 @@ import torch
 
 IGNORE_INDEX = -100
 DM05_STATE_BINS = 256
+HISTORY_TOKENS_PER_IMAGE = 16
 
 
 def build_action_prefix_mask(

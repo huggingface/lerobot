@@ -87,7 +87,7 @@ class PolicyRunner:
         if language_enabled is True and not supports_language:
             raise ValueError("Language is enabled but this policy has no text capability.")
         spec = self._policy_spec = policy.chunk_inference_spec()
-        if not spec.current_observation_only:
+        if not spec.current_observation_only and not spec.memory_image_key:
             raise ValueError("The default runner does not implement temporal observation sampling.")
         modes = tuple(ExecutionMode(mode) for mode in modes)
         if any(mode not in spec.modes for mode in modes):
@@ -123,6 +123,10 @@ class PolicyRunner:
             training_max_delay=spec.training_max_delay,
             rtc_horizon=rtc_config.execution_horizon if rtc_modes and rtc_config is not None else 0,
             retains_session_state=spec.retains_session_state,
+            current_observation_only=spec.current_observation_only,
+            memory_image_key=spec.memory_image_key,
+            memory_frames=spec.memory_frames,
+            memory_stride=spec.memory_stride,
         )
         self._validate_feature_contract()
         self._validate_processor_pair(preprocessor, postprocessor)
@@ -223,6 +227,17 @@ class PolicyRunner:
             batch[feature.name] = tensor.unsqueeze(0)
         batch["task"] = [observation.task]
         batch["robot_type"] = self.robot_type
+        if key := self.capabilities.memory_image_key:
+            count = self.capabilities.memory_frames
+            images, padding = observation.history_images, observation.history_is_pad
+            if len(images) != count or len(padding) != count:
+                raise ValueError("MEM chunk inference requires history sampled at every control frame.")
+            feature = next(feature for feature in self.capabilities.features if feature.name == key)
+            if any(image.shape != feature.shape or image.dtype != np.uint8 for image in images):
+                raise ValueError("MEM history images differ from the main-camera contract.")
+            history = torch.from_numpy(np.stack(images)).permute(0, 3, 1, 2).float().div_(255)
+            batch[key] = torch.cat((history.unsqueeze(0), batch[key].unsqueeze(1)), dim=1)
+            batch[f"{key}_is_pad"] = torch.tensor([(*padding, False)], dtype=torch.bool)
         return batch
 
     def predict(

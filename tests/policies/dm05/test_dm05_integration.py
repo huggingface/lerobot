@@ -145,7 +145,7 @@ def _tiny_core_config() -> DM05CoreModelConfig:
     )
 
 
-def _save_tiny_real_processor(path: Path):
+def _save_tiny_real_processor(path: Path, *, memory: bool = False):
     """Create a network-free Gemma3Processor with DM05's real multimodal code path."""
 
     from tokenizers import Tokenizer
@@ -174,6 +174,8 @@ def _save_tiny_real_processor(path: Path):
         126: "<end_of_image>",
         127: "<image_soft_token>",
     }
+    if memory:
+        replacements.update({15: "<unused0>", 16: "<unused1>", 17: "\n"})
     for index, token in replacements.items():
         tokens[index] = token
     backend = Tokenizer(WordLevel({token: index for index, token in enumerate(tokens)}, unk_token="<unk>"))
@@ -193,6 +195,7 @@ def _save_tiny_real_processor(path: Path):
             "<start_of_image>",
             "<end_of_image>",
             "<image_soft_token>",
+            *(["<unused0>", "<unused1>", "\n"] if memory else []),
         ],
     )
     chat_template = """{% for message in messages %}<start_of_turn>{{ message['role'] }}
@@ -207,6 +210,73 @@ def _save_tiny_real_processor(path: Path):
     )
     processor.save_pretrained(path)
     return processor
+
+
+def test_dm05_memory_real_forward_backward_and_checkpoint_roundtrip(tmp_path, monkeypatch):
+    torch.manual_seed(0)
+    processor_path = tmp_path / "source_processor"
+    _save_tiny_real_processor(processor_path, memory=True)
+    config = _dm05_config(
+        use_memory=True,
+        memory_image_key="observation.images.front",
+        memory_frames=2,
+        memory_stride=1,
+        core_config=_tiny_core_config().to_dict(),
+        processor_name_or_path=str(processor_path),
+        dtype=torch.float32,
+        vlm_gradient_checkpointing=False,
+        ae_gradient_checkpointing=False,
+    )
+    config.max_state_dim = config.max_action_dim = 4
+    policy = DM05Policy(config)
+    # Gemma zero-initializes this projection; emulate nonzero pretrained weights for the gradient check.
+    torch.nn.init.normal_(
+        policy.model.model.vlm.model.multi_modal_projector.mm_input_projection_weight, std=0.02
+    )
+    stats = {key: {"q01": [-1.0] * 3, "q99": [1.0] * 3} for key in (OBS_STATE, ACTION)}
+    pre, post = make_dm05_pre_post_processors(config, stats)
+    observation = {
+        OBS_STATE: torch.zeros(1, 3),
+        "observation.images.front": torch.rand(1, 3, 3, 16, 16),
+        "observation.images.front_is_pad": torch.tensor([[True, False, False]]),
+        "task": ["pick"],
+    }
+    batch = pre({**observation, ACTION: torch.zeros(1, 2, 3)})
+    pixels = batch[f"{MODEL_INPUT_PREFIX}history_pixel_values"].requires_grad_()
+    assert pixels.shape == (1, 3, 16, 16)
+    assert batch[f"{MODEL_INPUT_PREFIX}history_mask"].sum() == 16
+    loss, _ = policy(batch)
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert pixels.grad is not None and torch.isfinite(pixels.grad).all() and pixels.grad.abs().sum() > 0
+    vision_tower = policy.model.model.vlm.model.vision_tower
+    vision_model = getattr(vision_tower, "vision_model", vision_tower)
+    vision_grad = vision_model.embeddings.patch_embedding.weight.grad
+    assert vision_grad is not None and torch.isfinite(vision_grad).all() and vision_grad.abs().sum() > 0
+    assert policy.model.model.action_out_proj.weight.grad is not None
+
+    noise = torch.randn(1, 2, 3)
+    expected = post(policy.predict_action_chunk(pre(dict(observation)), noise=noise, diffusion_steps=1))
+    checkpoint = tmp_path / "checkpoint"
+    policy.save_pretrained(checkpoint)
+    pre.save_pretrained(checkpoint, config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json")
+    post.save_pretrained(checkpoint, config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json")
+    saved = json.loads((checkpoint / f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json").read_text())
+    tokenizer = next(step for step in saved["steps"] if step["registry_name"] == "dm05_tokenizer_processor")
+    assert tokenizer["artifacts"]["processor_name_or_path"] == "dm05_processor"
+    shutil.rmtree(processor_path)
+    monkeypatch.chdir(tmp_path)
+    reloaded = DM05Policy.from_pretrained("checkpoint", local_files_only=True, strict=True)
+    loaded_pre, loaded_post = make_pre_post_processors(reloaded.config, pretrained_path="checkpoint")
+    torch.testing.assert_close(reloaded.state_dict(), policy.state_dict(), atol=0, rtol=0)
+    restored = loaded_pre(dict(observation))
+    for key in ("input_ids", "attention_mask", "history_mask", "history_pixel_values"):
+        torch.testing.assert_close(
+            restored[f"{MODEL_INPUT_PREFIX}{key}"], batch[f"{MODEL_INPUT_PREFIX}{key}"]
+        )
+    actual = loaded_post(reloaded.predict_action_chunk(restored, noise=noise, diffusion_steps=1))
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+    assert torch.isfinite(actual).all()
 
 
 def test_dm05_config_defaults_and_validation(monkeypatch, tmp_path):
