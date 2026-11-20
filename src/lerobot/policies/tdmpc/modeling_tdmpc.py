@@ -106,13 +106,24 @@ class TDMPCPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
-        batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
+        """Predict a chunk of actions given environment observations.
 
-        # Remove the time dimensions as it is not handled yet.
-        for key in batch:
-            assert batch[key].shape[1] == 1
-            batch[key] = batch[key][:, 0]
+        Uses the observations queued by `select_action` when there are any. Otherwise, e.g. when the
+        async inference server calls this method directly, it uses the single observation in `batch`.
+
+        Returns:
+            (batch, horizon, action_dim) tensor of actions.
+        """
+        if len(self._queues[OBS_STATE]) > 0:
+            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
+
+            # Remove the time dimensions as it is not handled yet.
+            for key in batch:
+                assert batch[key].shape[1] == 1
+                batch[key] = batch[key][:, 0]
+        elif self.config.image_features:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
 
         # NOTE: Order of observations matters here.
         encode_keys = []
@@ -131,7 +142,8 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         actions = torch.clamp(actions, -1, +1)
 
-        return actions
+        # (horizon, batch, action_dim) -> (batch, horizon, action_dim), like the other policies.
+        return actions.transpose(0, 1)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -151,13 +163,13 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         # When the action queue is depleted, populate it again by querying the policy.
         if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch)
+            # The action queue is (n_action_steps, batch_size, action_dim), so make the chunk time-major.
+            actions = self.predict_action_chunk(batch).transpose(0, 1)
 
             if self.config.n_action_repeats > 1:
                 for _ in range(self.config.n_action_repeats):
                     self._queues[ACTION].append(actions[0])
             else:
-                # Action queue is (n_action_steps, batch_size, action_dim), so we transpose the action.
                 self._queues[ACTION].extend(actions[: self.config.n_action_steps])
 
         action = self._queues[ACTION].popleft()
