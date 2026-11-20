@@ -525,6 +525,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Raises:
             RuntimeError: If the dataset is read-only (no writer).
+            queue.Full: If a bounded async image writer queue stays full for 0.1 seconds.
+                Discard the current episode with :meth:`clear_episode_buffer`
+                before recording more frames.
         """
         self._require_writer("add_frame").add_frame(frame)
 
@@ -801,6 +804,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_threads: int | None = None,
         video_files_size_in_mb: int | None = None,
         data_files_size_in_mb: int | None = None,
+        image_writer_queue_maxsize: int = 0,
     ) -> "LeRobotDataset":
         """Create a new LeRobotDataset from scratch for recording data.
 
@@ -822,6 +826,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_writer_processes: Number of subprocesses for async image
                 writing. ``0`` means use threads only.
             image_writer_threads: Number of threads for async image writing.
+            image_writer_queue_maxsize: Maximum pending image writes. ``0`` (default)
+                is unbounded. A bounded queue raises ``queue.Full`` after remaining full
+                for 0.1 seconds instead of dropping frames.
             video_backend: Video decoding backend (used when reading back).
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos. ``1`` means encode immediately.
@@ -887,7 +894,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
 
         if image_writer_processes or image_writer_threads:
-            obj.writer.start_image_writer(image_writer_processes, image_writer_threads)
+            obj.writer.start_image_writer(
+                image_writer_processes, image_writer_threads, image_writer_queue_maxsize
+            )
 
         obj._is_finalized = False
 
@@ -912,6 +921,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_queue_maxsize: int = 30,
         *,
         token: str | bool | None = None,
+        image_writer_queue_maxsize: int = 0,
     ) -> "LeRobotDataset":
         """Resume recording on an existing dataset.
 
@@ -942,6 +952,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 lets the codec decide.
             image_writer_processes: Subprocesses for async image writing.
             image_writer_threads: Threads for async image writing.
+            image_writer_queue_maxsize: Maximum pending image writes. ``0`` (default)
+                is unbounded. A bounded queue raises ``queue.Full`` after remaining full
+                for 0.1 seconds instead of dropping frames.
             streaming_encoding: If ``True``, encode video in real-time during
                 capture.
             encoder_queue_maxsize: Max buffered frames per camera for streaming.
@@ -1006,7 +1019,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
 
         if image_writer_processes or image_writer_threads:
-            obj.writer.start_image_writer(image_writer_processes, image_writer_threads)
+            obj.writer.start_image_writer(
+                image_writer_processes, image_writer_threads, image_writer_queue_maxsize
+            )
 
         obj._is_finalized = False
 
