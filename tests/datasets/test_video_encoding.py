@@ -29,6 +29,7 @@ pytest.importorskip("av", reason="av is required (install lerobot[dataset])")
 import av  # noqa: E402
 
 from lerobot.configs import VALID_VIDEO_CODECS, DepthEncoderConfig, RGBEncoderConfig, VideoEncoderConfig
+from lerobot.datasets import pyav_utils
 from lerobot.datasets.image_writer import write_image
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pyav_utils import get_codec
@@ -371,6 +372,26 @@ class TestEncoderDetection:
         """``h264_videotoolbox`` sits at the top of ``HW_VIDEO_CODECS`` so it wins when present."""
         cfg = RGBEncoderConfig(vcodec="auto")
         assert cfg.vcodec == "h264_videotoolbox"
+
+    @require_libsvtav1
+    def test_auto_skips_listed_hardware_encoders_that_do_not_open(self, monkeypatch):
+        """A hardware encoder FFmpeg lists but cannot open is not picked; ``auto`` falls back to libsvtav1."""
+        monkeypatch.setattr(pyav_utils, "encoder_opens", lambda vcodec, pix_fmt: False, raising=False)
+        cfg = RGBEncoderConfig(vcodec="auto")
+        assert cfg.vcodec == "libsvtav1"
+
+    @require_libsvtav1
+    def test_auto_picks_an_encoder_that_opens(self):
+        """FFmpeg lists ``h264_nvenc`` whenever it was built with NVENC (e.g. on a Jetson, which has no NVENC);
+        ``auto`` must not pick an encoder that then fails in ``avcodec_open2``."""
+        cfg = RGBEncoderConfig(vcodec="auto")
+        ctx = av.codec.CodecContext.create(cfg.vcodec, "w")
+        ctx.width, ctx.height, ctx.pix_fmt, ctx.time_base = 256, 256, cfg.pix_fmt, Fraction(1, 30)
+        ctx.open()
+
+    @require_libsvtav1
+    def test_encoder_opens_for_a_software_encoder(self):
+        assert pyav_utils.encoder_opens("libsvtav1", "yuv420p")
 
     def test_invalid_codec_raises(self):
         with pytest.raises(ValueError, match="Invalid vcodec"):
