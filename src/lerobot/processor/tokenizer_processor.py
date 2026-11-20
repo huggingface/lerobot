@@ -43,7 +43,7 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import _transformers_available
 
-from .pipeline import ActionProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
+from .pipeline import ComplementaryDataProcessorStep, ObservationProcessorStep, ProcessorStepRegistry
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
@@ -336,19 +336,19 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
 @dataclass
 @ProcessorStepRegistry.register(name="action_tokenizer_processor")
-class ActionTokenizerProcessorStep(ActionProcessorStep):
+class ActionTokenizerProcessorStep(ComplementaryDataProcessorStep):
     """
     Processor step to tokenize action data using a fast action tokenizer.
 
-    This step takes action tensors from an `EnvTransition`, tokenizes them using
+    This step reads the action tensor from the `EnvTransition`, tokenizes it using
     a Hugging Face `transformers` AutoProcessor (such as the Physical Intelligence "fast" tokenizer),
-    and returns the tokenized action.
+    and stores the resulting token IDs and mask in the transition's complementary data.
 
     Requires the `transformers` library to be installed.
 
     Attributes:
-        tokenizer_name: The name of a pretrained processor from the Hugging Face Hub (e.g., "lerobot/fast-action-tokenizer").
-        tokenizer: A pre-initialized processor/tokenizer object. If provided, `tokenizer_name` is ignored.
+        action_tokenizer_name: The name of a pretrained processor from the Hugging Face Hub (e.g., "lerobot/fast-action-tokenizer").
+        action_tokenizer_input_object: A pre-initialized processor/tokenizer object. If provided, `action_tokenizer_name` is ignored.
         trust_remote_code: Whether to trust remote code when loading the tokenizer (required for some tokenizers).
         action_tokenizer: The internal tokenizer/processor instance, loaded during initialization.
         paligemma_tokenizer_name: The name of a pretrained PaliGemma tokenizer from the Hugging Face Hub (e.g., "google/paligemma-3b-pt-224").
@@ -404,38 +404,28 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             add_bos_token=False,
         )
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
         """
-        Applies action tokenization to the transition.
-
-        This overrides the base class to handle both tokens and mask.
+        Tokenizes the transition's action and adds the tokens and mask to the complementary data.
 
         Args:
-            transition: The input transition with action data.
+            complementary_data: The input complementary data dictionary.
 
         Returns:
-            The processed transition with tokenized actions and mask in complementary data.
+            The complementary data with tokenized actions and mask added.
         """
-        self._current_transition = transition.copy()
-        new_transition = self._current_transition
-
-        action = new_transition.get(TransitionKey.ACTION)
+        action = self.transition.get(TransitionKey.ACTION)
         if action is None:
             # During inference, no action is available, skip tokenization
-            return new_transition
+            return complementary_data
 
         # Tokenize and get masks for the full formatted sequence and the discrete action codes.
         tokens, mask, code_mask = self._tokenize_action(action)
 
-        # Store mask in complementary data
-        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
-        if complementary_data is None:
-            complementary_data = {}
         complementary_data[ACTION_TOKEN_MASK] = mask
         complementary_data[ACTION_CODE_TOKEN_MASK] = code_mask
         complementary_data[ACTION_TOKENS] = tokens
-        new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
-        return new_transition
+        return complementary_data
 
     def _act_tokens_to_paligemma_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         """
@@ -560,14 +550,6 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
 
         return tokens_batch, masks_batch, code_masks_batch
 
-    def action(self, action: torch.Tensor) -> torch.Tensor:
-        """
-        This method is not used since we override __call__.
-        Required by ActionProcessorStep ABC.
-        """
-        tokens, _, _ = self._tokenize_action(action)
-        return tokens
-
     def get_config(self) -> dict[str, Any]:
         """
         Returns the serializable configuration of the processor.
@@ -604,15 +586,15 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
-        Updates feature definitions to reflect tokenized actions.
+        Returns the policy features unchanged.
 
-        This updates the policy features dictionary to indicate that the action
-        has been tokenized into a sequence of token IDs with shape (max_action_tokens,).
+        The tokenized actions and mask are stored in complementary data, which is not
+        tracked in the policy features dictionary.
 
         Args:
             features: The dictionary of existing policy features.
 
         Returns:
-            The updated dictionary of policy features.
+            The dictionary of policy features, unchanged.
         """
         return features
