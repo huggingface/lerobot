@@ -25,10 +25,10 @@ from numpy.typing import NDArray
 
 from lerobot.datasets.utils import delta_window
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME
 
-from ..scoring import FrameSignals, SignalDescriptor
+from ..scoring import FrameSignals, SignalDescriptor, scoring_options
 from .modeling_sarm import SARMRewardModel
-from .processor_sarm import make_sarm_pre_post_processors
 from .sarm_utils import interpolate_progress
 
 if TYPE_CHECKING:
@@ -56,10 +56,12 @@ class SARMFrameScorer:
 
     name = "sarm"
 
-    def __init__(self, model: SARMRewardModel) -> None:
+    def __init__(self, model: SARMRewardModel, *, batch_size: int = 32) -> None:
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
         self.model = model
+        self.batch_size = batch_size
         self._preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
-        self._preprocessor_dataset: LeRobotDataset | None = None
 
     @property
     def heads(self) -> list[Literal["sparse", "dense"]]:
@@ -85,12 +87,7 @@ class SARMFrameScorer:
             },
             "scorer": {
                 "version": 1,
-                "options": {
-                    "image_key": config.image_key,
-                    "state_key": config.state_key,
-                    "heads": self.heads,
-                    "stride": config.stride,
-                },
+                "options": scoring_options(config),
             },
         }
 
@@ -99,24 +96,31 @@ class SARMFrameScorer:
         """Describe the progress signals for the selected heads."""
         return {_HEAD_SIGNALS[head]: SARM_SIGNAL_DESCRIPTORS[_HEAD_SIGNALS[head]] for head in self.heads}
 
-    def _get_preprocessor(
-        self, dataset: LeRobotDataset
-    ) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
-        # SARM normalizes state with the scored dataset's statistics. Without dataset metadata the
-        # processor needs no subtask annotations, which only training targets use.
-        if self._preprocessor is None or self._preprocessor_dataset is not dataset:
-            preprocessor, _ = make_sarm_pre_post_processors(
-                self.model.config, dataset_stats=dataset.meta.stats
+    def _get_preprocessor(self) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
+        # Normalize state with the statistics SARM was trained with, saved next to the checkpoint,
+        # as `lerobot-eval` does for policies: the scored dataset's statistics change when episodes
+        # are appended, which would change the scores of unchanged episodes.
+        if self._preprocessor is None:
+            config = self.model.config
+            if config.pretrained_path is None:
+                raise ValueError("SARM scoring needs a trained checkpoint: pass --reward_model.path=...")
+            self._preprocessor = PolicyProcessorPipeline.from_pretrained(
+                config.pretrained_path,
+                config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+                revision=config.pretrained_revision,
+                overrides={
+                    "SARMEncodingProcessorStep": {"config": config},
+                    "device_processor": {"device": config.device},
+                },
             )
-            for step in preprocessor.steps:
+            for step in self._preprocessor.steps:
                 if hasattr(step, "eval"):
                     step.eval()
-            self._preprocessor, self._preprocessor_dataset = preprocessor, dataset
         return self._preprocessor
 
     def score_episode(self, dataset: LeRobotDataset, episode_index: int) -> FrameSignals:
         config = self.model.config
-        preprocessor = self._get_preprocessor(dataset)
+        preprocessor = self._get_preprocessor()
         episode = dataset.meta.episodes[episode_index]
         episode_start = int(episode["dataset_from_index"])
         episode_end = int(episode["dataset_to_index"])
@@ -148,8 +152,8 @@ class SARMFrameScorer:
 
         self.model.eval()
         with torch.inference_mode():
-            for start in range(0, len(query_frames), config.scoring_batch_size):
-                chunk = query_frames[start : start + config.scoring_batch_size]
+            for start in range(0, len(query_frames), self.batch_size):
+                chunk = query_frames[start : start + self.batch_size]
                 # Windows are clamped to the episode, as `LeRobotDataset` does for `delta_timestamps`.
                 windows = torch.tensor(
                     [
@@ -194,6 +198,6 @@ class SARMFrameScorer:
         )
 
 
-def make_sarm_frame_scorer(model: SARMRewardModel) -> SARMFrameScorer:
-    """Construct the standard SARM offline frame scorer."""
-    return SARMFrameScorer(model)
+def make_sarm_frame_scorer(model: SARMRewardModel, *, batch_size: int = 32) -> SARMFrameScorer:
+    """Construct the standard SARM offline frame scorer, scoring `batch_size` frames together."""
+    return SARMFrameScorer(model, batch_size=batch_size)

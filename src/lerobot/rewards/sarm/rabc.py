@@ -63,7 +63,7 @@ class RABCWeights(SampleWeighter):
     Args:
         dataset: Dataset containing the scores.
         score_name: Name of the dataset scores.
-        signal_name: Progress signal selected from the sidecar.
+        signal_name: Progress signal selected from the Parquet file of scores.
         chunk_size: Number of frames ahead for computing progress delta.
         kappa: Hard threshold for high-quality samples (default: 0.01).
         epsilon: Small constant for numerical stability (default: 1e-6).
@@ -109,13 +109,17 @@ class RABCWeights(SampleWeighter):
 
         scores = load_scores(
             dataset, score_name, columns=["index", "episode_index", "frame_index", signal_name]
-        )
-        global_indices = np.asarray(scores["index"])
-        frame_indices = np.asarray(scores["frame_index"])
-        progress_values = np.asarray(scores[signal_name])
-        episode_indices = np.asarray(scores["episode_index"])
+        ).with_format("numpy")
+        # Whole-column reads in NumPy format; converting a column with `np.asarray` iterates in Python.
+        global_indices = scores["index"][:]
+        frame_indices = scores["frame_index"][:]
+        progress_values = scores[signal_name][:]
+        episode_indices = scores["episode_index"][:]
         if progress_values.dtype.kind not in "iuf":
             raise ValueError(f"RA-BC signal {signal_name!r} must be numeric")
+        # NaN marks a missing value, but one infinite value would make every weight NaN.
+        if np.isinf(progress_values).any():
+            raise ValueError(f"RA-BC signal {signal_name!r} in scores {score_name!r} has infinite values")
         if np.any((global_indices < 0) | (global_indices >= dataset.meta.total_frames)):
             raise ValueError(
                 f"Scores {score_name!r} no longer align with the dataset's frame range; "
@@ -160,6 +164,19 @@ class RABCWeights(SampleWeighter):
                 "start": int(episode_global_indices.min()),
                 "end": int(episode_global_indices.max()) + 1,
             }
+
+        # Frames of unscored episodes get `fallback_weight`, for example after appending episodes
+        # without scoring them and merging their scores.
+        selected = range(dataset.meta.total_episodes) if dataset.episodes is None else dataset.episodes
+        unscored = sorted(set(selected) - set(self.episode_boundaries))
+        if unscored:
+            logging.warning(
+                "Scores %r have no values for %d episode(s) %s; their frames get weight %s",
+                score_name,
+                len(unscored),
+                unscored[:10],
+                fallback_weight,
+            )
 
         logging.info(f"Loaded {len(self.progress_lookup)} frame progress values")
         logging.info(f"Chunk size for delta computation: {chunk_size}")

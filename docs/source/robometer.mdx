@@ -160,12 +160,13 @@ The preprocessor writes Qwen-VL tensors under the `observation.robometer.*` name
 Install both dataset and ROBOMETER dependencies, then run:
 
 ```bash
-pip install -e ".[dataset,robometer]"
+uv sync --extra dataset --extra robometer
 
 uv run lerobot-score \
     --dataset_repo_id=lerobot/libero_10_image \
     --dataset_root=/path/to/local/dataset \
     --reward_model.path=lerobot/Robometer-4B \
+    --reward_model.image_key=observation.images.image \
     --reward_model.device=cuda
 ```
 

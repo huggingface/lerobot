@@ -126,10 +126,11 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
     weighting = migrated_config.get("sample_weighting")
     if weighting and weighting.get("type", "rabc") == "rabc" and not weighting.get("score_name"):
         logging.warning(
-            f"Loaded a {TRAIN_CONFIG_NAME} whose RA-BC read a progress file, which LeRobot no longer reads. "
+            "Loaded a %s whose RA-BC read a progress file, which LeRobot no longer reads. "
             "Score the dataset with `lerobot-score`, then pass `--sample_weighting.score_name` and "
             "`--sample_weighting.signal_name`, e.g. `--sample_weighting.score_name=sarm "
-            "--sample_weighting.signal_name=reward.sarm.sparse_progress`."
+            "--sample_weighting.signal_name=reward.sarm.sparse_progress`.",
+            TRAIN_CONFIG_NAME,
         )
     return migrated_config
 

@@ -108,6 +108,7 @@ class MergeWorkerScores(PipelineStep):
         from lerobot.datasets import LeRobotDataset
         from lerobot.datasets.scores import (
             list_scores,
+            load_scores,
             merge_scores,
             push_scores_to_hub,
         )
@@ -122,6 +123,18 @@ class MergeWorkerScores(PipelineStep):
         worker_scores = [name for name in list_scores(dataset) if name.startswith(f"{self.score_name}-rank")]
         if not worker_scores:
             raise ValueError(f"No worker scores named {self.score_name}-rank* in {dataset.root}")
+        # A failed worker leaves its episodes unscored; RA-BC would give their frames full weight.
+        scored = set()
+        for name in worker_scores:
+            scored.update(
+                load_scores(dataset, name, columns=["episode_index"], download=False)["episode_index"]
+            )
+        missing = sorted(set(range(dataset.meta.total_episodes)) - scored)
+        if missing:
+            raise RuntimeError(
+                f"Worker scores have no values for {len(missing)} episode(s), first {missing[:10]}; "
+                "rerun the compute step to resume the failed workers"
+            )
         logging.info(f"Merging {len(worker_scores)} worker scores into {self.score_name!r}")
         merge_scores(dataset, worker_scores, name=self.score_name)
 

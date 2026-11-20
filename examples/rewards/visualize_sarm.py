@@ -43,8 +43,8 @@ from tqdm import tqdm
 
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
-from lerobot.rewards.sarm.processor_sarm import make_sarm_pre_post_processors
 from lerobot.rewards.sarm.sarm_utils import interpolate_progress, normalize_stage_tau
+from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
@@ -85,10 +85,14 @@ def load_sarm_resources(
     dataset = LeRobotDataset(dataset_repo_id, delta_timestamps=delta_timestamps)
     logging.info(f"Dataset: {dataset.num_episodes} episodes, {dataset.num_frames} frames")
 
-    preprocess, _ = make_sarm_pre_post_processors(
-        config=reward_model.config,
-        dataset_stats=dataset.meta.stats,
-        dataset_meta=dataset.meta,
+    # Normalize with the statistics saved with the checkpoint, as `lerobot-score` does. The dataset
+    # metadata provides the ground-truth stage annotations.
+    preprocess = PolicyProcessorPipeline.from_pretrained(
+        reward_model_path,
+        config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+        overrides={
+            "SARMEncodingProcessorStep": {"config": reward_model.config, "dataset_meta": dataset.meta}
+        },
     )
 
     return dataset, reward_model, preprocess
@@ -205,7 +209,7 @@ def visualize_sarm_predictions(
     Args:
         dataset: LeRobotDataset with delta_timestamps configured
         reward_model: Loaded SARM model
-        preprocess: Preprocessor from make_sarm_pre_post_processors
+        preprocess: SARM preprocessor loaded from the checkpoint
         episode_indices: List of episode indices to visualize
         head_mode: "sparse", "dense", or "both"
         output_dir: Directory to save visualizations

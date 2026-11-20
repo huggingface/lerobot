@@ -55,6 +55,7 @@ class FakeScoreDataset:
                 if episode == episode_index
             ]
             episodes.append({"dataset_from_index": min(indices), "dataset_to_index": max(indices) + 1})
+        self.episodes = None
         self.meta = SimpleNamespace(
             total_frames=max(scores["index"]) + 1,
             total_episodes=max(episode_indices) + 1,
@@ -403,7 +404,7 @@ def test_rabc_get_stats(sample_score_dataset):
 
 
 def test_rabc_accepts_namespaced_signal():
-    """Shared scoring sidecars can select a progress signal explicitly."""
+    """Parquet files written by `score_dataset` can select a progress signal explicitly."""
     from lerobot.rewards.sarm.rabc import RABCWeights
 
     scores = datasets.Dataset.from_dict(
@@ -477,6 +478,37 @@ def test_rabc_rejects_signals_without_higher_is_better(greater_is_better, score_
             chunk_size=1,
         )
     score_loaders[1].assert_not_called()
+
+
+def test_rabc_warns_about_episodes_without_scores(sample_score_dataset, caplog):
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    # Two episodes are scored; episode 2 was appended to the dataset but not scored.
+    sample_score_dataset.meta.total_episodes = 3
+
+    RABCWeights(dataset=sample_score_dataset, score_name="sarm", signal_name="progress_sparse", chunk_size=1)
+
+    assert "no values for 1 episode(s) [2]" in caplog.text
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf")])
+def test_rabc_rejects_infinite_progress(value):
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    scores = datasets.Dataset.from_dict(
+        {
+            "index": [0, 1, 2],
+            "episode_index": [0, 0, 0],
+            "frame_index": [0, 1, 2],
+            "progress": [0.0, value, 1.0],
+        }
+    )
+    dataset = FakeScoreDataset(
+        scores, {"progress": SignalDescriptor(description="Task progress.", greater_is_better=True)}
+    )
+
+    with pytest.raises(ValueError, match="infinite values"):
+        RABCWeights(dataset=dataset, score_name="sarm", signal_name="progress", chunk_size=1)
 
 
 def test_factory_creates_rabc_weighter(sample_score_dataset):

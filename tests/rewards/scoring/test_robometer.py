@@ -110,12 +110,16 @@ def test_make_robometer_frame_scorer_builds_processor_without_frame_cap(monkeypa
     assert config.max_frames == 8
 
 
-@pytest.mark.parametrize("option", ["num_subsampled_frames", "scoring_batch_size"])
-def test_robometer_config_rejects_invalid_scoring_options(option: str):
+def test_robometer_config_rejects_invalid_num_subsampled_frames():
     from lerobot.rewards.robometer import RobometerConfig
 
-    with pytest.raises(ValueError, match=option):
-        RobometerConfig(device="cpu", **{option: 0})
+    with pytest.raises(ValueError, match="num_subsampled_frames"):
+        RobometerConfig(device="cpu", num_subsampled_frames=0)
+
+
+def test_robometer_frame_scorer_rejects_invalid_batch_size():
+    with pytest.raises(ValueError, match="batch_size"):
+        RobometerFrameScorer(SimpleNamespace(config=None), _make_preprocessor(), batch_size=0)
 
 
 @pytest.mark.parametrize("task_key", ["task", "missing_task"])
@@ -143,7 +147,6 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
             pretrained_path="test/robometer",
             pretrained_revision="model-revision",
             num_subsampled_frames=2,
-            scoring_batch_size=2,
         )
 
         def eval(self):
@@ -160,7 +163,7 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     dataset = FakeDataset()
     model = FakeModel()
     preprocessor = _make_preprocessor(task_key=task_key)
-    scorer = RobometerFrameScorer(model, preprocessor)
+    scorer = RobometerFrameScorer(model, preprocessor, batch_size=2)
 
     result = scorer.score_episode(dataset, episode_index=0)
 
@@ -175,18 +178,6 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     task = {"task": "pick up the cube", "instruction": "custom task at frame 0"}.get(task_key)
     assert preprocessor.steps[0].tasks == [task, task]
     assert scorer.name == "robometer"
-    assert scorer.provenance == {
-        "model": {"type": "robometer", "id": "test/robometer", "revision": "model-revision"},
-        "scorer": {
-            "version": 1,
-            "options": {
-                "image_key": image_key,
-                "task_key": task_key,
-                "default_task": None,
-                "num_subsampled_frames": 2,
-            },
-        },
-    }
 
     episode_frames = torch.stack([dataset[index][image_key] for index in range(3)])
     prefix_batch = torch.stack([episode_frames[indices] for indices in _build_subsample_indices(3, 2)])
@@ -199,6 +190,25 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
         result.signals[SUCCESS_PROBABILITY_SIGNAL],
         direct.success_probability[:, -1].numpy(),
     )
+
+
+def test_robometer_frame_scorer_provenance_records_settings_that_change_the_scores():
+    from lerobot.rewards.robometer import RobometerConfig
+
+    config = RobometerConfig(
+        device="cpu",
+        pretrained_path="test/robometer",
+        pretrained_revision="model-revision",
+        num_subsampled_frames=2,
+    )
+
+    provenance = RobometerFrameScorer(SimpleNamespace(config=config), _make_preprocessor()).provenance
+
+    assert provenance["model"] == {"type": "robometer", "id": "test/robometer", "revision": "model-revision"}
+    options = provenance["scorer"]["options"]
+    assert options["num_subsampled_frames"] == 2
+    assert options["frame_pooling"] == config.frame_pooling
+    assert not {"device", "pretrained_path"} & set(options)
 
 
 @pytest.mark.parametrize("filtered", [False, True])
@@ -227,9 +237,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(filtered
             }
 
     class FakeModel:
-        config = SimpleNamespace(
-            image_key=image_key, task_key="task", num_subsampled_frames=2, scoring_batch_size=32
-        )
+        config = SimpleNamespace(image_key=image_key, task_key="task", num_subsampled_frames=2)
 
         def eval(self):
             return self
@@ -273,16 +281,15 @@ def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):
         def __getitem__(self, index: int):
             return {image_key: torch.full((3, 2, 2), float(index)), "task": "pick up the cube"}
 
+    from lerobot.rewards.robometer import RobometerConfig
+
     class FakeModel:
-        config = SimpleNamespace(
-            type="robometer",
+        config = RobometerConfig(
+            device="cpu",
             image_key=image_key,
-            task_key="task",
-            default_task=None,
             pretrained_path="test/robometer",
             pretrained_revision="model-revision",
             num_subsampled_frames=2,
-            scoring_batch_size=2,
         )
 
         def eval(self):
@@ -295,7 +302,7 @@ def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):
                 success_probability=progress / 2.0,
             )
 
-    scorer = RobometerFrameScorer(FakeModel(), _make_preprocessor())
+    scorer = RobometerFrameScorer(FakeModel(), _make_preprocessor(), batch_size=2)
     dataset = FakeDataset()
     score_dataset(dataset, scorer)
 

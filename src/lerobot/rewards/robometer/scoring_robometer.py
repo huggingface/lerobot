@@ -25,7 +25,7 @@ from numpy.typing import NDArray
 
 from lerobot.processor import PolicyProcessorPipeline
 
-from ..scoring import FrameSignals, SignalDescriptor
+from ..scoring import FrameSignals, SignalDescriptor, scoring_options
 from .modeling_robometer import RobometerRewardModel
 from .processor_robometer import make_robometer_pre_post_processors
 
@@ -52,7 +52,8 @@ ROBOMETER_SIGNAL_DESCRIPTORS = {
 def _build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> list[np.ndarray]:
     """For each frame, pick ``num_subsampled_frames`` indices spread over the prefix ending at it.
 
-    Indices are truncated, not rounded, as in RoboMeter's own frame-step evaluation.
+    Indices are truncated, not rounded, as in RoboMeter's own frame-step evaluation
+    (`robometer/evals/eval_server.py`).
     """
     return [
         np.linspace(0, frame_index, num_subsampled_frames, dtype=np.int64)
@@ -69,9 +70,14 @@ class RobometerFrameScorer:
         self,
         model: RobometerRewardModel,
         preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+        *,
+        batch_size: int = 32,
     ) -> None:
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
         self.model = model
         self.preprocessor = preprocessor
+        self.batch_size = batch_size
 
     @property
     def descriptors(self) -> dict[str, SignalDescriptor]:
@@ -90,12 +96,7 @@ class RobometerFrameScorer:
             },
             "scorer": {
                 "version": 1,
-                "options": {
-                    "image_key": config.image_key,
-                    "task_key": config.task_key,
-                    "default_task": config.default_task,
-                    "num_subsampled_frames": config.num_subsampled_frames,
-                },
+                "options": scoring_options(config),
             },
         }
 
@@ -120,8 +121,8 @@ class RobometerFrameScorer:
 
         self.model.eval()
         with torch.inference_mode():
-            for start in range(0, num_frames, config.scoring_batch_size):
-                end = min(start + config.scoring_batch_size, num_frames)
+            for start in range(0, num_frames, self.batch_size):
+                end = min(start + self.batch_size, num_frames)
                 # Each batch item is the prefix ending at one target frame.
                 prefixes = torch.stack(
                     [episode_frames[subsample_indices[frame]] for frame in range(start, end)]
@@ -140,8 +141,8 @@ class RobometerFrameScorer:
         )
 
 
-def make_robometer_frame_scorer(model: RobometerRewardModel) -> RobometerFrameScorer:
-    """Construct the standard RoboMeter offline frame scorer."""
+def make_robometer_frame_scorer(model: RobometerRewardModel, *, batch_size: int = 32) -> RobometerFrameScorer:
+    """Construct the standard RoboMeter offline frame scorer, scoring `batch_size` target frames together."""
     # Each prefix is already sub-sampled, so the processor must not crop it to `max_frames`.
     preprocessor, _ = make_robometer_pre_post_processors(replace(model.config, max_frames=None))
-    return RobometerFrameScorer(model, preprocessor)
+    return RobometerFrameScorer(model, preprocessor, batch_size=batch_size)

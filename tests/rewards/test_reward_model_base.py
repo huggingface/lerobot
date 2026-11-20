@@ -174,26 +174,17 @@ def _topreward_config(**kwargs):
 @pytest.mark.parametrize(
     ("make_config", "scoring_options"),
     [
-        (_robometer_config, {"num_subsampled_frames": 2, "scoring_batch_size": 8}),
-        (_sarm_config, {"head_mode": "both", "stride": 5, "scoring_batch_size": 8}),
+        (_robometer_config, {"num_subsampled_frames": 2}),
+        (_sarm_config, {"head_mode": "both", "stride": 5}),
         (_topreward_config, {"num_samples": 3}),
     ],
     ids=["robometer", "sarm", "topreward"],
 )
-def test_saved_reward_model_configs_leave_out_scoring_options(tmp_path, make_config, scoring_options):
+def test_saved_reward_model_configs_keep_scoring_options(tmp_path, make_config, scoring_options):
     make_config(**scoring_options).save_pretrained(tmp_path)
 
-    saved = json.loads((tmp_path / "config.json").read_text())
-    assert not set(scoring_options) & set(saved)
     loaded = RewardModelConfig.from_pretrained(tmp_path)
-    defaults = make_config()
-    assert {name: getattr(loaded, name) for name in scoring_options} == {
-        name: getattr(defaults, name) for name in scoring_options
-    }
-    overridden = RewardModelConfig.from_pretrained(
-        tmp_path, cli_overrides=[f"--{name}={value}" for name, value in scoring_options.items()]
-    )
-    assert {name: getattr(overridden, name) for name in scoring_options} == scoring_options
+    assert {name: getattr(loaded, name) for name in scoring_options} == scoring_options
 
 
 def test_make_frame_scorer_uses_reward_model_naming_convention(monkeypatch):
@@ -207,8 +198,8 @@ def test_make_frame_scorer_uses_reward_model_naming_convention(monkeypatch):
     expected = object()
     captured = {}
 
-    def make_plugin_frame_scorer(*, model):
-        captured.update(model=model)
+    def make_plugin_frame_scorer(*, model, batch_size):
+        captured.update(model=model, batch_size=batch_size)
         return expected
 
     def import_module(name):
@@ -217,10 +208,10 @@ def test_make_frame_scorer_uses_reward_model_naming_convention(monkeypatch):
 
     monkeypatch.setattr(reward_factory.importlib, "import_module", import_module)
 
-    scorer = reward_factory.make_frame_scorer(model)
+    scorer = reward_factory.make_frame_scorer(model, batch_size=4)
 
     assert scorer is expected
-    assert captured == {"module": "example.scoring_plugin", "model": model}
+    assert captured == {"module": "example.scoring_plugin", "model": model, "batch_size": 4}
 
 
 def test_make_frame_scorer_preserves_nested_import_errors(monkeypatch):
