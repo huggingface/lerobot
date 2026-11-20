@@ -68,7 +68,7 @@ FineART-VLA is a single end-to-end policy from Scale AI and Hugging Face that ex
 NAT VLA is a vision-language-action model built on LFM2-VL that writes robot actions as NAT action tokens.
 
 > [!IMPORTANT]
-> This checkpoint is a derivative work of LFM2-VL and is licensed under the [LFM Open License v1.0](https://huggingface.co/LiquidAI/LFM2-VL-450M/blob/main/LICENSE), not Apache-2.0.
+> This checkpoint is a derivative work of LFM2-VL and is licensed under the [LFM Open License v1.0](https://huggingface.co/LiquidAI/LFM2-VL-450M/blob/main/LICENSE), not Apache-2.0. Commercial use is licensed only to organizations with under $10M in annual revenue, and redistributions must include a copy of the license.
 {% elif model_name == "cosmos3_nano" or model_name == "cosmos3_edge" %}
 [Cosmos3](https://research.nvidia.com/labs/cosmos-lab/cosmos3/) is a world action model for robot control, built on NVIDIA's Cosmos 3 omnimodal world models. Its Mixture-of-Transformers backbone jointly predicts the future video frames and the next robot action chunk from camera observations and a language instruction, with flow matching over the Wan2.2 VAE latents and the actions.
 {% else %}

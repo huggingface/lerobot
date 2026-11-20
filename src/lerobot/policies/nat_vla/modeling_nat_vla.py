@@ -1,4 +1,4 @@
-# Copyright 2026 Ahad Jawaid. All rights reserved.
+# Copyright 2026 Ahad Jawaid and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,8 +16,9 @@
 
 import json
 import threading
+from collections.abc import Callable
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from safetensors.torch import load_file, load_model
@@ -44,8 +45,10 @@ class NATVLAPolicy(PreTrainedPolicy):
     config_class = NATVLAConfig
     name = "nat_vla"
     _fsdp_wrap_modules = ["Lfm2DecoderLayer", "Siglip2EncoderLayer"]
+    _stream: "ActionStreamHook | None"
+    _next_stream: "ActionStreamHook | None"
 
-    def __init__(self, config: NATVLAConfig, **kwargs):
+    def __init__(self, config: NATVLAConfig, **kwargs: Any) -> None:
         require_package("transformers", extra="nat_vla")
         super().__init__(config)
         config.validate_features()
@@ -95,14 +98,20 @@ class NATVLAPolicy(PreTrainedPolicy):
 
         if starts_from_pretrained:
             weights = downloaded(config.vlm, ["model.safetensors"], config.vlm_revision) / "model.safetensors"
-            load_model(self, weights)
+            del self.action_tokenizer  # the configured NAT tokenizer stays, not the one saved with the VLA
+            missing, unexpected = load_model(self, weights, strict=False)
+            self.action_tokenizer = tokenizer
+            if missing or any(not name.startswith("action_tokenizer.") for name in unexpected):
+                raise RuntimeError(
+                    f"{config.vlm} has no NAT VLA weights: missing {missing}, unexpected {unexpected}"
+                )
         self.reset()
 
     @property
     def device(self) -> torch.device:
         return self.vlm.device
 
-    def reset(self):
+    def reset(self) -> None:
         for stream in (getattr(self, "_stream", None), getattr(self, "_next_stream", None)):
             if stream is not None:
                 stream.thread.join()
@@ -192,25 +201,26 @@ class NATVLAPolicy(PreTrainedPolicy):
         rtc_steps, the next chunk is generated while the current chunk's last rtc_steps actions run, starting
         with their tokens."""
         steps_per_chunk, rtc_steps = self.config.n_action_steps, self.config.rtc_steps
-        if self._chunk_step == self._chunk_end_step:
-            if self._next_stream is None:
+        if self._stream is None or self._chunk_step == self._chunk_end_step:
+            if self._stream is None or self._next_stream is None:
                 self.reset()
                 self._stream = self.stream_action_chunk(batch, steps_per_chunk)
             else:
                 self._stream.thread.join()
                 self._stream, self._next_stream, self._chunk_step = self._next_stream, None, rtc_steps
             self._chunk_end_step = self._chunk_step + steps_per_chunk
+        stream = self._stream
 
         if rtc_steps and self._chunk_step == self._chunk_end_step - rtc_steps:
             executing_steps = range(self._chunk_step, self._chunk_end_step)
-            executing_actions = torch.stack([self._stream.action(step) for step in executing_steps], 1)
-            self._stream.thread.join()
+            executing_actions = torch.stack([stream.action(step) for step in executing_steps], 1)
+            stream.thread.join()
             self._next_stream = self.stream_action_chunk(
                 batch, rtc_steps + steps_per_chunk, executing_actions
             )
 
         self._chunk_step += 1
-        return self._stream.action(self._chunk_step - 1)
+        return stream.action(self._chunk_step - 1)
 
     def stream_action_chunk(
         self, batch: dict[str, Tensor], steps: int, executing_actions: Tensor | None = None
@@ -258,14 +268,15 @@ class ActionStreamHook(BaseStreamer):
     tokenizer's streaming decoder and keeps the decoded actions for action(step), which waits until that step
     is decoded."""
 
-    def __init__(self, decoder: StreamingDecoder, first_action_token: int):
+    def __init__(self, decoder: StreamingDecoder, first_action_token: int) -> None:
         self.decoder, self.first_action_token = decoder, first_action_token
         self.first_step, self.prompt_seen = decoder.decoded_steps, False
         self.actions: list[Tensor] = []
-        self.error, self.finished, self.arrived = None, False, threading.Condition()
+        self.error: BaseException | None = None
+        self.finished, self.arrived = False, threading.Condition()
 
-    def start(self, generate, device: torch.device):
-        def generated():
+    def start(self, generate: Callable[..., Any], device: torch.device) -> None:
+        def generated() -> None:
             try:
                 generate(streamer=self)
             except BaseException as error:
@@ -277,7 +288,7 @@ class ActionStreamHook(BaseStreamer):
         self.device, self.thread = device, threading.Thread(target=generated)
         self.thread.start()
 
-    def put(self, value: Tensor):
+    def put(self, value: Tensor) -> None:
         if not self.prompt_seen:
             self.prompt_seen = True
             return
@@ -288,7 +299,7 @@ class ActionStreamHook(BaseStreamer):
                 self.actions.extend(actions.unbind(1))
                 self.arrived.notify_all()
 
-    def end(self):
+    def end(self) -> None:
         pass
 
     def action(self, step: int) -> Tensor:
@@ -301,7 +312,9 @@ class ActionStreamHook(BaseStreamer):
         return self.actions[step - self.first_step]
 
 
-def lstm_weights_copy_hook(module, state_dict, prefix, local_metadata):
+def lstm_weights_copy_hook(
+    module: torch.nn.Module, state_dict: dict[str, Tensor], prefix: str, local_metadata: dict[str, Any]
+) -> None:
     """State-dict hook: on the GPU the LSTM's weights are views of one flat buffer, which safetensors refuses
     to save."""
     for name in [name for name in state_dict if name.startswith(f"{prefix}encoder.lstm.")]:

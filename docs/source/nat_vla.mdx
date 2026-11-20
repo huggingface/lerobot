@@ -25,43 +25,49 @@ Add `libero` to train or evaluate on LIBERO.
 
 ## Fine-tune
 
-`--policy.type=nat_vla` starts from the weights of the pretrained NAT VLA in `--policy.vlm` (by default `ahad-j/nat-vla-450m`):
+`--policy.type=nat_vla` starts from the weights of the pretrained NAT VLA in `--policy.vlm` (by default `ahad-j/nat-vla-450m`). For example, on LIBERO:
 
 ```bash
 lerobot-train \
   --policy.type=nat_vla \
-  --policy.setup="single so100 robotic arm" \
-  --policy.control_mode="absolute joint pose" \
-  --policy.repo_id=${HF_USER}/nat_vla_so100 \
-  --dataset.repo_id=<your/dataset> \
-  --output_dir=outputs/nat_vla_so100
+  --policy.setup="single franka robotic arm in libero" \
+  --policy.control_mode="delta end-effector pose" \
+  --policy.repo_id=${HF_USER}/nat_vla_libero \
+  --dataset.repo_id=lerobot/libero \
+  --batch_size=64 \
+  --steps=50000 \
+  --output_dir=outputs/nat_vla_libero
 ```
 
-`setup` and `control_mode` describe the robot in the prompt. The NAT tokenizer encodes actions in [-1, 1], so actions use min-max normalization (the config rejects other modes). With the default normalization, the dataset's statistics need `min` and `max` for `action` and `q01` and `q99` for `observation.state`. The model runs in `bfloat16` by default (`--policy.dtype` changes it); the NAT tokenizer always runs in `float32`. To continue from a fine-tuned checkpoint, use `--policy.path` instead of `--policy.type`; a new `setup`, `control_mode` or set of cameras replaces the checkpoint's in the prompt.
+The paper fine-tunes with batch 64 for 50,000 steps. Batch 64 needs more than 24 GB of GPU memory: on a 24 GB GPU such as an RTX 4090, use `--batch_size=16 --accelerator.gradient_accumulation.steps=4` for the same effective batch (about 18 GB, 0.37 s per step) with `--steps=200000`, since `--steps` counts batches of 16. For your own robot, change `--dataset.repo_id`, and `--policy.setup` and `--policy.control_mode`, which describe the robot in the prompt.
+
+The NAT tokenizer encodes actions in [-1, 1], so actions use min-max normalization (the config rejects other modes). With the default normalization, the dataset's statistics need `min` and `max` for `action` and `q01` and `q99` for `observation.state`. The model runs in `bfloat16` by default (`--policy.dtype` changes it); the NAT tokenizer always runs in `float32`. To continue from a fine-tuned checkpoint, use `--policy.path` instead of `--policy.type`; a new `setup`, `control_mode` or set of cameras replaces the checkpoint's in the prompt.
 
 ## Evaluate
 
-Evaluate a LIBERO fine-tune in simulation, mapping the environment's camera names to the ones the checkpoint was trained with:
+Evaluate the LIBERO fine-tune in simulation:
 
 ```bash
 lerobot-eval \
   --policy.path=outputs/nat_vla_libero/checkpoints/last/pretrained_model \
   --env.type=libero \
-  --env.task=libero_spatial \
-  --rename_map='{"observation.images.image2": "observation.images.wrist_image"}'
+  --env.task=libero_spatial
 ```
 
 ## Deploy with real-time chunking
 
-Token-prefix real-time chunking works with each `lerobot-rollout` inference backend, for actions the tokenizer encodes in a single group:
+Token-prefix real-time chunking works with each `lerobot-rollout` inference backend. With the default tokenizer, it needs actions of at most 7 dimensions, and `rtc_steps` can be 8, 16 or 24; another tokenizer lists its values in `prefix_token_counts`.
 
-- **Synchronous** (`--inference.type=sync`, the default): with `--policy.rtc_steps` set to a number of steps the tokenizer's latents cover exactly (a key of its `prefix_token_counts`), `select_action` generates the next chunk in the background while the current chunk's last `rtc_steps` actions run, starting from their tokens. It needs `rtc_steps <= n_action_steps <= chunk_size - rtc_steps`.
-- **Asynchronous** (`--inference.type=rtc`) and **remote** (a [policy server](./remote_inference) serving `rtc_guided`, with `--inference.mode=rtc_guided` on the client): the inference engine passes `predict_action_chunk` the number of steps that run during inference (`inference_delay`) and the rest of the previous chunk, and the new chunk starts from the tokens of the fewest whole latents that cover the delay. Keep `--inference.rtc.execution_horizon` at least that long. The guidance settings do not apply.
+- **Synchronous** (`--inference.type=sync`, the default): with `--policy.rtc_steps`, `select_action` generates the next chunk in the background while the current chunk's last `rtc_steps` actions run, starting from their tokens. It needs `rtc_steps <= n_action_steps <= chunk_size - rtc_steps`.
+- **Asynchronous** (`--inference.type=rtc`) and **remote** (a [policy server](./remote_inference) serving `rtc_guided`, with `--inference.mode=rtc_guided` on the client): the inference engine passes `predict_action_chunk` the number of steps that run during inference (`inference_delay`) and the rest of the previous chunk, and the new chunk starts from the tokens of the smallest of those step counts that covers the delay. Keep `--inference.rtc.execution_horizon` at least that long. The guidance settings do not apply.
+
+Deploy a checkpoint fine-tuned on your robot, here an SO-100:
 
 ```bash
 lerobot-rollout \
   --policy.path=${HF_USER}/nat_vla_so100 \
-  --policy.rtc_steps=<steps> \
+  --policy.n_action_steps=16 \
+  --policy.rtc_steps=8 \
   --robot.type=so100_follower \
   --robot.port=/dev/ttyACM0 \
   --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
@@ -69,7 +75,7 @@ lerobot-rollout \
   --duration=60
 ```
 
-or, with the asynchronous engine, `--inference.type=rtc --inference.rtc.execution_horizon=<steps>` in place of `--policy.rtc_steps`.
+or, with the asynchronous engine, `--inference.type=rtc --inference.rtc.execution_horizon=16` in place of `--policy.n_action_steps=16 --policy.rtc_steps=8`.
 
 ## Another NAT tokenizer
 
@@ -79,4 +85,4 @@ Hub downloads are pinned to the commits in `--policy.vlm_revision` and `--policy
 
 ## License
 
-The code is under the Apache License 2.0. The checkpoint is a derivative of LFM2-VL and is released under the LFM Open License v1.0.
+The code is under the Apache License 2.0. The checkpoint is a derivative of LFM2-VL and is released under the LFM Open License v1.0: commercial use is licensed only to organizations with under $10M in annual revenue, and redistributions must include a copy of the license.

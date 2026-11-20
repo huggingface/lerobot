@@ -1,4 +1,4 @@
-# Copyright 2026 Ahad Jawaid. All rights reserved.
+# Copyright 2026 Ahad Jawaid and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -129,13 +129,13 @@ class NATVLATokenizerProcessorStep(ComplementaryDataProcessorStep):
     _processor: Any = field(default=None, init=False, repr=False)
     _vocabulary: Any = field(default=None, init=False, repr=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         require_package("transformers", extra="nat_vla")
         self._processor = AutoProcessor.from_pretrained(self.processor_dir)
         self._vocabulary = Vocabulary(self.text_vocabulary_size, self.state_bins, action_tokens=0)
 
-    def complementary_data(self, complementary_data):
-        observation = self.transition[TransitionKey.OBSERVATION]
+    def complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
+        observation = self.transition[TransitionKey.OBSERVATION] or {}
         tasks = complementary_data["task"]
         cameras = [(observation[key] * 255).round().clamp(0, 255).to(torch.uint8) for key in self.camera_keys]
         frames = [camera[sample] for sample in range(len(tasks)) for camera in cameras]
@@ -219,7 +219,7 @@ class Vocabulary:
     """Token ids of the VLM's text vocabulary followed by the added ones: prompt markers, state bins and NAT
     action tokens."""
 
-    def __init__(self, text_vocabulary_size: int, state_bins: int, action_tokens: int):
+    def __init__(self, text_vocabulary_size: int, state_bins: int, action_tokens: int) -> None:
         start = text_vocabulary_size
         self.setup_start, self.setup_end, self.control_start, self.control_end = range(start, start + 4)
         self.state_start, self.state_end, self.first_state_bin = range(start + 4, start + 7)

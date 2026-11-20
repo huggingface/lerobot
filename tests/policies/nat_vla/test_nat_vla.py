@@ -1,4 +1,4 @@
-# Copyright 2026 Ahad Jawaid. All rights reserved.
+# Copyright 2026 Ahad Jawaid and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -207,7 +207,16 @@ def test_vocabulary_ids_follow_the_text_vocabulary_in_the_pretraining_order(poli
 def test_policy_type_starts_from_the_pretrained_weights(make_config):
     pretrained_weights = load_file(f"{make_config().vlm}/model.safetensors")
     state = NATVLAPolicy(make_config()).state_dict()
-    assert all(torch.equal(state[name], tensor) for name, tensor in pretrained_weights.items())
+    vlm_weights = {name: tensor for name, tensor in pretrained_weights.items() if name.startswith("vlm.")}
+    assert vlm_weights and all(torch.equal(state[name], tensor) for name, tensor in vlm_weights.items())
+
+
+def test_policy_type_keeps_the_configured_action_tokenizer(make_config, tmp_path):
+    torch.manual_seed(1)
+    configured = tokenizer_folder(tmp_path / "tokenizer", TOKENIZER)
+    state = NATVLAPolicy(make_config(action_tokenizer=str(configured))).action_tokenizer.state_dict()
+    configured_weights = load_file(configured / "model.safetensors")
+    assert all(torch.equal(state[name], tensor) for name, tensor in configured_weights.items())
 
 
 def test_the_preprocessor_writes_the_prompt_tokens_and_image_inputs(policy, preprocessor):

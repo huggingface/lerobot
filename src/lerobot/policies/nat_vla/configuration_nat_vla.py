@@ -1,4 +1,4 @@
-# Copyright 2026 Ahad Jawaid. All rights reserved.
+# Copyright 2026 Ahad Jawaid and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -67,7 +67,7 @@ class NATVLAConfig(PreTrainedConfig):
     scheduler_decay_steps: int = 50_000
     scheduler_decay_lr: float = 5e-6
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         super().__post_init__()
         if self.normalization_mapping.get("ACTION") != NormalizationMode.MIN_MAX:
             raise ValueError(

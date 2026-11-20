@@ -1,4 +1,4 @@
-# Copyright 2026 Ahad Jawaid. All rights reserved.
+# Copyright 2026 Ahad Jawaid and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 """NAT tokenizer: action chunks to time-ordered tokens and back."""
 
 import math
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -26,7 +27,7 @@ class NATTokenizer(nn.Module):
     groups of columns, each tokenized on its own, and their tokens concatenated. prefix_token_counts maps a
     number of steps to the tokens of one group that decode them."""
 
-    def __init__(self, config):
+    def __init__(self, config: dict[str, Any]) -> None:
         super().__init__()
         encoder, quantizer = config["encoder"], config["quantizer"]
         self.time_horizon, self.group_width = config["time_horizon"], config["group_width"]
@@ -114,7 +115,7 @@ class StreamingDecoder:
     tokens complete a latent, it returns that latent's actions. A chunk can start from first_tokens, whose
     actions are not returned."""
 
-    def __init__(self, tokenizer: NATTokenizer, action_dim: int, first_tokens: Tensor | None = None):
+    def __init__(self, tokenizer: NATTokenizer, action_dim: int, first_tokens: Tensor | None = None) -> None:
         self.tokenizer, self.action_dim, self.tokens = tokenizer, action_dim, first_tokens
         counts = (tokenizer.token_count(steps, action_dim) for steps in tokenizer.prefix_token_counts)
         self.steps_after_tokens = dict(counts)
@@ -133,7 +134,7 @@ class StreamingDecoder:
 
 
 class ActionEncoder(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: dict[str, Any]) -> None:
         super().__init__()
         filters = config["filters"]
         self.input_conv = CausalConv1d(config["channels"], filters, config["kernel_size"])
@@ -146,7 +147,7 @@ class ActionEncoder(nn.Module):
         self.lstm = nn.LSTM(filters, filters, config["lstm_layers"])
         self.output_conv = CausalConv1d(filters, config["latent_dim"], config["last_kernel_size"])
 
-    def forward(self, actions):
+    def forward(self, actions: Tensor) -> Tensor:
         hidden = self.input_conv(actions)
         for stage in self.stages:
             hidden = stage(hidden)
@@ -155,7 +156,7 @@ class ActionEncoder(nn.Module):
 
 
 class EncoderStage(nn.Module):
-    def __init__(self, channels, compress, kernel_size, ratio):
+    def __init__(self, channels: int, compress: int, kernel_size: int, ratio: int) -> None:
         super().__init__()
         self.residual = nn.ModuleDict(
             {
@@ -166,7 +167,7 @@ class EncoderStage(nn.Module):
         )
         self.downsample = CausalConv1d(channels, 2 * channels, 2 * ratio, stride=ratio)
 
-    def forward(self, hidden):
+    def forward(self, hidden: Tensor) -> Tensor:
         unit = self.residual
         hidden = unit.shortcut(hidden) + unit.projection(functional.elu(unit.conv(functional.elu(hidden))))
         return self.downsample(functional.elu(hidden))
@@ -175,7 +176,7 @@ class EncoderStage(nn.Module):
 class CausalConv1d(nn.Conv1d):
     """Zero-pads the input on the left, so each output sees only current and earlier steps."""
 
-    def forward(self, hidden):
+    def forward(self, hidden: Tensor) -> Tensor:
         kernel, stride = (self.kernel_size[0] - 1) * self.dilation[0] + 1, self.stride[0]
         frames = math.ceil((hidden.shape[-1] - stride) / stride + 1)
         right = (frames - 1) * stride + stride - hidden.shape[-1]
@@ -186,7 +187,7 @@ class MultiScaleFSQ(nn.Module):
     """Residual FSQ at several time scales. Tokens are ordered by the first latent they cover, so a prefix
     of whole latents decodes on its own."""
 
-    def __init__(self, latent_dim, levels, scales, latents):
+    def __init__(self, latent_dim: int, levels: list[int], scales: list[int], latents: int) -> None:
         super().__init__()
         self.scales, self.latents, self.codebook_size = scales, latents, math.prod(levels)
         self.project_in = nn.ModuleList([nn.Linear(latent_dim, len(levels)) for _ in scales])
@@ -203,7 +204,7 @@ class MultiScaleFSQ(nn.Module):
             for s in range(len(scales))
         ]
 
-    def tokens(self, latents):
+    def tokens(self, latents: Tensor) -> Tensor:
         residual, codes = latents, []
         for scale, span in enumerate(self.scales):
             pooled = functional.avg_pool1d(residual, span) if span > 1 else residual
@@ -212,8 +213,8 @@ class MultiScaleFSQ(nn.Module):
             codes.append(indices + scale * self.codebook_size)
         return torch.stack([codes[scale][:, position] for _, scale, position in self.token_order], dim=1)
 
-    def features(self, tokens):
-        features = 0
+    def features(self, tokens: Tensor) -> Tensor:
+        features = torch.zeros((), device=tokens.device)
         for scale, span in enumerate(self.scales):
             indices = (tokens[:, self.columns[scale]] - scale * self.codebook_size).clamp(
                 0, self.codebook_size - 1
@@ -223,19 +224,19 @@ class MultiScaleFSQ(nn.Module):
             features = features + self.upsampled(self.project_out[scale](codes).transpose(1, 2), span)
         return features
 
-    def quantize(self, projected):
+    def quantize(self, projected: Tensor) -> tuple[Tensor, Tensor]:
         half_level = (self.levels - 1) * (1 + 1e-3) / 2
         offset = torch.where(self.levels % 2 == 0, 0.5, 0.0)
         bounded = (projected + (offset / half_level).atanh()).tanh() * half_level - offset
         codes = (bounded + (bounded.round() - bounded)) / (self.levels // 2)
         return ((codes * (self.levels // 2) + self.levels // 2) * self.basis).sum(-1).long(), codes
 
-    def upsampled(self, quantized, span):
+    def upsampled(self, quantized: Tensor, span: int) -> Tensor:
         return torch.repeat_interleave(quantized, span, dim=-1)[..., : self.latents]
 
 
 class ActionDecoder(nn.Module):
-    def __init__(self, config, latent_dim, values_per_latent, latents):
+    def __init__(self, config: dict[str, Any], latent_dim: int, values_per_latent: int, latents: int) -> None:
         super().__init__()
         dim, groups, conditions = config["dim"], config["group_norm_groups"], config["condition_embeddings"]
         self.embed = CausalConv1d(latent_dim, dim, 7)
@@ -251,7 +252,7 @@ class ActionDecoder(nn.Module):
         self.head = nn.Linear(dim, values_per_latent)
         self.register_buffer("condition_id", torch.tensor([config["condition_id"]]), persistent=False)
 
-    def forward(self, features):
+    def forward(self, features: Tensor) -> Tensor:
         cudnn = torch.backends.cudnn
         with cudnn.flags(cudnn.enabled, cudnn.benchmark, deterministic=cudnn.deterministic, allow_tf32=False):
             hidden = self.temporal_norm(self.temporal_blocks(self.embed(features))).transpose(1, 2)
@@ -262,26 +263,26 @@ class ActionDecoder(nn.Module):
 
 
 class ResnetBlock(nn.Module):
-    def __init__(self, channels, groups):
+    def __init__(self, channels: int, groups: int) -> None:
         super().__init__()
         self.norm1, self.norm2 = (PerTimeGroupNorm(groups, channels, eps=1e-6) for _ in range(2))
         self.conv1, self.conv2 = (CausalConv1d(channels, channels, 3) for _ in range(2))
 
-    def forward(self, hidden):
+    def forward(self, hidden: Tensor) -> Tensor:
         return hidden + self.conv2(swish(self.norm2(self.conv1(swish(self.norm1(hidden))))))
 
 
 class CausalSelfAttention(nn.Module):
     """Attention over the current and a window of earlier latents."""
 
-    def __init__(self, channels, groups, context, latents):
+    def __init__(self, channels: int, groups: int, context: int, latents: int) -> None:
         super().__init__()
         self.norm = PerTimeGroupNorm(groups, channels, eps=1e-6)
         self.query, self.key, self.value, self.output = (nn.Conv1d(channels, channels, 1) for _ in range(4))
         distances = torch.arange(latents)[:, None] - torch.arange(latents)[None, :]
         self.register_buffer("allowed", (distances >= 0) & (distances < context), persistent=False)
 
-    def forward(self, hidden):
+    def forward(self, hidden: Tensor) -> Tensor:
         normalized = self.norm(hidden)
         queries, keys, values = self.query(normalized), self.key(normalized), self.value(normalized)
         weights = torch.bmm(queries.transpose(1, 2), keys) * queries.shape[1] ** -0.5
@@ -293,24 +294,24 @@ class CausalSelfAttention(nn.Module):
 class PerTimeGroupNorm(nn.GroupNorm):
     """Group normalization of each latent on its own, so no latent sees a later one."""
 
-    def forward(self, hidden):
+    def forward(self, hidden: Tensor) -> Tensor:
         batch, channels, length = hidden.shape
         normalized = super().forward(hidden.transpose(1, 2).reshape(batch * length, channels, 1))
         return normalized.reshape(batch, length, channels).transpose(1, 2)
 
 
 class ConditionedLayerNorm(nn.Module):
-    def __init__(self, conditions, channels):
+    def __init__(self, conditions: int, channels: int) -> None:
         super().__init__()
         self.scale, self.shift = nn.Embedding(conditions, channels), nn.Embedding(conditions, channels)
 
-    def forward(self, hidden, condition_id):
+    def forward(self, hidden: Tensor, condition_id: Tensor) -> Tensor:
         normalized = functional.layer_norm(hidden, (hidden.shape[-1],), eps=1e-6)
         return normalized * self.scale(condition_id) + self.shift(condition_id)
 
 
 class ConvNeXtBlock(nn.Module):
-    def __init__(self, channels, intermediate_channels, conditions):
+    def __init__(self, channels: int, intermediate_channels: int, conditions: int) -> None:
         super().__init__()
         self.depthwise_conv = CausalConv1d(channels, channels, 7, groups=channels)
         self.norm = ConditionedLayerNorm(conditions, channels)
@@ -320,12 +321,12 @@ class ConvNeXtBlock(nn.Module):
         )
         self.layer_scale = nn.Parameter(torch.ones(channels))
 
-    def forward(self, hidden, condition_id):
+    def forward(self, hidden: Tensor, condition_id: Tensor) -> Tensor:
         update = self.norm(self.depthwise_conv(hidden).transpose(1, 2), condition_id)
         return hidden + (self.layer_scale * self.contract(functional.gelu(self.expand(update)))).transpose(
             1, 2
         )
 
 
-def swish(hidden):
+def swish(hidden: Tensor) -> Tensor:
     return hidden * torch.sigmoid(hidden)
