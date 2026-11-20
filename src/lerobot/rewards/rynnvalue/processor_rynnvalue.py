@@ -113,12 +113,12 @@ def _video_to_pil(video: Tensor, *, max_frames: int | None, max_image_side: int 
     elif video.shape[-1] not in (1, 3):
         raise ValueError(f"Expected channel dimension of size 1 or 3, got {tuple(video.shape)}")
     array = video.detach().cpu().numpy()
+    # LeRobot frames are float in [0, 1] or uint8.
     if np.issubdtype(array.dtype, np.floating):
-        if array.size and array.min() < 0:
-            array = (array + 1.0) / 2.0
-        if array.size and array.max() <= 1.0:
-            array = array * 255.0
-    array = np.clip(array, 0, 255).astype(np.uint8)
+        array = np.rint(np.clip(array, 0.0, 1.0) * 255.0)
+    array = array.astype(np.uint8)
+    if array.shape[-1] == 1:
+        array = array[..., 0]
     return _shrink_to_max_side([Image.fromarray(frame).convert("RGB") for frame in array], max_image_side)
 
 

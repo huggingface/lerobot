@@ -148,6 +148,29 @@ def test_video_to_pil_accepts_float_chw_frames():
     assert images[-1].getpixel((0, 0))[0] == 255
 
 
+@pytest.mark.parametrize("overshoot", [1.01, -0.01])
+def test_video_to_pil_scales_float_frames_from_the_unit_range(overshoot):
+    # Resizing or augmentation can push a few values just outside [0, 1]; that must not change how
+    # the rest of the frame is read.
+    frames = torch.full((1, 3, 4, 4), 100 / 255)
+    frames[0, :, 0, 0] = overshoot
+    image = _video_to_pil(frames, max_frames=None, max_image_side=None)[0]
+    assert image.getpixel((1, 1)) == (100, 100, 100)
+    assert image.getpixel((0, 0)) == ((255, 255, 255) if overshoot > 1 else (0, 0, 0))
+
+
+def test_video_to_pil_keeps_uint8_frames():
+    frames = torch.full((1, 4, 4, 3), 200, dtype=torch.uint8)
+    assert _video_to_pil(frames, max_frames=None, max_image_side=None)[0].getpixel((0, 0)) == (200, 200, 200)
+
+
+@pytest.mark.parametrize("shape", [(1, 1, 4, 4), (1, 4, 4, 1)])
+def test_video_to_pil_converts_single_channel_frames_to_rgb(shape):
+    images = _video_to_pil(torch.full(shape, 0.5), max_frames=None, max_image_side=None)
+    assert images[0].mode == "RGB"
+    assert images[0].getpixel((0, 0)) == (128, 128, 128)
+
+
 def test_video_to_pil_shrinks_frames_to_the_max_image_side():
     frames = torch.zeros(2, 3, 720, 1280)
     assert _video_to_pil(frames, max_frames=None, max_image_side=640)[0].size == (640, 360)
