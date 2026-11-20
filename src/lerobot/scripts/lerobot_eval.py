@@ -171,6 +171,26 @@ def _build_raw_frame(
     return frame
 
 
+def _collect_step_metrics(info: dict[str, Any], num_envs: int) -> dict[str, np.ndarray]:
+    """Collect per-environment metrics, using terminal info for same-step autoresets."""
+    final_info = info.get("final_info")
+    autoreset = info.get("_final_info", np.zeros(num_envs, dtype=bool))
+    metrics: dict[str, np.ndarray] = {}
+    # Gymnasium stores terminal info separately from the new episode's reset info.
+    for step_info, active in ((info, ~autoreset), (final_info, autoreset)):
+        if not isinstance(step_info, dict):
+            continue
+        measurements = step_info.get("metrics") or {}
+        for name, values in measurements.items():
+            if name.startswith("_"):
+                continue
+            present = active & measurements.get(f"_{name}", True)
+            if present.any():
+                collected = metrics.setdefault(name, np.full(num_envs, np.nan, dtype=np.float32))
+                collected[present] = np.asarray(values, dtype=np.float32)[present]
+    return metrics
+
+
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
@@ -206,6 +226,8 @@ def rollout(
         "done": A (batch, sequence) tensor of **cumulative** done conditions. For any given batch element,
             the first True is followed by True's all the way till the end. This can be used for masking
             extraneous elements from the sequences above.
+        (optional) "metrics": A mapping from simulator metric name to a (batch, sequence) tensor.
+            Missing measurements are represented by NaN.
 
     Args:
         env: The batch of environments.
@@ -404,14 +426,7 @@ def rollout(
             all_rewards.append(torch.from_numpy(reward))
             all_dones.append(torch.from_numpy(done))
             all_successes.append(torch.tensor(successes))
-            all_metrics.append(
-                {
-                    key: np.asarray(value, dtype=np.float32)
-                    # Gymnasium's vector envs add a boolean presence mask per key of a sub-env's info.
-                    for key, value in (info.get("metrics") or {}).items()
-                    if not key.startswith("_")
-                }
-            )
+            all_metrics.append(_collect_step_metrics(info, env.num_envs))
 
             step += 1
             running_success_rate = (
@@ -443,7 +458,7 @@ def rollout(
     }
     metric_names = sorted({key for metrics in all_metrics for key in metrics})
     if metric_names:
-        missing = np.zeros(env.num_envs, dtype=np.float32)
+        missing = np.full(env.num_envs, np.nan, dtype=np.float32)
         ret["metrics"] = {
             name: torch.from_numpy(np.stack([metrics.get(name, missing) for metrics in all_metrics], axis=1))
             for name in metric_names
@@ -626,7 +641,8 @@ def eval_policy(
             for name, values in rollout_data.get("metrics", {}).items()
         }
         episode_metrics.extend(
-            {name: values[index] for name, values in batch_metrics.items()} for index in range(env.num_envs)
+            {name: values[index] for name, values in batch_metrics.items() if np.isfinite(values[index])}
+            for index in range(env.num_envs)
         )
 
         # FIXME: episode_data is either None or it doesn't exist

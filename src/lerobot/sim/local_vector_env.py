@@ -489,10 +489,18 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             batch, rewards, terminated, truncated, info = self._envs[0].step(actions)
             success = info.get("is_success", info.get("success", np.zeros(self.num_envs, dtype=bool)))
             metrics = info.get("metrics") or {}
-            return [
-                (i, _row(batch, i), rewards[i], terminated[i], truncated[i], success[i], _row(metrics, i))
-                for i in running
-            ]
+            results = []
+            for i in running:
+                # Gymnasium pads an unreported value and carries its presence in a sibling mask.
+                reported = {
+                    name: values[i]
+                    for name, values in metrics.items()
+                    if not name.startswith("_") and (f"_{name}" not in metrics or metrics[f"_{name}"][i])
+                }
+                results.append(
+                    (i, _row(batch, i), rewards[i], terminated[i], truncated[i], success[i], reported)
+                )
+            return results
         if self.use_async_envs:
             # Send every step before waiting, so the processes step in parallel.
             for i in running:
