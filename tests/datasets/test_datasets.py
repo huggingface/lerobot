@@ -17,6 +17,7 @@ import logging
 import re
 from itertools import chain
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -30,6 +31,9 @@ from PIL import Image
 from safetensors.torch import load_file
 from torchvision.transforms import v2
 
+import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
+import lerobot.datasets.multi_dataset as multi_dataset_module
+import lerobot.datasets.storage as storage_module
 from lerobot.configs import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -472,6 +476,8 @@ def test_multilerobot_dataset_set_image_transforms_propagates(tmp_path, lerobot_
         lerobot_dataset_factory(root=root / repo_id, repo_id=repo_id, use_videos=False)
 
     dataset = MultiLeRobotDataset(repo_ids, root=root, download_videos=False)
+    assert dataset.root == root
+    assert isinstance(dataset.root, Path)
     dataset.set_image_transforms(v2.Resize((96, 96)))
 
     camera_key = dataset.camera_keys[0]
@@ -481,6 +487,59 @@ def test_multilerobot_dataset_set_image_transforms_propagates(tmp_path, lerobot_
     dataset.clear_image_transforms()
     assert dataset.image_transforms is None
     assert all(child.image_transforms is None for child in dataset._datasets)
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        "s3://bucket/multi",
+        "hf://datasets/owner/base/",
+        "gs://bucket/multi/",
+        "az://container/multi",
+    ],
+)
+def test_multilerobot_dataset_joins_remote_roots(monkeypatch, root):
+    child_roots = {}
+
+    class FakeLeRobotDataset:
+        features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
+
+        def __init__(self, repo_id, root, **kwargs):
+            child_roots[repo_id] = root
+            self.meta = SimpleNamespace(stats={})
+
+        def set_image_transforms(self, transforms):
+            pass
+
+    monkeypatch.setattr(multi_dataset_module, "LeRobotDataset", FakeLeRobotDataset)
+    dataset = MultiLeRobotDataset(["lerobot/a", "lerobot/b"], root=root)
+
+    expected_root = root.rstrip("/")
+    assert dataset.root == expected_root
+    assert child_roots == {
+        "lerobot/a": f"{expected_root}/lerobot/a",
+        "lerobot/b": f"{expected_root}/lerobot/b",
+    }
+
+
+def test_multilerobot_dataset_propagates_remote_root_failure(monkeypatch, tmp_path):
+    repo_id = "lerobot/remote"
+    root = "s3://bucket/multi"
+    expected_child_root = f"{root}/{repo_id}"
+
+    class FailOnHubFallback:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("An explicit remote root must not fall back to the Hub.")
+
+    monkeypatch.chdir(tmp_path)
+    # With no backend able to localize the root, the explicit failure must surface.
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
+    monkeypatch.setattr(lerobot_dataset_module, "LeRobotDatasetMetadata", FailOnHubFallback)
+
+    with pytest.raises(FileNotFoundError, match=re.escape(f"No dataset found at '{expected_child_root}'")):
+        MultiLeRobotDataset([repo_id], root=root)
+
+    assert not (tmp_path / "s3:").exists()
 
 
 def test_image_array_to_pil_image_wrong_range_float_0_255():
