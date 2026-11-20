@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -733,6 +734,39 @@ def test_save_pretrained_still_writes_expected_serialization_files():
         save_path = Path(tmp_dir)
         assert (save_path / "policy_preprocessor.json").exists()
         assert (save_path / "policy_preprocessor_step_0.safetensors").exists()
+
+
+def test_custom_config_filename_is_saved_locally_and_uploaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pipeline = DataProcessorPipeline([MockLazyTensorStateStep(initial_value=3.0)], name="Policy Preprocessor")
+    local = tmp_path / "checkpoint"
+    local.mkdir()
+    (local / "unrelated.txt").write_text("keep local")
+    config_name = "Inputs-v2.json"
+    state_name = "policy_preprocessor_step_0.safetensors"
+
+    def check_upload(folder_path: Path, **kwargs: Any) -> str:
+        assert {entry.name for entry in folder_path.iterdir()} == {config_name, state_name}
+        for name in (config_name, state_name):
+            assert (folder_path / name).read_bytes() == (local / name).read_bytes()
+        return "uploaded"
+
+    api = MagicMock()
+    api.create_repo.return_value.repo_id = "checkpoint"
+    api.upload_folder.side_effect = check_upload
+    monkeypatch.setattr("lerobot.utils.hub.HfApi", lambda **kwargs: api)
+    assert pipeline.save_pretrained(local, config_filename=config_name, push_to_hub=True) == "uploaded"
+    api.create_repo.assert_called_once_with(repo_id="checkpoint", private=None, exist_ok=True)
+    assert json.loads((local / config_name).read_text()) == pipeline.get_config()
+    pipeline.save_pretrained(tmp_path / "next")
+    assert (tmp_path / "next" / "policy_preprocessor.json").is_file()
+
+
+def test_upload_requires_config_basename(tmp_path: Path) -> None:
+    pipeline = DataProcessorPipeline()
+    with pytest.raises(ValueError, match="filename without a directory"):
+        pipeline.save_pretrained(tmp_path, config_filename="nested/inputs.json", push_to_hub=True)
 
 
 def test_from_config_round_trips_stateful_pipeline():

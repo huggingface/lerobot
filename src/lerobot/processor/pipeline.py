@@ -36,7 +36,7 @@ import json
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict, TypeVar, cast
@@ -313,6 +313,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         init=False,
         repr=False,
     )
+    _upload_config_filename: str | None = field(default=None, init=False, repr=False, compare=False)
 
     def __call__(self, data: TInput) -> TOutput:
         """Processes input data through the full pipeline.
@@ -568,7 +569,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         This method does the actual saving work and is called by HubMixin.save_pretrained.
         """
-        config_filename = kwargs.pop("config_filename", None)
+        config_filename = kwargs.pop("config_filename", self._upload_config_filename)
         sanitized_name = self._get_sanitized_name()
 
         if config_filename is None:
@@ -623,7 +624,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             push_to_hub: Whether or not to push your object to the Hugging Face Hub after saving it.
             card_kwargs: Additional arguments passed to the card template to customize the card.
             config_filename: The name of the JSON configuration file. If None, a name is
-                generated from the pipeline's `name` attribute.
+                generated from the pipeline's `name` attribute. For Hub uploads, pass a filename
+                without a directory so the config is staged alongside its state and artifacts.
             **push_to_hub_kwargs: Additional key word arguments passed along to the push_to_hub method.
         """
         if save_directory is None:
@@ -631,17 +633,24 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
             save_directory = HF_LEROBOT_HOME / "processors" / sanitized_name
 
-        # For direct saves (not through hub), handle config_filename
-        if not push_to_hub and config_filename is not None:
-            # Call _save_pretrained directly with config_filename
+        if config_filename is not None:
+            if push_to_hub and (
+                config_filename in {"", ".."} or Path(config_filename).name != config_filename
+            ):
+                raise ValueError("config_filename must be a filename without a directory when uploading.")
             save_directory = Path(save_directory)
             save_directory.mkdir(parents=True, exist_ok=True)
             self._save_pretrained(save_directory, config_filename=config_filename)
-            return None
-
-        # Pass config_filename through kwargs for _save_pretrained when using hub
-        if config_filename is not None:
-            push_to_hub_kwargs["config_filename"] = config_filename
+            if not push_to_hub:
+                return None
+            # The Hub stages a second save. Keep the override private to this upload.
+            upload = copy(self)
+            upload._upload_config_filename = config_filename
+            return upload.push_to_hub(
+                repo_id=save_directory.name if repo_id is None else repo_id,
+                card_kwargs=card_kwargs,
+                **push_to_hub_kwargs,
+            )
 
         # Call parent's save_pretrained which will call our _save_pretrained
         return super().save_pretrained(
