@@ -19,12 +19,14 @@ from __future__ import annotations
 import logging
 from contextlib import suppress
 from copy import deepcopy
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from huggingface_hub import snapshot_download
-from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
+from huggingface_hub.errors import HfHubHTTPError, HFValidationError, RepositoryNotFoundError
+from huggingface_hub.utils import httpx
 from torch import nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -359,7 +361,11 @@ class Qwen3Backbone(nn.Module):
         if _is_cosmos_reason2_backbone(model_name):
             backbone_config = _cosmos_reason2_qwen3_vl_config()
         else:
-            backbone_config = AutoConfig.from_pretrained(model_name, **config_kwargs)
+            # Qwen3-VL is built into transformers, so reading the config of a backbone that a checkpoint names
+            # runs no code from that folder.
+            backbone_config = AutoConfig.from_pretrained(
+                model_name, **{**config_kwargs, "trust_remote_code": False}
+            )
         return Qwen3VLForConditionalGeneration._from_config(backbone_config, **model_kwargs)
 
     def prepare_input(self, batch: dict[str, Any]) -> BatchFeature:
@@ -911,7 +917,7 @@ class GR00TN17(PreTrainedModel):
         return next(iter(self.parameters())).dtype
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str | None, **kwargs):
         tune_visual = kwargs.pop("tune_visual", True)
         tune_llm = kwargs.pop("tune_llm", False)
         tune_projector = kwargs.pop("tune_projector", True)
@@ -925,17 +931,24 @@ class GR00TN17(PreTrainedModel):
             if key in kwargs:
                 transformers_loading_kwargs.setdefault(key, kwargs[key])
 
-        try:
-            local_model_path = snapshot_download(
+        local_model_path = pretrained_model_name_or_path
+        # None means `config` and `state_dict` are passed in, as transformers allows, so there is nothing to download.
+        if pretrained_model_name_or_path is not None:
+            download = partial(
+                snapshot_download,
                 pretrained_model_name_or_path,
                 repo_type="model",
                 revision=kwargs.get("revision"),
                 cache_dir=kwargs.get("cache_dir"),
-                local_files_only=kwargs.get("local_files_only", False),
                 token=kwargs.get("token"),
             )
-        except (HFValidationError, RepositoryNotFoundError):
-            local_model_path = pretrained_model_name_or_path
+            try:
+                with suppress(HFValidationError, RepositoryNotFoundError):
+                    local_model_path = download(local_files_only=kwargs.get("local_files_only", False))
+            except (httpx.ConnectError, httpx.TimeoutException, HfHubHTTPError):
+                # For a commit, snapshot_download asks the Hub for the file list and, unlike for a branch,
+                # does not fall back to the cache when the Hub cannot be reached or answers with an error.
+                local_model_path = download(local_files_only=True)
 
         pretrained_model = super().from_pretrained(
             local_model_path,
