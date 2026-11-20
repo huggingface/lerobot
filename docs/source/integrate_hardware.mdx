@@ -356,8 +356,6 @@ For implementing teleoperation devices, we also provide a [`Teleoperator`](https
 
 The main differences are in the I/O functions: a teleoperator allows you to produce action via `get_action` and can receive feedback actions via `send_feedback`. Feedback could be anything controllable on the teleoperation device that could help the person controlling it understand the consequences of the actions sent. Think motion/force feedback on a leader arm, vibrations on a gamepad controller for example. To implement a teleoperator, you can follow this same tutorial and adapt it for these two methods.
 
-Implement `get_action(self, observation: RobotObservation | None = None)`, importing `RobotObservation` from `lerobot.lerobot_types`. Control loops pass the latest raw robot observation; treat it as read-only. Accept the argument even if your device does not use it. The default preserves direct calls to `get_action()`.
-
 ## Using Your Own `LeRobot` Devices 🔌
 
 You can easily extend `lerobot` with your own custom hardware—be it a camera, robot, or teleoperation device—by creating a separate, installable Python package. If you follow a few simple conventions, the `lerobot` command-line tools (like `lerobot-teleoperate` and `lerobot-record`) will **automatically discover and integrate your creations** without requiring any changes to the `lerobot` source code.

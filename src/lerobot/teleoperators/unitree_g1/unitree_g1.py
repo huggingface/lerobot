@@ -20,7 +20,6 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from lerobot.lerobot_types import RobotObservation
 from lerobot.robots.unitree_g1.g1_utils import REMOTE_BUTTONS, REMOTE_KEYS, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -232,9 +231,7 @@ class UnitreeG1Teleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def get_action(self, observation: RobotObservation | None = None) -> dict[str, float]:
-        if observation is not None:
-            self._update_wireless_remote(observation)
+    def get_action(self) -> dict[str, float]:
         if not self._arm_control_enabled:
             return self._wireless_state.to_action()
 
@@ -283,17 +280,13 @@ class UnitreeG1Teleoperator(Teleoperator):
             self._exo_state.rx, self._exo_state.ry = right.x, right.y
             self._exo_state.buttons[_RIGHT_EXO_BUTTON] = int(right.pressed)
 
-    def _update_wireless_remote(self, observation: RobotObservation) -> None:
-        wireless_remote = observation.get("wireless_remote")
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        wireless_remote = feedback.get("wireless_remote")
         if wireless_remote is None:
             return
         remote = self.wireless_remote.parse(wireless_remote)
         if remote is not None:
             self._wireless_state = remote
-
-    def send_feedback(self, feedback: dict[str, Any]) -> None:
-        """Legacy wireless-remote input; pass observations to :meth:`get_action` instead."""
-        self._update_wireless_remote(feedback)
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()

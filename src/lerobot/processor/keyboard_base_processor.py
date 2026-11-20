@@ -15,7 +15,6 @@
 """Translate pressed keyboard keys into planar base velocities."""
 
 from dataclasses import dataclass, field
-from math import isfinite
 from typing import Any
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
@@ -58,16 +57,11 @@ class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
             raise ValueError(f"Missing keyboard bindings: {sorted(missing)}")
         if not self.linear_speeds or len(self.linear_speeds) != len(self.angular_speeds):
             raise ValueError("Linear and angular speed presets must have the same nonzero length.")
-        if any(not isfinite(v) or v < 0 for v in (*self.linear_speeds, *self.angular_speeds)):
-            raise ValueError("Speed presets must be finite and nonnegative.")
 
     def action(self, action: RobotAction) -> RobotAction:
         # Raw keyboard values are None; other devices' values must pass through unchanged.
         pressed = {key for key, value in action.items() if value is None}
         passthrough = {key: value for key, value in action.items() if value is not None}
-        overlap = passthrough.keys() & {"x.vel", "y.vel", "theta.vel"}
-        if overlap:
-            raise ValueError(f"Keyboard mapping would overwrite base commands: {sorted(overlap)}")
         newly_pressed = pressed - self._pressed
         self._pressed = pressed
         keys = self.key_bindings

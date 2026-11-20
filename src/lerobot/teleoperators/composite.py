@@ -12,39 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Device composition, independent of robots and action processors."""
-
-import logging
 from collections.abc import Sequence
 from typing import Any
 
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.lerobot_types import RobotAction
 
 from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
-
-logger = logging.getLogger(__name__)
 
 
 class CompositeTeleoperator(Teleoperator):
     """Combine devices with action prefixes, e.g. ``[(keyboard, ""), (leader, "arm_")]``.
 
-    Observations keep the robot's keys; feedback is routed with each child's prefix removed.
+    Feedback is routed to each device with its prefix removed.
     """
 
     config_class = TeleoperatorConfig
     name = "composite"
 
-    def __init__(
-        self, devices: Sequence[tuple[Teleoperator, str]], config: TeleoperatorConfig | None = None
-    ) -> None:
-        self._owns_connections = False
-        if not devices or len({id(device) for device, _ in devices}) != len(devices):
-            raise ValueError("A composite requires distinct devices and at least one device.")
+    def __init__(self, devices: Sequence[tuple[Teleoperator, str]]) -> None:
         self.devices = list(devices)
-        super().__init__(config or TeleoperatorConfig())
-        # Validate static collisions before connecting any hardware. Dynamic ones are checked per tick.
-        _ = self.action_features, self.feedback_features
+        super().__init__(TeleoperatorConfig())
 
     @staticmethod
     def _merge(target: dict, values: dict, prefix: str) -> None:
@@ -70,7 +58,7 @@ class CompositeTeleoperator(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
-        # A partially disconnected composite still has resources requiring cleanup.
+        # Stay connected while any device still needs cleanup, e.g. after Esc disconnects the keyboard.
         return any(device.is_connected for device, _ in self.devices)
 
     @property
@@ -86,46 +74,21 @@ class CompositeTeleoperator(Teleoperator):
             device.configure()
 
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise RuntimeError(
-                "Connect composite devices together, or use already-connected devices directly."
-            )
-        self._owns_connections = True
-        try:
-            for device, _ in self.devices:
-                device.connect(calibrate=calibrate)
-        except BaseException:
-            try:
-                self.disconnect()
-            except Exception:
-                logger.exception("Could not fully clean up after composite connection failure")
-            raise
+        for device, _ in self.devices:
+            device.connect(calibrate=calibrate)
 
     def disconnect(self) -> None:
-        errors: list[Exception] = []
         for device, _ in reversed(self.devices):
-            try:
-                if device.is_connected:
-                    device.disconnect()
-            except Exception as error:
-                errors.append(error)
-        if errors:
-            raise ExceptionGroup("Could not disconnect every composite device", errors)
+            if device.is_connected:
+                device.disconnect()
 
-    def __del__(self) -> None:
-        if getattr(self, "_owns_connections", False):
-            super().__del__()
-
-    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
+    def get_action(self) -> RobotAction:
         action: RobotAction = {}
         for device, prefix in self.devices:
-            self._merge(action, device.get_action(observation=observation), prefix)
+            self._merge(action, device.get_action(), prefix)
         return action
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        unknown = feedback.keys() - self.feedback_features.keys()
-        if unknown:
-            raise ValueError(f"No composite device accepts feedback keys: {sorted(unknown)}")
         for device, prefix in self.devices:
             selected = {
                 key: feedback[f"{prefix}{key}"]
@@ -134,26 +97,3 @@ class CompositeTeleoperator(Teleoperator):
             }
             if selected:
                 device.send_feedback(selected)
-
-    @property
-    def supports_position_feedback(self) -> bool:
-        devices = [device for device, _ in self.devices if device.feedback_features]
-        return bool(devices) and all(
-            getattr(device, "supports_position_feedback", True)
-            and callable(getattr(device, "enable_torque", None))
-            and callable(getattr(device, "disable_torque", None))
-            for device in devices
-        )
-
-    def _set_torque(self, method: str) -> None:
-        if not self.supports_position_feedback:
-            raise NotImplementedError("Not every feedback recipient supports position feedback.")
-        for device, _ in self.devices:
-            if device.feedback_features:
-                getattr(device, method)()
-
-    def enable_torque(self) -> None:
-        self._set_torque("enable_torque")
-
-    def disable_torque(self) -> None:
-        self._set_torque("disable_torque")

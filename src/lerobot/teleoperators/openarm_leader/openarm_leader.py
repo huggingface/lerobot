@@ -17,7 +17,7 @@
 import logging
 import time
 
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.lerobot_types import RobotAction
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.motors.damiao.damiao import MotorState
@@ -179,7 +179,7 @@ class OpenArmLeader(Teleoperator):
         )
 
     @check_if_not_connected
-    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
+    def get_action(self) -> RobotAction:
         """
         Get current action from the leader arm.
 

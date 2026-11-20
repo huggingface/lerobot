@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hold selected uncommanded joints at their first measured positions."""
-
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,35 +24,20 @@ from .pipeline import ProcessorStepRegistry, RobotActionProcessorStep
 @ProcessorStepRegistry.register("hold_uncommanded_joints")
 @dataclass
 class HoldUncommandedJointsProcessorStep(RobotActionProcessorStep):
-    """Fill missing joint commands from a latched observation, without replacing explicit actions.
+    """Fill missing joint commands with the position measured the first time each joint was missing.
 
-    Joint names are configured in robot action space. Targets stay fixed until ``reset()``;
-    reset on a new control session, not between recording and scene-reset phases. After an
-    explicit command, the next missing command latches a fresh measured position.
+    Latching (rather than echoing each new observation) keeps a sagging arm from drifting.
+    Targets persist across recording/reset phases; ``reset()`` re-latches, e.g. after policy control.
     """
 
     joint_names: tuple[str, ...] = ()
     _targets: RobotAction = field(default_factory=dict, init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        if len(set(self.joint_names)) != len(self.joint_names) or any(
-            not name.endswith(".pos") for name in self.joint_names
-        ):
-            raise ValueError("Held joints must have distinct position-action names ending in '.pos'.")
-
     def action(self, action: RobotAction) -> RobotAction:
         observation = self.transition.get(TransitionKey.OBSERVATION) or {}
-        pending = [name for name in self.joint_names if name not in action and name not in self._targets]
-        missing = [name for name in pending if name not in observation]
-        if missing:
-            raise ValueError(f"Cannot hold joints without measured positions: {missing}")
         for name in self.joint_names:
-            if name in action:
-                self._targets.pop(name, None)
-            else:
-                if name not in self._targets:
-                    self._targets[name] = observation[name]
-                action[name] = self._targets[name]
+            if name not in action:
+                action[name] = self._targets.setdefault(name, observation[name])
         return action
 
     def reset(self) -> None:
@@ -69,7 +52,7 @@ class HoldUncommandedJointsProcessorStep(RobotActionProcessorStep):
         return {
             **features,
             PipelineFeatureType.ACTION: {
-                **{name: PolicyFeature(type=FeatureType.ACTION, shape=(1,)) for name in self.joint_names},
                 **features.get(PipelineFeatureType.ACTION, {}),
+                **{name: PolicyFeature(type=FeatureType.ACTION, shape=(1,)) for name in self.joint_names},
             },
         }

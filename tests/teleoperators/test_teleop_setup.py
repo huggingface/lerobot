@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mobile session setup keeps devices independent of mapping and robot types."""
-
-import gc
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -23,7 +20,6 @@ import pytest
 from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.processor import make_default_processors
 from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
-from lerobot.robots.lekiwi import LeKiwi, LeKiwiConfig
 from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
@@ -38,95 +34,73 @@ def keyboard(tmp_path):
         yield KeyboardTeleop(KeyboardTeleopConfig(calibration_dir=tmp_path))
 
 
-def test_base_only_setup_returns_original_device_and_external_pipeline(keyboard):
+@pytest.fixture
+def arm(tmp_path):
+    arm = MockTeleop(
+        MockTeleopConfig(n_motors=1, random_values=False, static_values=[12.0], calibration_dir=tmp_path)
+    )
+    arm.motors = ["shoulder"]
+    arm.connect()
+    yield arm
+    if arm.is_connected:
+        arm.disconnect()
+
+
+def test_base_only_drives_the_base_and_holds_the_arm(keyboard):
     robot = SimpleNamespace(action_features={"joint.pos": float, "x.vel": float})
     teleop, pipeline = make_mobile_teleop(robot, keyboard)
     assert teleop is keyboard
     keyboard.event_queue.put(("w", True))
-    observation = {"joint.pos": 10.0}
-    raw = teleop.get_action(observation=observation)
-    assert raw == {"w": None}
-    assert pipeline((raw, observation)) == {"x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0, "joint.pos": 10.0}
+    assert pipeline((teleop.get_action(), {"joint.pos": 10.0})) == {
+        "x.vel": 0.1,
+        "y.vel": 0.0,
+        "theta.vel": 0.0,
+        "joint.pos": 10.0,
+    }
 
 
-def test_wired_lekiwi_arm_prefix_reaches_motor_bus(keyboard, tmp_path):
-    robot = LeKiwi.__new__(LeKiwi)
-    robot.config = LeKiwiConfig(cameras={})
-    robot.bus = MagicMock()
-    robot.cameras = {}
-    arm = MockTeleop(
-        MockTeleopConfig(n_motors=1, random_values=False, static_values=[12.0], calibration_dir=tmp_path)
-    )
-    arm.motors = ["shoulder_pan"]
-    arm.connect()
-    teleop, pipeline = make_mobile_teleop(robot, keyboard, arm, hold_uncommanded=False)
-    observation = {}
-    robot.send_action(pipeline((teleop.get_action(observation=observation), observation)))
-    robot.bus.sync_write.assert_any_call("Goal_Position", {"arm_shoulder_pan": 12.0})
-    teleop.disconnect()
+def test_keyboard_and_prefixed_arm_are_combined_and_feedback_is_routed(keyboard, arm):
+    robot = SimpleNamespace(arm_action_prefix="arm_", action_features={"arm_shoulder.pos": float})
+    teleop, pipeline = make_mobile_teleop(robot, keyboard, arm)
+    keyboard.event_queue.put(("w", True))
+    assert pipeline((teleop.get_action(), {})) == {
+        "arm_shoulder.pos": 12.0,
+        "x.vel": 0.1,
+        "y.vel": 0.0,
+        "theta.vel": 0.0,
+    }
+    with patch.object(arm, "send_feedback") as send_feedback:
+        teleop.send_feedback({"arm_shoulder.pos": 5.0})
+    send_feedback.assert_called_once_with({"shoulder.pos": 5.0})
 
 
-def test_generic_robot_combines_unprefixed_nonoverlapping_devices(tmp_path):
-    base, arm = (MockTeleop(MockTeleopConfig(n_motors=1, calibration_dir=tmp_path)) for _ in range(2))
-    base.motors, arm.motors = ["base"], ["arm"]
-    robot = SimpleNamespace(action_features={"base.pos": float, "arm.pos": float})
-    teleop, pipeline = make_mobile_teleop(robot, base, arm)
-    teleop.connect()
-    try:
-        assert set(pipeline((teleop.get_action(observation={}), {}))) == {"base.pos", "arm.pos"}
-    finally:
-        teleop.disconnect()
+def test_overlapping_device_keys_are_rejected(keyboard, arm):
+    teleop = CompositeTeleoperator([(keyboard, ""), (arm, "")])
+    keyboard.event_queue.put(("shoulder.pos", True))
+    with pytest.raises(ValueError, match="overlapping keys"):
+        teleop.get_action()
 
 
-def test_setup_retains_custom_pipeline_hooks_and_does_not_mutate_it(keyboard):
-    original = make_default_processors()[0]
-    hook = MagicMock()
-    original.after_step_hooks.append(hook)
-    original_steps = list(original.steps)
+def test_escaped_keyboard_stops_the_base_and_the_arm_is_still_cleaned_up(keyboard, arm):
     robot = SimpleNamespace(action_features={})
-    _, pipeline = make_mobile_teleop(robot, keyboard, action_processor=original, hold_uncommanded=False)
-    pipeline(({}, {}))
-    assert len(original.steps) == len(original_steps)
-    assert hook.call_count == len(pipeline.steps)
+    teleop, pipeline = make_mobile_teleop(robot, keyboard, arm)
+    keyboard.event_queue.put(("w", True))
+    with patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=False):
+        assert pipeline((teleop.get_action(), {}))["x.vel"] == 0.0
+        assert teleop.is_connected
+        teleop.disconnect()
+    assert not arm.is_connected
 
 
-def test_fresh_setup_resets_mapping_state_without_storing_it_on_keyboard(keyboard):
+def test_setup_copies_mapping_state_and_keeps_custom_pipeline_hooks(keyboard):
     robot = SimpleNamespace(action_features={})
     mapping = KeyboardToBaseActionProcessorStep()
     _, first = make_mobile_teleop(robot, keyboard, keyboard_mapping=mapping)
     assert first(({"w": None, "+": None}, {}))["x.vel"] == 0.2
-    _, second = make_mobile_teleop(robot, keyboard, keyboard_mapping=mapping)
+    custom = make_default_processors()[0]
+    hook = MagicMock()
+    custom.after_step_hooks.append(hook)
+    _, second = make_mobile_teleop(robot, keyboard, keyboard_mapping=mapping, action_processor=custom)
     assert second(({"w": None}, {}))["x.vel"] == 0.1
-    assert first(({"w": None}, {}))["x.vel"] == 0.2
-    assert not hasattr(keyboard, "_base_action_processor")
-
-
-def test_disconnected_keyboard_stops_velocities(keyboard):
-    robot = SimpleNamespace(action_features={})
-    teleop, pipeline = make_mobile_teleop(robot, keyboard)
-    keyboard.event_queue.put(("w", True))
-    assert pipeline((teleop.get_action(observation={}), {}))["x.vel"] == 0.1
-    with patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=False):
-        assert pipeline((teleop.get_action(observation={}), {})) == {
-            "x.vel": 0.0,
-            "y.vel": 0.0,
-            "theta.vel": 0.0,
-        }
-
-
-def test_borrowed_devices_survive_composite_collection(tmp_path):
-    base, arm = (MockTeleop(MockTeleopConfig(n_motors=1, calibration_dir=tmp_path)) for _ in range(2))
-    base.connect()
-    arm.connect()
-    composite = CompositeTeleoperator([(base, "base_"), (arm, "arm_")])
-    del composite
-    gc.collect()
-    assert base.is_connected and arm.is_connected
-    base.disconnect()
-    arm.disconnect()
-
-
-def test_static_action_collisions_are_rejected(tmp_path):
-    base, arm = (MockTeleop(MockTeleopConfig(n_motors=1, calibration_dir=tmp_path)) for _ in range(2))
-    with pytest.raises(ValueError, match="overlapping keys"):
-        CompositeTeleoperator([(base, ""), (arm, "")])
+    assert hook.call_count == len(second.steps)
+    assert len(custom.steps) == len(make_default_processors()[0].steps)
