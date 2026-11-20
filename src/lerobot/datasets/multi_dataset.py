@@ -16,6 +16,7 @@
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import datasets
 import torch
@@ -33,10 +34,14 @@ logger = logging.getLogger(__name__)
 
 
 def _child_root(root: str | Path, repo_id: str) -> str | Path:
-    """Place ``repo_id`` under ``root`` without converting an object-store URI to a local path."""
-    if isinstance(root, str):
-        return f"{root}/{repo_id}"
-    return root / repo_id
+    """Append ``repo_id`` to ``root`` without turning an object-store URI into a local path."""
+    if not isinstance(root, str):
+        return root / repo_id
+    scheme, netloc, path, query, fragment = urlsplit(root)
+    path = f"{path.rstrip('/')}/{repo_id}"
+    suffix = f"?{query}" if query else ""
+    suffix += f"#{fragment}" if fragment else ""
+    return f"{scheme}://{netloc}{path}{suffix}"
 
 
 class MultiLeRobotDataset(torch.utils.data.Dataset):
@@ -66,7 +71,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         self.repo_ids = repo_ids
         if root:
             root_str = str(root)
-            self.root = root_str.rstrip("/") if is_remote_uri(root_str) else Path(root)
+            self.root = root_str if is_remote_uri(root_str) else Path(root)
         else:
             self.root = HF_LEROBOT_HOME
         self.tolerances_s = tolerances_s if tolerances_s else dict.fromkeys(repo_ids, 0.0001)

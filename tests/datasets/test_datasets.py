@@ -490,15 +490,16 @@ def test_multilerobot_dataset_set_image_transforms_propagates(tmp_path, lerobot_
 
 
 @pytest.mark.parametrize(
-    "root",
+    ("root", "expected_child_prefix"),
     [
-        "s3://bucket/multi",
-        "hf://datasets/owner/base/",
-        "gs://bucket/multi/",
-        "az://container/multi",
+        ("s3://bucket/multi", "s3://bucket/multi/"),
+        ("hf://datasets/owner/base/", "hf://datasets/owner/base/"),
+        ("gs://bucket/multi/", "gs://bucket/multi/"),
+        ("az://container/multi", "az://container/multi/"),
+        ("file:///", "file:///"),
     ],
 )
-def test_multilerobot_dataset_joins_remote_roots(monkeypatch, root):
+def test_multilerobot_dataset_joins_remote_roots(monkeypatch, root, expected_child_prefix):
     child_roots = {}
 
     class FakeLeRobotDataset:
@@ -514,18 +515,24 @@ def test_multilerobot_dataset_joins_remote_roots(monkeypatch, root):
     monkeypatch.setattr(multi_dataset_module, "LeRobotDataset", FakeLeRobotDataset)
     dataset = MultiLeRobotDataset(["lerobot/a", "lerobot/b"], root=root)
 
-    expected_root = root.rstrip("/")
-    assert dataset.root == expected_root
+    assert dataset.root == root
     assert child_roots == {
-        "lerobot/a": f"{expected_root}/lerobot/a",
-        "lerobot/b": f"{expected_root}/lerobot/b",
+        "lerobot/a": f"{expected_child_prefix}lerobot/a",
+        "lerobot/b": f"{expected_child_prefix}lerobot/b",
     }
 
 
-def test_multilerobot_dataset_propagates_remote_root_failure(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("root", "expected_child_root", "local_prefix"),
+    [
+        ("s3://bucket/multi", "s3://bucket/multi/lerobot/remote", "s3:"),
+        ("file:///", "file:///lerobot/remote", "file:"),
+    ],
+)
+def test_multilerobot_dataset_propagates_remote_root_failure(
+    monkeypatch, tmp_path, root, expected_child_root, local_prefix
+):
     repo_id = "lerobot/remote"
-    root = "s3://bucket/multi"
-    expected_child_root = f"{root}/{repo_id}"
 
     class FailOnHubFallback:
         def __init__(self, *args, **kwargs):
@@ -539,7 +546,7 @@ def test_multilerobot_dataset_propagates_remote_root_failure(monkeypatch, tmp_pa
     with pytest.raises(FileNotFoundError, match=re.escape(f"No dataset found at '{expected_child_root}'")):
         MultiLeRobotDataset([repo_id], root=root)
 
-    assert not (tmp_path / "s3:").exists()
+    assert not (tmp_path / local_prefix).exists()
 
 
 def test_image_array_to_pil_image_wrong_range_float_0_255():
