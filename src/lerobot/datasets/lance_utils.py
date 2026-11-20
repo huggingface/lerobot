@@ -33,6 +33,7 @@ import multiprocessing
 import os
 import re
 import shutil
+import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
@@ -41,7 +42,7 @@ from typing import TYPE_CHECKING, Protocol
 import av
 import huggingface_hub
 
-from lerobot.streaming.location import StorageLocation, hf_dataset_uri
+from lerobot.streaming.location import LocationKind, StorageLocation, hf_dataset_uri
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import _lancedb_available, require_package
 
@@ -294,6 +295,11 @@ def _storage_options(
     return options
 
 
+def _is_hub_git_uri(uri: str) -> bool:
+    """True for Hub Git repository URIs (e.g. ``hf://datasets/...``), not mutable object stores."""
+    return StorageLocation.parse(uri).kind in (LocationKind.HF_DATASET, LocationKind.HF_OTHER)
+
+
 def _connect(
     db_uri: str,
     storage_options: dict[str, str] | None,
@@ -307,20 +313,53 @@ def _connect(
     return lancedb.connect(db_uri, **({"storage_options": options} if options else {}))
 
 
-def _materialize_meta(db, local_root: Path) -> None:
-    """Write ``meta/`` from the meta table to a local cache, once."""
-    meta_dir = local_root / "meta"
-    if meta_dir.exists():
-        return
+def _open_meta_table(db):
+    """Open ``meta.lance``, raising ``FileNotFoundError`` when missing."""
     try:
-        table = db.open_table(META_TABLE)
+        return db.open_table(META_TABLE)
     except Exception as error:
         raise FileNotFoundError(
             f"Dataset has no '{META_TABLE}' table. Re-convert it with a converter that "
             "ingests meta/, or create the table in place from an existing meta/ copy."
         ) from error
 
-    tmp_dir = local_root / f"meta.tmp-{os.getpid()}"
+
+def _remote_cache_root(
+    db_uri: str,
+    storage_options: dict[str, str] | None = None,
+    revision: str | None = None,
+    meta_version: int | None = None,
+) -> Path:
+    """Compute the local cache directory for materialized remote ``meta/`` files."""
+    # Key the cache by revision too: an hf:// root at a non-default revision must not
+    # reuse (or overwrite) another revision's materialized meta.
+    cache_key = f"{db_uri}@{revision}" if revision else db_uri
+    # The same URI can name different datasets on different object stores.
+    # Preserve the existing path when no explicit routing options are set.
+    routing_options = {
+        key.lower(): value
+        for key, value in (storage_options or {}).items()
+        if key.lower() in _METADATA_ROUTING_OPTIONS
+    }
+    if routing_options:
+        identity = json.dumps(routing_options, sort_keys=True, separators=(",", ":"))
+        cache_key += "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
+    # For mutable object-store roots, key by meta.lance's version so remote updates
+    # automatically invalidate stale caches without clobbering concurrent readers.
+    if meta_version is not None:
+        cache_key += f"@meta-v{meta_version}"
+    return HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
+
+
+def _materialize_meta(db, local_root: Path, *, table=None) -> None:
+    """Write ``meta/`` from the meta table to a local cache, once."""
+    meta_dir = local_root / "meta"
+    if meta_dir.exists():
+        return
+    if table is None:
+        table = _open_meta_table(db)
+
+    tmp_dir = local_root / f"meta.tmp-{os.getpid()}-{threading.get_ident()}"
     try:
         tmp_resolved = tmp_dir.resolve()
         for batch in table.search().select(["path", "data"]).to_batches():
@@ -370,6 +409,23 @@ def localize_root(
     return local_root
 
 
+def resolve_lance_uri(repo_id: str | None, root: str | Path | None) -> str:
+    """Resolve a Lance dataset's connect URI without touching remote metadata."""
+    if root is not None and is_remote_uri(root):
+        return str(root).rstrip("/")
+    if root is not None:
+        root_path = Path(root)
+    elif repo_id is not None:
+        root_path = HF_LEROBOT_HOME / repo_id
+    else:
+        raise ValueError("Either repo_id or root must be provided to locate a lance dataset.")
+    if (root_path / f"{FRAMES_TABLE}.lance").exists():
+        return str(root_path)
+    if repo_id is not None:
+        return hf_dataset_uri(repo_id)
+    raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {root_path}.")
+
+
 def resolve_lance_root(
     repo_id: str | None,
     root: str | Path | None,
@@ -381,24 +437,23 @@ def resolve_lance_root(
     """Resolve a Lance dataset to its connect URI and the local root holding ``meta/``"""
     if root is not None and is_remote_uri(root):
         db_uri = str(root).rstrip("/")
-        # Key the cache by revision too: an hf:// root at a non-default revision must not
-        # reuse (or overwrite) another revision's materialized meta.
-        cache_key = f"{db_uri}@{revision}" if revision else db_uri
-        # The same URI can name different datasets on different object stores.
-        # Preserve the existing path when no explicit routing options are set.
-        routing_options = {
-            key.lower(): value
-            for key, value in (storage_options or {}).items()
-            if key.lower() in _METADATA_ROUTING_OPTIONS
-        }
-        if routing_options:
-            identity = json.dumps(routing_options, sort_keys=True, separators=(",", ":"))
-            cache_key += "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
-        local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
+        if _is_hub_git_uri(db_uri):
+            local_root = _remote_cache_root(db_uri, storage_options, revision)
+            if force_cache_sync:
+                shutil.rmtree(local_root / "meta", ignore_errors=True)
+            if not (local_root / "meta").exists():
+                _materialize_meta(_connect(db_uri, storage_options, revision, token), local_root)
+            return db_uri, local_root
+
+        # Mutable remote object stores (s3://, gs://, hf://buckets/..., file://):
+        # probe meta.lance's version once and reuse the open handle if materialization is needed.
+        db = _connect(db_uri, storage_options, revision, token)
+        table = _open_meta_table(db)
+        local_root = _remote_cache_root(db_uri, storage_options, revision, meta_version=int(table.version))
         if force_cache_sync:
             shutil.rmtree(local_root / "meta", ignore_errors=True)
         if not (local_root / "meta").exists():
-            _materialize_meta(_connect(db_uri, storage_options, revision, token), local_root)
+            _materialize_meta(db, local_root, table=table)
         return db_uri, local_root
     if root is not None:
         root_path = Path(root)

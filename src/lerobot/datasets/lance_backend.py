@@ -72,6 +72,7 @@ from .lance_utils import (  # noqa: F401
     lance_mp_context,
     localize_root,
     resolve_lance_root,
+    resolve_lance_uri,
     to_lance_column,
 )
 from .utils import resolve_episode_indices
@@ -224,7 +225,7 @@ class LanceDatasetReader(BaseDatasetReader):
         self._storage_options = dict(storage_options) if storage_options is not None else None
         self._token = token
 
-        self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision, token)
+        self._db_uri = resolve_lance_uri(self.repo_id, root)
         self._hub_revision = meta.revision if self._db_uri == hf_dataset_uri(self.repo_id) else None
 
         if self.meta.image_keys:
