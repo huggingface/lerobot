@@ -264,7 +264,8 @@ class DatasetWriter:
                 self._save_image(frame[key], img_path, compress_level)
                 self.episode_buffer[key].append(str(img_path))
             else:
-                self.episode_buffer[key].append(frame[key])
+                value = frame[key]
+                self.episode_buffer[key].append(value.copy() if isinstance(value, np.ndarray) else value)
 
         self.episode_buffer["size"] += 1
 
