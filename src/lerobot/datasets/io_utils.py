@@ -34,6 +34,7 @@ from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.utils import SuppressProgressBars, flatten_dict, unflatten_dict
 
 from .language import LANGUAGE_COLUMNS
+from .robot_settings import ROBOT_SETTINGS_COLUMN
 from .utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_EPISODES_PATH,
@@ -62,7 +63,10 @@ def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
 
 
 def load_nested_dataset(
-    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None
+    pq_dir: Path,
+    features: datasets.Features | None = None,
+    episodes: list[int] | None = None,
+    columns: list[str] | None = None,
 ) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
@@ -80,7 +84,9 @@ def load_nested_dataset(
     with SuppressProgressBars():
         # We use .from_parquet() memory-mapped loading for efficiency
         filters = pa_ds.field("episode_index").isin(episodes) if episodes is not None else None
-        return Dataset.from_parquet([str(path) for path in paths], filters=filters, features=features)
+        return Dataset.from_parquet(
+            [str(path) for path in paths], filters=filters, features=features, columns=columns
+        )
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
@@ -211,10 +217,19 @@ def write_episodes(episodes: Dataset, local_dir: Path) -> None:
 
 
 def load_episodes(local_dir: Path) -> datasets.Dataset:
-    episodes = load_nested_dataset(local_dir / EPISODES_DIR)
+    pq_dir = local_dir / EPISODES_DIR
+    paths = sorted(pq_dir.glob("*/*.parquet"))
+    if len(paths) == 0:
+        raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
+    # Skip the settings strings at read time. select_columns would drop them
+    # only after from_parquet had already decoded every episode into the cache.
+    columns = [name for name in pq.read_schema(paths[0]).names if name != ROBOT_SETTINGS_COLUMN]
+    episodes = load_nested_dataset(pq_dir, columns=columns)
     # Select episode features/columns containing references to episode data and videos
     # (e.g. tasks, dataset_from_index, dataset_to_index, data/chunk_index, data/file_index, etc.)
     # This is to speedup access to these data, instead of having to load episode stats.
+    # Stats are decoded with the episode files, then dropped from this table.
+    # Settings are omitted from the column list above, so they are not decoded.
     episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
     return episodes
 

@@ -48,6 +48,7 @@ from .io_utils import (
     write_tasks,
 )
 from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
+from .robot_settings import cast_robot_settings_table
 from .storage import DEFAULT_STORAGE_FORMAT, dataset_location
 from .utils import (
     DEFAULT_EPISODES_PATH,
@@ -170,7 +171,7 @@ class LeRobotDatasetMetadata:
         chunk_idx = first_ep["meta/episodes/chunk_index"][0]
         file_idx = first_ep["meta/episodes/file_index"][0]
 
-        table = pa.Table.from_pydict(combined_dict)
+        table = cast_robot_settings_table(pa.Table.from_pydict(combined_dict))
 
         if not self._pq_writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
