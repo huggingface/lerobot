@@ -77,6 +77,7 @@ import argparse
 import gc
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -86,6 +87,9 @@ import tqdm
 
 from lerobot.configs import DEPTH_MILLIMETER_UNIT
 from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.storage import DEFAULT_STORAGE_FORMAT
+from lerobot.datasets.utils import task_name
+from lerobot.datasets.video_utils import extract_video_clip
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS, TASK
 from lerobot.utils.utils import init_logging
 
@@ -165,6 +169,63 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
     )
 
 
+@dataclass
+class _VideoFrames:
+    timestamps_ns: np.ndarray
+
+    def timestamp_ns(self, timestamp_s: float) -> int:
+        # Dataset timestamps may be float32. Snap to an actual presentation timestamp
+        # so rounding cannot select the previous video frame in the viewer.
+        target_ns = round(timestamp_s * 1e9)
+        right = min(int(np.searchsorted(self.timestamps_ns, target_ns)), len(self.timestamps_ns) - 1)
+        left = max(0, right - 1)
+        return int(
+            min((self.timestamps_ns[left], self.timestamps_ns[right]), key=lambda ts: abs(ts - target_ns))
+        )
+
+
+def _log_video_assets(dataset: LeRobotDataset, episode_index: int) -> dict[str, _VideoFrames]:
+    """Embed only the requested episode's RGB video and retain exact frame timestamps."""
+    import rerun as rr
+
+    if (
+        dataset.meta.storage_format != DEFAULT_STORAGE_FORMAT
+        or dataset.image_transforms is not None
+        or dataset.delta_timestamps
+        or dataset.episodes != [episode_index]
+    ):
+        logging.warning(
+            "Compressed video display requires an untransformed default-format dataset filtered to "
+            "the requested episode, without delta timestamps. Falling back to individual frames."
+        )
+        return {}
+
+    videos = {}
+    for key in dataset.meta.video_keys:
+        # Depth needs dequantization, unit conversion and a color map, not RGB video playback.
+        if key in dataset.meta.depth_keys:
+            continue
+        path = dataset.root / dataset.meta.get_video_file_path(episode_index, key)
+        if path.suffix.lower() != ".mp4" or not path.is_file():
+            logging.warning("No local MP4 for %s; falling back to individual frames.", key)
+            continue
+        try:
+            episode = dataset.meta.episodes[episode_index]
+            clip = extract_video_clip(
+                path, episode[f"videos/{key}/from_timestamp"], episode[f"videos/{key}/to_timestamp"]
+            )
+            asset = rr.AssetVideo(contents=clip, media_type="video/mp4")
+            timestamps_ns = asset.read_frame_timestamps_nanos()
+            if len(timestamps_ns) != len(dataset) or np.any(np.diff(timestamps_ns) <= 0):
+                raise ValueError("Video frame timestamps do not match the selected episode")
+            rr.log(key, asset, static=True, strict=True)
+        except (OSError, ValueError, RuntimeError) as exc:
+            logging.warning("Cannot use video asset for %s; falling back to individual frames: %s", key, exc)
+            continue
+        videos[key] = _VideoFrames(timestamps_ns=timestamps_ns)
+    return videos
+
+
 def visualize_dataset(
     dataset: LeRobotDataset,
     episode_index: int,
@@ -179,6 +240,7 @@ def visualize_dataset(
     display_mode: str = "rerun",
     host: str = "127.0.0.1",
     autoplay: bool = True,
+    display_compressed_videos: bool = True,
     **kwargs,
 ) -> Path | None:
     if display_mode == "foxglove":
@@ -203,13 +265,6 @@ def visualize_dataset(
             "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
         )
         rrd_path = output_dir / f"{repo_id.replace('/', '_')}_episode_{episode_index}.rrd"
-
-    logging.info("Loading dataloader")
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        num_workers=num_workers,
-        batch_size=batch_size,
-    )
 
     logging.info("Starting Rerun")
 
@@ -241,6 +296,13 @@ def visualize_dataset(
 
     logging.info("Logging to Rerun")
 
+    videos = _log_video_assets(dataset, episode_index) if display_compressed_videos else {}
+    # When every video is embedded, read the HF rows directly to avoid decoding RGB
+    # just to discard it. Depth datasets retain the reader's usual conversions.
+    use_hf_rows = videos and set(videos) == set(dataset.meta.video_keys) and not dataset.meta.depth_keys
+    frames = dataset.hf_dataset if use_hf_rows else dataset
+    dataloader = torch.utils.data.DataLoader(frames, num_workers=num_workers, batch_size=batch_size)
+
     # Depth frames and stats are dequantized to the dataset's depth_output_unit on load.
     depth_meter = 1000.0 if dataset.depth_output_unit == DEPTH_MILLIMETER_UNIT else 1.0
 
@@ -267,7 +329,10 @@ def visualize_dataset(
 
             # display each camera image (or depth map)
             for key in dataset.meta.camera_keys:
-                if key in dataset.meta.depth_keys:
+                if key in videos:
+                    timestamp_ns = videos[key].timestamp_ns(batch["timestamp"][i].item())
+                    rr.log(key, rr.VideoFrameReference(nanoseconds=timestamp_ns))
+                elif key in dataset.meta.depth_keys:
                     depth = to_hwc_float32_numpy(batch[key][i])
                     depth_entity = rr.DepthImage(
                         depth,
@@ -300,8 +365,10 @@ def visualize_dataset(
 
             # display the natural-language task (re-logged only when it changes)
             # Markdown renders it as a heading in the thin banner.
-            if TASK in batch:
-                task = batch[TASK][i]
+            if TASK in batch or "task_index" in batch:
+                task = (
+                    batch[TASK][i] if TASK in batch else task_name(dataset.meta.tasks, batch["task_index"][i])
+                )
                 if task != prev_task:
                     rr.log(
                         TASK,
@@ -417,6 +484,16 @@ def main():
         "--display-compressed-images",
         action="store_true",
         help="If set, display compressed (JPEG) images instead of uncompressed ones.",
+    )
+
+    parser.add_argument(
+        "--display-compressed-videos",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Use local compressed RGB videos in Rerun (default: enabled). "
+            "Disable if your viewer cannot play the source codec."
+        ),
     )
 
     parser.add_argument(
