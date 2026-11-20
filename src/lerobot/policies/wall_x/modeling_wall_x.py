@@ -1339,13 +1339,13 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         if predict_mode == "fast":
             if pred_horizon is None or action_dim is None:
                 raise ValueError("Fast action prediction requires pred_horizon and action_dim.")
-            action_id = []
-            # Extract action tokens from generated sequence
-            for token_id_i in predict_output_ids[0]:
-                if token_id_i.item() >= self.processor.tokenizer.init_kwargs["action_token_start_index"]:
-                    action_id.append(
-                        token_id_i.item() - self.processor.tokenizer.init_kwargs["action_token_start_index"]
-                    )
+            # Keep only generated <|action_token_i|> tokens, mapped back to their FAST ID i.
+            fast_ids = {
+                token_id: i for i, token_id in enumerate(self.action_token_id_set["fast_action_token_list"])
+            }
+            action_id = [
+                fast_ids[token_id] for token_id in predict_output_ids[0].tolist() if token_id in fast_ids
+            ]
 
             predict_action = decode_fast_actions(
                 self.processor.action_processor, [action_id], action_dim, time_horizon=pred_horizon

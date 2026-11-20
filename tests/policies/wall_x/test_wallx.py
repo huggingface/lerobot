@@ -71,13 +71,13 @@ def test_fast_prediction_keeps_decoded_dimensions(
         config=SimpleNamespace(output_attentions=False, output_hidden_states=False, use_return_dict=True),
         device=torch.device("cpu"),
         processor=SimpleNamespace(
-            tokenizer=SimpleNamespace(
-                init_kwargs={"action_token_start_index": 100}, eos_token_id=3, pad_token_id=0
-            ),
+            tokenizer=SimpleNamespace(eos_token_id=3, pad_token_id=0),
             batch_decode=lambda *args, **kwargs: [""],
             action_processor=object(),
         ),
-        generate=Mock(return_value=torch.tensor([[100, 101, 3]])),
+        action_token_id_set={"fast_action_token_list": [100, 101]},
+        # 102 follows the action tokens but is not one, so it must not be decoded.
+        generate=Mock(return_value=torch.tensor([[100, 102, 101, 3]])),
     )
     dof_mask = torch.zeros(1, horizon, padded_dim)
     dof_mask[:, :, active_dims] = 1
