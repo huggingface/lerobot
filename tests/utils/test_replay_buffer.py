@@ -21,11 +21,20 @@ import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 from lerobot.rl.buffer import BatchTransition, ReplayBuffer, random_crop_vectorized  # noqa: E402
-from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_STATE, OBS_STR, REWARD  # noqa: E402
+from lerobot.utils.constants import (  # noqa: E402
+    ACTION,
+    DONE,
+    OBS_IMAGE,
+    OBS_IMAGES,
+    OBS_STATE,
+    OBS_STR,
+    REWARD,
+)
 from tests.fixtures.constants import DUMMY_REPO_ID  # noqa: E402
 
 pytestmark = pytest.mark.dataset
@@ -470,6 +479,135 @@ def test_from_lerobot_dataset(tmp_path):
         assert torch.equal(
             replay_buffer.states[OBS_STATE][i],
             reconverted_buffer.next_states[OBS_STATE][i],
+        )
+
+
+VIDEO_CAMERA_KEY = f"{OBS_IMAGES}.front"
+DEPTH_CAMERA_KEY = f"{OBS_IMAGES}.depth"
+
+
+def create_video_dataset(root, with_depth: bool = False) -> None:
+    """Write a dataset with a video-backed camera: 2 episodes of 3 frames.
+
+    With `with_depth`, it also has a depth camera, with every pixel 2 metres away.
+    """
+    features = {
+        VIDEO_CAMERA_KEY: {"dtype": "video", "shape": (32, 32, 3), "names": ["height", "width", "channels"]},
+        OBS_STATE: {"dtype": "float32", "shape": (2,), "names": None},
+        ACTION: {"dtype": "float32", "shape": (2,), "names": None},
+        REWARD: {"dtype": "float32", "shape": (1,), "names": None},
+        DONE: {"dtype": "bool", "shape": (1,), "names": None},
+    }
+    if with_depth:
+        features[DEPTH_CAMERA_KEY] = {
+            "dtype": "image",
+            "shape": (32, 32, 1),
+            "names": ["height", "width", "channels"],
+            "info": {"is_depth_map": True},
+        }
+    dataset = LeRobotDataset.create(DUMMY_REPO_ID, fps=10, root=root, features=features, use_videos=True)
+    generator = np.random.default_rng(0)
+    for _ in range(2):
+        for frame_index in range(3):
+            frame = {
+                VIDEO_CAMERA_KEY: generator.integers(0, 256, size=(32, 32, 3), dtype=np.uint8),
+                OBS_STATE: generator.standard_normal(2).astype(np.float32),
+                ACTION: generator.standard_normal(2).astype(np.float32),
+                REWARD: np.array([1.0], dtype=np.float32),
+                DONE: np.array([frame_index == 2]),
+                "task": "dummy task",
+            }
+            if with_depth:
+                frame[DEPTH_CAMERA_KEY] = np.full((32, 32, 1), 2.0, dtype=np.float32)
+            dataset.add_frame(frame)
+        dataset.save_episode()
+    dataset.finalize()
+
+
+@pytest.mark.parametrize("optimize_memory", [False, True])
+def test_from_lerobot_dataset_stores_uint8_video_frames_in_unit_range(tmp_path, optimize_memory):
+    # `make_dataset` opens datasets with `return_uint8=True`, so video-backed cameras come back as uint8.
+    root = tmp_path / "video_dataset"
+    create_video_dataset(root)
+    uint8_dataset = LeRobotDataset(DUMMY_REPO_ID, root=root, return_uint8=True)
+    float_dataset = LeRobotDataset(DUMMY_REPO_ID, root=root)
+    assert uint8_dataset[0][VIDEO_CAMERA_KEY].dtype == torch.uint8
+
+    buffer = ReplayBuffer.from_lerobot_dataset(
+        uint8_dataset,
+        device="cpu",
+        state_keys=[VIDEO_CAMERA_KEY, OBS_STATE],
+        use_drq=False,
+        optimize_memory=optimize_memory,
+    )
+
+    images = buffer.states[VIDEO_CAMERA_KEY][: len(buffer)]
+    assert images.dtype == torch.float32
+    assert images.max() <= 1.0
+    for i in range(len(buffer)):
+        # Same frames as a dataset that decodes them to float32 in [0, 1] itself. Allow one 8-bit step, in
+        # case a decoder rounds differently; an unconverted frame would be off by up to 254.
+        torch.testing.assert_close(
+            buffer.states[VIDEO_CAMERA_KEY][i], float_dataset[i][VIDEO_CAMERA_KEY], rtol=0, atol=1 / 255
+        )
+        assert torch.equal(buffer.states[OBS_STATE][i], float_dataset[i][OBS_STATE])
+
+    if not optimize_memory:
+        # The next state of a frame that is not the last of its episode is the following frame.
+        for i in (0, 1, 3, 4):
+            torch.testing.assert_close(
+                buffer.next_states[VIDEO_CAMERA_KEY][i],
+                float_dataset[i + 1][VIDEO_CAMERA_KEY],
+                rtol=0,
+                atol=1 / 255,
+            )
+
+
+def test_from_lerobot_dataset_keeps_depth_frames_unscaled(tmp_path):
+    # Depth cameras are camera keys too, but hold distances, not 8-bit colors: only RGB frames are rescaled.
+    root = tmp_path / "video_dataset"
+    create_video_dataset(root, with_depth=True)
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=root, return_uint8=True)
+    assert DEPTH_CAMERA_KEY in dataset.meta.camera_keys
+    assert DEPTH_CAMERA_KEY in dataset.meta.depth_keys
+
+    buffer = ReplayBuffer.from_lerobot_dataset(
+        dataset,
+        device="cpu",
+        state_keys=[VIDEO_CAMERA_KEY, DEPTH_CAMERA_KEY, OBS_STATE],
+        use_drq=False,
+    )
+
+    assert buffer.states[VIDEO_CAMERA_KEY][: len(buffer)].max() <= 1.0
+    for i in range(len(buffer)):
+        depth = dataset[i][DEPTH_CAMERA_KEY]
+        # The 2 m depth is read back in the dataset's depth unit, far above the [0, 1] range of RGB frames.
+        assert depth.min() > 1.0
+        assert torch.equal(buffer.states[DEPTH_CAMERA_KEY][i], depth)
+    for i in (0, 1, 3, 4):
+        assert torch.equal(buffer.next_states[DEPTH_CAMERA_KEY][i], dataset[i + 1][DEPTH_CAMERA_KEY])
+
+
+def test_from_lerobot_dataset_with_uint8_video_frames_converts_back_to_dataset(tmp_path):
+    # The learner writes its offline buffer back with `to_lerobot_dataset` at every checkpoint.
+    root = tmp_path / "video_dataset"
+    create_video_dataset(root)
+    buffer = ReplayBuffer.from_lerobot_dataset(
+        LeRobotDataset(DUMMY_REPO_ID, root=root, return_uint8=True),
+        device="cpu",
+        state_keys=[VIDEO_CAMERA_KEY, OBS_STATE],
+        use_drq=False,
+        optimize_memory=True,
+    )
+
+    dataset = buffer.to_lerobot_dataset(DUMMY_REPO_ID, root=tmp_path / "from_buffer")
+
+    assert dataset.num_episodes == 2
+    assert dataset.num_frames == len(buffer)
+    for i in range(len(buffer)):
+        # Written as 8-bit images, so frames round to the nearest 1/255.
+        torch.testing.assert_close(
+            dataset[i][VIDEO_CAMERA_KEY], buffer.states[VIDEO_CAMERA_KEY][i], rtol=0, atol=1 / 255
         )
 
 
