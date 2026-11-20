@@ -335,6 +335,20 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -
     return chunk_idx, file_idx
 
 
+def _serialize_list(value: list) -> list:
+    out = []
+    for item in value:
+        if isinstance(item, np.generic):
+            out.append(item.item())
+        elif isinstance(item, list):
+            out.append(_serialize_list(item))
+        elif isinstance(item, (int | float)):
+            out.append(item)
+        else:
+            raise NotImplementedError(f"The value '{item}' of type '{type(item)}' is not supported.")
+    return out
+
+
 def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
     """Serialize a dictionary containing tensors or numpy arrays to be JSON-compatible.
 
@@ -353,8 +367,9 @@ def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
     for key, value in flatten_dict(stats).items():
         if isinstance(value, (torch.Tensor | np.ndarray)):
             serialized_dict[key] = value.tolist()
-        elif isinstance(value, list) and isinstance(value[0], (int | float | list)):
-            serialized_dict[key] = value
+        elif isinstance(value, list):
+            # An empty list has no value[0]. Lists of numpy scalars are not JSON.
+            serialized_dict[key] = _serialize_list(value)
         elif isinstance(value, np.generic):
             serialized_dict[key] = value.item()
         elif isinstance(value, (int | float)):

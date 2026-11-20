@@ -288,3 +288,15 @@ def test_newer_major_dataset_only_warns_when_major_is_not_enforced(caplog):
 def test_older_major_dataset_still_raises_conversion_error():
     with pytest.raises(BackwardCompatibilityError):
         check_version_compatibility("user/dataset", "v2.1", "v3.0")
+
+
+def test_serialize_dict_empty_list_and_numpy_scalars():
+    import json
+
+    import numpy as np
+
+    stats = {"names": [], "scale": [np.float64(1.5), np.float32(2.0)]}
+    out = dataset_utils.serialize_dict(stats)
+    assert out["names"] == []
+    assert out["scale"] == [1.5, 2.0]
+    json.dumps(out)
