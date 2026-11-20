@@ -33,6 +33,7 @@ pytest.importorskip("lerobot_lancedb", reason="lerobot-lancedb converts the test
 
 import lancedb
 import numpy as np
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from lerobot_lancedb.convert import convert
@@ -43,7 +44,12 @@ from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.factory import make_dataset, make_train_eval_datasets
-from lerobot.datasets.lance_backend import LanceDatasetReader, _EpisodeSubsetIndexMapping, lance_mp_context
+from lerobot.datasets.lance_backend import (
+    LanceDatasetReader,
+    _EpisodeSubsetIndexMapping,
+    _unpack_list_column,
+    lance_mp_context,
+)
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
     language_events_arrow_type,
@@ -939,3 +945,284 @@ def test_materialize_meta_rejects_escaping_paths(tmp_path):
         )
         with pytest.raises(ValueError, match="escapes the cache directory"):
             lance_utils._materialize_meta(db, tmp_path / f"root_{i}")
+
+
+def test_nested_fixed_size_list_2d_and_3d_roundtrip_and_delta_windows(tmp_path) -> None:
+    """2D/3D nested FixedSizeList, 1D variable list, scalar, and string features round-trip cleanly."""
+    lance_root = tmp_path / "nested_lance"
+    (lance_root / "meta").mkdir(parents=True)
+
+    num_episodes = 2
+    ep_len = 6
+    total_frames = num_episodes * ep_len
+    fps = 10
+
+    rng = np.random.default_rng(7)
+    actions = rng.normal(size=(total_frames, 3)).astype(np.float32)
+    keypoints_2d = rng.normal(size=(total_frames, 4, 3)).astype(np.float32)
+    voxels_3d = rng.integers(0, 100, size=(total_frames, 2, 3, 2), dtype=np.int64)
+    var_vec = rng.normal(size=(total_frames, 5)).astype(np.float32)
+    rewards = np.linspace(0.0, 1.0, total_frames, dtype=np.float32)
+    notes = [f"frame-{i}" if i % 3 != 0 else None for i in range(total_frames)]
+
+    info = {
+        "codebase_version": "v3.0",
+        "robot_type": "dummy",
+        "total_episodes": num_episodes,
+        "total_frames": total_frames,
+        "total_tasks": 1,
+        "chunks_size": 1000,
+        "data_files_size_in_mb": 100,
+        "video_files_size_in_mb": 200,
+        "fps": fps,
+        "splits": {"train": f"0:{num_episodes}"},
+        "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+        "video_path": None,
+        "storage_format": "lance",
+        "features": {
+            "timestamp": {"dtype": "float32", "shape": [1], "names": None},
+            "frame_index": {"dtype": "int64", "shape": [1], "names": None},
+            "episode_index": {"dtype": "int64", "shape": [1], "names": None},
+            "index": {"dtype": "int64", "shape": [1], "names": None},
+            "task_index": {"dtype": "int64", "shape": [1], "names": None},
+            "action": {"dtype": "float32", "shape": [3], "names": None},
+            "observation.keypoints": {"dtype": "float32", "shape": [4, 3], "names": None},
+            "observation.voxel": {"dtype": "int64", "shape": [2, 3, 2], "names": None},
+            "observation.var_vec": {"dtype": "float32", "shape": [5], "names": None},
+            "next.reward": {"dtype": "float32", "shape": [1], "names": None},
+            "note": {"dtype": "string", "shape": [1], "names": None},
+        },
+    }
+    (lance_root / "meta" / "info.json").write_text(json.dumps(info, indent=4))
+
+    tasks_df = pd.DataFrame({"task_index": [0]}, index=pd.Index(["nested_task"], name="task"))
+    tasks_df.to_parquet(lance_root / "meta" / "tasks.parquet")
+
+    ep_dir = lance_root / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "episode_index": pa.array([0, 1], type=pa.int64()),
+                "tasks": pa.array([["nested_task"], ["nested_task"]]),
+                "length": pa.array([ep_len, ep_len], type=pa.int64()),
+                "dataset_from_index": pa.array([0, ep_len], type=pa.int64()),
+                "dataset_to_index": pa.array([ep_len, total_frames], type=pa.int64()),
+            }
+        ),
+        ep_dir / "file-000.parquet",
+    )
+
+    frames_table = pa.table(
+        {
+            "timestamp": pa.array(
+                [float((i % ep_len) / fps) for i in range(total_frames)], type=pa.float32()
+            ),
+            "frame_index": pa.array([i % ep_len for i in range(total_frames)], type=pa.int64()),
+            "episode_index": pa.array([i // ep_len for i in range(total_frames)], type=pa.int64()),
+            "index": pa.array(list(range(total_frames)), type=pa.int64()),
+            "task_index": pa.array([0] * total_frames, type=pa.int64()),
+            "action": pa.array(actions.tolist(), type=pa.list_(pa.float32(), 3)),
+            "observation_keypoints": pa.array(
+                keypoints_2d.tolist(), type=pa.list_(pa.list_(pa.float32(), 3), 4)
+            ),
+            "observation_voxel": pa.array(
+                voxels_3d.tolist(), type=pa.list_(pa.list_(pa.list_(pa.int64(), 2), 3), 2)
+            ),
+            "observation_var_vec": pa.array(var_vec.tolist(), type=pa.list_(pa.float32())),
+            "next_reward": pa.array(rewards, type=pa.float32()),
+            "note": pa.array(notes, type=pa.string()),
+        }
+    )
+    db = lancedb.connect(str(lance_root))
+    db.create_table(lance_utils.FRAMES_TABLE, frames_table)
+
+    ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    try:
+        for idx in (0, 5, 6, total_frames - 1):
+            item = ds[idx]
+            assert item["observation.keypoints"].shape == (4, 3)
+            assert item["observation.keypoints"].dtype == torch.float32
+            torch.testing.assert_close(
+                item["observation.keypoints"], torch.from_numpy(keypoints_2d[idx]), rtol=0, atol=0
+            )
+            assert item["observation.voxel"].shape == (2, 3, 2)
+            assert item["observation.voxel"].dtype == torch.int64
+            torch.testing.assert_close(
+                item["observation.voxel"], torch.from_numpy(voxels_3d[idx]), rtol=0, atol=0
+            )
+            assert item["observation.var_vec"].shape == (5,)
+            torch.testing.assert_close(
+                item["observation.var_vec"], torch.from_numpy(var_vec[idx]), rtol=0, atol=0
+            )
+            assert item["next.reward"].ndim == 0
+            assert item["note"] == notes[idx]
+
+        # Batched fetch matches single-item fetch.
+        for idx, item in zip([1, 6, 11], ds.__getitems__([1, 6, 11]), strict=True):
+            assert item["note"] == notes[idx]
+            torch.testing.assert_close(
+                item["observation.keypoints"], torch.from_numpy(keypoints_2d[idx]), rtol=0, atol=0
+            )
+            torch.testing.assert_close(
+                item["observation.voxel"], torch.from_numpy(voxels_3d[idx]), rtol=0, atol=0
+            )
+    finally:
+        ds.reader.close()
+
+    # delta_timestamps windows over 2D and 3D nested FixedSizeList columns.
+    delta_timestamps = {
+        "observation.keypoints": [-1 / fps, 0.0, 1 / fps],
+        "observation.voxel": [0.0, 1 / fps],
+    }
+    ds_delta = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, delta_timestamps=delta_timestamps)
+    try:
+        item0 = ds_delta[0]
+        assert item0["observation.keypoints"].shape == (3, 4, 3)
+        assert item0["observation.keypoints_is_pad"].tolist() == [True, False, False]
+        torch.testing.assert_close(
+            item0["observation.keypoints"],
+            torch.from_numpy(keypoints_2d[[0, 0, 1]]),
+            rtol=0,
+            atol=0,
+        )
+        assert item0["observation.voxel"].shape == (2, 2, 3, 2)
+        torch.testing.assert_close(
+            item0["observation.voxel"],
+            torch.from_numpy(voxels_3d[[0, 1]]),
+            rtol=0,
+            atol=0,
+        )
+    finally:
+        ds_delta.reader.close()
+
+
+@pytest.mark.parametrize(
+    ("array", "expected_shape", "error_match"),
+    [
+        pytest.param(
+            pa.array([[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], None], type=pa.list_(pa.list_(pa.float32(), 3), 2)),
+            (2, 3),
+            "null list value.*depth 0",
+            id="null-outer-2d-fsl",
+        ),
+        pytest.param(
+            pa.array(
+                [[[1.0, 2.0, 3.0], None], [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]],
+                type=pa.list_(pa.list_(pa.float32(), 3), 2),
+            ),
+            (2, 3),
+            "null list value.*depth 1",
+            id="null-inner-2d-fsl",
+        ),
+        pytest.param(
+            pa.array(
+                [[[1, None, 3], [4, 5, 6]]],
+                type=pa.list_(pa.list_(pa.int64(), 3), 2),
+            ),
+            (2, 3),
+            "null leaf value",
+            id="null-leaf-2d-fsl",
+        ),
+        pytest.param(
+            pa.array([[1.0, 2.0, 3.0], [4.0]], type=pa.list_(pa.float32())),
+            (2,),
+            "ragged list lengths",
+            id="ragged-var-list-divisible-total",
+        ),
+        pytest.param(
+            pa.array(
+                [[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0, 10.0, 11.0, 12.0]]],
+                type=pa.list_(pa.list_(pa.float32(), 4), 3),
+            ),
+            (4, 3),
+            "nested list dims",
+            id="transposed-nested-shape",
+        ),
+        pytest.param(
+            pa.array([[1.0, 2.0, 3.0, 4.0, 5.0]], type=pa.list_(pa.float32(), 5)),
+            (4,),
+            "does not match feature shape",
+            id="width-mismatch",
+        ),
+    ],
+)
+def test_unpack_list_column_rejects_malformed_structures(
+    array: pa.Array, expected_shape: tuple[int, ...], error_match: str
+) -> None:
+    with pytest.raises(ValueError, match=error_match):
+        _unpack_list_column(array, key="observation.bad", expected_shape=expected_shape)
+
+
+def test_lance_reader_fails_clearly_on_null_in_nested_fixed_size_list(tmp_path) -> None:
+    """End-to-end: a NULL inside a nested FixedSizeList raises ValueError instead of misaligning rows."""
+    lance_root = tmp_path / "null_nested_lance"
+    (lance_root / "meta").mkdir(parents=True)
+
+    info = {
+        "codebase_version": "v3.0",
+        "robot_type": "dummy",
+        "total_episodes": 1,
+        "total_frames": 2,
+        "total_tasks": 1,
+        "chunks_size": 1000,
+        "data_files_size_in_mb": 100,
+        "video_files_size_in_mb": 200,
+        "fps": 10,
+        "splits": {"train": "0:1"},
+        "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+        "video_path": None,
+        "storage_format": "lance",
+        "features": {
+            "timestamp": {"dtype": "float32", "shape": [1], "names": None},
+            "frame_index": {"dtype": "int64", "shape": [1], "names": None},
+            "episode_index": {"dtype": "int64", "shape": [1], "names": None},
+            "index": {"dtype": "int64", "shape": [1], "names": None},
+            "task_index": {"dtype": "int64", "shape": [1], "names": None},
+            "observation.keypoints": {"dtype": "float32", "shape": [2, 3], "names": None},
+        },
+    }
+    (lance_root / "meta" / "info.json").write_text(json.dumps(info, indent=4))
+
+    pd.DataFrame({"task_index": [0]}, index=pd.Index(["t0"], name="task")).to_parquet(
+        lance_root / "meta" / "tasks.parquet"
+    )
+    ep_dir = lance_root / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "episode_index": pa.array([0], type=pa.int64()),
+                "tasks": pa.array([["t0"]]),
+                "length": pa.array([2], type=pa.int64()),
+                "dataset_from_index": pa.array([0], type=pa.int64()),
+                "dataset_to_index": pa.array([2], type=pa.int64()),
+            }
+        ),
+        ep_dir / "file-000.parquet",
+    )
+
+    db = lancedb.connect(str(lance_root))
+    db.create_table(
+        lance_utils.FRAMES_TABLE,
+        pa.table(
+            {
+                "timestamp": pa.array([0.0, 0.1], type=pa.float32()),
+                "frame_index": pa.array([0, 1], type=pa.int64()),
+                "episode_index": pa.array([0, 0], type=pa.int64()),
+                "index": pa.array([0, 1], type=pa.int64()),
+                "task_index": pa.array([0, 0], type=pa.int64()),
+                "observation_keypoints": pa.array(
+                    [[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], None],
+                    type=pa.list_(pa.list_(pa.float32(), 3), 2),
+                ),
+            }
+        ),
+    )
+
+    ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    try:
+        with pytest.raises(ValueError, match="null list value"):
+            ds.__getitems__([0, 1])
+    finally:
+        ds.reader.close()
