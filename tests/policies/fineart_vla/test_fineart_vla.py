@@ -90,7 +90,7 @@ def test_generation_tokenizer_cache_keeps_revisions_separate(monkeypatch):
     register = MagicMock(side_effect=lambda tokenizer: tokenizer)
     names = [f"google/paligemma-3b-pt-224@{revision}" for revision in ("first-sha", "second-sha")]
 
-    first, second = [_get_loc_tokenizer(name, loader, register) for name in names]
+    first, second = (_get_loc_tokenizer(name, loader, register) for name in names)
 
     assert first is not second
     assert _get_loc_tokenizer(names[0], loader, register) is first
