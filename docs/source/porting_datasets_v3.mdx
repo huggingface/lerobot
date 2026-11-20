@@ -2,6 +2,72 @@
 
 This tutorial explains how to port large-scale robotic datasets to the LeRobot Dataset v3.0 format. We'll use the **DROID 1.0.1** dataset as our primary example, which demonstrates handling multi-terabyte datasets with thousands of shards across SLURM clusters.
 
+## Start with a small local dataset
+
+Validate the state/action mapping and episode boundaries on a few frames before downloading a large dataset. This example needs the `dataset` extra and writes only to a new local directory. It does not upload data.
+
+Save one frame per line in `frames.jsonl`:
+
+```jsonl
+{"episode_index": 0, "task": "open the gripper", "observation.state": [0.0, 0.1], "action": [0.1, 0.2]}
+{"episode_index": 0, "task": "open the gripper", "observation.state": [0.1, 0.2], "action": [0.2, 0.3]}
+{"episode_index": 1, "task": "close the gripper", "observation.state": [0.2, 0.3], "action": [0.1, 0.2]}
+```
+
+The episode indices must start at zero and increase by one at each boundary. Frames from one episode must stay together. Save this converter as `convert_log.py`:
+
+```python
+import json
+from pathlib import Path
+
+import numpy as np
+
+from lerobot.datasets import LeRobotDataset
+
+records = [json.loads(line) for line in Path("frames.jsonl").read_text().splitlines() if line.strip()]
+episode_indices = [record["episode_index"] for record in records]
+if (
+    not episode_indices
+    or any(not isinstance(index, int) or isinstance(index, bool) for index in episode_indices)
+    or episode_indices[0] != 0
+    or any(b not in (a, a + 1) for a, b in zip(episode_indices, episode_indices[1:]))
+):
+    raise ValueError("Expected contiguous episode indices starting at zero")
+
+features = {
+    "observation.state": {"dtype": "float32", "shape": (2,), "names": ["joint_1", "gripper"]},
+    "action": {"dtype": "float32", "shape": (2,), "names": ["joint_1", "gripper"]},
+}
+dataset = LeRobotDataset.create(
+    repo_id="local/jsonl_demo", root=Path("converted_demo"), fps=30, features=features, use_videos=False
+)
+current_episode = 0
+try:
+    for record in records:
+        if record["episode_index"] != current_episode:
+            dataset.save_episode()
+            current_episode = record["episode_index"]
+        dataset.add_frame(
+            {
+                "observation.state": np.asarray(record["observation.state"], dtype=np.float32),
+                "action": np.asarray(record["action"], dtype=np.float32),
+                "task": record["task"],
+            }
+        )
+    dataset.save_episode()
+finally:
+    dataset.finalize()
+
+loaded = LeRobotDataset("local/jsonl_demo", root=Path("converted_demo"))
+assert loaded.num_episodes == 2
+assert len(loaded) == 3
+print(loaded[0])
+```
+
+Run `uv run --extra dataset python convert_log.py`. Adapt the feature shapes and `names` lists to the source device's joint order and control convention. The assertions above describe the three sample records; update them for your own input. LeRobot generates frame indices and timestamps at the specified FPS, so resample irregular source logs before using this example.
+
+This small example loads the JSONL into memory to validate episode order before creating the output. Keep the source logs for fields that are not mapped. Once the converted frames and boundaries are correct, use the DROID and SLURM workflows below to process larger inputs.
+
 ## File Organization: v2.1 vs v3.0
 
 Dataset v3.0 fundamentally changes how data is organized and stored:
