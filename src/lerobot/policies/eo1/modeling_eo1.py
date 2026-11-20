@@ -690,5 +690,8 @@ class EO1VisionFlowMatchingModel(nn.Module):
                 v_t = self.action_out_proj(hidden_states)
             return v_t.reshape(input_x_t.shape).to(input_x_t.dtype)
 
-        x_t = euler_integrate(denoise_fn, x_t, self.config.num_denoise_steps)
+        action_dim = (
+            _original_action_dim(self.config) if not self.config.supervise_padding_action_dims else None
+        )
+        x_t = euler_integrate(denoise_fn, x_t, self.config.num_denoise_steps, action_dim=action_dim)
         return x_t
