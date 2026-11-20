@@ -227,8 +227,8 @@ class SmolVLMWithExpertModel(nn.Module):
         batch_size,
         head_dim,
         use_cache: bool = True,
-        past_key_values: "DynamicCache | None" = None,
-    ) -> "tuple[list[torch.Tensor], DynamicCache | None]":
+        past_key_values: "DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None" = None,
+    ) -> "tuple[list[torch.Tensor], DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None]":
         query_states = []
         key_states = []
         value_states = []
@@ -274,15 +274,21 @@ class SmolVLMWithExpertModel(nn.Module):
                 raise ValueError(
                     "`use_cache=True` requires a `past_key_values` cache (forward() creates one on prefill)."
                 )
-            # `DynamicCache` stores tensors as [batch, heads, seq, head_dim]; this module works with
-            # [batch, seq, heads, head_dim]. During prefix prefill this stores the (post-RoPE) K/V and
-            # returns them unchanged; during denoising it appends the suffix K/V and returns
-            # [prefix; suffix], exactly like the previous hand-rolled dict cache.
-            key_states, value_states = past_key_values.update(
-                key_states.transpose(1, 2), value_states.transpose(1, 2), layer_idx
-            )
-            key_states = key_states.transpose(1, 2)
-            value_states = value_states.transpose(1, 2)
+            if isinstance(past_key_values, tuple):
+                # Static immutable KV cache: no in-place mutation or dynamic allocations
+                prefix_k, prefix_v = past_key_values[layer_idx]
+                key_states = torch.cat([prefix_k, key_states.transpose(1, 2)], dim=2).transpose(1, 2)
+                value_states = torch.cat([prefix_v, value_states.transpose(1, 2)], dim=2).transpose(1, 2)
+            else:
+                # `DynamicCache` stores tensors as [batch, heads, seq, head_dim]; this module works with
+                # [batch, seq, heads, head_dim]. During prefix prefill this stores the (post-RoPE) K/V and
+                # returns them unchanged; during denoising it appends the suffix K/V and returns
+                # [prefix; suffix], exactly like the previous hand-rolled dict cache.
+                key_states, value_states = past_key_values.update(
+                    key_states.transpose(1, 2), value_states.transpose(1, 2), layer_idx
+                )
+                key_states = key_states.transpose(1, 2)
+                value_states = value_states.transpose(1, 2)
 
         attention_interface = self.get_attention_interface()
 
@@ -301,8 +307,8 @@ class SmolVLMWithExpertModel(nn.Module):
         batch_size,
         head_dim,
         use_cache: bool = True,
-        past_key_values: "DynamicCache | None" = None,
-    ) -> "tuple[list[torch.Tensor], DynamicCache | None]":
+        past_key_values: "DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None" = None,
+    ) -> "tuple[list[torch.Tensor], DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None]":
         attention_interface = self.get_attention_interface()
 
         att_outputs = []
@@ -340,12 +346,13 @@ class SmolVLMWithExpertModel(nn.Module):
             expert_position_id = position_ids
 
         if use_cache and past_key_values is not None:
-            # Cross-attention layers never fill the cache themselves: during the prefix prefill every
-            # layer goes through `forward_attn_layer`, which stores the (post-RoPE) VLM K/V for this
-            # layer index. Here we only read them back (no concatenation: the expert cross-attends to
-            # the fixed prefix). `DynamicCache` stores [batch, heads, seq, head_dim]; transpose back.
-            key_states = past_key_values.layers[layer_idx].keys.transpose(1, 2)
-            value_states = past_key_values.layers[layer_idx].values.transpose(1, 2)
+            if isinstance(past_key_values, tuple):
+                prefix_k, prefix_v = past_key_values[layer_idx]
+                key_states = prefix_k.transpose(1, 2)
+                value_states = prefix_v.transpose(1, 2)
+            else:
+                key_states = past_key_values.layers[layer_idx].keys.transpose(1, 2)
+                value_states = past_key_values.layers[layer_idx].values.transpose(1, 2)
 
         # Expert
         expert_layer = model_layers[1][layer_idx]
@@ -415,7 +422,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        past_key_values: "DynamicCache | None" = None,
+        past_key_values: "DynamicCache | tuple[tuple[torch.Tensor, torch.Tensor], ...] | None" = None,
         inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
     ):
