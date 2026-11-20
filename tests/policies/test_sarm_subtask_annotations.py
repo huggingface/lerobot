@@ -192,3 +192,19 @@ class TestSaveAnnotationsToDataset:
 
         assert load_annotations_from_dataset(tmp_path, prefix="sparse") == {2: sparse}
         assert load_annotations_from_dataset(tmp_path, prefix="dense") == {2: dense}
+
+    @pytest.mark.parametrize("first,second", [("sparse", "dense"), ("dense", "sparse")])
+    def test_incremental_saves_preserve_both_prefixes(self, tmp_path, first, second):
+        from lerobot.data_processing.sarm_annotations.subtask_annotation import load_annotations_from_dataset
+
+        self.write_episodes_file(tmp_path, 0, [0, 1])
+        self.write_episodes_file(tmp_path, 1, [2])
+        original = make_annotation([("reach", 0, 1)])
+        added = make_annotation([("grasp", 0, 1)])
+        other = make_annotation([("task", 0, 1)])
+        save_annotations_to_dataset(tmp_path, {2: original}, fps=30, prefix=first)
+        save_annotations_to_dataset(tmp_path, {1: other}, fps=30, prefix=second)
+        save_annotations_to_dataset(tmp_path, {0: added}, fps=30, prefix=first)
+
+        assert load_annotations_from_dataset(tmp_path, prefix=first) == {0: added, 2: original}
+        assert load_annotations_from_dataset(tmp_path, prefix=second) == {1: other}
