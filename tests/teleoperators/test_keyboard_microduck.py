@@ -45,7 +45,7 @@ def release(teleop, *keys):
 
 
 def test_idle_keyboard_commands_nothing(teleop):
-    action = teleop.get_action()
+    action = teleop.get_action(observation={})
     assert set(action) == set(teleop.action_features)
     assert all(value == 0.0 for value in action.values())
 

@@ -732,8 +732,7 @@ def test_gamepad_records_commands_without_writing_to_robot(gamepad_robot, robotd
     teleop.connect()
     try:
         obs = gamepad_robot.get_observation()
-        teleop.on_observation(obs)
-        action = teleop.get_action()
+        action = teleop.get_action(observation=obs)
         assert action == pytest.approx(
             {
                 "x.vel": 0.4,
@@ -767,12 +766,18 @@ def test_gamepad_requires_passive_mode_and_fresh_sample(robot, tmp_path):
     teleop.connect()
     try:
         with pytest.raises(ValueError, match="control_mode=gamepad"):
-            teleop.on_observation(robot.get_observation())
+            teleop.get_action(observation=robot.get_observation())
         action = dict.fromkeys(teleop.action_features, 0.0)
-        teleop.on_observation({"microduck.gamepad": {"action": action, "received_at": time.monotonic() - 2}})
         with pytest.raises(RuntimeError, match="fresh"):
-            teleop.get_action()
-        teleop.on_observation({"microduck.gamepad": {"action": action, "received_at": time.monotonic()}})
+            teleop.get_action(
+                observation={"microduck.gamepad": {"action": action, "received_at": time.monotonic() - 2}}
+            )
+        assert (
+            teleop.get_action(
+                observation={"microduck.gamepad": {"action": action, "received_at": time.monotonic()}}
+            )
+            == action
+        )
         teleop.disconnect()
         teleop.connect()
         with pytest.raises(RuntimeError, match="fresh"):

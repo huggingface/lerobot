@@ -100,7 +100,7 @@ def test_record_and_resume_image_streams(tmp_path, monkeypatch, video, camera, o
     )
     action = dict.fromkeys(robot.action_features, 0.0)
     action["x.vel"] = 0.1
-    monkeypatch.setattr(MockTeleop, "get_action", lambda self: action.copy())
+    monkeypatch.setattr(MockTeleop, "get_action", lambda self, observation=None: action.copy())
 
     writer_settings = []
     start_image_writer = DatasetWriter.start_image_writer

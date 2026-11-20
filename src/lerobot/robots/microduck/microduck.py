@@ -76,7 +76,7 @@ class MicroDuck(Robot):
 
     Actions are the policy's intents: a body twist (``x.vel``, ``y.vel`` in m/s, ``theta.vel`` in deg/s,
     trunk frame, x forward, y left, positive turns left) and a head pose (rad). They are the planar base
-    actions of LeRobot's other mobile bases, so base teleoperators such as ``keyboard_base`` drive the duck
+    actions of LeRobot's other mobile bases, so the shared keyboard mapping pipeline can drive the duck
     too. They are sent to ``robotd`` as ``robot.move`` (``vx``, ``vy``, ``vyaw`` in rad/s) / ``robot.head``
     notifications on every ``send_action``; robotd zeroes the twist if no intent arrives for 500 ms, so the
     control loop must run at 2 Hz or more.

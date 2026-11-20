@@ -195,10 +195,6 @@ class Teleoperator(abc.ABC):
         """
         pass
 
-    def on_observation(self, observation: RobotObservation) -> None:
-        """Receive the robot observation before producing an action."""
-        return None
-
     @abc.abstractmethod
     def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         """

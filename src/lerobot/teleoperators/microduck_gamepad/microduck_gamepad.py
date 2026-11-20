@@ -32,8 +32,6 @@ class MicroDuckGamepad(Teleoperator):
     def __init__(self, config: MicroDuckGamepadConfig):
         super().__init__(config)
         self._connected = False
-        self._action: RobotAction | None = None
-        self._received_at = 0.0
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -64,7 +62,6 @@ class MicroDuckGamepad(Teleoperator):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        self._action = None
         self._connected = True
 
     def calibrate(self) -> None:
@@ -74,8 +71,9 @@ class MicroDuckGamepad(Teleoperator):
         pass
 
     @check_if_not_connected
-    def on_observation(self, observation: RobotObservation) -> None:
-        self._action = None
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
+        if observation is None:
+            raise RuntimeError("Read a fresh Microduck observation before each gamepad action")
         sample = observation.get("microduck.gamepad")
         if not isinstance(sample, dict) or not isinstance(sample.get("action"), dict):
             raise ValueError("microduck_gamepad requires --robot.control_mode=gamepad")
@@ -86,20 +84,13 @@ class MicroDuckGamepad(Teleoperator):
         received_at = float(sample["received_at"])
         if not all(math.isfinite(value) for value in [*values.values(), received_at]):
             raise ValueError("The Microduck gamepad sample contains non-finite values")
-        self._action = values
-        self._received_at = received_at
-
-    @check_if_not_connected
-    def get_action(self) -> RobotAction:
-        action, self._action = self._action, None
-        if action is None or not 0 <= time.monotonic() - self._received_at <= 1.0:
+        if not 0 <= time.monotonic() - received_at <= 1.0:
             raise RuntimeError("Read a fresh Microduck observation before each gamepad action")
-        return dict(action)
+        return values
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         pass
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        self._action = None
         self._connected = False
