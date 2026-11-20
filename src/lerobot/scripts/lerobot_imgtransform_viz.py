@@ -112,6 +112,7 @@ def save_each_transform(
 def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR, n_examples: int = 5):
     dataset = LeRobotDataset(
         repo_id=cfg.repo_id,
+        root=cfg.root,
         episodes=cfg.episodes,
         revision=cfg.revision,
         video_backend=cfg.video_backend,
