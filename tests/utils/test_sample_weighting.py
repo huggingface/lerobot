@@ -28,6 +28,7 @@ from lerobot.utils.sample_weighting import (
     SampleWeighter,
     SampleWeightingConfig,
     UniformWeighter,
+    check_policy_supports_sample_weighting,
     make_sample_weighter,
 )
 
@@ -402,3 +403,27 @@ def test_rabc_weights_normalization(sample_progress_parquet):
     # Weights should be normalized to sum approximately to batch_size
     batch_size = 4
     assert abs(weights.sum().item() - batch_size) < 0.1
+
+
+# =============================================================================
+# Policy compatibility check
+# =============================================================================
+
+
+class _PerSampleLossPolicy:
+    def forward(self, batch, reduction="mean"):
+        return torch.zeros(1), {}
+
+
+class _MeanLossPolicy:
+    def forward(self, batch):
+        return torch.zeros(()), {}
+
+
+def test_check_policy_supports_sample_weighting_accepts_reduction():
+    check_policy_supports_sample_weighting(_PerSampleLossPolicy())
+
+
+def test_check_policy_supports_sample_weighting_rejects_missing_reduction():
+    with pytest.raises(ValueError, match="_MeanLossPolicy.forward\\(\\) has no `reduction` argument"):
+        check_policy_supports_sample_weighting(_MeanLossPolicy())
