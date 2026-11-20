@@ -89,6 +89,8 @@ class TestCameraEncoderThread:
         assert "min" in data
         assert "max" in data
         assert "count" in data
+        # Count is the episode length, not the number of pixels fed to the tracker.
+        assert int(data["count"][0]) == num_frames
 
         # Verify the MP4 file is valid
         assert video_path.exists()
