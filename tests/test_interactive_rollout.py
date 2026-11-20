@@ -1333,6 +1333,12 @@ class _IdentityPipeline:
 
     steps = ()
 
+    def get_step(self, step_type):
+        return None
+
+    def get_steps(self, step_type):
+        return []
+
     def __call__(self, batch):
         return batch
 

@@ -530,44 +530,39 @@ def reconcile_wall_oss_05_processors(
     if config.action_feature is None:
         raise ValueError("Wall-OSS-0.5 requires an action output feature.")
     action_dim = config.action_feature.shape[-1]
-    pre_steps = [
+    preprocessor.steps = [
         step
         for step in preprocessor.steps
         if not isinstance(step, (WallOSS05PadStateProcessorStep, WallOSS05PadActionProcessorStep))
     ]
-    for step in pre_steps:
+    for step in preprocessor.steps:
         if isinstance(step, NormalizerProcessorStep):
             _configure_wall_quantile_eps(step)
         if isinstance(step, WallOSS05TokenizerStep):
             step.action_dim = action_dim
             step.camera_key_mapping = dict(config.camera_key_mapping)
-    insert_idx = next(
-        (
-            idx + 1
-            for idx, step in enumerate(pre_steps)
-            if isinstance(step, WallOSS05ClampNormalizedProcessorStep)
-        ),
-        next(idx + 1 for idx, step in enumerate(pre_steps) if isinstance(step, NormalizerProcessorStep)),
+    anchor = (
+        WallOSS05ClampNormalizedProcessorStep
+        if preprocessor.has_step(WallOSS05ClampNormalizedProcessorStep)
+        else NormalizerProcessorStep
     )
-    pre_steps[insert_idx:insert_idx] = [
+    pad_idx = preprocessor.index(anchor) + 1
+    preprocessor.steps[pad_idx:pad_idx] = [
         WallOSS05PadStateProcessorStep(max_state_dim=config.max_state_dim),
         WallOSS05PadActionProcessorStep(max_action_dim=config.max_action_dim),
     ]
-    preprocessor.steps = pre_steps
 
-    post_steps = [
+    postprocessor.steps = [
         step for step in postprocessor.steps if not isinstance(step, WallOSS05CropActionProcessorStep)
     ]
-    for step in post_steps:
-        if isinstance(step, UnnormalizerProcessorStep):
-            _configure_wall_quantile_eps(step)
-    crop_idx = next(idx for idx, step in enumerate(post_steps) if isinstance(step, UnnormalizerProcessorStep))
-    post_steps.insert(crop_idx, WallOSS05CropActionProcessorStep(action_dim=action_dim))
+    for step in postprocessor.get_steps(UnnormalizerProcessorStep):
+        _configure_wall_quantile_eps(step)
+    crop_idx = postprocessor.index(UnnormalizerProcessorStep)
+    postprocessor.steps.insert(crop_idx, WallOSS05CropActionProcessorStep(action_dim=action_dim))
     if config.postprocess_action_dim is not None:
-        post_steps.insert(
+        postprocessor.steps.insert(
             crop_idx + 2, WallOSS05CropActionProcessorStep(action_dim=config.postprocess_action_dim)
         )
-    postprocessor.steps = post_steps
     return preprocessor, postprocessor
 
 

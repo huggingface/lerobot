@@ -243,18 +243,14 @@ def make_longwam_pre_post_processors_from_pretrained(
         for key in ("longwam_action_toggle", "LongWAMActionToggle")
     ):
         return pre, post
-    toggles = [step for step in post.steps if isinstance(step, LongWAMActionToggle)]
+    toggles = post.get_steps(LongWAMActionToggle)
     if len(toggles) > 1:
         raise ValueError("LongWAM postprocessor must contain at most one action toggle")
     dimensions = list(config.toggle_action_dimensions)
     if toggles:
         toggles[0].dimensions = dimensions
     elif dimensions:
-        unnormalizers = [
-            i for i, step in enumerate(post.steps) if isinstance(step, UnnormalizerProcessorStep)
-        ]
-        if len(unnormalizers) != 1:
+        if len(post.get_steps(UnnormalizerProcessorStep)) != 1:
             raise ValueError("LongWAM action toggle requires exactly one action unnormalizer")
-        index = unnormalizers[0] + 1
-        post.steps = [*post.steps[:index], LongWAMActionToggle(dimensions), *post.steps[index:]]
+        post.steps.insert(post.index(UnnormalizerProcessorStep) + 1, LongWAMActionToggle(dimensions))
     return pre, post

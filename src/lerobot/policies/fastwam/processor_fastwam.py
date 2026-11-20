@@ -165,9 +165,7 @@ def make_fastwam_pre_post_processors_from_pretrained(
         postprocessor_config_filename=postprocessor_config_filename,
     )
 
-    relative_step = next(
-        (step for step in preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)), None
-    )
+    relative_step = preprocessor.get_step(RelativeActionsProcessorStep)
     if relative_step is None:
         # Only the training opt-in adds the pair: eval and rollout keep the checkpoint's processors.
         if not relative_overrides.get("enabled", False):
@@ -180,16 +178,10 @@ def make_fastwam_pre_post_processors_from_pretrained(
         absolute_step = AbsoluteActionsProcessorStep(
             enabled=config.use_relative_actions, relative_step=relative_step
         )
-        pre_steps = list(preprocessor.steps)
-        pre_steps.insert(_step_index(pre_steps, NormalizerProcessorStep), relative_step)
-        preprocessor.steps = pre_steps
-        post_steps = list(postprocessor.steps)
-        post_steps.insert(_step_index(post_steps, UnnormalizerProcessorStep) + 1, absolute_step)
-        postprocessor.steps = post_steps
+        preprocessor.steps.insert(preprocessor.index(NormalizerProcessorStep), relative_step)
+        postprocessor.steps.insert(postprocessor.index(UnnormalizerProcessorStep) + 1, absolute_step)
     else:
-        absolute_step = next(
-            step for step in postprocessor.steps if isinstance(step, AbsoluteActionsProcessorStep)
-        )
+        absolute_step = postprocessor.get_steps(AbsoluteActionsProcessorStep)[0]
 
     # Same precedence as the pipeline loader: overrides win over the saved (or config) values.
     for key, value in relative_overrides.items():
@@ -197,10 +189,3 @@ def make_fastwam_pre_post_processors_from_pretrained(
     for key, value in absolute_overrides.items():
         setattr(absolute_step, key, value)
     return preprocessor, postprocessor
-
-
-def _step_index(steps: list[ProcessorStep], step_type: type[ProcessorStep]) -> int:
-    for index, step in enumerate(steps):
-        if isinstance(step, step_type):
-            return index
-    raise ValueError(f"FastWAM processors have no {step_type.__name__} to place relative actions around.")
