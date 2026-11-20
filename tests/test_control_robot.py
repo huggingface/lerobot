@@ -25,10 +25,12 @@ pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[ha
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.processor import make_default_processors
 from lerobot.robots import make_robot_from_config
+from lerobot.scripts import lerobot_calibrate, lerobot_record, lerobot_replay, lerobot_teleoperate
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
 from lerobot.scripts.lerobot_record import RecordConfig, record, record_loop
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
+from lerobot.utils.import_utils import DEVICE_AND_ENV_PLUGIN_KINDS, DEVICE_PLUGIN_KINDS
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleopConfig
@@ -44,6 +46,25 @@ def _ticks(summary: str) -> int:
 def _step_calls(summary: str, step: str) -> int:
     """How many ticks ran *step*, off the loop-body breakdown of a run summary."""
     return int(re.search(rf"\n\s+{step}\s+.*· (\d+) calls", summary).group(1))
+
+
+@pytest.mark.parametrize(
+    ("script", "command", "expected_kinds"),
+    [
+        (lerobot_calibrate, "calibrate", DEVICE_PLUGIN_KINDS),
+        (lerobot_record, "record", DEVICE_AND_ENV_PLUGIN_KINDS),
+        (lerobot_replay, "replay", DEVICE_AND_ENV_PLUGIN_KINDS),
+        (lerobot_teleoperate, "teleoperate", DEVICE_AND_ENV_PLUGIN_KINDS),
+    ],
+)
+def test_main_registers_only_the_plugin_kinds_it_uses(monkeypatch, script, command, expected_kinds):
+    calls = []
+    monkeypatch.setattr(script, "register_third_party_plugins", lambda kinds: calls.append(kinds))
+    monkeypatch.setattr(script, command, lambda: calls.append(command))
+
+    script.main()
+
+    assert calls == [expected_kinds, command]
 
 
 def test_calibrate():

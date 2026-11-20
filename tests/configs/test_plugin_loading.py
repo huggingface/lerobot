@@ -18,6 +18,7 @@ import sys
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -103,6 +104,51 @@ def test_wrap_with_plugin(plugin_dir: Path):
     assert isinstance(cfg, Config)
     assert isinstance(cfg.env, EnvConfig.get_choice_class("test_env"))
     assert cfg.env.value == 42
+
+
+@pytest.fixture
+def device_plugin_dir(tmp_path: Path) -> Generator[Path, None, None]:
+    """A package without a `lerobot_robot_` prefix that registers a robot."""
+    plugin_pkg = tmp_path / "devices_from_another_package"
+    plugin_pkg.mkdir()
+    (plugin_pkg / "__init__.py").write_text(
+        "from dataclasses import dataclass\n"
+        "from lerobot.robots import RobotConfig\n"
+        "@RobotConfig.register_subclass('plugin_robot')\n"
+        "@dataclass\n"
+        "class PluginRobotConfig(RobotConfig):\n"
+        "    pass\n"
+    )
+
+    sys.path.insert(0, str(tmp_path))
+    yield plugin_pkg
+    sys.path.pop(0)
+
+    from lerobot.robots import RobotConfig
+
+    RobotConfig.get_known_choices().pop("plugin_robot", None)
+    sys.modules.pop(plugin_pkg.name, None)
+
+
+def test_calibrate_loads_a_robot_from_another_package_with_the_plugin_flag(monkeypatch, device_plugin_dir):
+    from lerobot.scripts import lerobot_calibrate
+
+    make_robot = MagicMock()
+    monkeypatch.setattr(lerobot_calibrate, "make_robot_from_config", make_robot)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "lerobot-calibrate",
+            f"--robot.discover_packages_path={device_plugin_dir.name}",
+            "--robot.type=plugin_robot",
+        ],
+    )
+
+    lerobot_calibrate.calibrate()
+
+    make_robot.assert_called_once()
+    assert make_robot.call_args.args[0].type == "plugin_robot"
 
 
 @pytest.fixture

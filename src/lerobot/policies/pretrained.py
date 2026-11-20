@@ -32,7 +32,6 @@ from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.lerobot_types import PolicyOutput
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
-from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
@@ -324,12 +323,22 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         The default streams one shard at a time. Custom loaders can inspect the whole
         checkpoint through its keys, shapes and tensors without creating a temporary file.
+
+        The default maps each file on the CPU and copies it into the parameters one tensor at a
+        time, wherever they were built. Mapped on a GPU, all of it would first be copied there,
+        beside the parameters. `map_location` is the device `from_pretrained` moves the policy to
+        afterwards: only a loader that assigns the file's tensors as the weights, as G0.5's does,
+        reads them itself and puts each one there. A loader does not move the policy.
         """
-        device = resolve_safetensors_device(map_location)
+        device = "cpu"
         if len(checkpoint.files) == 1:
             missing_keys, unexpected_keys = load_model_as_safetensor(
-                model, str(checkpoint.files[0]), strict=strict, device=device
+                model, str(checkpoint.files[0]), strict=False, device=device
             )
+            missing_keys = sorted(missing_keys)
+            # safetensors reports a tied weight's second name as unexpected when the file holds both names.
+            names = model.state_dict().keys()
+            unexpected_keys = [key for key in unexpected_keys if key not in names]
         else:
             expected = set(model.state_dict())
             missing = set(expected)
@@ -342,11 +351,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 del state
             missing_keys = _missing_keys(model, expected - missing)
             unexpected_keys = sorted(unexpected)
-            if strict and (missing_keys or unexpected_keys):
-                raise RuntimeError(
-                    f"Error(s) in loading state_dict for {type(model).__name__}: "
-                    f"missing keys {missing_keys}, unexpected keys {unexpected_keys}"
-                )
+        if strict and (missing_keys or unexpected_keys):
+            raise RuntimeError(
+                f"Error(s) in loading state_dict for {type(model).__name__}: "
+                f"missing keys {missing_keys}, unexpected keys {unexpected_keys}"
+            )
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model
 

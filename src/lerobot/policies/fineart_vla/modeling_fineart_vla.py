@@ -38,7 +38,6 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_CAUSAL_MARKS,
     OBS_LANGUAGE_TOKENS,
 )
-from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import (
     _kernels_available,
     _liger_kernel_available,
@@ -1475,7 +1474,7 @@ class FineARTVLAPolicy(PI05Policy):
         if native:
             return super()._load_checkpoint(model, checkpoint, map_location, strict)
         logger.info("FineART-VLA: converting PI0.5-format checkpoint %s", checkpoint.files)
-        state_dict = checkpoint.load_state_dict(device=resolve_safetensors_device(map_location))
+        state_dict = checkpoint.load_state_dict(device="cpu")
         state_dict = model._convert_openpi_state_dict(state_dict)
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=strict)
         log_model_loading_keys(missing_keys, unexpected_keys)

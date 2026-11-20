@@ -1811,9 +1811,27 @@ class G05Policy(PreTrainedPolicy):
         map_location: str,
         strict: bool,
     ) -> G05Policy:
-        """Load the weights from a safetensors file."""
+        """Load the weights from the checkpoint's files, one tensor at a time.
+
+        A bfloat16 policy on a GPU runs with the precision `to` gives it, so the weights take their final
+        dtypes on the meta device first and each tensor is cast on the CPU on its way: the float32
+        checkpoint is never on the GPU.
+        """
         device = resolve_safetensors_device(map_location)
-        state_dict = checkpoint.load_state_dict(device=device, backend="pread")
+        cast = model.config.dtype == torch.bfloat16 and torch.device(map_location).type == "cuda"
+        if cast:
+            model._apply_author_inference_precision()
+        targets = model.state_dict()
+        state_dict = {}
+        # Read on the CPU only to cast there. Otherwise straight onto the device: a safetensors build whose
+        # `safe_open` takes no `backend` reads a whole file at once, which would then sit in host memory.
+        for name, tensor in checkpoint.tensors("cpu" if cast else device, backend="pread"):
+            if cast and name in targets and tensor.is_floating_point():
+                # Through bfloat16 to the float32 islands too, as `_apply_author_inference_precision`
+                # rounds them.
+                tensor = tensor.to(torch.bfloat16).to(targets[name].dtype)
+            # Not moved: `load_state_dict` drops a tensor the policy does not have.
+            state_dict[name] = tensor.to(device) if name in targets else tensor
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False, assign=True)
         model.backend.materialize_runtime_buffers(device)
         remaining_meta = [name for name, parameter in model.named_parameters() if parameter.is_meta]

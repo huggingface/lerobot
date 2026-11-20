@@ -33,9 +33,9 @@ import torch
 
 from lerobot.lerobot_types import PolicyPrediction
 from lerobot.policies import ActionQueue, QueueSnapshot, RTCConfig
+from lerobot.utils.latency import LatencyWindow
 
 from .contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
-from .latency import LatencyWindow
 
 
 @dataclass(frozen=True)

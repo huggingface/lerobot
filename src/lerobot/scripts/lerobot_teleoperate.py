@@ -126,7 +126,7 @@ from lerobot.teleoperators import (  # noqa: F401
     unitree_g1,
 )
 from lerobot.utils.cycle_timer import CycleTimer
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import DEVICE_AND_ENV_PLUGIN_KINDS, register_third_party_plugins
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import (
     init_visualization,
@@ -303,7 +303,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
 
 def main():
-    register_third_party_plugins()
+    register_third_party_plugins(kinds=DEVICE_AND_ENV_PLUGIN_KINDS)
     teleoperate()
 
 
