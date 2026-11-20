@@ -105,6 +105,8 @@ class ReplayBuffer:
                 Using "cpu" can help save GPU memory.
             optimize_memory (bool): If True, optimizes memory by not storing duplicate next_states when
                 they can be derived from states. This is useful for large datasets where next_state[i] = state[i+1].
+                The next_state of a transition whose successor is not in the next slot (end of an episode,
+                non-consecutive transitions) is stored on its own, so such a boundary costs one extra state.
         """
         if capacity <= 0:
             raise ValueError("Capacity must be greater than 0.")
@@ -116,6 +118,10 @@ class ReplayBuffer:
         self.size = 0
         self.initialized = False
         self.optimize_memory = optimize_memory
+        # With optimize_memory, next_state[i] is read from states[i + 1]. Slots where that does not hold
+        # keep their next_state here, and _last_next_state lets add() detect them.
+        self._detached_next_states: dict[int, dict[str, torch.Tensor]] = {}
+        self._last_next_state: dict[str, torch.Tensor] | None = None
         self._lock = threading.Lock()
 
         # Track episode boundaries for memory optimization
@@ -213,6 +219,9 @@ class ReplayBuffer:
                     # Only store next_states if not optimizing memory
                     self.next_states[key][self.position].copy_(next_state[key].squeeze(dim=0))
 
+            if self.optimize_memory:
+                self._track_next_state(next_state)
+
             self.actions[self.position].copy_(action.squeeze(dim=0))
             self.rewards[self.position] = reward
             self.dones[self.position] = done
@@ -230,6 +239,22 @@ class ReplayBuffer:
 
             self.position = (self.position + 1) % self.capacity
             self.size = min(self.size + 1, self.capacity)
+
+    def _track_next_state(self, next_state: dict[str, torch.Tensor] | None) -> None:
+        """Keep the previous transition's next_state if the state just written to the current slot is not it."""
+        previous_next_state = self._last_next_state
+        if previous_next_state is not None and not all(
+            torch.equal(self.states[key][self.position], previous_next_state[key]) for key in self.states
+        ):
+            self._detached_next_states[(self.position - 1) % self.capacity] = previous_next_state
+        # The current slot now holds a new transition, its previous next_state no longer applies.
+        self._detached_next_states.pop(self.position, None)
+
+        self._last_next_state = None
+        if next_state is not None:
+            self._last_next_state = {
+                key: next_state[key].squeeze(dim=0).to(self.states[key], copy=True) for key in self.states
+            }
 
     def sample(self, batch_size: int) -> BatchTransition:
         """Sample a random batch of transitions and collate them into batched tensors."""
@@ -255,6 +280,12 @@ class ReplayBuffer:
                 else:
                     next_idx = (idx + 1) % self.capacity
                     batch_next_state[key] = self.states[key][next_idx].to(self.device)
+
+            if self._detached_next_states:
+                for batch_idx, slot in enumerate(idx.tolist()):
+                    if (detached := self._detached_next_states.get(slot)) is not None:
+                        for key, value in detached.items():
+                            batch_next_state[key][batch_idx] = value.to(self.device)
 
             # Sample other tensors
             batch_actions = self.actions[idx].to(self.device)
