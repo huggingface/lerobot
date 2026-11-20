@@ -161,6 +161,39 @@ def test_encoding_changes_invalidate_cache(policy: LingBotVAPolicy, setting: str
         assert policy._negative_prompt_embeds is not None
 
 
+@pytest.mark.parametrize("encoder_device, output_device", [("cpu", "cpu"), ("cpu", "cuda"), ("cuda", "cuda")])
+@pytest.mark.parametrize(
+    "initial_dtype, next_dtype",
+    [(None, torch.bfloat16), (torch.bfloat16, None), (torch.bfloat16, torch.float16)],
+)
+def test_autocast_changes_invalidate_cache(
+    policy: LingBotVAPolicy,
+    initial_dtype: torch.dtype | None,
+    next_dtype: torch.dtype | None,
+    encoder_device: str,
+    output_device: str,
+) -> None:
+    if output_device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA output requires a GPU")
+    policy.config.device = output_device
+    policy._frozen["text_encoder"].to(encoder_device)
+    with torch.autocast(encoder_device, dtype=initial_dtype, enabled=initial_dtype is not None):
+        policy._maybe_init_prompt({"task": "pick"})
+    previous = policy._prompt_embeds
+    policy.reset()
+    with torch.no_grad(), torch.autocast(encoder_device, dtype=next_dtype, enabled=next_dtype is not None):
+        policy._maybe_init_prompt({"task": "pick"})
+        assert policy._prompt_embeds is not previous
+        expected = policy._encode_prompt("pick")
+        torch.testing.assert_close(
+            (policy._prompt_embeds, policy._negative_prompt_embeds), expected, rtol=0, atol=0
+        )
+        current = policy._prompt_embeds
+        policy.reset()
+        policy._maybe_init_prompt({"task": "pick"})
+        assert policy._prompt_embeds is current
+
+
 def test_reset_clears_episode_state_with_a_cached_prompt(policy: LingBotVAPolicy) -> None:
     policy._maybe_init_prompt({"task": "pick"})
     policy._action_queue.append(torch.ones(1, 7))

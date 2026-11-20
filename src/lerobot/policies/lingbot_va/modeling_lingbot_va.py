@@ -100,8 +100,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # from ``config.wan_pretrained_path`` the first time inference runs.
         self._frozen: dict = {}
 
-        # Keep only the most recent prompt across episode resets. These tensors are not
-        # buffers: like the frozen text encoder, they must stay out of checkpoints.
+        # Retain one task/CFG embedding pair across resets without adding it to state_dict.
         self._prompt_cache_key: tuple | None = None
         self._prompt_cache: tuple[Tensor, Tensor | None] | None = None
 
@@ -121,8 +120,8 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # ``--bundle-frozen`` output dir. ``from_pretrained(path, subfolder=...)`` resolves
         # them for either a HF repo id or a local directory.
         vae = load_vae(path, torch_dtype=self.dtype, torch_device=device, subfolder="vae")
-        # The UMT5-XXL text encoder (~11 GB) runs when the prompt changes; keep it on its own
-        # (CPU by default) device so the 5B transformer + VAE fit on a single GPU.
+        # Keep the frozen UMT5-XXL encoder (~11 GB) on its own (CPU by default) device
+        # so the 5B transformer + VAE fit on a single GPU.
         text_encoder = load_text_encoder(
             path,
             torch_dtype=self.dtype,
@@ -157,7 +156,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return [p for p in self.transformer.parameters() if p.requires_grad]
 
     def reset(self):
-        """Reset all per-episode streaming state (KV cache, queues, frame counter)."""
+        """Reset per-episode streaming state, retaining reusable prompt embeddings."""
         cfg = self.config
         self._action_queue: deque = deque(maxlen=cfg.n_action_steps)
         self._obs_buffer: list = []  # raw keyframe obs (one per env substep) observed this chunk
@@ -551,6 +550,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
     # Prompt / text encoding
     @torch.no_grad()
     def _maybe_init_prompt(self, batch: dict | None) -> None:
+        """Initialize this episode's prompt, reusing the last encoding when its inputs match."""
         if self._prompt_embeds is not None or batch is None:
             return
         task = batch.get("task")
@@ -558,6 +558,12 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._prompt = prompt or ""
         text_encoder = self._frozen["text_encoder"]
         encoder_param = next(text_encoder.parameters())
+        # Autocast can change encoder outputs without changing the parameter dtype.
+        autocast_dtype = (
+            torch.get_autocast_dtype(encoder_param.device.type)
+            if torch.is_autocast_enabled(encoder_param.device.type)
+            else None
+        )
         cache_key = (
             self._prompt,
             self.config.max_sequence_length,
@@ -567,6 +573,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             ref(text_encoder),  # do not keep replaced frozen modules alive
             encoder_param.dtype,
             encoder_param.device,
+            autocast_dtype,
             ref(self._frozen["tokenizer"]),
         )
         if self._prompt_cache is None or self._prompt_cache_key != cache_key:
