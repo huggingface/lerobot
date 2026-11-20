@@ -31,11 +31,14 @@ class NATVLAConfig(PreTrainedConfig):
     """vlm: Hub repository or folder of the pretrained NAT VLA, whose weights a new policy starts from and whose
     vlm/ subfolder holds the VLM's config, tokenizer and image processor. vlm_config: the VLM's architecture,
     read from vlm/ when the policy is first built and kept in its checkpoints. action_tokenizer: Hub repository
-    or folder of the NAT tokenizer. rtc_steps: actions of a chunk that run while the next chunk is generated,
-    which then starts with their tokens (0 turns this off)."""
+    or folder of the NAT tokenizer. vlm_revision, action_tokenizer_revision: the Hub commits these are downloaded
+    from; change them together with the repositories. rtc_steps: actions of a chunk that run while the next chunk
+    is generated, which then starts with their tokens (0 turns this off)."""
 
     vlm: str = "ahad-j/nat-vla-450m"
+    vlm_revision: str | None = "a5c2e13d45832050e364265962f6ad536460e955"
     action_tokenizer: str = "ahad-j/nat-tokenizer-h32-l4-c6400"
+    action_tokenizer_revision: str | None = "daee61dc36d74129d7bf3e823871d3e8b3c5fa85"
     setup: str = ""
     control_mode: str = ""
     n_obs_steps: int = 1
@@ -66,6 +69,10 @@ class NATVLAConfig(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
+        if self.normalization_mapping.get("ACTION") != NormalizationMode.MIN_MAX:
+            raise ValueError(
+                "The NAT tokenizer encodes actions in [-1, 1], so ACTION needs MIN_MAX normalization"
+            )
         if not 0 < self.n_action_steps <= self.chunk_size:
             raise ValueError(f"n_action_steps must be between 1 and chunk_size ({self.chunk_size})")
         if self.rtc_steps and not self.rtc_steps <= self.n_action_steps <= self.chunk_size - self.rtc_steps:
@@ -109,7 +116,9 @@ class NATVLAConfig(PreTrainedConfig):
         return None
 
 
-def downloaded(repository: str, patterns: list[str]) -> Path:
-    """A local directory, or the files of a Hub repository matching patterns, downloaded."""
+def downloaded(repository: str, patterns: list[str], revision: str | None) -> Path:
+    """A local directory, or the files of a Hub repository at revision matching patterns, downloaded."""
     folder = Path(repository)
-    return folder if folder.is_dir() else Path(snapshot_download(repository, allow_patterns=patterns))
+    if folder.is_dir():
+        return folder
+    return Path(snapshot_download(repository, revision=revision, allow_patterns=patterns))

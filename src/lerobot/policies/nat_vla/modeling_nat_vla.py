@@ -30,7 +30,7 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_nat_vla import NATVLAConfig, downloaded
 from .nat_tokenizer import NATTokenizer, StreamingDecoder
-from .processor_nat_vla import IMAGE_INPUTS, Vocabulary, padded_token_ids, vlm_config_of
+from .processor_nat_vla import IMAGE_INPUTS, Vocabulary, vlm_config_of
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoConfig, Lfm2VlForConditionalGeneration
@@ -55,7 +55,11 @@ class NATVLAPolicy(PreTrainedPolicy):
 
         tokenizer_folder = None
         if config.action_tokenizer_config is None:
-            tokenizer_folder = downloaded(config.action_tokenizer, ["config.json", "model.safetensors"])
+            tokenizer_folder = downloaded(
+                config.action_tokenizer,
+                ["config.json", "model.safetensors"],
+                config.action_tokenizer_revision,
+            )
             config.action_tokenizer_config = json.loads((tokenizer_folder / "config.json").read_text())
 
         self.action_tokenizer = NATTokenizer(config.action_tokenizer_config).float().requires_grad_(False)
@@ -75,7 +79,7 @@ class NATVLAPolicy(PreTrainedPolicy):
 
         starts_from_pretrained = config.vlm_config is None and config.pretrained_path is None
         if config.vlm_config is None:
-            config.vlm_config = vlm_config_of(downloaded(config.vlm, ["vlm/*"]) / "vlm")
+            config.vlm_config = vlm_config_of(downloaded(config.vlm, ["vlm/*"], config.vlm_revision) / "vlm")
 
         vlm_config = AutoConfig.for_model(**config.vlm_config)
         text_config = vlm_config.text_config
@@ -90,7 +94,8 @@ class NATVLAPolicy(PreTrainedPolicy):
         )
 
         if starts_from_pretrained:
-            load_model(self, downloaded(config.vlm, ["model.safetensors"]) / "model.safetensors")
+            weights = downloaded(config.vlm, ["model.safetensors"], config.vlm_revision) / "model.safetensors"
+            load_model(self, weights)
         self.reset()
 
     @property
@@ -123,33 +128,33 @@ class NATVLAPolicy(PreTrainedPolicy):
         ]
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        prompts, image_inputs = self.prompts_and_image_inputs(batch)
+        """The loss on <action_start>, the action tokens, <action_end> and the end of sequence, appended to the
+        left-padded prompts. Each sample's tokens weigh one over the square root of their number, and action
+        tokens that describe only padded steps weigh zero."""
         vocabulary, actions = self.vocabulary, batch[ACTION]
         action_tokens = self.action_tokenizer.encode(actions) + vocabulary.first_action_token
-        padded_steps = batch.get(f"{ACTION}_is_pad", torch.zeros_like(actions[..., 0], dtype=torch.bool))
-        tokens_with_actions = self.action_tokenizer.tokens_with_actions(~padded_steps, self.action_dim)
+        ends = torch.tensor([vocabulary.action_end, self.eos_token_id], device=action_tokens.device)
+        outputs = torch.cat([action_tokens, ends.expand(len(actions), -1)], 1)
 
-        outputs = [
-            [vocabulary.action_start, *tokens, vocabulary.action_end, self.eos_token_id]
-            for tokens in action_tokens.tolist()
-        ]
-        output_masks = [[True, *mask, True, True] for mask in tokens_with_actions.tolist()]
-        input_ids, attention_mask = padded_token_ids(
-            [prompt + output for prompt, output in zip(prompts, outputs, strict=True)],
-            "right",
-            self.pad_token_id,
-        )
-
+        input_ids = torch.cat([batch["input_ids"], outputs], 1)
+        attention_mask = torch.cat([batch["attention_mask"], torch.ones_like(outputs)], 1)
         hidden_states = self.vlm.model(
-            input_ids=input_ids.to(self.device), attention_mask=attention_mask.to(self.device), **image_inputs
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=(attention_mask.cumsum(1) - 1).clamp(min=0),
+            **self.image_inputs(batch),
         ).last_hidden_state
 
-        samples, positions, weights = output_token_positions(prompts, outputs, output_masks)
-        logits = self.vlm.lm_head(hidden_states[samples, positions]).float()
-        weights = weights.to(logits.device)
+        trained_tokens = outputs.shape[1] + 1
+        logits = self.vlm.lm_head(hidden_states[:, -trained_tokens - 1 : -1]).float()
         cross_entropy = functional.cross_entropy(
-            logits, input_ids[samples, positions + 1].to(logits.device), reduction="none"
+            logits.transpose(1, 2), input_ids[:, -trained_tokens:], reduction="none"
         )
+
+        padded_steps = batch.get(f"{ACTION}_is_pad", torch.zeros_like(actions[..., 0], dtype=torch.bool))
+        tokens_with_actions = self.action_tokenizer.tokens_with_actions(~padded_steps, self.action_dim)
+        trained = functional.pad(tokens_with_actions.float(), (1, 2), value=1.0)
+        weights = trained / trained.sum(1, keepdim=True).sqrt()
 
         z_loss = self.config.z_loss_scale * logits.logsumexp(-1).square()
         cross_entropy, z_loss = ((weights * value).sum() / weights.sum() for value in (cross_entropy, z_loss))
@@ -216,31 +221,21 @@ class NATVLAPolicy(PreTrainedPolicy):
         tokenizer, vocabulary = self.action_tokenizer, self.vocabulary
         token_count = tokenizer.token_count(steps, self.action_dim)[0]
 
-        first_tokens = None
-        prefixes: list[list[int]] = [[] for _ in batch["input_ids"]]
+        first_tokens, input_ids, attention_mask = None, batch["input_ids"], batch["attention_mask"]
         if executing_actions is not None:
             first_tokens = tokenizer.tokens_starting_with(executing_actions)
-            prefixes = (first_tokens + vocabulary.first_action_token).tolist()
-
-        prompts, image_inputs = self.prompts_and_image_inputs(batch)
-        input_ids, attention_mask = padded_token_ids(
-            [
-                prompt + [vocabulary.action_start, *prefix]
-                for prompt, prefix in zip(prompts, prefixes, strict=True)
-            ],
-            "left",
-            self.pad_token_id,
-        )
+            input_ids = torch.cat([input_ids, first_tokens + vocabulary.first_action_token], 1)
+            attention_mask = torch.cat([attention_mask, torch.ones_like(first_tokens)], 1)
 
         stream = ActionStreamHook(
             tokenizer.stream(self.action_dim, first_tokens), vocabulary.first_action_token
         )
         generate = partial(
             self.vlm.generate,
-            input_ids=input_ids.to(self.device),
-            attention_mask=attention_mask.to(self.device),
-            **image_inputs,
-            max_new_tokens=token_count - len(prefixes[0]),
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            **self.image_inputs(batch),
+            max_new_tokens=token_count - (0 if first_tokens is None else first_tokens.shape[1]),
             do_sample=False,
             pad_token_id=self.pad_token_id,
             logits_processor=[
@@ -251,15 +246,11 @@ class NATVLAPolicy(PreTrainedPolicy):
         stream.start(generate, self.device)
         return stream
 
-    def prompts_and_image_inputs(self, batch: dict[str, Tensor]) -> tuple[list[list[int]], dict[str, Tensor]]:
-        """The prompt token ids and image inputs the preprocessor built."""
-        prompts = [
-            ids[mask.bool()].tolist()
-            for ids, mask in zip(batch["input_ids"], batch["attention_mask"], strict=True)
-        ]
-        image_inputs = {name: batch[name].to(self.device) for name in IMAGE_INPUTS}
+    def image_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """The image inputs the preprocessor built, with the pixel values in the VLM's dtype."""
+        image_inputs = {name: batch[name] for name in IMAGE_INPUTS}
         image_inputs["pixel_values"] = image_inputs["pixel_values"].to(self.vlm.dtype)
-        return prompts, image_inputs
+        return image_inputs
 
 
 class ActionStreamHook(BaseStreamer):
@@ -319,22 +310,6 @@ def lstm_weights_copy_hook(module, state_dict, prefix, local_metadata):
 
 def added_rows_only_gradient_hook(gradient: Tensor, first_added_row: int) -> Tensor:
     return torch.cat([torch.zeros_like(gradient[:first_added_row]), gradient[first_added_row:]])
-
-
-def output_token_positions(
-    prompts: list[list[int]], outputs: list[list[int]], output_masks: list[list[bool]]
-) -> tuple[Tensor, Tensor, Tensor]:
-    """Each output token's sample, the position predicting it, and its loss weight: one over the square root of
-    the sample's trained tokens, and zero for action tokens that describe only padded steps."""
-    samples: list[int] = []
-    positions: list[int] = []
-    weights: list[float] = []
-    for sample, (prompt, output, mask) in enumerate(zip(prompts, outputs, output_masks, strict=True)):
-        samples += [sample] * len(output)
-        positions += range(len(prompt) - 1, len(prompt) + len(output) - 1)
-        weights += [kept / sum(mask) ** 0.5 for kept in mask]
-
-    return torch.tensor(samples), torch.tensor(positions), torch.tensor(weights)
 
 
 def action_tokens_only_hook(input_ids: Tensor, scores: Tensor, first_action_token: int) -> Tensor:

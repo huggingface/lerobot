@@ -27,7 +27,7 @@ pytest.importorskip("transformers")
 
 from transformers import AutoProcessor  # noqa: E402
 
-from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature  # noqa: E402
 from lerobot.inference.rtc import supports_rtc_inference, validate_local_chunk_policy  # noqa: E402
 from lerobot.policies.factory import make_pre_post_processors  # noqa: E402
 from lerobot.policies.nat_vla import NATVLAConfig, NATVLAPolicy  # noqa: E402
@@ -105,9 +105,11 @@ def make_config(tmp_path_factory):
     tokenizer = tokenizer_folder(pretrained / "tokenizer", TOKENIZER)
 
     def make_config(action_dim=7, **overrides):
+        """float32 by default: CPU bfloat16 kernels differ between processors."""
         return NATVLAConfig(
             **{
                 "device": "cpu",
+                "dtype": torch.float32,
                 "vlm": str(pretrained),
                 "action_tokenizer": str(tokenizer),
                 "setup": "single arm",
@@ -217,9 +219,9 @@ def test_the_preprocessor_writes_the_prompt_tokens_and_image_inputs(policy, prep
         prompt = ids[mask.bool()].tolist()
         assert prompt[0] == bos_token_id
         assert set(range(vocabulary.setup_start, vocabulary.first_state_bin)) <= set(prompt)
-        assert prompt[-1] == vocabulary.action_output
+        assert prompt[-2:] == [vocabulary.action_output, vocabulary.action_start]
         assert sum(vocabulary.first_state_bin <= token < vocabulary.action_output for token in prompt) == 7
-        assert (ids[~mask.bool()] == pad_token_id).all()
+        assert (ids[~mask.bool()] == pad_token_id).all() and (mask.diff() >= 0).all()
     assert not batch["attention_mask"].all()
 
 
@@ -392,9 +394,10 @@ def test_generation_writes_only_action_tokens(policy, preprocessor):
 def test_the_vlm_follows_the_configured_dtype_and_the_tokenizer_stays_in_float32(
     policy, make_config, preprocessor
 ):
-    float32_policy = NATVLAPolicy(make_config(dtype=torch.float32))
-    assert (policy.vlm.dtype, float32_policy.vlm.dtype) == (torch.bfloat16, torch.float32)
-    for each_policy in (policy, float32_policy):
+    bfloat16_policy = NATVLAPolicy(make_config(dtype=torch.bfloat16))
+    assert NATVLAConfig.dtype == torch.bfloat16
+    assert (bfloat16_policy.vlm.dtype, policy.vlm.dtype) == (torch.bfloat16, torch.float32)
+    for each_policy in (bfloat16_policy, policy):
         assert all(
             parameter.dtype == torch.float32 for parameter in each_policy.action_tokenizer.parameters()
         )
@@ -459,3 +462,25 @@ def test_another_nat_tokenizer_swaps_in_through_the_config_alone(make_config, tm
     assert small.predict_action_chunk(batch).shape == (2, 16, 7)
     streamed = torch.stack([small.select_action(batch) for _ in range(8)], 1)
     torch.testing.assert_close(streamed, small.predict_action_chunk(batch, steps=8))
+
+
+def test_only_min_max_action_normalization_is_accepted(make_config):
+    normalization = {"VISUAL": NormalizationMode.IDENTITY, "STATE": NormalizationMode.QUANTILES}
+    with pytest.raises(ValueError, match="MIN_MAX"):
+        make_config(normalization_mapping={**normalization, "ACTION": NormalizationMode.MEAN_STD})
+
+
+def test_hub_downloads_use_the_pinned_revisions(make_config, monkeypatch):
+    folders = {"hub/vla": make_config().vlm, "hub/tokenizer": make_config().action_tokenizer}
+    downloads = set()
+
+    def snapshot_download(repository, revision, allow_patterns):
+        downloads.add((repository, revision))
+        return folders[repository]
+
+    monkeypatch.setattr("lerobot.policies.nat_vla.configuration_nat_vla.snapshot_download", snapshot_download)
+    revisions = {"vlm_revision": "vla-commit", "action_tokenizer_revision": "tokenizer-commit"}
+    config = make_config(vlm="hub/vla", action_tokenizer="hub/tokenizer", **revisions)
+    NATVLAPolicy(config)
+    make_pre_post_processors(config, dataset_stats=IDENTITY_STATS)
+    assert downloads == {("hub/vla", "vla-commit"), ("hub/tokenizer", "tokenizer-commit")}

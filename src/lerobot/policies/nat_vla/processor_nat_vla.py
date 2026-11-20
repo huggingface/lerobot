@@ -59,7 +59,7 @@ def make_nat_vla_pre_post_processors(
     normalizes it and builds the prompt token ids and image inputs. The postprocessor unnormalizes the actions
     and moves them to the CPU."""
     steps = make_default_policy_processor_steps(config, dataset_stats)
-    processor_folder = downloaded(config.vlm, ["vlm/*"]) / "vlm"
+    processor_folder = downloaded(config.vlm, ["vlm/*"], config.vlm_revision) / "vlm"
     vlm_config = config.vlm_config or vlm_config_of(processor_folder)
     tokenizer_step = NATVLATokenizerProcessorStep(
         processor_dir=str(processor_folder),
@@ -115,8 +115,9 @@ def prompt_settings(config: NATVLAConfig) -> dict[str, Any]:
 @ProcessorStepRegistry.register(name="nat_vla_tokenizer_processor")
 class NATVLATokenizerProcessorStep(ComplementaryDataProcessorStep):
     """Builds each sample's VLM inputs: the prompt token ids (the camera images, the task, the setup, the binned
-    state and the control mode, ending with <action_output>) and the processed images. The VLM processor is
-    saved with the pipeline as `vlm/`."""
+    state and the control mode, ending with <action_output> and <action_start>), left-padded so the policy
+    appends the action tokens, and the processed images. The VLM processor is saved with the pipeline as
+    `vlm/`."""
 
     processor_dir: str
     text_vocabulary_size: int
@@ -151,7 +152,7 @@ class NATVLATokenizerProcessorStep(ComplementaryDataProcessorStep):
             )
             for sample, task in enumerate(tasks)
         ]
-        input_ids, attention_mask = padded_token_ids(prompts, "right", self._processor.tokenizer.pad_token_id)
+        input_ids, attention_mask = left_padded_token_ids(prompts, self._processor.tokenizer.pad_token_id)
 
         complementary_data["input_ids"], complementary_data["attention_mask"] = input_ids, attention_mask
         complementary_data |= {name: images[name] for name in IMAGE_INPUTS}
@@ -184,6 +185,7 @@ class NATVLATokenizerProcessorStep(ComplementaryDataProcessorStep):
             ". Given these, what action should the robot take to complete the task?"
             f"{tokenizer.eos_token}\n<|im_start|>assistant\n",
             vocabulary.action_output,
+            vocabulary.action_start,
         ]
 
         encoded_parts = (
@@ -238,11 +240,11 @@ def vlm_config_of(processor_folder: Path) -> dict[str, Any]:
     return vlm_config
 
 
-def padded_token_ids(sequences: list[list[int]], side: str, pad_token_id: int) -> tuple[Tensor, Tensor]:
-    """Token id sequences padded with pad_token_id on `side`, and their attention mask."""
+def left_padded_token_ids(sequences: list[list[int]], pad_token_id: int) -> tuple[Tensor, Tensor]:
+    """Token id sequences padded on the left with pad_token_id, and their attention mask."""
     lengths = torch.tensor([len(sequence) for sequence in sequences])
     positions = torch.arange(int(lengths.max()))
-    mask = positions >= len(positions) - lengths[:, None] if side == "left" else positions < lengths[:, None]
+    mask = positions >= len(positions) - lengths[:, None]
 
     ids = torch.full(mask.shape, pad_token_id, dtype=torch.long)
     ids[mask] = torch.tensor([token for sequence in sequences for token in sequence])

@@ -20,6 +20,9 @@ pip install -e ".[nat_vla,training]"
 
 Add `libero` to train or evaluate on LIBERO.
 
+> [!NOTE]
+> Without the optional `causal-conv1d` package, transformers warns that LFM2's convolution layers run a slower PyTorch implementation; for NAT VLA, training and generation took the same time with and without it on an RTX 4090. If you install it (`pip install --no-build-isolation causal-conv1d`, compiled against your PyTorch), do so only on GPU machines: transformers then uses its CUDA kernels on every device, and the model fails on CPU.
+
 ## Fine-tune
 
 `--policy.type=nat_vla` starts from the weights of the pretrained NAT VLA in `--policy.vlm` (by default `ahad-j/nat-vla-450m`):
@@ -34,7 +37,7 @@ lerobot-train \
   --output_dir=outputs/nat_vla_so100
 ```
 
-`setup` and `control_mode` describe the robot in the prompt. With the default normalization, the dataset's statistics need `q01` and `q99` for `observation.state` and `min` and `max` for `action`. The model runs in `bfloat16` by default (`--policy.dtype` changes it); the NAT tokenizer always runs in `float32`. To continue from a fine-tuned checkpoint, use `--policy.path` instead of `--policy.type`; a new `setup`, `control_mode` or set of cameras replaces the checkpoint's in the prompt.
+`setup` and `control_mode` describe the robot in the prompt. The NAT tokenizer encodes actions in [-1, 1], so actions use min-max normalization (the config rejects other modes). With the default normalization, the dataset's statistics need `min` and `max` for `action` and `q01` and `q99` for `observation.state`. The model runs in `bfloat16` by default (`--policy.dtype` changes it); the NAT tokenizer always runs in `float32`. To continue from a fine-tuned checkpoint, use `--policy.path` instead of `--policy.type`; a new `setup`, `control_mode` or set of cameras replaces the checkpoint's in the prompt.
 
 ## Evaluate
 
@@ -71,6 +74,8 @@ or, with the asynchronous engine, `--inference.type=rtc --inference.rtc.executio
 ## Another NAT tokenizer
 
 A new policy loads its tokenizer from `--policy.action_tokenizer`, a Hub repository or local folder holding a NAT tokenizer's `config.json` and `model.safetensors` (default [`ahad-j/nat-tokenizer-h32-l4-c6400`](https://huggingface.co/ahad-j/nat-tokenizer-h32-l4-c6400)). The policy takes its chunk length, token counts, streaming boundaries and number of action-token rows from that tokenizer and saves the tokenizer in its checkpoint. Set `--policy.chunk_size` to the tokenizer's time horizon and `--policy.n_action_steps` to it or less.
+
+Hub downloads are pinned to the commits in `--policy.vlm_revision` and `--policy.action_tokenizer_revision`; set them together with `--policy.vlm` or `--policy.action_tokenizer`.
 
 ## License
 
