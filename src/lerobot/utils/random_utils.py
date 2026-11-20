@@ -97,6 +97,8 @@ def serialize_torch_rng_state() -> dict[str, torch.Tensor]:
         torch_rng_state_dict["torch_cuda_rng_state"] = torch.cuda.get_rng_state()
     if torch.backends.mps.is_available():
         torch_rng_state_dict["torch_mps_rng_state"] = torch.mps.get_rng_state()
+    if torch.xpu.is_available():
+        torch_rng_state_dict["torch_xpu_rng_state"] = torch.xpu.get_rng_state()
     return torch_rng_state_dict
 
 
@@ -109,6 +111,8 @@ def deserialize_torch_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None
         torch.cuda.set_rng_state(rng_state_dict["torch_cuda_rng_state"])
     if torch.backends.mps.is_available() and "torch_mps_rng_state" in rng_state_dict:
         torch.mps.set_rng_state(rng_state_dict["torch_mps_rng_state"])
+    if "torch_xpu_rng_state" in rng_state_dict and torch.xpu.is_available():
+        torch.xpu.set_rng_state(rng_state_dict["torch_xpu_rng_state"])
 
 
 def serialize_rng_state() -> dict[str, torch.Tensor]:
