@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import logging
-from contextlib import suppress
+import threading
+from collections import OrderedDict
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext, suppress
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -138,6 +141,7 @@ GR00T_N1_7_DEFAULTS: dict[str, Any] = {
         "final_dropout": True,
     },
     "num_inference_timesteps": 4,
+    "denoise_cuda_graph": False,
     "noise_beta_alpha": 1.5,
     "noise_beta_beta": 1.0,
     "noise_s": 0.999,
@@ -465,8 +469,74 @@ class Qwen3Backbone(nn.Module):
         )
 
 
+@contextmanager
+def _autocast_without_weight_cache(device: torch.device) -> Iterator[None]:
+    """Keep the caller's autocast dtype but turn off its weight-cast cache.
+
+    The cache holds casts made earlier in the autocast region and frees them when the region
+    exits, so a graph that read a cached cast would replay against freed memory. Without the
+    cache each cast runs inside the graph, with the same result.
+    """
+    if torch.is_autocast_enabled(device.type):
+        dtype = torch.get_autocast_dtype(device.type)
+        with torch.autocast(device.type, dtype=dtype, cache_enabled=False):
+            yield
+    else:
+        yield
+
+
+class _DenoiseGraph:
+    """The action head's denoise loop captured in one CUDA graph for one set of input shapes.
+
+    Each chunk copies its inputs into the captured buffers and replays the whole loop. The
+    buffers are shared, so the head runs one chunk at a time (``GR00TN17ActionHead`` holds a
+    lock around the copy and replay). Capture is a CUDA graph capture: other threads should not
+    issue CUDA work during a shape's first chunk.
+    """
+
+    def __init__(self, loop: Callable[..., torch.Tensor], inputs: dict[str, torch.Tensor | None]):
+        self.inputs = {name: value.clone() for name, value in inputs.items() if value is not None}
+        absent = {name: None for name, value in inputs.items() if value is None}
+        self.device = self.inputs["actions"].device
+        with torch.cuda.device(self.device), _autocast_without_weight_cache(self.device):
+            # warm up on a side stream before capture, as torch.cuda.graph requires
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                for _ in range(2):
+                    loop(**self.inputs, **absent)
+            torch.cuda.current_stream().wait_stream(side)
+            self.graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(self.graph, stream=side):
+                self.out = loop(**self.inputs, **absent)
+        self.done: torch.cuda.Event | None = None
+
+    def __call__(self, inputs: dict[str, torch.Tensor | None]) -> torch.Tensor:
+        stream = torch.cuda.current_stream(self.device)
+        if self.done is not None:
+            # the previous replay may have run on another stream
+            stream.wait_event(self.done)
+        for name, buffer in self.inputs.items():
+            value = inputs[name]
+            assert value is not None  # the graph's key includes which inputs are present
+            buffer.copy_(value)
+        with torch.cuda.device(self.device):
+            self.graph.replay()
+        out = self.out.clone()
+        self.done = torch.cuda.Event()
+        self.done.record(stream)
+        return out
+
+    def retire(self) -> None:
+        """Wait for the last replay before the graph and its buffers are released."""
+        if self.done is not None:
+            self.done.synchronize()
+
+
 class GR00TN17ActionHead(nn.Module):
     supports_gradient_checkpointing = True
+    # captured denoise graphs kept per head (one per set of input shapes in use)
+    _MAX_DENOISE_GRAPHS = 4
 
     def __init__(self, config: GR00TN17Config):
         require_package("diffusers", extra="groot")
@@ -686,6 +756,49 @@ class GR00TN17ActionHead(nn.Module):
                 None, :, None
             ].to(device)
 
+        if self.config.use_alternate_vl_dit:
+            image_mask = backbone_output.image_mask
+            backbone_attention_mask = backbone_output.backbone_attention_mask
+        else:
+            image_mask = backbone_attention_mask = None
+        inputs = {
+            "actions": actions,
+            "velocity_scale": vel_strength,
+            "vl_embeds": vl_embeds,
+            "state_features": state_features,
+            "embodiment_id": embodiment_id,
+            "image_mask": image_mask,
+            "backbone_attention_mask": backbone_attention_mask,
+        }
+        if self._use_denoise_graph(actions):
+            # the graph's input buffers are shared: one chunk at a time per head
+            with self.__dict__.setdefault("_denoise_graph_lock", threading.Lock()):
+                actions = self._denoise_graph(inputs, device)(inputs)
+        else:
+            actions = self._denoise(**inputs)
+
+        return BatchFeature(
+            data={
+                "action_pred": actions,
+                "backbone_features": vl_embeds,
+                "state_features": state_features,
+            }
+        )
+
+    def _denoise(
+        self,
+        actions: torch.Tensor,
+        velocity_scale: torch.Tensor,
+        vl_embeds: torch.Tensor,
+        state_features: torch.Tensor,
+        embodiment_id: torch.Tensor,
+        image_mask: torch.Tensor | None,
+        backbone_attention_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Integrate the noise ``actions`` into an action chunk over ``num_inference_timesteps``."""
+        batch_size = vl_embeds.shape[0]
+        device = vl_embeds.device
+
         def denoise_step(actions: torch.Tensor, time_tensor: torch.Tensor, t_step: int) -> torch.Tensor:
             # Bucket off the solver's step counter, not its float32 time: the buckets keep being
             # derived from the exact `t_step / num_inference_timesteps`, without a device sync.
@@ -703,8 +816,8 @@ class GR00TN17ActionHead(nn.Module):
                     hidden_states=sa_embs,
                     encoder_hidden_states=vl_embeds,
                     timestep=timesteps_tensor,
-                    image_mask=backbone_output.image_mask,
-                    backbone_attention_mask=backbone_output.backbone_attention_mask,
+                    image_mask=image_mask,
+                    backbone_attention_mask=backbone_attention_mask,
                 )
             else:
                 model_output = self.model(
@@ -715,22 +828,63 @@ class GR00TN17ActionHead(nn.Module):
             pred = self.action_decoder(model_output, embodiment_id)
             return pred[:, -self.action_horizon :]
 
-        actions = euler_integrate(
+        return euler_integrate(
             denoise_step,
             actions,
             self.num_inference_timesteps,
             convention=FlowConvention.NOISE_AT_ZERO,
             step_aware=True,
-            velocity_scale=vel_strength,
+            velocity_scale=velocity_scale,
         )
 
-        return BatchFeature(
-            data={
-                "action_pred": actions,
-                "backbone_features": vl_embeds,
-                "state_features": state_features,
-            }
+    def _use_denoise_graph(self, actions: torch.Tensor) -> bool:
+        # Training mode keeps the eager loop (dropout draws fresh randomness each call), and so does
+        # tracing under torch.compile, which captures its own graphs.
+        return (
+            bool(getattr(self.config, "denoise_cuda_graph", False))
+            and actions.is_cuda
+            and not self.training
+            and not torch.compiler.is_compiling()
         )
+
+    def _denoise_graph(self, inputs: dict[str, torch.Tensor | None], device: torch.device) -> _DenoiseGraph:
+        """The captured denoise loop for these input shapes. Captured on first use and kept for
+        the ``_MAX_DENOISE_GRAPHS`` most recent shapes; see ``reset_denoise_graphs`` for when to
+        drop them."""
+        graphs = self.__dict__.setdefault("_denoise_graphs", OrderedDict())
+        # buffers made under inference_mode can't be written outside it, and autocast changes kernels
+        key = (
+            tuple((name, None if v is None else (tuple(v.shape), v.dtype)) for name, v in inputs.items()),
+            device,
+            self.num_inference_timesteps,
+            torch.is_inference_mode_enabled(),
+            torch.get_autocast_dtype(device.type) if torch.is_autocast_enabled(device.type) else None,
+        )
+        graph = graphs.get(key)
+        if graph is None:
+            graph = graphs[key] = _DenoiseGraph(self._denoise, inputs)
+            while len(graphs) > self._MAX_DENOISE_GRAPHS:
+                graphs.popitem(last=False)[1].retire()
+        graphs.move_to_end(key)
+        return graph
+
+    def reset_denoise_graphs(self) -> None:
+        """Drop the captured denoise graphs; the next chunk captures again.
+
+        A graph replays against the parameter storage it was captured with. Loading weights in
+        place (``load_state_dict`` with the default ``assign=False``) keeps that storage, and
+        ``.to()``/``.cuda()`` reset the graphs themselves. Call this after anything that replaces
+        parameter tensors instead: ``load_state_dict(assign=True)``, swapping submodules, or
+        attaching or merging adapters.
+        """
+        lock = self.__dict__.get("_denoise_graph_lock")
+        with lock if lock is not None else nullcontext():
+            for graph in self.__dict__.pop("_denoise_graphs", {}).values():
+                graph.retire()
+
+    def _apply(self, fn, recurse=True):
+        self.reset_denoise_graphs()
+        return super()._apply(fn, recurse)
 
     @torch.no_grad()
     def get_action(
