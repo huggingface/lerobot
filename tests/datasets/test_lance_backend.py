@@ -503,9 +503,10 @@ def test_depth_batch_decode_limits_merged_span(shape: tuple[int, int, int], max_
         torch.testing.assert_close(decoded[sample_idx], torch.tensor(timestamps).reshape(1, 1, 1))
 
 
-def test_remote_metadata_rate_limit_surfaces_lerobot_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize("suffix", ["temporary", "persistent"])
+def test_remote_metadata_rate_limit_surfaces_lerobot_error(tmp_path, monkeypatch, suffix):
     remote_root = f"hf://datasets/{DUMMY_REPO_ID}"
-    original = OSError("failed to open 'meta': RateLimited (temporary) at open")
+    original = OSError(f"failed to open 'meta': RateLimited ({suffix}) at open")
 
     class _RateLimitedDB:
         def open_table(self, table_name):
@@ -523,6 +524,33 @@ def test_remote_metadata_rate_limit_surfaces_lerobot_error(tmp_path, monkeypatch
     assert DUMMY_REPO_ID in str(error)
     assert "HF_TOKEN" in str(error)
     assert "hf auth login" in str(error)
+
+
+def test_non_hub_rate_limit_keeps_original_error(tmp_path, monkeypatch):
+    root = "s3://test-bucket/dataset"
+    original = OSError("failed to open 'meta': RateLimited (persistent) at open")
+
+    class _RateLimitedDB:
+        def open_table(self, table_name):
+            raise original
+
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.setattr(lancedb, "connect", lambda *args, **kwargs: _RateLimitedDB())
+
+    with pytest.raises(OSError) as excinfo:
+        LeRobotDataset(DUMMY_REPO_ID, root=root)
+
+    assert excinfo.value is original
+
+
+def test_hub_rate_limit_error_pickle_round_trip():
+    error = HubRateLimitError(DUMMY_REPO_ID, f"hf://datasets/{DUMMY_REPO_ID}")
+    restored = pickle.loads(pickle.dumps(error))
+
+    assert isinstance(restored, HubRateLimitError)
+    assert restored.repo_id == error.repo_id
+    assert restored.uri == error.uri
+    assert str(restored) == str(error)
 
 
 def test_remote_reader_open_rate_limit_surfaces_lerobot_error(remote_lance_dataset, monkeypatch):
@@ -554,7 +582,7 @@ def test_remote_read_rate_limit_surfaces_lerobot_error(remote_lance_dataset, mon
     dataset, _, _ = remote_lance_dataset
     original_fetch = LanceDatasetReader._fetch_rows
 
-    # A bare 429 is not Lance's released OpenDAL rate-limit marker and must keep its type.
+    # A bare 429 is not Lance's OpenDAL rate-limit kind and must keep its type.
     unrelated = OSError("HTTP 429 Too Many Requests")
 
     def fetch_unrelated(self, rows):

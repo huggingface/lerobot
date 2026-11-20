@@ -80,10 +80,11 @@ class HubRateLimitError(OSError):
 
 
 # The released Lance Python bindings map object-store failures to OSError and do not
-# expose OpenDAL's error kind. Its Hugging Face service renders an HTTP 429 as this
-# exact marker, so match it rather than treating every OSError or bare 429 as a Hub
-# rate limit.
-_HUB_RATE_LIMIT_MARKER = "ratelimited (temporary)"
+# expose OpenDAL's error kind. Its Hugging Face service renders an HTTP 429 as
+# ``RateLimited (temporary)``; once Lance's RetryLayer exhausts its retries the same
+# kind is marked ``RateLimited (persistent)``. Match the kind and ignore that status
+# suffix rather than treating every OSError or bare 429 as a Hub rate limit.
+_HUB_RATE_LIMIT_PATTERN = re.compile(r"\brate\s*limited\b", re.IGNORECASE)
 
 
 def _is_hub_rate_limit(error: BaseException) -> bool:
@@ -93,7 +94,7 @@ def _is_hub_rate_limit(error: BaseException) -> bool:
         if isinstance(current, HubRateLimitError):
             return False
         seen.add(id(current))
-        if isinstance(current, OSError) and _HUB_RATE_LIMIT_MARKER in str(current).lower():
+        if isinstance(current, OSError) and _HUB_RATE_LIMIT_PATTERN.search(str(current)):
             return True
         current = current.__cause__ or current.__context__
     return False
