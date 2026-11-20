@@ -56,6 +56,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
 )
 
+from ..common.export_utils import is_non_strict_exporting
 from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_with_pad_torch
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
@@ -613,8 +614,17 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         """
         Optimized autoregressive decoding for FAST tokens using KV Caching.
 
-        Greedy decoding stops once every sequence emits the end-of-action marker. The
-        returned tensor keeps its fixed shape, with positions not generated after the
+        Greedy decoding stops once every sequence emits the end-of-action marker. Under
+        non-strict torch.export, the only export mode supported, it runs to
+        ``max_decoding_steps``, because torch.export cannot trace a Python ``if`` on a tensor
+        value, and then zero-fills the steps after the batch-wide stop, so it returns the same
+        tokens as eager. The exported program unrolls all
+        ``max_decoding_steps`` decoder passes (256 by default) and runs every one on each call, so
+        its size grows linearly with ``max_decoding_steps`` and export time grows faster than that.
+        For export, set ``max_decoding_steps`` to the longest action token sequence the policy
+        emits, counting the "Action: " prefix and the end marker: fewer steps cut actions short,
+        and more only add decoder passes.
+        The returned tensor keeps its fixed shape, with positions not generated after the
         batch-wide stop left zero-filled. Stochastic decoding always runs to
         ``max_decoding_steps`` so early stopping does not change the RNG state used by
         subsequent calls.
@@ -631,7 +641,8 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # every sequence has emitted it. Keep stochastic decoding unchanged because
         # skipping multinomial calls would shift the RNG state for subsequent calls.
         end_of_action_token_id = tokenizer.convert_tokens_to_ids("|")
-        finished = torch.zeros(bsize, dtype=torch.bool, device=device) if temperature == 0 else None
+        early_stop = temperature == 0 and not is_non_strict_exporting()
+        finished = torch.zeros(bsize, dtype=torch.bool, device=device) if early_stop else None
 
         # --- 1. PREFILL PHASE ---
         # Process Images + Text Prompt + BOS token once to populate the KV cache.
@@ -741,6 +752,11 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
                 if bool(finished.all()):
                     break
 
+        if temperature == 0:
+            # Zero the steps after the batch-wide stop, as the early stop leaves them; export runs every step.
+            ended = torch.cumsum(generated_action_tokens == end_of_action_token_id, dim=1) > 0
+            after_stop = torch.cat([ended.new_zeros(1), ended.all(dim=0)[:-1]])
+            generated_action_tokens = generated_action_tokens.masked_fill(after_stop, 0)
         return generated_action_tokens
 
 

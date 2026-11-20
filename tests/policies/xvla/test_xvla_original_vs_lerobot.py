@@ -166,6 +166,7 @@ def test_xvla_preprocessor_alignment(policy, preprocessor):
     print("\n[LeRobot] Preprocessing...")
     lerobot_observation = preprocessor(deepcopy(batch))
     lerobot_inputs = policy._build_model_inputs(lerobot_observation)
+    assert lerobot_inputs["num_valid_views"] == 2
 
     print("\nVerifying preprocessor outputs:")
     print("-" * 80)
@@ -175,7 +176,6 @@ def test_xvla_preprocessor_alignment(policy, preprocessor):
         "domain_id": (1,),
         "input_ids": (1, 50),
         "proprio": (1, 20),
-        "image_mask": (1, 2),
         "image_input": (1, 2, 3, 224, 224),
     }
 

@@ -79,7 +79,8 @@ class Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
             full_prompts.append(full_prompt)
 
-        complementary_data[self.task_key] = full_prompts
+        # A new dict, so the transition this step was given keeps its task and gives the same prompt again.
+        transition[TransitionKey.COMPLEMENTARY_DATA] = {**complementary_data, self.task_key: full_prompts}
         # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
         return transition

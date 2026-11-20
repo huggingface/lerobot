@@ -24,7 +24,7 @@ import torch
 pytest.importorskip("diffusers")  # the model code lives in modeling_lingbot_va, which imports diffusers
 
 from lerobot.policies.lingbot_va.modeling_lingbot_va import FlowMatchScheduler
-from lerobot.policies.lingbot_va.utils import data_seq_to_patch, get_mesh_id
+from lerobot.policies.lingbot_va.utils import WanAttention, WanRotaryPosEmbed, data_seq_to_patch, get_mesh_id
 
 
 def test_flow_match_scheduler_timesteps_monotone_decreasing() -> None:
@@ -126,3 +126,38 @@ def test_training_step_reduces_loss_tiny_flex() -> None:
     loss.backward()
     assert any(p.grad is not None and torch.isfinite(p.grad).all() for p in policy.get_optim_params())
     opt.step()
+
+
+def _complex_rotation(rope: WanRotaryPosEmbed, grid: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """The rotation as LingBot-VA's original code computes it, with complex numbers."""
+    bases = (rope.f_freqs_base, rope.h_freqs_base, rope.w_freqs_base)
+    freqs = torch.cat([grid[:, i, :].unsqueeze(-1) * base for i, base in enumerate(bases)], dim=-1).float()
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)[:, :, None]
+    x_out = torch.view_as_complex(x.to(torch.float64).reshape(*x.shape[:3], -1, 2))
+    return torch.view_as_real(x_out * freqs_cis).flatten(3).to(x.dtype)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_rotary_embedding_matches_the_complex_formula(dtype: torch.dtype) -> None:
+    torch.manual_seed(0)
+    rope = WanRotaryPosEmbed(attention_head_dim=24, patch_size=(1, 2, 2), max_seq_len=1024)
+    attn = WanAttention(dim=48, heads=2, dim_head=24).to(dtype)
+    video = get_mesh_id(3, 4, 6, 0, f_shift=40)
+    action = get_mesh_id(3, 4, 1, 1, f_shift=40, action=True)
+    grid = torch.cat([video, action], dim=1)[None]
+    x = torch.randn(1, grid.shape[-1], 48, dtype=dtype)
+    seen = []
+
+    def record(query, key, value):
+        seen.append((query, key))
+        return value
+
+    attn.attn_op = record
+    table = rope(grid)
+    # The export backends cannot compile complex tensors.
+    assert not table.is_complex()
+    attn(x, x, x, None)
+    attn(x, x, x, table[:, :, None])
+    (plain_query, plain_key), (query, key) = seen
+    torch.testing.assert_close(query, _complex_rotation(rope, grid, plain_query))
+    torch.testing.assert_close(key, _complex_rotation(rope, grid, plain_key))

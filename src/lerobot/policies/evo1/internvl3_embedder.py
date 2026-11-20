@@ -27,9 +27,10 @@ from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoModel, AutoTokenizer
+    from transformers import AutoConfig, AutoModel, AutoTokenizer
     from transformers.utils import is_flash_attn_2_available
 else:
+    AutoConfig = None
     AutoModel = None
     AutoTokenizer = None
     is_flash_attn_2_available = None
@@ -141,8 +142,25 @@ class InternVL3Embedder(nn.Module):
                 "Flash Attention 2 is unavailable on this runtime. Falling back to eager attention."
             )
 
+        config = AutoConfig.from_pretrained(model_name, **hub_kwargs)
+        text_config = config.text_config
+        rope_parameters = text_config.rope_parameters
+        # Below max_position_embeddings dynamic RoPE equals default RoPE, and export cannot trace its update.
+        # Not with partial_rotary_factor != 1.0, which dynamic RoPE applies and Qwen2's default RoPE ignores.
+        if (
+            rope_parameters.get("rope_type") == "dynamic"
+            and max_text_length <= text_config.max_position_embeddings
+            and rope_parameters.get("partial_rotary_factor", 1.0) == 1.0
+        ):
+            # Default RoPE takes no "factor", and "type" is the legacy name of "rope_type". Keep the rest.
+            text_config.rope_parameters = {
+                **{k: v for k, v in rope_parameters.items() if k not in ("factor", "type")},
+                "rope_type": "default",
+            }
+
         self.model = AutoModel.from_pretrained(
             model_name,
+            config=config,
             torch_dtype=model_dtype,
             attn_implementation=attn_implementation,
             low_cpu_mem_usage=True,
@@ -316,28 +334,34 @@ class InternVL3Embedder(nn.Module):
 
         prompts = self._build_multimodal_prompts(batch_num_tiles_list, text_prompts)
 
+        # Python lists, so the check below runs in Python, also while torch.export traces.
         model_inputs = self.tokenizer(
             list(prompts),
-            return_tensors="pt",
             padding=True,
             truncation=True,
             max_length=self.max_text_length,
-        ).to(self.device)
-        input_ids = model_inputs["input_ids"]
-        if input_ids.shape[1] >= self.max_text_length:
+        )
+        if len(model_inputs["input_ids"][0]) >= self.max_text_length:
             # Truncation cuts from the right, so text is dropped before image placeholders — but a
             # large max_views * image_seq_length budget can still eat into them. Fail loudly instead
             # of letting the VLM crash on a placeholder/vision-feature count mismatch.
             expected_image_tokens = self.num_image_token * sum(batch_num_tiles_list[0])
-            image_token_counts = (input_ids == self.img_context_token_id).sum(dim=1)
-            if not bool((image_token_counts == expected_image_tokens).all()):
+            if any(
+                ids.count(self.img_context_token_id) != expected_image_tokens
+                for ids in model_inputs["input_ids"]
+            ):
                 raise ValueError(
                     f"Prompt truncation at max_text_length={self.max_text_length} cut into the "
                     f"image placeholder tokens ({expected_image_tokens} expected per sample). "
                     "Increase max_text_length or reduce max_views."
                 )
+        # Under torch.export this is a constant, so a program serves the instruction it was exported with.
+        input_ids = torch.tensor(model_inputs["input_ids"], device=self.device)
         attention_mask = self._mask_absent_image_tokens(
-            input_ids, model_inputs["attention_mask"], image_masks, batch_num_tiles_list
+            input_ids,
+            torch.tensor(model_inputs["attention_mask"], device=self.device),
+            image_masks,
+            batch_num_tiles_list,
         )
 
         outputs = self.model(
