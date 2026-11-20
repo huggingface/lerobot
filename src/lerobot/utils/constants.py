@@ -81,6 +81,7 @@ EMA_SHARDED_STATE = "ema_state"
 
 POLICY_PREPROCESSOR_DEFAULT_NAME = "policy_preprocessor"
 POLICY_POSTPROCESSOR_DEFAULT_NAME = "policy_postprocessor"
+REWARD_CLASSIFIER_PREPROCESSOR_DEFAULT_NAME = "classifier_preprocessor"
 
 if "LEROBOT_HOME" in os.environ:
     raise ValueError(

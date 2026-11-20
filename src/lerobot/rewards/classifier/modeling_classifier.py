@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import logging
+from itertools import islice
+from typing import Self, cast
 
 import torch
 from torch import Tensor, nn
@@ -201,16 +203,41 @@ class Classifier(PreTrainedRewardModel):
             ),
         )
 
+    def _backbone_is_frozen(self) -> bool:
+        """Whether the pretrained backbone has no trainable parameters (see `_freeze_encoder`)."""
+        return not any(param.requires_grad for param in self.encoder.parameters())
+
+    def train(self, mode: bool = True) -> Self:
+        """Set the training mode, keeping a frozen backbone in eval mode.
+
+        A frozen backbone must compute the same features in training as at inference: its BatchNorm layers
+        keep their pretrained running stats instead of updating them and normalizing with batch stats, and
+        its dropout stays off. Otherwise the layers trained on top of it would fit features it never
+        produces at rollout.
+        """
+        super().train(mode)
+        if self._backbone_is_frozen():
+            self.encoder.eval()
+        return self
+
     def _get_encoder_output(self, x: torch.Tensor, image_key: str) -> torch.Tensor:
-        """Extract the appropriate output from the encoder."""
-        with torch.no_grad():
-            if self.is_cnn:
-                # The HF ResNet applies pooling internally
-                outputs = self.encoders[image_key](x)
-                return outputs
-            else:  # Transformer models
-                outputs = self.encoder(x)
-                return outputs.last_hidden_state[:, 0, :]
+        """Extract the appropriate output from the encoder.
+
+        Only the pretrained backbone runs without gradients (when it is frozen). For CNNs, the per-camera
+        layers stacked on top of it (spatial embeddings, projection, layer norm) are trainable and must
+        receive gradients, as in the HIL-SERL reference classifier.
+        """
+        with torch.set_grad_enabled(torch.is_grad_enabled() and not self._backbone_is_frozen()):
+            if not self.is_cnn:  # Transformer models
+                return self.encoder(x).last_hidden_state[:, 0, :]
+            # `Sequential(backbone, *trainable_layers)`, see `_create_single_encoder`. It is split here
+            # rather than stored as two modules so that the state-dict keys stay unchanged. Its tail is iterated
+            # rather than sliced: `encoder[1:]` would build a new `Sequential` on every call.
+            encoder = cast(nn.Sequential, self.encoders[image_key])
+            outputs = encoder[0](x)
+        for layer in islice(encoder, 1, None):
+            outputs = layer(outputs)
+        return outputs
 
     def extract_images_and_labels(self, batch: dict[str, Tensor]) -> tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""
@@ -235,6 +262,7 @@ class Classifier(PreTrainedRewardModel):
 
         return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
 
+    @torch.no_grad()
     def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
         """Returns 1.0 for success, 0.0 for failure based on image observations."""
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
@@ -279,14 +307,18 @@ class Classifier(PreTrainedRewardModel):
 
         return loss, output_dict
 
-    def predict_reward(self, batch, threshold=0.5):
+    @torch.no_grad()
+    def predict_reward(self, batch: dict[str, Tensor], threshold: float = 0.5) -> Tensor:
         """Eval method. Returns predicted reward with the decision threshold as argument."""
         # Extract images from batch dict
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
 
+        probs = self.predict(images).probabilities
+        if probs is None:
+            raise ValueError("Classifier.predict() returned no probabilities")
+
         if self.config.num_classes == 2:
-            probs = self.predict(images).probabilities
             logging.debug(f"Predicted reward images: {probs}")
             return (probs > threshold).float()
         else:
-            return torch.argmax(self.predict(images).probabilities, dim=1)
+            return torch.argmax(probs, dim=1)
