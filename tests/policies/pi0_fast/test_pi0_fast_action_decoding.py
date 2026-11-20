@@ -26,13 +26,18 @@ import torch
 pytest.importorskip("transformers")
 pytest.importorskip("scipy")
 
-from lerobot.policies.pi0_fast import modeling_pi0_fast  # noqa: E402
+from huggingface_hub.errors import LocalEntryNotFoundError  # noqa: E402
+
+from lerobot.policies.pi0_fast import modeling_pi0_fast, processor_pi0_fast  # noqa: E402
+from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig  # noqa: E402
 from lerobot.policies.pi0_fast.modeling_pi0_fast import PI0FastPolicy  # noqa: E402
 from lerobot.processor import fast_ids_to_paligemma_ids, paligemma_ids_to_fast_ids  # noqa: E402
 from lerobot.processor.tokenizer_processor import ACTION_TOKENIZER_DIR  # noqa: E402
 
 # PaliGemma's vocabulary, including location and segmentation tokens.
 PALIGEMMA_VOCAB_SIZE = 257152
+# Tokenizer a checkpoint was trained with, fitted on a machine whose path no longer exists.
+SAVED_NAME = "/fitted/on/another/machine"
 
 
 @pytest.mark.parametrize("fast_skip_tokens", [128, 1152], ids=["pi0_fast", "fineart_vla"])
@@ -87,31 +92,80 @@ def _write_checkpoint(root: Path, action_tokenizer_name: str, *, with_tokenizer:
     return root
 
 
-@pytest.mark.parametrize(
-    ("with_tokenizer", "configured_name", "uses_saved_copy"),
-    [
-        (True, "/fitted/on/another/machine", True),
-        # Checkpoints saved before the processor stored its tokenizer.
-        (False, "/fitted/on/another/machine", False),
-        # Fine-tuning with another tokenizer keeps the configured one.
-        (True, "lerobot/fast-action-tokenizer", False),
-    ],
-)
-def test_decoding_tokenizer_comes_from_the_checkpoint_when_saved_for_it(
+# (checkpoint saves its tokenizer, configured tokenizer, decoding and encoding use the saved copy)
+TOKENIZER_CASES = [
+    (True, SAVED_NAME, True),
+    # Checkpoints saved before the processor stored its tokenizer.
+    (False, SAVED_NAME, False),
+    # Fine-tuning with another tokenizer keeps the configured one.
+    (True, "lerobot/fast-action-tokenizer", False),
+]
+
+
+@pytest.mark.parametrize(("with_tokenizer", "configured_name", "uses_saved_copy"), TOKENIZER_CASES)
+def test_saved_tokenizer_is_used_only_when_the_checkpoint_was_trained_with_it(
     tmp_path: Path, with_tokenizer: bool, configured_name: str, uses_saved_copy: bool
 ) -> None:
-    checkpoint = _write_checkpoint(
-        tmp_path / "checkpoint", "/fitted/on/another/machine", with_tokenizer=with_tokenizer
-    )
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint", SAVED_NAME, with_tokenizer=with_tokenizer)
 
-    folder = modeling_pi0_fast._saved_action_tokenizer(checkpoint, configured_name)
+    folder = processor_pi0_fast.find_saved_action_tokenizer(checkpoint, configured_name)
 
     assert folder == (str(checkpoint / ACTION_TOKENIZER_DIR) if uses_saved_copy else None)
 
 
-def test_decoding_tokenizer_falls_back_when_the_hub_checkpoint_is_unavailable() -> None:
-    folder = modeling_pi0_fast._saved_action_tokenizer(
-        "lerobot-tests/not-a-checkpoint", "lerobot/fast-action-tokenizer", local_files_only=True
+def test_saved_tokenizer_lookup_falls_back_when_the_hub_checkpoint_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def snapshot_download(*args, **kwargs):
+        raise LocalEntryNotFoundError("offline")
+
+    monkeypatch.setattr(processor_pi0_fast, "snapshot_download", snapshot_download)
+
+    assert processor_pi0_fast.find_saved_action_tokenizer("user/checkpoint", SAVED_NAME) is None
+
+
+@pytest.mark.parametrize(("with_tokenizer", "configured_name", "uses_saved_copy"), TOKENIZER_CASES)
+def test_policy_decodes_with_the_tokenizer_of_its_pretrained_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_tokenizer: bool,
+    configured_name: str,
+    uses_saved_copy: bool,
+) -> None:
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint", SAVED_NAME, with_tokenizer=with_tokenizer)
+    loaded = []
+
+    def from_pretrained(name, **kwargs):
+        loaded.append(name)
+        raise RuntimeError("stop after choosing the tokenizer")
+
+    monkeypatch.setattr(modeling_pi0_fast, "AutoProcessor", SimpleNamespace(from_pretrained=from_pretrained))
+    # Set by every load path: from_pretrained, sharded-checkpoint resume and PEFT adapters.
+    config = PI0FastConfig(action_tokenizer_name=configured_name, pretrained_path=checkpoint)
+
+    with pytest.raises(RuntimeError, match="Failed to load required tokenizers"):
+        PI0FastPolicy(config)
+
+    assert loaded == [str(checkpoint / ACTION_TOKENIZER_DIR) if uses_saved_copy else configured_name]
+
+
+@pytest.mark.parametrize(("with_tokenizer", "configured_name", "uses_saved_copy"), TOKENIZER_CASES)
+def test_pretrained_processor_encodes_with_the_policy_decoding_tokenizer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_tokenizer: bool,
+    configured_name: str,
+    uses_saved_copy: bool,
+) -> None:
+    checkpoint = _write_checkpoint(tmp_path / "checkpoint", SAVED_NAME, with_tokenizer=with_tokenizer)
+    load = Mock(return_value=(None, None))
+    monkeypatch.setattr(processor_pi0_fast, "load_pretrained_policy_processors", load)
+
+    processor_pi0_fast.make_pi0_fast_pre_post_processors_from_pretrained(
+        PI0FastConfig(action_tokenizer_name=configured_name), str(checkpoint)
     )
 
-    assert folder is None
+    # Without an override, the step loads the copy saved in the checkpoint.
+    overrides = load.call_args.kwargs["preprocessor_overrides"]
+    override = overrides.get("action_tokenizer_processor", {}).get("action_tokenizer_name")
+    assert override == (None if uses_saved_copy else configured_name)

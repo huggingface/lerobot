@@ -254,7 +254,7 @@ Autoregressive policies predict actions as discrete tokens from an action tokeni
 - `encode_fast_actions(tokenizer, actions)` takes normalized actions of shape `(B, H, D)` and returns one list of raw FAST IDs per chunk.
 - `decode_fast_actions(tokenizer, tokens, action_dim, *, time_horizon, relaxed=False)` returns actions of shape `(B, time_horizon, action_dim)`. Pass the horizon the tokens encode (the whole chunk), then select the steps to execute: the decoded values depend on it.
 - `fast_ids_to_paligemma_ids()` and `paligemma_ids_to_fast_ids()` map raw FAST IDs into a PaliGemma vocabulary and back.
-- `ActionTokenizerProcessorStep` adds FAST training targets to the preprocessor and saves the tokenizer inside the checkpoint. Decode with that saved copy, as `PI0FastPolicy.from_pretrained` does, so a checkpoint always decodes with the tokenizer it was trained with.
+- `ActionTokenizerProcessorStep` adds FAST training targets to the preprocessor and saves the tokenizer inside the checkpoint. Decode with that saved copy, as `PI0FastPolicy` does, so a checkpoint always decodes with the tokenizer it was trained with. When fine-tuning with another tokenizer, encode and decode with that one instead (see `make_pi0_fast_pre_post_processors_from_pretrained`).
 
 ```python
 from lerobot.processor import decode_fast_actions, paligemma_ids_to_fast_ids

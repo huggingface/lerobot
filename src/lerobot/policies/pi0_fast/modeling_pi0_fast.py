@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import builtins
-import json
 import logging
 from collections import deque
 from copy import copy
@@ -23,7 +22,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 import torch
-from huggingface_hub import snapshot_download
 from torch import Tensor, nn
 
 from lerobot.utils.hub import split_hub_reference
@@ -47,7 +45,6 @@ else:
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.processor import decode_fast_actions, paligemma_ids_to_fast_ids
-from lerobot.processor.tokenizer_processor import ACTION_TOKENIZER_DIR
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -60,6 +57,7 @@ from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_wi
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0_fast import PI0FastConfig
+from .processor_pi0_fast import find_saved_action_tokenizer
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -744,59 +742,6 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         return generated_action_tokens
 
 
-def _saved_action_tokenizer(
-    pretrained_name_or_path: str | Path,
-    action_tokenizer_name: str,
-    *,
-    revision: str | None = None,
-    cache_dir: str | Path | None = None,
-    force_download: bool = False,
-    token: str | bool | None = None,
-    local_files_only: bool = False,
-) -> str | None:
-    """Return the FAST tokenizer folder the processor saved in a checkpoint, if it can be used.
-
-    Args:
-        pretrained_name_or_path: Local checkpoint directory or Hub repository.
-        action_tokenizer_name: Tokenizer the policy is configured with.
-        revision: Hub revision of the checkpoint.
-        cache_dir: Hub cache directory.
-        force_download: Download again even if cached.
-        token: Hub token.
-        local_files_only: Use only the local Hub cache.
-
-    Returns:
-        The saved folder, or ``None`` when the checkpoint has none (checkpoints saved before the
-        processor stored its tokenizer) or was trained with a different ``action_tokenizer_name``.
-    """
-    if Path(pretrained_name_or_path).is_dir():
-        root = Path(pretrained_name_or_path)
-    else:
-        try:
-            root = Path(
-                snapshot_download(
-                    str(pretrained_name_or_path),
-                    allow_patterns=["config.json", f"{ACTION_TOKENIZER_DIR}/*"],
-                    revision=revision,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    token=token,
-                    local_files_only=local_files_only,
-                )
-            )
-        except OSError:
-            # Missing from the Hub, or not cached while offline: use the configured tokenizer.
-            return None
-    folder = root / ACTION_TOKENIZER_DIR
-    config_file = root / "config.json"
-    if not (folder / "processor_config.json").is_file() or not config_file.is_file():
-        return None
-    # Fine-tuning with another tokenizer keeps the configured one.
-    if json.loads(config_file.read_text()).get("action_tokenizer_name") != action_tokenizer_name:
-        return None
-    return str(folder)
-
-
 class PI0FastPolicy(PreTrainedPolicy):
     """PI0Fast Policy for LeRobot."""
 
@@ -806,15 +751,11 @@ class PI0FastPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0FastConfig,
-        action_tokenizer_path: str | None = None,
         **kwargs,
     ):
         """
         Args:
             config: Policy configuration class instance.
-            action_tokenizer_path: FAST tokenizer to decode with instead of
-                ``config.action_tokenizer_name``. ``from_pretrained`` passes the copy the
-                processor saved in the checkpoint, so decoding uses the encoding tokenizer.
         """
         require_package("transformers", extra="pi")
         require_package("scipy", extra="pi")
@@ -824,7 +765,13 @@ class PI0FastPolicy(PreTrainedPolicy):
 
         # Load tokenizers first
         try:
-            # Load FAST tokenizer
+            # Decode with the FAST tokenizer the processor encodes with: the copy saved in the
+            # checkpoint, or the configured one.
+            action_tokenizer_path = None
+            if config.pretrained_path is not None:
+                action_tokenizer_path = find_saved_action_tokenizer(
+                    config.pretrained_path, config.action_tokenizer_name, revision=config.pretrained_revision
+                )
             repo_id, revision = split_hub_reference(action_tokenizer_path or config.action_tokenizer_name)
             self.action_tokenizer = AutoProcessor.from_pretrained(
                 repo_id, trust_remote_code=config.trust_remote_code, revision=revision, code_revision=revision
@@ -914,17 +861,6 @@ class PI0FastPolicy(PreTrainedPolicy):
         elif trust_remote_code is not None:
             config = copy(config)
             config.trust_remote_code = trust_remote_code
-
-        # Decode with the FAST tokenizer the processor saved in the checkpoint, the one it encodes with.
-        kwargs["action_tokenizer_path"] = _saved_action_tokenizer(
-            pretrained_name_or_path,
-            config.action_tokenizer_name,
-            revision=revision,
-            cache_dir=cache_dir,
-            force_download=force_download,
-            token=token,
-            local_files_only=local_files_only,
-        )
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
