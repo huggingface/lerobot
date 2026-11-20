@@ -33,7 +33,6 @@ from lerobot.rewards.rynnvalue.scoring_rynnvalue import (
     RynnValueFrameScorer,
     make_rynnvalue_frame_scorer,
     select_anchor_indices,
-    select_prefix_indices,
 )
 
 pytestmark = pytest.mark.dataset
@@ -52,20 +51,6 @@ IMAGE_KEY = "observation.images.top"
 )
 def test_select_anchor_indices(num_frames, dataset_fps, inference_fps, expected):
     assert select_anchor_indices(num_frames, dataset_fps, inference_fps).tolist() == expected
-
-
-@pytest.mark.parametrize(
-    ("anchor_index", "max_frames", "expected"),
-    [
-        (2, 8, [0, 0, 0, 0, 1, 1, 1, 2]),
-        (3, None, [0, 1, 2, 3]),
-        (20, 5, [0, 5, 10, 15, 20]),
-        (853, 8, [0, 121, 243, 365, 487, 609, 731, 853]),
-        (7, 1, [7]),
-    ],
-)
-def test_select_prefix_indices(anchor_index, max_frames, expected):
-    assert select_prefix_indices(anchor_index, max_frames).tolist() == expected
 
 
 def test_make_rynnvalue_frame_scorer_builds_processor_without_frame_cap(monkeypatch):

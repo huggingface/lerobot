@@ -27,7 +27,7 @@ from lerobot.processor import PolicyProcessorPipeline
 
 from ..scoring import FrameSignals, SignalDescriptor, scoring_options
 from .modeling_rynnvalue import RynnValueRewardModel
-from .processor_rynnvalue import make_rynnvalue_pre_post_processors
+from .processor_rynnvalue import make_rynnvalue_pre_post_processors, select_frame_indices
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
@@ -55,18 +55,6 @@ def select_anchor_indices(num_frames: int, dataset_fps: float, inference_fps: fl
     if anchors[-1] != num_frames - 1:
         anchors = np.append(anchors, num_frames - 1)
     return anchors
-
-
-def select_prefix_indices(anchor_index: int, max_frames: int | None) -> NDArray[np.int64]:
-    """Return `max_frames` evenly spaced frames, in order, of the prefix ending at `anchor_index`.
-
-    Like the official inference, shorter prefixes repeat frames so RynnValue always sees `max_frames`.
-    """
-    if max_frames is None:
-        return np.arange(anchor_index + 1, dtype=np.int64)
-    if max_frames == 1:
-        return np.asarray([anchor_index], dtype=np.int64)
-    return np.linspace(0, anchor_index, max_frames, dtype=np.int64)
 
 
 class RynnValueFrameScorer:
@@ -122,7 +110,8 @@ class RynnValueFrameScorer:
         task = dataset[positions[0]].get(config.task_key)
 
         anchors = select_anchor_indices(num_frames, float(dataset.fps), config.inference_fps)
-        prefixes = [select_prefix_indices(int(anchor), config.max_frames) for anchor in anchors]
+        # The prefix ending at each anchor, sampled like the preprocessor samples a video.
+        prefixes = [select_frame_indices(int(anchor) + 1, config.max_frames) for anchor in anchors]
         # Without `max_frames`, prefixes differ in length and can't share a batch.
         batch_size = self.batch_size if config.max_frames is not None else 1
         remaining_time: NDArray[np.float64] = np.empty(len(anchors), dtype=np.float64)

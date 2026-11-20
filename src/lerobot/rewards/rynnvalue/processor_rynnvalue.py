@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
+from numpy.typing import NDArray
 from PIL import Image
 from torch import Tensor
 
@@ -65,14 +66,32 @@ def _expand_text(value: Any, *, batch_size: int, default: str | None, name: str)
     return value
 
 
+def select_frame_indices(num_frames: int, max_frames: int | None) -> NDArray[np.int64]:
+    """Return the indices of `max_frames` evenly spaced frames of a video, in order.
+
+    Like the official inference, shorter videos repeat frames so RynnValue always sees `max_frames`.
+    With one frame, the last one is kept, since it is the frame being scored; the official inference
+    keeps the first.
+
+    Args:
+        num_frames: Number of frames in the video.
+        max_frames: Number of frames to select, or `None` for every frame.
+
+    Returns:
+        The selected frame indices.
+    """
+    if max_frames is None:
+        return np.arange(num_frames, dtype=np.int64)
+    if max_frames == 1:
+        return np.asarray([num_frames - 1], dtype=np.int64)
+    return np.linspace(0, num_frames - 1, max_frames, dtype=np.int64)
+
+
 def _uniform_subsample(video: Tensor, max_frames: int | None) -> Tensor:
-    """Pick `max_frames` evenly spaced frames, repeating some in shorter videos, as the official inference does."""
+    """Keep the frames `select_frame_indices` selects, on the video's device."""
     if max_frames is None:
         return video
-    if max_frames == 1:
-        return video[-1:]
-    indices = np.linspace(0, video.shape[0] - 1, max_frames, dtype=np.int64)
-    return video[torch.as_tensor(indices, device=video.device)]
+    return video[torch.as_tensor(select_frame_indices(video.shape[0], max_frames), device=video.device)]
 
 
 def _shrink_to_max_side(images: list[Image.Image], max_side: int | None) -> list[Image.Image]:

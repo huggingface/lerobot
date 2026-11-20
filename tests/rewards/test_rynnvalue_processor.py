@@ -29,6 +29,7 @@ from lerobot.rewards.rynnvalue.processor_rynnvalue import (  # noqa: E402
     _uniform_subsample,
     _video_to_pil,
     make_rynnvalue_pre_post_processors,
+    select_frame_indices,
 )
 from lerobot.rewards.rynnvalue.rynn_value_lang.processing_rynn_value_lang import (  # noqa: E402
     RynnValueLangProcessor,
@@ -108,6 +109,20 @@ def _patch_processor(monkeypatch) -> _FakeProcessor:
         classmethod(lambda cls, *args, **kwargs: fake),
     )
     return fake
+
+
+@pytest.mark.parametrize(
+    ("num_frames", "max_frames", "expected"),
+    [
+        (3, 8, [0, 0, 0, 0, 1, 1, 1, 2]),
+        (4, None, [0, 1, 2, 3]),
+        (21, 5, [0, 5, 10, 15, 20]),
+        (854, 8, [0, 121, 243, 365, 487, 609, 731, 853]),
+        (8, 1, [7]),
+    ],
+)
+def test_select_frame_indices(num_frames, max_frames, expected):
+    assert select_frame_indices(num_frames, max_frames).tolist() == expected
 
 
 def test_uniform_subsample_samples_like_the_official_inference():
