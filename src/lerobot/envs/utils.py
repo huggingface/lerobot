@@ -49,7 +49,12 @@ def _convert_nested_dict(d):
     return result
 
 
-def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+def _observation_tensor(value: np.ndarray | Tensor) -> Tensor:
+    """Preserve tensor placement and NumPy's existing zero-copy CPU conversion."""
+    return value if isinstance(value, Tensor) else torch.from_numpy(value)
+
+
+def preprocess_observation(observations: dict[str, np.ndarray | Tensor]) -> dict[str, Tensor]:
     # TODO(jadechoghari, imstevenpmwork): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
     Args:
@@ -67,7 +72,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
         for imgkey, img in imgs.items():
             # TODO(aliberts, rcadene): use transforms.ToTensor()?
-            img_tensor = torch.from_numpy(img)
+            img_tensor = _observation_tensor(img)
 
             # When preprocessing observations in a non-vectorized environment, we need to add a batch dimension.
             # This is the case for human-in-the-loop RL where there is only one environment.
@@ -87,14 +92,14 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             return_observations[imgkey] = img_tensor
 
     if "environment_state" in observations:
-        env_state = torch.from_numpy(observations["environment_state"]).float()
+        env_state = _observation_tensor(observations["environment_state"]).float()
         if env_state.dim() == 1:
             env_state = env_state.unsqueeze(0)
 
         return_observations[OBS_ENV_STATE] = env_state
 
     if "agent_pos" in observations:
-        agent_pos = torch.from_numpy(observations["agent_pos"]).float()
+        agent_pos = _observation_tensor(observations["agent_pos"]).float()
         if agent_pos.dim() == 1:
             agent_pos = agent_pos.unsqueeze(0)
         return_observations[OBS_STATE] = agent_pos
@@ -132,12 +137,12 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     return return_observations
 
 
-def prepare_canonical_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+def prepare_canonical_observation(observations: dict[str, np.ndarray | Tensor]) -> dict[str, Tensor]:
     """Convert batched sim observations to tensors; uint8 BHWC images become float BCHW in [0, 1]."""
     result = {}
     for name, value in observations.items():
-        tensor = torch.from_numpy(value)
-        if value.dtype == np.uint8 and value.ndim == 4:
+        tensor = _observation_tensor(value)
+        if tensor.dtype == torch.uint8 and tensor.ndim == 4:
             tensor = tensor.permute(0, 3, 1, 2).contiguous().float() / 255
         elif tensor.is_floating_point():
             tensor = tensor.float()
