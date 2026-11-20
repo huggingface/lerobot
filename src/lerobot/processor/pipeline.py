@@ -38,7 +38,7 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, TypedDict, cast
 
 import torch
 from huggingface_hub import hf_hub_download, snapshot_download
@@ -57,10 +57,6 @@ from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.hub import HubMixin
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
-
-# Generic type variables for pipeline input and output.
-TInput = TypeVar("TInput")
-TOutput = TypeVar("TOutput")
 
 
 class ProcessorStepRegistry:
@@ -1867,8 +1863,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
 
 # Type aliases for semantic clarity.
-RobotProcessorPipeline = DataProcessorPipeline[TInput, TOutput]
-PolicyProcessorPipeline = DataProcessorPipeline[TInput, TOutput]
+RobotProcessorPipeline = DataProcessorPipeline
+PolicyProcessorPipeline = DataProcessorPipeline
 
 
 class ObservationProcessorStep(ProcessorStep, ABC):

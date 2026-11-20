@@ -58,7 +58,7 @@ import builtins
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 import torch
@@ -80,8 +80,6 @@ else:
     Qwen3VLForConditionalGeneration = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T", bound="TOPRewardModel")
 
 
 def _torch_dtype(name: str) -> torch.dtype | str:
@@ -145,7 +143,7 @@ class TOPRewardModel(PreTrainedRewardModel):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls: builtins.type[Self],
         pretrained_name_or_path: str | Path,
         *,
         config: RewardModelConfig | None = None,
@@ -158,7 +156,7 @@ class TOPRewardModel(PreTrainedRewardModel):
         revision: str | None = None,
         strict: bool = False,  # noqa: ARG003 — accepted for API parity; unused (no safetensors to load)
         **kwargs: Any,
-    ) -> T:
+    ) -> Self:
         """Load a TOPReward configuration and instantiate the wrapped VLM."""
         if config is None:
             config = RewardModelConfig.from_pretrained(
