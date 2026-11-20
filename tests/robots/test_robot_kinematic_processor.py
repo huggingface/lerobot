@@ -14,9 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 import pytest
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.processor import TransitionKey
 from lerobot.processor.converters import create_transition
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEReferenceAndDelta,
@@ -83,3 +85,48 @@ def test_missing_observation_raises_value_error(step, action):
 
     with pytest.raises(ValueError, match="Joints observation"):
         step(transition)
+
+
+class _RecordingKinematics:
+    def __init__(self):
+        self.q = None
+
+    def forward_kinematics(self, q):
+        self.q = q
+        return np.eye(4)
+
+    def inverse_kinematics(self, q_init, t_des, **kwargs):
+        self.q = q_init
+        return q_init
+
+
+JOINTS = {name: float(i) for i, name in enumerate(MOTOR_NAMES)}
+REVERSED_OBSERVATION = {f"{name}.pos": JOINTS[name] for name in reversed(MOTOR_NAMES)}
+DELTA_ACTION = {"enabled": 1.0, "gripper_vel": 0.0} | {
+    f"target_{k}": 0.0 for k in ["x", "y", "z", "wx", "wy", "wz"]
+}
+
+
+@pytest.mark.parametrize(
+    ("step_cls", "kwargs", "action"),
+    [
+        (EEReferenceAndDelta, {"end_effector_step_sizes": dict.fromkeys("xyz", 1.0)}, DELTA_ACTION),
+        (InverseKinematicsEEToJoints, {}, EE_ACTION),
+        (InverseKinematicsRLStep, {}, EE_ACTION),
+    ],
+    ids=["ee_reference_and_delta", "inverse_kinematics_ee_to_joints", "inverse_kinematics_rl_step"],
+)
+def test_joints_are_read_by_motor_name_not_observation_order(step_cls, kwargs, action):
+    """The joint vector must follow `motor_names`, whatever the order of the observation dict."""
+    kinematics = _RecordingKinematics()
+    step = step_cls(kinematics=kinematics, motor_names=MOTOR_NAMES, **kwargs)
+    step(create_transition(observation=REVERSED_OBSERVATION, action=dict(action)))
+    assert list(kinematics.q) == [JOINTS[name] for name in MOTOR_NAMES]
+
+
+def test_gripper_velocity_reads_gripper_by_name():
+    step = GripperVelocityToJoint(speed_factor=1.0)
+    out = step(
+        create_transition(observation=REVERSED_OBSERVATION, action={**EE_ACTION, "ee.gripper_vel": 0.0})
+    )
+    assert out[TransitionKey.ACTION]["ee.gripper_pos"] == JOINTS["gripper"]
