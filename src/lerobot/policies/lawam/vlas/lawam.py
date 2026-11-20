@@ -132,8 +132,10 @@ class VLMToLAMQFormer(nn.Module):
         for norm_q, norm_kv, xattn, ffn in zip(
             self.norm_qs, self.norm_kvs, self.cross_attns, self.ffns, strict=True
         ):
-            q = norm_q(queries)
-            kv = norm_kv(context)
+            # Without autocast, the float32 attention rejects bfloat16 inputs. Cast up, never down, and here
+            # rather than where the queries are built, so under autocast the residual keeps the VLM's dtype.
+            q = norm_q(queries.to(dtype=torch.promote_types(queries.dtype, self.query.dtype)))
+            kv = norm_kv(context.to(dtype=torch.promote_types(context.dtype, self.query.dtype)))
             attn_out, _ = xattn(q, kv, kv)
             queries = queries + attn_out
             queries = queries + ffn(queries)
