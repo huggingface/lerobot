@@ -512,7 +512,7 @@ class KeyboardMicroDuckTeleop(KeyboardTeleop):
                 self.current_pressed.pop(key, None)
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         before_read_t = time.perf_counter()
         self._drain_pressed_keys()
         pressed = {key for key, is_pressed in self.current_pressed.items() if is_pressed}
