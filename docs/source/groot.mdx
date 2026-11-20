@@ -1,5 +1,18 @@
 # GR00T Policy
 
+| At a glance |                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=groot`                                                                                                        |
+| Family      | Vision-language-action model (VLA)                                                                                           |
+| Size        | 3B parameters                                                                                                                |
+| GPU memory  | 24–40 GB to train                                                                                                            |
+| Takes text  | Yes                                                                                                                          |
+| Starts from | Pretrained: [`nvidia/GR00T-N1.7-3B`](https://huggingface.co/nvidia/GR00T-N1.7-3B)                                            |
+| Install     | `pip install 'lerobot[groot]'`, on a computer with an NVIDIA GPU                                                             |
+| Guide shows | Real robot (SO-101), simulation (LIBERO)                                                                                     |
+| License     | Weights: [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) |
+| Paper       | [GR00T N1](https://arxiv.org/abs/2503.14734) (NVIDIA, 2025), about the first version                                         |
+
 GR00T is an NVIDIA foundation model family for generalized humanoid robot reasoning and skills. It is a cross-embodiment policy that accepts multimodal input, including language, images, and proprioception, to perform manipulation tasks in diverse environments.
 
 LeRobot integrates GR00T N1.7 through the `groot` policy type.

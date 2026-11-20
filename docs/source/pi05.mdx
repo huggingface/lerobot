@@ -1,5 +1,18 @@
 # π₀.₅ (Pi05) Policy
 
+| At a glance |                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=pi05`                                                                                           |
+| Family      | Vision-language-action model (VLA)                                                                             |
+| Size        | 3.6B parameters                                                                                                |
+| GPU memory  | 24–40 GB to train                                                                                              |
+| Takes text  | Yes                                                                                                            |
+| Starts from | Pretrained: [`lerobot/pi05_base`](https://huggingface.co/lerobot/pi05_base)                                    |
+| Install     | `pip install 'lerobot[pi]'`                                                                                    |
+| Guide shows | Real robot (SO-100), simulation (LIBERO)                                                                       |
+| License     | Code: Apache 2.0. Weights: the [Gemma license](https://ai.google.dev/gemma/terms), as listed on the model card |
+| Paper       | [π₀.₅](https://arxiv.org/abs/2504.16054) (Physical Intelligence, 2025)                                         |
+
 π₀.₅ is a **Vision-Language-Action model with open-world generalization**, from Physical Intelligence. The LeRobot implementation is adapted from their open source [OpenPI](https://github.com/Physical-Intelligence/openpi) repository.
 
 ## Model Overview
@@ -388,4 +401,4 @@ These results demonstrate π₀.₅'s strong generalization capabilities across 
 
 ## License
 
-This model follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi).
+LeRobot's code for this model follows the **Apache 2.0 License**, consistent with the original [OpenPI repository](https://github.com/Physical-Intelligence/openpi). The pretrained checkpoints on the Hub list the [Gemma license](https://ai.google.dev/gemma/terms) on their model cards.

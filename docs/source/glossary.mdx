@@ -1,0 +1,253 @@
+# Glossary
+
+The words used across the LeRobot docs, each in a sentence or two. New to all of this? Read [How robot learning works](./how_it_works) first: it introduces the most important ones in context.
+
+## A
+
+### Action
+
+The command sent to the robot's motors at one moment, usually the target position of every joint. While you record, the action is where you moved the leader arm. When a policy runs, the action is what it decides. See also [observation](#observation).
+
+### Action chunk
+
+A short sequence of future actions that a policy predicts at once, for example the next 100. The robot carries them out one after another, which gives smoother movements than predicting one action at a time.
+
+### ACT
+
+Action Chunking with Transformers, a small and fast policy trained from scratch on your own data. It's the usual first policy to train. See [ACT](./act).
+
+## B
+
+### Batch size
+
+How many frames the policy learns from at once in each training step. Larger batches need more GPU memory.
+
+### Benchmark
+
+A standard set of simulated tasks, used to measure policies the same way and compare them. LIBERO and Meta-World are examples. See [Simulation: when and why](./simulation_overview).
+
+## C
+
+### Calibration
+
+A one-time step for each arm, where you move every joint through its full range so LeRobot learns each motor's limits. It makes the leader and follower agree on positions. It's saved under the arm's [ID](#id), in `~/.cache/huggingface/lerobot/calibration/`.
+
+### Camera name
+
+The name you give each camera when you record, such as `front` or `wrist`. It becomes part of the data (`observation.images.front`), and a policy expects the same names when it runs. See [Match camera names to a pretrained policy](./rename_map).
+
+### Checkpoint
+
+A saved copy of a policy, written at regular points during training. You run a policy from a checkpoint, and you can resume training from one.
+
+## D
+
+### DAgger
+
+Dataset Aggregation, a way to improve a policy with human corrections: the policy runs, you take over when it goes wrong, and the corrections are added to the dataset. See [Correct a running policy](./hil_data_collection).
+
+### Dataset
+
+A collection of [episodes](#episode) of one or more tasks, stored in the LeRobot format: videos from the cameras plus the state and actions of every frame. Datasets are shared on the [Hugging Face Hub](#hugging-face-hub). See [What's in a LeRobot dataset](./datasets_explained).
+
+### Degrees of freedom (DoF)
+
+The number of independent ways a robot can move, roughly its number of joints. The SO-101 has 5, plus a gripper.
+
+### Diffusion Policy
+
+A small imitation-learning policy that generates actions step by step from noise. See [Diffusion Policy](./diffusion).
+
+## E
+
+### Embodiment
+
+The physical form of a robot: its arms, joints, grippers and cameras. A policy trained on one embodiment usually doesn't work on another without more training.
+
+### End effector
+
+The tool at the end of a robot arm, usually a gripper.
+
+### Environment
+
+One simulated scene and task that LeRobot can run, chosen with `--env.type`. See [Simulation: when and why](./simulation_overview).
+
+### Episode
+
+One recording of the task, from start to end. A dataset is made of many episodes, typically 50 or more for one task.
+
+### Epoch
+
+One pass of training over every frame of the dataset.
+
+### Evaluate
+
+Measure how well a policy works, usually as a [success rate](#success-rate). In simulation, `lerobot-eval` does it automatically. On a real robot, you count the successful episodes yourself.
+
+## F
+
+### Fine-tune
+
+Keep training a policy that was already trained, often on large datasets, on your own data. It usually needs fewer episodes than training from scratch.
+
+### Flow matching
+
+A training method used by many large policies to generate actions, related to the method behind image-generation models. You don't need to know how it works to use these policies.
+
+### Follower arm
+
+The robot arm that does the task. While you teleoperate, it copies the [leader arm](#leader-arm).
+
+### Frame
+
+One moment of a recording: the camera images, the robot's state and the action. LeRobot records 30 frames per second by default.
+
+## G
+
+### Gripper
+
+The "hand" at the end of a robot arm, which opens and closes to hold objects.
+
+## H
+
+### HIL-SERL
+
+Human-in-the-Loop Sample-Efficient Robotic Reinforcement Learning, the reinforcement learning method in LeRobot: the robot practices a task, a reward tells it how well it did, and a human can step in to help. See [RL on a real robot](./hilserl).
+
+### Hugging Face Hub
+
+The website where LeRobot datasets and policies are shared and downloaded: [huggingface.co](https://huggingface.co/lerobot). Your recordings and trained policies are uploaded to your account there by default.
+
+### Human-in-the-loop
+
+Any method where a person helps the robot while it runs, for example by taking over when it makes a mistake. See [DAgger](#dagger) and [HIL-SERL](#hil-serl).
+
+## I
+
+### ID
+
+The name you give each arm, such as `my_follower`, with `--robot.id` or `--teleop.id`. The arm's calibration is saved under this name, so use the same ID in every command.
+
+### Imitation learning
+
+Teaching a robot by showing it what to do: the policy learns to copy the episodes you recorded. Also called behavior cloning. It's the main way to train policies in LeRobot.
+
+### Inference
+
+Running a trained policy to get its actions. "Inference speed" is how long the policy takes to decide.
+
+## J
+
+### Joint
+
+A part of the robot that rotates or slides, driven by one motor. The positions of all joints make up the robot's [state](#state).
+
+## L
+
+### Leader arm
+
+A copy of the robot arm that you move by hand. The [follower arm](#follower-arm) copies every move, which is how you show the robot a task.
+
+### LeRobotDataset
+
+The Python class that loads a LeRobot dataset for training or analysis. See [Use datasets in Python](./lerobot-dataset-v3).
+
+### LoRA
+
+Low-Rank Adaptation, a way to fine-tune a large policy by training only a small number of extra weights, so it fits on a smaller GPU. LeRobot uses it through the PEFT library. See [Fine-tune large policies on a small GPU](./peft_training).
+
+## M
+
+### Motor ID
+
+The number of each motor on the cable that connects them. `lerobot-setup-motors` gives each motor its ID once, before or during assembly.
+
+## O
+
+### Observation
+
+What the robot senses at one moment: the camera images and its [state](#state). It's what a policy looks at to decide the next [action](#action).
+
+## P
+
+### Policy
+
+The AI model that controls your robot: it looks at the observation and decides the next actions, many times per second. You train a policy on a dataset, then run it on the robot. See [Choose a policy](./policies).
+
+### Port
+
+The connection your computer uses to talk to a robot's motors, such as `/dev/ttyACM0` on Linux or `/dev/tty.usbmodem585A0076841` on macOS. `lerobot-find-port` finds it.
+
+### Processor
+
+A step that converts data on its way between the robot, the dataset and the policy, for example scaling joint positions into the range a policy expects. See [How data flows between robot, dataset and policy](./introduction_processors).
+
+## R
+
+### Real-Time Chunking (RTC)
+
+A technique that keeps the robot moving smoothly while a slow policy computes its next action chunk. See [Smoother motion for slow policies](./rtc).
+
+### Reinforcement learning (RL)
+
+Teaching a robot by trial and error: it tries the task, gets a reward that says how well it did, and improves. See [Reinforcement learning: when to use it](./rl_overview).
+
+### Remote inference
+
+Running the policy on another computer, usually one with a large GPU, while the computer connected to the robot sends observations and receives actions. See [Run the policy on another computer](./remote_inference).
+
+### Rename map
+
+A setting (`--rename_map`) that matches the camera and data names in your dataset or robot to the names a pretrained policy expects. See [Match camera names to a pretrained policy](./rename_map).
+
+### Reward model
+
+A model that scores how well a task is going, for example from 0 (not started) to 1 (done). See [Reward models: what they are for](./reward_models).
+
+### Rollout
+
+Running a trained policy on a robot, real or simulated: the policy controls the robot for one or more episodes. `lerobot-rollout` is the command that does it. See [6. Run it on your robot](./run_policy).
+
+## S
+
+### Simulation
+
+Software that imitates a robot and its surroundings, so you can record, train and test without real hardware. A **simulated robot** can stand in for a real one in most LeRobot commands. See [Simulation: when and why](./simulation_overview).
+
+### State
+
+The robot's own measurements at one moment, mainly the position of every joint. Part of the [observation](#observation).
+
+### Success rate
+
+The share of episodes in which the policy completes the task, for example 8 out of 10. The main measure of how good a policy is.
+
+## T
+
+### Task
+
+The text that describes what the robot should do, like "Put the cube in the box", set with `--dataset.single_task` when you record. Policies that read text (VLAs) use it as their instruction.
+
+### Teleoperation
+
+Controlling a robot yourself, live, with a [teleoperation device](#teleoperation-device). It's how you record the episodes a policy learns from.
+
+### Teleoperation device
+
+Anything you control the robot with: a leader arm, keyboard, gamepad, phone or VR headset. The command-line options for it start with `--teleop.`. See [Teleoperation devices](./teleoperators).
+
+### Training step
+
+One update of the policy, on one [batch](#batch-size) of frames. Training lengths are given in steps, such as `--steps=50000`.
+
+## V
+
+### VLA
+
+Vision-language-action model: a large policy, pretrained on many robots and tasks, that reads camera images and a text instruction and outputs actions. SmolVLA and π₀ are examples. See [Choose a policy](./policies).
+
+## W
+
+### WAM
+
+World action model: a policy that predicts what the cameras will see next as well as the actions to take. See [Choose a policy](./policies).

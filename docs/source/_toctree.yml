@@ -1,248 +1,326 @@
 - sections:
   - local: index
-    title: LeRobot
+    title: Welcome
+  - local: how_it_works
+    title: How robot learning works
   - local: installation
-    title: Installation
-  - local: cheat-sheet
-    title: Cheat sheet
+    title: Install LeRobot
+  - local: quickstart
+    title: Try it without a robot
+  - local: troubleshooting
+    title: Troubleshooting & FAQ
+  - local: glossary
+    title: Glossary
   title: Get started
 - sections:
   - local: il_robots
-    title: Imitation Learning for Robots
+    title: "Overview: what you'll build"
+  - local: setup_your_robot
+    title: 1. Set up your robot
+  - local: teleoperate
+    title: 2. Teleoperate and add cameras
+  - local: record_dataset
+    title: 3. Record a dataset
+  - local: check_dataset
+    title: 4. Check your data
+  - local: train_policy
+    title: 5. Train a policy
+  - local: run_policy
+    title: 6. Run it on your robot
+  - local: improve_policy
+    title: 7. Make it work better
   - local: lelab
-    title: LeLab - Lerobot GUI
-  - local: bring_your_own_policies
-    title: Adding a Policy
-  - local: integrate_hardware
-    title: Bring Your Own Hardware
-  - local: hilserl
-    title: Train a Robot with RL
-  - local: hilserl_sim
-    title: Train RL in Simulation
-  - local: multi_gpu_training
-    title: Multi GPU training
-  - local: hil_data_collection
-    title: Human In the Loop Data Collection
-  - local: peft_training
-    title: Training with PEFT (e.g., LoRA)
-  - local: rename_map
-    title: Using Rename Map and Empty Cameras
-  title: "Tutorials"
+    title: "No-code option: LeLab (SO-101)"
+  title: Teach your robot a task
 - sections:
-  - local: hardware_guide
-    title: Compute Hardware Guide
-  - local: torch_accelerators
-    title: PyTorch accelerators
-  title: "Compute & Hardware"
-- sections:
-  - local: lerobot-dataset-v3
-    title: Using LeRobotDataset
-  - local: training_dataset_streaming
-    title: Training Dataset Streaming
-  - local: porting_datasets_v3
-    title: Porting Large Datasets
-  - local: using_dataset_tools
-    title: Using the Dataset Tools
-  - local: language_and_recipes
-    title: Language Columns and Recipes
-  - local: tools
-    title: Tools
-  - local: annotation_pipeline
-    title: Annotation Pipeline
-  - local: video_encoding_parameters
-    title: Video encoding parameters
-  - local: streaming_video_encoding
-    title: Streaming Video Encoding
-  title: "Datasets"
-- sections:
-  - local: act
-    title: ACT
-  - local: smolvla
-    title: SmolVLA
-  - local: pi0
-    title: π₀ (Pi0)
-  - local: pi0fast
-    title: π₀-FAST (Pi0Fast)
-  - local: pi05
-    title: π₀.₅ (Pi05)
-  - local: fineart_vla
-    title: FineART-VLA
-  - local: molmoact2
-    title: MolmoAct2
-  - local: vla_jepa
-    title: VLA-JEPA
-  - local: lawam
-    title: LaWAM
-  - local: praxis
-    title: Praxis-1
-  - local: eo1
-    title: EO-1
-  - local: lingbot_va
-    title: LingBot-VA
-  - local: lingbot_vla_v2
-    title: LingBot-VLA 2.0
-  - local: g05
-    title: OpenGalaxea G0.5
-  - local: fastwam
-    title: FastWAM
-  - local: longwam
-    title: Long-WAM
-  - local: flux3
-    title: FLUX 3 Action (flux3)
-  - local: evo1
-    title: EVO1
-  - local: groot
-    title: NVIDIA GR00T
-  - local: xvla
-    title: X-VLA
-  - local: multi_task_dit
-    title: Multitask DiT Policy
-  - local: walloss
-    title: WALL-OSS
-  - local: wall_oss_05
-    title: Wall-OSS-0.5
-  - local: dm05
-    title: DM05
-  - local: cosmos3
-    title: Cosmos3
-  title: "Policies"
-- sections:
-  - local: sarm
-    title: SARM
-  - local: robometer
-    title: ROBOMETER
-  - local: topreward
-    title: TOPReward
-  title: "Reward Models"
-- sections:
-  - local: inference
-    title: Policy Deployment (lerobot-rollout)
-  - local: remote_inference
-    title: Remote Inference
-  - local: rtc
-    title: Real-Time Chunking (RTC)
-  title: "Inference"
-- sections:
-  - local: simulation
-    title: Simulation
-  - local: envhub
-    title: "EnvHub: Share a Simulator on the Hub"
-  - local: adding_benchmarks
-    title: Adding a Benchmark
-  - local: envhub_leisaac
-    title: LeIsaac (deprecated)
-  title: "Simulation"
-- sections:
-  - local: libero
-    title: LIBERO
-  - local: libero_plus
-    title: LIBERO-plus
-  - local: metaworld
-    title: Meta-World
-  - local: robotwin
-    title: RoboTwin 2.0
-  - local: robocasa
-    title: RoboCasa365
-  - local: robocerebra
-    title: RoboCerebra
-  - local: robolab
-    title: NVIDIA RoboLab
-  - local: robomme
-    title: RoboMME
-  - local: envhub_isaaclab_arena
-    title: NVIDIA IsaacLab Arena (deprecated)
-  - local: vlabench
-    title: VLABench
-  - local: robocolosseum
-    title: RoboColosseum
-  title: "Benchmarks"
-- sections:
-  - local: introduction_processors
-    title: Introduction to Robot Processors
-  - local: debug_processor_pipeline
-    title: Debug your processor pipeline
-  - local: implement_your_own_processor
-    title: Implement your own processor
-  - local: processors_robots_teleop
-    title: Processors for Robots and Teleoperators
-  - local: env_processor
-    title: Environment Processors
-  - local: action_representations
-    title: Action Representations
-  title: "Robot Processors"
-- sections:
-  - local: so101
-    title: SO-101
-  - local: so100
-    title: SO-100
-  - local: koch
-    title: Koch v1.1
-  - local: lekiwi
-    title: LeKiwi
-  - local: hope_jr
-    title: Hope Jr
-  - local: reachy2
-    title: Reachy 2
-  - local: unitree_g1
-    title: Unitree G1
-  - local: earthrover_mini_plus
-    title: Earth Rover Mini
-  - local: omx
-    title: OMX
-  - local: openarm
-    title: OpenArm
-  - local: rebot_b601
-    title: reBot B601
-  - local: yam
-    title: YAM
-  - local: third_party_robots
-    title: Third-Party Robots & Teleoperators
-  title: "Robots"
-- sections:
-  - local: phone_teleop
-    title: Phone
-  - local: isaac_teleop
-    title: Isaac Teleop
-  title: "Teleoperators"
-- sections:
+  - local: robots
+    title: Choose a robot
+  - isExpanded: false
+    sections:
+    - local: so101
+      title: SO-101
+    - local: so100
+      title: SO-100
+    - local: koch
+      title: Koch v1.1
+    - local: omx
+      title: OMX (ROBOTIS)
+    - local: rebot_b601
+      title: reBot B601
+    - local: openarm
+      title: OpenArm
+    - local: yam
+      title: YAM (I2RT)
+    title: Robot arms
+  - isExpanded: false
+    sections:
+    - local: lekiwi
+      title: LeKiwi
+    - local: earthrover_mini_plus
+      title: EarthRover Mini Plus
+    - local: unitree_g1
+      title: Unitree G1
+    title: Mobile and humanoid robots
+  - isExpanded: false
+    sections:
+    - local: reachy2
+      title: Reachy 2
+    - local: hope_jr
+      title: Hope Jr
+    title: More robots
+  - isExpanded: false
+    sections:
+    - local: teleoperators
+      title: All teleoperation devices
+    - local: phone_teleop
+      title: Phone
+    - local: isaac_teleop
+      title: VR headset (NVIDIA Isaac Teleop)
+    title: Teleoperation devices
   - local: cameras
     title: Cameras
-  - local: third_party_sensors
-    title: Third-Party Cameras & Sensors
-  title: "Sensors"
+  - isExpanded: false
+    sections:
+    - local: feetech
+      title: Update Feetech motor firmware
+    - local: damiao
+      title: Damiao motors and CAN bus
+    title: Motors
+  - isExpanded: false
+    sections:
+    - local: third_party_robots
+      title: Community robots and controllers
+    - local: third_party_sensors
+      title: Community cameras and sensors
+    title: Community hardware (plugins)
+  - local: hardware_guide
+    title: Which GPU do I need?
+  - local: integrate_hardware
+    title: Add your own robot
+  title: Robots & hardware
 - sections:
+  - local: policies
+    title: Choose a policy
+  - isExpanded: false
+    sections:
+    - local: act
+      title: ACT
+    - local: diffusion
+      title: Diffusion Policy
+    - local: multi_task_dit
+      title: Multitask DiT
+    title: Small imitation-learning models
+  - isExpanded: false
+    sections:
+    - local: smolvla
+      title: SmolVLA
+    - local: pi0
+      title: π₀ (pi0)
+    - local: pi0fast
+      title: π₀-FAST (pi0_fast)
+    - local: pi05
+      title: π₀.₅ (pi05)
+    - local: groot
+      title: GR00T (NVIDIA)
+    - local: xvla
+      title: X-VLA
+    - local: dm05
+      title: DM0.5
+    - local: eo1
+      title: EO-1
+    - local: evo1
+      title: EVO1
+    - local: fineart_vla
+      title: FineART-VLA
+    - local: g05
+      title: G0.5 (OpenGalaxea)
+    - local: lingbot_vla_v2
+      title: LingBot-VLA 2.0
+    - local: molmoact2
+      title: MolmoAct2
+    - local: vla_jepa
+      title: VLA-JEPA
+    - local: walloss
+      title: WALL-OSS
+    - local: wall_oss_05
+      title: WALL-OSS 0.5
+    title: Vision-language-action models (VLAs)
+  - isExpanded: false
+    sections:
+    - local: cosmos3
+      title: Cosmos3
+    - local: fastwam
+      title: FastWAM
+    - local: flux3
+      title: FLUX 3 Action
+    - local: lawam
+      title: LaWAM
+    - local: lingbot_va
+      title: LingBot-VA
+    - local: longwam
+      title: Long-WAM
+    - local: praxis
+      title: Praxis-1
+    title: World action models (WAMs)
+  title: Policies
+- sections:
+  - local: simulation_overview
+    title: "Simulation: when and why"
+  - local: train_in_sim
+    title: Train and evaluate in simulation
+  - local: simulation
+    title: Simulated robots and environments
+  - local: envhub
+    title: Share a simulation on the Hub (EnvHub)
+  - local: envhub_leisaac
+    title: Record demos in Isaac Sim (LeIsaac, deprecated)
+  - isExpanded: false
+    sections:
+    - local: libero
+      title: LIBERO
+    - local: libero_plus
+      title: LIBERO-plus
+    - local: metaworld
+      title: Meta-World
+    - local: robotwin
+      title: RoboTwin 2.0
+    - local: robocasa
+      title: RoboCasa365
+    - local: robocerebra
+      title: RoboCerebra
+    - local: robolab
+      title: RoboLab (NVIDIA)
+    - local: robomme
+      title: RoboMME
+    - local: vlabench
+      title: VLABench
+    - local: robocolosseum
+      title: RoboColosseum (real robots)
+    - local: envhub_isaaclab_arena
+      title: Isaac Lab Arena (NVIDIA, deprecated)
+    title: Benchmarks
+  title: Simulation & benchmarks
+- sections:
+  - isExpanded: false
+    sections:
+    - local: datasets_explained
+      title: What's in a LeRobot dataset
+    - local: lerobot-dataset-v3
+      title: Use datasets in Python
+    - local: training_dataset_streaming
+      title: Train without downloading the dataset (streaming)
+    - local: using_dataset_tools
+      title: Edit, merge and split datasets
+    - local: porting_datasets_v3
+      title: Convert other datasets to LeRobot
+    - local: video_encoding_parameters
+      title: Video size and quality settings
+    - local: streaming_video_encoding
+      title: Encode video while recording
+    - local: language_and_recipes
+      title: Add language annotations
+    - local: annotation_pipeline
+      title: Auto-label episodes with a VLM
+    - local: tools
+      title: Let a policy call tools
+    title: Datasets
+  - isExpanded: false
+    sections:
+    - local: peft_training
+      title: Fine-tune large policies on a small GPU (LoRA)
+    - local: multi_gpu_training
+      title: Train on multiple GPUs
+    - local: torch_accelerators
+      title: Use Apple, AMD or Intel GPUs
+    - local: rename_map
+      title: Match camera names to a pretrained policy
+    title: Training
+  - isExpanded: false
+    sections:
+    - local: inference
+      title: All ways to run a policy (lerobot-rollout)
+    - local: remote_inference
+      title: Run the policy on another computer
+    - local: rtc
+      title: Smoother motion for slow policies (RTC)
+    - local: hil_data_collection
+      title: Correct a running policy (human-in-the-loop)
+    title: Running policies
+  - isExpanded: false
+    sections:
+    - local: rl_overview
+      title: "Reinforcement learning: when to use it"
+    - local: hilserl_sim
+      title: Practice RL in simulation
+    - local: hilserl
+      title: RL on a real robot (HIL-SERL)
+    title: Reinforcement learning
+  - isExpanded: false
+    sections:
+    - local: reward_models
+      title: What reward models are for
+    - local: sarm
+      title: SARM
+    - local: robometer
+      title: Robometer
+    - local: topreward
+      title: TOPReward
+    title: Reward models
+  title: Guides
+- sections:
+  - local: cheat-sheet
+    title: "Cheat sheet: every command"
+  - isExpanded: false
+    sections:
+    - local: introduction_processors
+      title: How data flows between robot, dataset and policy
+    - local: action_representations
+      title: Absolute vs relative actions
+    - local: processors_robots_teleop
+      title: Map teleoperation commands to a robot
+    - local: env_processor
+      title: Adapt simulator observations to a policy
+    - local: debug_processor_pipeline
+      title: Debug a processor pipeline
+    - local: implement_your_own_processor
+      title: Write your own processor
+    title: Processors
   - local: notebooks
-    title: Notebooks
-  - local: feetech
-    title: Updating Feetech Firmware
-  - local: damiao
-    title: Damiao Motors and CAN Bus
-  title: "Resources"
-- sections:
+    title: Colab notebooks
+  - local: backwardcomp
+    title: Upgrading from older versions
+  - isExpanded: false
+    sections:
+    - local: api/robots
+      title: Robots
+    - local: api/teleoperators
+      title: Teleoperators
+    - local: api/cameras
+      title: Cameras
+    - local: api/motors
+      title: Motors
+    - local: api/datasets
+      title: Datasets
+    - local: api/policies
+      title: Policies
+    - local: api/processor
+      title: Processors
+    - local: api/envs
+      title: Environments
+    - local: api/configs
+      title: Configuration
+    title: Python API
+  title: Reference
+- isExpanded: false
+  sections:
   - local: contributing
     title: Contribute to LeRobot
+  - local: bring_your_own_policies
+    title: Add your own policy
+  - local: adding_benchmarks
+    title: Add a simulation benchmark
   - local: writing_docstrings
     title: Writing docstrings
-  - local: backwardcomp
-    title: Backward compatibility
-  title: "About"
-- sections:
-  - local: api/robots
-    title: Robots
-  - local: api/teleoperators
-    title: Teleoperators
-  - local: api/cameras
-    title: Cameras
-  - local: api/motors
-    title: Motors
-  - local: api/datasets
-    title: Datasets
-  - local: api/policies
-    title: Policies
-  - local: api/processor
-    title: Processors
-  - local: api/envs
-    title: Environments
-  - local: api/configs
-    title: Configuration
-  title: "API Reference"
+  - local: writing_docs
+    title: Writing docs
+  title: Contribute

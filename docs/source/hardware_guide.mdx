@@ -1,6 +1,6 @@
-# Compute HW Guide for LeRobot Training
+# Which GPU do I need?
 
-Rough sizing for training a LeRobot policy: how much VRAM each policy needs, what training time looks like, and where to run when local hardware isn't enough.
+Rough sizing for training a LeRobot policy: how much GPU memory (VRAM) each policy needs, what training time looks like, and where to run when local hardware isn't enough.
 
 The numbers below are **indicative** — order-of-magnitude figures for picking hardware, not exact predictions. Throughput depends heavily on dataset I/O, image resolution, batch size, and number of GPUs.
 
@@ -8,14 +8,15 @@ The numbers below are **indicative** — order-of-magnitude figures for picking 
 
 Policies cluster by backbone size; the groupings below give a single VRAM envelope per group instead of repeating numbers per policy. Memory scales roughly linearly with batch size; AdamW (the LeRobot default) carries optimizer state that adds ~30–100% over a forward+backward pass alone.
 
-| Group      | Policies                                    | Peak VRAM (BS 8, AdamW) | Suitable starter GPUs             |
-| ---------- | ------------------------------------------- | ----------------------: | --------------------------------- |
-| Light BC   | `act`, `vqbet`, `tdmpc`                     |                  ~2–6GB | Laptop GPU (RTX 3060), L4, A10G   |
-| Diffusion  | `diffusion`, `multi_task_dit`               |                 ~8–14GB | RTX 4070+ / L4 / A10G             |
-| Small VLA  | `smolvla`                                   |                ~10–16GB | RTX 4080+ / L4 / A10G             |
-| Large VLA  | `pi0`, `pi0_fast`, `pi05`, `xvla`, `wall_x` |                ~24–40GB | A100 40 GB+ (24 GB tight at BS 1) |
-| Multimodal | `groot`, `eo1`                              |                ~24–40GB | A100 40 GB+                       |
-| RL         | `sac`                                       |             config-dep. | See [HIL-SERL guide](./hilserl)   |
+| Group                           | Policies                                                                                                                                                                                       | Peak VRAM (BS 8, AdamW) | Suitable starter GPUs                         |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------: | --------------------------------------------- |
+| Small imitation-learning models | `act`, `vqbet`, `tdmpc`                                                                                                                                                                        |                  ~2–6GB | Laptop GPU (RTX 3060), L4, A10G               |
+| Diffusion-based models          | `diffusion`, `multi_task_dit`                                                                                                                                                                  |                 ~8–14GB | RTX 4070+ / L4 / A10G                         |
+| Small VLA                       | `smolvla`                                                                                                                                                                                      |                ~10–16GB | RTX 4080+ / L4 / A10G                         |
+| Large VLAs                      | `pi0`, `pi0_fast`, `pi05`, `xvla`, `wall_x`                                                                                                                                                    |                ~24–40GB | A100 40 GB+ (24 GB tight at BS 1)             |
+| Large multimodal VLAs           | `groot`, `eo1`                                                                                                                                                                                 |                ~24–40GB | A100 40 GB+                                   |
+| Reinforcement learning          | `gaussian_actor` (trained with SAC)                                                                                                                                                            |             config-dep. | See [HIL-SERL guide](./hilserl)               |
+| Not measured here               | `cosmos3_nano`, `cosmos3_edge`, `dm05`, `evo1`, `fastwam`, `fineart_vla`, `flux3`, `g05`, `lawam`, `lingbot_va`, `lingbot_vla_v2`, `longwam`, `molmoact2`, `praxis`, `vla_jepa`, `wall_oss_05` |                       — | See each policy's page; most need a large GPU |
 
 Memory-bound? Drop the batch size (~linear), use gradient accumulation to recover effective batch, or for SmolVLA leave `freeze_vision_encoder=True`.
 

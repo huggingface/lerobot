@@ -1,5 +1,18 @@
 # EVO1
 
+| At a glance |                                                                                                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=evo1`                                                                                                                                      |
+| Family      | Vision-language-action model (VLA)                                                                                                                        |
+| Size        | 0.8B parameters                                                                                                                                           |
+| GPU memory  | Not measured                                                                                                                                              |
+| Takes text  | Yes                                                                                                                                                       |
+| Starts from | A pretrained vision-language model: [`OpenGVLab/InternVL3-1B-hf`](https://huggingface.co/OpenGVLab/InternVL3-1B-hf) (no robot-pretrained EVO1 checkpoint) |
+| Install     | `pip install 'lerobot[evo1]'`                                                                                                                             |
+| Guide shows | Simulation (LIBERO)                                                                                                                                       |
+| License     | Code: Apache 2.0. The InternVL3 model card lists the Qwen license                                                                                         |
+| Paper       | [Evo-1](https://arxiv.org/abs/2511.04555) (Lin et al., 2025)                                                                                              |
+
 EVO1 is a Vision-Language-Action policy for robot control built around an InternVL3 backbone and a continuous flow-matching action head. This LeRobot integration exposes EVO1 as a standard policy type so it can be trained and evaluated with the usual LeRobot dataset, checkpoint, and processor APIs.
 
 ## Model Overview

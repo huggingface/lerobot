@@ -1,5 +1,18 @@
 # WALL-OSS
 
+| At a glance |                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=wall_x`                                                                            |
+| Family      | Vision-language-action model (VLA)                                                                |
+| Size        | 4.2B parameters                                                                                   |
+| GPU memory  | 24–40 GB to train                                                                                 |
+| Takes text  | Yes                                                                                               |
+| Starts from | Pretrained: [`x-square-robot/wall-oss-flow`](https://huggingface.co/x-square-robot/wall-oss-flow) |
+| Install     | `pip install 'lerobot[wallx]'`                                                                    |
+| Guide shows | Training and running on your robot                                                                |
+| License     | Apache 2.0                                                                                        |
+| Paper       | [Igniting VLMs toward the Embodied Space](https://arxiv.org/abs/2509.11766) (Zhai et al., 2025)   |
+
 WALL-OSS is an open-source foundation model for embodied intelligence, proposed by the [XSquare Robot](https://x2robot.com/en/research/68bc2cde8497d7f238dde690) team in 2025. The LeRobot implementation is adapted from their open-source [WallX](https://github.com/X-Square-Robot/wall-x) repository.
 
 X Square Robot’s WALL-OSS is now integrated into Hugging Face’s LeRobot ecosystem. This is an exciting collaborative project between the LeRobot and X Square Robot teams. You can now post-train, evaluate, and deploy WALL-OSS directly through LeRobot. With this, we’re aiming to make it easier for the open-source robotics community to customize and deploy WALL-OSS foundation models. Read and explore WALL-OSS [paper](https://arxiv.org/pdf/2509.11766) and [code](https://github.com/X-Square-Robot/wall-x).

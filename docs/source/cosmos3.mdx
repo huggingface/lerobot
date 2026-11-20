@@ -1,5 +1,18 @@
 # Cosmos3
 
+| At a glance |                                                                                                                                                            |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=cosmos3_edge` or `--policy.type=cosmos3_nano`                                                                                               |
+| Family      | World action model (WAM)                                                                                                                                   |
+| Size        | Edge: 4.6B parameters. Nano: 16.5B parameters                                                                                                              |
+| GPU memory  | Edge: 21 GB to train with LoRA, 47 GB in full. Nano: 80 GB GPUs (see [Hardware requirements](#hardware-requirements))                                      |
+| Takes text  | Yes                                                                                                                                                        |
+| Starts from | Pretrained: [`lerobot/Cosmos3-Edge`](https://huggingface.co/lerobot/Cosmos3-Edge) or [`lerobot/Cosmos3-Nano`](https://huggingface.co/lerobot/Cosmos3-Nano) |
+| Install     | `pip install 'lerobot[cosmos3]'`                                                                                                                           |
+| Guide shows | Simulation (LIBERO)                                                                                                                                        |
+| License     | Code: Apache 2.0. Weights: [OpenMDW-1.1](https://openmdw.ai/license/1-1/)                                                                                  |
+| Paper       | [Cosmos 3](https://arxiv.org/abs/2606.02800) (NVIDIA, 2026)                                                                                                |
+
 Cosmos3 is a **world action model for robot control**, built on [Cosmos 3](https://research.nvidia.com/labs/cosmos-lab/cosmos3/), NVIDIA's family of omnimodal world models. From the camera observations and a language instruction, the policy jointly predicts the future video frames and the next chunk of robot actions. The LeRobot implementation is adapted from the native [cosmos-framework](https://github.com/NVIDIA/cosmos-framework) action policy and runs the released [Cosmos3 Nano and Edge](https://huggingface.co/collections/nvidia/cosmos3) models, converted to the LeRobot format.
 
 - 📄 [Cosmos 3 technical report](https://research.nvidia.com/labs/cosmos-lab/cosmos3/technical-report.pdf) ([arXiv:2606.02800](https://arxiv.org/abs/2606.02800))
