@@ -29,11 +29,12 @@ import pytest
 pytest.importorskip("websockets")
 from websockets.sync.server import serve  # noqa: E402
 
+from lerobot.common.teleop_setup import make_mobile_teleop  # noqa: E402
 from lerobot.teleoperators import TeleoperatorConfig  # noqa: E402
 from lerobot.teleoperators.lightnav import LightNavTeleop, LightNavTeleopConfig  # noqa: E402
 from lerobot.teleoperators.lightnav.teleop_lightnav import limit_velocity, waypoint_velocity  # noqa: E402
-from lerobot.teleoperators.mobile_base import MobileBaseTeleop  # noqa: E402
 from lerobot.teleoperators.utils import make_teleoperator_from_config  # noqa: E402
+from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig  # noqa: E402
 
 BASE = ("x.vel", "y.vel", "theta.vel")
 ARM = ("arm_shoulder.pos", "arm_gripper.pos")
@@ -170,7 +171,7 @@ def test_streams_frames_and_follows_the_prediction(server, teleop):
     assert server.actions() == ["login", "reset"]
     assert teleop.get_action() == STOPPED
 
-    teleop.on_observation({"front": red_frame(), "arm_shoulder.pos": 0.0})
+    teleop.get_action(observation={"front": red_frame(), "arm_shoulder.pos": 0.0})
     wait_until(lambda: teleop.last_prediction is not None)
 
     request = server.requests[2]
@@ -190,7 +191,7 @@ def test_non_holonomic_bases_never_strafe(server):
     teleop = make_teleop(server, holonomic=False)
     teleop.connect()
     try:
-        teleop.on_observation({"front": red_frame()})
+        teleop.get_action(observation={"front": red_frame()})
         wait_until(lambda: teleop.last_prediction is not None)
         assert teleop.get_action() == pytest.approx(
             {"x.vel": 0.2, "y.vel": 0.0, "theta.vel": math.degrees(0.1)}
@@ -210,10 +211,10 @@ def test_only_the_newest_frame_is_sent_and_one_request_is_in_flight(server):
     teleop = make_teleop(server)
     teleop.connect()
     try:
-        teleop.on_observation({"front": red_frame()})
+        teleop.get_action(observation={"front": red_frame()})
         wait_until(lambda: len(server.requests) == 3)
         for _ in range(5):
-            teleop.on_observation({"front": red_frame()})
+            teleop.get_action(observation={"front": red_frame()})
         release.set()
         wait_until(lambda: len(server.requests) == 4)
         time.sleep(0.05)
@@ -226,11 +227,11 @@ def test_a_repeated_camera_array_is_sent_once(server, teleop):
     # A camera slower than the loop keeps returning its latest picture, as the same array.
     cached = red_frame()
     for _ in range(5):
-        teleop.on_observation({"front": cached})
+        teleop.get_action(observation={"front": cached})
         time.sleep(0.02)
     assert server.actions() == ["login", "reset", "next"]
 
-    teleop.on_observation({"front": red_frame()})
+    teleop.get_action(observation={"front": red_frame()})
     wait_until(lambda: len(server.requests) == 4)
     time.sleep(0.05)
     assert server.actions() == ["login", "reset", "next", "next"]
@@ -238,17 +239,17 @@ def test_a_repeated_camera_array_is_sent_once(server, teleop):
 
 def test_arrival_latches_a_stop_until_reset_episode(server, teleop):
     server.reply = lambda data: prediction((0.0, 0.0, 0.0), stop=True)
-    teleop.on_observation({"front": red_frame()})
+    teleop.get_action(observation={"front": red_frame()})
     wait_until(lambda: teleop.arrived)
     assert teleop.get_action() == STOPPED
 
-    teleop.on_observation({"front": red_frame()})
+    teleop.get_action(observation={"front": red_frame()})
     time.sleep(0.05)
     assert server.actions() == ["login", "reset", "next"]
 
     server.reply = lambda data: prediction((0.2, 0.0, 0.0))
     teleop.reset_episode("Walk to the leftmost TV in front")
-    teleop.on_observation({"front": red_frame()})
+    teleop.get_action(observation={"front": red_frame()})
     wait_until(lambda: teleop.last_prediction is not None)
     assert server.actions() == ["login", "reset", "next", "reset", "next"]
     assert server.requests[-1]["data"]["instruction"] == "Walk to the leftmost TV in front"
@@ -259,9 +260,9 @@ def test_arrival_latches_a_stop_until_reset_episode(server, teleop):
 def test_server_errors_keep_the_session(server, teleop):
     replies = iter([{"rc": 500, "msg": "decode failed"}, prediction((0.2, 0.0, 0.0))])
     server.reply = lambda data: next(replies)
-    teleop.on_observation({"front": red_frame()})
+    teleop.get_action(observation={"front": red_frame()})
     wait_until(lambda: len(server.requests) == 3)
-    teleop.on_observation({"front": red_frame()})
+    teleop.get_action(observation={"front": red_frame()})
     wait_until(lambda: teleop.last_prediction is not None)
     assert teleop.is_connected
     assert teleop.get_action()["x.vel"] == pytest.approx(0.2)
@@ -269,9 +270,9 @@ def test_server_errors_keep_the_session(server, teleop):
 
 def test_missing_or_malformed_camera_frames_are_rejected(teleop):
     with pytest.raises(KeyError, match="camera_key"):
-        teleop.on_observation({"wrist": red_frame()})
+        teleop.get_action(observation={"wrist": red_frame()})
     with pytest.raises(ValueError, match="uint8"):
-        teleop.on_observation({"front": red_frame().astype(np.float32)})
+        teleop.get_action(observation={"front": red_frame().astype(np.float32)})
 
 
 class FakeMobileRobot:
@@ -281,17 +282,43 @@ class FakeMobileRobot:
 
 
 def test_drives_a_mobile_base_and_stops_it_when_the_server_goes_away(server, teleop):
-    mobile = MobileBaseTeleop(FakeMobileRobot(), base=teleop, hold_uncommanded=True)
+    mobile, processor = make_mobile_teleop(FakeMobileRobot(), base=teleop)
     observation = {"arm_shoulder.pos": 10.0, "arm_gripper.pos": 50.0, **STOPPED, "front": red_frame()}
-    assert mobile.action_features == dict.fromkeys(ARM + BASE, float)
+    assert mobile.action_features == dict.fromkeys(BASE, float)
 
-    mobile.on_observation(observation)
+    mobile.get_action(observation=observation)
     wait_until(lambda: teleop.last_prediction is not None)
-    action = mobile.get_action()
+    action = processor((mobile.get_action(observation=observation), observation))
     assert action["arm_shoulder.pos"] == 10.0 and action["arm_gripper.pos"] == 50.0
     assert action["x.vel"] == pytest.approx(0.2)
 
     server.drop.set()
-    mobile.on_observation({**observation, "front": red_frame()})
+    mobile.get_action(observation={**observation, "front": red_frame()})
     wait_until(lambda: not teleop.is_connected)
-    assert {key: mobile.get_action()[key] for key in BASE} == STOPPED
+    action = processor((mobile.get_action(observation=observation), observation))
+    assert {key: action[key] for key in BASE} == STOPPED
+    assert action["arm_shoulder.pos"] == 10.0 and action["arm_gripper.pos"] == 50.0
+
+
+def test_leader_keeps_responding_after_lightnav_disconnects(server, teleop, tmp_path):
+    leader = MockTeleop(
+        MockTeleopConfig(
+            n_motors=2, random_values=False, static_values=[12.0, 34.0], calibration_dir=tmp_path
+        )
+    )
+    leader.motors = ["arm_shoulder", "arm_gripper"]
+    leader.connect()
+    mobile, processor = make_mobile_teleop(FakeMobileRobot(), base=teleop, arm=leader)
+    observation = {"arm_shoulder.pos": 10.0, "arm_gripper.pos": 50.0, **STOPPED, "front": red_frame()}
+    try:
+        mobile.get_action(observation=observation)
+        wait_until(lambda: teleop.last_prediction is not None)
+        assert processor((mobile.get_action(observation=observation), observation))["x.vel"] > 0
+        server.drop.set()
+        mobile.get_action(observation={**observation, "front": red_frame()})
+        wait_until(lambda: not teleop.is_connected)
+        leader.config.static_values = [20.0, 40.0]
+        action = processor((mobile.get_action(observation=observation), observation))
+        assert action == {**STOPPED, "arm_shoulder.pos": 20.0, "arm_gripper.pos": 40.0}
+    finally:
+        mobile.disconnect()

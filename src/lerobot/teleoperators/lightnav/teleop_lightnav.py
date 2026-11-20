@@ -17,7 +17,7 @@
 The model runs on a GPU host behind LightNav's WebSocket server, ``lightnav-serve``
 (https://github.com/lightorigins/LightNav-0). This teleoperator is its robot-side client: it streams
 one camera from the robot's observation and follows the predicted waypoints. It emits the planar base
-actions of ``keyboard_base``, so ``--base_teleop.type=lightnav`` composes with a leader arm or holds
+actions of the mobile control pipeline, so ``--base_teleop.type=lightnav`` composes with a leader arm or holds
 the arm still, like any other base input device.
 """
 
@@ -118,7 +118,7 @@ class LightNavTeleop(Teleoperator):
     """Follow LightNav-0 waypoints predicted from the robot's own camera.
 
     A background thread keeps one request in flight: it sends the newest frame delivered through
-    ``on_observation`` and waits for its waypoints, so ``get_action`` never blocks on the network. The
+    ``get_action(observation=...)`` and waits for its waypoints, so ``get_action`` never blocks on the network. The
     chunk is replayed open loop from the time its frame was observed and replaced by every new
     prediction. The base stops when the chunk runs out, when the model reports arrival (until
     ``reset_episode``), and when the connection fails.
@@ -207,7 +207,7 @@ class LightNavTeleop(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def on_observation(self, observation: RobotObservation) -> None:
+    def _queue_frame(self, observation: RobotObservation) -> None:
         """Queue the newest camera frame; an older frame that was not sent yet is dropped.
 
         A camera slower than the control loop often returns the same cached array until its next
@@ -232,11 +232,15 @@ class LightNavTeleop(Teleoperator):
             self._frame = (time.monotonic(), image.copy())
             self._lock.notify()
 
-    @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
+        stopped = dict.fromkeys(BASE_ACTION_KEYS, 0.0)
+        # Keep emitting a stop after a server failure, including when composed with a leader arm.
+        if not self.is_connected:
+            return stopped
+        if observation is not None:
+            self._queue_frame(observation)
         with self._lock:
             prediction = None if self._arrived else self._prediction
-        stopped = dict.fromkeys(BASE_ACTION_KEYS, 0.0)
         if prediction is None:
             return stopped
         velocity = waypoint_velocity(

@@ -49,7 +49,7 @@ lerobot-teleoperate \
 
 Add `--teleop.type=so100_leader --teleop.port=<port>` to drive LeKiwi's arm from a leader arm while LightNav drives the base. The same flags work with `lerobot-record`, which records the navigation commands as `x.vel`, `y.vel`, and `theta.vel` actions next to the camera frames.
 
-LightNav emits the base actions of `keyboard_base`: `x.vel` and `y.vel` in m/s (+y is left) and `theta.vel` in deg/s (+ is counter-clockwise). Any robot whose base takes these actions can use it. Other conventions need a robot action processor.
+LightNav emits the standard planar base actions: `x.vel` and `y.vel` in m/s (+y is left) and `theta.vel` in deg/s (+ is counter-clockwise). Any robot whose base takes these actions can use it. Other conventions need a robot action processor.
 
 Instructions work best with one action verb, an optional direction, and an unambiguous object, for example _"Turn left and walk to the red lamppost"_ or _"Walk to the vase on the dining table ahead."_ See LightNav's [prompt guide](https://github.com/lightorigins/LightNav-0#%EF%B8%8F-prompt-guide).
 
@@ -74,20 +74,20 @@ A server error on one frame (`rc` 400 or 500) is logged, and the current chunk k
 ```python
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.teleoperators.lightnav import LightNavTeleop, LightNavTeleopConfig
-from lerobot.teleoperators.mobile_base import make_mobile_base_teleop
+from lerobot.common.teleop_setup import make_mobile_teleop
 
 robot = LeKiwiClient(LeKiwiClientConfig(remote_ip="<lekiwi-ip>"))
 lightnav = LightNavTeleop(
     LightNavTeleopConfig(server_url="ws://<gpu-host>:8050", instruction="Go to the front-left TV")
 )
-teleop = make_mobile_base_teleop(robot, base=lightnav)  # the arm holds its position
+teleop, action_processor = make_mobile_teleop(robot, base=lightnav)  # the arm holds its position
 
 robot.connect()
 teleop.connect()
 while not lightnav.arrived:
     observation = robot.get_observation()
-    teleop.on_observation(observation)
-    robot.send_action(teleop.get_action())
+    raw_action = teleop.get_action(observation=observation)
+    robot.send_action(action_processor((raw_action, observation)))
 
 lightnav.reset_episode("Walk to the leftmost curtain")
 ```

@@ -25,7 +25,7 @@ from ..config import TeleoperatorConfig
 class LightNavTeleopConfig(TeleoperatorConfig):
     """Stream one camera to ``lightnav-serve`` and follow the waypoints it predicts.
 
-    Linear speeds are in m/s and angular speeds in deg/s, like ``keyboard_base``.
+    Linear speeds are in m/s and angular speeds in deg/s, as in the mobile control pipeline.
     """
 
     # WebSocket URL of a running `lightnav-serve` (started with `--task vln` for navigation).
