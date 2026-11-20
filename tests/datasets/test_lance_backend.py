@@ -939,3 +939,109 @@ def test_materialize_meta_rejects_escaping_paths(tmp_path):
         )
         with pytest.raises(ValueError, match="escapes the cache directory"):
             lance_utils._materialize_meta(db, tmp_path / f"root_{i}")
+
+
+def _update_meta_entry(table, rel_path: str, data: bytes) -> int:
+    row = pa.table({"path": [rel_path], "data": [data]}, schema=table.schema)
+    table.merge_insert("path").when_matched_update_all().when_not_matched_insert_all().execute(row)
+    return int(table.version)
+
+
+@pytest.mark.parametrize("uri_kind", ["file", "hf_bucket"])
+def test_remote_meta_cache_invalidates_on_meta_table_update(
+    dataset_roots, tmp_path, monkeypatch, uri_kind: str
+) -> None:
+    _, lance_root = dataset_roots
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+
+    remote_uri = f"file://{lance_root}" if uri_kind == "file" else "hf://buckets/owner/bucket"
+    connect = lancedb.connect
+    connect_calls: list[str] = []
+
+    def tracking_connect(uri, **kwargs):
+        connect_calls.append(uri)
+        if uri == remote_uri:
+            return connect(str(lance_root))
+        return connect(uri, **kwargs)
+
+    monkeypatch.setattr(lancedb, "connect", tracking_connect)
+
+    ds_v1 = LeRobotDataset(DUMMY_REPO_ID, root=remote_uri)
+    try:
+        # Version probe + materialization share one connect; LanceDatasetReader.__init__ does not reconnect.
+        assert connect_calls == [remote_uri]
+        assert "meta-v1" in ds_v1.root.name
+        original_fps = ds_v1.meta.fps
+
+        # Mutate remote meta.lance in-place (v1 -> v2) without touching ds_v1's cache.
+        db = connect(str(lance_root))
+        meta_table = db.open_table(lance_utils.META_TABLE)
+        info = json.loads((lance_root / "meta" / "info.json").read_text())
+        info["fps"] = original_fps + 5
+        new_version = _update_meta_entry(meta_table, "info.json", json.dumps(info, indent=4).encode("utf-8"))
+        assert new_version == 2
+
+        connect_calls.clear()
+        ds_v2 = LeRobotDataset(DUMMY_REPO_ID, root=remote_uri)
+        try:
+            assert connect_calls == [remote_uri]
+            assert ds_v2.meta.fps == original_fps + 5
+            assert ds_v2.root != ds_v1.root
+            assert "meta-v2" in ds_v2.root.name
+            # Concurrent reader isolation: v1's materialized metadata stays untouched.
+            assert json.loads((ds_v1.root / "meta" / "info.json").read_text())["fps"] == original_fps
+        finally:
+            ds_v2.reader.close()
+    finally:
+        ds_v1.reader.close()
+
+
+def test_hub_git_meta_cache_keeps_revision_strategy(dataset_roots, tmp_path, monkeypatch) -> None:
+    _, lance_root = dataset_roots
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+
+    hub_uri = "hf://datasets/user/repo"
+    connect = lancedb.connect
+    connect_calls: list[tuple[str, str | None]] = []
+
+    def tracking_connect(uri, **kwargs):
+        storage_opts = kwargs.get("storage_options") or {}
+        connect_calls.append((uri, storage_opts.get("revision")))
+        assert uri == hub_uri
+        return connect(str(lance_root))
+
+    monkeypatch.setattr(lancedb, "connect", tracking_connect)
+
+    _, local_v30 = lance_utils.resolve_lance_root("user/repo", hub_uri, revision="v3.0", token=False)
+    assert connect_calls == [(hub_uri, "v3.0")]
+    assert "meta-v" not in local_v30.name
+    initial_fps = json.loads((local_v30 / "meta" / "info.json").read_text())["fps"]
+
+    # Advance meta.lance version underneath; Hub Git cache stays keyed by revision without reconnecting.
+    db = connect(str(lance_root))
+    info = json.loads((lance_root / "meta" / "info.json").read_text())
+    info["fps"] = initial_fps + 7
+    _update_meta_entry(
+        db.open_table(lance_utils.META_TABLE), "info.json", json.dumps(info, indent=4).encode("utf-8")
+    )
+
+    connect_calls.clear()
+    _, cached_v30 = lance_utils.resolve_lance_root("user/repo", hub_uri, revision="v3.0", token=False)
+    assert connect_calls == []
+    assert cached_v30 == local_v30
+    assert json.loads((cached_v30 / "meta" / "info.json").read_text())["fps"] == initial_fps
+
+    # Different revision gets its own cache directory and fetches once.
+    _, local_v31 = lance_utils.resolve_lance_root("user/repo", hub_uri, revision="v3.1", token=False)
+    assert connect_calls == [(hub_uri, "v3.1")]
+    assert local_v31 != local_v30
+    assert json.loads((local_v31 / "meta" / "info.json").read_text())["fps"] == initial_fps + 7
+
+    # force_cache_sync=True refreshes the existing revision cache.
+    connect_calls.clear()
+    _, refreshed_v30 = lance_utils.resolve_lance_root(
+        "user/repo", hub_uri, revision="v3.0", token=False, force_cache_sync=True
+    )
+    assert connect_calls == [(hub_uri, "v3.0")]
+    assert refreshed_v30 == local_v30
+    assert json.loads((refreshed_v30 / "meta" / "info.json").read_text())["fps"] == initial_fps + 7
