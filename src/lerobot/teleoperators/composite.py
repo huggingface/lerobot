@@ -27,12 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 class CompositeTeleoperator(Teleoperator):
-    """Combine any number of devices using explicit prefixes for their action names.
+    """Combine devices with action prefixes, e.g. ``[(keyboard, ""), (leader, "arm_")]``.
 
-    For example, ``[(keyboard, ""), (leader, "arm_")]`` combines raw keyboard input and
-    prefixed leader positions. Mapping and joint holding belong to the caller's pipeline.
-    Observations are forwarded as read-only robot state in the robot's original key space.
-    Feedback is routed using each child's advertised feedback features, with prefixes removed.
+    Observations keep the robot's keys; feedback is routed with each child's prefix removed.
     """
 
     config_class = TeleoperatorConfig

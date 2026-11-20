@@ -292,10 +292,7 @@ class UnitreeG1Teleoperator(Teleoperator):
             self._wireless_state = remote
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        """Deprecated for observation delivery; pass observations to :meth:`get_action` instead.
-
-        Kept as a compatibility alias for callers that send wireless-remote observations here.
-        """
+        """Legacy wireless-remote input; pass observations to :meth:`get_action` instead."""
         self._update_wireless_remote(feedback)
 
     def disconnect(self) -> None:

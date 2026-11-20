@@ -234,7 +234,7 @@ def test_record_hands_the_observation_to_the_teleop(tmp_path):
 
 
 def test_record_multi_teleop_receives_fresh_observations_before_actions() -> None:
-    # Specs exercise the real LeKiwi branch without connecting hardware or a keyboard backend.
+    # Exercise LeKiwi action names without hardware or a keyboard backend.
     robot = MagicMock(spec=LeKiwiClient)
     robot.name = "lekiwi_client"
     robot.arm_action_prefix = "arm_"

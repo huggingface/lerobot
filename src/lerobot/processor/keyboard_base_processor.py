@@ -43,8 +43,7 @@ def default_base_key_bindings() -> dict[str, str]:
 class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
     """Map pressed-key dictionaries to x/y velocities in m/s and theta velocity in deg/s.
 
-    Opposite directions cancel. Speed changes once per key press and starts at the lowest
-    preset after reset. Key bindings and speed presets belong to this processor, not the robot.
+    Opposite directions cancel. Speed changes once per key press and resets to the lowest preset.
     """
 
     key_bindings: dict[str, str] = field(default_factory=default_base_key_bindings)

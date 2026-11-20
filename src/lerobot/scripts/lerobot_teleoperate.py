@@ -149,12 +149,11 @@ from lerobot.utils.visualization_utils import (
 @dataclass
 class TeleoperateConfig:
     robot: RobotConfig
-    # Teleoperator to control the robot. Optional when `base_teleop` drives a mobile robot alone.
+    # Optional when using base-only control.
     teleop: TeleoperatorConfig | None = None
-    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard`, alongside `teleop`
-    # for the arms. Without `teleop`, the arms hold the position they had when teleoperation started.
+    # Optional base input; teleop controls the arms when both are set.
     base_teleop: TeleoperatorConfig | None = None
-    # Keyboard-to-base mapping, applied in the action pipeline when base_teleop is a raw keyboard.
+    # Key bindings and speed presets for a keyboard base input.
     base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
     # With base-only control, hold other joints at their first measured positions.
     hold_uncommanded: bool = True
@@ -223,7 +222,6 @@ def teleop_loop(
             loop_start = time.perf_counter()  # for the live readout below
 
             with timer.section("observe"):
-                # Get robot observation, handed to the teleoperator, the processors and the display
                 obs = robot.get_observation()
 
             with timer.section("teleop"):

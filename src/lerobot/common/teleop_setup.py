@@ -39,12 +39,9 @@ def make_mobile_teleop(
     hold_uncommanded: bool = True,
     action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction] | None = None,
 ) -> tuple[Teleoperator, RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]]:
-    """Return ordinary device(s) plus a pipeline that maps their combined raw action.
+    """Assemble base/arm inputs with keyboard mapping and joint holding.
 
-    A single base is returned unchanged. With an arm, a generic composite prefixes its keys
-    using the robot's optional ``arm_action_prefix``. The pipeline owns keyboard mapping and
-    joint targets; reuse it for recording and reset phases, and reset it on a new session.
-    No concrete robot type or legacy robot-owned keyboard mapping is needed.
+    Reuse the returned pipeline across recording/reset phases; reset it for a new session.
     """
     teleop = (
         base

@@ -176,12 +176,11 @@ from lerobot.utils.visualization_utils import (
 class RecordConfig:
     robot: RobotConfig
     dataset: DatasetRecordConfig
-    # Teleoperator to control the robot. Optional when `base_teleop` drives a mobile robot alone.
+    # Optional when using base-only control.
     teleop: TeleoperatorConfig | None = None
-    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard`, alongside `teleop`
-    # for the arms. Without `teleop`, the arms hold the position they had when recording started.
+    # Base input, e.g. keyboard. Without a leader, uncommanded joints hold their initial positions.
     base_teleop: TeleoperatorConfig | None = None
-    # Keyboard-to-base mapping, applied in the action pipeline when base_teleop is a raw keyboard.
+    # Key bindings and speed presets for a keyboard base input.
     base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
     # Display all cameras on screen
     display_data: bool = False

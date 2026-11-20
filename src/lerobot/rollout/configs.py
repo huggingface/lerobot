@@ -290,7 +290,7 @@ class RolloutConfig:
     teleop: TeleoperatorConfig | None = None
     # Optional mobile base input, composed with teleop for corrections and resets.
     base_teleop: TeleoperatorConfig | None = None
-    # Keyboard-to-base mapping, applied in the action pipeline when base_teleop is a raw keyboard.
+    # Key bindings and speed presets for a keyboard base input.
     base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
 
     # Policy (loaded from --policy.path via __post_init__)
