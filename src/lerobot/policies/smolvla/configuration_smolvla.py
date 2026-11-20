@@ -61,6 +61,8 @@ class SmolVLAConfig(PreTrainedConfig):
 
     # Decoding
     num_steps: int = 10
+    # None preserves Euler sampling; a path selects a separately fitted readout.
+    gaussian_readout_path: str | None = None
 
     # Attention utils
     use_cache: bool = True
