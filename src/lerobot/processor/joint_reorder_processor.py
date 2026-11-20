@@ -65,7 +65,7 @@ class JointReorderProcessorStep(ProcessorStep):
         }
         return {
             feature_type: {
-                key: PolicyFeature(type=ft.type, shape=(len(indices[feature_type][key]),))
+                key: PolicyFeature(type=ft.type, shape=(*ft.shape[:-1], len(indices[feature_type][key])))
                 if key in indices.get(feature_type, {})
                 else ft
                 for key, ft in group.items()
