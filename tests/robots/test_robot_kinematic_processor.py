@@ -83,3 +83,35 @@ def test_missing_observation_raises_value_error(step, action):
 
     with pytest.raises(ValueError, match="Joints observation"):
         step(transition)
+
+
+@pytest.mark.parametrize(
+    ("step", "action"),
+    [
+        (
+            EEReferenceAndDelta(kinematics=None, end_effector_step_sizes={}, motor_names=MOTOR_NAMES),
+            dict(EE_ACTION),
+        ),
+        (InverseKinematicsEEToJoints(kinematics=None, motor_names=MOTOR_NAMES), dict(EE_ACTION)),
+        (GripperVelocityToJoint(), {**EE_ACTION, "ee.gripper_vel": 0.0}),
+        (InverseKinematicsRLStep(kinematics=None, motor_names=MOTOR_NAMES), dict(EE_ACTION)),
+    ],
+    ids=[
+        "ee_reference_and_delta",
+        "inverse_kinematics_ee_to_joints",
+        "gripper_velocity_to_joint",
+        "inverse_kinematics_rl_step",
+    ],
+)
+def test_observation_without_joint_keys_raises_value_error(step, action):
+    """An observation already mapped to EE space carries no `<motor>.pos` keys.
+
+    `ForwardKinematicsJointsToEEObservation` pops every joint key, so a pipeline that runs it
+    before these steps leaves them with an empty `q_raw`. The guard below them tested
+    `q_raw is None`, which `np.array(...)` never is, so an `IndexError` from `q_raw[-1]` or an
+    opaque solver failure escaped instead of the documented ValueError.
+    """
+    transition = create_transition(action=action, observation={"ee.x": 0.0, "ee.y": 0.0, "ee.z": 0.0})
+
+    with pytest.raises(ValueError, match="Joints observation"):
+        step(transition)
