@@ -1,6 +1,6 @@
 # Asimov 1
 
-[Asimov 1](https://github.com/menloresearch/menlo-sdk) is Menlo Research's humanoid robot. This integration uses `menlo-sdk` 0.1.x for UDP locomotion control, with balancing provided by the robot's onboard policy.
+[Asimov 1](https://github.com/menloresearch/menlo-sdk) is Menlo Research's humanoid robot. This integration uses `menlo-sdk` 0.1.x over UDP for locomotion control, with balancing provided by the robot's onboard policy, and for direct control of the arms, waist, and neck.
 
 It supports keyboard teleoperation, dataset recording, and replay through the standard LeRobot commands. It follows the mobile-base action convention from [PR #4941](https://github.com/huggingface/lerobot/pull/4941), and the Unitree G1 integration's fixed proprioception schema and configurable cameras. It uses the standard keyboard and mobile action pipeline from that PR; no device composite is needed for keyboard-only control.
 
@@ -87,15 +87,46 @@ ZMQ cameras and depth-capable camera backends are also supported. This adapter u
 | `mode`, `faulted`          | Reported firmware mode and fault indicator, stored as numeric scalars    |
 | Configured camera names    | RGB images `(height, width, 3)`; optional `<name>_depth`                 |
 
-Feature names and shapes are available before connecting. The adapter verifies the SDK's 25-joint order on connection. Missing IMU fields, changed joint layouts, non-finite readings, and observations older than `max_state_age_s` (default 0.5 seconds) raise an error instead of recording fabricated values. Joint velocities, battery telemetry, and base odometry are not part of this schema. Joint positions are observations only: direct joint trajectories and whole-body learning are outside this locomotion adapter.
+Feature names and shapes are available before connecting. The adapter verifies the SDK's 25-joint order on connection. Missing IMU fields, changed joint layouts, non-finite readings, and observations older than `max_state_age_s` (default 0.5 seconds) raise an error instead of recording fabricated values. Joint velocities, battery telemetry, and base odometry are not part of this schema. The observation is the same in both control modes.
+
+## Joint control (arms, waist, neck)
+
+With `--robot.control_mode=joints`, actions are absolute joint targets in radians instead of base velocities. The action features are `<joint>.pos` for each name in `--robot.controlled_joints` (default: the right arm, `R_Shoulder_Pitch`, `R_Shoulder_Roll`, `R_Shoulder_Yaw`, `R_Elbow`, `R_Wrist_Yaw`). Only upper-body joints can be controlled; the legs are held.
+
+> [!WARNING]
+> Joint control puts **every** joint under position control and switches the onboard walking policy off: the robot no longer balances itself. Take control with the robot supported (gantry rope taut), and lower the support only in a stance known to stand. Keep Asimov Manager's E-Stop within reach.
+
+- **Taking control.** Connecting still only observes. The first action requires STAND or MOVE without faults, then glides every joint over `take_over_s` (default 2 s) into the measured pose, with the legs in `leg_stance` if set. `leg_stance` is `[hip_pitch, knee, ankle_pitch]` for the left leg in radians, mirrored on the right, with each ankle's roll kept. For example, `[-0.5,0.55,-0.21]` with `--robot.joint_gains=menlo_amp` stood on its own on a real Asimov 1, while Menlo's STAND pose tipped over in simulation.
+- **Targets.** Each target moves at most `max_joint_step` rad (default 0.1) per action from the previous one, and stays within the optional `joint_limits`, for example `--robot.joint_limits='{R_Elbow: [-1.5, 0.2]}'`. Joints omitted from an action keep their target. `send_action()` returns the targets actually sent, and `lerobot-record` stores those.
+- **Gains.** `joint_gains=edge` (default) uses Asimov Edge's gain table; `menlo_amp` uses Menlo's hardware-tuned table from asimov-1-amp for every joint.
+- **Keepalive and watchdog.** Asimov Edge damps a trajectory two seconds after its last setpoint. A background thread re-sends the targets whenever no action has arrived for `keepalive_s` (default 0.2 s), for example during resets, pauses, or a slow policy step. Every 50 ms it also checks the IMU tilt: beyond `max_tilt_deg` (default 16°), or `max_extra_tilt_deg` (default 9°) more than at take-over, it hands the robot back and later actions raise an error.
+- **Handing back.** `stop()`, `disconnect()`, and the tilt watchdog glide the controlled joints back to their take-over pose over `release_s` (default 4 s). They then call `stand()` followed by `balance()`, so the walking policy holds the robot, and check that it still reports MOVE 2.5 s later. A bare `balance()` after joint control is dropped by Asimov Edge two seconds later. If the robot reports DAMP or a fault, the operator or the firmware has taken over: joint control ends and the robot is never re-armed from LeRobot.
+
+LeRobot can run on the robot's onboard computer or on any computer on the same network as the robot; the commands are the same. To move the right elbow from Python:
+
+```python
+import time
+
+from lerobot.robots.asimov import Asimov, AsimovConfig
+
+robot = Asimov(AsimovConfig(host="192.168.22.32", control_mode="joints"))
+robot.connect()
+try:
+    elbow = robot.get_observation()["R_Elbow.pos"]
+    for i in range(150):  # 3 s at 50 Hz
+        robot.send_action({"R_Elbow.pos": elbow - 0.3 * min(1.0, i / 50)})
+        time.sleep(0.02)
+finally:
+    robot.disconnect()  # Glides back, then stand() -> balance()
+```
 
 ## Command lifetime and cleanup
 
-`send_action()` calls the SDK with `wait=False`, a zero readiness timeout, and a short `duration=command_timeout_s` (default 0.25 seconds). It returns the velocity the SDK actually sent after clamping, in LeRobot units. Asimov opts into `Robot.record_sent_action` so `lerobot-record` saves these clamped velocities. This requires the dataset action space to match the robot's three velocity features; custom processors that change the recorded action representation are not supported with this option. Missing action axes become zero; unknown keys and non-finite commands are rejected. An SDK `Sent` result is not a firmware acknowledgement.
+In velocity mode, `send_action()` calls the SDK with `wait=False`, a zero readiness timeout, and a short `duration=command_timeout_s` (default 0.25 seconds). It returns the velocity the SDK actually sent after clamping, in LeRobot units. Asimov opts into `Robot.record_sent_action` so `lerobot-record` saves these clamped velocities. This requires the dataset action space to match the robot's three velocity features; custom processors that change the recorded action representation are not supported with this option. Missing action axes become zero; unknown keys and non-finite commands are rejected. An SDK `Sent` result is not a firmware acknowledgement.
 
 Each successful action refreshes the bounded hold. If the recording, policy, or camera loop stalls, the SDK sends zero when that hold expires; its background loop runs at 10 Hz, so expiry is not a hard real-time deadline. Use a control frequency comfortably faster than the hold duration. If the Python process or network fails outright, the firmware/Edge UDP watchdog is the remaining fallback (the SDK documents a two-second velocity timeout).
 
-`stop()` ends this adapter's command while keeping MOVE balancing active. `disconnect()` lets the SDK send its final zero and closes cameras, including after a lost link or partial connection failure. Neither operation calls STAND or DAMP: DAMP removes actuator support, and STAND does not balance. Follow Menlo's supported shutdown procedure to put the robot away.
+In velocity mode, `stop()` ends this adapter's command while keeping MOVE balancing active. `disconnect()` lets the SDK send its final zero and closes cameras, including after a lost link or partial connection failure. Neither operation calls STAND or DAMP: DAMP removes actuator support, and STAND does not balance. Follow Menlo's supported shutdown procedure to put the robot away.
 
 ## Validation
 
@@ -107,4 +138,4 @@ uv run --locked --extra test pytest \
 
 These tests use mocked hardware and run without the optional SDK. Physical walking, firmware timing, camera streams, and recorded-policy performance still require validation on an Asimov 1.
 
-With `--extra asimov`, also run `tests/robots/test_asimov_sdk.py` to exercise the real SDK's command clamping, timed expiry, and close behavior over an in-memory transport.
+With `--extra asimov`, also run `tests/robots/test_asimov_sdk.py` to exercise the real SDK's command clamping, timed expiry, and close behavior, and the joint-control take-over, keepalive, and handover, over an in-memory transport.

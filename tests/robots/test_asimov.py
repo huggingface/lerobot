@@ -14,6 +14,8 @@
 
 """Exercise the robot contract without a robot or the optional Menlo SDK."""
 
+import threading
+import time
 from dataclasses import dataclass
 from math import radians
 from types import SimpleNamespace
@@ -27,7 +29,7 @@ from lerobot.cameras import DepthCamera
 from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.robots import RobotConfig, make_robot_from_config
 from lerobot.robots.asimov import Asimov, AsimovConfig, asimov as module
-from lerobot.robots.asimov.asimov import ASIMOV_JOINTS, BASE_ACTIONS
+from lerobot.robots.asimov.asimov import ASIMOV_JOINTS, BASE_ACTIONS, JOINT_INDEX, MENLO_AMP_KP
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -59,7 +61,7 @@ def setup_robot(monkeypatch, tmp_path):
         UdpConfig=Mock(side_effect=lambda **kw: SimpleNamespace(**kw)),
         Limits=Velocity,
         Velocity=Velocity,
-        Mode=SimpleNamespace(MOVE=2),
+        Mode=SimpleNamespace(DAMP=0, STAND=1, MOVE=2, FAULT_DAMP=5),
     )
 
     def set_velocity(vx, vy, vyaw, *, duration, wait, timeout):
@@ -390,3 +392,278 @@ def test_missing_sdk_has_actionable_install_error(monkeypatch, tmp_path):
     monkeypatch.setitem(import_utils._require_package_cache, "menlo", False)
     with pytest.raises(ImportError, match="asimov"):
         Asimov(AsimovConfig(host="192.0.2.10", calibration_dir=tmp_path))
+
+
+# ── control_mode="joints" ────────────────────────────────────────────────────
+
+ARM = ("R_Shoulder_Pitch", "R_Shoulder_Roll", "R_Shoulder_Yaw", "R_Elbow", "R_Wrist_Yaw")
+# Fast lifecycle; a long keepalive keeps the watchdog out of call counts unless a test wants it.
+JOINTS = {"control_mode": "joints", "take_over_s": 0.01, "release_s": 0.01, "keepalive_s": 0.9}
+
+
+@pytest.fixture
+def joint_robot(setup_robot, monkeypatch):
+    monkeypatch.setattr(module, "_CONFIRM_BALANCE_S", 0.0)
+    return setup_robot
+
+
+def measured(env):
+    return [joint.pos for joint in env.state.joints]
+
+
+def test_joint_mode_features(joint_robot):
+    robot = joint_robot.make(**JOINTS, controlled_joints=["R_Elbow", "Neck_Pitch"])
+    assert set(robot.action_features) == {"R_Elbow.pos", "Neck_Pitch.pos"}
+    assert len(robot.observation_features) == 37  # Same observation in both modes.
+    assert robot.supports_command_hold
+    assert not joint_robot.make().supports_command_hold
+
+
+def test_first_action_takes_over_then_sends_clipped_targets(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    env.client.set_joints.assert_not_called()  # Connection stays observational.
+    elbow = JOINT_INDEX["R_Elbow"]
+    start = module._clip_ankles(measured(env))
+    sent = robot.send_action({"R_Elbow.pos": start[elbow] + 1.0, "R_Wrist_Yaw.pos": start[elbow + 1] - 0.05})
+    env.client.set_joints.assert_called_once_with(start, duration=0.01, wait=False)
+    target = env.client.trajectory.call_args.args[0]
+    assert len(target) == len(ASIMOV_JOINTS)
+    assert target[elbow] == pytest.approx(start[elbow] + 0.1)  # max_joint_step
+    assert target[elbow + 1] == pytest.approx(start[elbow + 1] - 0.05)
+    # Omitted joints keep their target; legs hold the measured pose with ankles clipped.
+    assert target[:12] == start[:12] and start[10:12] != measured(env)[10:12]
+    assert sent == {f"{name}.pos": target[JOINT_INDEX[name]] for name in ARM}
+    env.client.set_velocity.assert_not_called()
+
+    robot.send_action({"R_Elbow.pos": start[elbow] + 1.0})
+    assert env.client.trajectory.call_args.args[0][elbow] == pytest.approx(start[elbow] + 0.2)
+    env.client.set_joints.assert_called_once()  # Taken over once.
+
+
+def test_joint_limits_and_gains(joint_robot):
+    env = joint_robot
+    robot = env.make(
+        **JOINTS, joint_gains="menlo_amp", max_joint_step=10.0, joint_limits={"R_Elbow": [-0.5, 0.1]}
+    )
+    robot.connect()
+    sent = robot.send_action({"R_Elbow.pos": 2.0})
+    assert sent["R_Elbow.pos"] == 0.1
+    kwargs = env.client.trajectory.call_args.kwargs
+    assert kwargs["kp"] == MENLO_AMP_KP and len(kwargs["kd"]) == len(ASIMOV_JOINTS)
+    assert env.client.set_joints.call_args.kwargs["kp"] == MENLO_AMP_KP
+
+
+def test_leg_stance_mirrors_legs_and_keeps_ankle_roll(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS, leg_stance=[-0.5, 0.55, -0.21])
+    robot.connect()
+    robot.send_action({})
+    pose = env.client.set_joints.call_args.args[0]
+    assert pose[JOINT_INDEX["L_Hip_Pitch"]] == -0.5 and pose[JOINT_INDEX["R_Hip_Pitch"]] == 0.5
+    assert pose[JOINT_INDEX["L_Knee"]] == 0.55 and pose[JOINT_INDEX["R_Knee"]] == -0.55
+    for (a, b), pitch in zip(module._ANKLES, (-0.21, 0.21), strict=True):
+        assert (pose[a] - pose[b]) / (2 * module._ANKLE_K_PITCH) == pytest.approx(pitch)
+    left_roll = -(measured(env)[4] + measured(env)[5]) / (2 * module._ANKLE_K_ROLL)
+    assert -(pose[4] + pose[5]) / (2 * module._ANKLE_K_ROLL) == pytest.approx(left_roll)
+    assert pose[12:] == pytest.approx(measured(env)[12:])
+
+
+@pytest.mark.parametrize("mode,faulted", [(0, False), (5, True), (2, True), (-1, False)])
+def test_take_over_requires_stand_or_move_without_faults(joint_robot, mode, faulted):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    env.state.mode, env.state.faulted = mode, faulted
+    with pytest.raises(RuntimeError, match="STAND or MOVE"):
+        robot.send_action({"R_Elbow.pos": 0.0})
+    env.client.set_joints.assert_not_called()
+    env.client.trajectory.assert_not_called()
+
+
+def test_invalid_joint_actions_never_reach_sdk(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    for action in ({"R_Elbow.pos": float("nan")}, {"L_Knee.pos": 0.0}, {"x.vel": 0.1}):
+        with pytest.raises(ValueError):
+            robot.send_action(action)
+    env.client.set_joints.assert_not_called()
+
+
+def test_disconnect_glides_back_then_stands_and_balances(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS, max_joint_step=10.0)
+    robot.connect()
+    home = module._clip_ankles(measured(env))
+    robot.send_action({"R_Elbow.pos": 1.5})
+    env.client.reset_mock()
+    robot.disconnect()
+    names = [call[0] for call in env.client.method_calls if call[0] != "get_state"]
+    assert names == ["set_joints", "stand", "balance", "close"]
+    assert env.client.set_joints.call_args.args[0] == pytest.approx(home)
+    env.client.damp.assert_not_called()
+    robot.disconnect()  # Idempotent: no second handover.
+    assert env.client.stand.call_count == 1
+
+
+def test_balance_is_retried_when_robot_does_not_report_move(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    robot.send_action({})
+    env.client.balance.side_effect = lambda **kw: setattr(env.state, "mode", 1)
+    robot.disconnect()
+    assert env.client.stand.call_count == env.client.balance.call_count == 2
+
+
+@pytest.mark.parametrize("mode,faulted", [(0, False), (5, True)])
+def test_operator_takeover_ends_joint_control_without_rearming(joint_robot, mode, faulted):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    robot.send_action({})
+    calls = env.client.trajectory.call_count
+    env.state.mode, env.state.faulted = mode, faulted
+    with pytest.raises(RuntimeError, match="took over"):
+        robot.send_action({"R_Elbow.pos": 0.0})
+    with pytest.raises(RuntimeError, match="Reconnect"):
+        robot.send_action({"R_Elbow.pos": 0.0})
+    robot.disconnect()
+    assert env.client.trajectory.call_count == calls
+    env.client.stand.assert_not_called()
+    env.client.balance.assert_not_called()
+    env.client.damp.assert_not_called()
+
+
+def test_handover_skipped_when_robot_damped_before_disconnect(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    robot.send_action({})
+    env.state.mode = 0
+    robot.disconnect()
+    env.client.stand.assert_not_called()
+    env.client.balance.assert_not_called()
+    env.client.close.assert_called_once()
+
+
+def wait_for(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_watchdog_keeps_targets_alive_while_caller_pauses(joint_robot):
+    env = joint_robot
+    robot = env.make(**{**JOINTS, "keepalive_s": 0.05})
+    robot.connect()
+    robot.send_action({"R_Elbow.pos": 0.1})
+    target = env.client.trajectory.call_args.args[0]
+    assert wait_for(lambda: env.client.trajectory.call_count >= 3)
+    assert all(call.args[0] == target for call in env.client.trajectory.call_args_list)
+
+
+def test_watchdog_hands_back_on_tilt(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    robot.send_action({})
+    env.state.gravity = (0.0, -0.5, -0.866)  # 30 deg
+    assert wait_for(lambda: env.client.balance.called)
+    env.client.stand.assert_called_once()
+    with pytest.raises(RuntimeError, match="tilt"):
+        robot.send_action({"R_Elbow.pos": 0.0})
+    robot.disconnect()
+    env.client.stand.assert_called_once()  # Not handed back twice.
+
+
+def test_disconnect_waits_for_a_watchdog_handover(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    robot.send_action({})
+    standing = threading.Event()
+
+    def slow_stand(**kwargs):
+        standing.set()
+        time.sleep(0.2)
+
+    env.client.stand.side_effect = slow_stand
+    env.state.gravity = (0.0, -0.5, -0.866)
+    assert standing.wait(2.0)
+    robot.disconnect()
+    names = [call[0] for call in env.client.method_calls if call[0] in ("balance", "close")]
+    assert names == ["balance", "close"]  # The link stayed open for the handover.
+
+
+def test_hold_resends_targets(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    robot.hold()
+    env.client.trajectory.assert_not_called()  # Nothing owned yet.
+    robot.send_action({"R_Elbow.pos": 0.0})
+    target = env.client.trajectory.call_args.args[0]
+    robot.hold()
+    assert env.client.trajectory.call_args.args[0] == target
+
+
+def test_stop_in_joint_mode_hands_back(joint_robot):
+    env = joint_robot
+    robot = env.make(**JOINTS)
+    robot.connect()
+    robot.stop()
+    env.client.stand.assert_not_called()  # Nothing owned yet.
+    robot.send_action({})
+    robot.stop()
+    env.client.stand.assert_called_once_with(timeout=5.0)
+    env.client.balance.assert_called_once_with(timeout=5.0)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"control_mode": "walk"},
+        {"controlled_joints": []},
+        {"controlled_joints": ["R_Elbow", "R_Elbow"]},
+        {"controlled_joints": ["L_Knee"]},
+        {"joint_gains": "stiff"},
+        {"leg_stance": [-0.5, 0.55]},
+        {"leg_stance": [-0.5, 0.55, float("nan")]},
+        {"joint_limits": {"Neck_Yaw": [-0.1, 0.1]}},
+        {"joint_limits": {"R_Elbow": [0.1, -0.1]}},
+        {"max_joint_step": 0},
+        {"keepalive_s": 1.5},
+        {"max_tilt_deg": 60},
+        {"take_over_s": float("inf")},
+    ],
+)
+def test_invalid_joint_config(kwargs):
+    with pytest.raises(ValueError):
+        AsimovConfig(**{"host": "192.0.2.10", **kwargs})
+
+
+def test_joint_cli_config_roundtrip():
+    @dataclass
+    class Config:
+        robot: RobotConfig
+
+    config = draccus.parse(
+        Config,
+        args=[
+            "--robot.type=asimov",
+            "--robot.host=192.0.2.10",
+            "--robot.control_mode=joints",
+            "--robot.controlled_joints=[R_Elbow,Neck_Pitch]",
+            "--robot.leg_stance=[-0.5,0.55,-0.21]",
+            "--robot.joint_gains=menlo_amp",
+        ],
+    )
+    assert config.robot.controlled_joints == ["R_Elbow", "Neck_Pitch"]
+    assert config.robot.leg_stance == [-0.5, 0.55, -0.21]
+    assert draccus.decode(Config, draccus.encode(config)) == config
