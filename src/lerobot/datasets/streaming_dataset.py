@@ -173,7 +173,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
     needed for the complete episodes it owns. With N DataLoader workers, each worker owns a disjoint,
     frame-balanced part of the rank's episodes, with its own episode pool and 1/N of the byte budget.
     Each process has its own Python GIL, so N workers decode and assemble samples in parallel.
-    Episode ownership is disjoint and every selected frame is yielded exactly once per iteration.
+    Each worker yields every frame in its share once per pass. With `repeat=True`, workers
+    start their next pass independently and a batch can span two passes of the same worker.
     MP4 sidecars are resolved automatically and built in a revision-keyed local cache when absent.
 
     Example:
@@ -298,7 +299,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 Per-rank reservation limit in GiB for synthesized video bytes, not total RAM. Each of the
                 N DataLoader workers of a rank gets 1/N of it.
             repeat (`bool`, *optional*, defaults to `False`):
-                Repeat rank-local coverage epochs, allowing batches to span epoch boundaries.
+                Repeat each worker's pass independently, allowing a batch to span two passes of
+                that worker.
             repo_type (`Literal["dataset", "bucket"]`, *optional*, defaults to `"dataset"`):
                 Whether repo_id identifies a dataset repository or a Storage Bucket.
             token (`str | bool | None`, *optional*):
@@ -473,7 +475,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         return self._depth_output_unit
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
-        """Yield rank-local samples for one coverage epoch, or repeat when configured."""
+        """Yield samples for one pass of this worker's share, or repeat when configured."""
         # A new DataLoader iterator starts its worker turns at worker 0; a resume offset sets it again.
         self._worker_rotation = 0
         if self.repeat:
@@ -481,7 +483,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         return self._iter_once()
 
     def _repeat_iterator(self) -> Generator[dict[str, Any], None, None]:
-        """Repeat nonempty rank-local epochs and close each iterator on early exit."""
+        """Repeat nonempty passes of this worker's share and close each iterator on early exit."""
         while True:
             with closing(self._iter_once()) as iterator:
                 try:
@@ -492,7 +494,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 yield from iterator
 
     def _iter_once(self) -> Generator[dict[str, Any], None, None]:
-        """Yield one rank-local coverage plan with bounded prefetch and ordered decoding."""
+        """Yield one pass of this worker's share with bounded prefetch and ordered decoding."""
         epoch = self._next_epoch if self.shuffle else 0
         self._active_epoch = epoch
 
@@ -977,7 +979,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
 
         Args:
             state (`dict[str, int]`):
-                Rank-local epoch, sample offset and batch size. Missing keys default to 0, 0 and 1.
+                Starting pass number, rank-local sample offset and batch size. Missing keys default
+                to 0, 0 and 1.
 
         Raises:
             ValueError: If the epoch or offset is negative, or the batch size is not positive.
