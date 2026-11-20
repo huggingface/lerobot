@@ -857,6 +857,21 @@ def test_pickle_and_dataloader(dataset_roots):
     assert len(batch["task"]) == 8
 
 
+def test_video_locations_stay_external_to_worker_pickle(video_dataset_roots):
+    _, lance_root = video_dataset_roots
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    reader = dataset.reader
+
+    # Worker serialization keeps locations in Arrow-backed episode metadata
+    # instead of copying three numpy arrays per camera into the reader payload.
+    assert not hasattr(reader, "_video_locator")
+    restored = pickle.loads(pickle.dumps(dataset))
+    assert_items_equal(restored[3], dataset[3])
+
+    restored.reader.close()
+    reader.close()
+
+
 def _language_msg(role, content, style, tool_calls=None):
     return {
         "role": role,
