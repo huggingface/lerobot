@@ -111,7 +111,7 @@ def test_from_pretrained_hub_id_backfills_repo_and_revision(monkeypatch, tmp_pat
     monkeypatch.setattr(policies_mod, "hf_hub_download", fake_download)
     cfg = PreTrainedConfig.from_pretrained("user/dummy_backfill", revision="v2")
     assert isinstance(cfg, _DummyBackfillConfig)
-    assert str(cfg.pretrained_path) == "user/dummy_backfill"
+    assert cfg.pretrained_path == "user/dummy_backfill"
     assert cfg.pretrained_revision == "v2"
 
 
@@ -186,3 +186,40 @@ def test_cli_pretrained_revision_reaches_from_pretrained(monkeypatch, argv, buil
 
     assert captured["revision"] == "cli-sha"
     assert getattr(cfg, field).pretrained_revision == "cli-sha"
+
+
+@pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize(
+    ("field", "build"), [("policy", _eval_config), ("policy", _train_config), ("reward_model", _train_config)]
+)
+def test_cli_preserves_reference_after_config_load(monkeypatch, tmp_path, local, field, build):
+    import lerobot.configs.policies as policies_mod
+    import lerobot.configs.rewards as rewards_mod
+
+    policy_type = "_dummy_reward_backfill" if field == "reward_model" else "_dummy_backfill"
+    (tmp_path / "config.json").write_text(json.dumps({"type": policy_type, "lr": 0.1}))
+    reference = str(tmp_path) if local else "user/dummy_backfill"
+
+    def fake_download(*, repo_id, filename, revision, **kwargs):
+        assert repo_id == reference
+        assert revision == "cli-sha"
+        return str(tmp_path / filename)
+
+    monkeypatch.setattr(policies_mod, "hf_hub_download", fake_download)
+    monkeypatch.setattr(rewards_mod, "hf_hub_download", fake_download)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "lerobot",
+            f"--{field}.path={reference}",
+            f"--{field}.lr=0.5",
+            f"--{field}.pretrained_revision=cli-sha",
+        ],
+    )
+    cfg = getattr(build(), field)
+    expected = Path(reference) if local and field == "policy" else reference
+    assert cfg.pretrained_path == expected
+    assert isinstance(cfg.pretrained_path, type(expected))
+    assert cfg.pretrained_revision == "cli-sha"
+    assert cfg.lr == 0.5
