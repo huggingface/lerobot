@@ -50,7 +50,7 @@ class BiRebotB601Follower(BimanualMixin, Robot):
                 f"Top-level camera names collide with per-arm camera names: {sorted(_collisions)}"
             )
         left_arm_config = RebotB601FollowerRobotConfig(
-            id=f"{config.id}_left" if config.id else None,
+            id=f"{config.id}_left" if config.id else "left",
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
             motor_family=config.left_arm_config.motor_family,
@@ -71,7 +71,7 @@ class BiRebotB601Follower(BimanualMixin, Robot):
             joint_limits=config.left_arm_config.joint_limits,
         )
         right_arm_config = RebotB601FollowerRobotConfig(
-            id=f"{config.id}_right" if config.id else None,
+            id=f"{config.id}_right" if config.id else "right",
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
             motor_family=config.right_arm_config.motor_family,
