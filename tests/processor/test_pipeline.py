@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 import torch
 import torch.nn as nn
+from huggingface_hub.utils import filter_repo_objects
 from safetensors.torch import load_file
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
@@ -2507,38 +2508,39 @@ def _artifact_config(relative_path: str) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ("relative_path", "expected_pattern"),
+    ("artifact", "filename"),
     [
-        ("tokenizer", "tokenizer/**"),
+        ("tokenizer", "tokenizer/vocab.json"),
         ("action_tokenizer.safetensors", "action_tokenizer.safetensors"),
+        ("vocab", "vocab"),
+        ("tokenizer.v2", "tokenizer.v2/vocab.json"),
+        ("vocab[1]", "vocab[1]/vocab.json"),
     ],
 )
 def test_artifact_download_pattern_matches_directories_and_files(
-    tmp_path, monkeypatch, relative_path, expected_pattern
-):
-    """A file artifact must be fetched by name; globbing it as a directory matches nothing."""
-    captured: dict[str, Any] = {}
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, artifact: str, filename: str
+) -> None:
+    """Fetch the declared artifact from the config's directory without selecting sibling files."""
+    config_dir = tmp_path / "nested"
+    remote_file = f"nested/{filename}"
 
-    def fake_snapshot_download(**kwargs):
-        captured.update(kwargs)
-        target = tmp_path / relative_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if Path(relative_path).suffix:
-            target.write_text("{}")
-        else:
-            target.mkdir(exist_ok=True)
+    def download(*, allow_patterns: str | list[str], **kwargs: Any) -> str:
+        remote_files = [remote_file, f"nested/{artifact}.bak", "nested/vocab1/vocab.json", filename]
+        assert list(filter_repo_objects(remote_files, allow_patterns=allow_patterns)) == [remote_file]
+        target = tmp_path / remote_file
+        target.parent.mkdir(parents=True)
+        target.write_text("contents")
         return str(tmp_path)
 
-    monkeypatch.setattr("lerobot.processor.pipeline.snapshot_download", fake_snapshot_download)
-    loaded_config = _artifact_config(relative_path)
-
+    monkeypatch.setattr("lerobot.processor.pipeline.snapshot_download", download)
+    config = _artifact_config(artifact)
     DataProcessorPipeline._resolve_artifact_paths(
-        loaded_config,
+        config,
         model_id="some/repo",
-        base_path=tmp_path,
-        config_filename="policy_preprocessor.json",
+        base_path=config_dir,
+        config_filename="nested/processor.json",
         hub_download_kwargs={},
     )
 
-    assert captured["allow_patterns"] == expected_pattern
-    assert loaded_config["steps"][0]["config"]["asset"] == str(tmp_path / relative_path)
+    assert config["steps"][0]["config"]["asset"] == str(config_dir / artifact)
+    assert (config_dir / filename).read_text() == "contents"
