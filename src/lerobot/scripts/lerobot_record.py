@@ -91,7 +91,7 @@ lerobot-record \\
 
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pprint import pformat
 
 from lerobot.cameras import CameraConfig  # noqa: F401
@@ -100,6 +100,7 @@ from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.common.control_utils import sanity_check_dataset_robot_compatibility
+from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import (
@@ -115,6 +116,7 @@ from lerobot.processor import (
     RobotProcessorPipeline,
     make_default_processors,
 )
+from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -154,7 +156,6 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.teleoperators.keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
@@ -175,8 +176,12 @@ from lerobot.utils.visualization_utils import (
 class RecordConfig:
     robot: RobotConfig
     dataset: DatasetRecordConfig
-    # Teleoperator to control the robot (required)
+    # Optional when using base-only control.
     teleop: TeleoperatorConfig | None = None
+    # Base input, e.g. keyboard. Without a leader, uncommanded joints hold their initial positions.
+    base_teleop: TeleoperatorConfig | None = None
+    # Key bindings and speed presets for a keyboard base input.
+    base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
     # Display all cameras on screen
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
@@ -194,10 +199,10 @@ class RecordConfig:
     resume: bool = False
 
     def __post_init__(self):
-        if self.teleop is None:
+        if self.teleop is None and self.base_teleop is None:
             raise ValueError(
                 "A teleoperator is required for recording. "
-                "Use --teleop.type=... to specify one. "
+                "Use --teleop.type=... to specify one, or --base_teleop.type=... for a mobile base. "
                 "For policy-based deployment, use lerobot-rollout instead."
             )
 
@@ -243,7 +248,7 @@ def record_loop(
         RobotObservation, RobotObservation
     ],  # runs after robot
     dataset: LeRobotDataset | None = None,
-    teleop: Teleoperator | list[Teleoperator] | None = None,
+    teleop: Teleoperator | None = None,
     control_time_s: float | None = None,
     single_task: str | None = None,
     display_data: bool = False,
@@ -264,33 +269,6 @@ def record_loop(
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
     if control_time_s is None:
         raise ValueError("`control_time_s` is required: it is how long the loop runs.")
-
-    # Multi-teleop is LeKiwi-only: one arm leader plus a keyboard that drives the base.
-    multi_teleop: tuple[Teleoperator, KeyboardTeleop] | None = None
-    if isinstance(teleop, list):
-        teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
-        teleop_arm = next(
-            (
-                t
-                for t in teleop
-                if isinstance(
-                    t,
-                    (
-                        so_leader.SO100Leader
-                        | so_leader.SO101Leader
-                        | koch_leader.KochLeader
-                        | omx_leader.OmxLeader
-                    ),
-                )
-            ),
-            None,
-        )
-
-        if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and robot.name == "lekiwi_client"):
-            raise ValueError(
-                "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
-            )
-        multi_teleop = (teleop_arm, teleop_keyboard)
 
     if timer is None:
         timer = CycleTimer(fps, records_data=dataset is not None)
@@ -330,16 +308,6 @@ def record_loop(
                 action_values = act_processed_teleop
                 robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
-            elif multi_teleop is not None:
-                arm_teleop, keyboard_teleop = multi_teleop
-                arm_action = arm_teleop.get_action()
-                arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-                keyboard_action = keyboard_teleop.get_action()
-                base_action = robot._from_keyboard_to_base_action(keyboard_action)  # type: ignore[attr-defined]
-                act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-                act_processed_teleop = teleop_action_processor((act, obs))
-                action_values = act_processed_teleop
-                robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
             else:
                 robot_action_to_send = None
                 no_action_count += 1
@@ -411,7 +379,8 @@ def record(
 
     robot = make_robot_from_config(cfg.robot)
     check_control_rate(robot, cfg.dataset.fps, "--dataset.fps")
-    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    arm_teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    teleop: Teleoperator | None = arm_teleop
 
     # Fall back to identity pipelines when the caller doesn't supply processors.
     if (
@@ -423,6 +392,15 @@ def record(
         teleop_action_processor = teleop_action_processor or _t
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
+
+    if cfg.base_teleop is not None:
+        teleop, teleop_action_processor = make_mobile_teleop(
+            robot,
+            base=make_teleoperator_from_config(cfg.base_teleop),
+            arm=arm_teleop,
+            keyboard_mapping=cfg.base_mapping,
+            action_processor=teleop_action_processor,
+        )
 
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(
@@ -580,7 +558,7 @@ def record(
 
         if robot.is_connected:
             robot.disconnect()
-        if teleop and teleop.is_connected:
+        if teleop is not None and teleop.is_connected:
             teleop.disconnect()
 
         if listener is not None:

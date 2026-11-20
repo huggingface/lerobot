@@ -247,7 +247,7 @@ Then on your laptop, also run `conda activate lerobot` and run the API example, 
 python examples/lekiwi/teleoperate.py
 ```
 
-Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
+Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (+,-) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
 | ---------- | ------------------ | ---------------------- |
@@ -263,11 +263,27 @@ Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward,
 | D   | Move right     |
 | Z   | Turn left      |
 | X   | Turn right     |
-| R   | Increase speed |
-| F   | Decrease speed |
+| +   | Increase speed |
+| -   | Decrease speed |
 
 > [!TIP]
-> If you use a different keyboard, you can change the keys for each command in the [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py).
+> To change keys or speeds, pass a `KeyboardToBaseActionProcessorStep` as `keyboard_mapping` to `make_mobile_teleop`.
+
+### From the command line
+
+`lerobot-teleoperate` drives LeKiwi too: `--teleop` takes the leader arm and `--base_teleop` the keyboard that drives the base. Leave out `--teleop` to drive the base from the keyboard alone; the arm then holds the position it had when teleoperation started.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=lekiwi_client \
+    --robot.remote_ip=172.18.134.136 \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem585A0077581 \
+    --teleop.id=my_awesome_leader_arm \
+    --base_teleop.type=keyboard
+```
+
+The same flags work with `lerobot-record` and `lerobot-rollout`. Customize controls through `--base_mapping`, e.g. `--base_mapping.linear_speeds='[0.05,0.1,0.2]'`.
 
 ### Wired version
 

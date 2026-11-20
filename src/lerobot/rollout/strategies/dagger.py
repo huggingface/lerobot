@@ -765,6 +765,8 @@ class DAggerStrategy(RolloutStrategy):
 
         elif old_phase == DAggerPhase.PAUSED and new_phase == DAggerPhase.CORRECTING:
             logger.info("Entering correction mode - human teleop control")
+            # The policy may have moved the robot: drop targets held from the previous correction.
+            ctx.processors.teleop_action_processor.reset()
             if (
                 self.config.smooth_handover
                 and not teleop_supports_feedback(teleop)

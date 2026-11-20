@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.datasets import (
     LeRobotDataset,
@@ -337,6 +338,7 @@ def _prepare_rollout_devices(
     *,
     require_hold: bool = False,
     validate_simulator: Callable[[SimRobot], None] | None = None,
+    processors: ProcessorContext | None = None,
 ) -> tuple[ThreadSafeRobot, Teleoperator | None]:
     """Construct rollout devices without opening their hardware resources.
 
@@ -367,6 +369,15 @@ def _prepare_rollout_devices(
         if require_hold:
             wrapper.configure_hold()
         teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+        if cfg.base_teleop is not None:
+            assert processors is not None
+            teleop, processors.teleop_action_processor = make_mobile_teleop(
+                robot,
+                base=make_teleoperator_from_config(cfg.base_teleop),
+                arm=teleop,
+                keyboard_mapping=cfg.base_mapping,
+                action_processor=processors.teleop_action_processor,
+            )
     except BaseException:
         _disconnect_setup_hardware(robot, None)
         raise
@@ -554,7 +565,7 @@ def build_rollout_context(
     processors = _resolve_robot_processors(
         teleop_action_processor, robot_action_processor, robot_observation_processor
     )
-    robot_wrapper, teleop = _prepare_rollout_devices(cfg)
+    robot_wrapper, teleop = _prepare_rollout_devices(cfg, processors=processors)
     robot = robot_wrapper.inner
     dataset: LeRobotDataset | None = None
     hardware: HardwareContext | None = None
@@ -808,7 +819,7 @@ def build_remote_rollout_context(
                     raise ValueError("Remote observation declaration differs from simulator declaration")
 
         wrapper, teleop = _prepare_rollout_devices(
-            cfg, require_hold=True, validate_simulator=validate_simulator
+            cfg, require_hold=True, validate_simulator=validate_simulator, processors=processors
         )
         hardware = _connect_rollout_hardware(wrapper, teleop)
         robot = wrapper.inner

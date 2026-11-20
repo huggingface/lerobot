@@ -67,16 +67,26 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
+Example driving a mobile robot's base from the keyboard, with no leader arm (the arm holds its position):
+
+```shell
+lerobot-teleoperate \
+  --robot.type=lekiwi_client \
+  --robot.remote_ip=172.18.134.136 \
+  --base_teleop.type=keyboard
+```
+
 """
 
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pprint import pformat
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
+from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs import parser
 from lerobot.processor import (
     RobotAction,
@@ -84,6 +94,7 @@ from lerobot.processor import (
     RobotProcessorPipeline,
     make_default_processors,
 )
+from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -137,9 +148,13 @@ from lerobot.utils.visualization_utils import (
 
 @dataclass
 class TeleoperateConfig:
-    # TODO: pepijn, steven: if more robots require multiple teleoperators (like lekiwi) its good to make this possibele in teleop.py and record.py with List[Teleoperator]
-    teleop: TeleoperatorConfig
     robot: RobotConfig
+    # Optional when using base-only control.
+    teleop: TeleoperatorConfig | None = None
+    # Optional base input; teleop controls the arms when both are set.
+    base_teleop: TeleoperatorConfig | None = None
+    # Key bindings and speed presets for a keyboard base input.
+    base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
     # Limit the maximum frames per second.
     fps: int = 60
     teleop_time_s: float | None = None
@@ -154,6 +169,12 @@ class TeleoperateConfig:
     display_port: int | None = None
     # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
+
+    def __post_init__(self):
+        if self.teleop is None and self.base_teleop is None:
+            raise ValueError(
+                "Use --teleop.type=... to specify a teleoperator, or --base_teleop.type=... for a mobile base."
+            )
 
 
 def teleop_loop(
@@ -199,10 +220,6 @@ def teleop_loop(
             loop_start = time.perf_counter()  # for the live readout below
 
             with timer.section("observe"):
-                # Get robot observation
-                # Not really needed for now other than for visualization
-                # teleop_action_processor can take None as an observation
-                # given that it is the identity processor as default
                 obs = robot.get_observation()
 
                 if robot.name == "unitree_g1":
@@ -272,10 +289,22 @@ def teleoperate(cfg: TeleoperateConfig):
         else cfg.display_compressed_images
     )
 
-    teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
     check_control_rate(robot, cfg.fps, "--fps")
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+    teleop: Teleoperator
+    if cfg.base_teleop is not None:
+        arm = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+        teleop, teleop_action_processor = make_mobile_teleop(
+            robot,
+            base=make_teleoperator_from_config(cfg.base_teleop),
+            arm=arm,
+            keyboard_mapping=cfg.base_mapping,
+            action_processor=teleop_action_processor,
+        )
+    else:
+        assert cfg.teleop is not None
+        teleop = make_teleoperator_from_config(cfg.teleop)
 
     teleop.connect()
     robot.connect()

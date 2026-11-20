@@ -1,0 +1,57 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from dataclasses import replace
+from typing import TYPE_CHECKING
+
+from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.processor import RobotProcessorPipeline, make_default_processors
+from lerobot.processor.hold_joints_processor import HoldUncommandedJointsProcessorStep
+from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
+from lerobot.teleoperators import Teleoperator
+from lerobot.teleoperators.composite import CompositeTeleoperator
+from lerobot.teleoperators.keyboard import KeyboardTeleop
+
+if TYPE_CHECKING:
+    from lerobot.robots import Robot
+
+
+def make_mobile_teleop(
+    robot: "Robot",
+    base: Teleoperator,
+    arm: Teleoperator | None = None,
+    *,
+    keyboard_mapping: KeyboardToBaseActionProcessorStep | None = None,
+    action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction] | None = None,
+) -> tuple[Teleoperator, RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]]:
+    """Combine a base input and an optional arm leader, mapping keyboard keys and holding other joints.
+
+    Reuse the returned pipeline across recording/reset phases; reset it for a new session.
+    """
+    teleop = (
+        base
+        if arm is None
+        else CompositeTeleoperator([(base, ""), (arm, getattr(robot, "arm_action_prefix", ""))])
+    )
+    pipeline = action_processor if action_processor is not None else make_default_processors()[0]
+    steps = list(pipeline.steps)
+    if type(base) is KeyboardTeleop:
+        # Copy so a reused config object does not share speed/key state across sessions.
+        steps.insert(0, replace(keyboard_mapping or KeyboardToBaseActionProcessorStep()))
+    steps.append(
+        HoldUncommandedJointsProcessorStep(
+            tuple(key for key in robot.action_features if key.endswith(".pos"))
+        )
+    )
+    return teleop, replace(pipeline, steps=steps)

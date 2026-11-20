@@ -16,6 +16,7 @@
 
 import time
 
+from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
@@ -35,17 +36,18 @@ def main():
     robot = LeKiwiClient(robot_config)
     leader_arm = SO100Leader(teleop_arm_config)
     keyboard = KeyboardTeleop(keyboard_config)
+    # Pass arm=None for keyboard-only control: the arm then holds its position.
+    teleop, action_processor = make_mobile_teleop(robot, base=keyboard, arm=leader_arm)
 
     # Connect to the robot and teleoperator
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
     robot.connect()
-    leader_arm.connect()
-    keyboard.connect()
+    teleop.connect()
 
     # Init rerun viewer
     init_rerun(session_name="lekiwi_teleop")
 
-    if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
+    if not robot.is_connected or not teleop.is_connected:
         raise ValueError("Robot or teleop is not connected!")
 
     print("Starting teleop loop...")
@@ -55,15 +57,8 @@ def main():
         # Get robot observation
         observation = robot.get_observation()
 
-        # Get teleop action
-        # Arm
-        arm_action = leader_arm.get_action()
-        arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-        # Keyboard
-        keyboard_keys = keyboard.get_action()
-        base_action = robot._from_keyboard_to_base_action(keyboard_keys)
-
-        action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+        # Get teleop action: leader arm joints plus keyboard keys mapped to base velocities
+        action = action_processor((teleop.get_action(), observation))
 
         # Send action to robot
         _ = robot.send_action(action)

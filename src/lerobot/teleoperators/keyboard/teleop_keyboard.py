@@ -127,8 +127,10 @@ class KeyboardTeleop(Teleoperator):
     def configure(self):
         pass
 
-    @check_if_not_connected
     def get_action(self) -> RobotAction:
+        # Esc disconnects the keyboard; report no pressed keys so a mapped base stops instead of erroring.
+        if not self.is_connected:
+            return {}
         before_read_t = time.perf_counter()
 
         self._drain_pressed_keys()
