@@ -114,8 +114,8 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     (snapshot / "env.py").write_text("")
     downloads = []
 
-    def download(repo, revision=None):
-        downloads.append((repo, revision))
+    def download(repo, repo_type=None, revision=None):
+        downloads.append((repo, repo_type, revision))
         return str(snapshot)
 
     monkeypatch.setattr(lerobot_env_server, "snapshot_download", download)
@@ -136,7 +136,7 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     env = options["env"]
     assert (env["SIM"], env["SIM_TAG"]) == ("envhub", "user-my-env-v1")
     # Downloaded on the host, then copied as plain files into the build context.
-    assert downloads == [("User/My-Env", "v1")]
+    assert downloads == [("User/My-Env", "space", "v1")]
     assert (Path(env["ENVHUB_DIR"]) / "env.py").is_file() and Path(env["ENVHUB_DIR"]) != snapshot
     # The server loads the copy baked into the image.
     mounted = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())
