@@ -17,7 +17,10 @@
 import os
 import sys
 import types
+from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
@@ -245,6 +248,136 @@ class _Reach(gym.Env):
 
     def step(self, action):
         return {"agent_pos": np.zeros(2, np.float32)}, 0.0, False, False, {}
+
+
+class _UnusedTaskReach(_Reach):
+    task_description = "Inner instruction"
+
+    @property
+    def task(self) -> str:
+        raise RuntimeError("Lower-priority task must not be read")
+
+
+class _BrokenDescriptionReach(_Reach):
+    @property
+    def task_description(self) -> str:
+        raise ValueError("Instruction lookup failed")
+
+
+def _instruction_env(
+    make: Callable[[], Any], inner: dict[str, Any], limits: tuple[int | None, ...], outer: dict[str, Any]
+) -> Any:
+    env = make()
+    for name, value in inner.items():
+        setattr(env, name, value)
+    for limit in limits:
+        env = gym.wrappers.OrderEnforcing(env) if limit is None else gym.wrappers.TimeLimit(env, limit)
+    for name, value in outer.items():
+        setattr(env, name, value)
+    return gym.wrappers.OrderEnforcing(env) if limits else env
+
+
+_INSTRUCTION_CASES = [
+    ("plain", _Reach, {"task_description": "A"}, (), {}, "A"),
+    ("native", lambda: _NativeEnv(), {}, (), {}, "Pick the object"),
+    ("order", _Reach, {"task_description": "A"}, (None,), {}, "A"),
+    ("nested", _Reach, {"task_description": "A"}, (None, 8, 5), {}, "A"),
+    ("outer-description", _Reach, {"task_description": "A"}, (5,), {"task_description": "B"}, "B"),
+    ("outer-task-inner-description", _Reach, {"task_description": "A"}, (5,), {"task": "B"}, "A"),
+    ("task-only", _Reach, {"task": "A"}, (5,), {}, "A"),
+    ("absent", _Reach, {}, (5,), {}, "reach"),
+    ("lazy-lower-priority", _UnusedTaskReach, {}, (5,), {}, "Inner instruction"),
+    ("plain-lazy", _UnusedTaskReach, {}, (), {}, "Inner instruction"),
+] + [
+    (f"{name}-{value!r}", _Reach, {}, (5,), {name: value}, str(value))
+    for name in ("task_description", "task")
+    for value in ("", None, False, 0)
+]
+
+
+@pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "case, make, inner, limits, outer, expected",
+    _INSTRUCTION_CASES,
+    ids=[case[0] for case in _INSTRUCTION_CASES],
+)
+def test_task_instructions_respect_wrappers_and_fallback(
+    monkeypatch, use_async_envs: bool, case: str, make, inner, limits, outer, expected: str
+) -> None:
+    make = partial(_instruction_env, make, inner, limits, outer)
+    _register_integration(monkeypatch, "instructions", lambda task, n_envs: {task: {0: [make] * n_envs}})
+    env = LocalVectorEnv(SimConfig(type="instructions", task="reach"), use_async_envs=use_async_envs)
+    try:
+        env.reset(seed=0)
+        assert env.latest.task == env.call("task_description") == (expected,)
+        env.step(np.zeros((1, env.single_action_space.shape[0]), np.float32))
+        assert env.latest.task == env.call("task_description") == (expected,)
+        if case == "nested":
+            assert env.call("_max_episode_steps") == (5,)
+    finally:
+        env.close()
+
+
+class _ResetInstructionReach(_Reach):
+    def __getattr__(self, name: str) -> Any:
+        if name == "task_description" and self.__dict__.get("broken", False):
+            raise ValueError("Instruction lookup failed")
+        raise AttributeError(name)
+
+    def reset(self, seed=None, options=None):
+        self.broken = seed == 5
+        for name in ("task_description", "task"):
+            self.__dict__.pop(name, None)
+        if seed in (1, 2, 3):
+            setattr(self, "task" if seed == 3 else "task_description", ("A", "B", "C")[seed - 1])
+        return super().reset(seed=seed, options=options)
+
+
+@pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
+def test_task_instructions_refresh_on_reset(monkeypatch, use_async_envs: bool) -> None:
+    make = partial(_instruction_env, _ResetInstructionReach, {}, (None, 5), {})
+    _register_integration(monkeypatch, "instructions", lambda task, n_envs: {task: {0: [make] * n_envs}})
+    env = LocalVectorEnv(
+        SimConfig(type="instructions", task="reach"), num_envs=2, use_async_envs=use_async_envs
+    )
+    try:
+        if use_async_envs:
+            assert all(
+                not hasattr(worker, name) for worker in env._envs for name in ("task_description", "task")
+            )
+        for seed, instruction in ((0, "reach"), (1, "A"), (2, "B"), (3, "C"), (4, "reach"), (1, "A")):
+            env.reset(seed=[seed, seed])
+            assert env.latest.task == env.call("task_description") == (instruction,) * 2
+            env.step(np.zeros((2, 2), np.float32))
+            assert env.latest.task == env.call("task_description") == (instruction,) * 2
+        if use_async_envs:
+            # Consume each failed reply, so recovery cannot read another worker's pending reset.
+            for worker in env._envs:
+                with pytest.raises(RuntimeError, match="Instruction lookup failed"):
+                    worker.reset(seed=5)
+                assert worker.task_description == "A"
+        else:
+            with pytest.raises(ValueError, match="Instruction lookup failed"):
+                env.reset(seed=[5, 5])
+        env.reset(seed=[1, 1])
+        env.step(np.zeros((2, 2), np.float32))
+        assert env.latest.task == env.call("task_description") == ("A",) * 2
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
+def test_task_instruction_lookup_errors_are_reported(monkeypatch, use_async_envs: bool) -> None:
+    make = partial(_instruction_env, _BrokenDescriptionReach, {}, (None,), {})
+    _register_integration(monkeypatch, "instructions", lambda task, n_envs: {task: {0: [make] * n_envs}})
+    env = None
+    try:
+        with pytest.raises(RuntimeError if use_async_envs else ValueError, match="Instruction lookup failed"):
+            env = LocalVectorEnv(SimConfig(type="instructions", task="reach"), use_async_envs=use_async_envs)
+            env.reset(seed=0)
+    finally:
+        if env is not None:
+            env.close()
 
 
 def test_episode_limit_is_found_through_wrappers(monkeypatch):
