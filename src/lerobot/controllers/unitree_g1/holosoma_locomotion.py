@@ -14,22 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 
 import numpy as np
-import onnx
 import onnxruntime as ort
-from huggingface_hub import hf_hub_download
+import torch
 
 from lerobot.robots.unitree_g1.g1_utils import (
     REMOTE_AXES,
+    REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
-    get_gravity_orientation,
-    make_ort_session_options,
 )
-from lerobot.robots.unitree_g1.unitree_g1 import RobotController
+
+from ..controller import RobotController
+from ..hub import load_onnx_policy
+from ..processors import make_controller_processors
+from .proprio import read_proprio
 
 logger = logging.getLogger(__name__)
 
@@ -76,34 +77,17 @@ def load_policy(
     if policy_type not in POLICY_FILES:
         raise ValueError(f"Unknown policy type: {policy_type}. Choose from: {list(POLICY_FILES.keys())}")
 
-    filename = POLICY_FILES[policy_type]
-    logger.info(f"Loading {policy_type.upper()} policy from: {repo_id}/{filename}")
-    policy_path = hf_hub_download(repo_id=repo_id, filename=filename)
-
-    # Capped thread pool, same reasoning as GR00T: a small MLP stepped at 50 Hz from a
-    # background thread, where letting ORT take every core starves the control loop.
-    so = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
-    policy = ort.InferenceSession(policy_path, sess_options=so)
-    logger.info(f"Policy loaded: {policy.get_inputs()[0].shape} → {policy.get_outputs()[0].shape}")
-
-    # Extract KP/KD from ONNX metadata
-    model = onnx.load(policy_path, load_external_data=False)
-    metadata = {prop.key: prop.value for prop in model.metadata_props}
-
-    if "kp" not in metadata or "kd" not in metadata:
-        raise ValueError("ONNX model must contain 'kp' and 'kd' in metadata")
-
-    kp = np.array(json.loads(metadata["kp"]), dtype=np.float32)
-    kd = np.array(json.loads(metadata["kd"]), dtype=np.float32)
-    logger.info(f"Loaded KP/KD from ONNX ({len(kp)} joints)")
-
-    return policy, kp, kd
+    policy, constants = load_onnx_policy(repo_id, POLICY_FILES[policy_type], metadata_keys=("kp", "kd"))
+    return policy, constants["kp"], constants["kd"]
 
 
 class HolosomaLocomotionController(RobotController):
     """Holosoma lower-body locomotion controller for Unitree G1."""
 
     control_dt = CONTROL_DT
+    # Joystick velocities and buttons; the arms stay the caller's.
+    action_ft = dict.fromkeys(REMOTE_KEYS, float)
+    passthrough = True
 
     def __init__(self):
         # Load policy and gains
@@ -113,8 +97,6 @@ class HolosomaLocomotionController(RobotController):
         self.cmd = np.zeros(3, dtype=np.float32)
 
         # Robot state
-        self.qj = np.zeros(29, dtype=np.float32)
-        self.dqj = np.zeros(29, dtype=np.float32)
         self.obs = np.zeros(100, dtype=np.float32)
         self.last_action = np.zeros(29, dtype=np.float32)
 
@@ -123,13 +105,22 @@ class HolosomaLocomotionController(RobotController):
         self.phase_dt = 2 * np.pi / ((1.0 / CONTROL_DT) * GAIT_PERIOD)
         self.is_standing = True
 
+        # Scaled proprioception in; the policy acts on all 29 joints, the leg and waist targets (0-14) go out.
+        self.preprocessor, self.postprocessor = make_controller_processors(
+            observation_stats={
+                "observation.joint_pos": (DEFAULT_ANGLES, np.full(29, 1 / DOF_POS_SCALE)),
+                "observation.joint_vel": (np.zeros(29), np.full(29, 1 / DOF_VEL_SCALE)),
+                "observation.ang_vel": (np.zeros(3), np.full(3, 1 / ANG_VEL_SCALE)),
+            },
+            action_stats=(DEFAULT_ANGLES[:15], np.full(15, ACTION_SCALE)),
+            action_order=range(15),
+        )
+
         logger.info("HolosomaLocomotionController initialized")
 
     def reset(self) -> None:
         """Reset internal state for a new episode."""
         self.cmd[:] = 0.0
-        self.qj[:] = 0.0
-        self.dqj[:] = 0.0
         self.obs[:] = 0.0
         self.last_action[:] = 0.0
         self.phase = np.array([[0.0, np.pi]], dtype=np.float32)
@@ -156,27 +147,22 @@ class HolosomaLocomotionController(RobotController):
         lx = np.clip(lx, -0.3, 0.3)
         self.cmd[:] = [ly, -lx, -rx]
 
-        # Get joint positions and velocities from lowstate
-        for motor in G1_29_JointIndex:
-            idx = motor.value
-            self.qj[idx] = lowstate.motor_state[idx].q
-            self.dqj[idx] = lowstate.motor_state[idx].dq
+        proprio = read_proprio(lowstate)
+        qj, dqj = proprio.q, proprio.dq
 
         # Hide arm positions from policy (show DEFAULT_ANGLES instead)
         # This prevents policy from reacting to teleop arm movements
         for arm_joint in G1_29_JointArmIndex:
-            self.qj[arm_joint.value] = DEFAULT_ANGLES[arm_joint.value]
-            self.dqj[arm_joint.value] = 0.0
+            qj[arm_joint.value] = DEFAULT_ANGLES[arm_joint.value]
+            dqj[arm_joint.value] = 0.0
 
-        # Express IMU data in gravity frame of reference
-        quat = lowstate.imu_state.quaternion
-        ang_vel = np.array(lowstate.imu_state.gyroscope, dtype=np.float32)
-        gravity = get_gravity_orientation(quat)
-
-        # Scale joint positions and velocities before policy inference
-        qj_obs = (self.qj - DEFAULT_ANGLES) * DOF_POS_SCALE
-        dqj_obs = self.dqj * DOF_VEL_SCALE
-        ang_vel_s = ang_vel * ANG_VEL_SCALE
+        obs = self.preprocessor(
+            {
+                "observation.joint_pos": qj,
+                "observation.joint_vel": dqj,
+                "observation.ang_vel": proprio.ang_vel,
+            }
+        )
 
         # Update gait phase
         if np.linalg.norm(self.cmd[:2]) < 0.01 and abs(self.cmd[2]) < 0.01:
@@ -193,13 +179,13 @@ class HolosomaLocomotionController(RobotController):
 
         # Build observations
         self.obs[0:29] = self.last_action
-        self.obs[29:32] = ang_vel_s
+        self.obs[29:32] = obs["observation.ang_vel"]
         self.obs[32] = self.cmd[2]
         self.obs[33:35] = self.cmd[:2]
         self.obs[35:37] = cos_ph
-        self.obs[37:66] = qj_obs
-        self.obs[66:95] = dqj_obs
-        self.obs[95:98] = gravity
+        self.obs[37:66] = obs["observation.joint_pos"]
+        self.obs[66:95] = obs["observation.joint_vel"]
+        self.obs[95:98] = proprio.gravity
         self.obs[98:100] = sin_ph
 
         # Run policy inference
@@ -208,10 +194,9 @@ class HolosomaLocomotionController(RobotController):
         policy_action = np.clip(raw_action, -100.0, 100.0)
         self.last_action = policy_action.copy()
 
-        # Transform action back to target joint positions
-        target = DEFAULT_ANGLES + policy_action * ACTION_SCALE
+        # Transform action back to target joint positions (first 15 joints only)
+        target = self.postprocessor(torch.as_tensor(policy_action)).numpy()
 
-        # Build action dict (first 15 joints only)
         action_dict = {}
         for i in range(15):
             motor_name = G1_29_JointIndex(i).name
