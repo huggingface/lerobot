@@ -60,12 +60,17 @@ At minimum, each training sample needs:
 
 ### Programmatic inference
 
-Pass the SARM processor's output to `predict_progress()` to get per-frame progress. Run the model in evaluation mode:
+Pass the SARM processor's output to `predict_progress()`, with the model and the processor in evaluation mode. The processor steps default to training mode, which applies rewind and language perturbation augmentations:
 
 ```python
 import torch
 
 reward_model.eval()
+for step in preprocessor.steps:
+    if hasattr(step, "eval"):
+        step.eval()
+
+processed_batch = preprocessor(batch)
 with torch.inference_mode():
     prediction = reward_model.predict_progress(processed_batch, head_mode="sparse")
     progress = prediction.progress
@@ -451,11 +456,11 @@ SARM predicts progress from a window around each frame. The scorer saves the cen
 
 **Scoring options** (SARM config fields):
 
-| Argument                            | Description                                     | Default  |
-| ----------------------------------- | ----------------------------------------------- | -------- |
-| `--reward_model.head_mode`          | SARM head to use: `sparse`, `dense`, or `both`  | `sparse` |
-| `--reward_model.stride`             | Compute every N frames and interpolate the rest | `1`      |
-| `--reward_model.scoring_batch_size` | Number of frames scored together                | `32`     |
+| Argument                   | Description                                     | Default  |
+| -------------------------- | ----------------------------------------------- | -------- |
+| `--reward_model.head_mode` | SARM head to use: `sparse`, `dense`, or `both`  | `sparse` |
+| `--reward_model.stride`    | Compute every N frames and interpolate the rest | `1`      |
+| `--batch_size`             | Number of frames scored together                | `32`     |
 
 The score contains the signals selected by `--reward_model.head_mode`:
 
@@ -464,7 +469,7 @@ The score contains the signals selected by `--reward_model.head_mode`:
 | `reward.sarm.sparse_progress` | Sparse head progress value [0, 1]                   |
 | `reward.sarm.dense_progress`  | Dense head progress value [0, 1] (dual-head models) |
 
-Failed predictions are marked as NaN. With `--reward_model.stride` above 1, interpolation fills gaps when valid predictions are available.
+SARM normalizes the state with the statistics saved with the checkpoint (`policy_preprocessor.json`), not with the scored dataset's statistics, so appending episodes does not change the scores of existing ones. Failed predictions are marked as NaN. With `--reward_model.stride` above 1, interpolation fills gaps when valid predictions are available.
 
 > [!NOTE]
 > RA-BC reads dataset scores. It cannot read `sarm_progress.parquet` files from `compute_rabc_weights.py`. Recompute progress with `lerobot-score`.

@@ -71,7 +71,7 @@ TASK_FONT_SCALE = 0.55
 
 
 def load_episode_dataset(repo_id: str, episode: int, dataset_root: Path | None = None) -> LeRobotDataset:
-    """Load the metadata, the episode's data and the scores, without videos.
+    """Load the metadata and the episode's data, without videos.
 
     Args:
         repo_id: HuggingFace dataset repository ID.

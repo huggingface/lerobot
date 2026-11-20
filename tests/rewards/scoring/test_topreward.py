@@ -63,7 +63,9 @@ def test_make_topreward_frame_scorer_builds_processor_without_frame_cap(monkeypa
     scorer = make_topreward_frame_scorer(model)
 
     assert scorer.preprocessor is preprocessor
-    assert scorer.provenance["scorer"]["options"]["num_samples"] == 3
+    options = scorer.provenance["scorer"]["options"]
+    assert (options["num_samples"], options["vlm_name"]) == (3, model.config.vlm_name)
+    assert "device" not in options
     assert received["config"].max_frames is None
     assert model.config.max_frames == 16
 
@@ -117,18 +119,12 @@ class _FakeEncoder(PolicyProcessorPipeline):
 
 
 class _FakeModel:
-    config = SimpleNamespace(
-        type="topreward",
-        pretrained_path=None,
-        pretrained_revision=None,
+    config = TOPRewardConfig(
+        device="cpu",
         vlm_name="fake/vlm",
         image_key=IMAGE_KEY,
-        task_key="task",
-        default_task=None,
-        fps=2.0,
         prompt_prefix="prefix",
         prompt_suffix_template="{instruction}",
-        add_chat_template=False,
         num_samples=3,
     )
 
@@ -159,8 +155,6 @@ def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress(
     task = {"task": "pick up the cube", "instruction": "custom task at frame 0"}.get(task_key)
     assert encoder.steps[0].tasks == [task] * 3
     assert scorer.name == "topreward"
-    assert scorer.provenance["scorer"]["options"]["num_samples"] == 3
-    assert scorer.provenance["scorer"]["options"]["vlm_name"] == "fake/vlm"
 
 
 def test_topreward_scores_publish_to_the_dataset(tmp_path):
@@ -208,6 +202,7 @@ def test_topreward_frame_scorer_supports_episode_filtered_dataset_views(monkeypa
     assert encoder.steps[0].tasks == ["pick up the cube", "pick up the cube"]
 
 
-def test_topreward_config_rejects_non_positive_num_samples():
-    with pytest.raises(ValueError, match="num_samples must be >= 1"):
-        TOPRewardConfig(device="cpu", num_samples=0)
+@pytest.mark.parametrize("num_samples", [0, 1])
+def test_topreward_config_rejects_fewer_than_two_samples(num_samples):
+    with pytest.raises(ValueError, match="num_samples must be >= 2"):
+        TOPRewardConfig(device="cpu", num_samples=num_samples)

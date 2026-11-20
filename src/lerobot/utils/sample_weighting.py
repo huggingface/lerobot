@@ -85,7 +85,7 @@ class SampleWeightingConfig:
     Attributes:
         type: Weighting strategy type ("rabc", "uniform", etc.)
         score_name: Name of the dataset scores used by RA-BC
-        signal_name: Progress signal selected from the sidecar
+        signal_name: Progress signal selected from the Parquet file of scores
         kappa: Hard threshold for high-quality samples (RABC-specific)
         epsilon: Small constant for numerical stability
         extra_params: Additional type-specific parameters passed to the weighter

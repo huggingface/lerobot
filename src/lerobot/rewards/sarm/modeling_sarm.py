@@ -363,12 +363,11 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
 class SARMOutput(ProgressOutput):
     """SARM frame signals on the encoded input device.
 
-    ``progress``, ``stage_confidence``, and ``valid_mask`` have shape
-    ``(batch, time)``.
-    ``stage_probabilities`` has shape ``(batch, time, stages)``.
+    `progress` (task progress from 0 to 1), `stage_confidence` and `valid_mask` have shape
+    `(batch, time)`; `stage_probabilities` has shape `(batch, time, stages)`.
 
-    Values at positions where ``valid_mask`` is false are padding artifacts and
-    must not be consumed as predictions.
+    Values at positions where `valid_mask` is false are padding artifacts and must not be
+    consumed as predictions.
     """
 
     stage_probabilities: Tensor
@@ -502,18 +501,25 @@ class SARMRewardModel(PreTrainedRewardModel):
     ) -> SARMOutput:
         """Predict progress and stage signals for every encoded frame.
 
-        Args:
-            batch: Processor output containing ``text_features`` and
-                ``video_features``, plus optional ``state_features`` and
-                ``lengths``.
-            head_mode: Annotation head to evaluate.
+        The caller controls model mode (`eval()`) and gradient context (`torch.inference_mode()`).
 
-        The caller controls model mode and gradient context.
+        Args:
+            batch (`Mapping[str, Any]`):
+                Output of the SARM preprocessor, with tensors already on the model's device. Contains
+                `text_features` and `video_features`, plus optional `state_features` and `lengths`.
+            head_mode (`Literal["sparse", "dense"]`, *optional*, defaults to `"sparse"`):
+                Annotation head to evaluate.
 
         Returns:
-            Batched float32 tensors on the encoded input device, plus a boolean
-            ``valid_mask`` derived from ``lengths``. Consumers select a valid
-            frame that corresponds to their sampling strategy.
+            `SARMOutput`: Float32 tensors on the device of `video_features`, plus a boolean
+            `valid_mask` derived from `lengths`. The caller selects the valid frame that matches its
+            sampling strategy.
+
+        Raises:
+            KeyError: If `batch` has no `text_features` or `video_features`, because
+                `SARMEncodingProcessorStep` did not run.
+            ValueError: If `head_mode` is unknown or the selected head has no stages, or if `lengths` is
+                not shaped `(batch,)` with values between 1 and the number of frames.
         """
         if "text_features" not in batch:
             raise KeyError("SARM batch missing `text_features` (run SARMEncodingProcessorStep first)")
@@ -577,7 +583,7 @@ class SARMRewardModel(PreTrainedRewardModel):
                 dtype=video_embeddings.dtype,
             )
         )
-        lens = lengths
+        lens = lengths.to(device)
 
         # Pad state to max_state_dim
         state = pad_state_to_max_dim(state, self.config.max_state_dim)

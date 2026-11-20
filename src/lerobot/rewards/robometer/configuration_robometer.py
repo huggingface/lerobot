@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
@@ -57,11 +57,8 @@ class RobometerConfig(RewardModelConfig):
 
     max_frames: int | None = 8
 
-    # Offline scoring (`lerobot-score`): frames sampled from the prefix ending at each target
-    # frame, and the number of target frames scored together. Not saved with checkpoints.
+    # Offline scoring (`lerobot-score`): frames sampled from the prefix ending at each target frame.
     num_subsampled_frames: int = 4
-    scoring_batch_size: int = 32
-    _scoring_fields: ClassVar[tuple[str, ...]] = ("num_subsampled_frames", "scoring_batch_size")
 
     license: str | None = "apache-2.0"
     tags: list[str] | None = field(
@@ -99,8 +96,6 @@ class RobometerConfig(RewardModelConfig):
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
         if self.num_subsampled_frames < 1:
             raise ValueError(f"num_subsampled_frames must be >= 1, got {self.num_subsampled_frames}")
-        if self.scoring_batch_size < 1:
-            raise ValueError(f"scoring_batch_size must be >= 1, got {self.scoring_batch_size}")
         if self.frame_pooling not in {"mean", "boundary", "attention"}:
             raise ValueError(f"frame_pooling must be mean/boundary/attention; got {self.frame_pooling!r}")
         if self.frame_pooling_attn_temperature <= 0:

@@ -23,7 +23,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
-from lerobot.rewards.sarm import SARMConfig, SARMOutput, scoring_sarm
+from lerobot.rewards.sarm import SARMConfig, SARMOutput, processor_sarm, scoring_sarm
 from lerobot.rewards.sarm.scoring_sarm import (
     DENSE_PROGRESS_SIGNAL,
     SPARSE_PROGRESS_SIGNAL,
@@ -68,12 +68,12 @@ class _FakeModel:
         fail_on: int | None = None,
         head_mode: str = "sparse",
         stride: int = 1,
-        scoring_batch_size: int = 32,
     ):
         self.config = SimpleNamespace(
             type="sarm",
             pretrained_path="test/sarm",
             pretrained_revision=None,
+            device="cpu",
             image_key=IMAGE_KEY,
             state_key=STATE_KEY,
             n_obs_steps=4,
@@ -81,7 +81,6 @@ class _FakeModel:
             uses_dual_heads=dual_heads,
             head_mode=head_mode,
             stride=stride,
-            scoring_batch_size=scoring_batch_size,
         )
         self.fail_on = fail_on
         self.heads_seen = []
@@ -130,19 +129,21 @@ def encoder(monkeypatch):
     step = _WindowEncoderStep()
     received = {}
 
-    def fake_make_processors(config, *, dataset_stats=None, dataset_meta=None):
-        received.update(dataset_stats=dataset_stats, dataset_meta=dataset_meta)
-        return PolicyProcessorPipeline(steps=[step]), object()
+    def fake_from_pretrained(path, config_filename, *, revision, overrides):
+        received.update(path=path, config_filename=config_filename, revision=revision, overrides=overrides)
+        return PolicyProcessorPipeline(steps=[step])
 
-    monkeypatch.setattr(scoring_sarm, "make_sarm_pre_post_processors", fake_make_processors)
+    monkeypatch.setattr(
+        scoring_sarm, "PolicyProcessorPipeline", SimpleNamespace(from_pretrained=fake_from_pretrained)
+    )
     step.received = received
     return step
 
 
 @pytest.mark.parametrize("with_state", [True, False])
 def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder, with_state: bool):
-    model = _FakeModel(scoring_batch_size=2)
-    scorer = SARMFrameScorer(model)
+    model = _FakeModel()
+    scorer = SARMFrameScorer(model, batch_size=2)
     dataset = _FakeDataset(with_state=with_state)
 
     result = scorer.score_episode(dataset, 0)
@@ -153,18 +154,21 @@ def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder, with_s
     assert result.signals[SPARSE_PROGRESS_SIGNAL].dtype == np.float32
     assert [call["index"] for call in encoder.calls] == [[0, 1], [2, 3], [4]]
     assert encoder.calls[0]["task"] == "pick up the cube"
-    assert encoder.received == {"dataset_stats": {"observation.state": {}}, "dataset_meta": None}
+    # The checkpoint's saved preprocessor, with its training normalization statistics, is used.
+    assert encoder.received == {
+        "path": "test/sarm",
+        "config_filename": "policy_preprocessor.json",
+        "revision": None,
+        "overrides": {
+            "SARMEncodingProcessorStep": {"config": model.config},
+            "device_processor": {"device": "cpu"},
+        },
+    }
     # Each frame is read once, for both the image and the state.
     assert dataset.row_requests == list(range(5))
     assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL}
     assert scorer.descriptors[SPARSE_PROGRESS_SIGNAL].greater_is_better is True
     assert scorer.name == "sarm"
-    assert scorer.provenance["scorer"]["options"] == {
-        "image_key": IMAGE_KEY,
-        "state_key": STATE_KEY,
-        "heads": ["sparse"],
-        "stride": 1,
-    }
 
 
 def test_sarm_frame_scorer_clamps_windows_to_the_episode(encoder, monkeypatch):
@@ -208,18 +212,97 @@ def test_sarm_frame_scorer_falls_back_to_the_sparse_head_without_dual_heads(enco
 
 
 def test_sarm_frame_scorer_stores_nan_for_frames_that_fail(encoder):
-    scorer = SARMFrameScorer(_FakeModel(fail_on=2, scoring_batch_size=1))
+    scorer = SARMFrameScorer(_FakeModel(fail_on=2), batch_size=1)
     result = scorer.score_episode(_FakeDataset(num_frames=4), 0)
 
     np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, np.nan, 0.3])
     assert scorer.descriptors[SPARSE_PROGRESS_SIGNAL].allow_nan is True
 
 
+def test_sarm_frame_scorer_requires_a_trained_checkpoint(encoder):
+    model = _FakeModel()
+    model.config.pretrained_path = None
+
+    with pytest.raises(ValueError, match="trained checkpoint"):
+        SARMFrameScorer(model).score_episode(_FakeDataset(), 0)
+
+
 def test_make_sarm_frame_scorer_reads_options_from_the_model_config():
     scorer = make_sarm_frame_scorer(_FakeModel(dual_heads=True, head_mode="dense", stride=2))
 
     assert scorer.heads == ["dense"]
-    assert scorer.provenance["scorer"]["options"]["stride"] == 2
+
+
+def test_sarm_frame_scorer_provenance_records_settings_that_change_the_scores():
+    config = SARMConfig(device="cpu", stride=2, frame_gap=10)
+
+    options = SARMFrameScorer(SimpleNamespace(config=config)).provenance["scorer"]["options"]
+
+    assert (options["stride"], options["frame_gap"], options["n_obs_steps"]) == (2, 10, config.n_obs_steps)
+    assert not {"device", "pretrained_path"} & set(options)
+
+
+class _StateFeaturesStep(ProcessorStep):
+    """Stand in for SARM's CLIP encoder: pass the normalized state through as `state_features`."""
+
+    def __init__(self, config, image_key=None, dataset_meta=None, dataset_stats=None):
+        super().__init__()
+        self.config = config
+
+    def __call__(self, transition):
+        observation = dict(transition[TransitionKey.OBSERVATION])
+        state = observation[self.config.state_key]
+        batch_size, steps = state.shape[:2]
+        observation["video_features"] = torch.zeros(batch_size, steps, 1)
+        observation["text_features"] = torch.zeros(batch_size, 1)
+        observation["state_features"] = state
+        observation["lengths"] = torch.full((batch_size,), steps)
+        return {**transition, TransitionKey.OBSERVATION: observation}
+
+    def transform_features(self, features):
+        return features
+
+
+class _StateModel:
+    """Predict the mean of the normalized state as progress."""
+
+    def __init__(self, config):
+        self.config = config
+
+    def eval(self):
+        return self
+
+    def predict_progress(self, batch, *, head_mode):
+        progress = batch["state_features"].float().mean(-1)
+        batch_size, steps = progress.shape
+        return SARMOutput(
+            progress=progress,
+            stage_probabilities=torch.ones(batch_size, steps, 1),
+            stage_confidence=torch.ones(batch_size, steps),
+            valid_mask=torch.ones(batch_size, steps, dtype=torch.bool),
+        )
+
+
+def test_sarm_frame_scorer_normalizes_with_the_checkpoint_statistics(tmp_path, monkeypatch):
+    # Save SARM's preprocessor with the training statistics, as `lerobot-train` does. The stand-in
+    # encoder is saved and loaded under the real encoder's import path.
+    encoder_class = type(
+        "SARMEncodingProcessorStep", (_StateFeaturesStep,), {"__module__": processor_sarm.__name__}
+    )
+    monkeypatch.setattr(processor_sarm, "SARMEncodingProcessorStep", encoder_class)
+    config = SARMConfig(device="cpu")
+    training_stats = {STATE_KEY: {"mean": torch.full((2,), 1.0), "std": torch.full((2,), 2.0)}}
+    preprocessor, _ = processor_sarm.make_sarm_pre_post_processors(config, dataset_stats=training_stats)
+    preprocessor.save_pretrained(tmp_path)
+    config.pretrained_path = str(tmp_path)
+    dataset = _FakeDataset(num_frames=3)
+    # Statistics of the scored dataset, which change when episodes are appended, are not used.
+    dataset.meta.stats = {STATE_KEY: {"mean": torch.full((2,), 100.0), "std": torch.ones(2)}}
+
+    result = SARMFrameScorer(_StateModel(config)).score_episode(dataset, 0)
+
+    # The state of frame `f` is `f`, normalized with the training statistics to `(f - 1) / 2`.
+    np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [-0.5, 0.0, 0.5])
 
 
 @pytest.mark.parametrize(
@@ -227,9 +310,13 @@ def test_make_sarm_frame_scorer_reads_options_from_the_model_config():
     [
         ({"head_mode": "middle"}, "head_mode"),
         ({"stride": 0}, "stride"),
-        ({"scoring_batch_size": 0}, "scoring_batch_size"),
     ],
 )
 def test_sarm_config_rejects_invalid_scoring_options(kwargs, match):
     with pytest.raises(ValueError, match=match):
         SARMConfig(device="cpu", **kwargs)
+
+
+def test_sarm_frame_scorer_rejects_invalid_batch_size():
+    with pytest.raises(ValueError, match="batch_size"):
+        SARMFrameScorer(_FakeModel(), batch_size=0)

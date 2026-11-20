@@ -20,11 +20,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+import draccus
 import numpy as np
 
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
 if TYPE_CHECKING:
+    from lerobot.configs.rewards import RewardModelConfig
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
@@ -62,6 +64,38 @@ class FrameScorer(Protocol):
     def descriptors(self) -> Mapping[str, SignalDescriptor]: ...
 
     def score_episode(self, dataset: LeRobotDataset, episode_index: int) -> FrameSignals: ...
+
+
+# Config fields that change where or how fast a run executes, or how a model is published, but not
+# the scores. The checkpoint is recorded separately in the provenance.
+_RUN_FIELDS = (
+    "device",
+    "pretrained_path",
+    "pretrained_revision",
+    "push_to_hub",
+    "repo_id",
+    "license",
+    "tags",
+    "private",
+)
+
+
+def scoring_options(config: RewardModelConfig) -> dict[str, Any]:
+    """Return the reward model config fields that can change the scores, for score provenance.
+
+    Resume and merge only combine scores with the same provenance, so recording every such field
+    keeps scores computed with different settings apart.
+
+    Args:
+        config: Config of the reward model that computes the scores.
+
+    Returns:
+        The encoded config without fields that cannot change the scores.
+    """
+    options = draccus.encode(config)
+    for name in _RUN_FIELDS:
+        options.pop(name, None)
+    return options
 
 
 def score_dataset(

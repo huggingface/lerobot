@@ -147,16 +147,19 @@ def make_reward_model(
     return reward_model
 
 
-def make_frame_scorer(model: PreTrainedRewardModel) -> "FrameScorer":
+def make_frame_scorer(model: PreTrainedRewardModel, *, batch_size: int = 32) -> "FrameScorer":
     """
     Create the standard offline frame scorer for a reward model.
 
     The scorer is built by the ``make_<type>_frame_scorer`` function of the model's
-    ``scoring_<type>`` module, found next to its configuration module. Scoring options,
-    such as the number of frames scored together, are read from the model's config.
+    ``scoring_<type>`` module, found next to its configuration module. Model-specific
+    scoring options, such as the frames sampled for each prediction, are read from the
+    model's config.
 
     Args:
         model: The reward model the scorer will run.
+        batch_size: Number of predictions computed together. Scorers that cannot batch
+            their inputs ignore it.
 
     Returns:
         A frame scorer that can be passed to :func:`lerobot.rewards.scoring.score_dataset`.
@@ -164,7 +167,9 @@ def make_frame_scorer(model: PreTrainedRewardModel) -> "FrameScorer":
     Raises:
         ValueError: If no frame scorer is implemented for the model's type.
     """
-    return _make_frame_scorer_from_reward_model_config(config=model.config, model=model)
+    return _make_frame_scorer_from_reward_model_config(
+        config=model.config, model=model, batch_size=batch_size
+    )
 
 
 def make_reward_pre_post_processors(
@@ -290,6 +295,7 @@ def _make_processors_from_reward_model_config(
 def _make_frame_scorer_from_reward_model_config(
     config: RewardModelConfig,
     model: PreTrainedRewardModel,
+    batch_size: int,
 ) -> "FrameScorer":
     """Create a frame scorer from a reward model configuration using dynamic imports.
 
@@ -299,6 +305,7 @@ def _make_frame_scorer_from_reward_model_config(
     Args:
         config: The reward model configuration object.
         model: The reward model the scorer will run.
+        batch_size: Number of predictions computed together.
 
     Returns:
         The frame scorer returned by ``make_<type>_frame_scorer``.
@@ -310,4 +317,4 @@ def _make_frame_scorer_from_reward_model_config(
     function = getattr(module, f"make_{config.type}_frame_scorer", None)
     if function is None:
         raise ValueError(f"Frame scorer for reward model type '{config.type}' is not implemented.")
-    return function(model=model)
+    return function(model=model, batch_size=batch_size)

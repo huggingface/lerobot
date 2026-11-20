@@ -21,7 +21,12 @@ from torch import Tensor
 
 @dataclass(frozen=True)
 class ProgressOutput:
-    """Task progress for each frame, from 0 to 1, shaped `(batch, time)`."""
+    """Task progress from 0 to 1 for each input frame, shaped `(batch, time)`.
+
+    `progress[:, t]` is the model's estimate at input frame `t`. Which frames give the
+    prediction a caller needs, and which are padding, depends on the model and on how its
+    input was built; frame scorers make this choice for offline scoring.
+    """
 
     progress: Tensor
 

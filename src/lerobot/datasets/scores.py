@@ -490,13 +490,31 @@ def load_scores_info(
     download: bool = True,
     token: str | bool | None = None,
 ) -> dict[str, Any]:
-    """Read score info, downloading the named file if absent and ``download=True``."""
+    """Read the info stored with named scores, such as the scorer's provenance.
+
+    Args:
+        dataset: Dataset the scores belong to.
+        name: Score name.
+        download: Download the named Parquet file if absent locally. Set to ``False`` for
+            local-only reads.
+        token: Optional authentication token for the download.
+
+    Returns:
+        The ``info`` passed when the scores were written.
+    """
     path = _get_scores_path(dataset, name, download=download, token=token)
     return json.loads(_read_schema(path).metadata[_INFO_KEY])
 
 
 def list_scores(dataset: LeRobotDataset) -> list[str]:
-    """List locally available score names without downloading files."""
+    """List the names of the scores stored locally, without downloading files.
+
+    Args:
+        dataset: Dataset the scores belong to.
+
+    Returns:
+        The sorted score names.
+    """
     directory = Path(dataset.root) / SCORES_DIR
     return sorted(path.stem for path in directory.glob("*.parquet") if path.is_file())
 
@@ -536,7 +554,8 @@ def merge_scores(
     reference = schemas[0]
     reference_metadata = dict(reference.metadata)
     reference_metadata.pop(_DATASET_KEY)
-    episode_paths: dict[int, Path] = {}
+    # Score files hold one row group per episode, so each episode is copied without rescanning files.
+    episode_row_groups: dict[int, tuple[pq.ParquetFile, int]] = {}
     for part, path, schema in zip(names, paths, schemas, strict=True):
         metadata = dict(schema.metadata)
         identity = json.loads(metadata.pop(_DATASET_KEY))
@@ -548,13 +567,19 @@ def merge_scores(
             raise ValueError(f"Scores {part!r} no longer align with this dataset; score it again")
         if not schema.equals(reference, check_metadata=False) or metadata != reference_metadata:
             raise ValueError(f"Scores {part!r} have different columns or info than {names[0]!r}")
-        episodes = np.unique(
-            pq.read_table(path, columns=["episode_index"]).column("episode_index").to_numpy()
-        )
-        shared = sorted(int(index) for index in episodes if int(index) in episode_paths)
+        parquet_file = pq.ParquetFile(path)
+        row_groups = {}
+        for row_group in range(parquet_file.num_row_groups):
+            episodes = np.unique(
+                parquet_file.read_row_group(row_group, columns=["episode_index"]).column(0).to_numpy()
+            )
+            if episodes.size != 1 or int(episodes[0]) in row_groups:
+                raise ValueError(f"Scores {part!r} do not hold one row group per episode; score it again")
+            row_groups[int(episodes[0])] = (parquet_file, row_group)
+        shared = sorted(set(row_groups) & set(episode_row_groups))
         if shared:
             raise ValueError(f"Scores {part!r} repeat episodes of earlier scores: {shared}")
-        episode_paths.update((int(index), path) for index in episodes)
+        episode_row_groups.update(row_groups)
 
     # The merged file describes the current dataset, including any appended episodes.
     identity = json.loads(reference.metadata[_DATASET_KEY])
@@ -567,15 +592,23 @@ def merge_scores(
     reference = reference.with_metadata(reference_metadata)
 
     tables = (
-        pq.read_table(episode_paths[index], filters=[("episode_index", "==", index)], schema=reference)
-        for index in sorted(episode_paths)
+        parquet_file.read_row_group(row_group).replace_schema_metadata(reference.metadata)
+        for parquet_file, row_group in (episode_row_groups[index] for index in sorted(episode_row_groups))
     )
     _write_episode_tables(output_path, reference, tables)
     logger.info("Published merged scores %r to %s", name, output_path)
 
 
 def push_scores_to_hub(dataset: LeRobotDataset, name: str) -> None:
-    """Upload named scores and update the dataset version tag."""
+    """Upload named scores to the dataset repository and move its version tag to that commit.
+
+    Args:
+        dataset: Dataset the scores belong to.
+        name: Score name.
+
+    Raises:
+        FileNotFoundError: If the scores do not exist locally.
+    """
     local_path = _scores_path(dataset, name)
     if not local_path.is_file():
         raise FileNotFoundError(f"Scores {name!r} do not exist")

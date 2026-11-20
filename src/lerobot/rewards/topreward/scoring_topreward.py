@@ -25,7 +25,7 @@ from numpy.typing import NDArray
 
 from lerobot.processor import PolicyProcessorPipeline
 
-from ..scoring import FrameSignals, SignalDescriptor
+from ..scoring import FrameSignals, SignalDescriptor, scoring_options
 from .modeling_topreward import TOPRewardModel
 from .processor_topreward import make_topreward_pre_post_processors
 
@@ -93,17 +93,7 @@ class TOPRewardFrameScorer:
             },
             "scorer": {
                 "version": 1,
-                "options": {
-                    "vlm_name": config.vlm_name,
-                    "image_key": config.image_key,
-                    "task_key": config.task_key,
-                    "default_task": config.default_task,
-                    "fps": config.fps,
-                    "prompt_prefix": config.prompt_prefix,
-                    "prompt_suffix_template": config.prompt_suffix_template,
-                    "add_chat_template": config.add_chat_template,
-                    "num_samples": config.num_samples,
-                },
+                "options": scoring_options(config),
             },
         }
 
@@ -143,8 +133,12 @@ class TOPRewardFrameScorer:
         )
 
 
-def make_topreward_frame_scorer(model: TOPRewardModel) -> TOPRewardFrameScorer:
-    """Construct the standard TOPReward offline frame scorer."""
+def make_topreward_frame_scorer(model: TOPRewardModel, *, batch_size: int = 32) -> TOPRewardFrameScorer:
+    """Construct the standard TOPReward offline frame scorer.
+
+    `batch_size` is accepted like other scorers' but unused: prefixes have different lengths,
+    so each one is scored on its own.
+    """
     # Each prefix is scored whole, so the processor must not crop it to `max_frames`.
     preprocessor, _ = make_topreward_pre_post_processors(replace(model.config, max_frames=None))
     return TOPRewardFrameScorer(model, preprocessor)

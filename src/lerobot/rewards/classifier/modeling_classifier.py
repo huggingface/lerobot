@@ -274,7 +274,7 @@ class Classifier(PreTrainedRewardModel):
         Args:
             batch (`Mapping[str, Tensor]`):
                 Observations with the image features the classifier was trained on.
-            threshold (`float`, defaults to 0.5):
+            threshold (`float`, *optional*, defaults to `0.5`):
                 Success probability above which a binary classifier returns 1.
 
         Returns:
