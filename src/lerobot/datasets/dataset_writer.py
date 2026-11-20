@@ -323,8 +323,7 @@ class DatasetWriter:
         else:
             ep_stats = compute_episode_stats(episode_buffer, self._meta.features)
 
-        ep_metadata = self._save_episode_data(episode_buffer)
-
+        video_metadata: dict = {}
         if streaming_encoder is not None:
             streaming_results = streaming_encoder.finish_episode()
             for video_key in self._meta.video_keys:
@@ -337,7 +336,7 @@ class DatasetWriter:
                         else np.squeeze(v.reshape(1, -1, 1, 1) / normalization_factor, axis=0)
                         for k, v in video_stats.items()
                     }
-                ep_metadata.update(self._save_episode_video(video_key, episode_index, temp_path=temp_path))
+                video_metadata.update(self._save_episode_video(video_key, episode_index, temp_path=temp_path))
         elif has_video_keys and not use_batched_encoding:
             num_cameras = len(self._meta.video_keys)
             if parallel_encoding and num_cameras > 1:
@@ -367,12 +366,25 @@ class DatasetWriter:
 
                 for video_key in self._meta.video_keys:
                     temp_path = results[video_key]
-                    ep_metadata.update(
+                    video_metadata.update(
                         self._save_episode_video(video_key, episode_index, temp_path=temp_path)
                     )
             else:
+                # Finish every encode before appending to any shared camera file.
+                # An interruption in a later camera must not leave an unrecorded video tail.
+                results = {
+                    video_key: self._encode_temporary_episode_video(video_key, episode_index)
+                    for video_key in self._meta.video_keys
+                }
                 for video_key in self._meta.video_keys:
-                    ep_metadata.update(self._save_episode_video(video_key, episode_index))
+                    video_metadata.update(
+                        self._save_episode_video(video_key, episode_index, temp_path=results[video_key])
+                    )
+
+        # Write the data rows only after encoding, so a Ctrl-C while encoding leaves no rows of an episode
+        # that `meta.save_episode` never records; they would shift every later frame once recording resumes.
+        # Data keys come first to keep the episodes metadata column order.
+        ep_metadata = {**self._save_episode_data(episode_buffer), **video_metadata}
 
         # `meta.save_episode` need to be executed after encoding the videos
         self._meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
