@@ -65,6 +65,14 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
 
         return numpy_action
 
+    def get_config(self) -> dict[str, bool]:
+        """Return the serializable action conversion settings.
+
+        Returns:
+            `dict[str, bool]`: Configuration preserving the batch dimension setting.
+        """
+        return {"squeeze_batch_dim": self.squeeze_batch_dim}
+
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
