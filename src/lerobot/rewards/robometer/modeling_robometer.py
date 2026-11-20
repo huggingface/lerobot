@@ -227,10 +227,14 @@ class RobometerRewardModel(PreTrainedRewardModel):
 
         Args:
             batch (`Mapping[str, Any]`):
-                Output of the RoboMeter preprocessor.
+                Output of the RoboMeter preprocessor, with tensors already on the model's device.
 
         Returns:
             `RobometerOutput`: Values for every frame; the caller picks frames and thresholds.
+
+        Raises:
+            KeyError: If `batch` has no encoded `input_ids`, because `RobometerEncoderProcessorStep`
+                did not run.
         """
         inputs = {
             key: batch[f"{ROBOMETER_FEATURE_PREFIX}{key}"]
@@ -251,8 +255,8 @@ class RobometerRewardModel(PreTrainedRewardModel):
             if self.config.use_discrete_progress
             else progress_logits.float()
         )
-        # Match upstream Robometer's ``extract_rewards_from_output``: per-frame
-        # progress predictions are clamped to ``[0, 1]`` before being returned.
+        # Both heads already map to [0, 1] (sigmoid, or softmax expectation over bin centers in
+        # [0, 1]); the clamp only removes floating-point rounding outside that range.
         progress_pred = progress_pred.clamp(0.0, 1.0)
         success_probs = torch.sigmoid(success_logits.float())
 

@@ -60,12 +60,17 @@ At minimum, each training sample needs:
 
 ### Programmatic inference
 
-Pass the SARM processor's output to `predict_progress()` to get per-frame progress. Run the model in evaluation mode:
+Pass the SARM processor's output to `predict_progress()`, with the model and the processor in evaluation mode. The processor steps default to training mode, which applies rewind and language perturbation augmentations:
 
 ```python
 import torch
 
 reward_model.eval()
+for step in preprocessor.steps:
+    if hasattr(step, "eval"):
+        step.eval()
+
+processed_batch = preprocessor(batch)
 with torch.inference_mode():
     prediction = reward_model.predict_progress(processed_batch, head_mode="sparse")
     progress = prediction.progress
