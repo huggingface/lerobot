@@ -18,12 +18,11 @@
 
 from __future__ import annotations
 
-import builtins
 import logging
 import os
 from collections import deque
 from pathlib import Path
-from typing import Any, Unpack, cast
+from typing import Any, Self, Unpack, cast
 
 import torch
 import torch.nn.functional as torch_nn_functional
@@ -35,7 +34,7 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
 from ..common.vla_utils import pad_vector
-from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
+from ..pretrained import ActionSelectKwargs, PreTrainedPolicy
 from .configuration_dm05 import DM05Config
 from .core.adapter import (
     flatten_feature_names,
@@ -280,7 +279,7 @@ class DM05Policy(PreTrainedPolicy):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
@@ -293,7 +292,7 @@ class DM05Policy(PreTrainedPolicy):
         revision: str | None = None,
         strict: bool = True,
         **kwargs,
-    ) -> T:
+    ) -> Self:
         """Load DM05 from a self-contained LeRobot checkpoint."""
         model_id = str(pretrained_name_or_path)
         saved_config = None

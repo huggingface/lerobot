@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -24,7 +24,7 @@ from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
 from lerobot.policies.checkpoint import SafetensorsCheckpoint
-from lerobot.policies.pretrained import PreTrainedPolicy, T
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
@@ -568,8 +568,8 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     @classmethod
     def _load_checkpoint(
-        cls, model: T, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
-    ) -> T:
+        cls, model: Self, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> Self:
         reinit_prefixes = model.config.reinit_modules
         if not reinit_prefixes:
             return super()._load_checkpoint(model, checkpoint, map_location, strict)

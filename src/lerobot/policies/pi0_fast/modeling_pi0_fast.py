@@ -14,11 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import builtins
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, Self, TypedDict, Unpack, cast
 
 import numpy as np
 import torch
@@ -57,7 +56,7 @@ from lerobot.utils.constants import (
 )
 
 from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_with_pad_torch
-from ..pretrained import PreTrainedPolicy, T
+from ..pretrained import PreTrainedPolicy
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0_fast import PI0FastConfig
 
@@ -799,7 +798,7 @@ class PI0FastPolicy(PreTrainedPolicy):
 
     @classmethod
     def from_pretrained(
-        cls: builtins.type[T],
+        cls,
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
@@ -812,7 +811,7 @@ class PI0FastPolicy(PreTrainedPolicy):
         revision: str | None = None,
         strict: bool = True,
         **kwargs,
-    ) -> T:
+    ) -> Self:
         """Override the from_pretrained method to handle key remapping and display important disclaimer."""
         print(
             "The PI0Fast model is a direct port of the OpenPI implementation. \n"
