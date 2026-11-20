@@ -1,0 +1,38 @@
+{
+  "name": "policy_postprocessor",
+  "steps": [
+    {
+      "config": {
+        "action_dim": 6
+      },
+      "registry_name": "wall_oss_05_crop_action"
+    },
+    {
+      "config": {
+        "eps": 0.0,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          }
+        },
+        "norm_map": {
+          "ACTION": "QUANTILES",
+          "STATE": "QUANTILES",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "unnormalizer_processor",
+      "state_file": "policy_postprocessor_step_1_unnormalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}

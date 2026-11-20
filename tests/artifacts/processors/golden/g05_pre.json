@@ -1,0 +1,238 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "recipe": {
+          "bindings": null,
+          "blend": {
+            "atomic_task": {
+              "bindings": null,
+              "blend": null,
+              "messages": [
+                {
+                  "content": "${subtask}",
+                  "if_present": "subtask",
+                  "role": "user",
+                  "stream": "low_level",
+                  "target": false,
+                  "tool_calls_from": null
+                }
+              ],
+              "route": null,
+              "weight": 1.0
+            },
+            "base": {
+              "bindings": null,
+              "blend": null,
+              "messages": [
+                {
+                  "content": "${task}",
+                  "if_present": null,
+                  "role": "user",
+                  "stream": "low_level",
+                  "target": false,
+                  "tool_calls_from": null
+                }
+              ],
+              "route": null,
+              "weight": 1.0
+            },
+            "cot": {
+              "bindings": {
+                "bbox": "emitted_at(t, style=vqa, role=assistant, camera=observation.images.image)"
+              },
+              "blend": null,
+              "messages": [
+                {
+                  "content": "${task}",
+                  "if_present": null,
+                  "role": "user",
+                  "stream": "low_level",
+                  "target": false,
+                  "tool_calls_from": null
+                },
+                {
+                  "content": "BBoxJSON: ${bbox}",
+                  "if_present": "bbox",
+                  "role": "assistant",
+                  "stream": "low_level",
+                  "target": true,
+                  "tool_calls_from": null
+                },
+                {
+                  "content": "Subtask: ${subtask}",
+                  "if_present": "subtask",
+                  "role": "assistant",
+                  "stream": "low_level",
+                  "target": true,
+                  "tool_calls_from": null
+                }
+              ],
+              "route": null,
+              "weight": 4.0
+            }
+          },
+          "messages": null,
+          "route": null,
+          "weight": null
+        }
+      },
+      "registry_name": "render_runtime_messages_processor"
+    },
+    {
+      "config": {
+        "recipe": null
+      },
+      "registry_name": "render_training_messages_processor"
+    },
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "camera_order": [
+          "observation.images.image",
+          "observation.images.wrist_image"
+        ],
+        "camera_sizes": {
+          "observation.images.image": [
+            256,
+            256
+          ],
+          "observation.images.wrist_image": [
+            256,
+            256
+          ]
+        },
+        "mean": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "optional_camera_keys": [],
+        "std": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "registry_name": "g05_image_transform"
+    },
+    {
+      "config": {
+        "joint_offsets": [],
+        "joint_signs": []
+      },
+      "registry_name": "g05_state_frame_transform"
+    },
+    {
+      "config": {
+        "inverse": false,
+        "joint_offsets": [],
+        "joint_signs": []
+      },
+      "registry_name": "g05_action_frame_transform"
+    },
+    {
+      "config": {
+        "action_names": null,
+        "enabled": false,
+        "exclude_joints": [],
+        "num_obs_steps": 1
+      },
+      "registry_name": "g05_relative_joint_actions"
+    },
+    {
+      "config": {
+        "action_slots": [
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "camera_order": [
+          "observation.images.image",
+          "observation.images.wrist_image"
+        ],
+        "embodiment": "so100",
+        "policy_action_dim": 20,
+        "policy_state_dim": 20,
+        "state_slots": [
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ]
+      },
+      "registry_name": "g05_embodiment_projection"
+    },
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              20
+            ],
+            "type": "ACTION"
+          },
+          "observation.image.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.images.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.state": {
+            "shape": [
+              20
+            ],
+            "type": "STATE"
+          }
+        },
+        "norm_map": {
+          "ACTION": "IDENTITY",
+          "STATE": "IDENTITY",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "normalizer_processor",
+      "state_file": "policy_preprocessor_step_9_normalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    },
+    {
+      "config": {
+        "action_tokenizer_path": "action_tokenizer.safetensors",
+        "processor_dir": "hf_processor"
+      },
+      "registry_name": "g05_tokenizer"
+    }
+  ]
+}

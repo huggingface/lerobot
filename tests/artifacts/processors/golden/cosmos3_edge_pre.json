@@ -1,0 +1,115 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    },
+    {
+      "config": {
+        "action_feature_names": null,
+        "fps": null,
+        "gripper_threshold": 0.01,
+        "idle_state": false,
+        "joint_threshold": 0.005,
+        "min_streak": 3,
+        "rotation_threshold": 0.026179938779914945,
+        "translation_threshold": 0.005,
+        "use_state": false
+      },
+      "registry_name": "cosmos3_idle_frame_processor"
+    },
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          },
+          "observation.image.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.images.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.state": {
+            "shape": [
+              6
+            ],
+            "type": "STATE"
+          }
+        },
+        "norm_map": {
+          "ACTION": "QUANTILES",
+          "STATE": "IDENTITY",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "normalizer_processor",
+      "state_file": "policy_preprocessor_step_4_normalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "camera_keys": [
+          "observation.image.cam",
+          "observation.images.cam"
+        ],
+        "chunk_size": 16,
+        "fps": null,
+        "spatial_compression": 16,
+        "temporal_compression": 4,
+        "view_size": null
+      },
+      "registry_name": "cosmos3_video_canvas_processor"
+    },
+    {
+      "config": {
+        "chunk_size": 16,
+        "fps": null,
+        "use_state": false,
+        "view_description": "The left half shows the third-person view; the right half shows the wrist-mounted camera."
+      },
+      "registry_name": "cosmos3_prompt_processor"
+    },
+    {
+      "config": {
+        "cfg_dropout_rate": 0.1,
+        "tokenizer_name": "nvidia/Cosmos3-Edge"
+      },
+      "registry_name": "cosmos3_tokenizer_processor"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}
