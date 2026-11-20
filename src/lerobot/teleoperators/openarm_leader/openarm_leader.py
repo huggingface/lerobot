@@ -17,7 +17,7 @@
 import logging
 import time
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.hardware_types import RobotAction
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.motors.damiao.damiao import MotorState

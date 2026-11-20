@@ -12,20 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Periodic rollout health logs, sampled on the control thread."""
+"""Periodic rollout health logs, sampled on the control thread.
+
+They read the memory of a CUDA device only through a PyTorch that is already loaded, so a control loop that runs a
+policy without PyTorch shares them with `lerobot-rollout`.
+"""
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 from statistics import median
 
-import torch
-
-from lerobot.inference import InferenceEngine
-from lerobot.utils.cycle_timer import CadenceStats, CycleTimer
+from .cycle_timer import CadenceStats, CycleTimer
+from .latency import LatencyWindow
 
 logger = logging.getLogger(__name__)
 _GIB = 1024**3
@@ -41,7 +44,9 @@ def _process_rss_bytes() -> int | None:
 
 def _gpu_memory_bytes(device: str | None) -> tuple[int, int] | None:
     """Device-wide CUDA memory; avoid initialization and explicit synchronization."""
-    if device is None:
+    # Only a PyTorch already loaded can have initialized CUDA, so a loop without PyTorch never imports it.
+    torch = sys.modules.get("torch")
+    if torch is None or device is None or not device.startswith("cuda"):
         return None
     try:
         selected = torch.device(device)
@@ -56,8 +61,8 @@ def _gpu_memory_bytes(device: str | None) -> tuple[int, int] | None:
 class RolloutStatusReporter:
     """Own the reporting schedule and baseline; call after each control-loop tick starts."""
 
-    def __init__(self, engine: InferenceEngine, interval_s: float, device: str | None) -> None:
-        self._engine = engine
+    def __init__(self, latency: LatencyWindow, interval_s: float, device: str | None) -> None:
+        self._latency = latency
         self._interval_s = interval_s
         self._device = device
         self._timer: CycleTimer | None = None
@@ -76,13 +81,13 @@ class RolloutStatusReporter:
             return
         if now >= self._due_at:
             self._due_at = now + self._interval_s
-            self._previous = _log_status(timer, self._previous, self._engine, self._device, now)
+            self._previous = _log_status(timer, self._previous, self._latency, self._device, now)
 
 
 def _log_status(
     timer: CycleTimer,
     previous: CadenceStats,
-    engine: InferenceEngine,
+    latency: LatencyWindow,
     device: str | None,
     now: float,
 ) -> CadenceStats:
@@ -101,10 +106,8 @@ def _log_status(
         f"{current.groups_judged - previous.groups_judged}"
     )
     parts.append(f"starved {current.starved_ticks - previous.starved_ticks}")
-    if samples := engine.latency.recent(now):
-        parts.append(
-            f"{engine.latency.label} {median(samples) * 1000:.1f} ms (worst {max(samples) * 1000:.1f})"
-        )
+    if samples := latency.recent(now):
+        parts.append(f"{latency.label} {median(samples) * 1000:.1f} ms (worst {max(samples) * 1000:.1f})")
     if (rss := _process_rss_bytes()) is not None:
         parts.append(f"process {rss / _GIB:.2f} GiB")
     if (gpu := _gpu_memory_bytes(device)) is not None:

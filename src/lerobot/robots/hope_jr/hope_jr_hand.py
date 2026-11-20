@@ -19,7 +19,7 @@ import time
 from functools import cached_property
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.hardware_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.motors.calibration_gui import RangeFinderGUI
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected

@@ -375,7 +375,9 @@ Your project must be a standard, installable Python package. Crucially, the name
 - `lerobot_teleoperator_` for a teleoperation device.
 - `lerobot_strategy_` for a `lerobot-rollout` strategy (see [Bring your own strategy](./inference#bring-your-own-strategy)).
 
-This prefix system is how `lerobot` automatically finds your plugin in the Python environment.
+This prefix system is how `lerobot` automatically finds your plugin in the Python environment. `lerobot-calibrate` automatically imports only `lerobot_robot_`, `lerobot_camera_` and `lerobot_teleoperator_` packages, and `lerobot-teleoperate`, `lerobot-replay` and `lerobot-record` also import `lerobot_env_` packages, because a [sim robot](./simulation) runs an env. `lerobot-setup-motors` imports every plugin package, including `lerobot_policy_` and `lerobot_env_` ones.
+
+So register robots, cameras and teleoperators from a `lerobot_robot_`, `lerobot_camera_` or `lerobot_teleoperator_` package, not from a [`lerobot_policy_`](./bring_your_own_policies), `lerobot_env_` or `lerobot_strategy_` package. To load a device registered elsewhere in `lerobot-calibrate`, `lerobot-teleoperate`, `lerobot-replay` or `lerobot-record`, pass `--robot.discover_packages_path=<package>` or `--teleop.discover_packages_path=<package>`. It imports the package and each module directly in it, and the command stops if one of them fails to import.
 
 #### 2\. Follow the `SomethingConfig`/`Something` Naming Pattern
 

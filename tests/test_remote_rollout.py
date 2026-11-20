@@ -136,7 +136,7 @@ def test_terminal_fault_teardown_honors_configured_return(return_home, monkeypat
     ctx, robot = make_dispatch_context(engine)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
-    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    monkeypatch.setattr("lerobot.utils.robot_utils.precise_sleep", lambda _: None)
     strategy._teardown_hardware(ctx.hardware, return_to_initial_position=return_home)
     assert robot.sent[0] == {"joint.pos": 7.0}
     if return_home:
@@ -220,7 +220,7 @@ def test_engine_stop_failure_still_runs_local_shutdown(monkeypatch):
     ctx, robot = make_dispatch_context(engine)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
-    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    monkeypatch.setattr("lerobot.utils.robot_utils.precise_sleep", lambda _: None)
     with pytest.raises(RuntimeError, match="remote close failed"):
         strategy._teardown_hardware(ctx.hardware)
     assert robot.sent[0] == {"joint.pos": 7.0}
@@ -236,7 +236,7 @@ def test_return_move_io_failure_aborts_and_disconnects(operation, monkeypatch, c
     method = "get_observation" if operation == "read" else "send_action"
     failed_io = Mock(side_effect=OSError("return move failed"))
     monkeypatch.setattr(robot, method, failed_io)
-    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    monkeypatch.setattr("lerobot.utils.robot_utils.precise_sleep", lambda _: None)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
     strategy._teardown_hardware(ctx.hardware)
@@ -292,7 +292,7 @@ def test_terminal_fault_shutdown_orders_hold_stop_home_disconnect(monkeypatch):
     )
     monkeypatch.setattr(engine, "stop", lambda: events.append(("engine_stop", None)))
     monkeypatch.setattr(robot, "disconnect", lambda: events.append(("disconnect", None)))
-    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
+    monkeypatch.setattr("lerobot.utils.robot_utils.precise_sleep", lambda _: None)
     strategy._teardown_hardware(ctx.hardware)
     assert events[0] == ("action", {"joint.pos": 7.0})
     assert events[1] == ("engine_stop", None)

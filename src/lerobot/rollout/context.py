@@ -74,6 +74,7 @@ from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
+from lerobot.utils.robot_utils import align_to_checkpoint_order, policy_features
 
 from .configs import RolloutConfig
 from .planner import PlannerConfig, VlmPlanner, training_vocabulary
@@ -133,44 +134,10 @@ def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInf
         )
 
 
-def _align_to_checkpoint_order(
-    features: dict[str, type | tuple], policy_action_names: list[str] | None, *, what: str
-) -> dict[str, type | tuple]:
-    """Order ``features`` so its motor entries follow the checkpoint's joint order.
-
-    One rule for both sides: the policy emits and consumes tensors in the order it was
-    trained on, so whichever dict is about to be flattened into a tensor has to match it.
-    Only the scalar motor entries take part; anything else (camera shapes, on the state
-    side) keeps its relative order at the end.
-
-    A set mismatch is left alone rather than forced: extra ``.vel`` channels or an
-    uncommanded base mean the two describe different things, and the robot's own order is
-    the only meaningful one. ``what`` names the side being aligned, so the warning says
-    which of the two reordered.
-    """
-    if not policy_action_names:
-        return features
-
-    motor_names = [name for name, feature in features.items() if not isinstance(feature, tuple)]
-    if set(motor_names) != set(policy_action_names) or motor_names == policy_action_names:
-        return features
-
-    logger.warning(
-        "Robot %s order %s differs from checkpoint joint order %s; reordering %s",
-        what,
-        motor_names,
-        policy_action_names,
-        what,
-    )
-    reordered = {name: features[name] for name in policy_action_names}
-    reordered.update({name: feature for name, feature in features.items() if name not in reordered})
-    return reordered
-
-
 def _assert_state_matches_action_order(dataset_features: dict, ordered_action_keys: list[str]) -> None:
     """Reject a state layout that is a permutation of the action dispatch order.
 
-    ``send_next_action`` labels the action tensor positionally with ``ordered_action_keys``,
+    ``send_next_action`` labels the action positionally with ``ordered_action_keys``,
     so a permuted ``observation.state`` commands every joint with another joint's value.
     Differing *sets* are legitimate (extra ``.vel`` channels, an uncommanded base) and pass.
     """
@@ -560,24 +527,12 @@ def build_rollout_context(
     hardware: HardwareContext | None = None
 
     try:
-        # Retain position and base-velocity channels for mobile manipulators, plus cameras.
-        # Keep every state and action component of a sim robot, whatever its name.
-        keep_all = isinstance(robot, SimRobot)
-        all_obs_features = robot.observation_features
-        observation_features_hw: dict[str, type | tuple] = {
-            k: v
-            for k, v in all_obs_features.items()
-            if isinstance(v, tuple) or (v is float and (keep_all or k.endswith((".pos", ".vel"))))
-        }
         policy_action_names = getattr(policy_config, "action_feature_names", None)
-        checkpoint_order = list(policy_action_names) if policy_action_names else None
-        observation_features_hw = _align_to_checkpoint_order(
-            observation_features_hw, checkpoint_order, what="state"
+        observation_features_hw, action_features_hw = policy_features(
+            robot,
+            list(policy_action_names) if policy_action_names else None,
+            keep_all=isinstance(robot, SimRobot),
         )
-        action_features_hw = {
-            k: v for k, v in robot.action_features.items() if keep_all or k.endswith((".pos", ".vel"))
-        }
-        action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
 
         dataset_features = _aggregate_rollout_features(
             processors,
@@ -819,12 +774,12 @@ def build_remote_rollout_context(
             if isinstance(value, tuple) or value is float
         }
         expected_state = next((feature for feature in expected if feature.name == "observation.state"), None)
-        observation_hw = _align_to_checkpoint_order(
+        observation_hw = align_to_checkpoint_order(
             observation_hw,
             list(expected_state.names) if expected_state and expected_state.names else None,
             what="state",
         )
-        action_hw = _align_to_checkpoint_order(robot.action_features, list(action.names), what="action")
+        action_hw = align_to_checkpoint_order(robot.action_features, list(action.names), what="action")
         if list(action_hw) != list(action.names):
             raise ValueError("Robot action component names differ from the deployment contract")
         features = _aggregate_rollout_features(
