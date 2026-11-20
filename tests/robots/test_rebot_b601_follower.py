@@ -57,6 +57,7 @@ def _make_motor_mock(position_rad: float | None = 0.0) -> MagicMock:
     state = MagicMock()
     state.pos = position_rad
     state.vel = 0.0
+    state.torq = 0.0
     motor.get_state.return_value = state
     return motor
 
@@ -115,12 +116,16 @@ def test_motor_family_structure_is_complete():
 
 
 @pytest.mark.parametrize("family", MotorFamily)
-def test_features_match_joints(family):
-    robot = _build(family)
-    expected = {f"{motor}.pos" for motor in robot.motor_names}
-    assert set(robot.action_features) == expected
-    assert set(robot.observation_features) == expected
-    assert "gripper.pos" in expected
+@pytest.mark.parametrize("use_velocity_and_torque", [False, True])
+def test_features_match_joints(family, use_velocity_and_torque):
+    robot = _build(family, use_velocity_and_torque=use_velocity_and_torque)
+    positions = {f"{motor}.pos" for motor in robot.motor_names}
+    observation = set(positions)
+    if use_velocity_and_torque:
+        observation |= {f"{motor}.{field}" for motor in robot.motor_names for field in ("vel", "torque")}
+    assert set(robot.action_features) == positions
+    assert set(robot.observation_features) == observation
+    assert "gripper.pos" in positions
 
 
 def test_shipped_dm_defaults_are_preserved():
@@ -346,7 +351,43 @@ def test_get_observation_uses_the_public_coordinate_frame(family, expected_posit
     with _connected(family, positions_deg=[10.0] * len(JOINT_NAMES)) as robot:
         obs = robot.get_observation()
         assert set(obs) == {f"{motor}.pos" for motor in robot.motor_names}
-        assert all(position == pytest.approx(expected_position) for position in obs.values())
+        assert set(obs) == set(robot.observation_features)
+        assert all(obs[f"{motor}.pos"] == pytest.approx(expected_position) for motor in robot.motor_names)
+
+
+@pytest.mark.parametrize(
+    ("family", "expected_position"),
+    [(MotorFamily.DM, 10.0), (MotorFamily.RS, -10.0)],
+)
+def test_get_observation_exposes_velocity_and_torque_when_enabled(family, expected_position):
+    with _connected(
+        family,
+        positions_deg=[10.0] * len(JOINT_NAMES),
+        use_velocity_and_torque=True,
+    ) as robot:
+        obs = robot.get_observation()
+        assert set(obs) == {
+            f"{motor}.{field}" for motor in robot.motor_names for field in ("pos", "vel", "torque")
+        }
+        assert set(obs) == set(robot.observation_features)
+        assert all(obs[f"{motor}.pos"] == pytest.approx(expected_position) for motor in robot.motor_names)
+        assert all(obs[f"{motor}.vel"] == 0.0 for motor in robot.motor_names)
+        assert all(obs[f"{motor}.torque"] == 0.0 for motor in robot.motor_names)
+
+
+@pytest.mark.parametrize("family", MotorFamily)
+def test_get_observation_includes_signed_velocity_and_torque(family):
+    with _connected(family, use_velocity_and_torque=True) as robot:
+        motor_name = "shoulder_lift"
+        direction = robot.profile.joint_directions[motor_name]
+        state = robot.motors[motor_name].get_state.return_value
+        state.vel = math.radians(12.0) * direction
+        state.torq = 0.75 * direction
+
+        obs = robot.get_observation()
+
+        assert obs[f"{motor_name}.vel"] == pytest.approx(12.0)
+        assert obs[f"{motor_name}.torque"] == pytest.approx(0.75)
 
 
 @pytest.mark.parametrize(
