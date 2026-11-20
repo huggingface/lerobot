@@ -24,7 +24,10 @@ the main from_pretrained method to improve modularity and testability.
 import inspect
 import json
 import tempfile
+from collections.abc import Iterator
+from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
@@ -39,6 +42,385 @@ from lerobot.processor.pipeline import (
     ProcessorStep,
     ProcessorStepRegistry,
 )
+
+
+class ArtifactOverrideStep(ProcessorStep):
+    """Accept replacement values unchanged and keep artifact and tensor state separate."""
+
+    def __init__(self, tokenizer_name: Any = None, auxiliary: Any = None, tokenizer: Any = None) -> None:
+        self.tokenizer_name = tokenizer_name
+        self.auxiliary = auxiliary
+        self.tokenizer = tokenizer
+        self.value = torch.tensor(0)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"tokenizer_name": self.tokenizer_name, "auxiliary": self.auxiliary}
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        filename = "saved-tokenizer.txt"
+        (save_directory / filename).write_text(Path(self.tokenizer_name).read_text())
+        return {"tokenizer_name": filename}
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        return {"value": self.value}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        self.value = state["value"]
+
+
+@pytest.fixture
+def artifact_step_registry() -> Iterator[str]:
+    name = "artifact_override_test_step"
+    ProcessorStepRegistry.register(name)(ArtifactOverrideStep)
+    try:
+        yield name
+    finally:
+        ProcessorStepRegistry.unregister(name)
+        del ArtifactOverrideStep._registry_name
+
+
+def _artifact_override_entry(selector: str) -> dict[str, Any]:
+    return {
+        "registry_name": selector,
+        "config": {"tokenizer_name": "obsolete"},
+        "artifacts": {"tokenizer_name": "obsolete"},
+    }
+
+
+def _write_artifact_checkpoint(path: Path, *entries: dict[str, Any]) -> Path:
+    config_path = path / "processor.json"
+    config_path.write_text(json.dumps({"name": "ArtifactOverrides", "steps": entries}))
+    return config_path
+
+
+@pytest.mark.parametrize("source", ["directory", "file"])
+@pytest.mark.parametrize("replacement", ["replacement", None, False, 0, "", [], {}])
+def test_artifact_override_local(
+    tmp_path: Path, artifact_step_registry: str, source: str, replacement: Any
+) -> None:
+    config_path = _write_artifact_checkpoint(tmp_path, _artifact_override_entry(artifact_step_registry))
+    original_json = config_path.read_bytes()
+    overrides = {artifact_step_registry: {"tokenizer_name": replacement}}
+    original_overrides = deepcopy(overrides)
+
+    pipeline = DataProcessorPipeline.from_pretrained(
+        tmp_path if source == "directory" else config_path,
+        config_filename="processor.json" if source == "directory" else "ignored.json",
+        overrides=overrides,
+    )
+
+    assert pipeline.steps[0].tokenizer_name is replacement
+    assert overrides == original_overrides
+    assert config_path.read_bytes() == original_json
+
+
+@pytest.mark.parametrize("required_artifact", [None, "remaining", "remaining.json"])
+def test_artifact_override_hub(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_step_registry: str,
+    required_artifact: str | None,
+) -> None:
+    entry = _artifact_override_entry(artifact_step_registry)
+    if required_artifact is not None:
+        entry["artifacts"]["auxiliary"] = required_artifact
+    config_path = _write_artifact_checkpoint(tmp_path, entry)
+    config_calls = []
+    artifact_calls = []
+    hub_kwargs = {
+        "force_download": False,
+        "token": None,
+        "cache_dir": str(tmp_path / "cache"),
+        "local_files_only": True,
+        "revision": "test-revision",
+    }
+
+    def fake_config_download(**kwargs: Any) -> str:
+        inspect.signature(hf_hub_download).bind(**kwargs)
+        config_calls.append(kwargs)
+        return str(config_path)
+
+    def fake_snapshot_download(**kwargs: Any) -> str:
+        artifact_calls.append(kwargs)
+        if required_artifact is None:
+            pytest.fail("overridden obsolete artifact must not be downloaded")
+        expected_pattern = f"nested/{required_artifact}"
+        if not Path(required_artifact).suffix:
+            expected_pattern += "/**"
+        assert kwargs == {
+            "repo_id": "test/artifact-overrides",
+            "repo_type": "model",
+            "allow_patterns": expected_pattern,
+            **hub_kwargs,
+        }
+        target = tmp_path / required_artifact
+        if target.suffix:
+            target.write_text("required")
+        else:
+            target.mkdir()
+        return str(tmp_path)
+
+    monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", fake_config_download)
+    monkeypatch.setattr("lerobot.processor.pipeline.snapshot_download", fake_snapshot_download)
+    pipeline = DataProcessorPipeline.from_pretrained(
+        "test/artifact-overrides",
+        config_filename="nested/processor.json",
+        overrides={artifact_step_registry: {"tokenizer_name": "replacement"}},
+        **hub_kwargs,
+    )
+
+    assert pipeline.steps[0].tokenizer_name == "replacement"
+    assert config_calls == [
+        {
+            "repo_id": "test/artifact-overrides",
+            "filename": "nested/processor.json",
+            "repo_type": "model",
+            **hub_kwargs,
+        }
+    ]
+    assert len(artifact_calls) == (required_artifact is not None)
+    if required_artifact is not None:
+        assert pipeline.steps[0].auxiliary == str(tmp_path / required_artifact)
+
+
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("shared_path", [False, True])
+def test_artifact_override_partial_local(
+    tmp_path: Path, artifact_step_registry: str, present: bool, shared_path: bool
+) -> None:
+    entry = _artifact_override_entry(artifact_step_registry)
+    remaining = "obsolete" if shared_path else "remaining"
+    entry["artifacts"]["auxiliary"] = remaining
+    _write_artifact_checkpoint(tmp_path, entry)
+    if present:
+        (tmp_path / remaining).write_text("required")
+    kwargs = {
+        "config_filename": "processor.json",
+        "overrides": {artifact_step_registry: {"tokenizer_name": "new"}},
+    }
+    if not present:
+        with pytest.raises(FileNotFoundError, match=f"Missing processor artifact '{remaining}'"):
+            DataProcessorPipeline.from_pretrained(tmp_path, **kwargs)
+    else:
+        pipeline = DataProcessorPipeline.from_pretrained(tmp_path, **kwargs)
+        assert pipeline.steps[0].tokenizer_name == "new"
+        assert pipeline.steps[0].auxiliary == str(tmp_path / remaining)
+
+
+@pytest.mark.parametrize(
+    "override_kind", ["none", "empty", "step-empty", "object", "wrong-selector", "exact"]
+)
+@pytest.mark.parametrize("present", [False, True])
+def test_artifact_override_controls(
+    tmp_path: Path, artifact_step_registry: str, override_kind: str, present: bool
+) -> None:
+    _write_artifact_checkpoint(tmp_path, _artifact_override_entry(artifact_step_registry))
+    tokenizer = object()
+    overrides = {
+        "none": None,
+        "empty": {},
+        "step-empty": {artifact_step_registry: {}},
+        "object": {artifact_step_registry: {"tokenizer": tokenizer}},
+        "wrong-selector": {"unknown_step": {"tokenizer_name": "new"}},
+        "exact": {artifact_step_registry: {"tokenizer_name": "new"}},
+    }[override_kind]
+    if present:
+        (tmp_path / "obsolete").write_text("saved")
+    kwargs = {"config_filename": "processor.json", "overrides": overrides}
+    if not present and override_kind != "exact":
+        with pytest.raises(FileNotFoundError, match="Missing processor artifact 'obsolete'"):
+            DataProcessorPipeline.from_pretrained(tmp_path, **kwargs)
+    elif override_kind == "wrong-selector":
+        with pytest.raises(KeyError, match="do not match any step"):
+            DataProcessorPipeline.from_pretrained(tmp_path, **kwargs)
+    else:
+        pipeline = DataProcessorPipeline.from_pretrained(tmp_path, **kwargs)
+        assert pipeline.steps[0].tokenizer_name == (
+            "new" if override_kind == "exact" else str(tmp_path / "obsolete")
+        )
+        if override_kind == "object":
+            assert pipeline.steps[0].tokenizer is tokenizer
+
+
+@pytest.mark.parametrize("selector_kind", ["class", "both", "repeated"])
+def test_artifact_override_selectors(tmp_path: Path, artifact_step_registry: str, selector_kind: str) -> None:
+    entry = _artifact_override_entry(artifact_step_registry)
+    selector = artifact_step_registry
+    if selector_kind == "class":
+        del entry["registry_name"]
+        entry["class"] = f"{__name__}.ArtifactOverrideStep"
+        selector = "ArtifactOverrideStep"
+    elif selector_kind == "both":
+        entry["class"] = "must.not.be.imported.ArtifactOverrideStep"
+    entries = [entry, deepcopy(entry)] if selector_kind == "repeated" else [entry]
+    _write_artifact_checkpoint(tmp_path, *entries)
+    pipeline = DataProcessorPipeline.from_pretrained(
+        tmp_path, config_filename="processor.json", overrides={selector: {"tokenizer_name": "new"}}
+    )
+    assert len(pipeline.steps) == len(entries)
+    assert all(step.tokenizer_name == "new" for step in pipeline.steps)
+
+
+@pytest.mark.parametrize("selector", ["unknown_registry", "", None])
+def test_artifact_override_registry_presence(tmp_path: Path, selector: str | None) -> None:
+    entry = _artifact_override_entry(selector)
+    entry["class"] = f"{__name__}.ArtifactOverrideStep"
+    _write_artifact_checkpoint(tmp_path, entry)
+    with pytest.raises(ImportError, match="Failed to load processor step from registry"):
+        DataProcessorPipeline.from_pretrained(
+            tmp_path, config_filename="processor.json", overrides={selector: {"tokenizer_name": "new"}}
+        )
+
+
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("invalid_overrides", [None, [], ["tokenizer_name"], "tokenizer_name"])
+def test_artifact_override_invalid_container(
+    tmp_path: Path, artifact_step_registry: str, invalid_overrides: Any, present: bool
+) -> None:
+    _write_artifact_checkpoint(tmp_path, _artifact_override_entry(artifact_step_registry))
+    if present:
+        (tmp_path / "obsolete").write_text("saved")
+    error = ValueError if present else FileNotFoundError
+    message = "Failed to instantiate processor step" if present else "Missing processor artifact 'obsolete'"
+    with pytest.raises(error, match=message):
+        DataProcessorPipeline.from_pretrained(
+            tmp_path, config_filename="processor.json", overrides={artifact_step_registry: invalid_overrides}
+        )
+
+
+def test_artifact_override_unknown_constructor_key(tmp_path: Path, artifact_step_registry: str) -> None:
+    entry = _artifact_override_entry(artifact_step_registry)
+    entry["artifacts"] = {"unsupported": "obsolete"}
+    _write_artifact_checkpoint(tmp_path, entry)
+    with pytest.raises(ValueError, match="unexpected keyword argument 'unsupported'"):
+        DataProcessorPipeline.from_pretrained(
+            tmp_path,
+            config_filename="processor.json",
+            overrides={artifact_step_registry: {"unsupported": "new"}},
+        )
+
+
+@pytest.mark.parametrize(
+    ("artifacts", "error"),
+    [
+        ({"tokenizer_name": "/absolute"}, ValueError),
+        ({"tokenizer_name": "../escape"}, ValueError),
+        ({"tokenizer_name": "safe/../../escape"}, ValueError),
+        ({"tokenizer_name": None}, TypeError),
+        ({"tokenizer_name": 3}, TypeError),
+        ({"tokenizer_name": []}, TypeError),
+        ({"tokenizer_name": {}}, TypeError),
+        (None, AttributeError),
+        ([], AttributeError),
+        ("tokenizer_name", AttributeError),
+    ],
+)
+def test_artifact_override_validates_declarations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_step_registry: str,
+    artifacts: Any,
+    error: type[Exception],
+) -> None:
+    entry = _artifact_override_entry(artifact_step_registry)
+    entry["artifacts"] = artifacts
+    _write_artifact_checkpoint(tmp_path, entry)
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("invalid declarations must fail before class resolution or Hub access")
+
+    monkeypatch.setattr(DataProcessorPipeline, "_resolve_step_class", forbidden)
+    monkeypatch.setattr("lerobot.processor.pipeline.snapshot_download", forbidden)
+    monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", forbidden)
+    with pytest.raises(error):
+        DataProcessorPipeline.from_pretrained(
+            tmp_path,
+            config_filename="processor.json",
+            overrides={artifact_step_registry: {"tokenizer_name": "new"}},
+        )
+
+
+@pytest.mark.parametrize("saved_config", [None, []])
+def test_artifact_override_preserves_invalid_config_error(
+    tmp_path: Path, artifact_step_registry: str, saved_config: Any
+) -> None:
+    entry = _artifact_override_entry(artifact_step_registry)
+    entry["config"] = saved_config
+    _write_artifact_checkpoint(tmp_path, entry)
+    with pytest.raises(ValueError, match="Failed to instantiate processor step"):
+        DataProcessorPipeline.from_pretrained(
+            tmp_path,
+            config_filename="processor.json",
+            overrides={artifact_step_registry: {"tokenizer_name": "new"}},
+        )
+
+
+def test_artifact_override_lifecycle(tmp_path: Path, artifact_step_registry: str) -> None:
+    original = tmp_path / "original.txt"
+    original.write_text("original")
+    step = ArtifactOverrideStep(tokenizer_name=str(original))
+    step.value = torch.tensor(7)
+    pipeline = DataProcessorPipeline([step], name="ArtifactLifecycle")
+    checkpoint = tmp_path / "checkpoint"
+    pipeline.save_pretrained(checkpoint, config_filename="processor.json")
+    config_path = checkpoint / "processor.json"
+    original_json = config_path.read_bytes()
+    config = json.loads(original_json)
+    original_config = deepcopy(config)
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_text("replacement")
+    overrides = {artifact_step_registry: {"tokenizer_name": str(replacement)}}
+    original_overrides = deepcopy(overrides)
+
+    loaded = DataProcessorPipeline.from_pretrained(
+        checkpoint, config_filename="processor.json", overrides=overrides
+    )
+    assert loaded.steps[0].tokenizer_name == str(replacement)
+    assert loaded.steps[0].value.item() == 7
+    second_checkpoint = tmp_path / "second"
+    loaded.save_pretrained(second_checkpoint, config_filename="processor.json")
+    reloaded = DataProcessorPipeline.from_pretrained(second_checkpoint, config_filename="processor.json")
+    assert Path(reloaded.steps[0].tokenizer_name).read_text() == "replacement"
+    assert reloaded.steps[0].value.item() == 7
+
+    # In-memory construction does not resolve checkpoint-relative artifact declarations.
+    in_memory = DataProcessorPipeline.from_config(config, state_dict=pipeline.state_dict())
+    assert in_memory.steps[0].tokenizer_name == "saved-tokenizer.txt"
+    assert in_memory.steps[0].value.item() == 7
+    DataProcessorPipeline._build_steps_with_overrides(
+        config, overrides, str(checkpoint), checkpoint, "processor.json", {}, is_local_source=True
+    )
+    assert config == original_config
+    assert overrides == original_overrides
+    assert config_path.read_bytes() == original_json
+
+
+def test_artifact_override_preserves_missing_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, artifact_step_registry: str
+) -> None:
+    entry = _artifact_override_entry(artifact_step_registry)
+    entry["state_file"] = "missing.safetensors"
+    _write_artifact_checkpoint(tmp_path, entry)
+
+    def forbidden(**kwargs: Any) -> None:
+        pytest.fail("local artifact replacement must not download missing tensor state")
+
+    monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", forbidden)
+    with pytest.raises(FileNotFoundError, match="missing.safetensors.*local processor pipeline"):
+        DataProcessorPipeline.from_pretrained(
+            tmp_path,
+            config_filename="processor.json",
+            overrides={artifact_step_registry: {"tokenizer_name": "new"}},
+        )
+
 
 # Simplified Config Loading Tests
 
