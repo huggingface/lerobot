@@ -118,7 +118,7 @@ def envhub_context(hub_path: str, directory: Path) -> Path:
     if Path(location).is_dir():
         return Path(location).resolve()
     repo, _, revision = location.partition("@")
-    snapshot = snapshot_download(repo, revision=revision or None)
+    snapshot = snapshot_download(repo, repo_type="space", revision=revision or None)
     context = directory / "envhub" / re.sub(r"[^a-z0-9_.-]+", "-", repo.lower())
     shutil.rmtree(context, ignore_errors=True)
     shutil.copytree(snapshot, context)
@@ -186,11 +186,16 @@ def serve(cfg: EnvServerLaunchConfig) -> None:
         return
     init_logging()
     server = EnvServer(cfg)
-    previous_handlers = {
-        sig: signal.signal(sig, lambda *_: server.stop()) for sig in (signal.SIGTERM, signal.SIGINT)
-    }
+    shutdown_requested = False
+
+    def request_shutdown(_signum: int, _frame: object) -> None:
+        # Event.wait can hold the same non-reentrant lock that stop() would acquire.
+        nonlocal shutdown_requested
+        shutdown_requested = True
+
+    previous_handlers = {sig: signal.signal(sig, request_shutdown) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
-        server.serve()
+        server.serve(should_stop=lambda: shutdown_requested)
     finally:
         for sig, handler in previous_handlers.items():
             signal.signal(sig, handler)

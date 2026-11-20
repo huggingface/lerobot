@@ -210,6 +210,7 @@ def load_pretrained_policy_processors(
     postprocessor_overrides: dict[str, Any] | None = None,
     preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+    trust_remote_code: bool = False,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -222,6 +223,7 @@ def load_pretrained_policy_processors(
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
         revision=revision,
+        trust_remote_code=trust_remote_code,
     )
     postprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
@@ -230,6 +232,7 @@ def load_pretrained_policy_processors(
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
         revision=revision,
+        trust_remote_code=trust_remote_code,
     )
     _reconnect_relative_absolute_steps(preprocessor, postprocessor)
     return preprocessor, postprocessor

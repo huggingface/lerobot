@@ -51,6 +51,7 @@ from torch.nn import CrossEntropyLoss
 
 from lerobot.processor import decode_fast_actions
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
     require_package,
@@ -302,6 +303,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         token: str | bool | None = None,
         revision: str = "main",
         strict: bool = False,
+        trust_remote_code: bool = False,
         **kwargs: Any,
     ) -> Self:
         """
@@ -319,6 +321,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         Returns:
             Qwen2_5_VLMoEForAction: Loaded model instance
         """
+        pretrained_name_or_path, pinned_revision = split_hub_reference(pretrained_name_or_path, revision)
+        revision = pinned_revision or revision
         Qwen2_5_VLMoEModel._require_eager_attention(attn_implementation)
         if config is None:
             config = cls.config_class.from_pretrained(
@@ -339,11 +343,19 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             force_download=force_download,
             local_files_only=local_files_only,
             token=token,
-            revision=revision,
             use_fast=True,
+            trust_remote_code=trust_remote_code,
+            revision=revision,
+            code_revision=revision,
         )
         if action_tokenizer_path is not None:
-            action_tokenizer = AutoProcessor.from_pretrained(action_tokenizer_path, trust_remote_code=True)
+            action_repo, action_revision = split_hub_reference(action_tokenizer_path)
+            action_tokenizer = AutoProcessor.from_pretrained(
+                action_repo,
+                trust_remote_code=trust_remote_code,
+                revision=action_revision,
+                code_revision=action_revision,
+            )
             processor.action_processor = action_tokenizer
         else:
             action_tokenizer = None
@@ -1825,6 +1837,7 @@ class WallXPolicy(PreTrainedPolicy):
         self.model = Qwen2_5_VLMoEForAction.from_pretrained(
             pretrained_name_or_path=config.pretrained_name_or_path,
             action_tokenizer_path=config.action_tokenizer_path,
+            trust_remote_code=config.trust_remote_code,
             attn_implementation=config.attn_implementation,
             vision_attn_implementation=vision_attn_implementation,
         )

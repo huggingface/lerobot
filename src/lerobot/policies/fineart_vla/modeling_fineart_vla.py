@@ -40,6 +40,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
 )
 from lerobot.utils.device_utils import resolve_safetensors_device
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import (
     _kernels_available,
     _liger_kernel_available,
@@ -85,7 +86,10 @@ _LOC_TOKENIZER_CACHE: dict[str, Any] = {}
 def _get_loc_tokenizer(tok_name: str, auto_tokenizer_cls: Any, register_loc_fn: Any) -> Any:
     tokenizer = _LOC_TOKENIZER_CACHE.get(tok_name)
     if tokenizer is None:
-        tokenizer = register_loc_fn(auto_tokenizer_cls.from_pretrained(tok_name))
+        repo_id, revision = split_hub_reference(tok_name)
+        tokenizer = register_loc_fn(
+            auto_tokenizer_cls.from_pretrained(repo_id, revision=revision, code_revision=revision)
+        )
         _LOC_TOKENIZER_CACHE[tok_name] = tokenizer
     return tokenizer
 
