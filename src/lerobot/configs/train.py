@@ -33,7 +33,7 @@ from lerobot.configs.parallelism import ParallelismConfig
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.optim.ema import EMAConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAIN_CONFIG_NAME as TRAIN_CONFIG_NAME
-from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
+from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint, sanitize_checkpoint_consent
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
@@ -446,9 +446,7 @@ class TrainPipelineConfig(HubMixin):
 
     def _save_pretrained(self, save_directory: Path) -> None:
         config = self.to_dict()
-        for config_key in ("policy", "reward_model"):
-            if isinstance(config.get(config_key), dict):
-                config[config_key].pop("trust_remote_code", None)
+        sanitize_checkpoint_consent(config, remove=True)
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f:
             json.dump(config, f, indent=4)
 
@@ -512,10 +510,7 @@ class TrainPipelineConfig(HubMixin):
             if is_checkpoint:
                 # Reset before draccus constructs nested configs: their __post_init__
                 # may load custom tokenizer code. Explicit CLI overrides apply below.
-                for config_key in ("policy", "reward_model"):
-                    if isinstance(config.get(config_key), dict):
-                        config[config_key]["trust_remote_code"] = False
-                        updated = True
+                updated = sanitize_checkpoint_consent(config)
             for migrate in (_migrate_legacy_rabc_fields, _migrate_legacy_wandb_section):
                 migrated_config = migrate(config)
                 if migrated_config is not None:

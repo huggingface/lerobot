@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import builtins
+from collections.abc import Iterable
 from os import PathLike
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -24,6 +25,27 @@ from huggingface_hub.utils import validate_hf_hub_args
 from .constants import CHECKPOINTS_DIR
 
 T = TypeVar("T", bound="HubMixin")
+
+
+def sanitize_checkpoint_consent(config: Any, *, remove: bool = False) -> bool:
+    """Clear serialized code consent recursively; callers apply their overrides afterwards."""
+    modified = False
+    values: Iterable[Any]
+    if isinstance(config, dict):
+        if "trust_remote_code" in config:
+            if remove:
+                config.pop("trust_remote_code")
+            else:
+                config["trust_remote_code"] = False
+            modified = True
+        values = config.values()
+    elif isinstance(config, list):
+        values = config
+    else:
+        return False
+    for value in values:
+        modified = sanitize_checkpoint_consent(value, remove=remove) or modified
+    return modified
 
 
 def split_hub_reference(

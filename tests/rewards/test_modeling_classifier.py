@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
 import pytest
 import torch
 
@@ -54,6 +56,59 @@ def test_classifier_output():
         f"{output}"
         == "ClassifierOutput(logits=tensor([1, 2, 3]), probabilities=tensor([0.1000, 0.2000, 0.3000]), hidden_states=None)"
     )
+
+
+@skip_if_package_missing("transformers")
+@pytest.mark.parametrize("caller_trust", [None, False, True])
+def test_environment_checkpoint_cannot_authorize_encoder_code(monkeypatch, tmp_path, caller_trust):
+    from transformers import AutoModel
+
+    from lerobot.configs.train import TrainPipelineConfig
+    from lerobot.processor.hil_processor import RewardClassifierProcessorStep
+
+    classifier_path = tmp_path / "classifier"
+    classifier_path.mkdir()
+    (classifier_path / "config.json").write_text(
+        json.dumps(
+            {"type": "reward_classifier", "model_name": "user/custom-encoder", "trust_remote_code": True}
+        )
+    )
+    (tmp_path / "train_config.json").write_text(
+        json.dumps(
+            {
+                "dataset": {"repo_id": "user/data"},
+                "env": {
+                    "type": "gym_manipulator",
+                    "processor": {
+                        "reward_classifier": {
+                            "pretrained_path": str(classifier_path),
+                            "trust_remote_code": True,
+                        }
+                    },
+                },
+            }
+        )
+    )
+    args = (
+        []
+        if caller_trust is None
+        else [f"--env.processor.reward_classifier.trust_remote_code={str(caller_trust).lower()}"]
+    )
+    config = TrainPipelineConfig.from_pretrained(tmp_path, cli_args=args)
+    observed = []
+
+    def load_encoder(name, *, trust_remote_code, **kwargs):
+        assert name == "user/custom-encoder"
+        observed.append(trust_remote_code)
+        raise RuntimeError("Stopped before loading encoder code")
+
+    monkeypatch.setattr(AutoModel, "from_pretrained", load_encoder)
+    classifier = config.env.processor.reward_classifier
+    with pytest.raises(RuntimeError, match="Stopped before loading encoder code"):
+        RewardClassifierProcessorStep(
+            pretrained_path=classifier.pretrained_path, trust_remote_code=classifier.trust_remote_code
+        )
+    assert observed == [caller_trust is True]
 
 
 @skip_if_package_missing("transformers")

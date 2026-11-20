@@ -16,7 +16,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from lerobot.utils.hub import find_latest_hub_checkpoint
+from lerobot.utils.hub import find_latest_hub_checkpoint, sanitize_checkpoint_consent
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_checkpoint_consent_is_cleared_regardless_of_config_structure(remove):
+    config = {"custom": [{"nested": {"trust_remote_code": True, "model": "user/model"}}], "other": None}
+
+    assert sanitize_checkpoint_consent(config, remove=remove)
+
+    expected = {"model": "user/model"} if remove else {"trust_remote_code": False, "model": "user/model"}
+    assert config == {"custom": [{"nested": expected}], "other": None}
 
 
 def _patch_list_files(monkeypatch, files):

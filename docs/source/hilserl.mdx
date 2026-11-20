@@ -788,6 +788,10 @@ constructor, or to `DataProcessorPipeline.from_pretrained` when loading a saved
 pipeline. For the environment configuration below, use
 `env.processor.reward_classifier.trust_remote_code`; this consent is separate
 from policy or environment remote-code consent.
+This flag is omitted from exported `train_config.json` files and reset when
+loading a training checkpoint. Pass
+`--env.processor.reward_classifier.trust_remote_code=true` again to authorize
+custom classifier code for the current run.
 
 To use your trained reward classifier, configure the `HILSerlRobotEnvConfig` to use your model:
 

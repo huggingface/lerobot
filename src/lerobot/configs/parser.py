@@ -37,6 +37,7 @@ from draccus.wrappers.suppressing_argparse import SuppressingArgumentParser
 from draccus.wrappers.wrapper import AggregateWrapper, Wrapper
 
 from lerobot.utils.constants import TRAIN_CONFIG_NAME
+from lerobot.utils.hub import sanitize_checkpoint_consent
 from lerobot.utils.utils import has_method
 
 F = TypeVar("F", bound=Callable[..., object])
@@ -393,10 +394,7 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
     modified = False
     # Sanitize before extracting overrides or losing the checkpoint filename to a temp path.
     if config_file.name == TRAIN_CONFIG_NAME:
-        for field in path_fields:
-            if isinstance(config_data.get(field), dict) and "trust_remote_code" in config_data[field]:
-                config_data[field]["trust_remote_code"] = False
-                modified = True
+        modified = sanitize_checkpoint_consent(config_data)
     for field in path_fields:
         if field in config_data and isinstance(config_data[field], dict) and PATH_KEY in config_data[field]:
             _config_path_args[field] = str(config_data[field].pop(PATH_KEY))

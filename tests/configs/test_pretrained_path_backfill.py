@@ -308,3 +308,67 @@ def test_cli_path_extraction_cannot_restore_checkpoint_consent(
     expected = filename == "recipe.json" if caller_trust is None else caller_trust
     assert isinstance(getattr(config, field), config_cls)
     assert getattr(config, field).trust_remote_code is expected
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_training_export_omits_environment_classifier_consent(tmp_path, consent):
+    from lerobot.envs.configs import HILSerlProcessorConfig, HILSerlRobotEnvConfig, RewardClassifierConfig
+
+    classifier = RewardClassifierConfig(pretrained_path="user/classifier", trust_remote_code=consent)
+    config = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id="user/data"),
+        env=HILSerlRobotEnvConfig(processor=HILSerlProcessorConfig(reward_classifier=classifier)),
+    )
+    config.save_pretrained(tmp_path)
+
+    saved = json.loads((tmp_path / "train_config.json").read_text())
+    assert "trust_remote_code" not in saved["env"]["processor"]["reward_classifier"]
+    assert saved["env"]["processor"]["reward_classifier"]["pretrained_path"] == "user/classifier"
+    assert classifier.trust_remote_code is consent
+
+
+@pytest.mark.parametrize(
+    "source", ["hub", "directory", "checkpoint_file", "recipe", "cli_checkpoint", "cli_recipe"]
+)
+@pytest.mark.parametrize("caller_trust", [None, False, True])
+def test_training_environment_classifier_requires_fresh_consent(monkeypatch, tmp_path, source, caller_trust):
+    import lerobot.configs.train as train_module
+
+    is_recipe = source in ("recipe", "cli_recipe")
+    path = tmp_path / ("recipe.json" if is_recipe else "train_config.json")
+    payload = {
+        "dataset": {"repo_id": "user/data"},
+        # This also makes the CLI parser rewrite the checkpoint to a temporary file.
+        "policy": {"type": "_dummy_backfill", "trust_remote_code": True},
+        "env": {
+            "type": "gym_manipulator",
+            "processor": {
+                "reward_classifier": {"pretrained_path": "user/classifier", "trust_remote_code": True}
+            },
+        },
+    }
+    path.write_text(json.dumps(payload))
+    args = (
+        []
+        if caller_trust is None
+        else [f"--env.processor.reward_classifier.trust_remote_code={str(caller_trust).lower()}"]
+    )
+    if source.startswith("cli_"):
+        monkeypatch.setattr(parser, "_config_path_args", {})
+        monkeypatch.setattr(parser, "_config_yaml_overrides", {})
+        monkeypatch.setattr(sys, "argv", ["lerobot-train", f"--config_path={path}", *args])
+
+        @parser.wrap()
+        def load(config: TrainPipelineConfig):
+            return config
+
+        config = load()
+    else:
+        monkeypatch.setattr(train_module, "hf_hub_download", lambda **kwargs: str(path))
+        checkpoint = "user/checkpoint" if source == "hub" else tmp_path if source == "directory" else path
+        config = TrainPipelineConfig.from_pretrained(checkpoint, cli_args=args)
+
+    classifier = config.env.processor.reward_classifier
+    assert classifier.trust_remote_code is (is_recipe if caller_trust is None else caller_trust)
+    assert classifier.pretrained_path == "user/classifier"
+    assert json.loads(path.read_text()) == payload
