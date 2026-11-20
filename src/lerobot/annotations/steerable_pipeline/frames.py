@@ -31,7 +31,7 @@ import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import PIL.Image
 import torch
@@ -40,6 +40,9 @@ from lerobot.configs import RGBEncoderConfig
 from lerobot.datasets.video_utils import decode_video_frames, reencode_video
 
 from .reader import EpisodeRecord, snap_to_frame
+
+if TYPE_CHECKING:
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +145,7 @@ class VideoFrameProvider:
     # :func:`lerobot.datasets.video_utils.decode_video_frames`. ``None``
     # uses the library default (torchcodec when available, else PyAV).
     video_backend: str | None = None
-    _meta: Any = field(default=None, init=False, repr=False)
+    _meta: "LeRobotDatasetMetadata" = field(default=None, init=False, repr=False)
     _cache: dict = field(default_factory=dict, init=False, repr=False)
     _camera_keys: list[str] = field(default_factory=list, init=False, repr=False)
     # Pipeline runs the three module phases under a ThreadPoolExecutor (see
@@ -314,10 +317,10 @@ class VideoFrameProvider:
             # per-file decoder is single-threaded, so serialize decodes on a
             # dedicated lock. Frame extraction is a small fraction of episode
             # wall time (VLM calls dominate), so the contention is cheap.
-            with self._decode_lock:
+            with self._decode_lock, video_path.open("rb") as video_file:
                 # Stacked ``(N, C, H, W)`` uint8 tensor; one row per timestamp.
                 decoded = decode_video_frames(
-                    video_path, shifted, self.tolerance_s, backend=self.video_backend, return_uint8=True
+                    video_file, shifted, self.tolerance_s, backend=self.video_backend, return_uint8=True
                 )
             return list(decoded)
         except Exception as exc:
