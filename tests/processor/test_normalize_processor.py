@@ -2136,3 +2136,33 @@ def test_stats_reconstruction_after_load_state_dict():
         new_result[TransitionKey.OBSERVATION][OBS_STATE],
     )
     torch.testing.assert_close(original_result[TransitionKey.ACTION], new_result[TransitionKey.ACTION])
+
+
+@pytest.mark.parametrize("processor_type", [NormalizerProcessorStep, UnnormalizerProcessorStep])
+@pytest.mark.parametrize("inference_dtype", [torch.float16, torch.bfloat16])
+def test_checkpoint_precision_after_inference(tmp_path, processor_type, inference_dtype):
+    step = processor_type(
+        features={ACTION: PolicyFeature(FeatureType.ACTION, (2,))},
+        norm_map={FeatureType.ACTION: NormalizationMode.MEAN_STD},
+        stats={ACTION: {"mean": [1.001, 0.0], "std": [0.001, 1.0]}},
+    )
+    action = torch.tensor([1.001, 0.0])
+    expected = step(create_transition(action=action))[TransitionKey.ACTION]
+    step(create_transition(action=action.to(inference_dtype)))
+    pipeline = DataProcessorPipeline(steps=[step])
+    pipeline.save_pretrained(tmp_path, config_filename="processor.json")
+    restored = DataProcessorPipeline.from_pretrained(tmp_path, config_filename="processor.json")
+    actual = restored.steps[0](create_transition(action=action))[TransitionKey.ACTION]
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+
+def test_checkpoint_preserves_loaded_singleton_after_explicit_dtype_change():
+    step = NormalizerProcessorStep(
+        features={ACTION: PolicyFeature(FeatureType.ACTION, (1,))},
+        norm_map={FeatureType.ACTION: NormalizationMode.MEAN_STD},
+    )
+    state = {f"{ACTION}.mean": torch.tensor([1.001]), f"{ACTION}.std": torch.tensor([0.001])}
+    step.load_state_dict(state)
+    step.to(dtype=torch.float64)
+    step(create_transition(action=torch.zeros(1, dtype=torch.float16)))
+    torch.testing.assert_close(step.state_dict(), {key: value.double() for key, value in state.items()})
