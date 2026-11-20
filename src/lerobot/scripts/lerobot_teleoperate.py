@@ -155,8 +155,6 @@ class TeleoperateConfig:
     base_teleop: TeleoperatorConfig | None = None
     # Key bindings and speed presets for a keyboard base input.
     base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
-    # With base-only control, hold other joints at their first measured positions.
-    hold_uncommanded: bool = True
     # Limit the maximum frames per second.
     fps: int = 60
     teleop_time_s: float | None = None
@@ -224,9 +222,12 @@ def teleop_loop(
             with timer.section("observe"):
                 obs = robot.get_observation()
 
+                if robot.name == "unitree_g1":
+                    teleop.send_feedback(obs)
+
             with timer.section("teleop"):
                 # Get teleop action
-                raw_action = teleop.get_action(observation=obs)
+                raw_action = teleop.get_action()
 
                 # Process teleop action through pipeline
                 teleop_action = teleop_action_processor((raw_action, obs))
@@ -299,7 +300,6 @@ def teleoperate(cfg: TeleoperateConfig):
             base=make_teleoperator_from_config(cfg.base_teleop),
             arm=arm,
             keyboard_mapping=cfg.base_mapping,
-            hold_uncommanded=cfg.hold_uncommanded,
             action_processor=teleop_action_processor,
         )
     else:

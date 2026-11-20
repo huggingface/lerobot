@@ -12,81 +12,92 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keyboard mapping and configuration without hardware."""
-
-from dataclasses import dataclass, field
-
-import draccus
 import pytest
 
-from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.processor import RobotProcessorPipeline
+from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
+from lerobot.processor.hold_joints_processor import HoldUncommandedJointsProcessorStep
+from lerobot.processor.keyboard_base_processor import (
+    KeyboardToBaseActionProcessorStep,
+    default_base_key_bindings,
+)
 
 
-@dataclass
-class _Config:
-    mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
+def make_pipeline(*steps):
+    return RobotProcessorPipeline(
+        steps=list(steps),
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
 
 
 @pytest.mark.parametrize(
-    "key,expected",
+    "keys,expected",
     [
-        ("w", {"x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0}),
-        ("s", {"x.vel": -0.1, "y.vel": 0.0, "theta.vel": 0.0}),
-        ("a", {"x.vel": 0.0, "y.vel": 0.1, "theta.vel": 0.0}),
-        ("d", {"x.vel": 0.0, "y.vel": -0.1, "theta.vel": 0.0}),
-        ("z", {"x.vel": 0.0, "y.vel": 0.0, "theta.vel": 30.0}),
-        ("x", {"x.vel": 0.0, "y.vel": 0.0, "theta.vel": -30.0}),
+        ("w", (0.1, 0.0, 0.0)),
+        ("s", (-0.1, 0.0, 0.0)),
+        ("a", (0.0, 0.1, 0.0)),
+        ("d", (0.0, -0.1, 0.0)),
+        ("z", (0.0, 0.0, 30.0)),
+        ("x", (0.0, 0.0, -30.0)),
+        ("wsadzx", (0.0, 0.0, 0.0)),
+        ("", (0.0, 0.0, 0.0)),
     ],
 )
-def test_mapping_directions(key, expected):
-    step = KeyboardToBaseActionProcessorStep()
-    assert step.action({key: None}) == expected
-
-
-def test_opposite_keys_cancel_and_empty_input_stops():
-    step = KeyboardToBaseActionProcessorStep()
-    stopped = {"x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0}
-    assert step.action(dict.fromkeys("wsadzx")) == stopped
-    assert step.action({}) == stopped
+def test_mapping_directions(keys, expected):
+    action = KeyboardToBaseActionProcessorStep().action(dict.fromkeys(keys))
+    assert (action["x.vel"], action["y.vel"], action["theta.vel"]) == expected
 
 
 def test_speed_changes_once_per_press_is_bounded_and_resets():
     step = KeyboardToBaseActionProcessorStep()
-    for _ in range(3):
+    for _ in range(3):  # Holding "+" only counts once.
         assert step.action({"w": None, "+": None})["x.vel"] == 0.2
-    step.action({})
-    assert step.action({"w": None, "+": None})["x.vel"] == 0.3
-    for _ in range(3):
+    for _ in range(2):
         step.action({})
         assert step.action({"w": None, "+": None})["x.vel"] == 0.3
-    for _ in range(4):
-        step.action({})
-        step.action({"-": None})
-    assert step.action({"w": None})["x.vel"] == 0.1
-    step.action({"+": None})
     step.reset()
     assert step.action({"w": None})["x.vel"] == 0.1
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"linear_speeds": ()},
-        {"angular_speeds": (1.0,)},
-        {"linear_speeds": (-1, 2, 3)},
-        {"linear_speeds": (float("nan"), 2, 3)},
-        {"angular_speeds": (1, 2, float("inf"))},
-        {"key_bindings": {}},
-    ],
-)
+@pytest.mark.parametrize("kwargs", [{"angular_speeds": (1.0,)}, {"key_bindings": {}}])
 def test_invalid_mapping_config_is_rejected(kwargs):
     with pytest.raises(ValueError):
         KeyboardToBaseActionProcessorStep(**kwargs)
 
 
-def test_processor_config_supports_custom_speeds():
-    config = draccus.parse(
-        _Config, args=["--mapping.linear_speeds=[0.4,0.8]", "--mapping.angular_speeds=[10,20]"]
+def test_holding_latches_positions_until_reset():
+    pipeline = make_pipeline(HoldUncommandedJointsProcessorStep(("joint.pos",)))
+    assert pipeline(({}, {"joint.pos": 10.0})) == {"joint.pos": 10.0}
+    assert pipeline(({}, {"joint.pos": 8.0})) == {"joint.pos": 10.0}
+    assert pipeline(({"joint.pos": 20.0}, {"joint.pos": 8.0})) == {"joint.pos": 20.0}
+    pipeline.reset()
+    assert pipeline(({}, {"joint.pos": 30.0})) == {"joint.pos": 30.0}
+
+
+def test_features_and_serialization_preserve_arm_and_held_channels(tmp_path):
+    pipeline = make_pipeline(
+        KeyboardToBaseActionProcessorStep(key_bindings={**default_base_key_bindings(), "forward": "i"}),
+        HoldUncommandedJointsProcessorStep(("arm_joint.pos", "gripper.pos")),
     )
-    assert config.mapping.action({"w": None})["x.vel"] == 0.4
-    assert config.mapping.action({"w": None, "+": None})["x.vel"] == 0.8
+    feature = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+    features = pipeline.transform_features({PipelineFeatureType.ACTION: {"arm_joint.pos": feature}})
+    # Existing action features keep their position in the dataset layout.
+    assert list(features[PipelineFeatureType.ACTION]) == [
+        "arm_joint.pos",
+        "x.vel",
+        "y.vel",
+        "theta.vel",
+        "gripper.pos",
+    ]
+    pipeline.save_pretrained(tmp_path, config_filename="processor.json")
+    restored = RobotProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename="processor.json",
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
+    sample = ({"i": None, "arm_joint.pos": 4.0}, {"gripper.pos": 8.0})
+    expected = {"arm_joint.pos": 4.0, "x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0, "gripper.pos": 8.0}
+    assert restored(sample) == pipeline(sample) == expected

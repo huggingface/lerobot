@@ -270,9 +270,6 @@ def record_loop(
     if control_time_s is None:
         raise ValueError("`control_time_s` is required: it is how long the loop runs.")
 
-    if isinstance(teleop, list):
-        raise TypeError("Pass a CompositeTeleoperator and its action processor instead of a device list.")
-
     if timer is None:
         timer = CycleTimer(fps, records_data=dataset is not None)
 
@@ -302,7 +299,9 @@ def record_loop(
         with timer.section("teleop"):
             # Get action from teleop
             if isinstance(teleop, Teleoperator):
-                act = teleop.get_action(observation=obs)
+                act = teleop.get_action()
+                if robot.name == "unitree_g1":
+                    teleop.send_feedback(obs)
 
                 # Applies a pipeline to the raw teleop action, default is IdentityProcessor
                 act_processed_teleop = teleop_action_processor((act, obs))

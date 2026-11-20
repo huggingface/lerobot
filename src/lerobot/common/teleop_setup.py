@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Assemble mobile control devices and their action pipeline at session setup."""
-
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -21,7 +19,6 @@ from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.processor import RobotProcessorPipeline, make_default_processors
 from lerobot.processor.hold_joints_processor import HoldUncommandedJointsProcessorStep
 from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
-from lerobot.processor.pipeline import ProcessorStep
 from lerobot.teleoperators import Teleoperator
 from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.teleoperators.keyboard import KeyboardTeleop
@@ -36,10 +33,9 @@ def make_mobile_teleop(
     arm: Teleoperator | None = None,
     *,
     keyboard_mapping: KeyboardToBaseActionProcessorStep | None = None,
-    hold_uncommanded: bool = True,
     action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction] | None = None,
 ) -> tuple[Teleoperator, RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]]:
-    """Assemble base/arm inputs with keyboard mapping and joint holding.
+    """Combine a base input and an optional arm leader, mapping keyboard keys and holding other joints.
 
     Reuse the returned pipeline across recording/reset phases; reset it for a new session.
     """
@@ -49,17 +45,13 @@ def make_mobile_teleop(
         else CompositeTeleoperator([(base, ""), (arm, getattr(robot, "arm_action_prefix", ""))])
     )
     pipeline = action_processor if action_processor is not None else make_default_processors()[0]
-    steps: list[ProcessorStep] = []
-    if isinstance(base, KeyboardTeleop) and base.name == "keyboard":
-        # A new session gets fresh speed/key state even when a config object is reused.
-        steps.append(
-            replace(keyboard_mapping) if keyboard_mapping is not None else KeyboardToBaseActionProcessorStep()
+    steps = list(pipeline.steps)
+    if type(base) is KeyboardTeleop:
+        # Copy so a reused config object does not share speed/key state across sessions.
+        steps.insert(0, replace(keyboard_mapping or KeyboardToBaseActionProcessorStep()))
+    steps.append(
+        HoldUncommandedJointsProcessorStep(
+            tuple(key for key in robot.action_features if key.endswith(".pos"))
         )
-    steps.extend(pipeline.steps)
-    if hold_uncommanded:
-        steps.append(
-            HoldUncommandedJointsProcessorStep(
-                tuple(key for key in robot.action_features if key.endswith(".pos"))
-            )
-        )
+    )
     return teleop, replace(pipeline, steps=steps)

@@ -61,8 +61,6 @@ class LeKiwiClient(Robot):
         self.port_zmq_cmd = config.port_zmq_cmd
         self.port_zmq_observations = config.port_zmq_observations
 
-        self.teleop_keys = config.teleop_keys
-
         self.polling_timeout_ms = config.polling_timeout_ms
         self.connect_timeout_s = config.connect_timeout_s
 
@@ -73,14 +71,6 @@ class LeKiwiClient(Robot):
         self.last_frames: dict[str, np.ndarray] = {}
 
         self.last_remote_state: RobotObservation = {}
-
-        # Define three speed levels and a current index
-        self.speed_levels = [
-            {"xy": 0.1, "theta": 30},  # slow
-            {"xy": 0.2, "theta": 60},  # medium
-            {"xy": 0.3, "theta": 90},  # fast
-        ]
-        self.speed_index = 0  # Start at slow
 
         self._is_connected = False
         self.logs: dict[str, float] = {}
@@ -285,38 +275,6 @@ class LeKiwiClient(Robot):
             obs_dict[cam_name] = frame
 
         return obs_dict
-
-    def _from_keyboard_to_base_action(self, pressed_keys: np.ndarray):
-        # Speed control
-        if self.teleop_keys["speed_up"] in pressed_keys:
-            self.speed_index = min(self.speed_index + 1, 2)
-        if self.teleop_keys["speed_down"] in pressed_keys:
-            self.speed_index = max(self.speed_index - 1, 0)
-        speed_setting = self.speed_levels[self.speed_index]
-        xy_speed = speed_setting["xy"]  # e.g. 0.1, 0.25, or 0.4
-        theta_speed = speed_setting["theta"]  # e.g. 30, 60, or 90
-
-        x_cmd = 0.0  # m/s forward/backward
-        y_cmd = 0.0  # m/s lateral
-        theta_cmd = 0.0  # deg/s rotation
-
-        if self.teleop_keys["forward"] in pressed_keys:
-            x_cmd += xy_speed
-        if self.teleop_keys["backward"] in pressed_keys:
-            x_cmd -= xy_speed
-        if self.teleop_keys["left"] in pressed_keys:
-            y_cmd += xy_speed
-        if self.teleop_keys["right"] in pressed_keys:
-            y_cmd -= xy_speed
-        if self.teleop_keys["rotate_left"] in pressed_keys:
-            theta_cmd += theta_speed
-        if self.teleop_keys["rotate_right"] in pressed_keys:
-            theta_cmd -= theta_speed
-        return {
-            "x.vel": x_cmd,
-            "y.vel": y_cmd,
-            "theta.vel": theta_cmd,
-        }
 
     def configure(self) -> None:
         pass

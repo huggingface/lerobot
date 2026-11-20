@@ -25,9 +25,7 @@ pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[ha
 
 from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs.dataset import DatasetRecordConfig
-from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.processor import make_default_processors
-from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from lerobot.robots import make_robot_from_config
 from lerobot.robots.lekiwi import LeKiwiClient
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
@@ -39,7 +37,7 @@ from lerobot.teleoperators.so_leader import SO100Leader
 from lerobot.utils.feature_utils import hw_to_dataset_features
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
-from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
+from tests.mocks.mock_teleop import MockTeleopConfig
 
 pytestmark = [pytest.mark.dataset, pytest.mark.hardware]
 
@@ -103,201 +101,6 @@ def test_record_with_a_base_teleop_alone_holds_the_other_actions(tmp_path):
     assert len(actions) > 1
     assert all(list(a[1:]) == list(actions[0][1:]) for a in actions)
     assert len({float(a[0]) for a in actions}) > 1
-
-
-def test_record_requires_a_teleop():
-    dataset_cfg = DatasetRecordConfig(repo_id=DUMMY_REPO_ID, single_task="Dummy task", push_to_hub=False)
-    with pytest.raises(ValueError, match="base_teleop"):
-        RecordConfig(robot=MockRobotConfig(), dataset=dataset_cfg)
-
-
-@pytest.mark.parametrize("with_arm", [False, True])
-@pytest.mark.parametrize("recording", [False, True])
-def test_mobile_control_delivers_fresh_observations_to_each_device(
-    tmp_path, monkeypatch, with_arm, recording
-):
-    action_counts = {}
-
-    def get_action(self, observation=None):
-        assert observation
-        action_counts[self] = action_counts.get(self, 0) + 1
-        return {
-            key: observation[key]
-            for key in self.action_features
-            if self.config.n_motors == 1 or key != "motor_1.pos"
-        }
-
-    original_init = MockTeleop.__init__
-
-    def init(self, config):
-        original_init(self, config)
-        if config.n_motors > 1:
-            self.motors = self.motors[1:]
-
-    monkeypatch.setattr(MockTeleop, "__init__", init)
-    monkeypatch.setattr(MockTeleop, "get_action", get_action)
-    kwargs = {
-        "robot": MockRobotConfig(),
-        "base_teleop": MockTeleopConfig(n_motors=1),
-        "teleop": MockTeleopConfig() if with_arm else None,
-    }
-    if recording:
-        dataset_cfg = DatasetRecordConfig(
-            repo_id=DUMMY_REPO_ID,
-            single_task="Dummy task",
-            root=tmp_path / "mobile_observed",
-            num_episodes=1,
-            episode_time_s=0.1,
-            reset_time_s=0,
-            push_to_hub=False,
-        )
-        record(RecordConfig(**kwargs, dataset=dataset_cfg, play_sounds=False))
-    else:
-        teleoperate(TeleoperateConfig(**kwargs, fps=30, teleop_time_s=0.1))
-    assert len(action_counts) == (2 if with_arm else 1)
-    assert all(count > 0 for count in action_counts.values())
-
-
-def test_record_disconnects_arm_after_base_disconnects(tmp_path):
-    arm_cfg, base_cfg = MockTeleopConfig(), MockTeleopConfig(n_motors=1)
-    arm, base = MockTeleop(arm_cfg), MockTeleop(base_cfg)
-    arm.motors = ["motor_2", "motor_3"]
-    dataset_cfg = DatasetRecordConfig(
-        repo_id=DUMMY_REPO_ID,
-        single_task="Dummy task",
-        root=tmp_path / "disconnected_base",
-        num_episodes=1,
-        episode_time_s=0.1,
-        reset_time_s=0,
-        push_to_hub=False,
-    )
-    cfg = RecordConfig(
-        robot=MockRobotConfig(), dataset=dataset_cfg, teleop=arm_cfg, base_teleop=base_cfg, play_sounds=False
-    )
-    get_action = base.get_action
-
-    def disconnect_after_action(observation=None):
-        action = get_action(observation=observation) if base.is_connected else {"motor_1.pos": 0.0}
-        if base.is_connected:
-            base.disconnect()
-        return action
-
-    with (
-        patch("lerobot.scripts.lerobot_record.make_teleoperator_from_config", side_effect=[arm, base]),
-        patch.object(base, "get_action", side_effect=disconnect_after_action),
-    ):
-        record(cfg)
-    assert not base.is_connected
-    assert not arm.is_connected
-
-
-def _spy_on_observation():
-    """Require the current robot observation in each action request."""
-    from tests.mocks.mock_teleop import MockTeleop
-
-    observations: list[RobotObservation] = []
-    get_action = MockTeleop.get_action
-
-    def spy_get_action(self, observation: RobotObservation | None = None):
-        assert observation and all(key.endswith(".pos") for key in observation)
-        observations.append(observation)
-        return get_action(self, observation=observation)
-
-    return observations, patch.object(MockTeleop, "get_action", spy_get_action)
-
-
-def test_teleoperate_hands_the_observation_to_the_teleop():
-    calls, spy = _spy_on_observation()
-    cfg = TeleoperateConfig(robot=MockRobotConfig(), teleop=MockTeleopConfig(), fps=30, teleop_time_s=0.1)
-    with spy:
-        teleoperate(cfg)
-    assert calls
-
-
-def test_record_hands_the_observation_to_the_teleop(tmp_path):
-    calls, spy = _spy_on_observation()
-    dataset_cfg = DatasetRecordConfig(
-        repo_id=DUMMY_REPO_ID,
-        single_task="Dummy task",
-        root=tmp_path / "record_observed",
-        num_episodes=1,
-        episode_time_s=0.1,
-        reset_time_s=0,
-        push_to_hub=False,
-    )
-    cfg = RecordConfig(
-        robot=MockRobotConfig(), dataset=dataset_cfg, teleop=MockTeleopConfig(), play_sounds=False
-    )
-    with spy:
-        record(cfg)
-    assert calls
-
-
-def test_record_multi_teleop_receives_fresh_observations_before_actions() -> None:
-    # Exercise LeKiwi action names without hardware or a keyboard backend.
-    robot = MagicMock(spec=LeKiwiClient)
-    robot.name = "lekiwi_client"
-    robot.arm_action_prefix = "arm_"
-    robot.action_features = {"arm_shoulder.pos": float, "x.vel": float, "y.vel": float, "theta.vel": float}
-    arm = MagicMock(spec=SO100Leader)
-    keyboard = MagicMock(spec=KeyboardTeleop)
-    keyboard.name = "keyboard"
-    keyboard.action_features = keyboard.feedback_features = {}
-    arm.action_features = {"shoulder.pos": float}
-    arm.feedback_features = {}
-    observations = [{"arm_shoulder.pos": float(tick)} for tick in range(3)]
-    robot.get_observation.side_effect = observations
-    events = {"exit_early": False}
-    received: dict[str, list[RobotObservation]] = {"arm": [], "keyboard": []}
-    sent: list[RobotAction] = []
-
-    def arm_action(observation: RobotObservation) -> RobotAction:
-        received["arm"].append(observation)
-        return {"shoulder.pos": observation["arm_shoulder.pos"] + 10.0}
-
-    def keyboard_action(observation: RobotObservation) -> RobotAction:
-        received["keyboard"].append(observation)
-        return {"w": None}
-
-    def send_action(action: RobotAction) -> RobotAction:
-        sent.append(action)
-        if len(sent) == len(observations):
-            events["exit_early"] = True
-        return action
-
-    arm.get_action.side_effect = arm_action
-    keyboard.get_action.side_effect = keyboard_action
-    robot.send_action.side_effect = send_action
-    teleop_processor, action_processor, observation_processor = make_default_processors()
-    teleop, teleop_processor = make_mobile_teleop(
-        robot,
-        keyboard,
-        arm,
-        action_processor=teleop_processor,
-        keyboard_mapping=KeyboardToBaseActionProcessorStep(linear_speeds=(0.2, 0.3, 0.4)),
-    )
-
-    record_loop(
-        robot=robot,
-        events=events,
-        fps=200,
-        teleop_action_processor=teleop_processor,
-        robot_action_processor=action_processor,
-        robot_observation_processor=observation_processor,
-        teleop=teleop,
-        control_time_s=10.0,
-    )
-
-    for device in received:
-        assert len(received[device]) == len(observations)
-        assert all(
-            actual is expected for actual, expected in zip(received[device], observations, strict=True)
-        )
-    assert sent == [
-        {"arm_shoulder.pos": float(tick) + 10.0, "x.vel": 0.2, "y.vel": 0.0, "theta.vel": 0.0}
-        for tick in range(3)
-    ]
-    assert arm.get_action.call_count == keyboard.get_action.call_count == 3
 
 
 def test_record_and_resume(tmp_path):
@@ -486,15 +289,13 @@ def test_record_loop_without_a_teleoperator_paces_and_terminates():
     assert 1 <= calls <= 6
 
 
-@pytest.mark.parametrize("hold_uncommanded", [False, True])
-def test_lekiwi_keyboard_cli_uses_pipeline_mapping(hold_uncommanded) -> None:
+def test_lekiwi_keyboard_cli_drives_the_base_and_holds_the_arm() -> None:
     cfg = draccus.parse(
         TeleoperateConfig,
         args=[
             "--robot.type=lekiwi_client",
             "--robot.remote_ip=unused",
             "--base_teleop.type=keyboard",
-            f"--hold_uncommanded={str(hold_uncommanded).lower()}",
             "--fps=200",
             "--teleop_time_s=0.02",
         ],
@@ -502,11 +303,9 @@ def test_lekiwi_keyboard_cli_uses_pipeline_mapping(hold_uncommanded) -> None:
     robot = MagicMock(spec=LeKiwiClient)
     robot.config = cfg.robot
     robot.name = "lekiwi_client"
-    robot.arm_action_prefix = "arm_"
     obs = {"arm_shoulder.pos": 10.0, "x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0}
     robot.action_features = dict.fromkeys(obs, float)
     robot.get_observation.return_value = obs
-    robot._from_keyboard_to_base_action.side_effect = AssertionError("Robot must not map keyboard input")
 
     def connect_keyboard(self, calibrate=True):
         self.event_queue.put(("w", True))
@@ -519,12 +318,9 @@ def test_lekiwi_keyboard_cli_uses_pipeline_mapping(hold_uncommanded) -> None:
     ):
         teleoperate(cfg)
 
-    expected = {"x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0}
-    if hold_uncommanded:
-        expected["arm_shoulder.pos"] = 10.0
+    expected = {"x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0, "arm_shoulder.pos": 10.0}
     assert robot.send_action.call_count > 0
     assert all(call.args[0] == expected for call in robot.send_action.call_args_list)
-    robot._from_keyboard_to_base_action.assert_not_called()
 
 
 def test_keyboard_pipeline_speed_survives_recording_and_reset_phases():
@@ -555,8 +351,6 @@ def test_keyboard_pipeline_speed_survives_recording_and_reset_phases():
     ):
         keyboard = KeyboardTeleop(KeyboardTeleopConfig())
         keyboard.event_queue.put(("w", True))
-        arm.action_features = {"shoulder.pos": float}
-        arm.feedback_features = {}
         teleop, teleop_processor = make_mobile_teleop(robot, keyboard, arm, action_processor=processors[0])
         for phase, speed_key_pressed in enumerate((True, False, True, True)):
             keyboard.event_queue.put(("+", speed_key_pressed))

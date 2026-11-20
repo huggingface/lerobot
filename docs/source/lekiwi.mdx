@@ -241,7 +241,7 @@ python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
 
 The host stops after `--host.connection_time_s` seconds (30 by default). For longer sessions, such as recording a dataset, increase it, e.g. `--host.connection_time_s=600`.
 
-Then on your laptop, set the robot IP and leader serial port in `examples/lekiwi/teleoperate.py` and run it. Set `teleop_arm_config = None` for keyboard-only control.
+Then on your laptop, also run `conda activate lerobot` and run the API example, make sure you set the correct `remote_ip` and `port` in `examples/lekiwi/teleoperate.py`.
 
 ```bash
 python examples/lekiwi/teleoperate.py
@@ -267,7 +267,7 @@ Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward,
 | -   | Decrease speed |
 
 > [!TIP]
-> To customize controls in the API example, pass a `KeyboardToBaseActionProcessorStep` as `keyboard_mapping` to `make_mobile_teleop`. It accepts `key_bindings`, `linear_speeds` (m/s), and `angular_speeds` (deg/s).
+> To change keys or speeds, pass a `KeyboardToBaseActionProcessorStep` as `keyboard_mapping` to `make_mobile_teleop`.
 
 ### From the command line
 
@@ -283,11 +283,7 @@ lerobot-teleoperate \
     --base_teleop.type=keyboard
 ```
 
-The same `--teleop` / `--base_teleop` flags work with `lerobot-record` and `lerobot-rollout`. In standalone teleoperation, set `--hold_uncommanded=false` to disable joint holding; recording always retains held targets for complete action frames.
-
-Customize CLI controls through `--base_mapping`, for example `--base_mapping.linear_speeds='[0.05,0.1,0.2]'`. Key bindings and angular speed presets use the same prefix.
-
-For Python recording, replace `teleop=[leader, keyboard]` with `make_mobile_teleop(robot, base=keyboard, arm=leader)` and reuse the returned teleoperator and action processor across recording/reset phases, as in [`examples/lekiwi/record.py`](https://github.com/huggingface/lerobot/blob/main/examples/lekiwi/record.py).
+The same flags work with `lerobot-record` and `lerobot-rollout`. Customize controls through `--base_mapping`, e.g. `--base_mapping.linear_speeds='[0.05,0.1,0.2]'`.
 
 ### Wired version
 
