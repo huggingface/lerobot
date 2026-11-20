@@ -64,12 +64,16 @@ else:
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import NormalizerProcessorStep, encode_fast_actions
+from lerobot.processor import NormalizerProcessorStep, encode_fast_actions, to_relative_actions
 from lerobot.processor.converters import create_transition
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
+
+
+# Revision of the FAST code that fitting runs; ``fit()`` only uses the class, not its vocabulary.
+LEROBOT_FAST_REVISION = "3d4d8dd847c5333f1cb0f54d00074ba22b14a5b7"
 
 
 @dataclass
@@ -108,29 +112,6 @@ class TokenizerTrainingConfig:
     hub_repo_id: str | None = None
     # Whether to create a private repository on the Hub
     hub_private: bool = False
-
-
-def apply_relative_transform(
-    state: np.ndarray, actions: np.ndarray, relative_dims: list[int] | None
-) -> np.ndarray:
-    """Apply relative transform to specified dimensions.
-
-    Args:
-        state: Current state [D]
-        actions: Future actions [D]
-        relative_dims: List of dimension indices to apply relative transform to
-
-    Returns:
-        Transformed actions [D]
-    """
-    if relative_dims is None or len(relative_dims) == 0:
-        return actions
-
-    relative_actions = actions.copy()
-    for dim in relative_dims:
-        relative_actions[dim] = actions[dim] - state[dim]
-
-    return relative_actions
 
 
 def apply_normalization(
@@ -235,31 +216,15 @@ def process_episode(args):
         actions = np.array(actions)
 
         # create action chunks (sliding window)
-        # all actions in a chunk are relative to the FIRST state in that chunk
-        action_chunks = []
-
-        for i in range(len(states) - action_horizon + 1):
-            current_state = states[i]  # First state in chunk
-            future_absolute_actions = actions[i : i + action_horizon]
-
-            if use_relative_transform:
-                # relative actions
-                relative_chunk = np.zeros_like(future_absolute_actions)
-                for t in range(action_horizon):
-                    relative_chunk[t] = apply_relative_transform(
-                        current_state,
-                        future_absolute_actions[t],
-                        relative_dims,
-                    )
-                action_chunks.append(relative_chunk)
-            else:
-                # absolute actions (no relative transform)
-                action_chunks.append(future_absolute_actions)
-
-        if len(action_chunks) == 0:
-            return None
-
-        action_chunks = np.array(action_chunks)
+        starts = range(len(states) - action_horizon + 1)
+        action_chunks = np.stack([actions[i : i + action_horizon] for i in starts])
+        if use_relative_transform and relative_dims:
+            # Same transform as training's RelativeActionsProcessorStep: every action in a chunk
+            # becomes an offset from the chunk's first state, for the listed dimensions only.
+            mask = [dim in relative_dims for dim in range(max(relative_dims) + 1)]
+            action_chunks = to_relative_actions(
+                torch.from_numpy(action_chunks), torch.from_numpy(states[list(starts)]), mask
+            ).numpy()
 
         # sample chunks
         if sample_fraction < 1.0:
@@ -302,7 +267,9 @@ def train_fast_tokenizer(
 
     # download the tokenizer source code (not pretrained weights)
     # we'll train a new tokenizer on our own data
-    base_tokenizer = AutoProcessor.from_pretrained("lerobot/fast-action-tokenizer", trust_remote_code=True)
+    base_tokenizer = AutoProcessor.from_pretrained(
+        "lerobot/fast-action-tokenizer", revision=LEROBOT_FAST_REVISION, trust_remote_code=True
+    )
 
     # convert action_chunks array to list of arrays (expected by .fit())
     action_data_list = [action_chunks[i] for i in range(len(action_chunks))]

@@ -108,6 +108,8 @@ from .tokenizer_processor import (
     TokenizerProcessorStep,
     decode_fast_actions,
     encode_fast_actions,
+    fast_ids_to_paligemma_ids,
+    paligemma_ids_to_fast_ids,
 )
 
 __all__ = [
@@ -184,6 +186,8 @@ __all__ = [
     "ActionTokenizerProcessorStep",
     "decode_fast_actions",
     "encode_fast_actions",
+    "fast_ids_to_paligemma_ids",
+    "paligemma_ids_to_fast_ids",
     "Torch2NumpyActionProcessorStep",
     "RobotActionToPolicyActionProcessorStep",
     "PolicyActionToRobotActionProcessorStep",

@@ -417,6 +417,46 @@ def decode_fast_actions(
     return np.stack(decoded_actions)
 
 
+# Checkpoint folder where ``ActionTokenizerProcessorStep`` saves its FAST tokenizer.
+ACTION_TOKENIZER_DIR = "action_tokenizer"
+
+
+def fast_ids_to_paligemma_ids[T: (int, torch.Tensor)](
+    fast_ids: T, vocab_size: int, fast_skip_tokens: int
+) -> T:
+    """Map raw FAST IDs into a PaliGemma vocabulary.
+
+    FAST ID 0 becomes the last ID before the ``fast_skip_tokens`` reserved ones at the end of
+    the vocabulary, and higher FAST IDs count down from there.
+
+    Args:
+        fast_ids: Raw FAST token IDs.
+        vocab_size: Size of the PaliGemma vocabulary.
+        fast_skip_tokens: Number of IDs at the end of the vocabulary that FAST must not use.
+
+    Returns:
+        PaliGemma token IDs, with the type and shape of ``fast_ids``.
+    """
+    return vocab_size - 1 - fast_skip_tokens - fast_ids
+
+
+def paligemma_ids_to_fast_ids[T: (int, torch.Tensor)](
+    paligemma_ids: T, vocab_size: int, fast_skip_tokens: int
+) -> T:
+    """Map PaliGemma token IDs back to raw FAST IDs, inverting ``fast_ids_to_paligemma_ids``.
+
+    Args:
+        paligemma_ids: PaliGemma token IDs.
+        vocab_size: Size of the PaliGemma vocabulary.
+        fast_skip_tokens: Number of IDs at the end of the vocabulary that FAST must not use.
+
+    Returns:
+        Raw FAST token IDs, with the type and shape of ``paligemma_ids``.
+    """
+    # The mapping is its own inverse.
+    return fast_ids_to_paligemma_ids(paligemma_ids, vocab_size, fast_skip_tokens)
+
+
 @dataclass
 @ProcessorStepRegistry.register(name="action_tokenizer_processor")
 class ActionTokenizerProcessorStep(ActionProcessorStep):
@@ -520,12 +560,6 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
         return new_transition
 
-    def _act_tokens_to_paligemma_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        """
-        Converts action tokens to PaliGemma tokens.
-        """
-        return self._paligemma_tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
-
     def _tokenize_action(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Tokenizes the action tensor and creates a mask.
@@ -568,7 +602,9 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         code_masks_list = []
         for sample_tokens in fast_tokens:
             tokens = torch.tensor(sample_tokens, dtype=torch.long, device=action.device)
-            action_code_tokens = self._act_tokens_to_paligemma_tokens(tokens)
+            action_code_tokens = fast_ids_to_paligemma_ids(
+                tokens, self._paligemma_tokenizer.vocab_size, self.fast_skip_tokens
+            )
 
             code_start = 1 + len(prompt_tokens)
             code_end = code_start + len(action_code_tokens)
@@ -665,7 +701,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         return config
 
     def save_artifacts(self, save_directory: Path) -> dict[str, str]:
-        artifact_path = Path("action_tokenizer")
+        artifact_path = Path(ACTION_TOKENIZER_DIR)
         save_pretrained = getattr(self.action_tokenizer, "save_pretrained", None)
         if save_pretrained is None:
             raise TypeError("Action tokenizer must implement save_pretrained() to save a portable pipeline.")

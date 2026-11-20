@@ -15,12 +15,14 @@
 # limitations under the License.
 
 import builtins
+import json
 import logging
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 import torch
+from huggingface_hub import snapshot_download
 from torch import Tensor, nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -42,7 +44,8 @@ else:
     PaliGemmaForConditionalGenerationWithPiGemma = None
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.processor import decode_fast_actions
+from lerobot.processor import decode_fast_actions, paligemma_ids_to_fast_ids
+from lerobot.processor.tokenizer_processor import ACTION_TOKENIZER_DIR
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -739,6 +742,59 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         return generated_action_tokens
 
 
+def _saved_action_tokenizer(
+    pretrained_name_or_path: str | Path,
+    action_tokenizer_name: str,
+    *,
+    revision: str | None = None,
+    cache_dir: str | Path | None = None,
+    force_download: bool = False,
+    token: str | bool | None = None,
+    local_files_only: bool = False,
+) -> str | None:
+    """Return the FAST tokenizer folder the processor saved in a checkpoint, if it can be used.
+
+    Args:
+        pretrained_name_or_path: Local checkpoint directory or Hub repository.
+        action_tokenizer_name: Tokenizer the policy is configured with.
+        revision: Hub revision of the checkpoint.
+        cache_dir: Hub cache directory.
+        force_download: Download again even if cached.
+        token: Hub token.
+        local_files_only: Use only the local Hub cache.
+
+    Returns:
+        The saved folder, or ``None`` when the checkpoint has none (checkpoints saved before the
+        processor stored its tokenizer) or was trained with a different ``action_tokenizer_name``.
+    """
+    if Path(pretrained_name_or_path).is_dir():
+        root = Path(pretrained_name_or_path)
+    else:
+        try:
+            root = Path(
+                snapshot_download(
+                    str(pretrained_name_or_path),
+                    allow_patterns=["config.json", f"{ACTION_TOKENIZER_DIR}/*"],
+                    revision=revision,
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    token=token,
+                    local_files_only=local_files_only,
+                )
+            )
+        except OSError:
+            # Missing from the Hub, or not cached while offline: use the configured tokenizer.
+            return None
+    folder = root / ACTION_TOKENIZER_DIR
+    config_file = root / "config.json"
+    if not (folder / "processor_config.json").is_file() or not config_file.is_file():
+        return None
+    # Fine-tuning with another tokenizer keeps the configured one.
+    if json.loads(config_file.read_text()).get("action_tokenizer_name") != action_tokenizer_name:
+        return None
+    return str(folder)
+
+
 class PI0FastPolicy(PreTrainedPolicy):
     """PI0Fast Policy for LeRobot."""
 
@@ -748,11 +804,15 @@ class PI0FastPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0FastConfig,
+        action_tokenizer_path: str | None = None,
         **kwargs,
     ):
         """
         Args:
             config: Policy configuration class instance.
+            action_tokenizer_path: FAST tokenizer to decode with instead of
+                ``config.action_tokenizer_name``. ``from_pretrained`` passes the copy the
+                processor saved in the checkpoint, so decoding uses the encoding tokenizer.
         """
         require_package("transformers", extra="pi")
         require_package("scipy", extra="pi")
@@ -764,7 +824,7 @@ class PI0FastPolicy(PreTrainedPolicy):
         try:
             # Load FAST tokenizer
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                config.action_tokenizer_name, trust_remote_code=True
+                action_tokenizer_path or config.action_tokenizer_name, trust_remote_code=True
             )
 
             # Load PaliGemma tokenizer for token conversion
@@ -830,6 +890,17 @@ class PI0FastPolicy(PreTrainedPolicy):
                 revision=revision,
                 **kwargs,
             )
+
+        # Decode with the FAST tokenizer the processor saved in the checkpoint, the one it encodes with.
+        kwargs["action_tokenizer_path"] = _saved_action_tokenizer(
+            pretrained_name_or_path,
+            config.action_tokenizer_name,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            token=token,
+            local_files_only=local_files_only,
+        )
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
@@ -1032,18 +1103,6 @@ class PI0FastPolicy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
-    def _paligemma_tokens_to_act_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        """
-        Converts PaliGemma tokens back to action tokens (inverse of _act_tokens_to_paligemma_tokens).
-
-        Args:
-            tokens: PaliGemma token IDs
-
-        Returns:
-            Action token IDs
-        """
-        return self._paligemma_tokenizer.vocab_size - 1 - self.config.fast_skip_tokens - tokens
-
     def detokenize_actions(self, tokens: torch.Tensor, action_horizon: int, action_dim: int) -> torch.Tensor:
         """
         Detokenizes action tokens back to continuous actions.
@@ -1115,7 +1174,10 @@ class PI0FastPolicy(PreTrainedPolicy):
 
         # Convert PaliGemma tokens to action tokens
         action_tokens = [
-            self._paligemma_tokens_to_act_tokens(raw_action_token) for raw_action_token in raw_action_tokens
+            paligemma_ids_to_fast_ids(
+                raw_action_token, self._paligemma_tokenizer.vocab_size, self.config.fast_skip_tokens
+            )
+            for raw_action_token in raw_action_tokens
         ]
 
         # Decode action tokens to continuous actions

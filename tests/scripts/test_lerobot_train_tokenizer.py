@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keep FAST fitting inputs consistent with policy action normalization."""
+"""Keep FAST fitting inputs consistent with policy action preprocessing."""
+
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -25,8 +27,8 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature  # noq
 from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.processor import NormalizerProcessorStep  # noqa: E402
 from lerobot.processor.converters import create_transition  # noqa: E402
-from lerobot.scripts.lerobot_train_tokenizer import apply_normalization  # noqa: E402
-from lerobot.utils.constants import ACTION  # noqa: E402
+from lerobot.scripts.lerobot_train_tokenizer import apply_normalization, process_episode  # noqa: E402
+from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 
 pytestmark = pytest.mark.dataset
 
@@ -120,3 +122,25 @@ def test_integer_actions_are_normalized_as_floating_point() -> None:
 
     assert actual.dtype == np.float64
     np.testing.assert_array_equal(actual, [-1, 0, 1])
+
+
+@pytest.mark.parametrize("use_relative_transform", [False, True])
+def test_chunks_are_relative_to_their_first_state_for_listed_dims(use_relative_transform: bool) -> None:
+    states = np.arange(12, dtype=np.float32).reshape(4, 3)
+    actions = 100 + np.arange(12, dtype=np.float32).reshape(4, 3)
+    frames = [
+        {OBS_STATE: torch.from_numpy(states[i]), ACTION: torch.from_numpy(actions[i])} for i in range(4)
+    ]
+    dataset = SimpleNamespace(
+        meta=SimpleNamespace(episodes=[{"dataset_from_index": 0, "dataset_to_index": 4}]),
+        absolute_to_relative_idx=None,
+        get_raw_item=lambda index: frames[index],
+    )
+
+    chunks = process_episode((dataset, 0, 2, [0, 2], 1.0, OBS_STATE, use_relative_transform))
+
+    expected = np.stack([actions[0:2], actions[1:3], actions[2:4]])
+    if use_relative_transform:
+        # Dimensions 0 and 2 become offsets from the chunk's first state; dimension 1 stays absolute.
+        expected[:, :, [0, 2]] -= states[:3, None, [0, 2]]
+    np.testing.assert_array_equal(chunks, expected)
