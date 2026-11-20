@@ -18,6 +18,7 @@ import dataclasses
 import importlib.resources
 import json
 import logging
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -163,6 +164,35 @@ def delta_window(
 def shift_timestamps(timestamps: Sequence[float], offset: float) -> list[float]:
     """Move episode-relative timestamps onto a source video's timeline (``from_timestamp`` offset)."""
     return [offset + timestamp for timestamp in timestamps]
+
+
+def frame_indices_to_timestamps(
+    frame_indices: Sequence[int],
+    fps: int,
+    *,
+    stored_timestamps: Sequence[float],
+    tolerance_s: float,
+) -> list[float]:
+    """Address video on the FPS grid and warn about inconsistent stored timestamps.
+
+    The persisted ``timestamp`` column is float32, which can lose enough precision in long
+    episodes to exceed the decoder tolerance. Allow half a float32 ULP in addition to that
+    tolerance when checking the column, but use float64 frame-index times for decoding.
+    Only queried rows are checked; this is not a full dataset validation pass.
+    """
+    timestamps = [int(frame_index) / fps for frame_index in frame_indices]
+    expected = np.asarray(timestamps, dtype=np.float64)
+    stored = np.asarray(stored_timestamps, dtype=np.float64)
+    rounding = np.abs(np.spacing(expected.astype(np.float32))).astype(np.float64) / 2
+    if not np.all(np.isfinite(stored) & (np.abs(stored - expected) <= tolerance_s + rounding)):
+        warnings.warn(
+            "Stored timestamp differs from frame_index / fps beyond the synchronization tolerance "
+            "and float32 rounding allowance. Video queries use frame_index / fps; "
+            "check the dataset's timestamp and frame_index columns for inconsistencies.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return timestamps
 
 
 def task_name(tasks: "pd.DataFrame", task_index: int | torch.Tensor) -> str:
