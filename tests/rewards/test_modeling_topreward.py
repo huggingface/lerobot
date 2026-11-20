@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -32,7 +33,7 @@ class _FakeQwenModel(torch.nn.Module):
     """Stand-in for ``Qwen3VLForConditionalGeneration``.
 
     Returns a ``SimpleNamespace`` with ``logits`` of a controlled shape so
-    the log-prob extraction path in ``compute_reward`` can be exercised
+    the log-prob extraction path in ``compute_log_probability`` can be exercised
     without downloading real VLM weights.
     """
 
@@ -60,6 +61,7 @@ class _FakeQwenModel(torch.nn.Module):
         for i in range(batch_size):
             target_idx = int(input_ids[i, -1].item())
             logits[i, -2, target_idx] = self._reward_value * -10  # high logit -> high log-prob
+        logits = logits + self._param * 0
         if logits_to_keep:
             logits = logits[:, -logits_to_keep:, :]
         return SimpleNamespace(logits=logits)
@@ -79,7 +81,7 @@ def _make_batch(
     *,
     omit: str | None = None,
 ) -> dict[str, torch.Tensor]:
-    """Build a ``compute_reward``-ready batch using TOPReward's namespaced keys."""
+    """Build a ``compute_log_probability`` input using TOPReward's namespaced keys."""
     batch_size, seq_len = input_ids.shape
     if attention_mask is None:
         attention_mask = torch.ones(batch_size, seq_len, dtype=torch.long)
@@ -146,53 +148,66 @@ def test_topreward_config_rejects_suffix_without_instruction_placeholder():
 
 
 # ---------------------------------------------------------------------------
-# compute_reward
+# compute_log_probability
 # ---------------------------------------------------------------------------
 
 
 @skip_if_package_missing("transformers")
-def test_topreward_compute_reward_returns_one_scalar_per_sample(monkeypatch):
-    """``compute_reward`` must return a ``(B,)`` float32 tensor with one
-    log-prob reward per sample, consuming pre-encoded Qwen-VL tensors."""
+def test_topreward_compute_log_probability_returns_one_scalar_per_sample(monkeypatch):
+    """The native API returns one float32 log-probability per sample."""
     from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
     _patch_build(monkeypatch)
     cfg = TOPRewardConfig(device="cpu")
     model = TOPRewardModel(cfg)
+    model.train()
 
     input_ids = torch.randint(0, 100, (2, 10))
     attention_mask = torch.ones(2, 10, dtype=torch.long)
     labels = _terminal_labels(input_ids)
 
     batch = _make_batch(input_ids, attention_mask, labels)
-    rewards = model.compute_reward(batch)
+    rewards = model.compute_log_probability(batch)
 
     assert rewards.shape == (2,)
     assert rewards.dtype == torch.float32
+    assert rewards.requires_grad is True
+    assert model.training is True
+
+    rewards.sum().backward()
+    assert model.model._param.grad is not None
 
 
 @skip_if_package_missing("transformers")
-def test_topreward_compute_reward_applies_success_threshold(monkeypatch):
-    """When ``success_threshold`` is finite, the model returns binary success."""
+def test_topreward_compute_log_probability_scores_the_final_target_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
     _patch_build(monkeypatch)
-    cfg = TOPRewardConfig(device="cpu", success_threshold=0.0)
-    model = TOPRewardModel(cfg)
+    model = TOPRewardModel(TOPRewardConfig(device="cpu"))
+    probabilities = torch.tensor(
+        [
+            [[0.1, 0.2, 0.7], [0.2, 0.3, 0.5], [0.8, 0.1, 0.1]],
+            [[0.2, 0.3, 0.5], [0.1, 0.8, 0.1], [0.1, 0.2, 0.7]],
+        ]
+    )
 
-    input_ids = torch.randint(0, 100, (2, 10))
-    attention_mask = torch.ones(2, 10, dtype=torch.long)
-    labels = _terminal_labels(input_ids)
+    def forward(*, logits_to_keep: int, **kwargs: object) -> SimpleNamespace:  # noqa: ARG001
+        assert logits_to_keep == 2
+        return SimpleNamespace(logits=probabilities.log()[:, -logits_to_keep:, :])
 
-    batch = _make_batch(input_ids, attention_mask, labels)
-    rewards = model.compute_reward(batch)
+    monkeypatch.setattr(model.model, "forward", forward)
+    input_ids = torch.tensor([[0, 1, 2], [2, 0, 1]])
+    batch = _make_batch(input_ids, labels=_terminal_labels(input_ids))
 
-    assert rewards.shape == (2,)
-    assert set(rewards.tolist()).issubset({0.0, 1.0})
+    actual = model.compute_log_probability(batch)
+
+    torch.testing.assert_close(actual, torch.tensor([0.5, 0.8]).log())
 
 
 @skip_if_package_missing("transformers")
-def test_topreward_compute_reward_errors_when_inputs_missing(monkeypatch):
+def test_topreward_compute_log_probability_errors_when_inputs_missing(monkeypatch):
     from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
     _patch_build(monkeypatch)
@@ -200,11 +215,11 @@ def test_topreward_compute_reward_errors_when_inputs_missing(monkeypatch):
     model = TOPRewardModel(cfg)
 
     with pytest.raises(KeyError, match=r"observation\.topreward\.input_ids"):
-        model.compute_reward(_make_batch(torch.randint(0, 100, (1, 10)), omit="input_ids"))
+        model.compute_log_probability(_make_batch(torch.randint(0, 100, (1, 10)), omit="input_ids"))
 
 
 @skip_if_package_missing("transformers")
-def test_topreward_compute_reward_errors_when_labels_missing(monkeypatch):
+def test_topreward_compute_log_probability_errors_when_labels_missing(monkeypatch):
     from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
     _patch_build(monkeypatch)
@@ -213,11 +228,11 @@ def test_topreward_compute_reward_errors_when_labels_missing(monkeypatch):
 
     input_ids = torch.randint(0, 100, (1, 10))
     with pytest.raises(KeyError, match=r"observation\.topreward\.labels"):
-        model.compute_reward(_make_batch(input_ids, labels=None))
+        model.compute_log_probability(_make_batch(input_ids, labels=None))
 
 
 @skip_if_package_missing("transformers")
-def test_topreward_compute_reward_requires_all_encoder_keys(monkeypatch):
+def test_topreward_compute_log_probability_requires_all_encoder_keys(monkeypatch):
     from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
     _patch_build(monkeypatch)
@@ -230,7 +245,7 @@ def test_topreward_compute_reward_requires_all_encoder_keys(monkeypatch):
 
     for key in required_encoder_keys:
         with pytest.raises(KeyError, match=rf"observation\.topreward\.{key}"):
-            model.compute_reward(_make_batch(input_ids, labels=labels, omit=key))
+            model.compute_log_probability(_make_batch(input_ids, labels=labels, omit=key))
 
 
 # ---------------------------------------------------------------------------
@@ -256,10 +271,14 @@ def test_topreward_save_pretrained_writes_only_config_json(monkeypatch, tmp_path
 
     assert (tmp_path / CONFIG_NAME).exists()
     assert not (tmp_path / SAFETENSORS_SINGLE_FILE).exists()
+    assert "success_threshold" not in json.loads((tmp_path / CONFIG_NAME).read_text())
 
 
 @skip_if_package_missing("transformers")
-def test_topreward_from_pretrained_local_dir_roundtrips_config(monkeypatch, tmp_path):
+@pytest.mark.parametrize("cli_overrides", [None, ["--fps=6.0"]])
+def test_topreward_from_pretrained_local_dir_roundtrips_config(
+    monkeypatch, tmp_path, cli_overrides: list[str] | None
+):
     from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
     _patch_build(monkeypatch)
@@ -269,18 +288,17 @@ def test_topreward_from_pretrained_local_dir_roundtrips_config(monkeypatch, tmp_
         fps=4.0,
         image_key="observation.images.front",
         add_chat_template=True,
-        success_threshold=-1.5,
     )
     TOPRewardModel(cfg).save_pretrained(str(tmp_path))
 
-    reloaded = TOPRewardModel.from_pretrained(str(tmp_path))
+    kwargs = {} if cli_overrides is None else {"cli_overrides": cli_overrides}
+    reloaded = TOPRewardModel.from_pretrained(str(tmp_path), **kwargs)
 
     assert isinstance(reloaded.config, TOPRewardConfig)
     assert reloaded.config.vlm_name == "Qwen/Qwen3-VL-8B-Instruct"
-    assert reloaded.config.fps == 4.0
+    assert reloaded.config.fps == (4.0 if cli_overrides is None else 6.0)
     assert reloaded.config.image_key == "observation.images.front"
     assert reloaded.config.add_chat_template is True
-    assert reloaded.config.success_threshold == -1.5
 
 
 @skip_if_package_missing("transformers")

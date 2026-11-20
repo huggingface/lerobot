@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -142,6 +144,12 @@ class _FakeTokenizer:
 
 
 class _FakeAutoProcessor:
+    video_token = "<|video_pad|>"
+    vision_start_token = "<|vision_start|>"
+    vision_end_token = "<|vision_end|>"
+    video_processor = SimpleNamespace(temporal_patch_size=2)
+    last_call: dict = {}
+
     def __init__(self) -> None:
         self.tokenizer = _FakeTokenizer()
 
@@ -150,9 +158,10 @@ class _FakeAutoProcessor:
         return cls()
 
     def apply_chat_template(self, messages, **kwargs):  # noqa: ARG002
-        return "fake_prompt_text"
+        return "<|vision_start|><|video_pad|><|vision_end|>fake_prompt_text"
 
     def __call__(self, text=None, images=None, videos=None, **kwargs):  # noqa: ARG002
+        _FakeAutoProcessor.last_call = {"text": text, "videos": videos, **kwargs}
         seq_len = 10
         batch_size = len(text) if isinstance(text, list) else 1
         return {
@@ -202,6 +211,58 @@ def test_encoder_step_emits_input_ids_and_labels(monkeypatch):
     assert labels.shape == (2, 10)
     assert labels[:, :-1].eq(-100).all()
     assert labels[:, -1].equal(input_ids[:, -1])
+
+
+def _encode_clip(monkeypatch, num_frames: int) -> dict:
+    step = _build_step(monkeypatch)
+    frames = torch.arange(num_frames, dtype=torch.uint8).view(1, num_frames, 1, 1, 1).expand(-1, -1, 3, 2, 2)
+    step(_make_transition(observation={"observation.images.top": frames}, complementary={"task": "pick"}))
+    return _FakeAutoProcessor.last_call
+
+
+@_skip_if_topreward_extras_missing
+def test_encoder_step_repeats_a_single_frame_to_fill_a_temporal_patch(monkeypatch):
+    call = _encode_clip(monkeypatch, num_frames=1)
+
+    assert call["videos"].shape[1] == 2
+    assert torch.equal(call["videos"][0, 1], call["videos"][0, 0])
+    assert call["video_metadata"][0]["total_num_frames"] == 1
+    assert call["video_metadata"][0]["frames_indices"] == [0, 0]
+
+
+@_skip_if_topreward_extras_missing
+def test_encoder_step_leaves_clips_of_a_temporal_patch_or_more_unpadded(monkeypatch):
+    call = _encode_clip(monkeypatch, num_frames=3)
+
+    assert call["videos"].shape[1] == 3
+    assert call["video_metadata"][0]["frames_indices"] == [0, 1, 2]
+
+
+@_skip_if_topreward_extras_missing
+def test_encoder_step_keeps_frame_metadata_independent_between_videos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    step = _build_step(monkeypatch)
+    step(
+        _make_transition(
+            observation={"observation.images.top": torch.zeros(2, 3, 3, 8, 8)},
+            complementary={"task": ["pick", "place"]},
+        )
+    )
+    metadata = _FakeAutoProcessor.last_call["video_metadata"]
+
+    # Qwen3-VL extends the frame-index list while constructing timestamps for odd-length clips.
+    metadata[0]["frames_indices"].append(2)
+
+    assert metadata[1]["frames_indices"] == [0, 1, 2]
+
+
+@_skip_if_topreward_extras_missing
+def test_encoder_step_gives_the_processor_the_bare_video_token(monkeypatch):
+    text = _encode_clip(monkeypatch, num_frames=2)["text"][0]
+
+    assert "<|vision_start|><|video_pad|><|vision_end|>" not in text
+    assert text.startswith("<|video_pad|>fake_prompt_text")
 
 
 @_skip_if_topreward_extras_missing

@@ -142,8 +142,6 @@ def make_reward_model(
         reward_model.config.pretrained_path = parent_path
 
     reward_model.to(cfg.device)
-    assert isinstance(reward_model, torch.nn.Module)
-
     return reward_model
 
 

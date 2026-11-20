@@ -58,6 +58,18 @@ At minimum, each training sample needs:
 - `task` (string): task description
 - `reward_model.image_key` images and `reward_model.state_key` states from the dataset
 
+### Programmatic inference
+
+Pass the SARM processor's output to `predict_progress()`, with the model in evaluation mode:
+
+```python
+import torch
+
+reward_model.eval()
+with torch.inference_mode():
+    prediction = reward_model.predict_progress(processed_batch, head_mode="sparse")
+```
+
 ---
 
 ## Annotation Modes

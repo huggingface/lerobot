@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compute per-frame Robometer progress and success curves for a LeRobot dataset.
+"""Compute per-frame Robometer progress for a LeRobot dataset.
 
 For each episode, builds per-frame sub-samples using the frame-steps
 strategy from the Robometer eval server: for each original frame ``t``,
@@ -48,20 +48,30 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import create_transition
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
 from lerobot.rewards.robometer.processor_robometer import RobometerEncoderProcessorStep
+from lerobot.utils.import_utils import (
+    _av_available,
+    _datasets_available,
+    _pyarrow_available,
+    require_package,
+)
+
+if TYPE_CHECKING or _pyarrow_available:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import LeRobotDataset
 
 DEFAULT_OUTPUT_FILENAME = "robometer_progress.parquet"
 
@@ -73,6 +83,7 @@ def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     """Read ``reward_model_path`` from parquet metadata if available."""
     if not parquet_path.exists():
         return None
+    require_package("pyarrow", extra="dataset")
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -93,10 +104,9 @@ def _resolve_task(sample: dict[str, Any], default: str) -> str:
 def _build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> list[np.ndarray]:
     """Frame-steps linspace expansion.
 
-    For each ``t in [0, num_frames - 1]`` returns ``num_subsampled_frames``
-    indices from ``np.linspace(0, t, num_subsampled_frames)`` — the first
-    and last frames are always included. Each entry is a fixed-size array
-    so the model can batch them.
+    For each `t` in `[0, num_frames - 1]`, returns `np.linspace(0, t, num_subsampled_frames)` rounded to
+    frame indices: from frame 0 to frame `t`, or frame 0 only when `num_subsampled_frames` is 1. Every
+    entry has the same size, so the model can batch them.
     """
     return [np.linspace(0, t, num_subsampled_frames).round().astype(np.int64) for t in range(num_frames)]
 
@@ -111,7 +121,13 @@ def compute_robometer_progress(
     episodes: list[int] | None = None,
     image_key: str | None = None,
 ) -> Path:
-    """Run Robometer over a dataset and write per-frame progress + success."""
+    """Run Robometer over a dataset and write per-frame progress."""
+    if num_subsampled_frames < 1:
+        raise ValueError(f"num_subsampled_frames must be >= 1, got {num_subsampled_frames}")
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
+    require_package("pyarrow", extra="dataset")
+
     logging.info(f"Loading Robometer: {reward_model_path}")
     config = RobometerConfig(pretrained_path=reward_model_path, device=device)
     if image_key is not None:
@@ -124,7 +140,8 @@ def compute_robometer_progress(
         image_key=config.image_key,
         task_key=config.task_key,
         default_task=config.default_task,
-        max_frames=num_subsampled_frames,
+        # Each sub-sample already has exactly `num_subsampled_frames` frames.
+        max_frames=None,
         use_multi_image=config.use_multi_image,
         use_per_frame_progress_token=config.use_per_frame_progress_token,
     )
@@ -167,18 +184,17 @@ def compute_robometer_progress(
             transition = create_transition(
                 observation={image_key: frames_batch}, complementary_data={"task": task}
             )
-            encoded = encoder(transition)
-            obs = encoded[TransitionKey.OBSERVATION]
-            if obs is None:
-                raise ValueError("RobometerEncoderProcessorStep returned a transition without an observation")
-            batch = {
-                key: value.to(device) if isinstance(value, torch.Tensor) else value
-                for key, value in obs.items()
-            }
-
-            with torch.no_grad():
-                rewards = model.compute_reward(batch)
-            progress_per_frame[start:end] = rewards.cpu().numpy()
+            with torch.inference_mode():
+                encoded = encoder(transition)
+                obs = encoded[TransitionKey.OBSERVATION]
+                if obs is None:
+                    raise ValueError("RobometerEncoderProcessorStep returned no observation")
+                batch = {
+                    key: value.to(device) if isinstance(value, torch.Tensor) else value
+                    for key, value in obs.items()
+                }
+                prediction = model.predict_progress(batch)
+            progress_per_frame[start:end] = prediction.progress[:, -1].cpu().numpy()
 
         for local in range(num_frames):
             all_index.append(ep_start + local)
@@ -263,6 +279,8 @@ Examples:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
 
     reward_model_path = args.reward_model_path
     if reward_model_path is None:

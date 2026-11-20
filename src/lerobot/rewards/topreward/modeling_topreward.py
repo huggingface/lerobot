@@ -56,15 +56,11 @@ from __future__ import annotations
 
 import builtins
 import logging
-import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import numpy as np
 import torch
-from huggingface_hub import hf_hub_download
-from huggingface_hub.constants import CONFIG_NAME
-from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
 from torch.nn.functional import cross_entropy
 
@@ -113,31 +109,33 @@ class TOPRewardModel(PreTrainedRewardModel):
 
         self.model = Qwen3VLForConditionalGeneration.from_pretrained(config.vlm_name, **model_kwargs)
 
-    def compute_reward(self, batch: dict[str, Any]) -> Tensor:
-        """Return one log-prob reward per sample in the batch."""
+    def compute_log_probability(self, batch: Mapping[str, Any]) -> Tensor:
+        """Compute `log P(target token | video, prompt)` for each sample.
+
+        Args:
+            batch (`Mapping[str, Any]`):
+                Output of the TOPReward preprocessor.
+
+        Returns:
+            `Tensor`: One float32 log-probability per sample, shaped `(batch,)`.
+        """
         inputs: dict[str, Any] = {}
         for key in TOPREWARD_INPUT_KEYS:
             batch_key = f"{TOPREWARD_FEATURE_PREFIX}{key}"
             if batch_key not in batch:
                 raise KeyError(
                     f"TOPReward batch missing `{batch_key}`. Make sure the "
-                    "TOPRewardEncoderProcessorStep ran before `compute_reward`."
+                    "TOPRewardEncoderProcessorStep ran before `compute_log_probability`."
                 )
             inputs[key] = batch[batch_key]
 
-        device = next(self.model.parameters()).device
-        inputs = {key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()}
         labels = inputs.pop("labels")
+        # Keep the final two positions: the first predicts the final target token.
         inputs["logits_to_keep"] = 2
 
-        self.eval()
-        with torch.no_grad():
-            outputs = self.model(**inputs)
+        outputs = self.model(**inputs)
         logits = outputs.logits
-        rewards = -cross_entropy(logits[:, -2, :].float(), labels[:, -1], reduction="none")
-        if np.isfinite(self.config.success_threshold):
-            rewards = (rewards > self.config.success_threshold).float()
-        return rewards.to(self.config.device or "cpu")
+        return -cross_entropy(logits[:, -2, :].float(), labels[:, -1], reduction="none")
 
     def _save_pretrained(self, save_directory: Path) -> None:
         """Save ``config.json`` only."""
@@ -161,6 +159,7 @@ class TOPRewardModel(PreTrainedRewardModel):
     ) -> T:
         """Load a TOPReward configuration and instantiate the wrapped VLM."""
         if config is None:
+            cli_overrides = kwargs.pop("cli_overrides", [])
             config = RewardModelConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
                 force_download=force_download,
@@ -170,6 +169,7 @@ class TOPRewardModel(PreTrainedRewardModel):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                cli_overrides=cli_overrides,
                 **kwargs,
             )
         if not isinstance(config, TOPRewardConfig):
@@ -178,23 +178,6 @@ class TOPRewardModel(PreTrainedRewardModel):
                 f"`pretrained_name_or_path={pretrained_name_or_path!r}` points at a "
                 "TOPReward checkpoint."
             )
-
-        model_id = str(pretrained_name_or_path)
-        if not os.path.isdir(model_id):
-            try:
-                hf_hub_download(
-                    repo_id=model_id,
-                    filename=CONFIG_NAME,
-                    revision=revision,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    token=token,
-                    local_files_only=local_files_only,
-                )
-            except HfHubHTTPError as e:
-                raise FileNotFoundError(
-                    f"{CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
-                ) from e
 
         instance = cls(config, **kwargs)
         instance.to(config.device)

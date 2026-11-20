@@ -21,13 +21,47 @@ TOPReward is a **zero-shot** reward model that extracts token log-probabilities 
 _Reward model type not recognized — please update this template._
 {% endif %}
 
+{% if model_name in ["robometer", "topreward"] %}
+This reward model is inference-only in [LeRobot](https://github.com/huggingface/lerobot): it can't be trained with `lerobot-train`.
+{% else %}
 This reward model has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
+{% endif %}
 See the full documentation at [LeRobot Docs](https://huggingface.co/docs/lerobot/index).
 
 ---
 
 ## How to Get Started with the Reward Model
 
+### Load the reward model in Python
+
+```python
+import torch
+
+from lerobot.configs.rewards import RewardModelConfig
+from lerobot.rewards import make_reward_model
+
+config = RewardModelConfig.from_pretrained("{{ reward_model_repo_id | default('<hf_user>/<reward_model_repo_id>', true) }}")
+reward_model = make_reward_model(config)
+reward_model.eval()
+
+{% if model_name in ["reward_classifier", "sarm", "robometer", "topreward"] %}
+# `batch` is the output of this model's preprocessor.
+with torch.inference_mode():
+{% if model_name == "reward_classifier" %}
+    reward = reward_model.predict_reward(batch)
+{% elif model_name == "sarm" %}
+    prediction = reward_model.predict_progress(batch, head_mode="sparse")
+    progress = prediction.progress
+{% elif model_name == "robometer" %}
+    prediction = reward_model.predict_progress(batch)
+    progress = prediction.progress
+    success_probability = prediction.success_probability
+{% elif model_name == "topreward" %}
+    log_probability = reward_model.compute_log_probability(batch)
+{% endif %}
+{% endif %}
+```
+{% if model_name not in ["robometer", "topreward"] %}
 ### Train from scratch
 
 ```bash
@@ -42,15 +76,7 @@ lerobot-train \
 ```
 
 _Writes checkpoints to `outputs/train/<desired_reward_model_repo_id>/checkpoints/`._
-
-### Load the reward model in Python
-
-```python
-from lerobot.rewards import make_reward_model
-
-reward_model = make_reward_model(pretrained_path="<hf_user>/<reward_model_repo_id>")
-reward = reward_model.compute_reward(batch)
-```
+{% endif %}
 
 ---
 
