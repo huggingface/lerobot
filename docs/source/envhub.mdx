@@ -8,6 +8,13 @@ An EnvHub environment is a Hugging Face Space with an `env.py` that builds a [Gy
 
 This page shows how to use an EnvHub environment, then everything needed to write and publish one. [Simulation](./simulation) covers the commands in depth; [Adding a benchmark](./adding_benchmarks) is for the benchmarks LeRobot maintains in its CI.
 
+## Migrate from model repositories
+
+- **Environment authors:** publish the environment files as a [Hugging Face Space](#publish). EnvHub no longer loads them from model repositories.
+- **Environment users:** point your commands to the Space and use a commit hash from that Space. An old model repository's commit hash may not exist there.
+- **Offline users:** download the Space at the revision you want to run while online first. Previously cached model files won't be used.
+- **Docker users:** run `lerobot-env-server` once with `--docker=true --build=true` to replace the existing simulator image with one built from the Space.
+
 ## Use an EnvHub environment
 
 Browse [Spaces tagged `envhub`](https://huggingface.co/spaces?filter=envhub) or the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments).
