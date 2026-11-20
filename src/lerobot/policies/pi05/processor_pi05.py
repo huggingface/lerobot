@@ -134,10 +134,12 @@ def make_pi05_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
+    state_indices = config.state_observation_delta_indices
     relative_step = RelativeActionsProcessorStep(
         enabled=config.use_relative_actions,
         exclude_joints=getattr(config, "relative_exclude_joints", []),
         action_names=getattr(config, "action_feature_names", None),
+        state_index=state_indices.index(0) if state_indices is not None else 0,
     )
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
