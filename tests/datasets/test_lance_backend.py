@@ -105,6 +105,22 @@ def assert_items_equal(actual: dict, expected: dict, atol: float = 0.0) -> None:
             torch.testing.assert_close(actual[key], expected_val, rtol=0, atol=atol, msg=key)
 
 
+class _ImportlibProxy:
+    """``importlib`` with selected lookups replaced; every other attribute stays real.
+
+    Tests replace only the lookup they exercise, so unrelated callers such as
+    :func:`lerobot.utils.import_utils.require_package` keep ``importlib.metadata``.
+    """
+
+    def __init__(self, **overrides: object) -> None:
+        self._overrides = overrides
+
+    def __getattr__(self, name: str) -> object:
+        if name in self._overrides:
+            return self._overrides[name]
+        return getattr(importlib, name)
+
+
 class _FakeRGBDecoder:
     metadata = SimpleNamespace(average_fps=10.0)
 
@@ -341,7 +357,7 @@ def test_pyav_video_backend_decodes_blob_without_torchcodec(video_dataset_roots,
         return real_import_module(name, *args, **kwargs)
 
     # LanceDatasetReader only looks torchcodec up through its module-level importlib.
-    monkeypatch.setattr(lance_backend, "importlib", SimpleNamespace(import_module=import_module))
+    monkeypatch.setattr(lance_backend, "importlib", _ImportlibProxy(import_module=import_module))
 
     rgb_pyav_calls = []
     real_decode = lance_backend.decode_video_frames_pyav
@@ -378,7 +394,7 @@ def test_default_video_backend_falls_back_to_pyav(video_dataset_roots, monkeypat
     monkeypatch.setattr(
         import_utils,
         "importlib",
-        SimpleNamespace(util=SimpleNamespace(find_spec=find_spec), import_module=import_module),
+        _ImportlibProxy(util=SimpleNamespace(find_spec=find_spec), import_module=import_module),
     )
 
     expected = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="pyav")[0]
@@ -443,7 +459,7 @@ def test_explicit_torchcodec_that_cannot_be_imported_fails_at_open(video_dataset
             raise ImportError("torchcodec is not installed")
         return real_import_module(name, *args, **kwargs)
 
-    monkeypatch.setattr(lance_backend, "importlib", SimpleNamespace(import_module=import_module))
+    monkeypatch.setattr(lance_backend, "importlib", _ImportlibProxy(import_module=import_module))
     with pytest.raises(ImportError, match="video_backend='pyav'"):
         LeRobotDataset(DUMMY_REPO_ID, root=lance_root, video_backend="torchcodec")
 
