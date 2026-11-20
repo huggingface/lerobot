@@ -43,6 +43,8 @@ from huggingface_hub.utils import httpx
 
 from lerobot.common.train_utils import push_checkpoint_to_hub
 from lerobot.configs import parser
+from lerobot.envs.configs import HubEnvConfig
+from lerobot.utils.hub import sanitize_checkpoint_consent
 
 from .dataset import ensure_dataset_available
 
@@ -102,9 +104,7 @@ def build_remote_config_file(cfg, repo_id: str, dest: Path, tags: list[str] | No
     # trainer image doesn't know about.
     data = remote.to_dict()
     data.pop("job", None)
-    for field in ("policy", "reward_model"):
-        if isinstance(data.get(field), dict):
-            data[field].pop("trust_remote_code", None)
+    sanitize_checkpoint_consent(data, remove=True)
     policy = data.get("policy")
     # `policy.dtype` is newer than the released trainer image. Omit it only when both the value and the
     # policy class default are None: the pod then decodes the missing key back to the same None.
@@ -410,8 +410,12 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
         repo_id = fresh_repo_id
         command = ["lerobot-train", f"--config_path={config_repo_id}"]
 
+    # Reapply caller consent on the pod's CLI: loading the staged config clears
+    # saved permission, independently for the policy and evaluation environment.
     if cfg.policy is not None and cfg.policy.trust_remote_code:
         command.append("--policy.trust_remote_code=true")
+    if isinstance(cfg.env, HubEnvConfig) and cfg.env.trust_remote_code:
+        command.append("--env.trust_remote_code=true")
 
     print(f"Submitting job to HF Jobs (flavor={cfg.job.target}, image={cfg.job.image}) ...")
     job_info = run_job(
