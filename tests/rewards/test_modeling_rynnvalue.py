@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +22,9 @@ import torch
 
 pytest.importorskip("transformers")
 
+from huggingface_hub import hf_hub_download  # noqa: E402
 from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE  # noqa: E402
+from huggingface_hub.errors import HfHubHTTPError  # noqa: E402
 
 from lerobot.configs.rewards import RewardModelConfig  # noqa: E402
 from lerobot.rewards import RemainingTimeOutput  # noqa: E402
@@ -153,6 +156,19 @@ def test_rynnvalue_config_validation():
         RynnValueConfig(device="cpu", inference_fps=0)
     with pytest.raises(ValueError, match="pretrained_path"):
         RynnValueConfig(device="cpu", pretrained_path=None)
+
+
+@pytest.mark.parametrize("repo_id", ["lerobot/RynnValue-4B", "lerobot/RynnValue-8B"])
+def test_published_rynnvalue_configs_load(repo_id: str) -> None:
+    # The model tests use fake configs, so only this catches a published config the class rejects.
+    try:
+        config_file = hf_hub_download(repo_id, CONFIG_NAME)
+    except (HfHubHTTPError, OSError) as error:
+        pytest.skip(f"Could not download {repo_id}: {error}")
+
+    config = RewardModelConfig.from_pretrained(Path(config_file).parent)
+
+    assert isinstance(config, RynnValueConfig)
 
 
 def test_value_tokenizer_two_hot_symlog_roundtrip():
