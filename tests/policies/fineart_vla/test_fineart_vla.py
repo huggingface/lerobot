@@ -19,6 +19,7 @@
 import json
 import shutil
 from dataclasses import asdict, dataclass
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import draccus
@@ -156,7 +157,7 @@ def test_train_expert_only_without_vlm_supervision():
 
 class _ActionTokenizer:
     def __call__(self, actions):
-        return np.asarray(actions).round().astype(np.int64)
+        return [chunk.flatten().tolist() for chunk in np.asarray(actions).round().astype(np.int64)]
 
     def save_pretrained(self, path):
         path.mkdir(parents=True)
@@ -259,6 +260,31 @@ def test_processor_save_load_roundtrip_embeds_action_tokenizer(tmp_path, monkeyp
     assert asdict(loaded.steps[1].recipe) == asdict(recipe)
     torch.testing.assert_close(loaded.steps[0].state_dict()["action.min"], torch.tensor([-1.0, -2.0]))
     torch.testing.assert_close(loaded.steps[-1]._tokenize_action(action)[0], expected_tokens)
+
+
+@pytest.mark.dataset
+def test_processor_records_fast_vocab_size_in_saved_config(tmp_path, monkeypatch):
+    pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+    pytest.importorskip("av", reason="recipes require lerobot[dataset]")
+    # The universal FAST tokenizers have 2048 IDs, more than the legacy fallback of 1024.
+    monkeypatch.setattr(
+        "lerobot.processor.tokenizer_processor.AutoProcessor.from_pretrained",
+        lambda path, **kwargs: SimpleNamespace(bpe_tokenizer=range(2048)),
+    )
+    monkeypatch.setattr(
+        "lerobot.processor.tokenizer_processor.AutoTokenizer.from_pretrained",
+        lambda *args, **kwargs: _PaligemmaTokenizer(),
+    )
+    config = FineARTVLAConfig(
+        device="cpu", recipe_path="recipes/subtask.yaml", auto_fit_fast_tokenizer=False, **_parity_features()
+    )
+    assert config.fast_vocab_size is None
+
+    make_pre_post_processors(config)
+
+    assert config.fast_vocab_size == 2048
+    config.save_pretrained(tmp_path)
+    assert PreTrainedConfig.from_pretrained(tmp_path).fast_vocab_size == 2048
 
 
 def _parity_features():

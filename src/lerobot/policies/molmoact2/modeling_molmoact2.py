@@ -38,7 +38,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 from safetensors.torch import load_file as load_safetensors_file
@@ -46,6 +45,7 @@ from torch import Tensor
 from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import decode_fast_actions
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import (
     _peft_available,
@@ -1736,26 +1736,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 raise RuntimeError(
                     "Model generated no decodable action tokens between <action_start>/<action_end>."
                 )
-            try:
-                decoded = action_tokenizer.decode(
-                    [discrete_token_ids],
-                    time_horizon=self._generation_action_horizon(),
-                    action_dim=int(action_dim),
-                )
-            except TypeError:
-                decoded = action_tokenizer.decode([discrete_token_ids])
-            action_chunk = np.asarray(decoded, dtype=np.float32)
-            if action_chunk.ndim == 1:
-                action_chunk = action_chunk[None, :]
-            elif action_chunk.ndim == 3:
-                if int(action_chunk.shape[0]) != 1:
-                    action_chunk = action_chunk.reshape(action_chunk.shape[-2], action_chunk.shape[-1])
-                else:
-                    action_chunk = action_chunk[0]
-            elif action_chunk.ndim > 3:
-                action_chunk = action_chunk.reshape(action_chunk.shape[-2], action_chunk.shape[-1])
-            if action_chunk.ndim != 2:
-                raise RuntimeError(f"Decoded action chunk has unexpected shape {action_chunk.shape}.")
+            (action_chunk,) = decode_fast_actions(
+                action_tokenizer,
+                [discrete_token_ids],
+                int(action_dim),
+                time_horizon=self._generation_action_horizon(),
+            )
             chunks.append(torch.as_tensor(action_chunk, device=token_row.device, dtype=torch.float32))
         return torch.stack(chunks, dim=0)
 

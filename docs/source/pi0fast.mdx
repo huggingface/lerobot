@@ -56,11 +56,11 @@ You have two options for the FAST tokenizer:
 ```bash
 lerobot-train-tokenizer \
     --repo_id "user/my-lerobot-dataset" \
-    --action_horizon 10 \
-    --encoded_dims "0:6" \
+    --action_horizon 50 \
+    --encoded_dims "0:7" \
     --vocab_size 1024 \
     --scale 10.0 \
-    --normalization_mode QUANTILES \
+    --normalization_mode MEAN_STD \
     --output_dir "./my_fast_tokenizer" \
     --push_to_hub true \
     --hub_repo_id "username/my-action-tokenizer"
@@ -77,6 +77,15 @@ lerobot-train-tokenizer \
 | `--scale`              | DCT scaling factor for quantization                                               | `10.0`       |
 | `--normalization_mode` | Normalization mode (`MEAN_STD`, `MIN_MAX`, `QUANTILES`, `QUANTILE10`, `IDENTITY`) | `QUANTILES`  |
 | `--sample_fraction`    | Fraction of chunks to sample per episode                                          | `0.1`        |
+
+Fit the tokenizer on the same actions π₀-FAST tokenizes during training:
+
+- `--action_horizon` equals `--policy.chunk_size` (`50` by default). π₀-FAST encodes and decodes whole chunks.
+- `--encoded_dims` covers every action dimension, `0:<action_dim>` (`0:7` for a 7-DoF arm). π₀-FAST tokenizes all of them.
+- `--normalization_mode` equals the policy's action normalization, `MEAN_STD` by default.
+- With `--policy.use_relative_actions=true`, also pass `--use_relative_transform=true` and list in `--relative_dims` every dimension except the joints in `--policy.relative_exclude_joints` (the gripper by default).
+
+Then train with `--policy.action_tokenizer_name` set to the output directory or Hub repository.
 
 ## Usage
 
@@ -164,6 +173,17 @@ actions = policy.predict_action_chunk(batch)
 - **Language Model**: Gemma 2B for processing language instructions and predicting action tokens
 
 The model takes images, text instructions, and robot state as input, and outputs discrete FAST tokens that are decoded back to continuous actions.
+
+### FAST Tokens in LeRobot (for Developers)
+
+π₀-FAST, FineART-VLA, WALL-X and MolmoAct2 share two functions from `lerobot.processor`:
+
+- `encode_fast_actions(tokenizer, actions)` takes normalized actions of shape `(B, H, D)` and returns one list of raw FAST IDs per chunk. Lengths vary between chunks.
+- `decode_fast_actions(tokenizer, tokens, action_dim, *, time_horizon, relaxed=False)` returns actions of shape `(B, time_horizon, action_dim)`. Pass the horizon the tokens encode (the whole chunk) and select the steps to execute afterwards: the inverse DCT depends on it.
+
+Decoding has two modes. `relaxed=True` (π₀-FAST) zero-fills missing DCT coefficients and drops extra ones. The default strict mode (WALL-X, MolmoAct2) matches the tokenizer's own `decode()`. A sequence that cannot be decoded becomes a chunk of zeros.
+
+Raw FAST IDs range over `len(tokenizer.bpe_tokenizer)`. The tokenizer's `vocab_size` attribute is the size requested when fitting, not the real one. Each policy maps raw IDs into its language model's vocabulary: PaliGemma policies use `vocab_size - 1 - fast_skip_tokens - id` (`fast_skip_tokens` is `128` for π₀-FAST and `1152` for FineART-VLA), WALL-X uses its `<|action_token_i|>` tokens, and MolmoAct2 its `<action_i>` tokens. The quantization scale and token offset (`scale`, `min_token`) are stored with the tokenizer. π₀-FAST and FineART-VLA save the tokenizer inside each checkpoint's processor files; WALL-X and MolmoAct2 load it from the Hub repository named in their config.
 
 ## Configuration Options
 
