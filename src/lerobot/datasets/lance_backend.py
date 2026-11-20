@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import json
+import logging
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -43,7 +44,7 @@ import torch
 
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
 from lerobot.streaming.location import hf_dataset_uri
-from lerobot.utils.import_utils import _lancedb_available, require_package
+from lerobot.utils.import_utils import _lancedb_available, get_safe_default_video_backend, require_package
 
 if TYPE_CHECKING or _lancedb_available:
     from lancedb.permutation import Permutation
@@ -91,6 +92,27 @@ _DEPTH_DECODE_MAX_BYTES = 64 << 20
 # PyAV retains decoded uint16 frames while dequantization creates float32 output.
 # Leave extra headroom for the selected-frame stack and allocator overhead.
 _DEPTH_DECODE_BYTES_PER_VALUE = 8
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_rgb_video_backend(video_backend: str | None) -> str:
+    """Pick the RGB decoder: the requested one, else the best one this platform can load.
+
+    An explicit ``video_backend`` is honored. ``None`` asks
+    :func:`get_safe_default_video_backend`, which also detects a TorchCodec that is
+    installed but cannot load the FFmpeg shared libraries. That detection is the
+    automatic fallback: only a backend that cannot run is skipped, a decode error
+    from the selected backend always propagates.
+    """
+    if video_backend is None:
+        return get_safe_default_video_backend()
+    if video_backend == "video_reader":
+        logger.warning("video_backend='video_reader' is deprecated and now aliases to 'pyav'.")
+        return "pyav"
+    if video_backend not in ("torchcodec", "pyav"):
+        raise ValueError(f"Unsupported video backend: {video_backend}")
+    return video_backend
 
 
 def _decode_frame_limit(
@@ -195,6 +217,9 @@ class LanceDatasetReader(BaseDatasetReader):
         return_uint8: Return RGB frames as raw uint8 instead of normalized float32.
         depth_output_unit: Unit depth features dequantize to (``'mm'`` or ``'m'``).
             Depth decodes through pyav (16-bit planes torchcodec cannot emit).
+        video_backend: RGB decoder, ``'torchcodec'`` or ``'pyav'``. ``None`` uses
+            torchcodec when it can load FFmpeg and pyav otherwise. An explicitly
+            requested torchcodec that cannot be imported fails at open.
         storage_options: Extra options forwarded to ``lancedb.connect``.
         video_decoder_cache_size: Max open video decoders per worker (default 256, also
             bounded by a 2 GiB per-worker byte budget). Each cached decoder costs a few MB, so
@@ -213,6 +238,7 @@ class LanceDatasetReader(BaseDatasetReader):
         revision: str | None = None,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        video_backend: str | None = None,
         storage_options: dict[str, str] | None = None,
         video_decoder_cache_size: int | None = None,
         token: str | bool | None = None,
@@ -232,14 +258,18 @@ class LanceDatasetReader(BaseDatasetReader):
                 f"Image-backed features are not supported by the lance backend: {self.meta.image_keys}. "
                 "Re-encode them as video."
             )
-        if self.meta.video_keys:
+        self._video_backend = _resolve_rgb_video_backend(video_backend)
+        # Depth videos always decode through pyav and never need torchcodec, so only
+        # an RGB camera backed by an explicitly requested torchcodec has to fail early.
+        if self._video_backend == "torchcodec" and any(
+            key not in self.meta.depth_keys for key in self.meta.video_keys
+        ):
             try:
                 importlib.import_module("torchcodec")
             except Exception as error:
                 raise ImportError(
-                    "The lance reader decodes RGB video with torchcodec, which is not available "
-                    "on this platform. Video lance datasets cannot be read here; the default "
-                    "storage format supports video_backend='pyav'."
+                    "video_backend='torchcodec' was requested, but torchcodec cannot be imported "
+                    "on this platform. Pass video_backend='pyav' to decode RGB video with PyAV."
                 ) from error
         # Depth videos decode through pyav over the same prefetched sources.
         self._depth_output_unit = depth_output_unit
@@ -552,7 +582,12 @@ class LanceDatasetReader(BaseDatasetReader):
         row_pos: dict[int, int],
         prepared: dict[tuple, tuple],
     ) -> list[dict[str, torch.Tensor]]:
-        """Decode all camera frames a batch needs, one blob fetch + one decode pass per file."""
+        """Decode all camera frames a batch needs; one decode pass per file.
+
+        TorchCodec decoders are reused across a file's samples, while PyAV opens a
+        container per sample over the same prefetched blob ranges, matching the
+        default reader's per-sample decode on platforms without torchcodec.
+        """
         requests = self._build_video_requests(plans, columns["timestamp"], row_pos)
         entries = prepared
 
@@ -564,6 +599,16 @@ class LanceDatasetReader(BaseDatasetReader):
             if key in self.meta.depth_keys:
                 for sample_idx, frames in self._decode_depth_file_requests(source, file_requests, file_key):
                     results[sample_idx][key] = frames
+                return
+            if self._video_backend == "pyav":
+                for sample_idx, shifted_ts in file_requests:
+                    # A fresh container reads the same blob stream from the start; the
+                    # sparse source keeps already-fetched ranges, so only new bytes hit
+                    # the blob's ranged-read fallback.
+                    source.seek(0)
+                    results[sample_idx][key] = decode_video_frames_pyav(
+                        source, shifted_ts, self.tolerance_s, return_uint8=self.return_uint8
+                    ).squeeze(0)
                 return
             fps = decoder.metadata.average_fps
             request_indices = [[round(ts * fps) for ts in shifted_ts] for _, shifted_ts in file_requests]
@@ -690,9 +735,6 @@ class LanceDatasetReader(BaseDatasetReader):
         self, file_keys: list[tuple], windows: dict[tuple, list[tuple[int, int]]] | None = None
     ) -> dict[tuple, tuple]:
         """Stage 1 of video decoding: everything that doesn't need timestamps"""
-        # Lazy load torchcodec
-        from torchcodec.decoders import VideoDecoder
-
         file_meta = self._load_file_meta(file_keys)
 
         prepared: dict[tuple, tuple] = {}
@@ -726,11 +768,18 @@ class LanceDatasetReader(BaseDatasetReader):
             self._fetch_spans(spans_by_key, sources)
 
             rgb_files = [key for key in new_files if key[0] not in self.meta.depth_keys]
-            created = _opened(self._decode_pool).map(
-                lambda key: VideoDecoder(sources[key], seek_mode="approximate"), rgb_files
-            )
-            for key, decoder in zip(rgb_files, created, strict=True):
-                prepared[key] = (decoder, sources[key])
+            if rgb_files and self._video_backend == "torchcodec":
+                from torchcodec.decoders import VideoDecoder  # noqa: PLC0415
+
+                created = _opened(self._decode_pool).map(
+                    lambda key: VideoDecoder(sources[key], seek_mode="approximate"), rgb_files
+                )
+                for key, decoder in zip(rgb_files, created, strict=True):
+                    prepared[key] = (decoder, sources[key])
+            else:
+                # PyAV opens the blob per decode; the source carries the prefetched ranges.
+                for key in rgb_files:
+                    prepared[key] = (None, sources[key])
             for key in new_files:
                 if key[0] in self.meta.depth_keys:
                     prepared[key] = (None, sources[key])
