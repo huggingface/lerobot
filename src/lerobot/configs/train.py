@@ -32,16 +32,14 @@ from lerobot.configs.accelerator import AcceleratorConfig, ActivationCheckpointi
 from lerobot.configs.parallelism import ParallelismConfig
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.optim.ema import EMAConfig
-from lerobot.utils.constants import PRETRAINED_MODEL_DIR
-from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
+from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAIN_CONFIG_NAME as TRAIN_CONFIG_NAME
+from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint, sanitize_checkpoint_consent
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
 from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
-
-TRAIN_CONFIG_NAME = "train_config.json"
 
 
 class CheckpointFormat(str, Enum):
@@ -230,7 +228,9 @@ class TrainPipelineConfig(HubMixin):
         policy_path = parser.get_path_arg("policy")
 
         if reward_model_path:
-            cli_overrides = parser.get_cli_overrides("reward_model")
+            cli_overrides = parser.get_yaml_overrides("reward_model") + (
+                parser.get_cli_overrides("reward_model") or []
+            )
             self.reward_model = RewardModelConfig.from_pretrained(
                 reward_model_path,
                 revision=parser.get_pretrained_revision("reward_model"),
@@ -457,8 +457,10 @@ class TrainPipelineConfig(HubMixin):
         return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
-            draccus.dump(self, f, indent=4)
+        config = self.to_dict()
+        sanitize_checkpoint_consent(config, remove=True)
+        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f:
+            json.dump(config, f, indent=4)
 
     @classmethod
     def from_pretrained(
@@ -475,6 +477,9 @@ class TrainPipelineConfig(HubMixin):
         **kwargs: Any,
     ) -> "TrainPipelineConfig":
         model_id = str(pretrained_name_or_path)
+        # Explicit recipe files may contain caller consent. Hub/directory loads and
+        # the canonical checkpoint filename must require fresh consent on reload.
+        is_checkpoint = not Path(model_id).is_file() or Path(model_id).name == TRAIN_CONFIG_NAME
         config_file: str | None = None
         if Path(model_id).is_dir():
             if TRAIN_CONFIG_NAME in os.listdir(model_id):
@@ -513,12 +518,16 @@ class TrainPipelineConfig(HubMixin):
         if config_file is not None and config_file.endswith(".json"):
             with open(config_file) as f:
                 config = json.load(f)
-            migrated = False
+            updated = False
+            if is_checkpoint:
+                # Reset before draccus constructs nested configs: their __post_init__
+                # may load custom tokenizer code. Explicit CLI overrides apply below.
+                updated = sanitize_checkpoint_consent(config)
             for migrate in (_migrate_legacy_rabc_fields, _migrate_legacy_wandb_section):
                 migrated_config = migrate(config)
                 if migrated_config is not None:
-                    config, migrated = migrated_config, True
-            if migrated:
+                    config, updated = migrated_config, True
+            if updated:
                 with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
                     json.dump(config, f)
                     config_file = f.name

@@ -28,6 +28,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -189,7 +190,10 @@ class EO1Config(PreTrainedConfig):
         # Populate the serialized backbone config only when the caller did not provide one.
         if self.vlm_config is None:
             require_package("transformers", extra="eo1")
-            self.vlm_config = Qwen2_5_VLConfig.from_pretrained(self.vlm_base).to_dict()
+            repo_id, revision = split_hub_reference(self.vlm_base)
+            self.vlm_config = Qwen2_5_VLConfig.from_pretrained(
+                repo_id, revision=revision, code_revision=revision
+            ).to_dict()
 
     @property
     def vlm_backbone_config(self) -> Qwen2_5_VLConfig:

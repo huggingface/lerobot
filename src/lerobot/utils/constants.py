@@ -18,6 +18,8 @@ from typing import Final
 
 from huggingface_hub.constants import HF_HOME
 
+TRAIN_CONFIG_NAME = "train_config.json"
+
 OBS_STR = "observation"
 OBS_PREFIX = OBS_STR + "."
 OBS_ENV_STATE = OBS_STR + ".environment_state"

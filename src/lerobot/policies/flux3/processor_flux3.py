@@ -83,6 +83,7 @@ def make_flux3_pre_post_processors_from_pretrained(
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
         revision=revision,
+        trust_remote_code=config.trust_remote_code,
     )
     post = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
@@ -91,6 +92,7 @@ def make_flux3_pre_post_processors_from_pretrained(
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
         revision=revision,
+        trust_remote_code=config.trust_remote_code,
     )
     return connect_flux3_processors(config, pre, post)
 
