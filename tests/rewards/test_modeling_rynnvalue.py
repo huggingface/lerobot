@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,6 +40,9 @@ from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_
 from lerobot.rewards.rynnvalue.modeling_rynnvalue import (  # noqa: E402
     RynnValueRewardModel,
     reduce_remaining_time,
+)
+from lerobot.rewards.rynnvalue.rynn_value_lang.configuration_rynn_value_lang import (  # noqa: E402
+    RynnValueLangConfig,
 )
 from lerobot.rewards.rynnvalue.rynn_value_lang.modeling_rynn_value_lang import (  # noqa: E402
     RynnValueLangModel,
@@ -423,3 +427,110 @@ def test_checkpoint_roundtrip_through_reward_factories(monkeypatch, tmp_path):
     assert processor_sources == [(str(tmp_path), "processor")]
     assert prediction.remaining_time_s.shape == (1,)
     assert torch.isfinite(prediction.remaining_time_s).all()
+
+
+# --- Tiny random-weight model: the real vendored network and the real checkpoint processor ---
+
+
+@pytest.fixture(scope="module")
+def tiny_model_config() -> dict:
+    """RynnValue's architecture with two small layers, so it runs on CPU in seconds.
+
+    Token ids, value-query repeats and value decoding match the released checkpoints, so the
+    checkpoint's processor produces inputs this model accepts.
+    """
+    symlog_two_hot = {"bins": 256, "support_transform": "symlog", "encoding": "two_hot"}
+    small_head = {"head_type": "bro", "hidden_dims": 64, "depth": 2}
+    return RynnValueLangConfig(
+        text_config={
+            "vocab_size": 151938,
+            "hidden_size": 64,
+            "intermediate_size": 128,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "head_dim": 16,
+            # The multimodal rotary sections must add up to half the head size.
+            "rope_parameters": {
+                "rope_type": "default",
+                "rope_theta": 5_000_000,
+                "mrope_section": [4, 2, 2],
+                "mrope_interleaved": True,
+            },
+        },
+        vision_config={
+            "depth": 2,
+            "hidden_size": 64,
+            "intermediate_size": 128,
+            "num_heads": 4,
+            "out_hidden_size": 64,
+            "deepstack_visual_indexes": [0, 1],
+        },
+        value_tokenizer_config={**symlog_two_hot, "min_value": 0.0, "max_value": 512.0},
+        relative_value_tokenizer_config={**symlog_two_hot, "min_value": -256.0, "max_value": 256.0},
+        value_head_config=small_head,
+        relative_value_head_config=small_head,
+        value_token_repeat=8,
+        relative_value_token_repeat=8,
+        value_token_id=151669,
+        relative_value_token_id=151670,
+    ).to_dict()
+
+
+def _tiny_config(model_config: dict, attn_implementation: str = "sdpa") -> RynnValueConfig:
+    return RynnValueConfig(
+        device="cpu",
+        torch_dtype="float32",
+        model_config=json.loads(json.dumps(model_config)),
+        attn_implementation=attn_implementation,
+        max_frames=4,
+        robot_description="a single-arm robot",
+    )
+
+
+def _tiny_model(model_config: dict, attn_implementation: str = "sdpa") -> RynnValueRewardModel:
+    torch.manual_seed(0)
+    return RynnValueRewardModel(_tiny_config(model_config, attn_implementation)).eval()
+
+
+@pytest.fixture(scope="module")
+def tiny_batches(tiny_model_config):
+    """Two trajectories encoded together, and the first one alone, by the checkpoint's processor."""
+    try:
+        preprocessor, _ = make_reward_pre_post_processors(_tiny_config(tiny_model_config))
+    except (HfHubHTTPError, OSError) as error:
+        pytest.skip(f"Could not download the RynnValue processor: {error}")
+    torch.manual_seed(1)
+    videos = torch.rand(2, 4, 3, 96, 128)
+    batch = preprocessor({"observation.images.top": videos, "task": "pick up the cube"})
+    single = preprocessor({"observation.images.top": videos[:1], "task": "pick up the cube"})
+    return batch, single
+
+
+@pytest.mark.parametrize("attn_implementation", ["sdpa", "eager", "pred_slot_isolated_eager"])
+def test_tiny_model_scores_a_batch_like_single_trajectories(
+    tiny_model_config, tiny_batches, attn_implementation
+):
+    batch, single = tiny_batches
+    model = _tiny_model(tiny_model_config, attn_implementation)
+
+    with torch.inference_mode():
+        batched = model.predict_remaining_time(batch).remaining_time_s
+        alone = model.predict_remaining_time(single).remaining_time_s
+
+    assert batched.shape == (2,)
+    assert torch.isfinite(batched).all()
+    torch.testing.assert_close(batched[:1], alone, atol=1e-4, rtol=0)
+
+
+def test_tiny_model_attention_settings(tiny_model_config, tiny_batches):
+    batch, _ = tiny_batches
+    with torch.inference_mode():
+        scores = {
+            attn: _tiny_model(tiny_model_config, attn).predict_remaining_time(batch).remaining_time_s
+            for attn in ("sdpa", "eager", "pred_slot_isolated_eager")
+        }
+
+    # SDPA and eager apply the same causal mask; value isolation is a different mask.
+    torch.testing.assert_close(scores["sdpa"], scores["eager"], atol=1e-4, rtol=0)
+    assert not torch.allclose(scores["sdpa"], scores["pred_slot_isolated_eager"], atol=1e-4, rtol=0)
