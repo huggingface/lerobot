@@ -64,7 +64,7 @@ else:
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import NormalizerProcessorStep
+from lerobot.processor import NormalizerProcessorStep, encode_fast_actions
 from lerobot.processor.converters import create_transition
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.utils import init_logging
@@ -320,11 +320,8 @@ def train_fast_tokenizer(
     logger.info("✓ Tokenizer training complete!")
 
     # validate it works
-    sample_chunk = action_chunks[0]
-    encoded = tokenizer(sample_chunk[None])[0]
-    if isinstance(encoded, list):
-        encoded = np.array(encoded)
-    logger.info(f"Sample encoding: {len(encoded)} tokens for chunk shape {sample_chunk.shape}")
+    (encoded,) = encode_fast_actions(tokenizer, action_chunks[:1])
+    logger.info(f"Sample encoding: {len(encoded)} tokens for chunk shape {action_chunks.shape[1:]}")
 
     return tokenizer
 
@@ -338,15 +335,7 @@ def compute_compression_stats(tokenizer, action_chunks: np.ndarray):
     sample_indices = np.random.RandomState(42).choice(len(action_chunks), size=sample_size, replace=False)
     sample_chunks = action_chunks[sample_indices]
 
-    token_lengths = []
-    for chunk in sample_chunks:
-        encoded = tokenizer(chunk[None])[0]
-        if isinstance(encoded, list):
-            token_lengths.append(len(encoded))
-        else:
-            token_lengths.append(encoded.shape[0] if hasattr(encoded, "shape") else len(encoded))
-
-    token_lengths = np.array(token_lengths)
+    token_lengths = np.array([len(tokens) for tokens in encode_fast_actions(tokenizer, sample_chunks)])
 
     # compression ratio: (H * D) / avg_tokens
     input_size = action_chunks.shape[1] * action_chunks.shape[2]

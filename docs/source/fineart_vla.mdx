@@ -169,6 +169,12 @@ targets match the new robot's action distribution. The fitted tokenizer is saved
 inside the checkpoint's processor artifacts, so inference reuses it. Set
 `--policy.auto_fit_fast_tokenizer=false` to use `action_tokenizer_name` unchanged.
 
+Fitting applies the same relative-action and normalization steps as training. The
+cache is keyed by the dataset, episode selection, sampling, preprocessing and
+validation settings, so changing any of them fits a new tokenizer. The checkpoint
+config records the tokenizer's vocabulary size (`fast_vocab_size`), so text
+generation blocks every FAST ID.
+
 ## Training performance
 
 FineART-VLA uses optimized training paths by default:
