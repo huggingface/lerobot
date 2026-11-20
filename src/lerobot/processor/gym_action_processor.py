@@ -95,6 +95,7 @@ class Numpy2TorchActionProcessorStep(ProcessorStep):
         if complementary_data is None:
             complementary_data = {}
         if TELEOP_ACTION_KEY in complementary_data:
+            complementary_data = complementary_data.copy()
             teleop_action = complementary_data[TELEOP_ACTION_KEY]
             if isinstance(teleop_action, np.ndarray):
                 complementary_data[TELEOP_ACTION_KEY] = to_tensor(teleop_action)
