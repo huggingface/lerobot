@@ -17,6 +17,7 @@
 """Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``lerobot.configs.video.VideoEncoderConfig`` config class."""
 
 import json
+import platform
 import shutil
 from fractions import Fraction
 from pathlib import Path
@@ -146,13 +147,50 @@ class TestCodecOptions:
         assert opts["crf"] == 23
         assert "preset" not in opts
 
-    @require_videotoolbox
-    def test_videotoolbox_options(self):
-        cfg = RGBEncoderConfig(vcodec="h264_videotoolbox", g=2, crf=30, preset=None)
-        opts = cfg.get_codec_options()
-        assert opts["g"] == 2
-        assert opts["q:v"] == 40
-        assert "crf" not in opts
+    @pytest.mark.parametrize("vcodec", ["h264_videotoolbox", "hevc_videotoolbox"])
+    @pytest.mark.parametrize(
+        ("machine", "crf", "extra_options", "expected_options"),
+        [
+            ("arm64", 30, {}, {"flags": "+qscale", "global_quality": 8260}),
+            ("arm64", 23.25, {}, {"flags": "+qscale", "global_quality": 9086}),
+            ("arm64", -1, {}, {"flags": "+qscale", "global_quality": 11800}),
+            ("arm64", 120, {}, {"flags": "+qscale", "global_quality": 118}),
+            ("arm64", None, {}, {}),
+            (
+                "arm64",
+                None,
+                {"flags": "+qscale", "global_quality": 5900},
+                {"flags": "+qscale", "global_quality": 5900},
+            ),
+            ("arm64", 30, {"b": 600_000}, {"b": 600_000}),
+            ("arm64", 30, {"ab": 600_000}, {"ab": 600_000}),
+            ("arm64", 30, {"constant_bit_rate": 1}, {"constant_bit_rate": 1}),
+            ("arm64", 30, {"flags": "+low_delay"}, {"flags": "+low_delay"}),
+            ("arm64", 30, {"require_sw": 1}, {"require_sw": 1}),
+            ("arm64", 30, {"allow_sw": "yes"}, {"allow_sw": "yes"}),
+            (
+                "arm64",
+                30,
+                {"allow_sw": "0"},
+                {"flags": "+qscale", "global_quality": 8260, "allow_sw": "0"},
+            ),
+            (
+                "arm64",
+                30,
+                {"flags": "+qscale", "global_quality": 5900},
+                {"flags": "+qscale", "global_quality": 5900},
+            ),
+            ("x86_64", 30, {}, {}),
+        ],
+    )
+    def test_videotoolbox_options(self, monkeypatch, vcodec, machine, crf, extra_options, expected_options):
+        # Test option translation even on builds without VideoToolbox.
+        monkeypatch.setattr(RGBEncoderConfig, "__post_init__", lambda self: None)
+        monkeypatch.setattr(platform, "machine", lambda: machine)
+        cfg = RGBEncoderConfig(vcodec=vcodec, crf=crf, extra_options=extra_options)
+        expected = {"g": 2, **expected_options}
+        assert cfg.get_codec_options() == expected
+        assert cfg.get_codec_options(as_strings=True) == {key: str(value) for key, value in expected.items()}
 
     @require_nvenc
     def test_nvenc_options(self):
