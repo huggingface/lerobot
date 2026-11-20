@@ -28,15 +28,19 @@ the public entry point is ``LeRobotDataset`` (see :mod:`lerobot.datasets.storage
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib
 import json
+import os
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from itertools import batched
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, TypedDict
+from weakref import WeakValueDictionary
 
 import numpy as np
 import torch
@@ -67,6 +71,7 @@ from .lance_utils import (  # noqa: F401
     _merge_spans,
     _RangeReader,
     _SparseBlobSource,
+    _storage_options,
     _VideoDecoderLRU,
     build_video_byte_index,
     lance_mp_context,
@@ -74,6 +79,7 @@ from .lance_utils import (  # noqa: F401
     resolve_lance_root,
     to_lance_column,
 )
+from .storage import is_remote_uri
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
@@ -91,6 +97,45 @@ _DEPTH_DECODE_MAX_BYTES = 64 << 20
 # PyAV retains decoded uint16 frames while dequantization creates float32 output.
 # Leave extra headroom for the selected-frame stack and allocator overhead.
 _DEPTH_DECODE_BYTES_PER_VALUE = 8
+
+
+class _VideoRowIds(dict[tuple[str, int, int], int]):
+    """A video index that can be weakly cached while readers retain it."""
+
+    __slots__ = ("__weakref__",)
+
+
+_VIDEO_ROW_IDS: WeakValueDictionary[tuple[str, int, bytes], _VideoRowIds] = WeakValueDictionary()
+_VIDEO_ROW_IDS_LOCK = Lock()
+
+
+def _cached_video_row_ids(
+    db_uri: str, table: Table, version: int, storage_options: dict[str, str]
+) -> _VideoRowIds:
+    # Include implicit object-store configuration too: the same URI and version
+    # can address different stores after an endpoint or credential change.
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name.startswith(("AWS_", "AZURE_", "GOOGLE_", "HF_", "LANCE_"))
+    }
+    identity = json.dumps([storage_options, environment], sort_keys=True).encode()
+    if not is_remote_uri(db_uri):
+        db_uri = str(Path(db_uri).resolve())
+    cache_key = (db_uri, version, hashlib.sha256(identity).digest())
+    # Also prevent concurrent readers from repeating the same initial scan.
+    with _VIDEO_ROW_IDS_LOCK:
+        cached = _VIDEO_ROW_IDS.get(cache_key)
+        if cached is not None:
+            return cached
+        table.checkout(version)
+        index = table.search().select(["video_key", "chunk_index", "file_index"]).with_row_id(True).to_arrow()
+        row_ids = _VideoRowIds(
+            ((row["video_key"], row["chunk_index"], row["file_index"]), row["_rowid"])
+            for row in index.to_pylist()
+        )
+        _VIDEO_ROW_IDS[cache_key] = row_ids
+        return row_ids
 
 
 def _decode_frame_limit(
@@ -315,22 +360,18 @@ class LanceDatasetReader(BaseDatasetReader):
             for key in self.meta.video_keys
         }
 
-        # Resolved once here so DataLoader workers inherit the map instead of each
-        # scanning the videos table.
+        # Readers over the same snapshot share this map (including full/train/eval
+        # construction). DataLoader workers still inherit it through pickling.
         self._video_row_ids: dict[tuple, int] = {}
+        self._videos_version: int | None = None
         if self.meta.video_keys:
             db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
-            index = (
-                db.open_table(VIDEOS_TABLE)
-                .search()
-                .select(["video_key", "chunk_index", "file_index"])
-                .with_row_id(True)
-                .to_arrow()
+            videos_table = db.open_table(VIDEOS_TABLE)
+            self._videos_version = videos_table.version
+            options = _storage_options(self._db_uri, self._storage_options, self._hub_revision, self._token)
+            self._video_row_ids = _cached_video_row_ids(
+                self._db_uri, videos_table, self._videos_version, options
             )
-            self._video_row_ids = {
-                (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
-                for row in index.to_pylist()
-            }
             referenced = {
                 (key, int(chunk), int(file))
                 for key, (chunks, files, _) in self._video_locator.items()
@@ -372,7 +413,9 @@ class LanceDatasetReader(BaseDatasetReader):
             )
         frames_perm = Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
         if self.meta.video_keys:
-            self._videos_table = db.open_table(VIDEOS_TABLE)
+            videos_table = db.open_table(VIDEOS_TABLE)
+            videos_table.checkout(_opened(self._videos_version))
+            self._videos_table = videos_table
             self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
             self._decode_pool = ThreadPoolExecutor(max_workers=16)
         # Publish last: a failure above leaves the reader closed rather than half-open.

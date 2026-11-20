@@ -16,6 +16,7 @@
 """Lance storage backend: LeRobotDataset over a Lance root must return the same
 items as over the default parquet/mp4 layout, through the same public class."""
 
+import gc
 import json
 import pickle
 import weakref
@@ -216,6 +217,89 @@ def video_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
     lance_root = tmp_path / "lance_video"
     convert(lance_root, root=src_root)
     return src_root, lance_root
+
+
+def test_train_eval_reuses_video_index(video_dataset_roots, monkeypatch):
+    src_root, lance_root = video_dataset_roots
+    table_type = type(lancedb.connect(lance_root).open_table("videos"))
+    search = table_type.search
+    scans = []
+
+    def track_search(table, *args, **kwargs):
+        if table.name == "videos":
+            scans.append(table.version)
+        return search(table, *args, **kwargs)
+
+    monkeypatch.setattr(table_type, "search", track_search)
+    cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=lance_root, eval_split=0.5),
+        policy=make_policy_config("act"),
+    )
+    train, evaluation = make_train_eval_datasets(cfg)
+    assert evaluation is not None
+    # The full reader and both split readers must share one initial video scan.
+    assert len(scans) == 1
+    reference = LeRobotDataset(
+        DUMMY_REPO_ID,
+        root=src_root,
+        delta_timestamps=train.delta_timestamps,
+        return_uint8=True,
+        video_backend="torchcodec",
+    )
+    try:
+        for dataset in (train, evaluation):
+            sample = dataset[0]
+            assert_items_equal(sample, reference[int(sample["index"])])
+    finally:
+        train.reader.close()
+        evaluation.reader.close()
+
+
+def test_video_index_is_bound_to_table_version(video_dataset_roots):
+    src_root, lance_root = video_dataset_roots
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    expected = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="torchcodec")[0]
+    # Keep the original reader alive while a new snapshot no longer contains
+    # any referenced files. A new reader must validate the new video index.
+    lancedb.connect(lance_root).open_table("videos").delete("true")
+    with pytest.raises(ValueError, match="missing.*referenced by episode"):
+        LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    restored = pickle.loads(pickle.dumps(dataset))
+    try:
+        # The worker pickle must still read the original snapshot.
+        assert_items_equal(restored[0], expected)
+    finally:
+        dataset.reader.close()
+        restored.reader.close()
+
+
+def test_video_index_separates_connection_options(video_dataset_roots):
+    _, lance_root = video_dataset_roots
+    datasets = [
+        LeRobotDataset(DUMMY_REPO_ID, root=lance_root, storage_options={"aws_region": region})
+        for region in ("us-east-1", "us-west-2")
+    ]
+    try:
+        # Equal URI/version pairs must not share an index across store configurations.
+        assert datasets[0].reader._video_row_ids is not datasets[1].reader._video_row_ids
+    finally:
+        for dataset in datasets:
+            dataset.reader.close()
+
+
+def test_video_index_released_with_last_reader(video_dataset_roots):
+    _, lance_root = video_dataset_roots
+    first = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    second = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[1])
+    index = weakref.ref(first.reader._video_row_ids)
+    first.reader.close()
+    del first
+    gc.collect()
+    assert index() is not None
+    second.reader.close()
+    del second
+    gc.collect()
+    assert index() is None
 
 
 def test_video_parity(video_dataset_roots):
