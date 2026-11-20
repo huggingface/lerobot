@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import math
 from collections import deque
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import draccus
@@ -1437,6 +1439,26 @@ def test_molmoact2_rollout_generator_uses_eval_seed_per_task():
     )
     expected_new_task = torch.Generator().manual_seed(_combine_rollout_seeds(first_seed=1000, batch_size=3))
     assert torch.allclose(torch.rand(4, generator=new_task), torch.rand(4, generator=expected_new_task))
+
+
+@pytest.mark.parametrize(("device_type", "expected_warnings"), [("mps", 1), ("cpu", 0)])
+def test_molmoact2_bfloat16_warns_once_on_mps(monkeypatch, caplog, device_type, expected_warnings):
+    policy = object.__new__(MolmoAct2Policy)
+    torch.nn.Module.__init__(policy)
+    policy.config = SimpleNamespace(dtype=torch.bfloat16)
+    policy._warned_mps_bfloat16 = False
+    monkeypatch.setattr(
+        policy, "parameters", lambda: iter([SimpleNamespace(device=torch.device(device_type))])
+    )
+    monkeypatch.setattr(torch.amp.autocast_mode, "is_autocast_available", lambda device_type: True)
+    monkeypatch.setattr(torch, "autocast", lambda **kwargs: nullcontext())
+
+    with caplog.at_level(logging.WARNING, logger=molmoact2_modeling.logger.name):
+        policy._autocast_context()
+        policy._autocast_context()
+
+    warnings = [record for record in caplog.records if "on MPS" in record.getMessage()]
+    assert len(warnings) == expected_warnings
 
 
 def test_molmoact2_gripper_mask_uses_feature_names(tmp_path):
