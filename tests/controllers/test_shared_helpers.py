@@ -22,11 +22,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from lerobot.controllers.unitree_g1.proprio import read_proprio
-from lerobot.robots.unitree_g1.g1_utils import NUM_MOTORS, get_gravity_orientation
-
 onnx = pytest.importorskip("onnx")
 pytest.importorskip("onnxruntime")
+
+from lerobot.controllers.unitree_g1.proprio import read_proprio  # noqa: E402
+from lerobot.robots.unitree_g1.g1_utils import NUM_MOTORS, get_gravity_orientation  # noqa: E402
 
 
 @pytest.fixture
