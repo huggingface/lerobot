@@ -20,6 +20,7 @@ import json
 import pickle
 import weakref
 from collections import OrderedDict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,7 +44,12 @@ from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.factory import make_dataset, make_train_eval_datasets
-from lerobot.datasets.lance_backend import LanceDatasetReader, _EpisodeSubsetIndexMapping, lance_mp_context
+from lerobot.datasets.lance_backend import (
+    HubRateLimitError,
+    LanceDatasetReader,
+    _EpisodeSubsetIndexMapping,
+    lance_mp_context,
+)
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
     language_events_arrow_type,
@@ -85,6 +91,22 @@ def dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
     lance_root = tmp_path / "lance"
     convert(lance_root, root=src_root)
     return src_root, lance_root
+
+
+@pytest.fixture
+def remote_lance_dataset(dataset_roots, tmp_path, monkeypatch) -> tuple[LeRobotDataset, str, Callable]:
+    """A Lance dataset addressed by an hf:// root, backed by a local connection during setup."""
+    _, lance_root = dataset_roots
+    remote_root = f"hf://datasets/{DUMMY_REPO_ID}"
+    local_connect = lancedb.connect
+
+    def connect_local(uri, **kwargs):
+        assert uri in (remote_root, str(lance_root))
+        return local_connect(str(lance_root), **kwargs)
+
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.setattr(lancedb, "connect", connect_local)
+    return LeRobotDataset(DUMMY_REPO_ID, root=remote_root), remote_root, connect_local
 
 
 def assert_items_equal(actual: dict, expected: dict) -> None:
@@ -481,6 +503,112 @@ def test_depth_batch_decode_limits_merged_span(shape: tuple[int, int, int], max_
         torch.testing.assert_close(decoded[sample_idx], torch.tensor(timestamps).reshape(1, 1, 1))
 
 
+@pytest.mark.parametrize("suffix", ["temporary", "persistent"])
+def test_remote_metadata_rate_limit_surfaces_lerobot_error(tmp_path, monkeypatch, suffix):
+    remote_root = f"hf://datasets/{DUMMY_REPO_ID}"
+    original = OSError(f"failed to open 'meta': RateLimited ({suffix}) at open")
+
+    class _RateLimitedDB:
+        def open_table(self, table_name):
+            raise original
+
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.setattr(lancedb, "connect", lambda *args, **kwargs: _RateLimitedDB())
+
+    with pytest.raises(HubRateLimitError) as excinfo:
+        LeRobotDataset(DUMMY_REPO_ID, root=remote_root)
+
+    error = excinfo.value
+    assert error.__cause__ is original
+    assert error.repo_id == DUMMY_REPO_ID
+    assert DUMMY_REPO_ID in str(error)
+    assert "HF_TOKEN" in str(error)
+    assert "hf auth login" in str(error)
+
+
+def test_non_hub_rate_limit_keeps_original_error(tmp_path, monkeypatch):
+    root = "s3://test-bucket/dataset"
+    original = OSError("failed to open 'meta': RateLimited (persistent) at open")
+
+    class _RateLimitedDB:
+        def open_table(self, table_name):
+            raise original
+
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.setattr(lancedb, "connect", lambda *args, **kwargs: _RateLimitedDB())
+
+    with pytest.raises(OSError) as excinfo:
+        LeRobotDataset(DUMMY_REPO_ID, root=root)
+
+    assert excinfo.value is original
+
+
+def test_hub_rate_limit_error_pickle_round_trip():
+    error = HubRateLimitError(DUMMY_REPO_ID, f"hf://datasets/{DUMMY_REPO_ID}")
+    restored = pickle.loads(pickle.dumps(error))
+
+    assert isinstance(restored, HubRateLimitError)
+    assert restored.repo_id == error.repo_id
+    assert restored.uri == error.uri
+    assert str(restored) == str(error)
+
+
+def test_remote_reader_open_rate_limit_surfaces_lerobot_error(remote_lance_dataset, monkeypatch):
+    dataset, remote_root, connect_local = remote_lance_dataset
+    assert dataset.reader._db_uri == remote_root
+
+    original = OSError("failed to open 'frames.lance': RateLimited (temporary) at open")
+
+    def connect_rate_limited(uri, **kwargs):
+        raise original
+
+    monkeypatch.setattr(lancedb, "connect", connect_rate_limited)
+    with pytest.raises(HubRateLimitError) as excinfo:
+        dataset[0]
+
+    error = excinfo.value
+    assert error.__cause__ is original
+    assert error.repo_id == DUMMY_REPO_ID
+    assert DUMMY_REPO_ID in str(error)
+    assert "HF_TOKEN" in str(error)
+    assert dataset.reader._frames_perm is None
+
+    # The failed open published nothing, so the reader retries cleanly once the Hub recovers.
+    monkeypatch.setattr(lancedb, "connect", connect_local)
+    dataset[0]
+
+
+def test_remote_read_rate_limit_surfaces_lerobot_error(remote_lance_dataset, monkeypatch):
+    dataset, _, _ = remote_lance_dataset
+    original_fetch = LanceDatasetReader._fetch_rows
+
+    # A bare 429 is not Lance's OpenDAL rate-limit kind and must keep its type.
+    unrelated = OSError("HTTP 429 Too Many Requests")
+
+    def fetch_unrelated(self, rows):
+        raise unrelated
+
+    monkeypatch.setattr(LanceDatasetReader, "_fetch_rows", fetch_unrelated)
+    with pytest.raises(OSError) as excinfo:
+        dataset[0]
+    assert excinfo.value is unrelated
+
+    rate_limited = OSError("failed to read rows: RateLimited (temporary) at read")
+
+    def fetch_rate_limited(self, rows):
+        raise rate_limited
+
+    monkeypatch.setattr(LanceDatasetReader, "_fetch_rows", fetch_rate_limited)
+    with pytest.raises(HubRateLimitError) as excinfo:
+        dataset[0]
+    assert excinfo.value.__cause__ is rate_limited
+    assert excinfo.value.repo_id == DUMMY_REPO_ID
+    assert dataset.reader._frames_perm is not None
+
+    monkeypatch.setattr(LanceDatasetReader, "_fetch_rows", original_fetch)
+    dataset[0]
+
+
 def test_reader_reopens_after_failed_open(video_dataset_roots, monkeypatch):
     _, lance_root = video_dataset_roots
     lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
@@ -493,8 +621,9 @@ def test_reader_reopens_after_failed_open(video_dataset_roots, monkeypatch):
         raise OSError("simulated 429")
 
     monkeypatch.setattr(lance_backend.Permutation, "identity", fail_open)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError) as excinfo:
         lance_ds[0]
+    assert not isinstance(excinfo.value, HubRateLimitError)
     # nothing was published, so the next read starts over
     assert reader._frames_perm is None
     assert reader._prefetch_pool is None
