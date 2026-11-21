@@ -438,27 +438,52 @@ class SerialMotorsBus(MotorsBusBase):
         self._assert_same_firmware()
 
     def disconnect(self, disable_torque: bool = True) -> None:
-        """Close the serial port, by default with the torque of every motor off.
+        """Close the serial port, optionally disabling torque on each motor first.
 
-        Safe to call on a bus that is already disconnected, and the port is released even if
-        disabling the torque fails.
+        If disabling torque raises an `Exception` for one motor, the remaining motors are still attempted.
+        Port closure is always attempted. If closure succeeds, the first motor exception is re-raised. If closure fails,
+        the port-close exception takes precedence, with the first motor exception chained as its cause.
+        Interrupts stop further motor attempts; port closure is still attempted.
+        Safe to call on a bus that is already disconnected.
 
         Args:
             disable_torque (`bool`, *optional*, defaults to `True`):
-                Whether to disable the torque of every motor before closing the port, so that no
-                motor is left resisting.
+                Attempt to disable torque on every motor before closing the port. This can prevent motor
+                damage from continued resisting torque after disconnect.
+
+        Raises:
+            ConnectionError: A motor did not answer while torque was being disabled. The first motor
+                exception is re-raised if port closure succeeds.
+            RuntimeError: A motor reported an error while torque was being disabled. The first motor
+                exception is re-raised if port closure succeeds.
+            Exception: Port closure failed. If a motor also failed, its first exception is chained as the cause.
         """
 
         if not self.is_connected:
             return
 
+        first_exception: Exception | None = None
         try:
             if disable_torque:
-                self.disable_torque(num_retry=5)
+                for motor in self.motors:
+                    try:
+                        self.disable_torque(motor, num_retry=5)
+                    except Exception as e:
+                        logger.error(f"Failed to disable torque on motor '{motor}' during disconnect: {e}")
+                        if first_exception is None:
+                            first_exception = e
         finally:
-            self._close()
+            try:
+                self._close()
+            except Exception as close_error:
+                if first_exception is not None:
+                    raise close_error from first_exception
+                raise
 
-        logger.debug(f"{self.__class__.__name__} disconnected.")
+        logger.debug(f"{self.__class__.__name__} serial port closed.")
+
+        if first_exception is not None:
+            raise first_exception
 
     def _scan(self, definition: rustypot.ServoDefinition) -> dict[int, int]:
         """Every id answering at the current baud rate, with its model number: one broadcast
