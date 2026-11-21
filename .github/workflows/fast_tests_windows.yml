@@ -1,0 +1,105 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Windows coverage for the code paths that are only reachable on Windows:
+# COM port discovery, OpenCV camera enumeration and 4-channel frames, the msvcrt keyboard
+# backend, torchcodec's FFmpeg shared-DLL requirement, and the multiprocessing image
+# writer. The Ubuntu lanes run the same modules, but none of those branches execute there,
+# so this job is the only place they are exercised.
+#
+# Scope is deliberately small (tests/utils + tests/cameras, no GPU, CPU-only torch) so the
+# job stays under a few minutes. Widen the paths once the Windows-specific fixes land.
+name: Fast Tests (Windows)
+
+on:
+  # Allows running this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/**"
+      - "pyproject.toml"
+      - "uv.lock"
+
+env:
+  UV_VERSION: "0.11.30"
+  PYTHON_VERSION: "3.12"
+
+# Ensures that only the latest commit for a PR or branch is built, canceling older runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  windows-pytest-tests:
+    permissions:
+      contents: read
+    name: Windows Pytest Tests
+    runs-on: windows-latest
+    env:
+      # Keep caches inside the workspace: the Windows runner's %USERPROFILE%\.cache is not
+      # preserved and symlinking into it fails without Developer Mode.
+      HF_HOME: ${{ github.workspace }}\.hf-cache
+      HF_LEROBOT_HOME: ${{ github.workspace }}\.hf-cache\lerobot
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # tests/cameras reads the PNG artifacts from LFS; without them the camera tests
+          # fail with "Failed to open OpenCVCamera(...image_160x120.png)".
+          lfs: true
+
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          enable-cache: true
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Create virtual environment
+        run: uv venv --python ${{ env.PYTHON_VERSION }}
+
+      # `uv sync --locked` on Windows would pull PyPI's `torch`, which is the ~2.5 GB CUDA
+      # build, on a runner with no GPU. Install the CPU wheels first; the editable install
+      # below accepts them (they satisfy `torch>=2.7,<2.12`).
+      - name: Install CPU-only torch
+        run: |
+          uv pip install --index-url https://download.pytorch.org/whl/cpu torch==2.11.0 torchvision==0.26.0
+
+      - name: Install LeRobot
+        run: uv pip install -e ".[test,dataset,hardware]"
+
+      - name: Report environment
+        run: uv run lerobot-info
+
+      - name: "Test: utils"
+        run: uv run pytest tests/utils -vv --maxfail=10 -m "not gpu"
+
+      - name: "Test: cameras"
+        run: uv run pytest tests/cameras -vv --maxfail=10 -m "not gpu"
