@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import random
+from contextlib import nullcontext
 
 import numpy as np
 import pytest
@@ -171,6 +172,72 @@ def test_get_set_rng_state(fixed_seed):
     set_rng_state(st)
     val2 = (random.random(), np.random.rand(), torch.rand(1).item())
     assert val1 == val2
+
+
+@pytest.fixture
+def simulated_mps_rng(monkeypatch):
+    """Exercise MPS state handling on CPU with an independent, real torch generator."""
+    generator = torch.Generator().manual_seed(12345)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    monkeypatch.setattr(torch.mps, "get_rng_state", generator.get_state)
+    monkeypatch.setattr(torch.mps, "set_rng_state", generator.set_state)
+    monkeypatch.setattr(torch.mps, "manual_seed", generator.manual_seed)
+    return generator
+
+
+def test_get_set_rng_state_mps(simulated_mps_rng):
+    torch.rand(3, generator=simulated_mps_rng)
+    state = get_rng_state()
+    expected = torch.rand(6, generator=simulated_mps_rng)
+
+    set_rng_state(state)
+
+    torch.testing.assert_close(torch.rand(6, generator=simulated_mps_rng), expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_seeded_context_restores_mps_rng(simulated_mps_rng, fail):
+    original = simulated_mps_rng.get_state()
+    expected = torch.rand(6, generator=simulated_mps_rng)
+    simulated_mps_rng.set_state(original)
+
+    with (
+        pytest.raises(RuntimeError, match="context failed") if fail else nullcontext(),
+        seeded_context(1337),
+    ):
+        torch.rand(6, generator=simulated_mps_rng)
+        if fail:
+            raise RuntimeError("context failed")
+
+    torch.testing.assert_close(torch.rand(6, generator=simulated_mps_rng), expected, rtol=0, atol=0)
+
+
+def test_set_rng_state_without_mps_state(simulated_mps_rng):
+    state = get_rng_state()
+    state.pop("torch_mps_random_state", None)
+    original = simulated_mps_rng.get_state()
+
+    set_rng_state(state)
+
+    assert torch.equal(simulated_mps_rng.get_state(), original)
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS not available")
+@pytest.mark.parametrize("fail", [False, True])
+def test_seeded_context_mps_continuation(fixed_seed, fail):
+    original = torch.mps.get_rng_state()
+    expected = torch.rand(6, device="mps").cpu()
+    torch.mps.set_rng_state(original)
+
+    with (
+        pytest.raises(RuntimeError, match="context failed") if fail else nullcontext(),
+        seeded_context(1337),
+    ):
+        torch.rand(6, device="mps")
+        if fail:
+            raise RuntimeError("context failed")
+
+    torch.testing.assert_close(torch.rand(6, device="mps").cpu(), expected, rtol=0, atol=0)
 
 
 def test_set_seed():
