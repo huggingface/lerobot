@@ -84,7 +84,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
 from lerobot.processor import ImageAugmentationProcessorStep
-from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
+from lerobot.processor.rename_processor import rename_batch_keys, rename_stats, without_observation_renaming
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
@@ -712,6 +712,9 @@ def train(cfg: TrainPipelineConfig) -> None:
             pretrained_revision=active_cfg.pretrained_revision,
             **processor_kwargs,
         )
+    # `_preprocess_dataset_batch` renames the batch keys before the preprocessor; the saved preprocessor
+    # and the env evaluation keep the renames for raw observations.
+    dataset_preprocessor = without_observation_renaming(preprocessor)
 
     image_augmentation = _make_image_augmentation(cfg, dataset, device, accelerator.process_index)
     if image_augmentation is not None and is_main_process():
@@ -858,7 +861,9 @@ def train(cfg: TrainPipelineConfig) -> None:
         train_tracker.dataloading_s = preprocessing_start - step_start
         if image_augmentation is not None:
             batch = image_augmentation.observation(batch)
-        batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
+        batch = _preprocess_dataset_batch(
+            batch, dataset.meta.camera_keys, cfg.rename_map, dataset_preprocessor
+        )
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
 
         train_tracker, _ = update_policy(
@@ -914,7 +919,7 @@ def train(cfg: TrainPipelineConfig) -> None:
             with torch.no_grad(), accelerator.autocast():
                 for eval_batch in eval_dataloader:
                     eval_batch = _preprocess_dataset_batch(
-                        eval_batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor
+                        eval_batch, dataset.meta.camera_keys, cfg.rename_map, dataset_preprocessor
                     )
                     loss, _ = policy(eval_batch)  # __call__, so FSDP2 forward hooks run
                     eval_loss_sum += loss.item()
