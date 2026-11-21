@@ -239,6 +239,20 @@ Each named score is one Parquet file with one row group per episode. Downloads t
 
 Appending episodes does not require regenerating existing scores.
 
+### Visualize Scores
+
+`examples/dataset/create_progress_videos.py` draws scores over an episode's camera video and writes a 1080p MP4, plus an animated WebP preview with `--webp`:
+
+```bash
+uv run examples/dataset/create_progress_videos.py \
+    --repo-id lerobot/libero_10 \
+    --dataset-root /path/to/local/dataset \
+    --episodes 0 1 \
+    --scores robometer-4b
+```
+
+`--scores` takes score names, each optionally followed by `:<signal>` to draw one signal, such as `robometer-4b:reward.robometer.progress`. Several scores share one plot when their signals have the same unit. The video shows the camera the first score was computed on; pass `--camera-key` for another one. The y-axis follows the signal descriptors: the bounds when the signals have them, otherwise the episode's values in the signal's unit. Categorical signals, such as SARM's predicted subtask, are shown as text under the task and as a colored strip under the plot instead of curves, next to the episode's annotated subtasks when the dataset has subtask annotations. For SARM, the annotations also give the ground-truth progress line.
+
 ### Train with RA-BC
 
 Select the score file and a progress signal in your training configuration:
