@@ -49,6 +49,9 @@ class YamFollowerConfig:
     gripper_kp: float = 20.0
     gripper_kd: float = 0.5
     gripper_force_limit_n: float = 50.0
+    gripper_calibration: Literal["manual", "auto"] = "manual"
+    gripper_calibration_torque_nm: float = 0.2
+    gripper_calibration_timeout_s: float = 3.0
     max_joint_speed_deg_s: float = 17.0
     max_gripper_speed: float = 12.0
     max_tracking_error_deg: float = 8.5
@@ -73,6 +76,8 @@ class YamFollowerConfig:
         for name in (
             "initial_tolerance_deg",
             "gripper_force_limit_n",
+            "gripper_calibration_torque_nm",
+            "gripper_calibration_timeout_s",
             "max_joint_speed_deg_s",
             "max_gripper_speed",
             "max_tracking_error_deg",
@@ -127,6 +132,14 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
             MIT damping gain of the gripper, from I2RT.
         gripper_force_limit_n (`float`, *optional*, defaults to 50.0):
             Finger force, in newtons, once the gripper is blocked on an object.
+        gripper_calibration (`Literal["manual", "auto"]`, *optional*, defaults to `"manual"`):
+            How the gripper limits are measured: `manual` asks you to move the gripper by hand with torque
+            off, `auto` holds the arm and drives the gripper into both mechanical stops.
+        gripper_calibration_torque_nm (`float`, *optional*, defaults to 0.2):
+            Gripper motor torque, in newton-metres, that pushes the gripper into its stops during `auto`
+            calibration.
+        gripper_calibration_timeout_s (`float`, *optional*, defaults to 3.0):
+            Time allowed for the gripper to reach each stop during `auto` calibration.
         max_joint_speed_deg_s (`float`, *optional*, defaults to 17.0):
             Maximum joint speed, in degrees per second.
         max_gripper_speed (`float`, *optional*, defaults to 12.0):

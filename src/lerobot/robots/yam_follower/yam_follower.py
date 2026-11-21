@@ -50,6 +50,7 @@ from .mit_control import (
     MitController,
     MitGripperParams,
     MotorStates,
+    _gravity_feedforward,
     clip_to_limits,
 )
 
@@ -69,6 +70,12 @@ _MAX_GRAVITY_TORQUE_NM = 25.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
 # Plausible motor stroke between the gripper limits (0.5 to 10 rad).
 _GRIPPER_STROKE_RANGE_DEG = (math.degrees(0.5), math.degrees(10.0))
+# Automatic gripper calibration: the gripper is at a stop once it moves less than _GRIPPER_STALL_RAD in
+# _GRIPPER_STALL_CHECKS consecutive checks, after _GRIPPER_START_S.
+_GRIPPER_STALL_RAD = 0.01
+_GRIPPER_STALL_CHECKS = 3
+_GRIPPER_CHECK_INTERVAL_S = 0.1
+_GRIPPER_START_S = 0.5
 # Damiao register 9 stores the CAN timeout in 50 us ticks.
 _CAN_TIMEOUT_REGISTER = 9
 _CAN_TIMEOUT_TICK_US = 50
@@ -369,18 +376,10 @@ class YamFollower(Robot):
         if self.controller.active:
             input(f"[{self.id}] Support the arm, then press Enter to turn torque off: ")
             self.controller.stop()
-        measurements: dict[str, float] = {}
-        logger.info(f"{self}: support the arm. Move only the gripper gently by hand; stop if it resists.")
-        for limit in ("closed", "open"):
-            input(f"[{self.id}] Place the gripper fully {limit}, release it, then press Enter: ")
-            samples = []
-            for _ in range(10):
-                samples.append(self.bus.read_states().position[6])
-                time.sleep(0.02)
-            if np.ptp(samples) > 0.03:
-                raise ValueError("Gripper moved while it was measured; calibration was not saved")
-            measurements[limit] = float(np.median(samples))
-        closed, opened = measurements["closed"], measurements["open"]
+        if self.config.gripper_calibration == "auto":
+            closed, opened = self._find_gripper_stops()
+        else:
+            closed, opened = self._measure_gripper_by_hand()
         # Motor angles of the two limits, in whole degrees; drive_mode records which is closed.
         stops_deg = sorted(round(math.degrees(value)) for value in (closed, opened))
         stroke_deg = stops_deg[1] - stops_deg[0]
@@ -402,6 +401,87 @@ class YamFollower(Robot):
         self._save_calibration()
         self.controller.set_gripper_params(_yam_gripper_params(self.config, self.calibration["gripper"]))
         logger.info("Saved the gripper limits to %s. Joint zeros were not changed.", self.calibration_fpath)
+
+    def _measure_gripper_by_hand(self) -> tuple[float, float]:
+        """Return the closed and open gripper motor angles, placed by hand with torque off."""
+        measurements: dict[str, float] = {}
+        logger.info(f"{self}: support the arm. Move only the gripper gently by hand; stop if it resists.")
+        for limit in ("closed", "open"):
+            input(f"[{self.id}] Place the gripper fully {limit}, release it, then press Enter: ")
+            samples = []
+            for _ in range(10):
+                samples.append(self.bus.read_states().position[6])
+                time.sleep(0.02)
+            if np.ptp(samples) > 0.03:
+                raise ValueError("Gripper moved while it was measured; calibration was not saved")
+            measurements[limit] = float(np.median(samples))
+        return measurements["closed"], measurements["open"]
+
+    def _find_gripper_stops(self) -> tuple[float, float]:
+        """Hold the arm, push the gripper into both mechanical stops, and return the closed and open angles.
+
+        The linear YAM gripper closes toward larger motor angles.
+        """
+        self.bus.set_mit_mode()
+        self._check_can_timeouts()
+        self._load_gravity_model()
+        hold = self.bus.read_states().position.copy()
+        self._check_initial_position(hold)
+        input(
+            f"[{self.id}] Keep hands and objects clear of the gripper, "
+            "then press Enter to drive it into its stops: "
+        )
+        stops = []
+        try:
+            self.bus.enable_torque_at(hold)
+            for direction in (1.0, -1.0):
+                stops.append(self._push_gripper_to_stop(hold, direction))
+        finally:
+            self.bus.disable_torque()
+        logger.info(f"{self}: gripper stops at {np.round(np.rad2deg(stops), 1).tolist()} motor degrees")
+        return max(stops), min(stops)
+
+    def _push_gripper_to_stop(self, hold: np.ndarray, direction: float) -> float:
+        """Push the gripper with a constant torque, holding the arm joints, until it stops moving."""
+        params = _yam_arm_params(self.config)
+        torque = direction * self.config.gripper_calibration_torque_nm
+        push = MitCommand(position=0.0, velocity=0.0, kp=0.0, kd=0.0, torque=torque)
+        start = time.monotonic()
+        next_check = start + _GRIPPER_CHECK_INTERVAL_S
+        last_position: float | None = None
+        still_checks = 0
+        while True:
+            position = self.bus.read_states().position
+            if np.any(np.rad2deg(np.abs(position[:6] - hold[:6])) > self.config.max_tracking_error_deg):
+                raise ValueError("Arm moved during gripper calibration; calibration was not saved")
+            gravity = _gravity_feedforward(params, self._gravity_torque(np.r_[position[:6], 0.0]))
+            for i, name in enumerate(MOTOR_NAMES[:6]):
+                self.bus.send_mit(
+                    name,
+                    MitCommand(
+                        position=float(hold[i]),
+                        velocity=0.0,
+                        kp=float(params.kp[i]),
+                        kd=float(params.kd[i]),
+                        torque=float(gravity[i]),
+                    ),
+                )
+            self.bus.send_mit(MOTOR_NAMES[6], push)
+            now = time.monotonic()
+            if now >= next_check:
+                next_check += _GRIPPER_CHECK_INTERVAL_S
+                gripper = float(position[6])
+                moving = last_position is None or abs(gripper - last_position) >= _GRIPPER_STALL_RAD
+                still_checks = 0 if moving or now - start < _GRIPPER_START_S else still_checks + 1
+                if still_checks >= _GRIPPER_STALL_CHECKS:
+                    return gripper
+                last_position = gripper
+            if now - start > self.config.gripper_calibration_timeout_s:
+                raise ValueError(
+                    f"Gripper did not reach its stop within {self.config.gripper_calibration_timeout_s} s; "
+                    "calibration was not saved"
+                )
+            time.sleep(1 / params.control_frequency)
 
     @check_if_not_connected
     def configure(self) -> None:
