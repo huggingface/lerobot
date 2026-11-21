@@ -452,6 +452,209 @@ class TestStreamingVideoEncoder:
 # ─── Integration tests with LeRobotDataset ───
 
 
+def _record_constant_episode(dataset, num_frames, value):
+    for _ in range(num_frames):
+        dataset.add_frame(
+            {
+                "observation.images.cam": np.full((64, 96, 3), value, dtype=np.uint8),
+                "action": np.array([value / 255], dtype=np.float32),
+                "task": "test task",
+            }
+        )
+    dataset.save_episode()
+
+
+def test_streaming_aggregate_is_frame_weighted_across_resolutions(tmp_path):
+    from lerobot.datasets.compute_stats import aggregate_stats
+
+    key = "observation.images.cam"
+    episodes = []
+    for width, num_frames, value in [(96, 2, 0), (128, 4, 255)]:
+        encoder = StreamingVideoEncoder(
+            fps=30,
+            rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=18),
+        )
+        try:
+            directory = tmp_path / str(width)
+            directory.mkdir()
+            encoder.start_episode([key], directory)
+            for _ in range(num_frames):
+                encoder.feed_frame(key, np.full((64, width, 3), value, dtype=np.uint8))
+            path, stats = encoder.finish_episode()[key]
+            with av.open(str(path)) as container:
+                assert sum(1 for _ in container.decode(video=0)) == num_frames
+            episodes.append(
+                {
+                    key: {
+                        stat: values if stat == "count" else values.reshape(-1, 1, 1) / 255
+                        for stat, values in stats.items()
+                    }
+                }
+            )
+        finally:
+            encoder.close()
+    combined = aggregate_stats(episodes)[key]
+    np.testing.assert_array_equal(combined["count"], [6])
+    np.testing.assert_allclose(combined["mean"], 2 / 3, atol=1e-6)
+    np.testing.assert_allclose(combined["std"], np.sqrt(2 / 9), atol=1e-6)
+
+
+@pytest.fixture
+def legacy_streaming_dataset(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from lerobot.datasets.io_utils import load_stats, write_stats
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = tmp_path / "legacy"
+    dataset = LeRobotDataset.create(
+        repo_id="test/legacy",
+        fps=30,
+        features={
+            "observation.images.cam": {
+                "dtype": "video",
+                "shape": (64, 96, 3),
+                "names": ["height", "width", "channels"],
+            },
+            "action": {"dtype": "float32", "shape": (1,), "names": ["j1"]},
+        },
+        root=root,
+        streaming_encoding=True,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=18),
+    )
+    _record_constant_episode(dataset, 2, 0)
+    dataset.finalize()
+
+    # Reproduce the persisted files written by the old, pixel-count streaming encoder.
+    path = next((root / "meta/episodes").glob("*/*.parquet"))
+    table = pq.read_table(path)
+    count_column = "stats/observation.images.cam/count"
+    index = table.schema.get_field_index(count_column)
+    table = table.set_column(index, table.schema.field(index), pa.array([[2 * 64 * 96]]))
+    pq.write_table(table, path)
+    stats = load_stats(root)
+    stats["observation.images.cam"]["count"] = np.array([2 * 64 * 96])
+    write_stats(stats, root)
+    return root
+
+
+@pytest.mark.parametrize("streaming_encoding", [False, True])
+def test_resume_legacy_streaming_stats_use_frame_weights(legacy_streaming_dataset, streaming_encoding):
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = legacy_streaming_dataset
+    legacy_path = next((root / "meta/episodes").glob("*/*.parquet"))
+    legacy_bytes = legacy_path.read_bytes()
+    dataset = LeRobotDataset.resume(
+        repo_id="test/legacy",
+        root=root,
+        streaming_encoding=streaming_encoding,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=18),
+    )
+    np.testing.assert_array_equal(dataset.meta.stats["observation.images.cam"]["count"], [2])
+    _record_constant_episode(dataset, 4, 255)
+    dataset.finalize()
+
+    stats = LeRobotDatasetMetadata("test/legacy", root=root).stats
+    for key in ["observation.images.cam", "action"]:
+        np.testing.assert_array_equal(stats[key]["count"], [6])
+        np.testing.assert_allclose(stats[key]["mean"], 2 / 3, atol=1e-6)
+        np.testing.assert_allclose(stats[key]["std"], np.sqrt(2 / 9), atol=1e-6)
+    assert legacy_path.read_bytes() == legacy_bytes
+
+
+def test_legacy_mixed_image_aggregate_is_rebuilt(legacy_streaming_dataset):
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+    from lerobot.datasets.io_utils import load_stats, write_stats
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = legacy_streaming_dataset
+    dataset = LeRobotDataset.resume(
+        repo_id="test/legacy",
+        root=root,
+        streaming_encoding=True,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=18),
+    )
+    _record_constant_episode(dataset, 4, 255)
+    dataset.finalize()
+    # Emulate a previously resumed dataset with both legacy pixel counts and frame counts.
+    stats = load_stats(root)
+    mean = 4 / (2 * 64 * 96 + 4)
+    stats["observation.images.cam"]["count"] = np.array([2 * 64 * 96 + 4])
+    stats["observation.images.cam"]["mean"] = np.full((3, 1, 1), mean)
+    stats["observation.images.cam"]["std"] = np.full((3, 1, 1), np.sqrt(mean * (1 - mean)))
+    write_stats(stats, root)
+    original = (root / "meta/stats.json").read_bytes()
+
+    restored = LeRobotDatasetMetadata("test/legacy", root=root).stats
+    np.testing.assert_array_equal(restored["observation.images.cam"]["count"], [6])
+    np.testing.assert_allclose(restored["observation.images.cam"]["mean"], 2 / 3, atol=1e-6)
+    np.testing.assert_allclose(restored["observation.images.cam"]["std"], np.sqrt(2 / 9), atol=1e-6)
+    for stat in stats["action"]:
+        np.testing.assert_array_equal(restored["action"][stat], stats["action"][stat])
+    assert (root / "meta/stats.json").read_bytes() == original
+
+
+def test_edit_legacy_streaming_stats_preserves_frame_counts(legacy_streaming_dataset, tmp_path):
+    import pyarrow.parquet as pq
+
+    from lerobot.datasets.dataset_tools import delete_episodes
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = legacy_streaming_dataset
+    dataset = LeRobotDataset.resume(
+        repo_id="test/legacy",
+        root=root,
+        streaming_encoding=True,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=18),
+    )
+    _record_constant_episode(dataset, 4, 255)
+    dataset.finalize()
+    source = LeRobotDataset("test/legacy", root=root, video_backend="pyav")
+    edited = delete_episodes(source, [1], output_dir=tmp_path / "edited")
+    np.testing.assert_array_equal(edited.meta.stats["observation.images.cam"]["count"], [2])
+    np.testing.assert_allclose(edited.meta.stats["observation.images.cam"]["mean"], 0)
+    for path in (edited.root / "meta/episodes").glob("*/*.parquet"):
+        assert pq.read_table(path)["stats/observation.images.cam/count"].to_pylist() == [[2]]
+
+
+def test_merge_legacy_streaming_stats_preserves_frame_weights(legacy_streaming_dataset, tmp_path):
+    import pyarrow.parquet as pq
+
+    from lerobot.datasets.dataset_tools import merge_datasets
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = legacy_streaming_dataset
+    source = LeRobotDataset("test/legacy", root=root, video_backend="pyav")
+    other = LeRobotDataset.create(
+        repo_id="test/current",
+        fps=30,
+        features=source.meta.features,
+        root=tmp_path / "current",
+        streaming_encoding=True,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=18),
+    )
+    _record_constant_episode(other, 4, 255)
+    other.finalize()
+    other = LeRobotDataset("test/current", root=other.root, video_backend="pyav")
+    merged = merge_datasets(
+        [source, other],
+        output_repo_id="test/merged",
+        output_dir=tmp_path / "merged",
+        concatenate_videos=False,
+        concatenate_data=False,
+    )
+    np.testing.assert_array_equal(merged.meta.stats["observation.images.cam"]["count"], [6])
+    np.testing.assert_allclose(merged.meta.stats["observation.images.cam"]["mean"], 2 / 3, atol=1e-6)
+    np.testing.assert_allclose(merged.meta.stats["observation.images.cam"]["std"], np.sqrt(2 / 9), atol=1e-6)
+    counts = []
+    for path in sorted((merged.root / "meta/episodes").glob("*/*.parquet")):
+        counts.extend(pq.read_table(path)["stats/observation.images.cam/count"].to_pylist())
+    assert counts == [[2], [4]]
+
+
 class TestStreamingEncoderIntegration:
     def test_add_frame_save_episode_streaming(self, tmp_path):
         """Full integration test: add_frame -> save_episode with streaming encoding."""

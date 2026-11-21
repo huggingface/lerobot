@@ -104,9 +104,12 @@ def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> d
     parquet_path = src_dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
     df = pd.read_parquet(parquet_path)
 
-    episode_row = df[df["episode_index"] == episode_idx].iloc[0]
-
-    return episode_row.to_dict()
+    episode_row = df[df["episode_index"] == episode_idx].iloc[0].to_dict()
+    for key in src_dataset.meta.camera_keys:
+        count_column = f"stats/{key}/count"
+        if count_column in episode_row:
+            episode_row[count_column] = np.array([episode_row["length"]])
+    return episode_row
 
 
 def delete_episodes(

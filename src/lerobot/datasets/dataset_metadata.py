@@ -41,6 +41,7 @@ from .io_utils import (
     get_file_size_in_mb,
     load_episodes,
     load_info,
+    load_nested_dataset,
     load_stats,
     load_tasks,
     write_info,
@@ -51,6 +52,7 @@ from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
 from .storage import DEFAULT_STORAGE_FORMAT, dataset_location
 from .utils import (
     DEFAULT_EPISODES_PATH,
+    EPISODES_DIR,
     check_version_compatibility,
     get_safe_version,
     has_legacy_hub_download_metadata,
@@ -221,6 +223,30 @@ class LeRobotDatasetMetadata:
         self.tasks = load_tasks(self.root) if self.total_tasks > 0 else None
         self.episodes = load_episodes(self.root) if self.total_episodes > 0 else None
         self.stats = load_stats(self.root)
+        self._normalize_legacy_image_stats()
+
+    def _normalize_legacy_image_stats(self) -> None:
+        """Reweight legacy streaming image statistics by episode length, without rewriting source files."""
+        if self.episodes is None or self.stats is None or not self.camera_keys:
+            return
+        episodes = load_nested_dataset(self.root / EPISODES_DIR)
+        lengths = np.asarray(episodes["length"])
+        for key in self.camera_keys:
+            prefix = f"stats/{key}/"
+            count_column = f"{prefix}count"
+            if key not in self.stats or count_column not in episodes.column_names:
+                continue
+            counts = np.asarray(episodes[count_column]).reshape(-1)
+            if np.array_equal(counts, lengths):
+                continue
+            # Rebuild the aggregate, not just its count: old episodes may have different pixel weights.
+            columns = [column for column in episodes.column_names if column.startswith(prefix)]
+            stats = []
+            for episode in episodes.select_columns(["length", *columns]):
+                feature_stats = {column[len(prefix) :]: np.asarray(episode[column]) for column in columns}
+                feature_stats["count"] = np.array([episode["length"]])
+                stats.append({key: feature_stats})
+            self.stats[key] = aggregate_stats(stats)[key]
 
     def ensure_readable(self) -> None:
         """Guarantee metadata is fully loaded for read operations.
