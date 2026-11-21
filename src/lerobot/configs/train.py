@@ -14,6 +14,7 @@
 import builtins
 import datetime as dt
 import json
+import logging
 import multiprocessing
 import os
 import tempfile
@@ -30,16 +31,15 @@ from lerobot import envs
 from lerobot.configs.accelerator import AcceleratorConfig, ActivationCheckpointingMode
 from lerobot.configs.parallelism import ParallelismConfig
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
-from lerobot.utils.constants import PRETRAINED_MODEL_DIR
-from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
+from lerobot.optim.ema import EMAConfig
+from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAIN_CONFIG_NAME as TRAIN_CONFIG_NAME
+from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint, sanitize_checkpoint_consent
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
+from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
-
-TRAIN_CONFIG_NAME = "train_config.json"
 
 
 class CheckpointFormat(str, Enum):
@@ -52,22 +52,36 @@ class CheckpointFormat(str, Enum):
       save under sharding.
     - DCP: sharded `pytorch_model_fsdp_0/*.distcp` only — fastest save/resume; convert with
       `lerobot-convert-dcp` before distributing.
-    - SAFETENSORS_AND_DCP: both artifacts, written independently.
+    - SAFETENSORS_DCP: both artifacts, written independently.
     """
 
     SAFETENSORS = "safetensors"
     DCP = "dcp"
-    SAFETENSORS_AND_DCP = "safetensors_dcp"
+    SAFETENSORS_DCP = "safetensors_dcp"
 
-    @property
-    def wants_safetensors(self) -> bool:
-        """True when a full `model.safetensors` artifact should be written."""
-        return self in (CheckpointFormat.SAFETENSORS, CheckpointFormat.SAFETENSORS_AND_DCP)
 
-    @property
-    def wants_dcp(self) -> bool:
-        """True when sharded DCP model shards (`pytorch_model_fsdp_0/`) should be written."""
-        return self in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_AND_DCP)
+def _migrate_legacy_wandb_section(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the payload with a pre-Trackio ``wandb`` section mapped onto ``trackio``, or None if absent.
+
+    Checkpoints and Hub repos saved before the switch to Trackio carry a top-level ``wandb`` block that
+    draccus would reject as an unknown field. The options with a Trackio counterpart carry over, the
+    wandb-only ones are dropped, and an explicit ``trackio`` section always wins.
+    """
+    if "wandb" not in config:
+        return None
+
+    migrated_config = dict(config)
+    wandb = migrated_config.pop("wandb")
+    carried: dict[str, Any] = {}
+    if migrated_config.get("trackio") is None and isinstance(wandb, dict):
+        carried = {key: wandb[key] for key in ("enable", "project", "disable_artifact") if key in wandb}
+        if carried:
+            migrated_config["trackio"] = carried
+    logging.warning(
+        f"Loaded a {TRAIN_CONFIG_NAME} with a legacy `wandb` section (LeRobot now tracks experiments with "
+        f"Trackio); carried {sorted(carried)} over to `trackio` and dropped the rest."
+    )
+    return migrated_config
 
 
 def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
@@ -128,6 +142,8 @@ class TrainPipelineConfig(HubMixin):
     # Set to True to use deterministic cuDNN algorithms for reproducibility.
     # This disables cudnn.benchmark and may reduce training speed by ~10-20 percent.
     cudnn_deterministic: bool = False
+    # TF32 in float32 matmuls and cuDNN convolutions on Ampere and newer GPUs.
+    tf32: bool | None = True
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
@@ -142,7 +158,7 @@ class TrainPipelineConfig(HubMixin):
     steps: int = 100_000
     # Run policy in the simulation environment every N steps to measure reward/success (0 = disabled).
     env_eval_freq: int = 20_000
-    log_freq: int = 200
+    log_freq: int = 200  # 0 or negative disables periodic logging
     # Compute eval loss on held-out episodes every N steps (0 = disabled). Requires eval_split > 0.
     eval_steps: int = 0
     # Cap on total eval samples, split uniformly across tasks (0 = use all held-out data).
@@ -163,9 +179,10 @@ class TrainPipelineConfig(HubMixin):
     # FSDP/DDP tuning knobs, compile & activation-checkpointing placeholders.
     accelerator: AcceleratorConfig = field(default_factory=AcceleratorConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
-    # Maintain an EMA shadow of the policy weights during training (see EMAConfig).
-    ema: EMAConfig = field(default_factory=EMAConfig)
-    wandb: WandBConfig = field(default_factory=WandBConfig)
+    # EMA of the trainable policy weights, enabled with --ema.type (see EMAConfig). In-training env eval and the
+    # pushed main branch use the EMA weights.
+    ema: EMAConfig | None = None
+    trackio: TrackioConfig = field(default_factory=TrackioConfig)
     peft: PeftConfig | None = None
 
     # Where to run training (local default, or an HF Jobs flavor). See JobConfig.
@@ -207,14 +224,20 @@ class TrainPipelineConfig(HubMixin):
         policy_path = parser.get_path_arg("policy")
 
         if reward_model_path:
-            cli_overrides = parser.get_cli_overrides("reward_model")
+            cli_overrides = parser.get_yaml_overrides("reward_model") + (
+                parser.get_cli_overrides("reward_model") or []
+            )
             self.reward_model = RewardModelConfig.from_pretrained(
-                reward_model_path, cli_overrides=cli_overrides
+                reward_model_path,
+                revision=parser.get_pretrained_revision("reward_model"),
+                cli_overrides=cli_overrides,
             )
             self.reward_model.pretrained_path = str(Path(reward_model_path))
         elif policy_path:
             overrides = parser.get_yaml_overrides("policy") + (parser.get_cli_overrides("policy") or [])
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=overrides)
+            self.policy = PreTrainedConfig.from_pretrained(
+                policy_path, revision=parser.get_pretrained_revision("policy"), cli_overrides=overrides
+            )
             self.policy.pretrained_path = Path(policy_path)
         elif self.resume:
             self._resolve_resume_checkpoint()
@@ -280,6 +303,22 @@ class TrainPipelineConfig(HubMixin):
             )
 
         active_cfg = self.trainable_config
+
+        # `--peft.*` and `--policy.use_peft=true` both request PEFT training: normalize them so that
+        # `make_policy` and the training loop see the same thing.
+        if self.policy is not None and (self.peft is not None or self.policy.use_peft):
+            if self.policy.pretrained_path is None and not self.resume:
+                raise ValueError(
+                    "Training from scratch using PEFT is unlikely to yield good results. "
+                    "Supply a `--policy.path` to fine-tune an existing model."
+                )
+            self.policy.use_peft = True
+            if self.peft is None:
+                logging.info(
+                    "`policy.use_peft=true` without `--peft.*` options: using the default PEFT config."
+                )
+                self.peft = PeftConfig()
+
         if self.rename_map and active_cfg.pretrained_path is None and not self.resume:
             raise ValueError(
                 "`rename_map` requires a pretrained policy checkpoint. "
@@ -310,6 +349,13 @@ class TrainPipelineConfig(HubMixin):
         elif self.use_policy_training_preset and not self.resume:
             self.optimizer = active_cfg.get_optimizer_preset()
             self.scheduler = active_cfg.get_scheduler_preset()
+
+        image_transforms = self.dataset.image_transforms
+        if image_transforms.enable and image_transforms.backend == "gpu" and active_cfg.device == "cpu":
+            raise ValueError(
+                "dataset.image_transforms.backend='gpu' needs an accelerator device, but policy.device is 'cpu'. "
+                "Use image_transforms.backend='dataloader' to augment in the DataLoader workers."
+            )
 
         if self.eval_steps > 0 and self.dataset.eval_split == 0.0:
             raise ValueError("eval_steps > 0 requires dataset.eval_split > 0.0 to hold out eval data.")
@@ -354,7 +400,10 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError("--accelerator.compile is a placeholder and not wired yet.")
         if self.accelerator.activation_checkpointing.mode is not ActivationCheckpointingMode.NONE:
             raise ValueError("--accelerator.activation_checkpointing is a placeholder and not wired yet.")
-        if self.checkpoint_format is not CheckpointFormat.SAFETENSORS and not self.parallelism.is_sharded:
+        if (
+            self.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP)
+            and not self.parallelism.is_sharded
+        ):
             raise ValueError(
                 f"checkpoint_format={self.checkpoint_format.value} requires a sharded run "
                 "(--parallelism.dp_shard != 1); non-sharded checkpoints are always safetensors."
@@ -373,8 +422,6 @@ class TrainPipelineConfig(HubMixin):
                 "(which does autocast on CPU) or =no."
             )
         if self.parallelism.is_sharded:
-            if self.peft is not None:
-                raise ValueError("PEFT is not supported under sharded training yet.")
             if self.is_reward_model_training:
                 raise ValueError(
                     "Reward-model training is not supported under sharded training yet "
@@ -398,8 +445,10 @@ class TrainPipelineConfig(HubMixin):
         return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
-            draccus.dump(self, f, indent=4)
+        config = self.to_dict()
+        sanitize_checkpoint_consent(config, remove=True)
+        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f:
+            json.dump(config, f, indent=4)
 
     @classmethod
     def from_pretrained(
@@ -416,6 +465,9 @@ class TrainPipelineConfig(HubMixin):
         **kwargs: Any,
     ) -> "TrainPipelineConfig":
         model_id = str(pretrained_name_or_path)
+        # Explicit recipe files may contain caller consent. Hub/directory loads and
+        # the canonical checkpoint filename must require fresh consent on reload.
+        is_checkpoint = not Path(model_id).is_file() or Path(model_id).name == TRAIN_CONFIG_NAME
         config_file: str | None = None
         if Path(model_id).is_dir():
             if TRAIN_CONFIG_NAME in os.listdir(model_id):
@@ -430,8 +482,6 @@ class TrainPipelineConfig(HubMixin):
                 "revision": revision,
                 "cache_dir": cache_dir,
                 "force_download": force_download,
-                "proxies": proxies,
-                "resume_download": resume_download,
                 "token": token,
                 "local_files_only": local_files_only,
             }
@@ -451,15 +501,23 @@ class TrainPipelineConfig(HubMixin):
                 )
 
         cli_args = kwargs.pop("cli_args", [])
-        # Legacy RA-BC migration only applies to framework-saved checkpoints (always JSON).
-        # Hand-written YAML/TOML configs are expected to use the current sample_weighting schema.
+        # Legacy migrations (RA-BC fields, pre-Trackio `wandb` section) only apply to framework-saved
+        # checkpoints (always JSON). Hand-written YAML/TOML configs are expected to use the current schema.
         if config_file is not None and config_file.endswith(".json"):
             with open(config_file) as f:
                 config = json.load(f)
-            migrated_config = _migrate_legacy_rabc_fields(config)
-            if migrated_config is not None:
+            updated = False
+            if is_checkpoint:
+                # Reset before draccus constructs nested configs: their __post_init__
+                # may load custom tokenizer code. Explicit CLI overrides apply below.
+                updated = sanitize_checkpoint_consent(config)
+            for migrate in (_migrate_legacy_rabc_fields, _migrate_legacy_wandb_section):
+                migrated_config = migrate(config)
+                if migrated_config is not None:
+                    config, updated = migrated_config, True
+            if updated:
                 with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
-                    json.dump(migrated_config, f)
+                    json.dump(config, f)
                     config_file = f.name
 
         with draccus.config_type("json"):

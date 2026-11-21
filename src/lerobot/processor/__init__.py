@@ -31,11 +31,13 @@ from .converters import (
     identity_transition,
     observation_to_transition,
     policy_action_to_transition,
+    policy_output_to_transition,
     robot_action_observation_to_transition,
     robot_action_to_transition,
     transition_to_batch,
     transition_to_observation,
     transition_to_policy_action,
+    transition_to_prediction,
     transition_to_robot_action,
 )
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
@@ -66,6 +68,8 @@ from .hil_processor import (
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
+from .image_augmentation_processor import ImageAugmentationProcessorStep
+from .joint_reorder_processor import JointReorderProcessorStep
 from .newline_task_processor import NewLineTaskProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
 from .observation_processor import VanillaObservationProcessorStep
@@ -98,7 +102,7 @@ from .relative_action_processor import (
     to_absolute_actions,
     to_relative_actions,
 )
-from .rename_processor import RenameObservationsProcessorStep, rename_stats
+from .rename_processor import RenameObservationsProcessorStep, rename_keys, rename_stats
 from .render_messages_processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
@@ -107,16 +111,19 @@ __all__ = [
     "AddTeleopActionAsComplimentaryDataStep",
     "AddTeleopEventsAsInfoStep",
     "ComplementaryDataProcessorStep",
+    "ImageAugmentationProcessorStep",
     "batch_to_transition",
     "create_transition",
     "from_tensor_to_numpy",
     "identity_transition",
     "observation_to_transition",
     "policy_action_to_transition",
+    "policy_output_to_transition",
     "robot_action_observation_to_transition",
     "robot_action_to_transition",
     "transition_to_observation",
     "transition_to_policy_action",
+    "transition_to_prediction",
     "transition_to_robot_action",
     "DeviceProcessorStep",
     "DoneProcessorStep",
@@ -129,6 +136,7 @@ __all__ = [
     "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
     "InterventionActionProcessorStep",
+    "JointReorderProcessorStep",
     "DefaultPolicyProcessorSteps",
     "load_pretrained_policy_processors",
     "make_default_policy_processor_steps",
@@ -156,6 +164,7 @@ __all__ = [
     "RobotAction",
     "RobotActionProcessorStep",
     "RobotObservation",
+    "rename_keys",
     "rename_stats",
     "RenameObservationsProcessorStep",
     "RenderRuntimeMessagesStep",

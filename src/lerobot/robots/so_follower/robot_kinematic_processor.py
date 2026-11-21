@@ -132,9 +132,9 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
                 ],
                 dtype=float,
             )
-            r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+            r_abs = Rotation.from_rotvec(np.array([wx, wy, wz])).as_matrix()
             desired = np.eye(4, dtype=float)
-            desired[:3, :3] = ref[:3, :3] @ r_abs
+            desired[:3, :3] = r_abs @ ref[:3, :3]
             desired[:3, 3] = ref[:3, 3] + delta_p
 
             self._command_when_disabled = desired.copy()
@@ -335,7 +335,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
 
         # Build desired 4x4 transform from pos + rotvec (twist)
         t_des = np.eye(4, dtype=float)
-        t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+        t_des[:3, :3] = Rotation.from_rotvec(np.array([wx, wy, wz])).as_matrix()
         t_des[:3, 3] = [x, y, z]
 
         # Compute inverse kinematics
@@ -611,7 +611,7 @@ class InverseKinematicsRLStep(ProcessorStep):
 
         # Build desired 4x4 transform from pos + rotvec (twist)
         t_des = np.eye(4, dtype=float)
-        t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+        t_des[:3, :3] = Rotation.from_rotvec(np.array([wx, wy, wz])).as_matrix()
         t_des[:3, 3] = [x, y, z]
 
         # Compute inverse kinematics

@@ -28,6 +28,8 @@ from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig  # noqa: 
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE  # noqa: E402
 from lerobot.utils.random_utils import seeded_context, set_seed  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 try:
     import transformers  # noqa: F401
 
@@ -304,7 +306,10 @@ def test_gaussian_actor_training_with_visual_input(batch_size: int, state_dim: i
 
 @pytest.mark.parametrize(
     "batch_size,state_dim,action_dim,vision_encoder_name",
-    [(1, 6, 6, "lerobot/resnet10"), (1, 6, 6, "facebook/convnext-base-224")],
+    [
+        (1, 6, 6, "lerobot/resnet10@60e4365989619db6365ba92b1169d5dcc143d165"),
+        (1, 6, 6, "facebook/convnext-base-224"),
+    ],
 )
 @pytest.mark.skipif(not TRANSFORMERS_AVAILABLE, reason="Transformers are not installed")
 def test_gaussian_actor_policy_with_pretrained_encoder(
@@ -312,6 +317,7 @@ def test_gaussian_actor_policy_with_pretrained_encoder(
 ):
     config = create_config_with_visual_input(state_dim=state_dim, continuous_action_dim=action_dim)
     config.vision_encoder_name = vision_encoder_name
+    config.trust_remote_code = vision_encoder_name.startswith("lerobot/resnet10@")
     algorithm, policy = _make_algorithm(config)
 
     batch = create_train_batch_with_visual_input(
@@ -526,3 +532,20 @@ def test_gaussian_actor_policy_save_and_load_with_discrete_critic(tmp_path):
 
     for k in policy.state_dict():
         assert torch.allclose(policy.state_dict()[k], loaded_policy.state_dict()[k], atol=1e-6)
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_pretrained_encoder_requires_caller_consent(monkeypatch, consent):
+    from unittest.mock import MagicMock
+
+    transformers = pytest.importorskip("transformers")
+    from lerobot.policies.gaussian_actor.modeling_gaussian_actor import PretrainedImageEncoder
+
+    load = MagicMock(side_effect=RuntimeError("stop before encoder weights"))
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", load)
+    config = GaussianActorConfig(vision_encoder_name="user/encoder@" + "a" * 40, trust_remote_code=consent)
+    with pytest.raises(RuntimeError, match="stop before encoder weights"):
+        PretrainedImageEncoder(config)
+    load.assert_called_once_with(
+        "user/encoder", revision="a" * 40, code_revision="a" * 40, trust_remote_code=consent
+    )

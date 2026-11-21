@@ -96,7 +96,7 @@ class Qwen2_5_VLConfig(TransformersQwen2_5_VLConfig):  # noqa: N801
     flat layout used by existing ``wall-oss-flow`` checkpoints.
     """
 
-    sub_configs = {
+    sub_configs_defaults = {
         "vision_config": Qwen2_5_VLVisionConfig,
         "text_config": Qwen2_5_VLTextConfig,
     }

@@ -451,7 +451,6 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Compile model if requested
         if config.compile_model:
-            torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
             # Also compile the main forward pass used during training
             self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
@@ -686,6 +685,8 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 self.config.max_action_dim,
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
+        else:
+            noise = noise.to(device=device, dtype=torch.float32)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks
@@ -849,13 +850,11 @@ class PI0Policy(PreTrainedPolicy):
                 resolved_file = cached_file(
                     pretrained_name_or_path,
                     "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    token=token,
+                    revision=revision,
+                    local_files_only=local_files_only,
                 )
                 from safetensors.torch import load_file
 
@@ -1075,7 +1074,7 @@ class PI0Policy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations."""
         assert not self._rtc_enabled(), (
             "RTC is not supported for select_action, use it with predict_action_chunk"
@@ -1085,7 +1084,7 @@ class PI0Policy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
             self._action_queue.extend(actions.transpose(0, 1))
 
@@ -1093,9 +1092,17 @@ class PI0Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+        """Predict a chunk of actions given environment observations.
+
+        `noise` is the starting sample of the denoising loop, shaped
+        (batch_size, chunk_size, max_action_dim). When it is None, fresh noise is drawn.
+        """
         self.eval()
 
         # Prepare inputs
@@ -1104,7 +1111,9 @@ class PI0Policy(PreTrainedPolicy):
         state = self.prepare_state(batch)
 
         # Sample actions using the model (pass through RTC kwargs)
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, **kwargs)
+        actions = self.model.sample_actions(
+            images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
+        )
 
         # Unpad actions to actual action dimension
         if self.config.output_features is None:

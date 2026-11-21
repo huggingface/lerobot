@@ -56,6 +56,7 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available
 
 from ..pi05.processor_pi05 import make_pi05_pre_post_processors
@@ -160,9 +161,6 @@ def _is_batched_messages(messages: Any) -> bool:
     return isinstance(messages, list) and bool(messages) and isinstance(messages[0], list)
 
 
-_VQA_COORD_SCALE = 1000.0
-
-
 def register_paligemma_loc_tokens(tokenizer: Any) -> Any:
     """Register PaliGemma's reserved ``<locDDDD>`` strings as single tokens.
 
@@ -174,9 +172,9 @@ def register_paligemma_loc_tokens(tokenizer: Any) -> Any:
     return tokenizer
 
 
-def _loc_token(coord: float, scale: float = _VQA_COORD_SCALE) -> str:
-    """PaliGemma ``<locNNNN>`` for a coord on a ``[0, scale]`` axis."""
-    idx = round(float(coord) / scale * 1023) if scale > 0 else 0
+def _loc_token(coord: float) -> str:
+    """PaliGemma ``<locNNNN>`` for a stored annotation in [0, 1] image fractions."""
+    idx = round(float(coord) * 1023)
     return f"<loc{max(0, min(1023, idx)):04d}>"
 
 
@@ -295,7 +293,10 @@ class FineARTVLATextTokenizerStep(ProcessorStep):
     def _ensure_tokenizer(self) -> Any:
         if self._tokenizer is not None:
             return self._tokenizer
-        self._tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(self.tokenizer_name))
+        repo_id, revision = split_hub_reference(self.tokenizer_name)
+        self._tokenizer = register_paligemma_loc_tokens(
+            AutoTokenizer.from_pretrained(repo_id, revision=revision, code_revision=revision)
+        )
         return self._tokenizer
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -496,6 +497,7 @@ def make_fineart_vla_pre_post_processors(
                     episodes,
                     exclude_episodes,
                 ),
+                trust_remote_code=config.trust_remote_code,
                 max_action_tokens=config.max_action_tokens,
                 fast_skip_tokens=config.fast_skip_tokens,
                 paligemma_tokenizer_name=config.text_tokenizer_name,

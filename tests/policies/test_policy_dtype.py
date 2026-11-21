@@ -24,15 +24,24 @@ import torch
 import lerobot.policies
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.policies.cosmos3.configuration_cosmos3 import Cosmos3Config
 from lerobot.policies.eo1.configuration_eo1 import EO1Config
+from lerobot.utils.import_utils import _transformers_available
 
+# The public package also exports inference settings such as RTCConfig.
 POLICY_CONFIGS = [
-    getattr(lerobot.policies, name) for name in lerobot.policies.__all__ if name.endswith("Config")
+    config_cls
+    for name in lerobot.policies.__all__
+    if isinstance(config_cls := getattr(lerobot.policies, name), type)
+    and issubclass(config_cls, PreTrainedConfig)
+    and config_cls is not PreTrainedConfig
 ]
 
 
 @pytest.mark.parametrize("config_cls", POLICY_CONFIGS, ids=lambda cls: cls.__name__)
 def test_policy_config_json_round_trip(tmp_path, config_cls):
+    if issubclass(config_cls, Cosmos3Config) and not _transformers_available:
+        pytest.skip("The Cosmos3 backbone configs are transformers configs.")
     # EO1 would otherwise download the Qwen2.5-VL config from the Hub.
     extra = {"vlm_config": {}} if config_cls is EO1Config else {}
     config_cls(device="cpu", dtype=torch.bfloat16, **extra).save_pretrained(tmp_path)

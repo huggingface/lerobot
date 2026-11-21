@@ -17,12 +17,7 @@
 import logging
 import time
 
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.dynamixel import (
-    DriveMode,
-    DynamixelMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors import DriveMode, Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -43,7 +38,7 @@ class OmxLeader(Teleoperator):
     def __init__(self, config: OmxLeaderConfig):
         super().__init__(config)
         self.config = config
-        self.bus = DynamixelMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(1, "xl330-m288", MotorNormMode.RANGE_M100_100),
@@ -88,8 +83,7 @@ class OmxLeader(Teleoperator):
         self.bus.disable_torque()
         logger.info(f"\nUsing factory default calibration values for {self}")
         logger.info(f"\nWriting default configuration of {self} to the motors")
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+        self.bus.set_operating_mode("extended_position")
 
         for motor in self.bus.motors:
             if motor == "gripper":
@@ -105,7 +99,7 @@ class OmxLeader(Teleoperator):
                 drive_mode=drive_modes[motor],
                 homing_offset=0 if motor != "gripper" else 100,
                 range_min=0,
-                range_max=4095,
+                range_max=self.bus.resolution(m.model) - 1,
             )
 
         self.bus.write_calibration(self.calibration)
@@ -121,7 +115,7 @@ class OmxLeader(Teleoperator):
                 # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
                 # assembling the arm, you could end up with a servo with a position 0 or 4095 at a crucial
                 # point
-                self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+                self.bus.set_operating_mode("extended_position", motor)
 
             if motor == "gripper":
                 self.bus.write("Drive_Mode", motor, DriveMode.INVERTED.value)
@@ -133,7 +127,7 @@ class OmxLeader(Teleoperator):
         # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
         # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
         # to make it move, and it will move back to its original target position when we release the force.
-        self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+        self.bus.set_operating_mode("current_based_position", "gripper")
         self.bus.write("Current_Limit", "gripper", 100)
         self.bus.write("Goal_Current", "gripper", 100)
         self.bus.write("Homing_Offset", "gripper", 100)
@@ -143,10 +137,7 @@ class OmxLeader(Teleoperator):
             self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
 
     def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors()
 
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:

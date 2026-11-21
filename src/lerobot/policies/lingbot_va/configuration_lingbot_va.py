@@ -97,6 +97,10 @@ class LingBotVAConfig(PreTrainedConfig):
 
     # Opt-in: VAE-decode predicted video latents to ``self.last_predicted_frames`` for saving MP4s.
     save_predicted_video: bool = False
+    # Opt-in: VAE-decode each chunk's predicted video and return, with each action, the imagined
+    # frame it belongs to (``observation.images.predicted``), shown live by ``--display_data``.
+    # Costs one VAE decode per chunk.
+    return_predicted_video: bool = False
 
     # Normalization: IDENTITY here; images are scaled + VAE-encoded and actions are
     # quantile-(un)normalized inside the policy / dedicated processor steps.

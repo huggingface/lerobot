@@ -33,6 +33,8 @@ from lerobot.processor.relative_action_processor import (
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 
+pytestmark = pytest.mark.dataset
+
 CHUNK_SIZE = 10
 REPO_ID = "lerobot-data-collection/dagger_final_1_21"
 

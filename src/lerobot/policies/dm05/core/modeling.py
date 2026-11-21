@@ -37,7 +37,7 @@ from transformers import (
     PretrainedConfig,
     PreTrainedModel,
 )
-from transformers.cache_utils import Cache, CacheLayerMixin, DynamicCache
+from transformers.cache_utils import Cache, CacheLayerMixin, DynamicCache, DynamicLayer
 from transformers.modeling_layers import GradientCheckpointingLayer
 from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3CausalLMOutputWithPast,
@@ -50,6 +50,8 @@ from transformers.models.gemma3.modeling_gemma3 import (
     repeat_kv,
 )
 from transformers.utils import is_torch_flex_attn_available
+
+from lerobot.utils.hub import split_hub_reference
 
 from .utils import IGNORE_INDEX, build_action_prefix_mask, validate_action_prefill_pair
 
@@ -84,20 +86,8 @@ def patch_decoder_layers(model):
         layer.__class__ = patched_decoder_layer
 
 
-class _OverwriteDynamicLayerBase(CacheLayerMixin):
+class _OverwriteDynamicLayerBase(DynamicLayer):
     """Overwrite-mode cache layer used by DM05 prefix/suffix forwards."""
-
-    is_sliding = False
-
-    def __init__(self):
-        super().__init__()
-        self.keys = None
-        self.values = None
-        self.is_initialized = True
-
-    def lazy_initialization(self, key_states: torch.Tensor, value_states: torch.Tensor) -> None:
-        """No-op; initialized in __init__."""
-        pass
 
     def update(
         self,
@@ -109,21 +99,8 @@ class _OverwriteDynamicLayerBase(CacheLayerMixin):
         self.device = key_states.device
         self.keys = key_states
         self.values = value_states
+        self.is_initialized = True
         return key_states, value_states
-
-    def get_mask_sizes(self, cache_position: torch.Tensor) -> tuple[int, int]:
-        kv_offset = 0
-        query_length = cache_position if isinstance(cache_position, int) else cache_position.shape[0]
-        kv_length = self.get_seq_length() + query_length
-        return kv_length, kv_offset
-
-    def get_seq_length(self) -> int:
-        if self.keys is None or self.keys.numel() == 0:
-            return 0
-        return self.keys.shape[-2]
-
-    def get_max_cache_shape(self) -> int:
-        return -1
 
 
 class OverwriteDynamicLayer(_OverwriteDynamicLayerBase):
@@ -659,7 +636,8 @@ def resolve_action_attn_implementation(
 
 def hydrate_config(config_ref):
     if isinstance(config_ref, str):
-        return AutoConfig.from_pretrained(config_ref)
+        repo_id, revision = split_hub_reference(config_ref)
+        return AutoConfig.from_pretrained(repo_id, revision=revision, code_revision=revision)
     if isinstance(config_ref, dict) and "model_type" in config_ref:
         return CONFIG_MAPPING[config_ref["model_type"]](**config_ref)
     return config_ref
@@ -1264,10 +1242,9 @@ class DM05Model(DM05CoreVLAModel):
 
         # Initialize VLM.
         if isinstance(vlm_source, str) and not _on_meta:
+            repo_id, revision = split_hub_reference(vlm_source)
             self.vlm = Gemma3ForConditionalGeneration.from_pretrained(
-                vlm_source,
-                config=vlm_config_ref,
-                torch_dtype=torch_dtype,
+                repo_id, config=vlm_config_ref, torch_dtype=torch_dtype, revision=revision
             )
         else:
             self.vlm = Gemma3ForConditionalGeneration(vlm_config_ref)
@@ -1275,10 +1252,9 @@ class DM05Model(DM05CoreVLAModel):
         # Initialize the action expert, then wrap it as a suffix-only module
         # while preserving layer/norm parameter paths.
         if isinstance(action_source, str) and not _on_meta:
+            repo_id, revision = split_hub_reference(action_source)
             action_expert = Gemma3TextModel.from_pretrained(
-                action_source,
-                config=action_config_ref,
-                torch_dtype=torch_dtype,
+                repo_id, config=action_config_ref, torch_dtype=torch_dtype, revision=revision
             )
         else:
             action_expert = Gemma3TextModel(action_config_ref)

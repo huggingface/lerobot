@@ -27,6 +27,8 @@ from lerobot.lerobot_types import (
     EnvAction,
     EnvTransition,
     PolicyAction,
+    PolicyOutput,
+    PolicyPrediction,
     RobotAction,
     RobotObservation,
     TransitionKey,
@@ -37,6 +39,7 @@ from lerobot.utils.constants import (
     INFO,
     MESSAGES_RENDERED,
     OBS_PREFIX,
+    PREDICTION,
     QUERY_KIND,
     QUERY_TEXT,
     REWARD,
@@ -208,6 +211,7 @@ def create_transition(
     truncated: bool | torch.Tensor = False,
     info: dict[str, Any] | None = None,
     complementary_data: dict[str, Any] | None = None,
+    prediction: PolicyPrediction | None = None,
 ) -> EnvTransition:
     """
     Create an `EnvTransition` dictionary with sensible defaults.
@@ -220,6 +224,7 @@ def create_transition(
         truncated: Episode truncation flag.
         info: Additional info dictionary.
         complementary_data: Complementary data dictionary.
+        prediction: What the policy predicts besides its action.
 
     Returns:
         A complete `EnvTransition` dictionary.
@@ -227,6 +232,7 @@ def create_transition(
     return {
         TransitionKey.OBSERVATION: observation,
         TransitionKey.ACTION: action,
+        TransitionKey.PREDICTION: prediction,
         TransitionKey.REWARD: reward,
         TransitionKey.DONE: done,
         TransitionKey.TRUNCATED: truncated,
@@ -349,6 +355,28 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
     return create_transition(action=action)
 
 
+def policy_output_to_transition(output: PolicyAction | PolicyOutput) -> EnvTransition:
+    """
+    Convert what ``select_action`` / ``predict_action_chunk`` returned to an `EnvTransition`.
+
+    A policy returns a bare `PolicyAction`, or a `PolicyOutput` batch carrying the action and its
+    prediction (see `transition_to_prediction`).
+    """
+    if isinstance(output, torch.Tensor):
+        return policy_action_to_transition(output)
+    return batch_to_transition(dict(output))
+
+
+def transition_to_prediction(transition: EnvTransition) -> PolicyPrediction:
+    """
+    Extract what a policy predicted besides its action.
+
+    Returns an empty `PolicyPrediction` when the transition carries none.
+    """
+    prediction = transition.get(TransitionKey.PREDICTION)
+    return prediction if prediction is not None else PolicyPrediction()
+
+
 def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
     """
     Convert a batch dictionary from a dataset/dataloader into an `EnvTransition`.
@@ -386,6 +414,7 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
         truncated=batch.get(TRUNCATED, False),
         info=batch.get("info", {}),
         complementary_data=complementary_data if complementary_data else None,
+        prediction=batch.get(PREDICTION),
     )
 
 
@@ -411,6 +440,8 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
         TRUNCATED: transition.get(TransitionKey.TRUNCATED, False),
         INFO: transition.get(TransitionKey.INFO, {}),
     }
+    if (prediction := transition.get(TransitionKey.PREDICTION)) is not None:
+        batch[PREDICTION] = prediction
 
     # Add complementary data.
     comp_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})

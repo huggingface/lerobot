@@ -193,7 +193,7 @@ def test_hub_options_reach_checkpoint_download(checkpoint, monkeypatch):
         calls.append(kwargs)
         return str(path / "model.safetensors")
 
-    monkeypatch.setattr("lerobot.policies.eo1.modeling_eo1.hf_hub_download", download)
+    monkeypatch.setattr("lerobot.policies.pretrained.hf_hub_download", download)
     EO1Policy.from_pretrained(
         "org/eo1",
         config=deepcopy(original.config),
@@ -212,7 +212,23 @@ def test_hub_options_reach_checkpoint_download(checkpoint, monkeypatch):
             "cache_dir": path,
             "local_files_only": True,
             "force_download": False,
-            "resume_download": None,
-            "proxies": None,
         }
     ]
+
+
+def test_sharded_checkpoint_restores_weights(checkpoint):
+    path, original = checkpoint
+    single = path / "model.safetensors"
+    weights = load_file(single)
+    names = sorted(weights)
+    weight_map = {}
+    for number in range(2):
+        filename = f"shard-{number}.safetensors"
+        shard = {name: weights[name] for name in names[number::2]}
+        save_file(shard, path / filename)
+        weight_map.update(dict.fromkeys(shard, filename))
+    (path / "model.safetensors.index.json").write_text(json.dumps({"weight_map": weight_map}))
+    single.unlink()
+    loaded = EO1Policy.from_pretrained(path, config=deepcopy(original.config), strict=True)
+    for name, tensor in original.state_dict().items():
+        torch.testing.assert_close(loaded.state_dict()[name], tensor, rtol=0, atol=0)

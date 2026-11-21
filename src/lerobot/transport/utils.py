@@ -21,13 +21,17 @@ import logging
 import pickle  # nosec B403: Safe usage for internal serialization only
 from multiprocessing.synchronize import Event as MpEvent
 from queue import Queue
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
+from lerobot.utils.import_utils import _grpc_available, require_package
 from lerobot.utils.transition import Transition
 
-from . import services_pb2
+if TYPE_CHECKING or _grpc_available:
+    from . import services_pb2
+
+require_package("grpcio", extra="grpcio-dep", import_name="grpc")
 
 TransferState = services_pb2.TransferState
 

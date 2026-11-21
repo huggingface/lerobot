@@ -40,7 +40,9 @@ pip install -e ".[fineart_vla]"
 The `fineart_vla` extra includes the PaliGemma/FAST dependencies. For the optional
 fused training kernels on Linux with a CUDA GPU, install `".[fineart_vla_kernels]"`
 instead. It adds `liger-kernel` and the Hugging Face `kernels` package used by the
-FlashRT backends. Liger is opt-in with `--policy.use_liger_kernels=true`: it patches
+FlashRT backends. FlashRT kernels are only published for some PyTorch versions;
+without a matching build, the FlashRT backends log a warning and fall back to
+PyTorch. Liger is opt-in with `--policy.use_liger_kernels=true`: it patches
 transformers' PaliGemma RoPE/GeGLU for the whole process, so other PaliGemma-based
 policies loaded in the same process also run with the fused kernels.
 
@@ -108,10 +110,16 @@ embedded 70/30 subtask recipe. `--policy.path` loads the base checkpoint's own
 config, so fine-tuning keeps the FAST token layout (`fast_skip_tokens`) and the
 recipe the base was trained with; the other `--policy.*` flags override it.
 
+The default FAST action tokenizer loads custom Python code. Review the tokenizer
+repository before enabling `--policy.trust_remote_code=true`. This consent is
+required for FAST tokenizer fitting and loading, including local fitted copies,
+and must be supplied again when resuming or loading a checkpoint.
+
 ```bash
 lerobot-train \
     --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
     --policy.path=lerobot/fineart_vla_base \
+    --policy.trust_remote_code=true \
     --policy.tokenizer_max_length=256 \
     --policy.dtype=bfloat16 \
     --policy.device=cuda \
@@ -121,11 +129,11 @@ lerobot-train \
     --steps=30000 \
     --output_dir=outputs/fineart_vla \
     --job_name=fineart_vla \
-    --wandb.enable=true
+    --trackio.enable=true
 ```
 
-Start with a small run and confirm that W&B examples show
-the expected prompt, text target, and action endpoints before scaling up.
+Start with a small run and confirm in the Trackio dashboard that the losses
+behave as expected before scaling up.
 
 To start from the plain PI0.5 checkpoint instead, keep FineART-VLA's default
 config and point `--policy.pretrained_path` at it:
@@ -166,6 +174,10 @@ fine-tuning from a checkpoint such as `lerobot/fineart_vla_base`, so the FAST
 targets match the new robot's action distribution. The fitted tokenizer is saved
 inside the checkpoint's processor artifacts, so inference reuses it. Set
 `--policy.auto_fit_fast_tokenizer=false` to use `action_tokenizer_name` unchanged.
+Disabling automatic fitting does not remove the consent requirement for a
+tokenizer that loads custom code. When calling `fit_fast_tokenizer` directly in
+Python, pass `trust_remote_code=True` after reviewing the base tokenizer code.
+Pin the base FAST tokenizer with `--policy.action_tokenizer_name=physical-intelligence/fast@<full-commit-sha>`; this also pins the source used for fitting.
 
 ## Training performance
 
@@ -222,6 +234,7 @@ reduces generation cost but also slows replanning.
 ## Run a checkpoint
 
 Use `lerobot-rollout` with the robot/camera configuration matching the checkpoint,
+`--policy.trust_remote_code=true` when loading its custom FAST tokenizer,
 `--interactive=true`, and `--autosteer_interval_s=3`. Choose
 `--inference.type=sync` or `--inference.type=rtc`. In the interactive terminal,
 `/autosteer <goal>` enables generated subtasks, `/subtask <instruction>` supplies

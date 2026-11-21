@@ -25,7 +25,7 @@ The base install is intentionally lightweight. Feature-specific dependencies
 are gated behind optional extras::
 
     pip install 'lerobot[dataset]'       # dataset loading & creation
-    pip install 'lerobot[training]'      # training loop + wandb
+    pip install 'lerobot[training]'      # training loop + trackio
     pip install 'lerobot[hardware]'      # real robot control
     pip install 'lerobot[core_scripts]'  # dataset + hardware + viz (record, replay, calibrate, etc.)
     pip install 'lerobot[all]'           # everything

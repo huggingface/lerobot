@@ -8,19 +8,23 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
+from lerobot.configs.train import CheckpointFormat
 from lerobot.policies import factory
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
+    DataProcessorPipeline,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
+from lerobot.transforms import ImageTransformsConfig
 
 
 def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_are_present(monkeypatch):
     saved = (SimpleNamespace(steps=[]), SimpleNamespace(steps=[]))
     load = MagicMock(side_effect=saved)
     rebuild = MagicMock()
-    monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
+    # Patch the concrete class so monkeypatch can restore the classmethod at teardown.
+    monkeypatch.setattr(DataProcessorPipeline, "from_pretrained", load)
     monkeypatch.setattr(factory, "_make_processors_from_policy_config", rebuild)
 
     config = _act_config()
@@ -63,7 +67,7 @@ def dataset_dependencies():
 
 
 @pytest.fixture
-def training_dependencies(dataset_dependencies):
+def training_dependencies(dataset_dependencies, restore_torch_backend_flags):
     pytest.importorskip("accelerate", reason="training setup requires lerobot[training]")
 
 
@@ -80,12 +84,16 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     cfg.validate = lambda: None
     cfg.to_dict = lambda: {}
     cfg.parallelism = None
-    cfg.wandb = SimpleNamespace(enable=False)
+    cfg.trackio = SimpleNamespace(enable=False)
     cfg.seed = None
     cfg.cudnn_deterministic = False
-    cfg.checkpoint_format = SimpleNamespace(wants_dcp=False)
+    cfg.tf32 = True
+    cfg.checkpoint_format = CheckpointFormat.SAFETENSORS
     cfg.peft = None
-    accelerator = SimpleNamespace(num_processes=1, device=torch.device("cpu"), wait_for_everyone=lambda: None)
+    cfg.dataset = SimpleNamespace(image_transforms=ImageTransformsConfig())
+    accelerator = SimpleNamespace(
+        num_processes=1, process_index=0, device=torch.device("cpu"), wait_for_everyone=lambda: None
+    )
     monkeypatch.setattr(trainer, "make_accelerator", lambda _: accelerator)
     monkeypatch.setattr(trainer.ParallelDims, "from_config", lambda *args: None)
     monkeypatch.setattr(trainer, "init_logging", lambda **kwargs: None)
@@ -96,9 +104,6 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
         lambda _: (SimpleNamespace(meta=SimpleNamespace(stats=stats)), None),
     )
     monkeypatch.setattr(trainer, "make_policy", lambda **kwargs: SimpleNamespace(config=cfg.policy))
-    # Restore backend globals changed during training setup after each test.
-    monkeypatch.setattr(torch.backends.cudnn, "benchmark", torch.backends.cudnn.benchmark)
-    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32)
     pipelines = []
 
     def build(**kwargs):
@@ -117,6 +122,7 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     return pipelines
 
 
+@pytest.mark.dataset
 @pytest.mark.parametrize("recipe_mode", ["absent", "disabled", "builtin", "yaml"])
 @pytest.mark.parametrize("main_process", [False, True])
 @pytest.mark.parametrize("resume", [False, True])
@@ -147,7 +153,7 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
         is_reward_model_training=False,
     )
     load = MagicMock(wraps=factory.PolicyProcessorPipeline.from_pretrained)
-    monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
+    monkeypatch.setattr(DataProcessorPipeline, "from_pretrained", load)
     pre, post = _run_training_until_processors(monkeypatch, cfg, _stats(20.0), main_process=main_process)
     uses_checkpoint = resume or recipe_mode in ("absent", "disabled")
     warnings = [
@@ -162,6 +168,7 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
     torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[12.0 if resume else 22.0]]))
 
 
+@pytest.mark.dataset
 @pytest.mark.parametrize("for_training", [False, True])
 def test_checkpoint_renderer_uses_saved_recipe_and_stats(tmp_path, for_training, dataset_dependencies):
     from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
@@ -202,6 +209,7 @@ def test_checkpoint_renderer_uses_saved_recipe_and_stats(tmp_path, for_training,
         assert "target_message_indices" not in result
 
 
+@pytest.mark.dataset
 def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, training_dependencies):
     from lerobot.policies.act import processor_act
 
@@ -247,6 +255,7 @@ def test_pipeline_without_recipe_preserves_training_inputs_and_renders_vqa():
     ]
 
 
+@pytest.mark.dataset
 def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
     monkeypatch, caplog, training_dependencies
 ):
@@ -287,3 +296,174 @@ def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
     )
     torch.testing.assert_close(processed["observation.state"], torch.tensor([[5.0]]))
     torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[12.0]]))
+
+
+@pytest.mark.parametrize("consent,override", [(False, None), (True, None), (False, True), (True, False)])
+def test_policy_consent_reaches_both_loaded_processors(monkeypatch, consent, override):
+    config = _act_config()
+    config.trust_remote_code = consent
+    load = MagicMock(side_effect=[SimpleNamespace(steps=[]), SimpleNamespace(steps=[])])
+    monkeypatch.setattr(DataProcessorPipeline, "from_pretrained", load)
+    kwargs = {} if override is None else {"trust_remote_code": override}
+    factory.make_pre_post_processors(config, pretrained_path="user/checkpoint", **kwargs)
+    assert load.call_count == 2
+    assert config.trust_remote_code is consent
+    assert all(
+        call.kwargs["trust_remote_code"] is (consent if override is None else override)
+        for call in load.call_args_list
+    )
+
+
+@pytest.mark.parametrize("consent,override", [(False, None), (True, None), (False, True), (True, False)])
+@pytest.mark.parametrize("policy_type", ["pi0_fast", pytest.param("fineart_vla", marks=pytest.mark.dataset)])
+def test_fresh_fast_processors_receive_consent(monkeypatch, consent, override, policy_type):
+    if policy_type == "fineart_vla":
+        pytest.importorskip("datasets")
+    from lerobot.processor import tokenizer_processor
+
+    monkeypatch.setattr(tokenizer_processor, "_transformers_available", True)
+    monkeypatch.setattr(tokenizer_processor, "AutoProcessor", MagicMock())
+    tokenizer = MagicMock()
+    monkeypatch.setattr(tokenizer_processor, "AutoTokenizer", tokenizer)
+    config = factory.make_policy_config(policy_type, device="cpu", trust_remote_code=consent)
+    config.validate_features()
+    kwargs = {} if override is None else {"trust_remote_code": override}
+    pre, _ = factory.make_pre_post_processors(config, **kwargs)
+    step = next(step for step in pre.steps if type(step).__name__ == "ActionTokenizerProcessorStep")
+    assert step.trust_remote_code is (consent if override is None else override)
+    assert config.trust_remote_code is consent
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_wallx_model_tokenizer_loaders_receive_consent(monkeypatch, consent):
+    from lerobot.policies.wall_x import modeling_wall_x as wallx
+
+    load = MagicMock(side_effect=[MagicMock(), RuntimeError("stop before model construction")])
+    monkeypatch.setattr(wallx, "AutoProcessor", SimpleNamespace(from_pretrained=load))
+    monkeypatch.setattr(wallx, "Qwen2_5_VLMoEModel", SimpleNamespace(_require_eager_attention=lambda _: None))
+    with pytest.raises(RuntimeError, match="stop before model construction"):
+        wallx.Qwen2_5_VLMoEForAction.from_pretrained(
+            "user/model",
+            config=SimpleNamespace(),
+            action_tokenizer_path="user/fast@" + "a" * 40,
+            trust_remote_code=consent,
+        )
+    assert load.call_count == 2
+    assert all(call.kwargs["trust_remote_code"] is consent for call in load.call_args_list)
+    assert load.call_args.kwargs["revision"] == "a" * 40
+    assert load.call_args.kwargs["code_revision"] == "a" * 40
+
+
+@pytest.mark.parametrize("consent", [False, True])
+@pytest.mark.parametrize(
+    "reference", ["physical-intelligence/fast", "physical-intelligence/fast@" + "a" * 40]
+)
+def test_fineart_fitter_fallback_requires_consent(monkeypatch, consent, reference):
+    from lerobot.policies.fineart_vla import fit_fast_tokenizer as fitter
+
+    loader = MagicMock(side_effect=ValueError("custom tokenizer code"))
+    fallback = MagicMock()
+    monkeypatch.setattr(fitter, "AutoProcessor", SimpleNamespace(from_pretrained=loader), raising=False)
+    monkeypatch.setattr(fitter, "get_class_from_dynamic_module", fallback, raising=False)
+    if consent:
+        assert fitter._load_fast_fitter(reference, trust_remote_code=True) is fallback.return_value
+    else:
+        with pytest.raises(ValueError, match="custom tokenizer code"):
+            fitter._load_fast_fitter(reference)
+        fallback.assert_not_called()
+    assert loader.call_args.kwargs["trust_remote_code"] is consent
+    if "@" in reference:
+        assert loader.call_args.kwargs["code_revision"] == "a" * 40
+        if consent:
+            assert fallback.call_args.kwargs["revision"] == "a" * 40
+            assert fallback.call_args.kwargs["code_revision"] == "a" * 40
+
+
+@pytest.mark.parametrize("revision", [None, "a" * 40])
+def test_pi0_fast_pins_model_and_processor_tokenizers(monkeypatch, tmp_path, revision):
+    pytest.importorskip("transformers")
+    pytest.importorskip("scipy")
+    from lerobot.policies.pi0_fast import modeling_pi0_fast as modeling
+    from lerobot.processor import tokenizer_processor
+
+    action_loader = MagicMock()
+    text_loader = MagicMock()
+    monkeypatch.setattr(modeling, "AutoProcessor", SimpleNamespace(from_pretrained=action_loader))
+    monkeypatch.setattr(modeling, "AutoTokenizer", SimpleNamespace(from_pretrained=text_loader))
+    monkeypatch.setattr(tokenizer_processor, "AutoProcessor", modeling.AutoProcessor)
+    monkeypatch.setattr(tokenizer_processor, "AutoTokenizer", modeling.AutoTokenizer)
+    monkeypatch.setattr(modeling, "PI0FastPytorch", MagicMock(side_effect=RuntimeError("stop before core")))
+    config = factory.make_policy_config(
+        "pi0_fast",
+        device="cpu",
+        trust_remote_code=True,
+        action_tokenizer_name="user/fast" + (f"@{revision}" if revision else ""),
+        text_tokenizer_name="user/text" + ("@" + "b" * 40 if revision else ""),
+    )
+    config.save_pretrained(tmp_path)
+    config = type(config).from_pretrained(tmp_path, trust_remote_code=True)
+    with pytest.raises(RuntimeError, match="stop before core"):
+        modeling.PI0FastPolicy(config)
+    factory.make_pre_post_processors(config)
+    assert action_loader.call_count == 2
+    assert text_loader.call_count == 3
+    for loader, expected in [
+        (action_loader, revision),
+        (text_loader, None if revision is None else "b" * 40),
+    ]:
+        for call in loader.call_args_list:
+            assert call.kwargs.get("revision") == expected
+            assert call.kwargs.get("code_revision") == expected
+
+
+def test_pi0_fast_pins_saved_processors_without_mutating_overrides(monkeypatch):
+    from lerobot.policies.pi0_fast import processor_pi0_fast as processors
+
+    config = factory.make_policy_config(
+        "pi0_fast",
+        device="cpu",
+        action_tokenizer_name="user/fast@" + "a" * 40,
+        text_tokenizer_name="user/text@" + "b" * 40,
+    )
+    load = MagicMock(return_value=(None, None))
+    monkeypatch.setattr(processors, "load_pretrained_policy_processors", load)
+    overrides = {"tokenizer_processor": {"max_length": 42}}
+    factory.make_pre_post_processors(
+        config, pretrained_path="user/checkpoint", preprocessor_overrides=overrides
+    )
+    assert load.call_args.kwargs["preprocessor_overrides"] == {
+        "tokenizer_processor": {"max_length": 42, "tokenizer_name": "user/text@" + "b" * 40},
+        "action_tokenizer_processor": {
+            "action_tokenizer_name": "user/fast@" + "a" * 40,
+            "paligemma_tokenizer_name": "user/text@" + "b" * 40,
+        },
+    }
+    assert overrides == {"tokenizer_processor": {"max_length": 42}}
+
+
+@pytest.mark.parametrize("policy_type", ["act", "pi0_fast"])
+@pytest.mark.parametrize(
+    "config_consent,consent", [(False, None), (True, None), (True, False), (False, True)]
+)
+def test_explicit_policy_consent_overrides_supplied_config(
+    monkeypatch, tmp_path, policy_type, consent, config_consent
+):
+    if policy_type == "pi0_fast":
+        pytest.importorskip("transformers")
+        pytest.importorskip("scipy")
+    model_cls = factory.get_policy_class(policy_type)
+    config = factory.make_policy_config(policy_type, device="cpu", trust_remote_code=config_consent)
+
+    class ConstructionReachedError(Exception):
+        pass
+
+    def construct(self, received, **kwargs):
+        assert received.trust_remote_code is (config_consent if consent is None else consent)
+        assert (received is config) is (consent is None)
+        raise ConstructionReachedError
+
+    monkeypatch.setattr(model_cls, "__init__", construct)
+    kwargs = {} if consent is None else {"trust_remote_code": consent}
+    with pytest.raises(ConstructionReachedError):
+        model_cls.from_pretrained(tmp_path, config=config, **kwargs)
+    assert config.trust_remote_code is config_consent

@@ -20,14 +20,19 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from safetensors.torch import load_file
 from torch import Tensor, nn
 
+from lerobot.configs import FeatureType
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
+from lerobot.utils.feature_spec import FeatureSpec
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from ..chunk import ChunkPolicySpec
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoModel, AutoVideoProcessor
@@ -86,11 +91,13 @@ class VLAJEPAModel(nn.Module):
 
         # JEPA world model components
         if config.enable_world_model:
+            repo_id, revision = split_hub_reference(config.jepa_encoder_name)
             self.video_encoder = AutoModel.from_pretrained(
-                config.jepa_encoder_name,
-                torch_dtype=config.dtype,
+                repo_id, torch_dtype=config.dtype, revision=revision, code_revision=revision
             )
-            self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
+            self.video_processor = AutoVideoProcessor.from_pretrained(
+                repo_id, revision=revision, code_revision=revision
+            )
             num_views = config.num_world_model_views
             tubelet_size = self.video_encoder.config.tubelet_size
             image_size = getattr(self.video_encoder.config, "image_size", None)
@@ -110,6 +117,7 @@ class VLAJEPAModel(nn.Module):
                 mlp_ratio=config.predictor_mlp_ratio,
                 num_action_tokens_per_step=config.num_action_tokens_per_timestep,
                 dropout=config.predictor_dropout,
+                rope_legacy=config.world_model_rope_legacy,
             )
         else:
             self.video_encoder = None
@@ -355,6 +363,8 @@ class VLAJEPAModel(nn.Module):
         images: list[list[Tensor]],
         instructions: list[str],
         state: Tensor | None = None,
+        *,
+        noise: Tensor | None = None,
     ) -> Tensor:
         """Predict an action chunk. `images` is per-sample, per-view float [0,1] [C, H, W] tensors."""
         if self.config.resize_images_to is not None:
@@ -366,7 +376,7 @@ class VLAJEPAModel(nn.Module):
 
         embodied_action_tokens, _ = self._encode_qwen(images, instructions, need_action_tokens=False)
         return self.action_model.predict_action(
-            embodied_action_tokens.float(), state.float() if state is not None else None
+            embodied_action_tokens.float(), state.float() if state is not None else None, noise=noise
         )
 
 
@@ -398,6 +408,37 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     def reset(self) -> None:
         self._queues: dict[str, deque[Tensor]] = {ACTION: deque(maxlen=self.config.n_action_steps)}
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Serve current frames; future video observations are training targets only.
+
+        The world model stays configured as trained. ``_prepare_model_inputs``
+        builds its video targets only for training, while direct prediction uses
+        current images, language and state without reading the playback queue.
+        """
+        if self.config.n_obs_steps != 1:
+            raise ValueError("VLA-JEPA chunk serving requires n_obs_steps=1.")
+        return ChunkPolicySpec(
+            prediction_steps=self.config.chunk_size,
+            execution_steps=self.config.n_action_steps,
+        )
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Allow the same configured image resizing as direct local inference."""
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        if supplied.keys() != expected.keys():
+            raise ValueError("Canonical feature names must exactly match policy input_features.")
+        for name, policy_feature in expected.items():
+            feature = supplied[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if len(shape) != 3 or shape[0] != 3 or feature.kind != "rgb":
+                    raise ValueError(f"VLA-JEPA requires RGB camera inputs: {name}.")
+                if not self.config.resize_images_to and feature.shape != (shape[1], shape[2], shape[0]):
+                    raise ValueError(f"RGB feature shape differs from checkpoint: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     # ---- Format Conversion: LeRobot → Native ----
 
@@ -503,35 +544,43 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         return self.model.parameters()
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
-        """LeRobot inference: convert → native predict → return as Tensor."""
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+        """LeRobot inference: convert → native predict → return as Tensor.
+
+        `noise` is the starting sample of the flow, shaped `(batch_size, chunk_size, action_dim)`.
+        When it is None, it is drawn with `torch.randn`.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         inputs = self._prepare_model_inputs(batch, training=False)
-        actions = self.model.predict_action(inputs["images"], inputs["instructions"], inputs.get("state"))
+        actions = self.model.predict_action(
+            inputs["images"], inputs["instructions"], inputs.get("state"), noise=noise
+        )
         return actions.to(device=self.config.device, dtype=torch.float32)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """LeRobot select_action with action queue caching."""
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
         if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch)
+            actions = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
         return self._queues[ACTION].popleft()
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+    def _load_checkpoint(
+        cls, model: T, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> T:
         reinit_prefixes = model.config.reinit_modules
         if not reinit_prefixes:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
+            return super()._load_checkpoint(model, checkpoint, map_location, strict)
 
         # `resolve_safetensors_device` is what keeps every rank from materializing the whole
         # checkpoint on GPU 0: safetensors maps the bare string "cuda" to cuda:0 regardless of
         # torch.cuda.current_device(), and `config.device` is exactly that bare string.
-        state_dict = load_file(model_file, device=resolve_safetensors_device(map_location))
+        state_dict = checkpoint.load_state_dict(device=resolve_safetensors_device(map_location))
         current = model.state_dict()
 
         reinitialized: list[str] = []

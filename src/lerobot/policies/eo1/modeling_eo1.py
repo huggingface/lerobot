@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections import deque
+from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -27,15 +28,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 import torch.utils.checkpoint
-from huggingface_hub import hf_hub_download
-from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from huggingface_hub.errors import HfHubHTTPError
-from safetensors.torch import load_file, load_model as load_model_as_safetensor
+from safetensors.torch import load_file
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
 
@@ -88,10 +86,12 @@ class EO1Policy(PreTrainedPolicy):
         if vlm_backbone is None:
             if config.pretrained_path is None:
                 # Initialize from pretrained VLM
+                repo_id, revision = split_hub_reference(config.vlm_base)
                 vlm_backbone = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                    config.vlm_base,
+                    repo_id,
                     dtype=config.dtype,
                     attn_implementation=config.attn_implementation,
+                    revision=revision,
                 )
             else:
                 vlm_backbone = Qwen2_5_VLForConditionalGeneration._from_config(
@@ -120,6 +120,7 @@ class EO1Policy(PreTrainedPolicy):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool | None = None,
         strict: bool = False,
         **kwargs,
     ) -> EO1Policy:
@@ -127,31 +128,30 @@ class EO1Policy(PreTrainedPolicy):
         require_package("transformers", extra="eo1")
         hub_kwargs: dict[str, Any] = {
             "force_download": force_download,
-            "resume_download": resume_download,
-            "proxies": proxies,
             "token": token,
             "cache_dir": cache_dir,
             "local_files_only": local_files_only,
             "revision": revision,
         }
         if config is None:
-            config = PreTrainedConfig.from_pretrained(pretrained_name_or_path, **hub_kwargs, **kwargs)
+            config = PreTrainedConfig.from_pretrained(
+                pretrained_name_or_path,
+                **hub_kwargs,
+                resume_download=resume_download,
+                proxies=proxies,
+                trust_remote_code=bool(trust_remote_code),
+                **kwargs,
+            )
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
         config = cast(EO1Config, config)
-        model_id = str(pretrained_name_or_path)
-        if Path(model_id).is_dir():
-            model_file = str(Path(model_id) / SAFETENSORS_SINGLE_FILE)
-        else:
-            try:
-                model_file = hf_hub_download(repo_id=model_id, filename=SAFETENSORS_SINGLE_FILE, **hub_kwargs)
-            except HfHubHTTPError as e:
-                raise FileNotFoundError(
-                    f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
-                ) from e
-
+        files = cls._resolve_weight_files(str(pretrained_name_or_path), **hub_kwargs)
         prefix = "model.vlm_backbone."
         backbone_weights = {
             key.removeprefix(prefix): value
-            for key, value in load_file(model_file, device="cpu").items()
+            for file in files
+            for key, value in load_file(file, device="cpu").items()
             if key.startswith(prefix)
         }
         backbone_config = config.vlm_backbone_config
@@ -171,10 +171,7 @@ class EO1Policy(PreTrainedPolicy):
         policy = cls(config, vlm_backbone=vlm_backbone, **kwargs)
         # Keep safetensors' handling of shared weights and strict/partial checkpoints.
         # CPU staging avoids a second full checkpoint allocation on the accelerator.
-        missing_keys, unexpected_keys = load_model_as_safetensor(
-            policy, model_file, strict=strict, device="cpu"
-        )
-        log_model_loading_keys(missing_keys, unexpected_keys)
+        cls._load_weight_files(policy, files, "cpu", strict)
         policy.to(config.device)
         policy.eval()
         return policy
@@ -211,12 +208,17 @@ class EO1Policy(PreTrainedPolicy):
         return loss, loss_dict
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+        """Predict a chunk of actions.
+
+        `noise` is the optional starting sample of the flow, shape `(batch_size, chunk_size, max_action_dim)`.
+        When it is None, standard normal noise is drawn.
+        """
         self.eval()
 
         states = self.prepare_state(batch[OBS_STATE])
         model_inputs = self._get_model_inputs(batch, {OBS_STATE})
-        actions = self.model.sample_actions(states=states, **model_inputs).to(torch.float32)
+        actions = self.model.sample_actions(states=states, noise=noise, **model_inputs).to(torch.float32)
 
         return actions[:, :, : _original_action_dim(self.config)]
 
@@ -228,10 +230,13 @@ class EO1Policy(PreTrainedPolicy):
 
     def _get_text_processor(self):
         if self._text_processor is None:
+            repo_id, revision = split_hub_reference(self.config.vlm_base)
             self._text_processor = Qwen2_5_VLProcessor.from_pretrained(
-                self.config.vlm_base,
+                repo_id,
                 use_fast=self.config.use_fast_processor,
                 fix_mistral_regex=True,
+                revision=revision,
+                code_revision=revision,
             )
             self._text_processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
         return self._text_processor
@@ -281,11 +286,11 @@ class EO1Policy(PreTrainedPolicy):
         return require_single_text_output(outputs, policy_name="EO-1")
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         self.eval()
 
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
 
         return self._action_queue.popleft()
@@ -668,6 +673,7 @@ class EO1VisionFlowMatchingModel(nn.Module):
         *,
         state_token_id: int,
         action_token_id: int,
+        noise: Tensor | None = None,
         **kwargs,
     ) -> Tensor:
         """Sample actions from the model."""
@@ -736,10 +742,12 @@ class EO1VisionFlowMatchingModel(nn.Module):
             return_dict=True,
         )
 
-        x_t = self.sample_noise(
-            (batch_size, chunk_size, self.config.max_action_dim),
-            device,
-        ).to(dtype=self.action_in_proj.weight.dtype)
+        if noise is None:
+            noise = self.sample_noise(
+                (batch_size, chunk_size, self.config.max_action_dim),
+                device,
+            )
+        x_t = noise.to(device=device, dtype=self.action_in_proj.weight.dtype)
         past_key_values = outputs.past_key_values
 
         # 3. Denoise only the action chunk while keeping the prefix cache invariant.
@@ -748,7 +756,8 @@ class EO1VisionFlowMatchingModel(nn.Module):
             inputs_embeds[:, act_slice] = action_time_embs.to(inputs_embeds.dtype)
 
             # Keep the prefix KV cache invariant across denoising steps.
-            past_key_values.crop(act_start)
+            for layer in past_key_values.layers:
+                layer.crop(act_start - layer.get_seq_length())
             outputs = self.vlm_backbone.model(
                 attention_mask=attention_mask[:, :act_end],
                 past_key_values=past_key_values,

@@ -97,6 +97,7 @@ class MockConfig:
         return 1 + self.n_obs_steps + self.max_rewind_steps
 
 
+@pytest.mark.gpu
 class TestSARMEncodingProcessorStepEndToEnd:
     """End-to-end test for SARMEncodingProcessorStep with dummy batch data."""
 

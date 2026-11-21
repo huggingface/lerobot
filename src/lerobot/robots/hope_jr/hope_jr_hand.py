@@ -20,11 +20,8 @@ from functools import cached_property
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.motors.calibration_gui import RangeFinderGUI
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-)
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -61,11 +58,12 @@ LEFT_HAND_INVERSIONS = [
 class HopeJrHand(Robot):
     config_class = HopeJrHandConfig
     name = "hope_jr_hand"
+    supports_position_hold = True
 
     def __init__(self, config: HopeJrHandConfig):
         super().__init__(config)
         self.config = config
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 # Thumb
@@ -91,7 +89,6 @@ class HopeJrHand(Robot):
                 "pinky_pip_dip": Motor(16, "scs0009", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
-            protocol_version=1,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
         self.inverted_motors = RIGHT_HAND_INVERSIONS if config.side == "right" else LEFT_HAND_INVERSIONS
@@ -156,20 +153,13 @@ class HopeJrHand(Robot):
             self.bus.configure_motors()
 
     def setup_motors(self) -> None:
-        # TODO: add docstring
-        for motor in self.bus.motors:
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors(list(self.bus.motors))
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        obs_dict = {}
-
         # Read hand position
         start = time.perf_counter()
-        for motor in self.bus.motors:
-            obs_dict[f"{motor}.pos"] = self.bus.read("Present_Position", motor)
+        obs_dict = {f"{motor}.pos": val for motor, val in self.bus.sync_read("Present_Position").items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 

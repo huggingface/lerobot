@@ -20,7 +20,8 @@ Tests for the TokenizerProcessorStep class.
 
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -105,7 +106,6 @@ def test_action_tokenizer_config_preserves_token_mapping():
     processor.action_tokenizer_input_object = None
 
     assert processor.get_config() == {
-        "trust_remote_code": True,
         "max_action_tokens": 384,
         "fast_skip_tokens": 64,
         "paligemma_tokenizer_name": "custom/paligemma",
@@ -977,6 +977,7 @@ def test_device_detection_no_tensors():
     assert attention_mask.device.type == "cpu"
 
 
+@pytest.mark.gpu
 @skip_if_package_missing("transformers")
 def test_device_detection_mixed_devices():
     """Test device detection when tensors are on different devices (uses first found)."""
@@ -1575,3 +1576,30 @@ def test_subtask_not_added_for_unsupported_types():
 
     # But main task tokens should still be present
     assert f"{OBS_LANGUAGE}.tokens" in observation
+
+
+@skip_if_package_missing("transformers")
+@pytest.mark.parametrize("step_type", [TokenizerProcessorStep, ActionTokenizerProcessorStep])
+def test_tokenizer_revisions_survive_pipeline_round_trip(monkeypatch, step_type):
+    from lerobot.processor import DataProcessorPipeline, tokenizer_processor
+
+    loader = MagicMock(return_value=MockTokenizer(vocab_size=100))
+    monkeypatch.setattr(tokenizer_processor, "AutoProcessor", SimpleNamespace(from_pretrained=loader))
+    monkeypatch.setattr(tokenizer_processor, "AutoTokenizer", SimpleNamespace(from_pretrained=loader))
+    revision = "a" * 40
+    kwargs = (
+        {"tokenizer_name": f"user/text@{revision}"}
+        if step_type is TokenizerProcessorStep
+        else {
+            "action_tokenizer_name": f"user/fast@{revision}",
+            "paligemma_tokenizer_name": f"user/text@{revision}",
+        }
+    )
+    pipeline = DataProcessorPipeline([step_type(**kwargs)])
+    config = pipeline.get_config()
+    restored = DataProcessorPipeline.from_config(config)
+    assert restored.get_config() == config
+    assert loader.call_count == (2 if step_type is TokenizerProcessorStep else 4)
+    for call in loader.call_args_list:
+        assert call.kwargs["revision"] == revision
+        assert call.kwargs["code_revision"] == revision

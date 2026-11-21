@@ -1,6 +1,6 @@
 # Third-Party Robots & Teleoperators
 
-The LeRobot ecosystem extends far beyond its officially supported hardware. Thanks to LeRobot's plugin architecture, the community has built integrations for a wide range of robot arms and teleoperation devices — from industrial manipulators to affordable hobbyist platforms, VR headsets, haptic devices, and full arm-plus-teleoperator kits. This page showcases community-maintained integrations you can use for teleoperation, data collection, and policy deployment.
+The LeRobot ecosystem extends far beyond its officially supported hardware. Thanks to LeRobot's plugin architecture, the community has built integrations for a wide range of robot arms and teleoperation devices — from industrial manipulators and dexterous hands to affordable hobbyist platforms, VR headsets, haptic devices, and full arm-plus-teleoperator kits. This page showcases community-maintained integrations you can use for teleoperation, data collection, and policy deployment.
 
 > [!IMPORTANT]
 > These projects are developed and maintained by third parties. Please refer to each repository for installation instructions, hardware requirements, and support.
@@ -37,12 +37,20 @@ lerobot-record \
       <td>Plugin for the xArm collaborative arm series from <a href="https://www.ufactory.cc/">UFACTORY</a>.</td>
     </tr>
     <tr style="border:0">
+      <td><a href="https://github.com/xArm-Developer/lerobot_robot_ufactory">lerobot_robot_ufactory</a> ⚠️</td>
+      <td>Official package for the xArm series from <a href="https://www.ufactory.cc/">UFACTORY</a>. It wraps LeRobot in its own record, teleoperate, and eval commands and supports GELLO, <a href="https://global.agilex.ai/products/pika">Pika</a>, UMI, and SpaceMouse teleoperation.</td>
+    </tr>
+    <tr style="border:0">
       <td><a href="https://github.com/lebai-robotics/lerobot_lebai">lerobot_lebai</a></td>
       <td>Plugin for the six-axis collaborative arms from <a href="https://lebai.ltd/en/">Lebai</a>.</td>
     </tr>
     <tr style="border:0">
       <td><a href="https://github.com/wengmister/LeFranX">LeFranX</a> ⚠️</td>
       <td>LeRobot extension for the <a href="https://franka.de/">Franka</a> research arm, paired with the <a href="https://www.robotera.com/">RobotEra XHand</a> hand for VR teleoperation.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/xensedyl/lerobot-robot-franka-research3">lerobot-robot-franka-research3</a></td>
+      <td>Plugin for the <a href="https://franka.de/">Franka</a> Research 3 arm through <a href="https://github.com/TimSchneider42/franky"><code>franky</code></a>, with joint, Cartesian, and impedance control. A <a href="https://github.com/xensedyl/lerobot-robot-franka-research3-dexhand">companion plugin</a> pairs it with the BrainCo Revo2 hand.</td>
     </tr>
   </tbody>
 </table>
@@ -90,6 +98,10 @@ lerobot-record \
       <td><a href="https://github.com/TrossenRobotics/lerobot_trossen">lerobot_trossen</a></td>
       <td>Plugin for the WidowX and ALOHA-style arms from <a href="https://www.trossenrobotics.com/">Trossen Robotics</a>.</td>
     </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/pengyue-polaron/lerobot-robot-galaxea-a1">lerobot-robot-galaxea-a1</a></td>
+      <td>Plugin for the A1 6 degrees of freedom arm from <a href="https://www.galaxea-ai.com/">Galaxea</a>, controlled through the separately installed <a href="https://github.com/pengyue-polaron/galaxea-a1-runtime">Galaxea A1 Runtime</a>, with a matching <a href="https://github.com/pengyue-polaron/lerobot-teleoperator-galaxea-a1-so-leader">SO-Leader teleoperator</a> (a modified SO-101 leader arm).</td>
+    </tr>
   </tbody>
 </table>
 
@@ -113,6 +125,10 @@ lerobot-record \
       <td><a href="https://github.com/WeGo-Robotics/lerobot_robot_piper">lerobot_robot_piper (WeGo Robotics)</a></td>
       <td>Plugin for the <a href="https://global.agilex.ai/">AgileX Piper</a> arm, with multi-arm teleoperation, safety limits, and GUI tools.</td>
     </tr>
+    <tr style="border:0">
+      <td><a href="https://pypi.org/project/lerobot-robot-piper/">lerobot-robot-piper (FashionStar)</a></td>
+      <td>Plugin for the <a href="https://global.agilex.ai/">AgileX Piper</a> arm over CAN, the companion robot for the PiperMate teleoperator listed under Leader Arms.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -134,7 +150,38 @@ lerobot-record \
     </tr>
     <tr style="border:0">
       <td><a href="https://github.com/servodevelop/fashionstar-lerobot-robot-viola">fashionstar-lerobot-robot-viola</a></td>
-      <td>Plugin for the compact StarAI Viola 6+1 degrees of freedom robot arm from <a href="https://fashionstar.com.hk/">FashionStar</a>.</td>
+      <td>Plugin for the compact StarAI Viola 6+1 degrees of freedom robot arm from <a href="https://fashionstar.com.hk/">FashionStar</a>, with its matching <a href="https://github.com/servodevelop/fashionstar-lerobot-teleoperator-violin">StarAI Violin teleoperator arm</a>.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/metrox-eth/lerobot_robot_roarm_m3">lerobot_robot_roarm_m3</a></td>
+      <td>Plugin for the <a href="https://www.waveshare.com/wiki/RoArm-M3">Waveshare RoArm-M3</a> 5 degrees of freedom arm with gripper, driven by its onboard ESP32 over serial.</td>
+    </tr>
+  </tbody>
+</table>
+
+## Hands & Grippers
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>Project</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/algomatic-dynamics/ghand">lerobot-robot-ghand</a></td>
+      <td>Plugin for the LEAP V1 KAIZEN hand from <a href="https://algomatic-dynamics.com/">Algomatic Dynamics</a>, a 16 degrees of freedom four-finger hand compatible with the <a href="https://leaphand.com/">LEAP Hand</a> v1. The companion <code>ghand</code> SDK adds webcam hand-tracking teleoperation and MuJoCo simulation.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/xensedyl/lerobot-robot-revo2-hand">lerobot-robot-revo2-hand</a></td>
+      <td>Plugin for the Revo2 dexterous hand from <a href="https://www.brainco.tech/">BrainCo</a>, through BrainCo's Python SDK.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/Transcend-Mechanics/fastgripper-lerobot">fastgripper-lerobot</a></td>
+      <td>Plugin for FastGripper, a worm-gear parallel gripper for the SO-101 that holds its grip without power. The robot type <code>fastgripper_follower</code> exposes it as a standard 0–100 gripper.</td>
     </tr>
   </tbody>
 </table>
@@ -154,6 +201,18 @@ lerobot-record \
     <tr style="border:0">
       <td><a href="https://github.com/ugo-plus/lerobot-robot-ugo-pro">lerobot-robot-ugo-pro</a></td>
       <td>Plugin for the ugo Pro dual-arm service robot from <a href="https://ugo.plus/products/ugo-pro/">ugo</a>.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://pypi.org/project/lerobot-robot-ugo-nova/">lerobot-robot-ugo-nova</a></td>
+      <td>Plugin for the ugo Nova wheeled semi-humanoid from <a href="https://ugo.plus/">ugo</a>, reading joints and cameras and sending joint commands over ROS 2.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/vulcan-forge/lerobot-robot-sourccey">lerobot-robot-sourccey</a></td>
+      <td>Plugin for Sourccey, the open-source dual-arm home robot on a mecanum base from Vulcan Robotics, with its leader-arm teleoperator, a Python SDK, and 2D LiDAR tools.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/OpenWonderLabs/onero_lerobot">onero_lerobot</a></td>
+      <td>Plugin for the <a href="https://www.switch-bot.com/">SwitchBot</a> Onero H1 wheeled household humanoid, wrapping its ROS 2 SDK as a LeRobot robot.</td>
     </tr>
     <tr style="border:0">
       <td><a href="https://github.com/zuoxingdong/lerobot_robot_lekiwi_pincopen">lerobot_robot_lekiwi_pincopen</a></td>
@@ -196,6 +255,10 @@ lerobot-record \
       <td><a href="https://github.com/xensedyl/lerobot-teleoperator-pico4">lerobot-teleoperator-pico4</a></td>
       <td>Plugin for the <a href="https://www.picoxr.com/">PICO 4</a> VR headset, with a companion controller-free <a href="https://github.com/xensedyl/lerobot-teleoperator-pico4-hand">hand-tracking variant</a>.</td>
     </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/Seeed-Projects/lerobot-teleoperator-rebot-vr">lerobot-teleoperator-rebot-vr</a></td>
+      <td>Plugin from <a href="https://www.seeedstudio.com/">Seeed Studio</a> teleoperating the reBot Arm B601-RS and B601-DM (supported natively in LeRobot) with <a href="https://www.picoxr.com/">PICO 4</a> controllers, in single- or dual-arm mode.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -226,6 +289,14 @@ lerobot-record \
     <tr style="border:0">
       <td><a href="https://pypi.org/project/lerobot-teleoperator-pipermate/">lerobot-teleoperator-pipermate</a></td>
       <td>Plugin for the PiperMate teleoperator (<a href="https://fashionstar.com.hk/">FashionStar</a> UART servos), driving the <a href="https://global.agilex.ai/">AgileX Piper</a> arm.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/iAmLakshya/lerobot_teleoperator_openarm_ker">lerobot_teleoperator_openarm_ker</a></td>
+      <td>Plugin for the <a href="https://docs.openarm.dev/hardware/openarm-ker/general">OpenArm KER</a> leader arm from Enactic. It drives the native <code>openarm_follower</code> and <code>bi_openarm_follower</code>.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/MINT-SJTU/LeRobot-Anything-U-Arm">LeRobot-Anything-U-Arm</a> ⚠️</td>
+      <td>U-Arm, a low-cost leader arm (from about $60) that teleoperates many commercial arms, with LeRobot teleoperation scripts for SO-100, LeKiwi, and XLeRobot followers (<a href="https://arxiv.org/abs/2509.02437">paper</a>).</td>
     </tr>
   </tbody>
 </table>
@@ -285,6 +356,10 @@ lerobot-record \
   </thead>
   <tbody>
     <tr style="border:0">
+      <td><a href="https://github.com/roboninecom/SO-ARM-102">SO-ARM 102</a></td>
+      <td>Next-generation <a href="https://robonine.com/shop/so-arm102-robotic-arm-kit/?utm_source=lerobot&amp;utm_medium=referral&amp;utm_campaign=third_party_robots">SO-ARM 102 leader–follower kit</a>: parallel gripper, 2× payload and frame stiffness, 67% faster shoulder/elbow joints, and 10% longer reach than SO-ARM 101. <a href="https://github.com/roboninecom/SO-ARM-102-Lerobot">LeRobot plugin</a>.</td>
+    </tr>
+    <tr style="border:0">
       <td><a href="https://github.com/villekuosmanen/lerobot-arx5">lerobot-arx5</a></td>
       <td>Plugin for the <a href="https://www.arx-x.com/">ARX5</a> arm: <a href="https://pypi.org/project/lerobot-robot-arx5/"><code>lerobot-arx5</code></a> robot arm with its <a href="https://pypi.org/project/lerobot-teleoperator-arx5/"><code>lerobot-teleoperator-arx5</code></a> teleoperator arm.</td>
     </tr>
@@ -308,6 +383,18 @@ lerobot-record \
       <td><a href="https://github.com/Hiwonder-official/lerobot-robot-nexarm-follower">lerobot-robot-nexarm-follower</a></td>
       <td>Plugin for the NexArm from <a href="https://www.hiwonder.com/">Hiwonder</a>: the <a href="https://github.com/Hiwonder-official/lerobot-robot-nexarm-follower">robot arm</a> and its matching <a href="https://github.com/Hiwonder-official/lerobot-teleoperator-nexarm-leader">teleoperator arm</a>.</td>
     </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/servodevelop/Star-Arm-102">Star-Arm-102</a></td>
+      <td>Plugin for the open-source Star Arm 102 6+1 degrees of freedom arm from <a href="https://fashionstar.com.hk/robot-arm/star-arm-102">FashionStar</a>: <a href="https://pypi.org/project/lerobot-robot-stararm102/"><code>lerobot-robot-stararm102</code></a> robot arm (102-FL) with its <a href="https://pypi.org/project/lerobot-teleoperator-stararm102/"><code>lerobot-teleoperator-stararm102</code></a> teleoperator arm (102-LD, or the pose-holding 102-HD).</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/metrox-eth/lerobot_robot_elrobot">lerobot_robot_elrobot</a></td>
+      <td>Plugin for the 3D-printed 7+1 degrees of freedom ElRobot from <a href="https://normacore.dev/">NormaCore</a>: robot arm <code>elrobot_follower</code> and teleoperator arm <code>elrobot_leader</code>.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/almond-bot/axol/tree/main/plugins/lerobot_robot_axol">lerobot-robot-axol</a></td>
+      <td>Plugin for the <a href="https://almond.bot/">Almond Axol</a> dual-arm robot: robot <code>axol</code>, VR teleoperator <code>axol_vr</code> (WebXR), a ZED camera, and <code>axol_mantis</code> for the handheld Mantis demonstration rigs.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -330,6 +417,10 @@ lerobot-record \
     <tr style="border:0">
       <td><a href="https://github.com/ROBOTIS-GIT/lerobot_robot_ros2_zenoh">lerobot_robot_ros2_zenoh</a></td>
       <td>Plugin bridging ROS 2 robots to LeRobot over <a href="https://zenoh.io">Zenoh</a> pub/sub transport.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/iblnkn/lerobot-robot-rosetta">lerobot-robot-rosetta</a></td>
+      <td>Plugin from the <a href="https://github.com/iblnkn/rosetta">Rosetta</a> project exposing a ROS 2 robot through topics declared in a contract YAML, with a matching <a href="https://github.com/iblnkn/lerobot-teleoperator-rosetta">teleoperator plugin</a>.</td>
     </tr>
   </tbody>
 </table>

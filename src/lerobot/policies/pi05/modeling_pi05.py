@@ -482,9 +482,8 @@ class PaliGemmaWithExpertModel(
         if image.ndim == 5:
             if frame_mask is None:
                 frame_mask = torch.ones(image.shape[:2], dtype=torch.bool, device=image.device)
-            vision_transformer = self.paligemma.model.vision_tower.vision_model
             features = encode_video_with_mem(
-                vision_transformer,
+                self.paligemma.model.vision_tower,
                 image,
                 frame_mask,
                 temporal_attention_every=temporal_attention_every,
@@ -684,7 +683,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Compile model if requested
         if config.compile_model:
-            torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
             # Also compile the main forward pass used during training
             self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
@@ -960,6 +958,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 self.config.max_action_dim,
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
+        else:
+            noise = noise.to(device=device, dtype=torch.float32)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, tokens, masks, states, state_masks
@@ -1165,13 +1165,11 @@ class PI05Policy(PreTrainedPolicy):
                 resolved_file = cached_file(
                     pretrained_name_or_path,
                     "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    token=token,
+                    revision=revision,
+                    local_files_only=local_files_only,
                 )
                 from safetensors.torch import load_file
 
@@ -1491,7 +1489,7 @@ class PI05Policy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations."""
         assert not self._rtc_enabled(), (
             "RTC is not supported for select_action, use it with predict_action_chunk"
@@ -1503,7 +1501,7 @@ class PI05Policy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
             self._action_queue.extend(actions.transpose(0, 1))
 
@@ -1511,9 +1509,17 @@ class PI05Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+        """Predict a chunk of actions given environment observations.
+
+        `noise` is the starting sample of the denoising loop, shaped
+        (batch_size, chunk_size, max_action_dim). When it is None, fresh noise is drawn.
+        """
         self.eval()
 
         # Direct chunk callers provide single observations. ``select_action``
@@ -1533,7 +1539,7 @@ class PI05Policy(PreTrainedPolicy):
 
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
         actions = self.model.sample_actions(
-            images, img_masks, tokens, masks, states=states, state_masks=state_masks, **kwargs
+            images, img_masks, tokens, masks, states=states, state_masks=state_masks, noise=noise, **kwargs
         )
 
         # Unpad actions to actual action dimension
@@ -1607,7 +1613,9 @@ class PI05Policy(PreTrainedPolicy):
 
     def _get_default_peft_targets(self) -> dict[str, Any]:
         """Return default PEFT target modules for PI0.5 fine-tuning."""
-        common_projections = "state_proj|action_in_proj|action_out_proj|time_mlp_in|time_mlp_out"
+        # Unlike pi0, PI05Pytorch has no `state_proj`: state only enters the model through the
+        # MEM-gated `proprio_history_proj` (handled separately below via `modules_to_save`).
+        common_projections = "action_in_proj|action_out_proj|time_mlp_in|time_mlp_out"
         target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
         # MEM's proprioceptive projection does not exist in `lerobot/pi05_base`, so a
         # LoRA adapter cannot start from pretrained weights for it. Train and save it

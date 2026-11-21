@@ -33,6 +33,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     AbsoluteActionsProcessorStep,
@@ -44,6 +45,8 @@ from lerobot.utils.feature_utils import (  # noqa: E402
     combine_feature_dicts,
     hw_to_dataset_features,
 )
+
+pytestmark = pytest.mark.dataset
 
 # ---------------------------------------------------------------------------
 # The two orders under test
@@ -109,6 +112,7 @@ class _StubRelativePolicy:
     def __init__(self, action_dim: int = 16):
         self.action_dim = action_dim
         self.config = SimpleNamespace(
+            n_obs_steps=1,
             action_feature_names=list(CKPT_ORDER),
             use_amp=False,
             chunk_size=30,
@@ -134,6 +138,10 @@ class _StubRelativePolicy:
     _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
     drop_queued_actions = PreTrainedPolicy.drop_queued_actions
     count_queued_actions = PreTrainedPolicy.count_queued_actions
+    chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
+
+    def supports_rtc(self):
+        return True
 
     def supports_text_generation(self):
         return False
@@ -247,7 +255,7 @@ def _remap_like_pre_4416(action_tensor, dataset_features, ordered_action_keys):
 
 def _run_sync_tick(*, align_state, align_action, remap):
     """One control tick through the real sync engine and ``send_next_action``."""
-    from lerobot.rollout.inference.sync import SyncInferenceEngine
+    from lerobot.inference import SyncInferenceEngine
     from lerobot.rollout.strategies.core import send_next_action
     from lerobot.utils.action_interpolator import ActionInterpolator
 
@@ -292,13 +300,14 @@ def _run_sync_tick(*, align_state, align_action, remap):
         data=SimpleNamespace(dataset_features=dataset_features, ordered_action_keys=ordered_action_keys),
     )
 
-    action_dict = send_next_action(
+    step = send_next_action(
         obs_processed=dict(obs_raw),
         obs_raw=obs_raw,
         ctx=ctx,
         interpolator=ActionInterpolator(multiplier=1),
     )
-    assert action_dict is not None
+    assert step is not None
+    action_dict = step[TransitionKey.ACTION]
     return action_dict, dataset_features, ordered_action_keys, policy
 
 
@@ -393,7 +402,7 @@ def test_sync_grippers_swap_with_each_other_but_never_run_away():
 
 def test_sync_anchor_is_pinned_across_a_chunk():
     """A cached action must keep the anchor from the tick that predicted its chunk."""
-    from lerobot.rollout.inference.sync import SyncInferenceEngine
+    from lerobot.inference import SyncInferenceEngine
 
     dataset_features, ordered_action_keys = _build_features(align_state=True, align_action=True)
     preprocessor, postprocessor = _make_pipelines()
@@ -462,9 +471,8 @@ def test_sync_anchor_is_pinned_across_a_chunk():
 
 def _seed_rtc_engine(dataset_features, state_names):
     """An RTC engine whose queue holds the chunk this variant's postprocessor would emit."""
-    from lerobot.policies.rtc import ActionQueue
+    from lerobot.inference import ActionProvenance, RTCInferenceEngine
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
-    from lerobot.rollout.inference import RTCInferenceEngine
 
     preprocessor, postprocessor = _make_pipelines()
     engine = RTCInferenceEngine(
@@ -489,8 +497,9 @@ def _seed_rtc_engine(dataset_features, state_names):
         ],
         dtype=torch.float32,
     )
-    engine._action_queue = ActionQueue(RTCConfig(enabled=True, execution_horizon=8))
-    engine._action_queue.merge(absolute.clone(), absolute.clone(), 0, None, task="fold the t-shirt")
+    engine._runtime.activate()
+    provenance = ActionProvenance(engine._runtime.clock(), "fold the t-shirt")
+    engine.action_queue.replace_future(absolute, [provenance], snapshot=engine.action_queue.snapshot())
     return engine
 
 
@@ -529,3 +538,37 @@ def test_rtc_and_sync_agree_on_the_shipped_wiring():
     assert rtc_action_dict.keys() == sync_action_dict.keys()
     for joint in sync_action_dict:
         assert rtc_action_dict[joint] == pytest.approx(sync_action_dict[joint]), joint
+
+
+def test_sync_task_change_resets_the_postprocessor():
+    """Dropping a chunk must also rewind postprocessor steps that track a position in it"""
+    from lerobot.inference import SyncInferenceEngine
+
+    dataset_features, ordered_action_keys = _build_features(align_state=True, align_action=True)
+    preprocessor, postprocessor = _make_pipelines()
+    resets = []
+    original_reset = postprocessor.reset
+    postprocessor.reset = lambda: (resets.append(1), original_reset())[1]
+
+    policy = _StubRelativePolicy()
+    bind_relative_anchor(policy, preprocessor)
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+        dataset_features=dataset_features,
+        ordered_action_keys=ordered_action_keys,
+        task="fold the t-shirt",
+        device="cpu",
+        robot_type="bi_openarm_follower",
+    )
+
+    frame = build_dataset_frame(dataset_features, _observation(), "observation")
+    for _ in range(3):
+        engine.get_action(frame)
+    before = len(resets)
+
+    engine.set_task("pick up the mug")
+    engine.get_action(frame)
+
+    assert len(resets) == before + 1, "a task change must rewind the postprocessor"

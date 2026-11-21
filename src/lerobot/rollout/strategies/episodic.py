@@ -40,6 +40,8 @@ from lerobot.common.control_utils import (
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.processor import transition_to_robot_action
+from lerobot.robots.utils import episode_ended
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -106,7 +108,6 @@ class EpisodicStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         """Main multi-episode recording loop."""
-        engine = self._require_engine()
         interpolator = self._require_interpolator()
         events = self._events
         if events is None:
@@ -122,7 +123,6 @@ class EpisodicStrategy(RolloutStrategy):
         episode_time_s = dataset_cfg.episode_time_s
         reset_time_s = dataset_cfg.reset_time_s
         num_episodes = dataset_cfg.num_episodes
-        single_task = dataset_cfg.single_task or cfg.task
         play_sounds = cfg.play_sounds
 
         display_compressed = (
@@ -142,14 +142,7 @@ class EpisodicStrategy(RolloutStrategy):
                     if ctx.runtime.shutdown_event.is_set():
                         break
 
-                    # Reset policy state at episode start (discard leftover hidden state / queue)
-                    engine.reset()
-                    interpolator.reset()
-                    # A reset interpolator re-primes over two consecutive inference
-                    # ticks, exactly like loop start-up, so exempt the group that
-                    # spans them instead of reporting a healthy episode as slow.
-                    timer.restart()
-                    engine.resume()
+                    self._start_episode(robot, timer)
 
                     log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
                     self._policy_loop(
@@ -160,7 +153,6 @@ class EpisodicStrategy(RolloutStrategy):
                         timer=timer,
                         control_time_s=episode_time_s,
                         dataset=dataset,
-                        single_task=single_task,
                     )
 
                     # Reset phase, skip after the last episode (but run when re-recording)
@@ -245,7 +237,6 @@ class EpisodicStrategy(RolloutStrategy):
         timer: CycleTimer,
         control_time_s: float,
         dataset: LeRobotDataset,
-        single_task: str,
     ) -> None:
         """Policy-driven recording loop for a single episode.
 
@@ -258,7 +249,7 @@ class EpisodicStrategy(RolloutStrategy):
         start_t = time.perf_counter()
 
         while timestamp < control_time_s:
-            timer.tick(new_cycle=interpolator.needs_new_action())
+            self._tick(timer, new_cycle=interpolator.needs_new_action())
 
             if events["exit_early"]:
                 events["exit_early"] = False
@@ -275,11 +266,12 @@ class EpisodicStrategy(RolloutStrategy):
             if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, timer):
                 continue
 
-            action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+            step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
-            if action_dict is not None:
+            if step is not None:
+                action_dict = transition_to_robot_action(step)
                 with timer.section("telemetry"):
-                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                    self._log_telemetry(obs_processed, step, ctx.runtime)
                 # Record once per interpolation cycle so the dataset cadence
                 # matches its declared fps; interpolated ticks only send
                 # commands to the robot.
@@ -287,8 +279,15 @@ class EpisodicStrategy(RolloutStrategy):
                     with timer.section("record"):
                         obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                         action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                        dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
+                        dataset.add_frame(
+                            {**obs_frame, **action_frame, "task": self._require_engine().dispatched_task}
+                        )
 
+            # End the recorded episode when the sim robot's episode ends (success, failure or step limit).
+            if episode_ended(robot.inner):
+                break
+
+            self._require_engine().pump_query(obs_processed)
             timer.wait()
             timestamp = time.perf_counter() - start_t
 

@@ -47,6 +47,8 @@ from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient  # n
 
 from ._helpers import make_canned_responder  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 @dataclass
 class _StubFrameProvider:

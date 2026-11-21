@@ -1613,6 +1613,8 @@ def test_molmoact2_norm_metadata_is_initialization_only(tmp_path, monkeypatch):
 
     molmoact2_modeling._apply_norm_tag_metadata(config)
     config._save_pretrained(checkpoint_path)
+    # Weight resolution checks for this file before calling the mocked loader.
+    (checkpoint_path / "model.safetensors").touch()
     stats_path.unlink()
     reloaded = PreTrainedConfig.from_pretrained(checkpoint_path)
 
@@ -2165,14 +2167,8 @@ def test_molmoact2_compile_applies_precision_safe_action_partition(monkeypatch):
     policy = _make_compile_test_policy()
     backbone = policy._backbone()
     state_dict_keys = tuple(policy.state_dict())
-    matmul_precision_calls = []
     lru_cache_calls = []
     ddp_optimizer_disable_calls = []
-    monkeypatch.setattr(
-        torch,
-        "set_float32_matmul_precision",
-        lambda precision: matmul_precision_calls.append(precision),
-    )
     monkeypatch.setattr(
         molmoact2_modeling,
         "_set_dynamo_lru_cache",
@@ -2204,7 +2200,6 @@ def test_molmoact2_compile_applies_precision_safe_action_partition(monkeypatch):
         "fullgraph": False,
     }
 
-    assert matmul_precision_calls == ["high"]
     assert lru_cache_calls == [False]
     assert ddp_optimizer_disable_calls == [True]
     assert tuple(policy.state_dict()) == state_dict_keys
@@ -2219,7 +2214,6 @@ def test_molmoact2_compile_uses_automatic_shapes_without_gradient_checkpointing(
     backbone = policy._backbone()
     lru_cache_calls = []
     ddp_optimizer_disable_calls = []
-    monkeypatch.setattr(torch, "set_float32_matmul_precision", lambda precision: None)
     monkeypatch.setattr(
         molmoact2_modeling,
         "_set_dynamo_lru_cache",
@@ -2264,7 +2258,6 @@ def test_molmoact2_compile_marks_only_context_sequence_dynamic(monkeypatch):
 def test_molmoact2_compile_is_limited_to_action_expert_for_every_train_mode(monkeypatch, train_mode_vlm):
     policy = _make_compile_test_policy(train_mode_vlm=train_mode_vlm)
     backbone = policy._backbone()
-    monkeypatch.setattr(torch, "set_float32_matmul_precision", lambda precision: None)
     monkeypatch.setattr(molmoact2_modeling, "_set_dynamo_lru_cache", lambda enabled: None)
     monkeypatch.setattr(molmoact2_modeling, "_disable_dynamo_ddp_optimizer", lambda: None)
 
@@ -2287,7 +2280,6 @@ def test_molmoact2_compile_is_limited_to_action_expert_for_every_train_mode(monk
 
 def test_molmoact2_checkpoint_compile_requires_dynamo_cache_order_control(monkeypatch):
     policy = _make_compile_test_policy()
-    monkeypatch.setattr(torch, "set_float32_matmul_precision", lambda precision: None)
 
     class MissingEvalFrame:
         pass
@@ -2308,18 +2300,11 @@ def test_molmoact2_checkpoint_compile_disables_dynamo_ddp_optimizer(monkeypatch)
         torch._dynamo.config.optimize_ddp = original_optimize_ddp
 
 
-def test_molmoact2_compile_disabled_is_a_noop(monkeypatch):
+def test_molmoact2_compile_disabled_is_a_noop():
     policy = _make_compile_test_policy(compile_model=False)
-    matmul_precision_calls = []
-    monkeypatch.setattr(
-        torch,
-        "set_float32_matmul_precision",
-        lambda precision: matmul_precision_calls.append(precision),
-    )
 
     policy._apply_compile()
 
-    assert matmul_precision_calls == []
     assert all(module.compile_calls == [] for module in policy.modules() if hasattr(module, "compile_calls"))
 
 

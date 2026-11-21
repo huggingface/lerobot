@@ -104,5 +104,5 @@ def test_pi0_action_time_embedding_follows_bf16_weights():
         _historical_action_time_block(suffix, noisy_actions, timestep)
 
     tokens = _action_time_tokens(suffix, state, noisy_actions, timestep)
-    assert tokens.dtype == torch.bfloat16
+    assert tokens.dtype == torch.bfloat16  # gitleaks:allow
     assert tokens.shape == (BATCH, HORIZON, WIDTH)

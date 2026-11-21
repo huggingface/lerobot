@@ -24,7 +24,9 @@ This module provides utilities for:
 """
 
 import logging
+import math
 import shutil
+from collections import Counter
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from copy import deepcopy
@@ -56,6 +58,7 @@ from .compute_stats import (
     compute_relative_action_stats,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
+from .dataset_reader import DatasetReader
 from .image_writer import write_image
 from .io_utils import (
     get_parquet_file_size_in_mb,
@@ -217,6 +220,9 @@ def split_dataset(
         if not episodes:
             raise ValueError(f"Split '{split_name}' has no episodes")
         episode_set = set(episodes)
+        if len(episode_set) != len(episodes):
+            duplicates = sorted(episode for episode, count in Counter(episodes).items() if count > 1)
+            raise ValueError(f"Split '{split_name}' lists episodes more than once: {duplicates}")
         if episode_set & all_episodes:
             raise ValueError("Episodes cannot appear in multiple splits")
         all_episodes.update(episode_set)
@@ -636,6 +642,110 @@ def _copy_and_reindex_data(
     return episode_data_metadata
 
 
+def _try_keep_episodes_from_video_by_stream_copy(
+    input_path: Path,
+    output_path: Path,
+    episodes_to_keep: list[tuple[int, int]],
+    fps: float,
+) -> bool:
+    """Keep specified episodes by copying encoded packets without re-encoding.
+
+    Validate cut points before writing; return False if re-encoding is needed.
+    Two demux passes avoid holding encoded payloads in memory.
+
+    Args:
+        input_path: Source video file path.
+        output_path: Destination video file path.
+        episodes_to_keep: List of (start_frame, end_frame) tuples for episodes to keep.
+            Ranges are half-open intervals: [start_frame, end_frame), where start_frame
+            is inclusive and end_frame is exclusive.
+        fps: Frame rate of the video.
+
+    Returns:
+        True if the output was written, False if the file cannot be cut without re-encoding.
+    """
+    import av
+
+    frame_ranges = sorted(episodes_to_keep)
+    if any(
+        prev_end > start for (_, prev_end), (start, _) in zip(frame_ranges, frame_ranges[1:], strict=False)
+    ):
+        return False
+
+    with av.open(str(input_path)) as in_container:
+        if not in_container.streams.video:
+            return False
+        v_in = in_container.streams.video[0]
+        if v_in.time_base is None:
+            return False
+        ticks_per_frame = round((1 / fps) / v_in.time_base)
+        if ticks_per_frame <= 0:
+            return False
+
+        pts: list[int] = []
+        is_keyframe: list[bool] = []
+        for packet in in_container.demux(v_in):
+            if packet.size == 0:
+                continue
+            if packet.pts is None:
+                return False
+            pts.append(packet.pts)
+            is_keyframe.append(packet.is_keyframe)
+
+    num_packets = len(pts)
+    prefix_max = [-math.inf] * (num_packets + 1)
+    for i in range(num_packets):
+        prefix_max[i + 1] = max(prefix_max[i], pts[i])
+    suffix_min = [math.inf] * (num_packets + 1)
+    for i in reversed(range(num_packets)):
+        suffix_min[i] = min(suffix_min[i + 1], pts[i])
+
+    # Demuxing yields packets in decode order, so a packet index is only a frame index at a cut
+    # where decode and presentation order agree: a keyframe that is presented before every later
+    # packet and after every earlier one. A keyframe followed by leading pictures (open GOP) fails
+    # this, because those pictures are presented before it and reference the previous GOP.
+    def is_clean_cut(i: int) -> bool:
+        if i == num_packets:
+            return True
+        return 0 <= i < num_packets and is_keyframe[i] and prefix_max[i] < pts[i] == suffix_min[i]
+
+    if any(not (is_clean_cut(start) and is_clean_cut(end)) for start, end in frame_ranges):
+        return False
+
+    pts_offsets = []
+    out_start = 0
+    for start, end in frame_ranges:
+        pts_offsets.append(out_start - pts[start])
+        out_start += (end - start) * ticks_per_frame
+
+    with av.open(str(input_path)) as in_container, av.open(str(output_path), mode="w") as out_container:
+        v_in = in_container.streams.video[0]
+        # `opaque` copies codec parameters without looking up an encoder named after the input's
+        # decoder, which does not exist for e.g. AV1 decoded by libdav1d.
+        v_out = out_container.add_stream_from_template(v_in, opaque=True)
+
+        segment_idx = 0
+        packet_idx = 0
+        for packet in in_container.demux(v_in):
+            if packet.size == 0:
+                continue
+            while segment_idx < len(frame_ranges) and packet_idx >= frame_ranges[segment_idx][1]:
+                segment_idx += 1
+            if segment_idx == len(frame_ranges):
+                break
+            if packet_idx >= frame_ranges[segment_idx][0]:
+                # Shift both timestamps to preserve the decode/presentation delay for B-frames.
+                offset = pts_offsets[segment_idx]
+                packet.pts += offset
+                if packet.dts is not None:
+                    packet.dts += offset
+                packet.stream = v_out
+                out_container.mux(packet)
+            packet_idx += 1
+
+    return True
+
+
 def _keep_episodes_from_video_with_av(
     input_path: Path,
     output_path: Path,
@@ -645,8 +755,8 @@ def _keep_episodes_from_video_with_av(
 ) -> None:
     """Keep only specified episodes from a video file using PyAV.
 
-    This function decodes frames from specified frame ranges and re-encodes them with
-    properly reset timestamps to ensure monotonic progression.
+    Copy encoded packets when cut points are safe; otherwise re-encode the selected
+    frames. Both paths reset timestamps onto a continuous output timeline.
 
     Args:
         input_path: Source video file path.
@@ -664,6 +774,10 @@ def _keep_episodes_from_video_with_av(
     if not episodes_to_keep:
         raise ValueError("No episodes to keep")
 
+    if _try_keep_episodes_from_video_by_stream_copy(input_path, output_path, episodes_to_keep, fps):
+        return
+
+    logger.info(f"Re-encoding {input_path} with {len(episodes_to_keep)} episodes")
     in_container = av.open(str(input_path))
 
     # Check if video stream exists.
@@ -676,7 +790,7 @@ def _keep_episodes_from_video_with_av(
 
     v_in = in_container.streams.video[0]
 
-    out = av.open(str(output_path), mode="w")
+    out = av.open(str(output_path), mode="w", options={"movflags": "faststart"})
 
     # Convert fps to Fraction for PyAV compatibility.
     fps_fraction = Fraction(fps).limit_denominator(1000)
@@ -838,7 +952,7 @@ def _copy_and_reindex_videos(
                     )
                     episodes_to_keep_ranges.append((from_frame, to_frame))
 
-                # Use PyAV filters to efficiently re-encode only the desired segments.
+                # Keep the desired segments using stream copy or re-encoding.
                 assert src_dataset.meta.video_path is not None
                 src_video_path = src_dataset.root / src_dataset.meta.video_path.format(
                     video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
@@ -848,10 +962,6 @@ def _copy_and_reindex_videos(
                 )
                 dst_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-                logger.info(
-                    f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx}) "
-                    f"with {len(episodes_to_keep_ranges)} episodes"
-                )
                 _keep_episodes_from_video_with_av(
                     src_video_path,
                     dst_video_path,
@@ -920,30 +1030,32 @@ def _copy_and_reindex_episodes_metadata(
         # This happens particularly with image/video statistics. We need to detect and flatten
         # these nested structures back to proper (C, 1, 1) arrays so aggregate_stats can process them.
         episode_stats: dict[str, dict[str, np.ndarray]] = {}
+        ignored_stats_features: set[str] = set()
         for key in src_episode_full:
             if key.startswith("stats/"):
-                stat_key = key.replace("stats/", "")
-                parts = stat_key.split("/")
-                if len(parts) == 2:
-                    feature_name, stat_name = parts
+                parsed_key = _parse_episode_feature_column(key, "stats/")
+                if parsed_key is not None:
+                    feature_name, stat_name = parsed_key
+                    if feature_name not in dst_meta.features:
+                        ignored_stats_features.add(feature_name)
+                        continue
+
                     if feature_name not in episode_stats:
                         episode_stats[feature_name] = {}
 
                     value = src_episode_full[key]
-
-                    if feature_name in src_dataset.meta.features:
-                        feature_dtype = src_dataset.meta.features[feature_name]["dtype"]
-                        if feature_dtype in ["image", "video"] and stat_name != "count":
-                            # Stats are channel-first (C, 1, 1)
-                            if isinstance(value, np.ndarray) and value.dtype == object:
-                                flat_values = []
-                                for item in value:
-                                    while isinstance(item, np.ndarray):
-                                        item = item.flatten()[0]
-                                    flat_values.append(item)
-                                value = np.array(flat_values, dtype=np.float64).reshape(-1, 1, 1)
-                            elif isinstance(value, np.ndarray) and value.ndim == 1:
-                                value = value.reshape(-1, 1, 1)
+                    feature_dtype = dst_meta.features[feature_name]["dtype"]
+                    if feature_dtype in ["image", "video"] and stat_name != "count":
+                        # Stats are channel-first (C, 1, 1)
+                        if isinstance(value, np.ndarray) and value.dtype == object:
+                            flat_values = []
+                            for item in value:
+                                while isinstance(item, np.ndarray):
+                                    item = item.flatten()[0]
+                                flat_values.append(item)
+                            value = np.array(flat_values, dtype=np.float64).reshape(-1, 1, 1)
+                        elif isinstance(value, np.ndarray) and value.ndim == 1:
+                            value = value.reshape(-1, 1, 1)
 
                     episode_stats[feature_name][stat_name] = value
 
@@ -959,6 +1071,12 @@ def _copy_and_reindex_episodes_metadata(
         dst_meta._save_episode_metadata(episode_dict)
 
         total_frames += src_episode["length"]
+
+    if ignored_stats_features:
+        logger.warning(
+            "Ignoring stale episode statistics for features absent from the output dataset: "
+            f"{sorted(ignored_stats_features)}"
+        )
 
     dst_meta.finalize()
 
@@ -1118,6 +1236,53 @@ def _copy_videos(
             shutil.copy(src_dataset.root / src_path, dst_path)
 
 
+def _parse_episode_feature_column(column: str, prefix: str) -> tuple[str, str] | None:
+    """Parse a feature and its field from an episode metadata column.
+
+    Feature names may contain ``/``, so the field name is always the last path
+    component and everything before it belongs to the feature name.
+    """
+    if not column.startswith(prefix):
+        return None
+
+    feature_name, separator, field_name = column.removeprefix(prefix).rpartition("/")
+    if not separator or not feature_name or not field_name:
+        return None
+
+    return feature_name, field_name
+
+
+def _drop_stale_episode_feature_columns(episodes_dir: Path, active_features: set[str]) -> set[str]:
+    """Drop stale feature columns from copied episode metadata parquet files.
+
+    ``stats/`` and ``videos/`` column groups are keyed by feature names. Those
+    names may themselves contain ``/``, so parse each column from the right
+    rather than matching a plain prefix. Only parquet schemas are inspected up
+    front, so clean files keep the cheap copy-only path and are decoded only
+    when stale columns must be removed.
+    """
+    stale_features: set[str] = set()
+
+    for path in sorted(episodes_dir.glob("*/*.parquet")):
+        stale_columns = []
+        for column in pq.read_schema(path).names:
+            for prefix in ("stats/", "videos/"):
+                parsed_column = _parse_episode_feature_column(column, prefix)
+                if parsed_column is None:
+                    continue
+
+                feature_name, _ = parsed_column
+                if feature_name not in active_features:
+                    stale_columns.append(column)
+                    stale_features.add(feature_name)
+                break
+
+        if stale_columns:
+            pq.write_table(pq.read_table(path).drop(stale_columns), path)
+
+    return stale_features
+
+
 def _copy_episodes_metadata_and_stats(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
@@ -1131,6 +1296,12 @@ def _copy_episodes_metadata_and_stats(
     dst_episodes_dir = dst_meta.root / "meta/episodes"
     if episodes_dir.exists():
         shutil.copytree(episodes_dir, dst_episodes_dir, dirs_exist_ok=True)
+        stale_features = _drop_stale_episode_feature_columns(dst_episodes_dir, set(dst_meta.features.keys()))
+        if stale_features:
+            logger.warning(
+                "Dropped stale episode metadata for features absent from the output dataset: "
+                f"{sorted(stale_features)}"
+            )
 
     dst_meta.info.total_episodes = src_dataset.meta.total_episodes
     dst_meta.info.total_frames = src_dataset.meta.total_frames
@@ -1607,6 +1778,9 @@ def modify_tasks(
     # Reload metadata to reflect changes
     dataset.meta.tasks = new_task_df
     dataset.meta.episodes = load_episodes(root)
+    # A dataset opened from disk already holds its frames in memory: reload them for the new task_index.
+    if isinstance(dataset.reader, DatasetReader) and dataset.reader.hf_dataset is not None:
+        dataset.reader.load_and_activate()
 
     logger.info(f"Tasks: {unique_tasks}")
 

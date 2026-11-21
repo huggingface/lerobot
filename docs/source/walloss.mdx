@@ -40,18 +40,26 @@ To use WallX in LeRobot, specify the policy type as:
 policy.type=wall_x
 ```
 
+WALL-X's default action tokenizer (`lerobot/fast-action-tokenizer`) loads custom
+Python code. Review the tokenizer repository before setting
+`--policy.trust_remote_code=true` for training or inference. The model loads the
+configured action tokenizer in both `diffusion` and `fast` modes. Consent defaults
+to false and must be supplied again when loading a checkpoint, including a local
+copy; `--env.trust_remote_code` does not grant policy consent.
+Pin it with `--policy.action_tokenizer_path=lerobot/fast-action-tokenizer@<full-commit-sha>`; code consent is still required.
+
 ### Text generation and interactive control
 
 WALL-OSS exposes native text generation through the policy contract from
-[Bring your own policy](./bring_your_own_policies#adding-a-text-head-the-language-contract).
-Runtime supplies `query_kind` and caller-owned `text` before running WALL-OSS's
+[Bring your own policy](./bring_your_own_policies#text-capable-policies).
+Runtime supplies `query_kind` and caller-owned `query_text` before running WALL-OSS's
 normal input pipeline:
 
 ```python
 request = {
     **observation,
     "query_kind": "vqa",
-    "text": "Which object is closest to the right gripper?",
+    "query_text": "Which object is closest to the right gripper?",
 }
 processed_batch = preprocessor(request)
 answer = policy.generate_text(processed_batch)
@@ -69,6 +77,7 @@ WALL-OSS action prediction on it:
 lerobot-rollout \
   --strategy.type=base \
   --policy.path=your-org/your-wall-oss-checkpoint \
+  --policy.trust_remote_code=true \
   --robot.type=your_robot_type \
   --robot.port=/dev/your_robot_port \
   --task="clear the table" \
@@ -87,6 +96,7 @@ For training WallX, you can use the standard LeRobot training script with the ap
 lerobot-train \
     --dataset.repo_id=your_dataset \
     --policy.type=wall_x \
+    --policy.trust_remote_code=true \
     --output_dir=./outputs/wallx_training \
     --job_name=wallx_training \
     --policy.repo_id=your_repo_id \
@@ -107,6 +117,7 @@ columns. Set `recipe_path` only to replace that recipe:
 lerobot-train \
   --dataset.repo_id=your_org/your_language_annotated_dataset \
   --policy.type=wall_x \
+  --policy.trust_remote_code=true \
   --policy.pretrained_name_or_path=x-square-robot/wall-oss-flow \
   --policy.text_loss_weight=0.01 \
   --policy.flow_loss_weight=1.0 \
@@ -124,21 +135,42 @@ use WALL-OSS's original action-only training path.
 See [Language columns and recipes](./language_and_recipes) for the annotation
 schema and available recipes.
 
+### FAST action prediction
+
+For a checkpoint trained with FAST action tokens, select `fast` mode and opt in
+to its tokenizer code:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_dataset \
+  --policy.type=wall_x \
+  --policy.pretrained_name_or_path=your_org/your_wall_x_fast_checkpoint \
+  --policy.prediction_mode=fast \
+  --policy.trust_remote_code=true \
+  --policy.device=cuda
+```
+
+In Python, set `WallXConfig(trust_remote_code=True, ...)` when constructing a
+policy, or pass `trust_remote_code=True` to `WallXPolicy.from_pretrained(...)`
+when loading its config from a checkpoint. Use the same consent on the config
+passed to `make_pre_post_processors` so the processor's FAST tokenizer can load.
+
 ### Training Arguments
 
-| Argument                       | Description                                                                                                                                                   |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--dataset.repo_id`            | The Hugging Face Hub repository ID for your training dataset (e.g., `lerobot/aloha_sim_insertion_human`)                                                      |
-| `--policy.type`                | Specifies using the WallX policy architecture                                                                                                                 |
-| `--output_dir`                 | Local directory where training checkpoints and logs will be saved                                                                                             |
-| `--job_name`                   | A name identifier for this training run (used in logging/tracking)                                                                                            |
-| `--policy.repo_id`             | Your Hugging Face Hub repo ID where the trained model will be pushed                                                                                          |
-| `--policy.pretrained_path`     | Path to pretrained WallX weights to initialize from (the official WALL-OSS checkpoint)                                                                        |
-| `--policy.prediction_mode`     | The action prediction strategy: `diffusion` or `fast` - `diffusion` uses iterative denoising for action generation, `fast` uses next token prediction instead |
-| `--policy.attn_implementation` | Attention implementation backend - `eager` uses standard PyTorch attention (alternatives include `flash_attention_2` or `sdpa`)                               |
-| `--steps`                      | Total number of training steps to run                                                                                                                         |
-| `--policy.device`              | Device to train on (`cuda` for GPU, `cpu` for CPU)                                                                                                            |
-| `--batch_size`                 | Number of samples per training batch                                                                                                                          |
+| Argument                           | Description                                                                                                                                                   |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--dataset.repo_id`                | The Hugging Face Hub repository ID for your training dataset (e.g., `lerobot/aloha_sim_insertion_human`)                                                      |
+| `--policy.type`                    | Specifies using the WallX policy architecture                                                                                                                 |
+| `--output_dir`                     | Local directory where training checkpoints and logs will be saved                                                                                             |
+| `--job_name`                       | A name identifier for this training run (used in logging/tracking)                                                                                            |
+| `--policy.repo_id`                 | Your Hugging Face Hub repo ID where the trained model will be pushed                                                                                          |
+| `--policy.pretrained_name_or_path` | Path to pretrained WallX weights to initialize from (the official WALL-OSS checkpoint)                                                                        |
+| `--policy.prediction_mode`         | The action prediction strategy: `diffusion` or `fast` - `diffusion` uses iterative denoising for action generation, `fast` uses next token prediction instead |
+| `--policy.trust_remote_code`       | Caller consent for custom policy/tokenizer code; defaults to `false` and is required by the default FAST action tokenizer                                     |
+| `--policy.attn_implementation`     | Attention implementation backend - `eager` uses standard PyTorch attention (alternatives include `flash_attention_2` or `sdpa`)                               |
+| `--steps`                          | Total number of training steps to run                                                                                                                         |
+| `--policy.device`                  | Device to train on (`cuda` for GPU, `cpu` for CPU)                                                                                                            |
+| `--batch_size`                     | Number of samples per training batch                                                                                                                          |
 
 Language training uses `policy.text_loss_weight` (default `0.01`),
 `policy.flow_loss_weight` (default `1.0`), and `policy.tokenizer_max_length`

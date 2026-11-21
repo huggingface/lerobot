@@ -26,6 +26,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.utils.process import ProcessSignalHandler  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 # Fixture to reset shutdown_event_counter and original signal handlers before and after each test
 @pytest.fixture(autouse=True)

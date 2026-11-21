@@ -33,14 +33,18 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import (
+    ACTION,
     IMAGENET_STATS,
     OBS_IMAGES,
-    OBS_PREFIX,
     OBS_STATE,
 )
+from lerobot.utils.rotation import Rotation
 
 from .configuration_xvla import XVLAConfig
 from .utils import rotate6d_to_axis_angle
+
+# XVLA was trained on the controller's `ee_ori_mat`, a fixed quarter turn about z from `robot0_eef_quat`.
+_EEF_TO_CONTROLLER = np.array([[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 
 
 def make_xvla_pre_post_processors(
@@ -83,76 +87,56 @@ def make_xvla_pre_post_processors(
 @dataclass
 class LiberoProcessorStep(ObservationProcessorStep):
     """
-    Processes LIBERO observations into the LeRobot format.
-
-    This step handles the specific observation structure from LIBERO environments,
-    which includes nested robot_state dictionaries and image observations.
+    Build the LIBERO input XVLA was trained on from the canonical LIBERO observation.
 
     **State Processing:**
-    -   Processes the `robot_state` dictionary which contains nested end-effector,
-        gripper, and joint information.
-    -   Extracts and concatenates:
-        - End-effector position (3D)
-        - End-effector quaternion converted to axis-angle (3D)
-        - Gripper joint positions (2D)
-    -   Maps the concatenated state to `"observation.state"`.
+    -   Reads the 8-D canonical state: end-effector position (3), axis-angle (3) and gripper joints (2).
+    -   Writes the 9-D state to `"observation.state"`: end-effector position (3) and 6D rotation of the
+        controller frame (6). The policy zero pads it to `max_state_dim`.
 
     **Image Processing:**
-    -   Rotates images by 180 degrees by flipping both height and width dimensions.
-    -   This accounts for the HuggingFaceVLA/libero camera orientation convention.
+    -   The LIBERO integration rotates every camera by 180 degrees. XVLA takes `image` that way and the
+        other cameras unrotated, so this step rotates them back.
     """
 
     def _process_observation(self, observation):
         """
-        Processes both image and robot_state observations from LIBERO.
+        Processes both image and state observations of the canonical LIBERO observation.
         """
         processed_obs = observation.copy()
         for key in list(processed_obs.keys()):
-            if key.startswith(f"{OBS_IMAGES}."):
-                img = processed_obs[key]
+            if key.startswith(f"{OBS_IMAGES}.") and key != f"{OBS_IMAGES}.image":
+                # Flip both H and W
+                processed_obs[key] = torch.flip(processed_obs[key], dims=[2, 3])
 
-                if key == f"{OBS_IMAGES}.image":
-                    # Flip both H and W
-                    img = torch.flip(img, dims=[2, 3])
-
-                processed_obs[key] = img
-        # Process robot_state into a flat state vector
-        robot_state_str = OBS_PREFIX + "robot_state"
-        if robot_state_str in processed_obs:
-            robot_state = processed_obs.pop(robot_state_str)
-
-            # Extract components
-            eef_pos = robot_state["eef"]["pos"]  # (B, 3,)
-            eef_mat = robot_state["eef"]["mat"]  # (B, 3, 3)
-            eef_rot6d = self._mat_to_rotate6d(eef_mat)  # (B, 6)
-
-            extra = torch.zeros((eef_pos.shape[0], 1), dtype=torch.float32, device=eef_pos.device)
-
-            proprio_state = torch.cat((eef_pos, eef_rot6d, extra), dim=-1)  # (B, 10)
-            state = torch.cat((proprio_state, torch.zeros_like(proprio_state)), dim=-1)  # (B, 20)
-            # ensure float32
-            state = state.float()
-            if state.dim() == 1:
-                state = state.unsqueeze(0)
-
-            processed_obs[OBS_STATE] = state
+        state = processed_obs[OBS_STATE]  # (B, 8)
+        if state.shape[-1] != 8:
+            raise ValueError(f"Expected the 8 wide canonical LIBERO state, got {state.shape[-1]}.")
+        eef_mat = np.stack(
+            [
+                Rotation.from_rotvec(rotvec).as_matrix() @ _EEF_TO_CONTROLLER
+                for rotvec in state[:, 3:6].cpu().numpy()
+            ]
+        )  # (B, 3, 3)
+        eef_rot6d = self._mat_to_rotate6d(torch.as_tensor(eef_mat, device=state.device))  # (B, 6)
+        processed_obs[OBS_STATE] = torch.cat((state[:, :3], eef_rot6d), dim=-1).float()  # (B, 9)
         return processed_obs
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         """
-        Transforms feature keys from the LIBERO format to the LeRobot standard.
+        Declares the 9-D state this step writes in place of the canonical state.
         """
         new_features = {ft: feats.copy() for ft, feats in features.items()}
 
-        # rebuild the observation STATE features around our new flattened state
+        # rebuild the observation STATE features around the new state
         observation_features = {
             key: feature
             for key, feature in new_features.get(PipelineFeatureType.OBSERVATION, {}).items()
             if feature.type is not FeatureType.STATE
         }
-        observation_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(20,))
+        observation_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(9,))
         new_features[PipelineFeatureType.OBSERVATION] = observation_features
 
         return new_features
@@ -449,10 +433,11 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
     - action[:, 3:9] -> 6D rotation (converted to axis-angle, 3D)
     - action[:, 9:10] -> gripper action
 
-    Final output: [target_eef (3), axis_angle (3), gripper (1)] = 7D action
+    Final output: [target_eef (3), axis_angle (3), gripper (1)] = 7D action, in float32 as the environment takes it.
 
     Args:
-        expected_action_dim: Expected input action dimension (default: 10, supports 6D rotation + extras)
+        expected_action_dim: Minimum input action dimension (default: 10). Only the first 10 values are used, the
+            20D ee6d action of X-VLA carries a second arm that LIBERO does not have.
     """
 
     expected_action_dim: int = 10
@@ -465,10 +450,15 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         if action is None or not isinstance(action, torch.Tensor):
             return new_transition
 
-        # Convert to numpy for processing
+        if action.shape[-1] < self.expected_action_dim:
+            raise ValueError(
+                f"Expected an action with at least {self.expected_action_dim} dimensions "
+                f"[target_eef (3), rotation 6D (6), gripper (1)], got {action.shape[-1]}."
+            )
+
+        # Convert to numpy for processing, in float32 since numpy has no bfloat16
         device = action.device
-        dtype = action.dtype
-        action_np = action.cpu().numpy()
+        action_np = action.cpu().float().numpy()
 
         # Extract components
         # action shape: (B, D) where D >= 10
@@ -486,16 +476,21 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         action_np[:, -1] = np.where(action_np[:, -1] > 0.5, 1.0, -1.0)
 
         # Convert back to tensor
-        action = torch.from_numpy(action_np).to(device=device, dtype=dtype)
+        action = torch.from_numpy(action_np).to(device=device)
 
         new_transition[TransitionKey.ACTION] = action
         return new_transition
 
-    def transform_features(self, features):
-        """Rotation conversion changes action dimension from 10 to 7."""
-        # Note: This is a simplified version. In practice, you might want to
-        # update the action feature shape in the features dict.
-        return features
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Rotation conversion changes the action to [target_eef (3), axis_angle (3), gripper (1)]."""
+        new_features = {ft: feats.copy() for ft, feats in features.items()}
+        if ACTION in new_features.get(PipelineFeatureType.ACTION, {}):
+            new_features[PipelineFeatureType.ACTION][ACTION] = PolicyFeature(
+                type=FeatureType.ACTION, shape=(7,)
+            )
+        return new_features
 
     def get_config(self) -> dict[str, Any]:
         """Return serializable configuration."""

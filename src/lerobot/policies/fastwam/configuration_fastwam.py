@@ -187,6 +187,25 @@ class FastWAMConfig(PreTrainedConfig):
             Cuts the AdamW optimizer footprint substantially; the video expert keeps its
             pretrained weights. (If enabled, also set `loss.lambda_video=0` to skip the
             now-gradient-free video loss compute.)
+        action_expert_layers (int | None): Depth of the action expert. `None` keeps
+            `action_dit_config["num_layers"]` (default 30, the Fast-WAM behavior). A
+            value smaller than the video backbone depth requires `lite_kv_fusion`:
+            the paper's Faster-WAM (arXiv 2608.02365) uses 1 (a 28.6M single-layer
+            action expert).
+        lite_kv_fusion (bool): Dock of Transformers Lite KV-Fusion (paper Eq. 1). Each
+            action layer learns, per attention head, a softmax mixture over the native
+            K/V cached across ALL video layers (fused after the backbone's QK-Norm and
+            RoPE, the paper's adopted N+R->F variant). Adds `num_heads * L_v * L_a`
+            parameters (720 for the paper's 24 heads, 30 video layers, 1 action layer).
+        retracted_1d_rope (bool): Retracted 1D-RoPE (paper Eq. 3): de-rotate the fused
+            video keys with the backbone's native 3D rotary transform and re-encode them
+            on the action queries' 1D temporal axis at the video token's temporal
+            position (identity for the observed frame at t=0). Requires
+            `lite_kv_fusion`. The video backbone keeps its native 3D RoPE.
+        world_model_only_conditioning (bool): Paper Sec. 2.2. The action expert is built
+            without text cross-attention modules and receives no text/proprioceptive
+            context; language and proprioception condition only the video backbone, and
+            the action expert reads all conditioning through the fused video keys.
     """
 
     n_obs_steps: int = 1
@@ -198,13 +217,33 @@ class FastWAMConfig(PreTrainedConfig):
     action_video_freq_ratio: int = 4
     image_size: tuple[int, int] = (224, 448)
     context_len: int = 128
+
+    # Relative actions: subtract the current state from the action during preprocessing and add it
+    # back at postprocessing, so the model predicts offsets instead of absolute poses. Needs
+    # `proprio_dim` (OBS_STATE) to be set.
+    use_relative_actions: bool = False
+    # Joint names kept absolute (never converted). Empty list = every dim goes relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Filled in at runtime from dataset metadata by `make_policy`; used to build the exclude mask.
+    action_feature_names: list[str] | None = None
     model_id: str = WAN22_MODEL_ID
     tokenizer_model_id: str = WAN_T5_TOKENIZER_ID
     text_encoder_model_id: str = WAN22_DIFFUSERS_MODEL_ID
     base_model_id: str | None = FASTWAM_BASE_MODEL_ID
     tokenizer_max_len: int = 128
     load_text_encoder: bool = True
+    # Device for the frozen ~11GB UMT5-XXL text encoder. `None` keeps it on the main policy
+    # `device` (default). Set to e.g. "cpu" to keep it off the GPU and save VRAM; prompts are then
+    # encoded there and the embeddings moved to the policy device. Trades GPU memory for slower
+    # (CPU) text encoding — which the per-episode cache below makes a one-off cost per episode.
+    text_encoder_device: str | None = None
     mot_checkpoint_mixed_attn: bool = False
+    # Faster-WAM (arXiv 2608.02365) design choices. All default off/None, which preserves
+    # the Fast-WAM behavior, module tree and checkpoint layout exactly.
+    action_expert_layers: int | None = None
+    lite_kv_fusion: bool = False
+    retracted_1d_rope: bool = False
+    world_model_only_conditioning: bool = False
     dtype: torch.dtype | None = torch.bfloat16
 
     # Deprecated and ignored: superseded by `dtype`. Declared only so configs written before the
@@ -272,6 +311,20 @@ class FastWAMConfig(PreTrainedConfig):
         self.action_dit_config["fp32_attention"] = bool(self.fp32_attention)
         self.video_dit_config["use_gradient_checkpointing"] = bool(self.use_gradient_checkpointing)
         self.action_dit_config["use_gradient_checkpointing"] = bool(self.use_gradient_checkpointing)
+        if self.action_expert_layers is not None:
+            if isinstance(self.action_expert_layers, bool) or not isinstance(self.action_expert_layers, int):
+                raise ValueError("`action_expert_layers` must be a positive integer.")
+            self.action_dit_config["num_layers"] = self.action_expert_layers
+        # Faster-WAM world-model-only conditioning: the action expert is built without
+        # text cross-attention modules and is never given a text/proprio context.
+        self.action_dit_config["use_text_cross_attention"] = not self.world_model_only_conditioning
+        self._validate_fasterwam_options()
+        if self.use_relative_actions and self.proprio_dim is None:
+            # Without a state there is no anchor: training would stay absolute and inference would fail.
+            raise ValueError(
+                "`use_relative_actions=true` requires `proprio_dim` to be set "
+                "(and `observation.state` to be provided)."
+            )
         if self.input_features is None:
             height, width = self.image_size
             self.input_features = {
@@ -294,6 +347,39 @@ class FastWAMConfig(PreTrainedConfig):
             return
         self.pretrained_path = Path(self.base_model_id)
         self._auto_pretrained_path = True
+
+    def _validate_fasterwam_options(self) -> None:
+        """Validate the opt-in Faster-WAM (arXiv 2608.02365) options.
+
+        - A shallow action expert must read the video backbone through Lite KV-Fusion
+          (Dock of Transformers): without it an expert shallower than the video backbone
+          could only see its index-aligned video layer.
+        - Retracted 1D-RoPE operates on the fused video keys (the paper introduces it
+          precisely because Lite KV-Fusion reuses the backbone's native rotated keys),
+          so it requires `lite_kv_fusion`.
+        """
+        video_config = self.video_dit_config
+        action_config = self.action_dit_config
+        if video_config is None or action_config is None:
+            # __post_init__ resolves both before this validation runs.
+            raise ValueError("`video_dit_config` and `action_dit_config` must be resolved first.")
+        video_layers = int(video_config["num_layers"])
+        action_layers = action_config["num_layers"]
+        if isinstance(action_layers, bool) or not isinstance(action_layers, int) or action_layers < 1:
+            raise ValueError(f"Action expert depth must be a positive integer, got {action_layers!r}.")
+        if action_layers > video_layers:
+            raise ValueError(
+                f"`action_expert_layers` ({action_layers}) cannot exceed the video backbone "
+                f"depth ({video_layers})."
+            )
+        if action_layers != video_layers and not self.lite_kv_fusion:
+            raise ValueError(
+                f"`action_expert_layers={action_layers}` differs from the video backbone depth "
+                f"({video_layers}); set `lite_kv_fusion=True` so the shallow expert reads all "
+                "video layers through Lite KV-Fusion."
+            )
+        if self.retracted_1d_rope and not self.lite_kv_fusion:
+            raise ValueError("`retracted_1d_rope=True` requires `lite_kv_fusion=True`.")
 
     def _save_pretrained(self, save_directory: Path) -> None:
         if not getattr(self, "_auto_pretrained_path", False):
@@ -402,6 +488,11 @@ class FastWAMConfig(PreTrainedConfig):
             image_width_sum += shape[2]
         if image_width_sum != width:
             raise ValueError(f"FastWAM image feature widths must sum to {width}, got {image_width_sum}.")
+
+    @property
+    def chunk_size(self) -> int:
+        """Alias read by RA-BC sample weighting: the full supervised horizon, not `n_action_steps`."""
+        return self.action_horizon
 
     @property
     def model_video_frames(self) -> int:
