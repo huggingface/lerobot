@@ -264,14 +264,15 @@ lerobot-train \
 ### Evaluate
 
 ```bash
-lerobot-record \
+lerobot-rollout \
+  --strategy.type=episodic \
   --robot.type=hope_jr_hand \
   --robot.port=/dev/tty.usbmodem58760432281 \
   --robot.id=right \
   --robot.side=right \
   --robot.cameras='{"main": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}}' \
   --display_data=false \
-  --dataset.repo_id=<USER>/eval_hopejr \
+  --dataset.repo_id=<USER>/rollout_hopejr \
   --dataset.single_task="Evaluate hopejr hand policy" \
   --dataset.num_episodes=10 \
   --dataset.streaming_encoding=true \

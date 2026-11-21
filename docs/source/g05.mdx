@@ -105,6 +105,10 @@ the selected ActionCodec or flow chunk directly and generates no CoT:
 lerobot-rollout \
   --policy.path=lerobot/g05_so101 \
   --policy.runtime_system=system1 \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_follower \
+  --robot.cameras='{exterior: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist_right: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}' \
   --task="pick up the cup" \
   --fps=30
 ```
