@@ -214,8 +214,35 @@ class MetricsTracker:
         if not dist.is_initialized() or dist.get_world_size() <= 1:
             return
 
+        # A mixed-supervision batch can produce different sub-losses on each rank.
+        # Exchange these short CPU summaries by name once per logging window.
+        world_size = dist.get_world_size()
+        local = {
+            name: (meter.sum, meter.count)
+            for name, meter in self.metrics.items()
+            if name not in self._caller_metrics and meter.count
+        }
+        gathered: list[dict[str, tuple[float, float]]] = [{} for _ in range(world_size)]
+        dist.all_gather_object(gathered, local)
+        sums: dict[str, float] = defaultdict(float)
+        counts: dict[str, float] = defaultdict(float)
+        for rank_metrics in gathered:
+            for name, (total, count) in rank_metrics.items():
+                sums[name] += total
+                counts[name] += count
+        for name, total in sums.items():
+            if name not in self.metrics:
+                self.metrics[name] = AverageMeter(name, ":.3f", reduction="mean")
+            meter = self.metrics[name]
+            # Keep one rank's share, so reducing again after more updates counts
+            # observations from this window only once.
+            meter.sum = total / world_size
+            meter.count = counts[name] / world_size
+            meter.avg = total / counts[name]
+
         buckets: dict[str, list[str]] = defaultdict(list)
-        for name, meter in self.metrics.items():
+        for name in sorted(self._caller_metrics):
+            meter = self.metrics[name]
             if meter.reduction != "none":
                 buckets[meter.reduction].append(name)
         if not buckets:

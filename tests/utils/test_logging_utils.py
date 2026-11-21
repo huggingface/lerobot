@@ -187,6 +187,7 @@ def test_metrics_tracker_reduce_across_ranks_invokes_all_reduce(monkeypatch):
     monkeypatch.setattr(logging_utils.dist, "is_initialized", lambda: True)
     monkeypatch.setattr(logging_utils.dist, "get_world_size", lambda: 4)
     monkeypatch.setattr(logging_utils.dist, "all_reduce", fake_all_reduce)
+    monkeypatch.setattr(logging_utils.dist, "all_gather_object", lambda out, local: None)
 
     metrics = {
         "loss": AverageMeter("loss"),  # reduction="none" -> not touched
@@ -240,3 +241,31 @@ def test_metrics_tracker_update_metrics_does_not_override_caller_meter():
 
     assert tracker.metrics["loss"].avg == pytest.approx(1.0)  # snapshot ignored
     assert tracker.metrics["latent_loss"].avg == pytest.approx(0.2)
+
+
+def test_distributed_policy_metrics_align_by_name(monkeypatch):
+    tracker = MetricsTracker(batch_size=1, num_frames=8, num_episodes=2, metrics={})
+    tracker.update_metrics({"flow_loss": 2.0, "shared": 3.0})
+    tracker.update_metrics({"shared": 6.0})
+    peer = {"shared": (9.0, 1), "text_loss": (8.0, 1)}
+
+    def gather(out, local):
+        out[:] = [local, peer]
+
+    monkeypatch.setattr(logging_utils.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(logging_utils.dist, "get_world_size", lambda: 2)
+    monkeypatch.setattr(logging_utils.dist, "all_gather_object", gather)
+    monkeypatch.setattr(logging_utils.dist, "all_reduce", lambda tensor, op: None)
+    tracker.reduce_across_ranks()
+
+    assert tracker.flow_loss.avg == 2.0
+    assert tracker.text_loss.avg == 8.0
+    assert tracker.shared.avg == 6.0
+
+    tracker.reset_averages()
+    tracker.update_metrics({"text_loss": 4.0})
+    peer = {"flow_loss": (5.0, 1)}
+    tracker.reduce_across_ranks()
+    assert tracker.flow_loss.avg == 5.0
+    assert tracker.text_loss.avg == 4.0
+    assert tracker.shared.avg == 0.0
