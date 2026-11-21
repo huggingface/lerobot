@@ -235,6 +235,7 @@ wallx = [
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]", "lerobot[sentencepiece-dep]"]
 dm05 = ["lerobot[transformers-dep]"]
+dynamicvla = ["lerobot[transformers-dep]", "lerobot[timm-dep]", "lerobot[accelerate-dep]"]
 molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "lerobot[accelerate-dep]"]
 multi_task_dit = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
@@ -369,6 +370,7 @@ all = [
     "lerobot[dm05]",
     "lerobot[fineart_vla]",
     "lerobot[molmoact2]",
+    "lerobot[dynamicvla]",
     "lerobot[smolvla]",
     "lerobot[fastwam]",
     "lerobot[longwam]",
@@ -628,7 +630,12 @@ enable_error_code = [
 # One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
 # molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
 [[tool.mypy.overrides]]
-module = ["lerobot.rl.*", "lerobot.policies.molmoact2.molmoact2_hf_model.*"]
+module = [
+    "lerobot.rl.*",
+    "lerobot.policies.molmoact2.molmoact2_hf_model.*",
+    # Vendored FastViT / FastVLM (apple/ml-fastvlm)
+    "lerobot.policies.dynamicvla.modeling_fastvlm",
+]
 ignore_errors = true
 
 # ZeroMQ's public stubs re-export names from Python modules. Follow those modules
