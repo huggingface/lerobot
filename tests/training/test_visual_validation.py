@@ -166,6 +166,7 @@ def test_train_with_camera_mismatch(camera_keys, empty_cameras, rename_map, expe
         output_dir=tmp_path / "_output",
         steps=1,
     )
+    train_config.trackio.enable = False
     train_config = custom_validate(train_config, policy_path=pretrained_path, empty_cameras=empty_cameras)
     # HACK: disable the internal CLI validation step for tests, we did it with custom_validate
     train_config.validate = lambda: None

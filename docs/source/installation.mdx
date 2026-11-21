@@ -266,15 +266,23 @@ pip install -e ".[feetech]" # or "[dynamixel]" for example
 
 ### Experiment Tracking
 
-[Trackio](https://huggingface.co/docs/trackio) is included in the `training` extra. Local runs need no account or login: they are stored in a local SQLite database under `~/.cache/huggingface/trackio`. Open the dashboard with:
+[Trackio](https://huggingface.co/docs/trackio) is included in the `training` extra, and every training run is tracked with it unless you pass `--trackio.enable=false`. Local runs need no account or login: they are stored in a local SQLite database under `~/.cache/huggingface/trackio`. Open the dashboard with:
 
 ```bash
 trackio show --project lerobot
 ```
 
-To sync runs to a Hugging Face Space (created if missing), run `hf auth login` and pass `--trackio.space_id=<user>/<space>`. Remote jobs (`--job.target`) with tracking enabled require `space_id`, because the pod's local database is lost when the job ends.
+To follow runs live from anywhere, run `hf auth login` and pass `--trackio.space_id=<user>/<space>`: metrics are synced to that Hugging Face Space (created if missing) while training runs. A run that was only stored locally can be uploaded once it finishes:
 
-Space privacy defaults to `None`: new Spaces are public unless the organization's default is private. Pass `--trackio.private=true` to create a private Space.
+```bash
+trackio sync --project lerobot --space-id <user>/<space>
+```
+
+The sync uploads the whole local project and replaces the Space's copy of it, so use a Space that only holds this machine's runs of the project.
+
+Remote jobs (`--job.target`) with tracking enabled log to a Space, because the pod's local database is lost when the job ends. Without `--trackio.space_id`, they use `$TRACKIO_SPACE_ID` if set, else `<user>/lerobot-trackio`.
+
+The automatically selected `<user>/lerobot-trackio` Space defaults to private. If it already exists and is public, submission fails unless you explicitly pass `--trackio.private=false`. For Spaces selected via `--trackio.space_id` or `$TRACKIO_SPACE_ID`, privacy defaults to `None`: new Spaces are public unless the organization's default is private. Pass `--trackio.private=true` to create a private Space. Privacy flags do not change the visibility of existing Spaces.
 
 Each run records the command that launched it and its console output (prints, logs, tracebacks), both shown on the run's page in the dashboard. On a Space they are as visible as the Space itself; pass `--trackio.capture_console=false` to keep the console output out of the run.
 
@@ -282,7 +290,7 @@ Each run records the command that launched it and its console output (prints, lo
 
 | W&B setting                     | Trackio setting                                                                                  |
 | ------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `--wandb.enable=true`           | `--trackio.enable=true`                                                                          |
+| `--wandb.enable=true`           | Already the default                                                                              |
 | `--wandb.project=<project>`     | `--trackio.project=<project>`                                                                    |
 | `--wandb.disable_artifact=true` | Already the default; use `--trackio.disable_artifact=false` to opt in                            |
 | `--wandb.entity=<team>`         | Choose `--trackio.space_id=<user-or-org>/<space>` for hosted logging                             |
