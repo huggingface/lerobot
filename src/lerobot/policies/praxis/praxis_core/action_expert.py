@@ -52,18 +52,21 @@ encoder forward.
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
-from torch.nn.attention.flex_attention import BlockMask, FlexKernelOptions
+from torch.nn.attention.flex_attention import BlockMask
 
 from lerobot.policies.praxis.praxis_core.layers import (
     RotaryEmbedding,
     _compiled_flex_attention_dynamic,
     apply_rope,
 )
+
+if TYPE_CHECKING:
+    from torch.nn.attention.flex_attention import FlexKernelOptions
 
 __all__ = [
     "ATTENTION_MODES",
@@ -585,7 +588,7 @@ class ActionExpertBlock(nn.Module):
                 scale=None,
                 enable_gqa=False,
                 kernel_options=(
-                    None if kernel_options is None else cast(FlexKernelOptions, dict(kernel_options))
+                    None if kernel_options is None else cast("FlexKernelOptions", dict(kernel_options))
                 ),
             )
             assert isinstance(attn, torch.Tensor)
