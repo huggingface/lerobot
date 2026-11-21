@@ -35,7 +35,20 @@ def is_main_process() -> bool:
     Returns:
         bool: True when this process is rank 0 or no process group is initialized.
     """
-    return not dist.is_initialized() or dist.get_rank() == 0
+    return not is_distributed_initialized() or dist.get_rank() == 0
+
+
+def is_distributed_initialized() -> bool:
+    """True when a process group is initialized.
+
+    `torch.distributed.is_initialized` only exists when torch was built with distributed
+    support (`USE_DISTRIBUTED=1`); the NVIDIA JetPack wheels and other single-device builds
+    ship a `torch.distributed` stub without it, so the availability check comes first.
+
+    Returns:
+        bool: True when `torch.distributed` is available and a process group is initialized.
+    """
+    return dist.is_available() and dist.is_initialized()
 
 
 def unwrap_peft_model(model: nn.Module) -> nn.Module:

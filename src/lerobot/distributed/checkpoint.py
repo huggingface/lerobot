@@ -54,6 +54,10 @@ def is_sharded_module(module: nn.Module) -> bool:
     Returns:
         bool: True when the module (or its compiled `_orig_mod`) is an `FSDPModule`.
     """
+    # `torch.distributed.fsdp` does not import on a torch built without distributed support
+    # (the NVIDIA JetPack wheels); nothing is sharded there.
+    if not torch.distributed.is_available():
+        return False
     from torch.distributed.fsdp import FSDPModule
 
     if isinstance(module, FSDPModule):
