@@ -26,7 +26,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from packaging import version
-from safetensors.torch import load_file
+from safetensors import safe_open
+from safetensors.torch import load_file, save_file
 
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -538,6 +539,57 @@ def test_sharded_load_without_a_hook_streams_the_shards(dummy_dataset_metadata, 
     with pytest.raises(RuntimeError, match="missing keys"):
         policy_cls.from_pretrained(save_dir, config=policy_cfg, strict=True)
     policy_cls.from_pretrained(save_dir, config=policy_cfg, strict=False)
+
+
+def _small_diffusion_config(dummy_dataset_metadata, compile_model):
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    actions = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    inputs = {key: ft for key, ft in features.items() if key not in actions}
+    return make_policy_config(
+        "diffusion",
+        compile_model=compile_model,
+        down_dims=(64, 128),
+        input_features=inputs,
+        output_features=actions,
+    )
+
+
+@pytest.mark.skipif("diffusion" not in AVAILABLE_POLICIES, reason="needs diffusers")
+@pytest.mark.parametrize("saved_compiled", [True, False])
+@pytest.mark.parametrize("loaded_compiled", [True, False])
+def test_diffusion_loads_weights_saved_with_either_compile_model(
+    dummy_dataset_metadata, tmp_path, saved_compiled, loaded_compiled
+):
+    saved = _small_diffusion_config(dummy_dataset_metadata, saved_compiled)
+    loaded = _small_diffusion_config(dummy_dataset_metadata, loaded_compiled)
+    policy_cls = get_policy_class("diffusion")
+    policy = policy_cls(saved)
+    policy.to(saved.device)
+    policy.save_pretrained(tmp_path)
+    # The rename is only exercised if a compiled policy really saves the wrapper's names.
+    with safe_open(tmp_path / SAFETENSORS_SINGLE_FILE, "pt") as weights:
+        saved_keys = list(weights.keys())
+    assert any(key.startswith("diffusion.unet._orig_mod.") for key in saved_keys) == saved_compiled
+
+    loaded_policy = policy_cls.from_pretrained(tmp_path, config=loaded, strict=True)
+
+    torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
+
+
+@pytest.mark.skipif("diffusion" not in AVAILABLE_POLICIES, reason="needs diffusers")
+def test_diffusion_keeps_a_weight_saved_under_both_names(dummy_dataset_metadata, tmp_path):
+    """The wrapper's spelling of a weight must not overwrite the plain one, so a strict load reports it."""
+    config = _small_diffusion_config(dummy_dataset_metadata, compile_model=False)
+    policy_cls = get_policy_class("diffusion")
+    policy_cls(config).save_pretrained(tmp_path)
+    weights = tmp_path / SAFETENSORS_SINGLE_FILE
+    state = load_file(weights)
+    name = next(key for key in state if key.startswith("diffusion.unet."))
+    state[name.replace("diffusion.unet.", "diffusion.unet._orig_mod.", 1)] = torch.zeros_like(state[name])
+    save_file(state, weights)
+
+    with pytest.raises(RuntimeError, match="_orig_mod"):
+        policy_cls.from_pretrained(tmp_path, config=config, strict=True)
 
 
 @pytest.mark.parametrize("multikey", [True, False])
