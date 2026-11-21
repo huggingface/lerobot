@@ -213,7 +213,7 @@ def update_meta_data(
         count_column = f"stats/{key}/count"
         if count_column in df:
             df[count_column] = [
-                np.minimum(count, length)
+                None if count is None else np.minimum(count, length)
                 for count, length in zip(df[count_column], df["length"], strict=True)
             ]
 

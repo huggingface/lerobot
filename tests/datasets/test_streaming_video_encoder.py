@@ -762,6 +762,103 @@ def test_dropped_streaming_frame_counts_are_preserved(
     assert original_path.read_bytes() == original
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_streaming_missing_camera_stats_across_sessions(tmp_path, legacy):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from lerobot.datasets.dataset_tools import delete_episodes, merge_datasets, split_dataset
+    from lerobot.datasets.io_utils import load_nested_dataset, load_stats, write_stats
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    key = "observation.images.cam"
+    root = tmp_path / "short_episodes"
+    config = RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=18)
+    dataset = LeRobotDataset.create(
+        repo_id="test/short",
+        fps=30,
+        features={
+            key: {"dtype": "video", "shape": (64, 96, 3), "names": ["height", "width", "channels"]},
+            "action": {"dtype": "float32", "shape": (1,), "names": ["j1"]},
+        },
+        root=root,
+        streaming_encoding=True,
+        rgb_encoder=config,
+    )
+    _record_constant_episode(dataset, 2, 0)
+    dataset.finalize()
+    dataset = LeRobotDataset.resume("test/short", root=root, streaming_encoding=True, rgb_encoder=config)
+    _record_constant_episode(dataset, 1, 255)
+    dataset.finalize()
+    videos = sorted((root / "videos").rglob("*.mp4"))
+    assert len(videos) == 2
+    for path, num_frames in zip(videos, [2, 1], strict=True):
+        with av.open(str(path)) as video:
+            assert sum(1 for _ in video.decode(video=0)) == num_frames
+
+    paths = sorted((root / "meta/episodes").glob("*/*.parquet"))
+    if legacy:
+        # Restore an old pixel count, leaving the genuinely omitted stats untouched.
+        table = pq.read_table(paths[0])
+        column = f"stats/{key}/count"
+        index = table.schema.get_field_index(column)
+        table = table.set_column(index, table.schema.field(index), pa.array([[2 * 64 * 96]]))
+        pq.write_table(table, paths[0])
+        stats = load_stats(root)
+        stats[key]["count"] = np.array([2 * 64 * 96])
+        write_stats(stats, root)
+    original = {path: path.read_bytes() for path in paths}
+    original_stats = (root / "meta/stats.json").read_bytes()
+    source = LeRobotDataset("test/short", root=root, video_backend="pyav")
+    np.testing.assert_array_equal(source.meta.stats[key]["count"], [2])
+    np.testing.assert_allclose(source.meta.stats[key]["mean"], 0)
+    np.testing.assert_array_equal(source.meta.stats["action"]["count"], [3])
+    np.testing.assert_allclose(source.meta.stats["action"]["mean"], 1 / 3, atol=1e-6)
+    assert list(load_nested_dataset(root / "meta/episodes")[f"stats/{key}/count"]) == [
+        [2 * 64 * 96 if legacy else 2],
+        None,
+    ]
+    assert (root / "meta/stats.json").read_bytes() == original_stats
+
+    dataset = LeRobotDataset.resume("test/short", root=root, streaming_encoding=True, rgb_encoder=config)
+    _record_constant_episode(dataset, 2, 255)
+    dataset.finalize()
+    source = LeRobotDataset("test/short", root=root, video_backend="pyav")
+    np.testing.assert_array_equal(source.meta.stats[key]["count"], [4])
+    np.testing.assert_allclose(source.meta.stats[key]["mean"], 0.5, atol=1e-6)
+    np.testing.assert_allclose(source.meta.stats[key]["std"], 0.5, atol=1e-6)
+
+    edited = delete_episodes(source, [2], output_dir=tmp_path / "edited_short")
+    splits = split_dataset(source, {"head": [0, 1], "tail": [2]}, output_dir=tmp_path / "splits")
+    for subset in [edited, splits["head"]]:
+        np.testing.assert_array_equal(subset.meta.stats[key]["count"], [2])
+        np.testing.assert_allclose(subset.meta.stats[key]["mean"], 0)
+        assert list(load_nested_dataset(subset.root / "meta/episodes")[f"stats/{key}/count"]) == [[2], None]
+
+    # The copied shard now has explicit nulls, rather than entirely absent columns.
+    missing_only = delete_episodes(splits["head"], [0], output_dir=tmp_path / "missing_only")
+    assert key not in missing_only.meta.stats
+    np.testing.assert_array_equal(missing_only.meta.stats["action"]["count"], [1])
+    for name, inputs in [("source", [source]), ("splits", [splits["head"], splits["tail"]])]:
+        merged = merge_datasets(
+            inputs,
+            output_repo_id=f"test/merged_short_{name}",
+            output_dir=tmp_path / f"merged_short_{name}",
+            concatenate_videos=False,
+            concatenate_data=False,
+        )
+        np.testing.assert_array_equal(merged.meta.stats[key]["count"], [4])
+        np.testing.assert_allclose(merged.meta.stats[key]["mean"], 0.5, atol=1e-6)
+        np.testing.assert_allclose(merged.meta.stats[key]["std"], 0.5, atol=1e-6)
+        assert list(load_nested_dataset(merged.root / "meta/episodes")[f"stats/{key}/count"]) == [
+            [2],
+            None,
+            [2],
+        ]
+    for path, data in original.items():
+        assert path.read_bytes() == data
+
+
 class TestStreamingEncoderIntegration:
     def test_add_frame_save_episode_streaming(self, tmp_path):
         """Full integration test: add_frame -> save_episode with streaming encoding."""
