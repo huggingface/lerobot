@@ -17,9 +17,20 @@ import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.scripts.lerobot_dataset_viz import visualize_dataset
+from lerobot.scripts.lerobot_dataset_viz import rerun_application_id, visualize_dataset
 
 pytestmark = pytest.mark.dataset
+
+
+@pytest.mark.parametrize(
+    ("repo_id", "episode_index", "expected"),
+    [
+        ("lerobot/pusht", 0, "lerobot-pusht-episode_0"),
+        ("user/so101.pick-place_v2", 12, "user-so101-pick-place_v2-episode_12"),
+    ],
+)
+def test_rerun_application_id(repo_id, episode_index, expected):
+    assert rerun_application_id(repo_id, episode_index) == expected
 
 
 @pytest.mark.skip("TODO: add dummy videos")

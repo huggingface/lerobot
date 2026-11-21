@@ -76,6 +76,7 @@ so you can play/pause and scrub anywhere in the episode using Foxglove's playbac
 import argparse
 import gc
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -108,6 +109,15 @@ def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
         return [str(name) for name in names]
 
     return [f"{key}_{d}" for d in range(dim)]
+
+
+def rerun_application_id(repo_id: str, episode_index: int) -> str:
+    """Rerun application ID for an episode, e.g. ``lerobot/pusht`` episode 0 -> ``lerobot-pusht-episode_0``.
+
+    Rerun application IDs allow only ASCII alphanumerics, underscores, hyphens, spaces, brackets and
+    colons. Rerun rewrites other IDs itself, with a warning and a hash suffix, so sanitize them here.
+    """
+    return re.sub(r"[^A-Za-z0-9_\- \[\]:]", "-", f"{repo_id}-episode_{episode_index}")
 
 
 def check_chw_float32(frame: torch.Tensor) -> None:
@@ -223,7 +233,9 @@ def visualize_dataset(
 
     spawn_local_viewer = mode == "local" and not save
     blueprint = build_blueprint_from_dataset(dataset)
-    rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer, default_blueprint=blueprint)
+    rr.init(
+        rerun_application_id(repo_id, episode_index), spawn=spawn_local_viewer, default_blueprint=blueprint
+    )
 
     # Manually call python garbage collector after `rr.init` to avoid hanging in a blocking flush
     # when iterating on a dataloader with `num_workers` > 0
