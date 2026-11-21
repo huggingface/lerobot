@@ -16,9 +16,9 @@
 
 import collections
 import copy
+import logging
 from collections.abc import Sequence
 from typing import Any
-import logging
 
 import torch
 from transformers import AutoModel, AutoTokenizer, PretrainedConfig, PreTrainedModel

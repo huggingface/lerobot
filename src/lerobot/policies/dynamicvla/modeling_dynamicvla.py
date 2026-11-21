@@ -19,8 +19,8 @@ import math
 import os
 import re
 import time
-from typing import Any
 from collections import deque
+from typing import Any
 
 import safetensors
 import torch
