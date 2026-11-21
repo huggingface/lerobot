@@ -723,6 +723,9 @@ def _try_keep_episodes_from_video_by_stream_copy(
         # `opaque` copies codec parameters without looking up an encoder named after the input's
         # decoder, which does not exist for e.g. AV1 decoded by libdav1d.
         v_out = out_container.add_stream_from_template(v_in, opaque=True)
+        # Keep the source time base. Left unset, the MP4 muxer falls back to 1/90000 and the trimmed
+        # file no longer shares the time base of the dataset's other videos.
+        v_out.time_base = v_in.time_base
 
         segment_idx = 0
         packet_idx = 0
