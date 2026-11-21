@@ -435,6 +435,9 @@ def _compute_basic_stats(
         quantile_list = DEFAULT_QUANTILES
     quantile_list_keys = [f"q{int(q * 100):02d}" for q in quantile_list]
 
+    # Match RunningQuantileStats (float64) so episodes of any length share one Parquet schema.
+    array = array.astype(np.float64, copy=False)
+
     stats = {
         "min": np.min(array, axis=0),
         "max": np.max(array, axis=0),
