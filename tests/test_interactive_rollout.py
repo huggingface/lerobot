@@ -407,6 +407,22 @@ def test_controller_segment_ended_event_on_natural_end():
     assert controller.stopped
 
 
+@pytest.mark.parametrize("cause", ["stop", "shutdown signal"])
+def test_controller_reset_return_ends_on_stop_or_shutdown(cause):
+    controller, _events, strategy, _engine, parent, _run_started = _make_controller()
+    thread = _serve_thread(controller)
+    controller.reset()
+    assert _wait_for(lambda: strategy.return_to_initial_position.called)
+    stop_requested = strategy.return_to_initial_position.call_args.kwargs["stop_requested"]
+    assert not stop_requested()  # the reset itself does not end its own return
+    if cause == "stop":
+        controller.stop()
+    else:
+        parent.set()
+    assert stop_requested()
+    _join_session(thread)
+
+
 # --- InteractiveSession (the stdin CLI front-end) ---
 
 

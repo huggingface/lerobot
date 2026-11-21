@@ -20,6 +20,7 @@ import abc
 import contextlib
 import logging
 import math
+import time
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,12 @@ if TYPE_CHECKING:
     from ..robot_wrapper import ThreadSafeRobot
 
 logger = logging.getLogger(__name__)
+
+# The return to the initial position ends once the farthest joint has not come closer by 1% of its
+# starting distance for 0.5 s. A settled robot less than 95% of the way back is reported as stopped short.
+_RETURN_SETTLE_S = 0.5
+_RETURN_PROGRESS_FRACTION = 0.01
+_RETURN_REACHED_FRACTION = 0.95
 
 
 class RolloutStrategy(abc.ABC):
@@ -335,12 +342,23 @@ class RolloutStrategy(abc.ABC):
                     teleop.disconnect()
 
     @staticmethod
-    def return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> bool:
-        """Smoothly interpolate the robot back to its initial position.
+    def return_to_initial_position(
+        hw: HardwareContext,
+        duration_s: float = 3.0,
+        fps: int = 50,
+        timeout_s: float = 10.0,
+        stop_requested: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Move the robot back to its initial position, and wait until it stops getting closer.
 
-        Returns ``True`` when the interpolation completed, ``False`` when it failed
-        partway — the robot is then at an arbitrary pose, so callers must not report
-        a completed reset on ``False``.
+        The move interpolates to the initial position over ``duration_s``, then keeps commanding it:
+        a robot that limits its own speed can still be on its way. It ends once the farthest joint has
+        not come closer by 1% of its starting distance for 0.5 s, after ``timeout_s`` more seconds, or
+        as soon as ``stop_requested`` returns ``True``.
+
+        Returns ``True`` when the robot settled, ``False`` when the move failed or was stopped partway,
+        or the robot was still getting closer at the timeout — the robot is then at an arbitrary pose,
+        so callers must not report a completed reset on ``False``.
         """
         robot = hw.robot_wrapper
         if robot.hardware_failure is not None:
@@ -352,6 +370,7 @@ class RolloutStrategy(abc.ABC):
         if target is None:
             logger.warning("Could not return to initial position: none was captured at connect time")
             return False
+        stopped = stop_requested or (lambda: False)
         try:
             current_obs = robot.get_observation()
             current_pos = {k: float(current_obs[k]) for k in target}
@@ -359,15 +378,51 @@ class RolloutStrategy(abc.ABC):
                 raise ValueError("Return movement requires finite current and initial positions")
             steps = max(int(duration_s * fps), 1)
             for step in range(1, steps + 1):
+                if stopped():
+                    logger.info("Return to initial position stopped partway")
+                    return False
                 t = step / steps
                 interp = {}
                 for k in current_pos:
                     interp[k] = current_pos[k] * (1 - t) + target[k] * t
                 robot.send_action(interp)
                 precise_sleep(1 / fps)
+
+            start_distance = max(abs(current_pos[k] - target[k]) for k in target)
+            closest = math.inf
+            closer_at = time.perf_counter()
+            deadline = closer_at + timeout_s
+            while True:
+                if stopped():
+                    logger.info("Return to initial position stopped before the robot settled")
+                    return False
+                robot.send_action(dict(target))
+                precise_sleep(1 / fps)
+                obs = robot.get_observation()
+                positions = {k: float(obs[k]) for k in target}
+                if not all(math.isfinite(value) for value in positions.values()):
+                    raise ValueError("Return movement requires finite observed positions")
+                distance = max(abs(positions[k] - target[k]) for k in target)
+                now = time.perf_counter()
+                if distance < closest - _RETURN_PROGRESS_FRACTION * start_distance:
+                    closest, closer_at = distance, now
+                elif now - closer_at >= _RETURN_SETTLE_S:
+                    break
+                if now >= deadline:
+                    logger.warning(
+                        "The robot was still moving toward its initial position after %.1f s",
+                        duration_s + timeout_s,
+                    )
+                    return False
         except Exception as e:
             logger.warning("Could not return to initial position: %s", e)
             return False
+        if start_distance > 0 and closest > (1 - _RETURN_REACHED_FRACTION) * start_distance:
+            logger.warning(
+                "The robot stopped %.3g from its initial position, %.0f%% of the way back",
+                closest,
+                100 * (1 - closest / start_distance),
+            )
         return True
 
     @staticmethod
