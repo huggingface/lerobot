@@ -365,6 +365,13 @@ class XVLAPolicy(PreTrainedPolicy):
             images.append(img)
             masks.append(torch.ones(img.size(0), dtype=torch.bool, device=img.device))
 
+        # Pad each missing camera at its own slot in `image_features` order so that the cameras
+        # after it keep their slots
+        for slot, key in enumerate(self.config.image_features):
+            if key not in batch:
+                images.insert(slot, torch.zeros_like(images[0]))
+                masks.insert(slot, torch.zeros_like(masks[0]))
+
         stacked_imgs = torch.stack(images, dim=1)
         stacked_masks = torch.stack(masks, dim=1)
 
