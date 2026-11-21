@@ -212,7 +212,10 @@ def update_meta_data(
     for key in dst_meta.camera_keys:
         count_column = f"stats/{key}/count"
         if count_column in df:
-            df[count_column] = [np.array([length]) for length in df["length"]]
+            df[count_column] = [
+                np.minimum(count, length)
+                for count, length in zip(df[count_column], df["length"], strict=True)
+            ]
 
     df["meta/episodes/chunk_index"] = df["meta/episodes/chunk_index"] + meta_idx["chunk"]
     df["meta/episodes/file_index"] = df["meta/episodes/file_index"] + meta_idx["file"]

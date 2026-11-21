@@ -237,14 +237,15 @@ class LeRobotDatasetMetadata:
             if key not in self.stats or count_column not in episodes.column_names:
                 continue
             counts = np.asarray(episodes[count_column]).reshape(-1)
-            if np.array_equal(counts, lengths):
+            if not np.any(counts > lengths):
                 continue
             # Rebuild the aggregate, not just its count: old episodes may have different pixel weights.
             columns = [column for column in episodes.column_names if column.startswith(prefix)]
             stats = []
             for episode in episodes.select_columns(["length", *columns]):
                 feature_stats = {column[len(prefix) :]: np.asarray(episode[column]) for column in columns}
-                feature_stats["count"] = np.array([episode["length"]])
+                # A smaller frame count is legitimate when the encoder queue dropped frames.
+                feature_stats["count"] = np.minimum(feature_stats["count"], episode["length"])
                 stats.append({key: feature_stats})
             self.stats[key] = aggregate_stats(stats)[key]
 

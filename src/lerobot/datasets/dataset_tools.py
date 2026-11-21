@@ -108,7 +108,7 @@ def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> d
     for key in src_dataset.meta.camera_keys:
         count_column = f"stats/{key}/count"
         if count_column in episode_row:
-            episode_row[count_column] = np.array([episode_row["length"]])
+            episode_row[count_column] = np.minimum(episode_row[count_column], episode_row["length"])
     return episode_row
 
 
