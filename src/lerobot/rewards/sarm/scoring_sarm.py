@@ -36,7 +36,10 @@ if TYPE_CHECKING:
 
 SPARSE_PROGRESS_SIGNAL = "reward.sarm.sparse_progress"
 DENSE_PROGRESS_SIGNAL = "reward.sarm.dense_progress"
+SPARSE_STAGE_SIGNAL = "reward.sarm.sparse_stage"
+DENSE_STAGE_SIGNAL = "reward.sarm.dense_stage"
 _HEAD_SIGNALS = {"sparse": SPARSE_PROGRESS_SIGNAL, "dense": DENSE_PROGRESS_SIGNAL}
+_STAGE_SIGNALS = {"sparse": SPARSE_STAGE_SIGNAL, "dense": DENSE_STAGE_SIGNAL}
 
 SARM_SIGNAL_DESCRIPTORS = {
     signal: SignalDescriptor(
@@ -91,10 +94,27 @@ class SARMFrameScorer:
             },
         }
 
+    def _stage_names(self, head: str) -> list[str]:
+        """Return the subtask names of a head that has several, else an empty list."""
+        names = list(getattr(self.model.config, f"{head}_subtask_names", None) or [])
+        return names if len(names) > 1 else []
+
     @property
     def descriptors(self) -> dict[str, SignalDescriptor]:
-        """Describe the progress signals for the selected heads."""
-        return {_HEAD_SIGNALS[head]: SARM_SIGNAL_DESCRIPTORS[_HEAD_SIGNALS[head]] for head in self.heads}
+        """Describe the progress signals for the selected heads, and their predicted subtasks."""
+        descriptors = {}
+        for head in self.heads:
+            descriptors[_HEAD_SIGNALS[head]] = SARM_SIGNAL_DESCRIPTORS[_HEAD_SIGNALS[head]]
+            names = self._stage_names(head)
+            if names:
+                descriptors[_STAGE_SIGNALS[head]] = SignalDescriptor(
+                    description=f"SARM's most likely subtask from its {head} head, as an index into labels.",
+                    greater_is_better=None,
+                    bounds=(0.0, float(len(names) - 1)),
+                    allow_nan=True,
+                    labels=tuple(names),
+                )
+        return descriptors
 
     def _get_preprocessor(self) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
         # Normalize state with the statistics SARM was trained with, saved next to the checkpoint,
@@ -149,6 +169,7 @@ class SARMFrameScorer:
             query_frames.append(num_frames - 1)
         center = config.n_obs_steps // 2
         values = {head: np.full(len(query_frames), np.nan) for head in self.heads}
+        stages = {head: np.full(len(query_frames), np.nan) for head in self.heads if self._stage_names(head)}
 
         self.model.eval()
         with torch.inference_mode():
@@ -180,6 +201,10 @@ class SARMFrameScorer:
                         values[head][start : start + len(chunk)] = (
                             prediction.progress[:, center].cpu().numpy()
                         )
+                        if head in stages:
+                            stages[head][start : start + len(chunk)] = (
+                                prediction.stage_probabilities[:, center].argmax(dim=-1).cpu().numpy()
+                            )
                 except Exception as exc:
                     logger.warning("Failed to score frames %s of episode %d: %s", chunk, episode_index, exc)
 
@@ -192,6 +217,10 @@ class SARMFrameScorer:
                 signals[_HEAD_SIGNALS[head]] = interpolate_progress(
                     np.asarray(query_frames), computed, all_frames
                 )
+        # A subtask is a category: frames between scored ones keep the last scored subtask.
+        last_scored = np.searchsorted(query_frames, all_frames, side="right") - 1
+        for head, computed in stages.items():
+            signals[_STAGE_SIGNALS[head]] = computed[last_scored].astype(np.float32)
         return FrameSignals(
             frame_indices=all_frames.astype(np.int64),
             signals=signals,

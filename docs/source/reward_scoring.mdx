@@ -258,7 +258,7 @@ Every Parquet file of scores contains:
 
 - `index`, `episode_index`, and `frame_index` identity columns;
 - namespaced signal columns such as `reward.robometer.progress`;
-- semantic descriptors: a description, `greater_is_better` (`True`, `False`, or `None`), optional unit and bounds, plus whether NaN is allowed;
+- semantic descriptors: a description, `greater_is_better` (`True`, `False`, or `None`), optional unit and bounds, whether NaN is allowed, and, for a categorical signal such as a predicted subtask, the `labels` its values index;
 - provenance for the dataset, model, scorer options, and LeRobot version.
 
 `bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run. Scoring validates structure and alignment; descriptor bounds and `allow_nan` remain metadata for consumers.

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -26,7 +26,9 @@ from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.rewards.sarm import SARMConfig, SARMOutput, processor_sarm, scoring_sarm
 from lerobot.rewards.sarm.scoring_sarm import (
     DENSE_PROGRESS_SIGNAL,
+    DENSE_STAGE_SIGNAL,
     SPARSE_PROGRESS_SIGNAL,
+    SPARSE_STAGE_SIGNAL,
     SARMFrameScorer,
     make_sarm_frame_scorer,
 )
@@ -217,6 +219,64 @@ def test_sarm_frame_scorer_stores_nan_for_frames_that_fail(encoder):
 
     np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, np.nan, 0.3])
     assert scorer.descriptors[SPARSE_PROGRESS_SIGNAL].allow_nan is True
+
+
+class _StagedModel(_FakeModel):
+    """Predict subtask `frame id // 2` (capped at the last subtask) at each window position."""
+
+    def __init__(self, names: list[str], **kwargs):
+        super().__init__(**kwargs)
+        self.config.sparse_subtask_names = names
+        self.config.dense_subtask_names = names
+
+    def predict_progress(self, batch, *, head_mode):
+        output = super().predict_progress(batch, head_mode=head_mode)
+        num_stages = len(self.config.sparse_subtask_names)
+        stage = (batch["video_features"].long() // 2).clamp(max=num_stages - 1)
+        return replace(output, stage_probabilities=torch.nn.functional.one_hot(stage, num_stages).float())
+
+
+def test_sarm_frame_scorer_records_the_predicted_subtask_of_each_frame(encoder):
+    scorer = SARMFrameScorer(_StagedModel(["grasp", "fold", "place"]), batch_size=2)
+
+    result = scorer.score_episode(_FakeDataset(num_frames=6), 0)
+
+    np.testing.assert_array_equal(result.signals[SPARSE_STAGE_SIGNAL], [0, 0, 1, 1, 2, 2])
+    assert result.signals[SPARSE_STAGE_SIGNAL].dtype == np.float32
+    descriptor = scorer.descriptors[SPARSE_STAGE_SIGNAL]
+    assert descriptor.labels == ("grasp", "fold", "place")
+    assert (descriptor.greater_is_better, descriptor.bounds) == (None, (0.0, 2.0))
+
+
+def test_sarm_frame_scorer_keeps_the_last_scored_subtask_between_strided_frames(encoder):
+    result = SARMFrameScorer(_StagedModel(["grasp", "fold", "place"], stride=3)).score_episode(
+        _FakeDataset(num_frames=6), 0
+    )
+
+    # Frames 0, 3 and 5 are scored, as subtasks 0, 1 and 2.
+    np.testing.assert_array_equal(result.signals[SPARSE_STAGE_SIGNAL], [0, 0, 0, 1, 1, 2])
+
+
+def test_sarm_frame_scorer_records_subtasks_of_both_heads(encoder):
+    scorer = SARMFrameScorer(_StagedModel(["grasp", "place"], dual_heads=True, head_mode="both"))
+
+    assert set(scorer.descriptors) == {
+        SPARSE_PROGRESS_SIGNAL,
+        SPARSE_STAGE_SIGNAL,
+        DENSE_PROGRESS_SIGNAL,
+        DENSE_STAGE_SIGNAL,
+    }
+    result = scorer.score_episode(_FakeDataset(num_frames=2), 0)
+
+    assert set(result.signals) == set(scorer.descriptors)
+    np.testing.assert_array_equal(result.signals[DENSE_STAGE_SIGNAL], [0, 0])
+
+
+def test_sarm_frame_scorer_skips_the_subtask_of_a_single_stage_head(encoder):
+    scorer = SARMFrameScorer(_StagedModel(["task"]))
+
+    assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL}
+    assert set(scorer.score_episode(_FakeDataset(num_frames=2), 0).signals) == {SPARSE_PROGRESS_SIGNAL}
 
 
 def test_sarm_frame_scorer_requires_a_trained_checkpoint(encoder):

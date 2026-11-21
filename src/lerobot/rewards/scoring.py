@@ -42,6 +42,8 @@ class SignalDescriptor:
     bounds: tuple[float, float] | None = None
     unit: str | None = None
     allow_nan: bool = False
+    # Names of a categorical signal's values, such as subtasks: each value is a position here.
+    labels: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -170,7 +172,7 @@ def load_signal_descriptors(dataset: LeRobotDataset, name: str) -> dict[str, Sig
         name: Score name.
 
     Returns:
-        The signal descriptors, with bounds restored as tuples.
+        The signal descriptors, with bounds and labels restored as tuples.
 
     Raises:
         ImportError: If the dataset extra's dependencies are unavailable.
@@ -185,8 +187,10 @@ def load_signal_descriptors(dataset: LeRobotDataset, name: str) -> dict[str, Sig
     descriptors = {}
     for signal_name, descriptor in info["signals"].items():
         fields = dict(descriptor)
-        bounds = fields.pop("bounds", None)
+        bounds, labels = fields.pop("bounds", None), fields.pop("labels", None)
         descriptors[signal_name] = SignalDescriptor(
-            **fields, bounds=None if bounds is None else tuple(bounds)
+            **fields,
+            bounds=None if bounds is None else tuple(bounds),
+            labels=None if labels is None else tuple(labels),
         )
     return descriptors

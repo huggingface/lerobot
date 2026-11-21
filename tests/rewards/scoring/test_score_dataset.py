@@ -226,6 +226,18 @@ def test_score_dataset_round_trips_descriptor_directions(
     assert load_signal_descriptors(dataset, scorer.name) == {"progress": descriptor}
 
 
+def test_score_dataset_round_trips_categorical_labels(tmp_path: Path) -> None:
+    dataset = FakeDataset(tmp_path / "dataset")
+    descriptor = SignalDescriptor(
+        description="Predicted subtask", greater_is_better=None, bounds=(0.0, 1.0), labels=("grasp", "place")
+    )
+    scorer = FakeScorer(descriptors={"progress": descriptor})
+
+    score_dataset(dataset, scorer)
+
+    assert load_signal_descriptors(dataset, scorer.name) == {"progress": descriptor}
+
+
 @pytest.mark.parametrize("invalid_direction", [0, 1, "higher", np.bool_(True)])
 def test_score_dataset_rejects_invalid_directions_before_scoring(
     tmp_path: Path, invalid_direction: Any
