@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from pathlib import Path
+
 import pytest
 import torch
 from packaging.version import Version
@@ -95,6 +97,91 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
         expected_state_dict["_is_initial"] = False
 
     assert scheduler.state_dict() == expected_state_dict
+
+
+@pytest.mark.parametrize(
+    "warmup_steps,decay_steps,training_steps,effective_warmup,effective_end",
+    [
+        (50, 100, 100, 50, 100),
+        (100, 200, 100, 50, 100),  # Scale both phases for a shorter run.
+        (0, 100, 100, 0, 100),
+        (1, 1000, 10, 0, 10),  # Scaling rounds warmup down to zero.
+        (1, 2, 2, 1, 2),  # A single decay step.
+        (50, 100, 200, 50, 100),  # Hold the floor after the configured end.
+    ],
+)
+def test_cosine_decay_warmup_boundaries(
+    warmup_steps: int, decay_steps: int, training_steps: int, effective_warmup: int, effective_end: int
+) -> None:
+    peak_lr, decay_lr = 1e-4, 1e-5
+    optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=peak_lr)
+    config = CosineDecayWithWarmupSchedulerConfig(
+        num_warmup_steps=warmup_steps,
+        num_decay_steps=decay_steps,
+        peak_lr=peak_lr,
+        decay_lr=decay_lr,
+    )
+    scheduler = config.build(optimizer, num_training_steps=training_steps)
+    rates = [scheduler.get_last_lr()[0]]
+    for _ in range(training_steps + 2):
+        optimizer.step()
+        scheduler.step()
+        rates.append(scheduler.get_last_lr()[0])
+
+    assert rates[0] == pytest.approx(peak_lr / (effective_warmup + 1))
+    assert rates[effective_warmup] == pytest.approx(peak_lr)
+    assert rates[effective_end:] == pytest.approx([decay_lr] * len(rates[effective_end:]))
+    assert all(a <= b for a, b in zip(rates[:effective_warmup], rates[1 : effective_warmup + 1], strict=True))
+    assert all(a >= b for a, b in zip(rates[effective_warmup:-1], rates[effective_warmup + 1 :], strict=True))
+    duration = effective_end - effective_warmup
+    if duration % 2 == 0:
+        assert rates[effective_warmup + duration // 2] == pytest.approx((peak_lr + decay_lr) / 2)
+
+
+@pytest.mark.parametrize("resume_step", [25, 50, 75, 100])
+def test_cosine_decay_resume_preserves_group_rates(resume_step: int, tmp_path: Path) -> None:
+    config = CosineDecayWithWarmupSchedulerConfig(
+        num_warmup_steps=50, num_decay_steps=100, peak_lr=1e-4, decay_lr=1e-5
+    )
+
+    def make_optimizer() -> torch.optim.SGD:
+        return torch.optim.SGD(
+            [
+                {"params": [torch.nn.Parameter(torch.zeros(1))], "lr": 1e-4},
+                {"params": [torch.nn.Parameter(torch.zeros(1))], "lr": 1e-5},
+            ]
+        )
+
+    optimizer = make_optimizer()
+    scheduler = config.build(optimizer, num_training_steps=100)
+    for _ in range(resume_step):
+        optimizer.step()
+        scheduler.step()
+    save_scheduler_state(scheduler, tmp_path)
+
+    restored_optimizer = make_optimizer()
+    restored_scheduler = config.build(restored_optimizer, num_training_steps=100)
+    restored_optimizer.load_state_dict(optimizer.state_dict())
+    load_scheduler_state(restored_scheduler, tmp_path)
+    for _ in range(105 - resume_step):
+        optimizer.step()
+        scheduler.step()
+        restored_optimizer.step()
+        restored_scheduler.step()
+        assert restored_scheduler.get_last_lr() == pytest.approx(scheduler.get_last_lr())
+        assert restored_scheduler.get_last_lr()[1] == pytest.approx(scheduler.get_last_lr()[0] * 0.1)
+
+
+@pytest.mark.parametrize("warmup_steps,decay_steps,training_steps", [(10, 10, 10), (11, 10, 10), (1, 10, 0)])
+def test_cosine_decay_requires_decay_interval(
+    warmup_steps: int, decay_steps: int, training_steps: int
+) -> None:
+    optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=1e-4)
+    config = CosineDecayWithWarmupSchedulerConfig(
+        num_warmup_steps=warmup_steps, num_decay_steps=decay_steps, peak_lr=1e-4, decay_lr=1e-5
+    )
+    with pytest.raises(ValueError, match="at least one step after warmup"):
+        config.build(optimizer, num_training_steps=training_steps)
 
 
 def test_warmup_stable_decay_scheduler(optimizer):
