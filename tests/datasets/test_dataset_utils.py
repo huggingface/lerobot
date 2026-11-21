@@ -14,10 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 import torch
 from packaging.version import Version
@@ -29,7 +31,7 @@ from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
 
 import lerobot.datasets.utils as dataset_utils
-from lerobot.datasets.io_utils import hf_transform_to_torch
+from lerobot.datasets.io_utils import hf_transform_to_torch, load_stats, write_stats
 from lerobot.datasets.utils import (
     BackwardCompatibilityError,
     ForwardCompatibilityError,
@@ -291,12 +293,29 @@ def test_older_major_dataset_still_raises_conversion_error():
 
 
 def test_serialize_dict_empty_list_and_numpy_scalars():
-    import json
-
-    import numpy as np
-
-    stats = {"names": [], "scale": [np.float64(1.5), np.float32(2.0)]}
+    stats = {OBS_IMAGES: {"mean": [], "std": [np.float64(1.5), np.float32(2.0)], "count": [np.int64(4)]}}
     out = dataset_utils.serialize_dict(stats)
-    assert out["names"] == []
-    assert out["scale"] == [1.5, 2.0]
+    assert out[OBS_IMAGES] == {"mean": [], "std": [1.5, 2.0], "count": [4]}
     json.dumps(out)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [[], [np.int64(2), np.float32(1.5)], [[np.int64(2), np.float32(1.5)], [3, np.float64(4.5)]]],
+)
+def test_stats_numeric_lists_round_trip(tmp_path, values):
+    stats = {"observation.state": {"mean": values, "count": [np.int64(4)]}}
+    write_stats(stats, tmp_path)
+
+    stored = json.loads((tmp_path / "meta" / "stats.json").read_text(encoding="utf-8"))
+    np.testing.assert_array_equal(stored["observation.state"]["mean"], np.asarray(values))
+    assert stored["observation.state"]["count"] == [4]
+    restored = load_stats(tmp_path)
+    np.testing.assert_array_equal(restored["observation.state"]["mean"], np.asarray(values))
+    np.testing.assert_array_equal(restored["observation.state"]["count"], [4])
+
+
+@pytest.mark.parametrize("values", [[1, "a"], [1, None]])
+def test_serialize_dict_rejects_nonnumeric_stats_list(values):
+    with pytest.raises(NotImplementedError, match="is not supported"):
+        dataset_utils.serialize_dict({"observation.state": {"mean": values}})
