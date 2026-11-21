@@ -11,7 +11,7 @@
     "scheduler_cooldown_steps": 0
   },
   "peft": {"method_type": "LORA", "r": 32, "lora_alpha": 32},
-  "ema": {"enable": true, "decay": 0.999},
+  "ema": {"type": "constant", "decay": 0.999},
   "accelerator": {"mixed_precision": "bf16", "gradient_accumulation": {"steps": 4}},
   "batch_size": 2, "steps": 10000, "save_freq": 500,
   "seed": 42, "num_workers": 4, "prefetch_factor": 2,

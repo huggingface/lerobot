@@ -23,6 +23,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event as ThreadingEvent, Lock
 
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.processor import transition_to_robot_action
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -48,8 +49,9 @@ class HighlightStrategy(RolloutStrategy):
     3. The episode is saved and the ring buffer resumes capturing.
 
     Requires ``streaming_encoding=True`` (enforced in config validation)
-    so that ``dataset.add_frame`` is a non-blocking queue put — flushing
-    the entire ring buffer in one tick must not stall the control loop.
+    to keep normal frame encoding off the control thread. Ring-buffer drains
+    and episode saves can still block: asynchronous inference is paused and
+    its buffered motion invalidated across these operator-triggered operations.
     """
 
     config: HighlightStrategyConfig
@@ -107,13 +109,12 @@ class HighlightStrategy(RolloutStrategy):
         play_sounds = cfg.play_sounds
 
         start_time = time.perf_counter()
-        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         logger.info("Highlight strategy recording started (press '%s' to save)", self.config.save_key)
 
         with VideoEncodingManager(dataset):
             try:
                 while not ctx.runtime.shutdown_event.is_set():
-                    timer.tick(new_cycle=interpolator.needs_new_action())
+                    self._tick(timer, new_cycle=interpolator.needs_new_action())
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
@@ -127,11 +128,12 @@ class HighlightStrategy(RolloutStrategy):
                     if self._handle_warmup(cfg.use_torch_compile, timer):
                         continue
 
-                    action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                    step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
-                    if action_dict is not None:
+                    if step is not None:
+                        action_dict = transition_to_robot_action(step)
                         with timer.section("telemetry"):
-                            self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                            self._log_telemetry(obs_processed, step, ctx.runtime)
 
                         if self._push_requested.is_set():
                             self._push_requested.clear()
@@ -148,7 +150,7 @@ class HighlightStrategy(RolloutStrategy):
                             with timer.section("record"):
                                 obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                                 action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                                frame = {**obs_frame, **action_frame, "task": task_str}
+                                frame = {**obs_frame, **action_frame, "task": engine.dispatched_task}
 
                                 toggled = False
                                 frame_consumed = False
@@ -164,13 +166,15 @@ class HighlightStrategy(RolloutStrategy):
                                             "Flushing ring buffer (%d frames) + starting live recording",
                                             len(ring),
                                         )
-                                        for buffered_frame in ring.drain():
-                                            dataset.add_frame(buffered_frame)
+                                        with self._pause_for_recording(ctx):
+                                            for buffered_frame in ring.drain():
+                                                dataset.add_frame(buffered_frame)
                                         self._recording_live.set()
                                     else:
-                                        dataset.add_frame(frame)
-                                        with self._episode_lock:
-                                            dataset.save_episode()
+                                        with self._pause_for_recording(ctx):
+                                            dataset.add_frame(frame)
+                                            with self._episode_lock:
+                                                dataset.save_episode()
                                         logger.info("Episode saved (total: %d)", dataset.num_episodes)
                                         log_say(
                                             f"Episode {dataset.num_episodes} saved",
@@ -194,6 +198,7 @@ class HighlightStrategy(RolloutStrategy):
                                     timer.log_episode_summary(f"episode {dataset.num_episodes}")
                                 timer.restart()
 
+                    engine.pump_query(obs_processed)
                     timer.wait()
 
             finally:

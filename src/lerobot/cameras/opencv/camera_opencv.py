@@ -84,8 +84,8 @@ class OpenCVCamera(Camera):
         # Read 1 frame asynchronously (waits for new frame with a timeout)
         async_image = camera.async_read()
 
-        # Get the latest frame immediately (no wait, returns timestamp)
-        latest_image, timestamp = camera.read_latest()
+        # Get the latest frame immediately (no wait)
+        latest_image = camera.read_latest()
 
         # When done, properly disconnect the camera using
         camera.disconnect()
@@ -104,7 +104,7 @@ class OpenCVCamera(Camera):
         self.config = config
         self.index_or_path = config.index_or_path
 
-        self.fps = config.fps
+        self.fps: float | None = config.fps
         self.color_mode = config.color_mode
         self.warmup_s = config.warmup_s
 
@@ -163,13 +163,16 @@ class OpenCVCamera(Camera):
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
 
-        self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
+        index_or_path = (
+            str(self.index_or_path) if isinstance(self.index_or_path, Path) else self.index_or_path
+        )
+        self.videocapture = cv2.VideoCapture(index_or_path, self.backend)
 
         if not self.videocapture.isOpened():
             self.videocapture.release()
             self.videocapture = None
             raise ConnectionError(
-                f"Failed to open {self}.Run `lerobot-find-cameras opencv` to find available cameras."
+                f"Failed to open {self}. Run `lerobot-find-cameras opencv` to find available cameras."
             )
 
         try:
@@ -265,7 +268,7 @@ class OpenCVCamera(Camera):
         fourcc = self.config.fourcc
         if fourcc is None:
             raise ValueError(f"{self} has no fourcc configured to validate.")
-        fourcc_code = cv2.VideoWriter_fourcc(*fourcc)
+        fourcc_code = cv2.VideoWriter.fourcc(*fourcc)
 
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")

@@ -33,6 +33,8 @@ from lerobot.scripts.lerobot_edit_dataset import (
     _validate_config,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def parse_cfg(cli_args: list[str]) -> EditDatasetConfig:
     """Helper to parse CLI args into an EditDatasetConfig via draccus."""

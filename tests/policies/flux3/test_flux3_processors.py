@@ -27,7 +27,12 @@ from lerobot.policies.flux3.processor_flux3 import (
     ObservationHistoryNormalizerProcessorStep,
     connect_history_processors,
 )
-from lerobot.processor.pipeline import ActionProcessorStep, ObservationProcessorStep, PolicyProcessorPipeline
+from lerobot.processor.pipeline import (
+    ActionProcessorStep,
+    DataProcessorPipeline,
+    ObservationProcessorStep,
+    PolicyProcessorPipeline,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.policies.flux3.helpers import rich_task_config, single_config
 
@@ -53,7 +58,8 @@ def test_saved_frame_processors_keep_overrides_and_reconnect_relative_actions(tm
         revisions.append(kwargs.get("revision"))
         return load(**kwargs)
 
-    monkeypatch.setattr(PolicyProcessorPipeline, "from_pretrained", tracked_load)
+    # Patch the concrete class: the typing alias forwards writes but not deletes during undo.
+    monkeypatch.setattr(DataProcessorPipeline, "from_pretrained", tracked_load)
     stats = {ACTION: {"mean": torch.ones(6), "std": torch.full((6,), 2.0)}}
     pre_overrides = {"normalizer_processor": {"stats": stats}}
     post_overrides = {"unnormalizer_processor": {"stats": stats}}

@@ -20,11 +20,8 @@ from functools import cached_property
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.motors.calibration_gui import RangeFinderGUI
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-)
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -37,11 +34,12 @@ logger = logging.getLogger(__name__)
 class HopeJrArm(Robot):
     config_class = HopeJrArmConfig
     name = "hope_jr_arm"
+    supports_position_hold = True
 
     def __init__(self, config: HopeJrArmConfig):
         super().__init__(config)
         self.config = config
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pitch": Motor(1, "sm8512bl", MotorNormMode.RANGE_M100_100),
@@ -126,11 +124,7 @@ class HopeJrArm(Robot):
             self.bus.configure_motors(maximum_acceleration=30, acceleration=30)
 
     def setup_motors(self) -> None:
-        # TODO: add docstring
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors()
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:

@@ -62,6 +62,7 @@ class _Harness(torch.nn.Module):
         self.gradient_checkpointing_enabled = False
         self.config = _Config()
 
+    checkpoint_vision_embeddings = PI05Pytorch.checkpoint_vision_embeddings
     _apply_checkpoint = PI05Pytorch._apply_checkpoint
     _embed_one_image = PI05Pytorch._embed_one_image
     _embed_images = PI05Pytorch._embed_images
@@ -177,7 +178,7 @@ def test_autocast_is_off_on_cpu():
 def test_autocast_is_enabled_for_bfloat16_inference_on_cuda():
     image = torch.zeros(1, 3, 4, 4, device="cuda")
 
-    inference = _autocast_stub("bfloat16", training=False)
+    inference = _autocast_stub(torch.bfloat16, training=False)
     assert PaliGemmaWithExpertModel._vision_autocast(inference, image) is True  # noqa: SLF001
 
     training = _autocast_stub("bfloat16", training=True)
@@ -187,7 +188,8 @@ def test_autocast_is_enabled_for_bfloat16_inference_on_cuda():
 @require_cuda
 def test_batched_and_looped_embeddings_match_on_the_real_vision_tower():
     torch.manual_seed(0)
-    model = PI05Pytorch(PI05Config(paligemma_variant="gemma_300m")).to("cuda").eval()
+    with torch.device("cuda"):  # initializing the weights on the CPU takes ~30s
+        model = PI05Pytorch(PI05Config(paligemma_variant="gemma_300m")).eval()
     images = [torch.rand(1, 3, 224, 224, device="cuda") for _ in range(3)]
     masks = [torch.ones(1, dtype=torch.bool, device="cuda") for _ in images]
 

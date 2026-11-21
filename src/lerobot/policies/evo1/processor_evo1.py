@@ -397,6 +397,7 @@ def make_evo1_pre_post_processors_from_pretrained(
         postprocessor_overrides=postprocessor_overrides,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
+        trust_remote_code=config.trust_remote_code,
     )
     return reconcile_evo1_processors(config, preprocessor, postprocessor)
 

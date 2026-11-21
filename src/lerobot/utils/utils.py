@@ -98,6 +98,7 @@ def init_logging(
         logger.addHandler(file_handler)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
 
 
 def format_big_number(num, precision=0):

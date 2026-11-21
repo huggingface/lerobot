@@ -39,7 +39,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-pytestmark = pytest.mark.multigpu
+pytestmark = [pytest.mark.dataset, pytest.mark.multigpu]
 
 
 def get_num_available_gpus() -> int:

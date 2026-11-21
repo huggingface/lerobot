@@ -16,7 +16,6 @@
 
 import argparse
 import logging
-import os
 from pathlib import Path
 
 from datatrove.executor import LocalPipelineExecutor
@@ -51,12 +50,6 @@ class UploadDataset(PipelineStep):
         self.private = private
         self.card_kwargs = card_kwargs
         self.revision = revision if revision else CODEBASE_VERSION
-
-        if os.environ.get("HF_HUB_ENABLE_HF_TRANSFER", "0") != "1":
-            logging.warning(
-                'HF_HUB_ENABLE_HF_TRANSFER is not set to "1". Install hf_transfer and set the env '
-                "variable for faster uploads:\npip install hf-transfer\nexport HF_HUB_ENABLE_HF_TRANSFER=1"
-            )
 
         self.create_repo()
 

@@ -33,6 +33,8 @@ from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleopConfig
 
+pytestmark = [pytest.mark.dataset, pytest.mark.hardware]
+
 
 def _ticks(summary: str) -> int:
     """Sample size out of a cadence report — every other number is an average over it."""

@@ -180,6 +180,7 @@ def test_to_tensor_dtype_parameter():
     assert result.dtype == torch.float64
 
 
+@pytest.mark.gpu
 def test_to_tensor_device_parameter():
     """Test to_tensor with device parameter."""
     arr = np.array([1.0, 2.0, 3.0])

@@ -100,6 +100,9 @@ def export_base(
     features = dataset_to_policy_features(metadata.features)
     settings["input_features"] = {k: v for k, v in features.items() if v.type != FeatureType.ACTION}
     settings["output_features"] = {k: v for k, v in features.items() if v.type == FeatureType.ACTION}
+    # The config stores `dtype` by name; decode it the way config loading does (a torch.dtype).
+    if "dtype" in settings:
+        settings["dtype"] = draccus.decode(torch.dtype | None, settings["dtype"])
     config = Flux3Config(**settings)
     if metadata.fps != config.fps:
         raise ValueError(f"Dataset fps {metadata.fps} differs from policy fps {config.fps}")

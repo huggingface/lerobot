@@ -1,0 +1,167 @@
+# Unitree G1 + SONIC profile for nepyope/sonic_walk.
+# Run the server on the GPU host and the rollout client on the G1 Jetson; see
+# docs/source/unitree_g1.mdx. Keep the schema in sync with the checkpoint.
+deployment: g1-sonic
+model:
+  repo_or_path: nepyope/sonic_walk
+  revision: null
+  device: cuda
+execution:
+  supported_modes: [chunk]
+  action_fps: 30.0
+  action_deadline_s: 5.0
+  idle_timeout_s: 10.0
+  warmup_calls: 2
+language:
+  enabled: false
+  deadline_s: 60.0
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/0.0.0.0:7447]
+semantics: unitree-g1-sonic-motion-token-v1
+robot_type: unitree_g1
+features:
+  - name: observation.state
+    shape: [64]
+    dtype: float32
+    names:
+      - motion_token.0.pos
+      - motion_token.1.pos
+      - motion_token.2.pos
+      - motion_token.3.pos
+      - motion_token.4.pos
+      - motion_token.5.pos
+      - motion_token.6.pos
+      - motion_token.7.pos
+      - motion_token.8.pos
+      - motion_token.9.pos
+      - motion_token.10.pos
+      - motion_token.11.pos
+      - motion_token.12.pos
+      - motion_token.13.pos
+      - motion_token.14.pos
+      - motion_token.15.pos
+      - motion_token.16.pos
+      - motion_token.17.pos
+      - motion_token.18.pos
+      - motion_token.19.pos
+      - motion_token.20.pos
+      - motion_token.21.pos
+      - motion_token.22.pos
+      - motion_token.23.pos
+      - motion_token.24.pos
+      - motion_token.25.pos
+      - motion_token.26.pos
+      - motion_token.27.pos
+      - motion_token.28.pos
+      - motion_token.29.pos
+      - motion_token.30.pos
+      - motion_token.31.pos
+      - motion_token.32.pos
+      - motion_token.33.pos
+      - motion_token.34.pos
+      - motion_token.35.pos
+      - motion_token.36.pos
+      - motion_token.37.pos
+      - motion_token.38.pos
+      - motion_token.39.pos
+      - motion_token.40.pos
+      - motion_token.41.pos
+      - motion_token.42.pos
+      - motion_token.43.pos
+      - motion_token.44.pos
+      - motion_token.45.pos
+      - motion_token.46.pos
+      - motion_token.47.pos
+      - motion_token.48.pos
+      - motion_token.49.pos
+      - motion_token.50.pos
+      - motion_token.51.pos
+      - motion_token.52.pos
+      - motion_token.53.pos
+      - motion_token.54.pos
+      - motion_token.55.pos
+      - motion_token.56.pos
+      - motion_token.57.pos
+      - motion_token.58.pos
+      - motion_token.59.pos
+      - motion_token.60.pos
+      - motion_token.61.pos
+      - motion_token.62.pos
+      - motion_token.63.pos
+    semantics: unitree-g1-sonic-motion-token-v1
+  - name: observation.images.ego_view
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-g1-head-ego-v1
+action_feature:
+  name: action
+  shape: [64]
+  dtype: float32
+  names:
+    - motion_token.0.pos
+    - motion_token.1.pos
+    - motion_token.2.pos
+    - motion_token.3.pos
+    - motion_token.4.pos
+    - motion_token.5.pos
+    - motion_token.6.pos
+    - motion_token.7.pos
+    - motion_token.8.pos
+    - motion_token.9.pos
+    - motion_token.10.pos
+    - motion_token.11.pos
+    - motion_token.12.pos
+    - motion_token.13.pos
+    - motion_token.14.pos
+    - motion_token.15.pos
+    - motion_token.16.pos
+    - motion_token.17.pos
+    - motion_token.18.pos
+    - motion_token.19.pos
+    - motion_token.20.pos
+    - motion_token.21.pos
+    - motion_token.22.pos
+    - motion_token.23.pos
+    - motion_token.24.pos
+    - motion_token.25.pos
+    - motion_token.26.pos
+    - motion_token.27.pos
+    - motion_token.28.pos
+    - motion_token.29.pos
+    - motion_token.30.pos
+    - motion_token.31.pos
+    - motion_token.32.pos
+    - motion_token.33.pos
+    - motion_token.34.pos
+    - motion_token.35.pos
+    - motion_token.36.pos
+    - motion_token.37.pos
+    - motion_token.38.pos
+    - motion_token.39.pos
+    - motion_token.40.pos
+    - motion_token.41.pos
+    - motion_token.42.pos
+    - motion_token.43.pos
+    - motion_token.44.pos
+    - motion_token.45.pos
+    - motion_token.46.pos
+    - motion_token.47.pos
+    - motion_token.48.pos
+    - motion_token.49.pos
+    - motion_token.50.pos
+    - motion_token.51.pos
+    - motion_token.52.pos
+    - motion_token.53.pos
+    - motion_token.54.pos
+    - motion_token.55.pos
+    - motion_token.56.pos
+    - motion_token.57.pos
+    - motion_token.58.pos
+    - motion_token.59.pos
+    - motion_token.60.pos
+    - motion_token.61.pos
+    - motion_token.62.pos
+    - motion_token.63.pos
+  semantics: unitree-g1-sonic-motion-token-v1

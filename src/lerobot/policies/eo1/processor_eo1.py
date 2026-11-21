@@ -36,8 +36,10 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import normalize_semantic_messages
+from lerobot.utils.transition import move_state_dict_to_device
 
 from .configuration_eo1 import EO1_DEFAULT_SYSTEM_MESSAGE, EO1Config
 
@@ -290,10 +292,13 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
 
     def __post_init__(self):
         require_package("transformers", extra="eo1")
+        repo_id, revision = split_hub_reference(self.processor_name)
         self._processor = Qwen2_5_VLProcessor.from_pretrained(
-            self.processor_name,
+            repo_id,
             use_fast=self.use_fast_processor,
             fix_mistral_regex=True,
+            revision=revision,
+            code_revision=revision,
         )
         self._processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
         self._state_token_id = self._processor.tokenizer.convert_tokens_to_ids(DEFAULT_STATE_TOKEN)
@@ -312,6 +317,10 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         # Rollout batches use left padding so action spans stay aligned across samples.
         # Supervised batches use right padding to match standard training collation.
         padding_side = "right" if self.transition.get(TransitionKey.ACTION) is not None else "left"
+
+        if not self.use_fast_processor:
+            # The slow image processor needs CPU images, and the batch may already be on the policy device.
+            messages = move_state_dict_to_device(messages, "cpu")
 
         inputs = self._processor.apply_chat_template(
             messages,

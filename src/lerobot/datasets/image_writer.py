@@ -199,7 +199,8 @@ class AsyncImageWriter:
 
     When `num_processes=0`, it creates a threads pool of size `num_threads`.
     When `num_processes>0`, it creates processes pool of size `num_processes`, where each subprocess starts
-    their own threads pool of size `num_threads`.
+    their own threads pool of size `num_threads`. `num_processes` must be non-negative and
+    `num_threads` must be positive in both modes.
 
     The optimal number of processes and threads depends on your computer capabilities.
     We advise to use 4 threads per camera with 0 processes. If the fps is not stable, try to increase or lower
@@ -214,8 +215,10 @@ class AsyncImageWriter:
         self.processes: list[multiprocessing.Process] = []
         self._stopped = False
 
-        if num_threads <= 0 and num_processes <= 0:
-            raise ValueError("Number of threads and processes must be greater than zero.")
+        if num_threads <= 0:
+            raise ValueError("Number of threads must be greater than zero.")
+        if num_processes < 0:
+            raise ValueError("Number of processes must be non-negative.")
 
         if self.num_processes == 0:
             # Use threading

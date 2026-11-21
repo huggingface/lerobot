@@ -26,6 +26,7 @@ from types import ModuleType
 from typing import Any, TypeVar, cast
 
 import draccus
+import torch
 import yaml
 from draccus.help_formatter import SimpleHelpFormatter
 from draccus.utils import DecodingError
@@ -35,6 +36,8 @@ from draccus.wrappers.field_wrapper import FieldWrapper
 from draccus.wrappers.suppressing_argparse import SuppressingArgumentParser
 from draccus.wrappers.wrapper import AggregateWrapper, Wrapper
 
+from lerobot.utils.constants import TRAIN_CONFIG_NAME
+from lerobot.utils.hub import sanitize_checkpoint_consent
 from lerobot.utils.utils import has_method
 
 F = TypeVar("F", bound=Callable[..., object])
@@ -48,6 +51,27 @@ _config_path_args: dict[str, str] = {}
 
 # Storage for non-path YAML overrides so validate() can pass them to from_pretrained.
 _config_yaml_overrides: dict[str, list[str]] = {}
+
+
+# Register draccus encode/decode functions for the torch.dtype values held by dtype fields.
+@draccus.decode.register(torch.dtype)
+def _decode_dtype(value: Any, path: Sequence[str] = ()) -> torch.dtype:
+    """Resolve a dtype name coming from config.json or the command line.
+
+    Args:
+        value: The raw serialized value, e.g. "bfloat16".
+        path: The field breadcrumb draccus prefixes onto error messages, e.g. ("policy", "dtype").
+    """
+    dtype = getattr(torch, str(value).removeprefix("torch."), None)
+    if not isinstance(dtype, torch.dtype):
+        raise ValueError(f"Invalid dtype {value!r}: expected a torch dtype name.")
+    return dtype
+
+
+@draccus.encode.register(torch.dtype)
+def _encode_dtype(value: torch.dtype, declared_type: type | None = None) -> str:
+    """Serialize a dtype to its bare name, e.g. torch.bfloat16 -> "bfloat16"."""
+    return str(value).removeprefix("torch.")
 
 
 def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
@@ -207,6 +231,14 @@ def get_yaml_overrides(field_name: str) -> list[str]:
     return _config_yaml_overrides.get(field_name, [])
 
 
+def get_pretrained_revision(field_name: str) -> str | None:
+    """Return `--<field_name>.pretrained_revision` from the CLI, else from the `--config_path` file."""
+    revision = parse_arg("pretrained_revision", get_cli_overrides(field_name) or [])
+    if revision is None:
+        revision = parse_arg("pretrained_revision", get_yaml_overrides(field_name))
+    return revision
+
+
 def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
     return parse_arg(f"{field_name}.{draccus.CHOICE_TYPE_KEY}", args)
 
@@ -363,6 +395,9 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
         return config_path
 
     modified = False
+    # Sanitize before extracting overrides or losing the checkpoint filename to a temp path.
+    if config_file.name == TRAIN_CONFIG_NAME:
+        modified = sanitize_checkpoint_consent(config_data)
     for field in path_fields:
         if field in config_data and isinstance(config_data[field], dict) and PATH_KEY in config_data[field]:
             _config_path_args[field] = str(config_data[field].pop(PATH_KEY))
@@ -419,7 +454,7 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 config_path_cli = parse_arg("config_path", cli_args)
                 if has_method(argtype, "__get_path_fields__"):
                     path_fields = argtype.__get_path_fields__()
-                    # Also extract path fields from the YAML/JSON config file
+                    # Extract first so CLI overrides of file-provided paths are filtered too.
                     if config_path_cli:
                         config_path_cli = extract_path_fields_from_config(config_path_cli, path_fields)
                     cli_args = filter_path_args(path_fields, cli_args)

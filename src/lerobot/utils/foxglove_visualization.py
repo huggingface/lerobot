@@ -28,7 +28,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.lerobot_types import BboxAnswer, PolicyPrediction, RobotAction, RobotObservation
 
 from .constants import (
     ACTION,
@@ -38,6 +38,7 @@ from .constants import (
     OBS_PREFIX,
     OBS_STATE,
     OBS_STR,
+    PREDICTION,
     REWARD,
     SUCCESS,
     TRUNCATED,
@@ -65,6 +66,17 @@ _SCALARS_SCHEMA = {
         }
     },
 }
+
+# Static schema for text policy outputs (chain of thought, subtask...), shown in a Raw Message panel.
+_TEXT_SCHEMA = {
+    "type": "object",
+    "title": "lerobot.Text",
+    "properties": {"text": {"type": "string"}},
+}
+
+# (height, width) of each image topic logged so far, so policy overlays given in image fractions can
+# be scaled to pixels.
+_IMAGE_SIZES: dict[str, tuple[int, int]] = {}
 
 
 def _is_scalar(x):
@@ -95,6 +107,7 @@ def init_foxglove(host: str = "127.0.0.1", port: int | None = 8765) -> None:
         return
     log_foxglove_data.server = foxglove.start_server(host=host, port=port or 8765)  # type: ignore[attr-defined]
     log_foxglove_data.channels = {}  # type: ignore[attr-defined]
+    _IMAGE_SIZES.clear()
 
 
 def shutdown_foxglove() -> None:
@@ -226,6 +239,7 @@ def _log_foxglove_image(
         arr = np.transpose(arr, (1, 2, 0))
     height, width = arr.shape[0], arr.shape[1]
     n_channels = 1 if arr.ndim == 2 else arr.shape[2]
+    _IMAGE_SIZES[topic] = (height, width)
 
     encoding: str | None
     if n_channels == 1 and arr.dtype != np.uint8:
@@ -286,13 +300,97 @@ def _log_foxglove_image(
     )
 
 
+def _log_foxglove_boxes(topic: str, answer: BboxAnswer, size: tuple[int, int], log_time: int) -> None:
+    """Log a bbox answer's boxes as ``ImageAnnotations`` (pixels) on ``topic``; no detections clears them."""
+
+    from foxglove.channels import ImageAnnotationsChannel
+    from foxglove.messages import (
+        Color,
+        ImageAnnotations,
+        Point2,
+        PointsAnnotation,
+        PointsAnnotationType,
+        TextAnnotation,
+        Timestamp,
+    )
+
+    channels = log_foxglove_data.channels  # type: ignore[attr-defined]
+    channel = channels.get(topic)
+    if channel is None:
+        channel = channels[topic] = ImageAnnotationsChannel(topic=topic)
+    timestamp = Timestamp(sec=log_time // 1_000_000_000, nsec=log_time % 1_000_000_000)
+    color = Color(r=0.0, g=1.0, b=0.0, a=1.0)
+    height, width = size
+
+    points, texts = [], []
+    for det in answer["detections"]:
+        x1, y1, x2, y2 = (float(v) for v in det["bbox"])
+        x1, x2, y1, y2 = x1 * width, x2 * width, y1 * height, y2 * height
+        corners = [Point2(x=x1, y=y1), Point2(x=x2, y=y1), Point2(x=x2, y=y2), Point2(x=x1, y=y2)]
+        points.append(
+            PointsAnnotation(
+                timestamp=timestamp,
+                type=PointsAnnotationType.LineLoop,
+                points=corners,
+                outline_color=color,
+                thickness=2.0,
+            )
+        )
+        if label := det["label"]:
+            texts.append(
+                TextAnnotation(
+                    timestamp=timestamp, position=corners[0], text=label, font_size=14.0, text_color=color
+                )
+            )
+    channel.log(ImageAnnotations(points=points, texts=texts), log_time=log_time)
+
+
+def _log_foxglove_prediction(prediction: PolicyPrediction, *, compress_images: bool, log_time: int) -> None:
+    """Log the first environment of a policy's prediction on ``/prediction/...`` topics.
+
+    A predicted ``observation.images.top`` goes to ``/prediction/images/top`` and predicted state to
+    ``/prediction/state``; language goes to ``/prediction/<style>`` (``lerobot.Text`` JSON), and boxes
+    to ``<camera topic>/prediction`` as ``ImageAnnotations`` to overlay on that camera in an Image panel.
+    """
+
+    import foxglove
+
+    channels = log_foxglove_data.channels  # type: ignore[attr-defined]
+    scalars: dict[str, float] = {}
+    for key, value in prediction.get("observation", {}).items():
+        name = key.removeprefix(OBS_PREFIX)
+        arr = value[0].numpy(force=True)
+        if arr.ndim == 1:
+            scalars.update(_labeled_scalars(name, arr))
+        else:
+            topic = f"/{PREDICTION}/images/{_foxglove_safe_name(name.removeprefix('images.'))}"
+            _log_foxglove_image(topic, name, arr, compress_images=compress_images, log_time=log_time)
+    _log_foxglove_scalars(f"/{PREDICTION}/state", scalars, log_time=log_time)
+    for style, texts in prediction.get("language", {}).items():
+        text = texts[0]
+        topic = f"/{PREDICTION}/{_foxglove_safe_name(style)}"
+        channel = channels.get(topic)
+        if channel is None:
+            channel = channels[topic] = foxglove.Channel(topic, schema=_TEXT_SCHEMA, message_encoding="json")
+        channel.log({"text": text}, log_time=log_time)
+    for camera_key, answers in prediction.get("boxes", {}).items():
+        answer = answers[0]
+        camera_topic = _foxglove_topic(camera_key, is_image=True)
+        size = _IMAGE_SIZES.get(camera_topic)
+        if size is None:
+            logging.debug("Skipping predicted boxes: camera %r was not logged", camera_key)
+            continue
+        _log_foxglove_boxes(f"{camera_topic}/{PREDICTION}", answer, size, log_time)
+
+
 def log_foxglove_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    prediction: PolicyPrediction | None = None,
 ) -> None:
     """
-    Logs observation and action data to a Foxglove WebSocket server for real-time visualization.
+    Logs observation, action and policy-prediction data to a Foxglove WebSocket server for real-time visualization.
 
     Mirrors ``log_rerun_data`` but emits Foxglove messages over the server started by
     :func:`init_foxglove`. Data is mapped as follows:
@@ -310,6 +408,8 @@ def log_foxglove_data(
         action: An optional dictionary containing action data to log.
         compress_images: Whether to JPEG-compress images before logging to save bandwidth in exchange
             for CPU and quality.
+        prediction: An optional `PolicyPrediction`, logged on ``/prediction/...`` topics (see
+            :func:`_log_foxglove_prediction`).
     """
 
     require_package("foxglove-sdk", extra="viz", import_name="foxglove")
@@ -351,6 +451,10 @@ def log_foxglove_data(
             elif isinstance(v, np.ndarray):
                 action_scalars.update(_labeled_scalars(key, v.flatten()))
         _log_foxglove_scalars(_foxglove_topic(ACTION), action_scalars, log_time=now)
+
+    if prediction:
+        # After the observation, so overlays can be scaled to the camera frames just logged.
+        _log_foxglove_prediction(prediction, compress_images=compress_images, log_time=now)
 
 
 # ── Dataset playback over a Foxglove WebSocket server ─────────────────────

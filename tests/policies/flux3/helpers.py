@@ -117,7 +117,7 @@ def droid_config(**overrides) -> Flux3Config:
         "canvas_hw": (544, 736),
         "fps": 15.0,
         "dit_config": TINY_DIT,
-        "dtype": "float32",
+        "dtype": torch.float32,
         "video_vae_id": None,
         "device": "cpu",
     }
@@ -139,7 +139,7 @@ def single_config(**overrides) -> Flux3Config:
         "canvas_hw": (64, 96),
         "gripper_flip_dims": [],
         "dit_config": TINY_DIT,
-        "dtype": "float32",
+        "dtype": torch.float32,
         "video_vae_id": None,
         "device": "cpu",
     }
@@ -164,7 +164,7 @@ def task_config(**overrides):
         "camera_layout": "single",
         "canvas_hw": (64, 96),
         "dit_config": TINY_DIT,
-        "dtype": "float32",
+        "dtype": torch.float32,
         "video_vae_id": None,
         "device": "cpu",
         "delta_absolute_dims": [-1],

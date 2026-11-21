@@ -312,7 +312,6 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
             "config": self.config,
             "inputs_embeds": inputs_embeds,
             "attention_mask": attention_mask,
-            "cache_position": cache_position,
             "past_key_values": past_key_values,
             "position_ids": text_position_ids,
             "or_mask_function": action_island_mask,

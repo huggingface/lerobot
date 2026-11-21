@@ -24,6 +24,7 @@ from threading import Event, Lock
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.processor import transition_to_robot_action
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -54,9 +55,9 @@ class SentryStrategy(RolloutStrategy):
     so no push is ever silently dropped and exactly one push runs at a
     time.
 
-    Policy state (hidden state, RTC queue) intentionally persists across
-    episode boundaries — Sentry slices one continuous rollout, the robot
-    does not reset between slices.
+    Policy hidden state persists across episode boundaries. Async motion is
+    invalidated and held during blocking saves, then resumes from a fresh capture;
+    the robot does not return to its initial position between slices.
 
     Requires ``streaming_encoding=True`` (enforced in config validation)
     to prevent disk I/O from blocking the control loop.
@@ -121,7 +122,7 @@ class SentryStrategy(RolloutStrategy):
 
         try:
             while not ctx.runtime.shutdown_event.is_set():
-                timer.tick(new_cycle=interpolator.needs_new_action())
+                self._tick(timer, new_cycle=interpolator.needs_new_action())
 
                 if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                     logger.info("Duration limit reached (%.0fs)", cfg.duration)
@@ -135,11 +136,12 @@ class SentryStrategy(RolloutStrategy):
                 if self._handle_warmup(cfg.use_torch_compile, timer):
                     continue
 
-                action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
-                if action_dict is not None:
+                if step is not None:
+                    action_dict = transition_to_robot_action(step)
                     with timer.section("telemetry"):
-                        self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                        self._log_telemetry(obs_processed, step, ctx.runtime)
                     # Record once per interpolation cycle so the dataset cadence
                     # matches its declared fps; interpolated ticks only send
                     # commands to the robot.
@@ -164,7 +166,8 @@ class SentryStrategy(RolloutStrategy):
                 # keeping push_to_hub efficient (uploads complete files).
                 elapsed = time.perf_counter() - episode_start
                 if elapsed >= episode_duration_s:
-                    self._checked_save_episode(dataset)
+                    with self._pause_for_recording(ctx):
+                        self._checked_save_episode(dataset)
                     logger.info(
                         "Episode saved (total: %d, elapsed: %.1fs)",
                         dataset.num_episodes,

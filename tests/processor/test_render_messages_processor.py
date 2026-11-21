@@ -16,6 +16,8 @@ from lerobot.processor.render_messages_processor import (  # noqa: E402
     _select_batch_indices,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def test_render_messages_step_renders_task_fallback_without_language_columns():
     """No language columns + a task string → low-level task fallback render,
@@ -262,6 +264,20 @@ def test_select_batch_indices_slices_robot_action_dict():
     assert torch.equal(selected[TransitionKey.ACTION]["gripper"], torch.tensor([[2.0], [0.0]]))
 
 
+@pytest.mark.parametrize("dtype,index", [(torch.bool, 2), (torch.uint8, 256), (torch.bfloat16, 257)])
+def test_select_batch_indices_preserves_indices_for_tensor_dtypes(dtype: torch.dtype, index: int) -> None:
+    values = torch.zeros(index + 1, 1, dtype=dtype)
+    values[index] = 1
+    transition = create_transition(complementary_data={"values": values})
+
+    selected = _select_batch_indices(transition, [index, 0], batch_size=len(values))
+
+    torch.testing.assert_close(
+        selected[TransitionKey.COMPLEMENTARY_DATA]["values"],
+        torch.tensor([[1], [0]], dtype=dtype),
+    )
+
+
 def test_select_batch_indices_rejects_misaligned_list():
     transition = create_transition(complementary_data={"task": ["one", "two"]})
 
@@ -307,3 +323,102 @@ def test_training_filter_keeps_messages_observations_and_actions_aligned():
     ]
     assert output[TransitionKey.COMPLEMENTARY_DATA]["target_message_indices"] == [[0]]
     assert transition[TransitionKey.ACTION].shape[0] == 2
+
+
+def test_training_filter_keeps_boolean_padding_masks_aligned() -> None:
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="assistant", content="${subtask}", stream="high_level", target=True, if_present="subtask"
+            )
+        ]
+    )
+    padding = torch.tensor([[False, True], [True, True], [False, False]])
+    transition = create_transition(
+        action=torch.tensor([[1.0], [2.0], [3.0]]),
+        complementary_data={
+            "action_is_pad": padding,
+            "language_persistent": [
+                [],
+                [],
+                [{"role": "assistant", "content": "keep me", "style": "subtask", "timestamp": 0.0}],
+            ],
+            "timestamp": torch.zeros(3),
+            "task": [None, None, None],
+        },
+    )
+
+    output = RenderTrainingMessagesStep(recipe)(transition)
+
+    torch.testing.assert_close(output[TransitionKey.ACTION], torch.tensor([[3.0]]))
+    torch.testing.assert_close(output[TransitionKey.COMPLEMENTARY_DATA]["action_is_pad"], padding[2:3])
+    assert output[TransitionKey.COMPLEMENTARY_DATA]["messages_rendered"] == [
+        [{"role": "assistant", "content": "keep me"}]
+    ]
+    assert transition[TransitionKey.COMPLEMENTARY_DATA]["action_is_pad"] is padding
+
+
+def _task_aug_transition(index: int, rephrasings: list[str]) -> dict:
+    return create_transition(
+        complementary_data={
+            "task": "canonical task",
+            "timestamp": 0.0,
+            "index": index,
+            "language_persistent": [
+                {"role": "user", "content": text, "style": "task_aug", "timestamp": 0.0}
+                for text in rephrasings
+            ]
+            + [{"role": "assistant", "content": "reach carefully", "style": "subtask", "timestamp": 0.0}],
+            "language_events": [],
+        }
+    )
+
+
+def test_training_render_rotates_task_rephrasings_instead_of_pinning_the_dataset_task():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(role="user", content="${task}", stream="high_level"),
+            MessageTurn(role="assistant", content="${subtask}", stream="low_level", target=True),
+        ]
+    )
+    rephrasings = ["tidy the table", "clear the table", "put the table in order"]
+    step = RenderTrainingMessagesStep(recipe)
+
+    seen = {
+        step(_task_aug_transition(index, rephrasings))[TransitionKey.COMPLEMENTARY_DATA]["messages_rendered"][
+            0
+        ]["content"]
+        for index in range(48)
+    }
+    canonical = step(_task_aug_transition(0, []))[TransitionKey.COMPLEMENTARY_DATA]["messages_rendered"][0]
+
+    assert seen == set(rephrasings)
+    assert canonical["content"] == "canonical task"
+
+
+def test_batched_training_render_uses_rephrasings_per_sample_and_the_task_otherwise():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(role="user", content="${task}", stream="high_level"),
+            MessageTurn(role="assistant", content="${subtask}", stream="low_level", target=True),
+        ]
+    )
+    subtask = {"role": "assistant", "content": "reach carefully", "style": "subtask", "timestamp": 0.0}
+    rephrasing = {"role": "user", "content": "clear the table", "style": "task_aug", "timestamp": 0.0}
+    transition = create_transition(
+        action=torch.zeros(2, 2),
+        complementary_data={
+            "task": ["tidy the table", "open the drawer"],
+            "timestamp": torch.tensor([0.0, 0.0]),
+            "index": torch.tensor([3, 4]),
+            "language_persistent": [[rephrasing, subtask], [subtask]],
+            "language_events": [[], []],
+        },
+    )
+
+    data = RenderTrainingMessagesStep(recipe)(transition)[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert [messages[0]["content"] for messages in data["messages_rendered"]] == [
+        "clear the table",
+        "open the drawer",
+    ]

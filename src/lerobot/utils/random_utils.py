@@ -33,17 +33,26 @@ def serialize_python_rng_state() -> dict[str, torch.Tensor]:
     `safetensors.save_file()` or `torch.save()`.
     """
     py_state = random.getstate()
-    return {
+    state = {
         "py_rng_version": torch.tensor([py_state[0]], dtype=torch.int64),
         "py_rng_state": torch.tensor(py_state[1], dtype=torch.int64),
     }
+    if py_state[2] is not None:
+        state["py_rng_cached_gaussian"] = torch.tensor([py_state[2]], dtype=torch.float64)
+    return state
 
 
 def deserialize_python_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None:
     """
     Restores the rng state for `random` from a dictionary produced by `serialize_python_rng_state()`.
     """
-    py_state = (rng_state_dict["py_rng_version"].item(), tuple(rng_state_dict["py_rng_state"].tolist()), None)
+    # Older checkpoints did not save the optional cached Gaussian sample.
+    cached_gaussian = rng_state_dict.get("py_rng_cached_gaussian")
+    py_state = (
+        rng_state_dict["py_rng_version"].item(),
+        tuple(rng_state_dict["py_rng_state"].tolist()),
+        cached_gaussian.item() if cached_gaussian is not None else None,
+    )
     random.setstate(py_state)
 
 
@@ -60,7 +69,7 @@ def serialize_numpy_rng_state() -> dict[str, torch.Tensor]:
         "np_rng_state_values": torch.tensor(np_state[1], dtype=torch.int64),
         "np_rng_state_index": torch.tensor([np_state[2]], dtype=torch.int64),
         "np_rng_has_gauss": torch.tensor([np_state[3]], dtype=torch.int64),
-        "np_rng_cached_gaussian": torch.tensor([np_state[4]], dtype=torch.float32),
+        "np_rng_cached_gaussian": torch.tensor([np_state[4]], dtype=torch.float64),
     }
 
 
@@ -198,6 +207,8 @@ def seeded_context(seed: int) -> Generator[None, None, None]:
     ```
     """
     random_state_dict = get_rng_state()
-    set_seed(seed)
-    yield None
-    set_rng_state(random_state_dict)
+    try:
+        set_seed(seed)
+        yield None
+    finally:
+        set_rng_state(random_state_dict)

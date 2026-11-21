@@ -94,6 +94,9 @@ class BiRebotB601Follower(BimanualMixin, Robot):
 
         self.left_arm = RebotB601Follower(left_arm_config)
         self.right_arm = RebotB601Follower(right_arm_config)
+        self.supports_position_hold = (
+            self.left_arm.supports_position_hold and self.right_arm.supports_position_hold
+        )
 
         # Only for compatibility with parts of the codebase that expect `robot.cameras`.
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}

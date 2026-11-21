@@ -51,13 +51,14 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, get_type_hints
 
+import draccus
 import torch
 from huggingface_hub import HfApi, hf_hub_download
 from safetensors.torch import load_file as load_safetensors
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.utils.constants import ACTION
 
@@ -585,6 +586,11 @@ def main():
 
     # Add normalization mapping to config
     cleaned_config["normalization_mapping"] = norm_map
+
+    # config.json stores `dtype` by name; decode it the way config loading does (a torch.dtype).
+    if "dtype" in cleaned_config:
+        dtype_type = get_type_hints(PreTrainedConfig.get_choice_class(policy_type))["dtype"]
+        cleaned_config["dtype"] = draccus.decode(dtype_type, cleaned_config["dtype"])
 
     # Create policy configuration using the factory
     print(f"Creating {policy_type} policy configuration...")

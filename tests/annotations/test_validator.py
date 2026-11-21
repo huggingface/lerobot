@@ -33,6 +33,8 @@ from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging  # noq
 from lerobot.annotations.steerable_pipeline.validator import StagingValidator  # noqa: E402
 from lerobot.annotations.steerable_pipeline.writer import speech_atom  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 
 def _validate(root: Path, staging_dir: Path):
     records = list(iter_episodes(root))

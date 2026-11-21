@@ -187,6 +187,7 @@ def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypa
         train_utils.resolve_resume_checkpoint("u/run", tmp_path / "run")
 
 
+@pytest.mark.dataset
 @pytest.mark.skipif(not _datasets_available, reason="requires datasets")
 @pytest.mark.parametrize("frames,drop_first,drop_last,max_eval_samples", [(12, 2, 3, 3), (64, 0, 32, 0)])
 def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
@@ -233,3 +234,71 @@ def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
         expected[:max_eval_samples] if max_eval_samples else expected
     )
     assert torch.equal(rng, torch.get_rng_state())
+
+
+@pytest.mark.dataset
+@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+@pytest.mark.parametrize(("num_workers", "expected"), [(0, 0), (1, 1), (4, 4), (16, 8)])
+def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_workers, expected):
+    class Dataset(torch.utils.data.IterableDataset):
+        meta = SimpleNamespace(has_language_columns=False)
+
+        def set_data_parallel_shard(self, rank, world_size):
+            pass
+
+        def num_episodes_for_rank(self, rank, world_size):
+            return 8
+
+        def num_frames_for_rank(self, rank, world_size, num_workers):
+            assert num_workers <= 8
+            return 80
+
+        def __iter__(self):
+            return iter(())
+
+    cfg = SimpleNamespace(
+        trainable_config=None,
+        dataset=SimpleNamespace(streaming=True),
+        resume=False,
+        seed=42,
+        num_workers=num_workers,
+        batch_size=2,
+        prefetch_factor=2,
+        persistent_workers=False,
+        dataloader_multiprocessing_context=None,
+        max_eval_samples=0,
+    )
+    parallel_dims = SimpleNamespace(device_type="cpu", dp_rank=0, dp_world_size=1)
+    train, _ = make_dataloaders(cfg, Dataset(), None, 0, parallel_dims)
+
+    assert train.num_workers == expected
+
+
+@pytest.mark.dataset
+@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+def test_streaming_dataloader_receives_the_trainers_data_parallel_rank():
+    class StreamingDataset(torch.utils.data.IterableDataset):
+        meta = SimpleNamespace(has_language_columns=False)
+        set_data_parallel_shard = MagicMock()
+        num_episodes_for_rank = MagicMock(return_value=1)
+        num_frames_for_rank = MagicMock(return_value=1)
+
+        def __iter__(self):
+            return iter([])
+
+    cfg = SimpleNamespace(
+        trainable_config=SimpleNamespace(),
+        dataset=SimpleNamespace(streaming=True),
+        resume=False,
+        seed=42,
+        num_workers=0,
+        batch_size=2,
+        prefetch_factor=None,
+        persistent_workers=False,
+        dataloader_multiprocessing_context=None,
+    )
+    parallel_dims = SimpleNamespace(device_type="cpu", dp_rank=3, dp_world_size=4)
+
+    make_dataloaders(cfg, StreamingDataset(), None, 0, parallel_dims)
+
+    StreamingDataset.set_data_parallel_shard.assert_called_once_with(3, 4)

@@ -29,10 +29,17 @@ import torch.utils.checkpoint
 from torch import Tensor
 
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
 
-from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..common.flow_matching import (
+    FlowConvention,
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_noise,
+    sample_time_beta,
+)
 from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
@@ -72,15 +79,14 @@ class EO1Policy(PreTrainedPolicy):
 
         if config.pretrained_path is None:
             # Initialize from pretrained VLM
+            repo_id, revision = split_hub_reference(config.vlm_base)
             vlm_backbone = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                config.vlm_base,
-                dtype=config.dtype,
-                attn_implementation=config.attn_implementation,
+                repo_id, dtype=config.dtype, attn_implementation=config.attn_implementation, revision=revision
             )
         else:
             vlm_backbone = Qwen2_5_VLForConditionalGeneration._from_config(
                 config.vlm_backbone_config,
-                dtype=config.vlm_backbone_config.dtype if config.dtype == "auto" else config.dtype,
+                dtype=config.dtype,
             )
 
         self.model = EO1VisionFlowMatchingModel(config, vlm_backbone)
@@ -123,12 +129,17 @@ class EO1Policy(PreTrainedPolicy):
         return loss, loss_dict
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+        """Predict a chunk of actions.
+
+        `noise` is the optional starting sample of the flow, shape `(batch_size, chunk_size, max_action_dim)`.
+        When it is None, standard normal noise is drawn.
+        """
         self.eval()
 
         states = self.prepare_state(batch[OBS_STATE])
         model_inputs = self._get_model_inputs(batch, {OBS_STATE})
-        actions = self.model.sample_actions(states=states, **model_inputs).to(torch.float32)
+        actions = self.model.sample_actions(states=states, noise=noise, **model_inputs).to(torch.float32)
 
         return actions[:, :, : _original_action_dim(self.config)]
 
@@ -140,10 +151,13 @@ class EO1Policy(PreTrainedPolicy):
 
     def _get_text_processor(self):
         if self._text_processor is None:
+            repo_id, revision = split_hub_reference(self.config.vlm_base)
             self._text_processor = Qwen2_5_VLProcessor.from_pretrained(
-                self.config.vlm_base,
+                repo_id,
                 use_fast=self.config.use_fast_processor,
                 fix_mistral_regex=True,
+                revision=revision,
+                code_revision=revision,
             )
             self._text_processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
         return self._text_processor
@@ -193,11 +207,11 @@ class EO1Policy(PreTrainedPolicy):
         return require_single_text_output(outputs, policy_name="EO-1")
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         self.eval()
 
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
 
         return self._action_queue.popleft()
@@ -471,9 +485,9 @@ class EO1VisionFlowMatchingModel(nn.Module):
             active_action = action[action_rows]
             time = self.sample_time(active_action.shape[0], inputs_embeds.device)
             noise = self.sample_noise(active_action.shape, inputs_embeds.device)
-            time_expanded = time[:, None, None]
-            x_t = time_expanded * noise + (1 - time_expanded) * active_action
-            u_t = noise - active_action
+            x_t, u_t, _ = make_flow_matching_inputs(
+                active_action, noise, time, convention=FlowConvention.NOISE_AT_ONE
+            )
             action_time_embs = self.embed_suffix(time, x_t)
             expected_tokens = int(action_token_mask.sum().item())
             if expected_tokens != action_time_embs.shape[0] * action_time_embs.shape[1]:
@@ -580,6 +594,7 @@ class EO1VisionFlowMatchingModel(nn.Module):
         *,
         state_token_id: int,
         action_token_id: int,
+        noise: Tensor | None = None,
         **kwargs,
     ) -> Tensor:
         """Sample actions from the model."""
@@ -648,10 +663,12 @@ class EO1VisionFlowMatchingModel(nn.Module):
             return_dict=True,
         )
 
-        x_t = self.sample_noise(
-            (batch_size, chunk_size, self.config.max_action_dim),
-            device,
-        ).to(dtype=self.action_in_proj.weight.dtype)
+        if noise is None:
+            noise = self.sample_noise(
+                (batch_size, chunk_size, self.config.max_action_dim),
+                device,
+            )
+        x_t = noise.to(device=device, dtype=self.action_in_proj.weight.dtype)
         past_key_values = outputs.past_key_values
 
         # 3. Denoise only the action chunk while keeping the prefix cache invariant.
@@ -660,7 +677,8 @@ class EO1VisionFlowMatchingModel(nn.Module):
             inputs_embeds[:, act_slice] = action_time_embs.to(inputs_embeds.dtype)
 
             # Keep the prefix KV cache invariant across denoising steps.
-            past_key_values.crop(act_start)
+            for layer in past_key_values.layers:
+                layer.crop(act_start - layer.get_seq_length())
             outputs = self.vlm_backbone.model(
                 attention_mask=attention_mask[:, :act_end],
                 past_key_values=past_key_values,

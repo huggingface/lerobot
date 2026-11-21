@@ -13,20 +13,19 @@ For training a new robot embodiment from the base model or full finetuning, use 
 
 ## Installation
 
-From the LeRobot checkout, install the training, policy, PEFT and EMA dependencies:
+The Video VAE requires **NATTEN** 0.21.6 or newer, as a wheel built for your exact torch and CUDA versions, from https://whl.natten.org.
+NATTEN publishes wheels for torch 2.10 to 2.13, but not yet for the torch 2.15 LeRobot installs by default, so install a supported torch first. For example, from the LeRobot checkout, torch 2.13 with CUDA 13.0 together with the training, policy, PEFT and EMA dependencies. As in the [installation guide](./installation#pytorch-cuda-variant-linux-only), TorchCodec comes from the CPU index:
 
 ```bash
-pip install -e ".[training,flux3,peft,diffusion]"
+pip install --index-url https://download.pytorch.org/whl/cu130 \
+    'torch==2.13.0+cu130' 'torchvision==0.28.0+cu130' 'numpy>=2.0,<2.3'
+pip install --index-url https://download.pytorch.org/whl/cpu 'torchcodec==0.13.0+cpu'
+pip install -e ".[training,flux3,peft,diffusion]" \
+    'torch==2.13.0+cu130' 'torchvision==0.28.0+cu130' 'torchcodec==0.13.0+cpu'
+pip install 'natten==0.21.7+torch2130cu130' --find-links https://whl.natten.org
 ```
 
-The Video VAE also requires a torch/CUDA-compatible **NATTEN** wheel from https://whl.natten.org.
-For torch 2.11 with CUDA 12.8:
-
-```bash
-uv pip install natten==0.21.6+torch2110cu128 --find-links https://whl.natten.org
-```
-
-Use `natten==0.21.6+torch2100cu128` for torch 2.10, or build for your environment.
+For an NVIDIA driver older than 580.65, use the CUDA 12.6 build instead: the `cu126` index, the `+cu126` torch and torchvision tags, and `natten==0.21.7+torch2130cu126`. For another torch version, use the NATTEN wheel whose tag matches it, such as `natten==0.21.6+torch2110cu130` for torch 2.11 with CUDA 13.0.
 
 ## SO-101 task adaptation
 
@@ -64,7 +63,7 @@ If access is restricted, authenticate with `hf auth login` using an account with
 Run from the LeRobot checkout:
 
 ```bash
-python -m lerobot.scripts.lerobot_train \
+lerobot-train \
   --config_path=examples/flux3/lora.json \
   --policy.path=black-forest-labs/flux-3-action-so101 --policy.device=cuda \
   --dataset.repo_id=YOUR_ORG/YOUR_SO101_DATASET \

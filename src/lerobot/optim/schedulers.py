@@ -270,3 +270,60 @@ class FrozenWarmupConstantSchedulerConfig(LRSchedulerConfig):
         n_groups = len(optimizer.param_groups)
         lambdas = [trunk] + [heads] * (n_groups - 1) if n_groups > 1 else trunk
         return LambdaLR(optimizer, lambdas, -1)
+
+
+@LRSchedulerConfig.register_subclass("warmup_stable_decay")
+@dataclass
+class WarmupStableDecaySchedulerConfig(LRSchedulerConfig):
+    """Warmup, stable and decay phases, mirroring ``transformers.get_wsd_schedule``.
+
+    The factor rises from ``min_lr_ratio`` to 1 over ``num_warmup_steps``, stays at 1 for ``num_stable_steps``
+    (None: the training steps left after warmup and decay), falls to ``min_lr_ratio`` over ``num_decay_steps``
+    and then stays there.
+    """
+
+    num_warmup_steps: int
+    num_decay_steps: int
+    num_stable_steps: int | None = None
+    warmup_type: str = "linear"
+    decay_type: str = "cosine"
+    min_lr_ratio: float = 0.0
+    num_cycles: float = 0.5
+
+    def __post_init__(self):
+        for name in ("warmup_type", "decay_type"):
+            if getattr(self, name) not in ("linear", "cosine", "1-sqrt"):
+                raise ValueError(
+                    f"{name} must be 'linear', 'cosine' or '1-sqrt', got {getattr(self, name)!r}."
+                )
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        num_stable_steps = self.num_stable_steps
+        if num_stable_steps is None:
+            num_stable_steps = num_training_steps - self.num_warmup_steps - self.num_decay_steps
+        decay_start = self.num_warmup_steps + num_stable_steps
+
+        def lr_lambda(current_step: int) -> float:
+            if current_step < self.num_warmup_steps:
+                progress = current_step / max(1, self.num_warmup_steps)
+                if self.warmup_type == "linear":
+                    factor = progress
+                elif self.warmup_type == "cosine":
+                    factor = 0.5 * (1.0 - math.cos(math.pi * progress))
+                else:
+                    factor = 1.0 - math.sqrt(1.0 - progress)
+            elif current_step < decay_start:
+                return 1.0
+            elif current_step < decay_start + self.num_decay_steps:
+                progress = (current_step - decay_start) / max(1, self.num_decay_steps)
+                if self.decay_type == "linear":
+                    factor = 1.0 - progress
+                elif self.decay_type == "cosine":
+                    factor = 0.5 * (1.0 + math.cos(math.pi * self.num_cycles * 2.0 * progress))
+                else:
+                    factor = 1.0 - math.sqrt(progress)
+            else:
+                return self.min_lr_ratio
+            return max(0.0, factor * (1.0 - self.min_lr_ratio) + self.min_lr_ratio)
+
+        return LambdaLR(optimizer, lr_lambda, -1)

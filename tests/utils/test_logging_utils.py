@@ -174,6 +174,7 @@ def test_metrics_tracker_reduce_across_ranks_outside_distributed():
     assert tracker.update_s.avg == 0.5
 
 
+@pytest.mark.gpu
 def test_metrics_tracker_reduce_across_ranks_invokes_all_reduce(monkeypatch):
     captured = {}
 

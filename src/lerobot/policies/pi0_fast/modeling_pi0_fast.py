@@ -17,13 +17,15 @@
 import builtins
 import logging
 from collections import deque
+from copy import copy
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 import numpy as np
 import torch
 from torch import Tensor, nn
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
@@ -109,7 +111,7 @@ class PI0FastPaliGemma(nn.Module):
         self,
         vlm_config,
         use_adarms=None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
+        precision: torch.dtype = torch.bfloat16,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -145,10 +147,10 @@ class PI0FastPaliGemma(nn.Module):
 
         self.to_bfloat16_for_selected_params(precision)
 
-    def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
-        if precision == "bfloat16":
+    def to_bfloat16_for_selected_params(self, precision: torch.dtype = torch.bfloat16):
+        if precision == torch.bfloat16:
             self.to(dtype=torch.bfloat16)
-        elif precision == "float32":
+        elif precision == torch.float32:
             self.to(dtype=torch.float32)
             return
         else:
@@ -233,7 +235,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.paligemma_with_expert = PI0FastPaliGemma(
             paligemma_config,
             use_adarms=[False, True],
-            precision=cast(Literal["bfloat16", "float32"], config.dtype),
+            precision=cast(torch.dtype, config.dtype),
         )
 
         # Initialize gradient checkpointing flag
@@ -241,7 +243,6 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Compile model if requested
         if config.compile_model:
-            torch.set_float32_matmul_precision("high")
             self.sample_actions_fast = torch.compile(self.sample_actions_fast, mode=config.compile_mode)
             self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 
@@ -769,20 +770,36 @@ class PI0FastPolicy(PreTrainedPolicy):
         # Load tokenizers first
         try:
             # Load FAST tokenizer
+            repo_id, revision = split_hub_reference(config.action_tokenizer_name)
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                config.action_tokenizer_name, trust_remote_code=True
+                repo_id, trust_remote_code=config.trust_remote_code, revision=revision, code_revision=revision
             )
 
             # Load PaliGemma tokenizer for token conversion
+            repo_id, revision = split_hub_reference(config.text_tokenizer_name)
             self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-                config.text_tokenizer_name, trust_remote_code=True, add_eos_token=True, add_bos_token=False
+                repo_id,
+                trust_remote_code=config.trust_remote_code,
+                add_eos_token=True,
+                add_bos_token=False,
+                revision=revision,
+                code_revision=revision,
             )
 
             logging.info("Loaded FAST tokenizer for action detokenization")
         except Exception as e:
             logging.error(f"Failed to load FAST tokenizer for action detokenization: {e}")
             logging.error("Tokenizer loading is required for proper policy initialization; aborting.")
-            raise RuntimeError("Failed to load required tokenizers for PI0FastPolicy initialization") from e
+            hint = (
+                ""
+                if config.trust_remote_code
+                else " The FAST action tokenizer runs custom code: after reviewing it, pass "
+                "--policy.trust_remote_code=true (--model.trust_remote_code=true for lerobot-policy-server) "
+                "or trust_remote_code=True in Python."
+            )
+            raise RuntimeError(
+                f"Failed to load required tokenizers for PI0FastPolicy initialization.{hint}"
+            ) from e
 
         # Initialize the core PI0Fast model
         self.init_rtc_processor()
@@ -811,6 +828,7 @@ class PI0FastPolicy(PreTrainedPolicy):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool | None = None,
         strict: bool = True,
         **kwargs,
     ) -> T:
@@ -834,8 +852,13 @@ class PI0FastPolicy(PreTrainedPolicy):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                trust_remote_code=bool(trust_remote_code),
                 **kwargs,
             )
+
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
@@ -850,13 +873,11 @@ class PI0FastPolicy(PreTrainedPolicy):
                 resolved_file = cached_file(
                     pretrained_name_or_path,
                     "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    token=token,
+                    revision=revision,
+                    local_files_only=local_files_only,
                 )
                 from safetensors.torch import load_file
 

@@ -89,7 +89,7 @@ def test_training_step_reduces_loss_tiny_flex() -> None:
 
     cfg = LingBotVAConfig(
         attn_mode="flex",
-        dtype="bfloat16",
+        dtype=torch.bfloat16,
         in_channels=16,
         out_channels=16,
         action_dim=8,

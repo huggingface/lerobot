@@ -31,9 +31,10 @@ import contextlib
 import importlib
 import json
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
+from itertools import batched
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
@@ -41,6 +42,7 @@ import numpy as np
 import torch
 
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
+from lerobot.streaming.location import hf_dataset_uri
 from lerobot.utils.import_utils import _lancedb_available, require_package
 
 if TYPE_CHECKING or _lancedb_available:
@@ -75,6 +77,39 @@ from .lance_utils import (  # noqa: F401
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
+# Per-call limits for multi-sample RGB decoding within each DataLoader worker.
+# Concurrent file decodes have independent budgets; final sample outputs,
+# scatter copies, and decoder-internal memory are excluded from the byte estimate.
+_RGB_DECODE_MAX_FRAMES = 64
+_RGB_DECODE_MAX_BYTES = 64 << 20
+
+# Limit the temporal span when merging multiple depth windows, further bounded
+# by the byte budget. Individual windows keep the direct decode path; these
+# limits do not split an individual window.
+_DEPTH_DECODE_MAX_SPAN_FRAMES = 64
+_DEPTH_DECODE_MAX_BYTES = 64 << 20
+# PyAV retains decoded uint16 frames while dequantization creates float32 output.
+# Leave extra headroom for the selected-frame stack and allocator overhead.
+_DEPTH_DECODE_BYTES_PER_VALUE = 8
+
+
+def _decode_frame_limit(
+    shape: Sequence[int] | None,
+    *,
+    max_frames: int,
+    max_bytes: int,
+    bytes_per_value: int,
+) -> int:
+    """Bound frame capacity by estimated memory, allowing at least one frame.
+
+    Missing or zero-sized shapes fall back to the frame cap. Callers apply the
+    capacity to unique RGB frames or the temporal span of merged depth windows.
+    """
+    frame_values = int(np.prod(shape)) if shape else 0
+    if not frame_values:
+        return max_frames
+    return min(max_frames, max(1, max_bytes // (frame_values * bytes_per_value)))
+
 
 class _SamplePlan(TypedDict):
     """Frames-table rows one sample needs, plus its per-key delta windows and padding masks."""
@@ -84,6 +119,52 @@ class _SamplePlan(TypedDict):
     rows: set[int]
     windows: dict[str, list[int]]
     padding: dict[str, torch.Tensor]
+
+
+class _EpisodeSubsetIndexMapping(Mapping[int, int]):
+    """Map absolute frame indices to relative Lance rows using selected episode intervals.
+
+    Stores O(num_episodes) boundaries; both lookup directions use binary search.
+    Keys follow storage order, and unselected frames raise KeyError.
+    """
+
+    def __init__(self, episode_starts: np.ndarray, episode_ends: np.ndarray) -> None:
+        """Build from ascending, non-overlapping absolute [start, end) intervals."""
+        self._episode_starts = np.ascontiguousarray(episode_starts, dtype=np.int64)
+        self._episode_ends = np.ascontiguousarray(episode_ends, dtype=np.int64)
+        self._relative_episode_ends = np.cumsum(self._episode_ends - self._episode_starts)
+        self._num_frames = int(self._relative_episode_ends[-1]) if len(self._relative_episode_ends) else 0
+
+    def rel_to_abs(self, rel_idx: int) -> int:
+        """Map a relative row in [0, len(self)) to its absolute frame index."""
+        block = int(np.searchsorted(self._relative_episode_ends, rel_idx, side="right"))
+        relative_base = int(self._relative_episode_ends[block - 1]) if block > 0 else 0
+        return int(self._episode_starts[block]) + (rel_idx - relative_base)
+
+    def __getitem__(self, abs_idx: int) -> int:
+        block = int(np.searchsorted(self._episode_starts, abs_idx, side="right")) - 1
+        if block < 0 or abs_idx >= int(self._episode_ends[block]):
+            raise KeyError(abs_idx)
+        relative_base = int(self._relative_episode_ends[block - 1]) if block > 0 else 0
+        return relative_base + (abs_idx - int(self._episode_starts[block]))
+
+    def __len__(self) -> int:
+        return self._num_frames
+
+    def __iter__(self) -> Iterator[int]:
+        for start, end in zip(self._episode_starts.tolist(), self._episode_ends.tolist(), strict=True):
+            yield from range(start, end)
+
+    def __eq__(self, other: object) -> bool:
+        # Mapping.__eq__ materializes per-frame dicts; compare items incrementally instead.
+        if isinstance(other, Mapping):
+            if len(self) != len(other):
+                return False
+            try:
+                return all(other[key] == value for key, value in self.items())
+            except KeyError:
+                return False
+        return NotImplemented
 
 
 def _opened[T](resource: T | None) -> T:
@@ -132,7 +213,7 @@ class LanceDatasetReader(BaseDatasetReader):
         revision: str | None = None,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
-        storage_options: dict | None = None,
+        storage_options: dict[str, str] | None = None,
         video_decoder_cache_size: int | None = None,
         token: str | bool | None = None,
     ):
@@ -140,11 +221,11 @@ class LanceDatasetReader(BaseDatasetReader):
         self.meta = meta
         self.repo_id = meta.repo_id
         self.tolerance_s = tolerance_s
-        self._storage_options = storage_options
+        self._storage_options = dict(storage_options) if storage_options is not None else None
         self._token = token
 
         self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision, token)
-        self._hub_revision = meta.revision if self._db_uri == f"hf://datasets/{self.repo_id}" else None
+        self._hub_revision = meta.revision if self._db_uri == hf_dataset_uri(self.repo_id) else None
 
         if self.meta.image_keys:
             raise NotImplementedError(
@@ -191,17 +272,17 @@ class LanceDatasetReader(BaseDatasetReader):
                 "the dataset metadata is inconsistent."
             )
 
-        self._rel_to_abs: np.ndarray | None = None
-        self._absolute_to_relative_idx: dict[int, int] | None = None
+        self._subset_index_mapping: _EpisodeSubsetIndexMapping | None = None
         if self.episodes is not None:
             # Rows are served in storage order regardless of the episodes list
-            # order, matching the default reader's parquet predicate pushdown.
-            self._rel_to_abs = np.concatenate(
-                [np.arange(self._ep_from[ep], self._ep_to[ep]) for ep in sorted(self.episodes)]
+            # order, matching the default reader's parquet predicate pushdown;
+            # likewise a duplicated episode is served once, as its isin() filter does.
+            # The index keeps only per-episode bounds (O(num_episodes)) and resolves
+            # either direction with a binary search instead of one entry per frame.
+            selected = sorted(set(self.episodes))
+            self._subset_index_mapping = _EpisodeSubsetIndexMapping(
+                self._ep_from[selected], self._ep_to[selected]
             )
-            self._absolute_to_relative_idx = {
-                int(abs_idx): rel_idx for rel_idx, abs_idx in enumerate(self._rel_to_abs)
-            }
 
         self._task_names = list(self.meta.tasks.index)
 
@@ -325,15 +406,19 @@ class LanceDatasetReader(BaseDatasetReader):
 
     @property
     def num_frames(self) -> int:
-        return len(self._rel_to_abs) if self._rel_to_abs is not None else self.meta.total_frames
+        return (
+            len(self._subset_index_mapping)
+            if self._subset_index_mapping is not None
+            else self.meta.total_frames
+        )
 
     @property
     def num_episodes(self) -> int:
         return len(self.episodes) if self.episodes is not None else self.meta.total_episodes
 
     @property
-    def absolute_to_relative_idx(self) -> dict[int, int] | None:
-        return self._absolute_to_relative_idx
+    def absolute_to_relative_idx(self) -> Mapping[int, int] | None:
+        return self._subset_index_mapping
 
     def get_item(self, idx: int) -> dict:
         return self.get_items([idx])[0]
@@ -414,7 +499,7 @@ class LanceDatasetReader(BaseDatasetReader):
             idx += self.num_frames
         if not 0 <= idx < self.num_frames:
             raise IndexError(f"Index {idx} is out of range for a dataset of {self.num_frames} frames.")
-        return int(self._rel_to_abs[idx]) if self._rel_to_abs is not None else idx
+        return self._subset_index_mapping.rel_to_abs(idx) if self._subset_index_mapping is not None else idx
 
     def _episode_index_for_abs_idx(self, abs_idx: int) -> int:
         return int(np.searchsorted(self._ep_from, abs_idx, side="right") - 1)
@@ -477,24 +562,107 @@ class LanceDatasetReader(BaseDatasetReader):
             key, chunk_idx, file_idx = file_key
             decoder, source = entries[file_key]
             if key in self.meta.depth_keys:
-                for sample_idx, shifted_ts in file_requests:
-                    results[sample_idx][key] = self._decode_depth_window(source, shifted_ts, file_key)
+                for sample_idx, frames in self._decode_depth_file_requests(source, file_requests, file_key):
+                    results[sample_idx][key] = frames
                 return
             fps = decoder.metadata.average_fps
-            for sample_idx, shifted_ts in file_requests:
-                indices = [round(ts * fps) for ts in shifted_ts]
-                batch = decoder.get_frames_at(indices=indices)
-                distance = (torch.tensor(shifted_ts, dtype=torch.float64) - batch.pts_seconds).abs()
+            request_indices = [[round(ts * fps) for ts in shifted_ts] for _, shifted_ts in file_requests]
+
+            def _finish_request(
+                sample_idx: int, shifted_ts: list[float], frames: torch.Tensor, loaded_pts: torch.Tensor
+            ) -> None:
+                distance = (
+                    torch.tensor(shifted_ts, dtype=torch.float64, device=loaded_pts.device) - loaded_pts
+                ).abs()
                 if (distance > self.tolerance_s).any():
                     raise FrameTimestampError(
                         f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
                         f"'{key}' (chunk {chunk_idx}, file {file_idx}): queried {shifted_ts}, "
-                        f"loaded {batch.pts_seconds.tolist()}."
+                        f"loaded {loaded_pts.tolist()}."
                     )
+                results[sample_idx][key] = frames.squeeze(0)
+
+            # Avoid set/map construction and an advanced-index copy when this file
+            # contributes to only one sample in the batch. The decoded tensor is
+            # the final sample output, so splitting it would add another full-size
+            # output allocation without reducing the required result memory.
+            if len(file_requests) == 1:
+                sample_idx, shifted_ts = file_requests[0]
+                batch = decoder.get_frames_at(indices=request_indices[0])
                 frames = batch.data
                 if not self.return_uint8:
                     frames = (frames / 255.0).type(torch.float32)
-                results[sample_idx][key] = frames.squeeze(0)
+                _finish_request(sample_idx, shifted_ts, frames, batch.pts_seconds)
+                return
+
+            unique_indices = sorted({index for indices in request_indices for index in indices})
+            # Normalization allocates float32 output while ``batch`` still owns the
+            # decoder's uint8 tensor, so both storages contribute to peak decode memory.
+            value_bytes = np.dtype(np.uint8).itemsize
+            if not self.return_uint8:
+                value_bytes += np.dtype(np.float32).itemsize
+            decode_batch_size = _decode_frame_limit(
+                self.meta.features[key].get("shape"),
+                max_frames=_RGB_DECODE_MAX_FRAMES,
+                max_bytes=_RGB_DECODE_MAX_BYTES,
+                bytes_per_value=value_bytes,
+            )
+
+            # Keep the low-overhead gather/scatter path when all unique frames
+            # already fit within the configured per-decode limits.
+            if len(unique_indices) <= decode_batch_size:
+                batch = decoder.get_frames_at(indices=unique_indices)
+                frames = batch.data
+                if not self.return_uint8:
+                    frames = (frames / 255.0).type(torch.float32)
+                positions = {index: position for position, index in enumerate(unique_indices)}
+                for (sample_idx, shifted_ts), indices in zip(file_requests, request_indices, strict=True):
+                    source_positions = [positions[index] for index in indices]
+                    _finish_request(
+                        sample_idx,
+                        shifted_ts,
+                        frames[source_positions],
+                        batch.pts_seconds[source_positions],
+                    )
+                return
+
+            index_batches = iter(batched(unique_indices, decode_batch_size))
+
+            first_indices = list(next(index_batches))
+            first_batch = decoder.get_frames_at(indices=first_indices)
+            first_frames = first_batch.data
+            if not self.return_uint8:
+                first_frames = (first_frames / 255.0).type(torch.float32)
+            sample_frames = [
+                first_frames.new_empty((len(indices), *first_frames.shape[1:])) for indices in request_indices
+            ]
+            sample_pts = [first_batch.pts_seconds.new_empty(len(indices)) for indices in request_indices]
+
+            def _scatter_batch(indices: list[int], frames: torch.Tensor, pts: torch.Tensor) -> None:
+                positions = {index: position for position, index in enumerate(indices)}
+                for request_pos, requested in enumerate(request_indices):
+                    output_positions = [pos for pos, index in enumerate(requested) if index in positions]
+                    if not output_positions:
+                        continue
+                    source_positions = [positions[requested[pos]] for pos in output_positions]
+                    sample_frames[request_pos][output_positions] = frames[source_positions]
+                    sample_pts[request_pos][output_positions] = pts[source_positions]
+
+            _scatter_batch(first_indices, first_frames, first_batch.pts_seconds)
+            del first_batch, first_frames
+            for index_batch in index_batches:
+                indices = list(index_batch)
+                batch = decoder.get_frames_at(indices=indices)
+                frames = batch.data
+                if not self.return_uint8:
+                    frames = (frames / 255.0).type(torch.float32)
+                _scatter_batch(indices, frames, batch.pts_seconds)
+                del batch, frames
+
+            for (sample_idx, shifted_ts), frames, loaded_pts in zip(
+                file_requests, sample_frames, sample_pts, strict=True
+            ):
+                _finish_request(sample_idx, shifted_ts, frames, loaded_pts)
 
         decode_pool = _opened(self._decode_pool)
         futures = [decode_pool.submit(_decode_file, k, r) for k, r in requests.items()]
@@ -525,7 +693,7 @@ class LanceDatasetReader(BaseDatasetReader):
         # Lazy load torchcodec
         from torchcodec.decoders import VideoDecoder
 
-        self._load_file_meta([key for key in file_keys if key not in self._file_meta])
+        file_meta = self._load_file_meta(file_keys)
 
         prepared: dict[tuple, tuple] = {}
         new_files = []
@@ -537,12 +705,12 @@ class LanceDatasetReader(BaseDatasetReader):
 
         if new_files:
             sources = {
-                key: _SparseBlobSource(self._file_meta[key]["file_size"], partial(self._blob_handle, key))
+                key: _SparseBlobSource(file_meta[key]["file_size"], partial(self._blob_handle, key))
                 for key in new_files
             }
             spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
             for key in new_files:
-                meta = self._file_meta[key]
+                meta = file_meta[key]
                 spans = [
                     (0, min(_OPEN_PROBE_BYTES, meta["file_size"])),
                     # Slack past the moov covers the next box header ffmpeg reads.
@@ -570,7 +738,7 @@ class LanceDatasetReader(BaseDatasetReader):
         if windows:
             window_spans: dict[tuple, list[tuple[int, int]]] = {}
             for key, frame_windows in windows.items():
-                meta = self._file_meta[key]
+                meta = file_meta[key]
                 source = prepared[key][1]
                 spans = [
                     span
@@ -607,8 +775,8 @@ class LanceDatasetReader(BaseDatasetReader):
         base = float(from_ts_arr[ep_idx])
         return [base + float(timestamps[row_pos[row]]) for row in window]
 
-    def _decode_depth_window(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
-        """Decode one depth window with upstream's pyav decoder over our sparse source."""
+    def _decode_depth_frames(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
+        """Decode and dequantize to (N, C, H, W), preserving timestamp order and the time axis."""
         source.seek(0)
         frames = decode_video_frames_pyav(
             source, shifted_ts, self.tolerance_s, return_uint8=False, is_depth=True
@@ -621,7 +789,59 @@ class LanceDatasetReader(BaseDatasetReader):
             shift=config.shift,
             use_log=config.use_log,
             output_unit=self._depth_output_unit,
-        ).squeeze(0)
+        )
+
+    def _decode_depth_file_requests(
+        self, source, file_requests: list[tuple[int, list[float]]], file_key: tuple
+    ) -> list[tuple[int, torch.Tensor]]:
+        """Merge nearby sample windows so each depth span opens and seeks PyAV once."""
+        if len(file_requests) == 1:
+            sample_idx, shifted_ts = file_requests[0]
+            return [(sample_idx, self._decode_depth_frames(source, shifted_ts, file_key).squeeze(0))]
+
+        fps = float(self.meta.fps)
+        max_span_frames = _decode_frame_limit(
+            self.meta.features[file_key[0]].get("shape"),
+            max_frames=_DEPTH_DECODE_MAX_SPAN_FRAMES,
+            max_bytes=_DEPTH_DECODE_MAX_BYTES,
+            bytes_per_value=_DEPTH_DECODE_BYTES_PER_VALUE,
+        )
+        merge_gap_s = 1.0 / fps + self.tolerance_s
+
+        ordered = sorted(file_requests, key=lambda request: min(request[1]))
+        groups: list[list[tuple[int, list[float]]]] = []
+        group: list[tuple[int, list[float]]] = []
+        group_start = group_end = 0.0
+        for request in ordered:
+            start, end = min(request[1]), max(request[1])
+            merged_end = max(group_end, end)
+            merged_span_frames = int(np.ceil((merged_end - group_start) * fps)) + 1
+            if group and start <= group_end + merge_gap_s and merged_span_frames <= max_span_frames:
+                group.append(request)
+                group_end = merged_end
+            else:
+                if group:
+                    groups.append(group)
+                group = [request]
+                group_start, group_end = start, end
+        groups.append(group)
+
+        decoded: list[tuple[int, torch.Tensor]] = []
+        for group in groups:
+            if len(group) == 1:
+                sample_idx, timestamps = group[0]
+                decoded.append(
+                    (sample_idx, self._decode_depth_frames(source, timestamps, file_key).squeeze(0))
+                )
+                continue
+            unique_ts = sorted({timestamp for _, timestamps in group for timestamp in timestamps})
+            frames = self._decode_depth_frames(source, unique_ts, file_key)
+            positions = {timestamp: position for position, timestamp in enumerate(unique_ts)}
+            for sample_idx, timestamps in group:
+                decoded.append(
+                    (sample_idx, frames[[positions[timestamp] for timestamp in timestamps]].squeeze(0))
+                )
+        return decoded
 
     def _fetch_spans(
         self, spans_by_key: dict[tuple, list[tuple[int, int]]], sources: dict[tuple, _SparseBlobSource]
@@ -638,10 +858,12 @@ class LanceDatasetReader(BaseDatasetReader):
         for (key, offset), payload in zip(range_targets, payloads, strict=True):
             sources[key].add(offset, payload.as_py())
 
-    def _load_file_meta(self, missing: list[tuple]) -> None:
-        """Fetch byte-index columns for files not yet in the per-worker cache."""
+    def _load_file_meta(self, file_keys: list[tuple]) -> dict[tuple, dict]:
+        """Return the batch's byte indexes, retaining references across cache eviction."""
+        file_meta = {key: self._file_meta[key] for key in file_keys if key in self._file_meta}
+        missing = [key for key in file_keys if key not in file_meta]
         if not missing:
-            return
+            return file_meta
         row_ids = [self._video_row_ids[file_key] for file_key in missing]
         batch = (
             _opened(self._videos_table)
@@ -667,7 +889,7 @@ class LanceDatasetReader(BaseDatasetReader):
         position_values = kf_position_column.values.to_numpy(zero_copy_only=False)
         for i in range(batch.num_rows):
             file_key = (scalars["video_key"][i], scalars["chunk_index"][i], scalars["file_index"][i])
-            self._file_meta[file_key] = {
+            file_meta[file_key] = self._file_meta[file_key] = {
                 "file_size": scalars["file_size"][i],
                 "moov_offset": scalars["moov_offset"][i],
                 "moov_size": scalars["moov_size"][i],
@@ -676,6 +898,7 @@ class LanceDatasetReader(BaseDatasetReader):
             }
         while len(self._file_meta) > 2048:
             self._file_meta.popitem(last=False)
+        return file_meta
 
     def _window_byte_range(self, key: str, meta: dict, first_frame: int, last_frame: int) -> tuple[int, int]:
         """Byte range covering frames [first, last]: preceding keyframe to next keyframe."""
