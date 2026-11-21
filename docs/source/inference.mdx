@@ -404,6 +404,8 @@ lerobot-rollout \
 | `/subtask <text>`   | Change the instruction within the current run; asynchronous inference may enter a planned hold. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar). With an [external planner](#external-planner), `/subtask` also hands control back from autosteer |
 | `/vqa <text>`       | Ask a question about what the robot currently sees. Only while a run is in progress, and only with a policy text head or an [external planner](#external-planner)                                                                                                                                                       |
 | `/autosteer <goal>` | Hand over a high-level goal and let the policy's text head or the [external planner](#external-planner) choose the subtasks. `/autosteer off` hands control back; no argument reports the current goal                                                                                                                  |
+| `/pause`            | Stop the policy and leave the robot where it is, keeping the current instruction                                                                                                                                                                                                                                        |
+| `/resume`           | Continue the instruction after `/pause`, from wherever the robot is now                                                                                                                                                                                                                                                 |
 | `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                                                                                                                                                           |
 | `/stop`             | End the session and run the normal shutdown routines                                                                                                                                                                                                                                                                    |
 | `/help`             | List the commands                                                                                                                                                                                                                                                                                                       |
@@ -499,7 +501,7 @@ lerobot-rollout ... --task="put all colored cubes in the green bin" --interactiv
 
 ### Programmatic control
 
-`RolloutController` exposes the same operations as a library API — thread-safe `start()` / `reset()` / `stop()` / `set_task()` plus a `RolloutEvent` callback, with no stdin, printing or log muting attached:
+`RolloutController` exposes the same operations as a library API — thread-safe `start()` / `pause()` / `resume()` / `reset()` / `stop()` / `set_task()` plus a `RolloutEvent` callback, with no stdin, printing or log muting attached:
 
 ```python
 from threading import Event, Thread
@@ -523,6 +525,8 @@ serve_thread.start()
 
 controller.start()                        # robot starts executing the policy
 controller.set_task("grab the red cube")  # re-instruct mid-run
+controller.pause()                        # stop where the robot is, keep the task
+controller.resume()                       # continue the task from there
 controller.reset()                        # stop movement, return home, stay warm
 controller.stop()                         # end serve()
 
