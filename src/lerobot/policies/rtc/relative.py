@@ -49,7 +49,9 @@ def reanchor_relative_rtc_prefix(
 
     action_cpu = prev_actions_absolute.detach().cpu()
     mask = relative_step._build_mask(action_cpu.shape[-1])
-    relative_actions = to_relative_actions(action_cpu, state, mask)
+    relative_actions = to_relative_actions(
+        action_cpu, state, mask, state_anchor_index=relative_step.state_anchor_index
+    )
 
     transition = create_transition(action=relative_actions)
     if normalizer_step is not None:
