@@ -209,7 +209,7 @@ def combine_feature_dicts(*dicts: dict) -> dict:
             shape = value.get("shape")
             is_vector = (
                 dtype not in ("image", "video", "string")
-                and isinstance(shape, tuple)
+                and isinstance(shape, (tuple, list))
                 and len(shape) == 1
                 and "names" in value
             )

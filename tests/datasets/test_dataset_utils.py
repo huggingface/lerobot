@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -169,6 +171,23 @@ def test_merge_multiple_groups_order_and_dedup():
     assert out[ACTION]["shape"] == (4,)
 
 
+@pytest.mark.parametrize("serialize_left", [False, True])
+@pytest.mark.parametrize("serialize_right", [False, True])
+def test_merge_serialized_vector_features(serialize_left, serialize_right):
+    left = {ACTION: {"dtype": "float32", "shape": (2,), "names": ["ee.x", "ee.y"]}}
+    right = {ACTION: {"dtype": "float32", "shape": (2,), "names": ["ee.y", "ee.z"]}}
+    if serialize_left:
+        left = json.loads(json.dumps(left))
+    if serialize_right:
+        right = json.loads(json.dumps(right))
+    original = deepcopy((left, right))
+
+    merged = combine_feature_dicts(left, right)
+
+    assert merged[ACTION] == {"dtype": "float32", "shape": (3,), "names": ["ee.x", "ee.y", "ee.z"]}
+    assert (left, right) == original
+
+
 def test_non_vector_last_wins_for_images():
     # Non-vector (images) with same name should be overwritten by the last image specified
     g1 = {
@@ -191,9 +210,11 @@ def test_non_vector_last_wins_for_images():
     assert out[f"{OBS_IMAGES}.front"]["dtype"] == "image"
 
 
-def test_dtype_mismatch_raises():
-    g1 = {ACTION: {"dtype": "float32", "shape": (1,), "names": ["a"]}}
-    g2 = {ACTION: {"dtype": "float64", "shape": (1,), "names": ["b"]}}
+@pytest.mark.parametrize("left_shape", [(1,), [1]])
+@pytest.mark.parametrize("right_shape", [(1,), [1]])
+def test_dtype_mismatch_raises(left_shape, right_shape):
+    g1 = {ACTION: {"dtype": "float32", "shape": left_shape, "names": ["a"]}}
+    g2 = {ACTION: {"dtype": "float64", "shape": right_shape, "names": ["b"]}}
 
     with pytest.raises(ValueError, match="dtype mismatch for 'action'"):
         _ = combine_feature_dicts(g1, g2)
