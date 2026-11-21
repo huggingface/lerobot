@@ -1282,7 +1282,11 @@ class FineARTVLAPolicy(PI05Policy):
         )
         att_2d = make_att_2d_masks(prefix_pad, prefix_att)
         position_ids = torch.cumsum(prefix_pad, dim=1) - 1
-        att_2d_4d = self.model._prepare_attention_masks_4d(att_2d, dtype=prefix_embs.dtype)
+        # prefix_embs stays fp32 on this path, so take the mask dtype from the (possibly bf16) SDPA queries.
+        first_layer = self.model.paligemma_with_expert.paligemma.model.language_model.layers[0]
+        att_2d_4d = self.model._prepare_attention_masks_4d(
+            att_2d, dtype=first_layer.self_attn.q_proj.weight.dtype
+        )
 
         (vlm_out, _), _ = self.model.paligemma_with_expert.forward(
             attention_mask=att_2d_4d,
