@@ -815,6 +815,21 @@ def test_fractions_to_episode_indices_lossless(total_episodes, fractions):
 
 
 @pytest.mark.parametrize(
+    "total_episodes, fractions, expected",
+    [
+        (100, {"train": 0.29, "val": 0.71}, {"train": 29, "val": 71}),
+        (100, {"train": 0.57, "val": 0.43}, {"train": 57, "val": 43}),
+        (50, {"train": 0.58, "val": 0.42}, {"train": 29, "val": 21}),
+    ],
+)
+def test_fractions_to_episode_indices_exact_counts(total_episodes, fractions, expected):
+    """A fraction that gives a whole number of episodes must not lose one to float error (100 * 0.29 = 28.999...)."""
+    result = _fractions_to_episode_indices(total_episodes, fractions)
+
+    assert {name: len(indices) for name, indices in result.items()} == expected
+
+
+@pytest.mark.parametrize(
     "total_episodes, fractions, match",
     [
         (2, {"train": 0.4, "val": 0.4, "test": 0.2}, "Cannot split"),

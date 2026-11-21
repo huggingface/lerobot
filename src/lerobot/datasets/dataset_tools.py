@@ -526,7 +526,8 @@ def _fractions_to_episode_indices(
             "there are fewer episodes than requested splits."
         )
 
-    counts = {name: int(total_episodes * fraction) for name, fraction in splits.items()}
+    # Round before flooring: 100 * 0.29 is 28.999999999999996 in floating point, not 29.
+    counts = {name: math.floor(round(total_episodes * fraction, 9)) for name, fraction in splits.items()}
     counts[positive_splits[-1]] += total_episodes - sum(counts.values())
 
     for name in positive_splits:
