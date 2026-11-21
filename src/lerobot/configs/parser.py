@@ -75,19 +75,22 @@ def _encode_dtype(value: torch.dtype, declared_type: type | None = None) -> str:
 
 
 def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
-    """Recursively flatten a nested dict to CLI-style args (e.g. {"lr": 1e-4} -> ["--lr=0.0001"])."""
+    """Recursively flatten a nested dict to CLI-style args (e.g. {"lr": 1e-4} -> ["--lr=0.0001"]).
+
+    Explicit None values become JSON null so nullable checkpoint settings can be cleared.
+    """
     args = []
     for key, value in d.items():
         if key in (PATH_KEY, draccus.CHOICE_TYPE_KEY):
             continue
         full_key = f"{prefix}.{key}" if prefix else key
-        if isinstance(value, bool):
-            value = str(value).lower()
+        if isinstance(value, bool) or value is None:
+            value = json.dumps(value)
         if isinstance(value, dict):
             args.extend(_flatten_to_cli_args(value, full_key))
         elif isinstance(value, list):
             args.append(f"--{full_key}={json.dumps(value)}")
-        elif value is not None:
+        else:
             args.append(f"--{full_key}={value}")
     return args
 
