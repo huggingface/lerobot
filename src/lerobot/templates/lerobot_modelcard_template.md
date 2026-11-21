@@ -43,6 +43,8 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 [EVO1](https://github.com/MINT-SJTU/Evo-1) is a Vision-Language-Action policy built around an InternVL3 backbone and a continuous flow-matching action head. It embeds camera images and the language instruction with InternVL3 and predicts future action chunks via flow matching.
 {% elif model_name == "fastwam" %}
 [FastWAM](https://arxiv.org/abs/2603.16666) is a World Action Model policy that keeps video world-modeling during training but predicts actions directly at inference time, initializing its visual world-model components from the Wan2.2 video-diffusion stack.
+{% elif model_name == "cae_fastwam" %}
+[CAE-FastWAM](https://huggingface.co/amd/CAE-FastWAM) is a [FastWAM](https://arxiv.org/abs/2603.16666) world action model with a Compact Action Expert: a 32-wide action expert denoises latent action tokens that a suite-conditioned action decoder turns into the action chunk, on top of FastWAM's Wan2.2 video expert.
 {% elif model_name == "longwam" %}
 [Long-WAM](https://nvlabs.github.io/LongLive/Long-WAM/) is a world-action model that conditions robot action prediction on an extended history of observations.
 {% elif model_name == "flux3" %}
@@ -111,6 +113,7 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "wall_oss_05": "wall_oss_05",
   "evo1": "evo1",
   "fastwam": "fastwam",
+  "cae_fastwam": "cae_fastwam",
   "longwam": "longwam",
   "flux3": "flux3",
   "lingbot_va": "lingbot_va",
