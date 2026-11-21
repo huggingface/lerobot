@@ -504,6 +504,82 @@ calibration change.
 
 </Tip>
 
+## Exporting With torch.export
+
+Continuous inference for one example, images included, can be exported with
+`torch.export`, for example to run it with ExecuTorch or Torch-TensorRT. Wrap
+`policy.predict_action_chunk` in a module that takes the flow matching noise as
+an input, and export it with `strict=False`:
+
+```python
+class PredictActionChunk(torch.nn.Module):
+    def __init__(self, policy):
+        super().__init__()
+        self.policy = policy
+
+    def forward(self, batch, noise):
+        return self.policy.predict_action_chunk(batch, noise=noise)
+
+
+program = torch.export.export(PredictActionChunk(policy), (batch, noise), strict=False)
+```
+
+- `batch` holds these outputs of the policy preprocessor for one example:
+  `input_ids`, `attention_mask`, `position_ids`, `token_type_ids`,
+  `pixel_values`, `image_token_pooling`, `image_grids`, `image_num_crops` and
+  `action_dim_is_pad`. Leave none out: without `attention_mask`,
+  `position_ids`, `token_type_ids` or `action_dim_is_pad`, the program exports
+  and runs without an error, but its actions can differ from what the policy
+  returns for the full processor output.
+- `noise` has the shape `(1, chunk_size, expected_max_action_dim)`. Without the
+  `noise` input, the program draws new noise on every call. With
+  `per_episode_seed=True`, always pass `noise`. Without it, the export fails on
+  torch 2.7 and 2.11. Where it works, as on torch 2.15, the program does not
+  reseed after `policy.reset()`, so later episodes do not get their own seed.
+- Like `predict_action_chunk`, the program returns normalized actions. Run the
+  policy postprocessor on them before they reach the robot.
+- The program only accepts inputs with the shapes of the example: the same
+  prompt length and the same number of images and crops. Export again for other
+  shapes.
+- Strict export is not supported: it stops at the autocast setup on torch 2.7
+  and 2.11. torch 2.7 exports strictly by default, so always pass
+  `strict=False`.
+- Only continuous inference for one example, with images, is covered. Batches
+  of several examples, discrete inference, video inputs and RTC are not.
+- `torch.export.save` writes the program, but `torch.export.load` cannot read
+  it back because of its autocast region. Programs from
+  `program.run_decompositions({})` and from the default
+  `program.run_decompositions()` load. On torch 2.7 and 2.11, though, saving a
+  CUDA bfloat16 program from the default decomposition fails with a
+  `SerializeError` on `_scaled_dot_product_flash_attention`.
+- Decomposing can change the actions. On CPU in bfloat16, both tables changed
+  the actions of a small test model by up to about 0.1, while the program before
+  decomposing matched eager inference. On CUDA with torch 2.15 they matched, and
+  in float32 they matched to rounding. ExecuTorch and Torch-TensorRT also
+  decompose the program when they lower it, so check the saved or lowered
+  program against eager inference before you use it.
+- ExecuTorch's default CPU kernels run only a float32 program (checked with
+  ExecuTorch 1.6.0 and torch 2.15.0), so export a policy loaded with
+  `policy.dtype=float32` for them. With the default `bfloat16`, `to_edge`
+  rejects the vision layer norm: its input is bfloat16 and its weights float32.
+- The program checks the image inputs (token counts, crop counts, pooling
+  rows) with runtime asserts. ExecuTorch and Torch-TensorRT drop these asserts.
+  With mismatched inputs, the program can then return wrong actions without an
+  error, or read past the end of a tensor on a runtime that does not check
+  indices. Where the asserts stay, as in `program.module()` on a GPU, each one
+  waits for a copy of one value to the CPU.
+
+Inputs from the policy preprocessor can mismatch too: it tokenizes the task
+together with the image tokens, so a task that contains `<im_patch>` adds an
+image patch token. Before each call to a program without the asserts, check the
+image patch tokens as eager inference does:
+
+```python
+patch_tokens = (batch["input_ids"] == policy.model.config.image_patch_id).sum()
+if patch_tokens != batch["image_token_pooling"].shape[0]:
+    raise ValueError("The image patch tokens do not match the image features.")
+```
+
 ## Differences From the Original Implementation
 
 This LeRobot port is intended to match MolmoAct2 behavior while using LeRobot's
