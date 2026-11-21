@@ -485,6 +485,27 @@ def test_running_quantile_stats_get_statistics_with_quantiles():
             assert np.all(stats[prev_q_key] <= stats[q_key])
 
 
+@pytest.mark.parametrize("num_quantile_bins", [1, 2, 8])
+@pytest.mark.parametrize("multiple_batches", [False, True])
+def test_running_quantile_stats_interpolates_first_bin(num_quantile_bins, multiple_batches):
+    quantiles = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+    running_stats = RunningQuantileStats(quantile_list=quantiles, num_quantile_bins=num_quantile_bins)
+    data = np.column_stack((np.arange(8.0), np.arange(8.0) + 10.0))
+    if multiple_batches:
+        # Keep the initial range fixed so this also exercises accumulated counts.
+        running_stats.update(data[[0, 2, 4, 7]])
+        running_stats.update(data[[1, 3, 5, 6]])
+    else:
+        running_stats.update(data)
+
+    stats = running_stats.get_statistics()
+
+    # Every bin has the same population: the inverse histogram CDF is linear,
+    # including quantiles inside the first bin and the endpoint quantiles.
+    for q in quantiles:
+        np.testing.assert_allclose(stats[f"q{int(q * 100):02d}"], [7 * q, 10 + 7 * q], atol=1e-9)
+
+
 def test_running_quantile_stats_histogram_adjustment():
     """Test that histograms adjust when min/max change."""
     running_stats = RunningQuantileStats()
@@ -982,3 +1003,16 @@ def test_aggregate_stats_incremental_resume():
     # Bounds should widen monotonically
     np.testing.assert_allclose(cumulative2["action"]["q01"], np.array([-25.0, -18.0]))
     np.testing.assert_allclose(cumulative2["action"]["q99"], np.array([35.0, 22.0]))
+
+
+@pytest.mark.parametrize("offset,scale", [(0.0, 1.0), (-10.0, 3.0)])
+def test_running_quantile_stats_skewed_first_bin(offset: float, scale: float) -> None:
+    # Six of eight samples occupy the first quarter of the range.
+    data = np.array([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 2.5, 4.0])
+    running = RunningQuantileStats(quantile_list=[0.25, 0.5, 0.75], num_quantile_bins=4)
+    running.update((offset + scale * data)[:, None])
+    stats = running.get_statistics()
+    # Histogram CDF reaches 0.75 at the end of the first bin, so its
+    # 25th/50th/75th percentiles lie at 1/3, 2/3, and 1 of that bin.
+    for key, expected in [("q25", 1 / 3), ("q50", 2 / 3), ("q75", 1.0)]:
+        np.testing.assert_allclose(stats[key], [offset + scale * expected], atol=1e-9)
