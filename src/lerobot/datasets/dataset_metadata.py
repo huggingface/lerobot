@@ -460,8 +460,8 @@ class LeRobotDatasetMetadata:
     def tools(self) -> list[dict]:
         """OpenAI-style tool schemas declared by this dataset.
 
-        Read from ``meta/info.json["tools"]``. Returns a copy, so callers
-        can mutate the result safely. Falls back to
+        Read from ``meta/info.json["tools"]``. Returns a deep copy, so callers
+        can mutate nested schemas safely. Falls back to
         :data:`lerobot.datasets.language.DEFAULT_TOOLS` (the canonical
         ``say`` schema) when the dataset doesn't declare any — that way
         unannotated datasets and chat-template consumers
@@ -473,8 +473,8 @@ class LeRobotDatasetMetadata:
         """
         declared = self.info.tools
         if declared:
-            return [dict(t) for t in declared]
-        return [dict(t) for t in DEFAULT_TOOLS]
+            return deepcopy(declared)
+        return deepcopy(DEFAULT_TOOLS)
 
     @tools.setter
     def tools(self, value: list[dict] | None) -> None:
