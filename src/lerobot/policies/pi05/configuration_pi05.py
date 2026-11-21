@@ -78,6 +78,11 @@ class PI05Config(PreTrainedConfig):
     # Maximum clean action-prefix length sampled during training. Zero disables trained RTC.
     rtc_training_max_delay: int = 0
 
+    # FlowDAgger (arXiv 2607.08877): path or Hub repo of a noise policy trained with
+    # `lerobot-train-flow-dagger`. When set, inference seeds denoising with its output
+    # instead of Gaussian noise; the base weights are unchanged.
+    noise_policy_path: str | None = None
+
     image_resolution: tuple[int, int] = (
         DEFAULT_IMAGE_SIZE,
         DEFAULT_IMAGE_SIZE,
