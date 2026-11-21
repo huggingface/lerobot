@@ -1,0 +1,285 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import torch
+from numpy.typing import NDArray
+from PIL import Image
+from torch import Tensor
+
+from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
+    PolicyAction,
+    PolicyProcessorPipeline,
+    ProcessorStep,
+    ProcessorStepRegistry,
+    policy_action_to_transition,
+)
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import (
+    RYNNVALUE_FEATURE_PREFIX,
+    RYNNVALUE_PROCESSOR_SUBFOLDER,
+    RynnValueConfig,
+)
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from .rynn_value_lang.processing_rynn_value_lang import RynnValueLangProcessor
+else:
+    RynnValueLangProcessor = None  # type: ignore[assignment]
+
+
+def _expand_text(value: Any, *, batch_size: int, default: str | None, name: str) -> list[str]:
+    if value is None:
+        value = default
+    if value is None:
+        raise KeyError(f"RynnValue expected {name} in complementary data")
+    if isinstance(value, str):
+        return [value] * batch_size
+    if isinstance(value, tuple):
+        value = list(value)
+    if not (isinstance(value, list) and all(isinstance(item, str) for item in value)):
+        raise TypeError(f"RynnValue {name} must be a string or list of strings")
+    if len(value) == 1 and batch_size > 1:
+        return value * batch_size
+    if len(value) != batch_size:
+        raise ValueError(f"Expected {batch_size} {name} values, got {len(value)}")
+    return value
+
+
+def select_frame_indices(num_frames: int, max_frames: int | None) -> NDArray[np.int64]:
+    """Return the indices of `max_frames` evenly spaced frames of a video, in order.
+
+    Like the official inference, shorter videos repeat frames so RynnValue always sees `max_frames`.
+    With one frame, the last one is kept, since it is the frame being scored; the official inference
+    keeps the first.
+
+    Args:
+        num_frames: Number of frames in the video.
+        max_frames: Number of frames to select, or `None` for every frame.
+
+    Returns:
+        The selected frame indices.
+    """
+    if max_frames is None:
+        return np.arange(num_frames, dtype=np.int64)
+    if max_frames == 1:
+        return np.asarray([num_frames - 1], dtype=np.int64)
+    return np.linspace(0, num_frames - 1, max_frames, dtype=np.int64)
+
+
+def _uniform_subsample(video: Tensor, max_frames: int | None) -> Tensor:
+    """Keep the frames `select_frame_indices` selects, on the video's device."""
+    if max_frames is None:
+        return video
+    return video[torch.as_tensor(select_frame_indices(video.shape[0], max_frames), device=video.device)]
+
+
+def _shrink_to_max_side(images: list[Image.Image], max_side: int | None) -> list[Image.Image]:
+    """Shrink frames so their longer side is at most `max_side`, as the official inference does."""
+    if max_side is None or not images or max(images[0].size) <= max_side:
+        return images
+    width, height = images[0].size
+    scale = max_side / max(width, height)
+    size = (round(width * scale), round(height * scale))
+    return [image.resize(size, resample=Image.Resampling.BICUBIC) for image in images]
+
+
+def _video_to_pil(video: Tensor, *, max_frames: int | None, max_image_side: int | None) -> list[Image.Image]:
+    video = _uniform_subsample(video, max_frames)
+    if video.ndim != 4:
+        raise ValueError(f"Expected a (T,C,H,W) or (T,H,W,C) video, got {tuple(video.shape)}")
+    if video.shape[1] in (1, 3):
+        video = video.permute(0, 2, 3, 1)
+    elif video.shape[-1] not in (1, 3):
+        raise ValueError(f"Expected channel dimension of size 1 or 3, got {tuple(video.shape)}")
+    array = video.detach().cpu().numpy()
+    # LeRobot frames are float in [0, 1] or uint8.
+    if np.issubdtype(array.dtype, np.floating):
+        array = np.rint(np.clip(array, 0.0, 1.0) * 255.0)
+    array = array.astype(np.uint8)
+    if array.shape[-1] == 1:
+        array = array[..., 0]
+    return _shrink_to_max_side([Image.fromarray(frame).convert("RGB") for frame in array], max_image_side)
+
+
+def _pad_sequences(sequences: list[Tensor], *, padding_value: int) -> Tensor:
+    return torch.nn.utils.rnn.pad_sequence(
+        [sequence.squeeze(0) for sequence in sequences],
+        batch_first=True,
+        padding_value=padding_value,
+    )
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="rynnvalue_encoder")
+class RynnValueEncoderProcessorStep(ProcessorStep):
+    """Encode trajectory frames and task text with the native RynnValue processor."""
+
+    checkpoint_path: str = "lerobot/RynnValue-4B"
+    checkpoint_revision: str | None = None
+    image_key: str = "observation.images.top"
+    task_key: str = "task"
+    default_task: str | None = None
+    max_frames: int | None = 8
+    max_image_side: int | None = 640
+    robot_description: str | None = None
+    camera_description: str | None = None
+    use_meta: bool | None = None
+    _processor: Any = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        require_package("transformers", extra="rynnvalue")
+        self._processor = RynnValueLangProcessor.from_pretrained(
+            self.checkpoint_path,
+            revision=self.checkpoint_revision,
+            subfolder=RYNNVALUE_PROCESSOR_SUBFOLDER,
+        )
+        if self.use_meta is not None:
+            self._processor.use_meta = self.use_meta
+            self._processor.refresh_conversation_builder()
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition.get(TransitionKey.OBSERVATION)
+        if not isinstance(observation, dict):
+            raise ValueError("RynnValueEncoderProcessorStep requires an observation dict")
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        if self.image_key not in observation:
+            raise KeyError(f"RynnValue expected image key {self.image_key!r} in observation")
+        frames = observation[self.image_key]
+        # Frames stay on their device until `_video_to_pil` has picked the ones RynnValue sees.
+        tensor = frames.detach() if isinstance(frames, Tensor) else torch.as_tensor(frames)
+        if tensor.ndim == 4:
+            tensor = tensor.unsqueeze(0)
+        elif tensor.ndim != 5:
+            raise ValueError(
+                f"Expected RynnValue frames with shape (T,C,H,W) or (B,T,C,H,W); got {tuple(tensor.shape)}"
+            )
+
+        tasks = _expand_text(
+            complementary.get(self.task_key),
+            batch_size=tensor.shape[0],
+            default=self.default_task,
+            name="task",
+        )
+        encoded = self.encode_samples(
+            [
+                (
+                    _video_to_pil(
+                        tensor[index], max_frames=self.max_frames, max_image_side=self.max_image_side
+                    ),
+                    tasks[index],
+                )
+                for index in range(tensor.shape[0])
+            ]
+        )
+        new_observation = dict(observation)
+        for key, value in encoded.items():
+            new_observation[f"{RYNNVALUE_FEATURE_PREFIX}{key}"] = value
+        output = transition.copy()
+        output[TransitionKey.OBSERVATION] = new_observation
+        return output
+
+    def encode_samples(self, samples: list[tuple[list[Image.Image], str]]) -> dict[str, Tensor]:
+        outputs = [
+            self._processor.process_episode(
+                instruction=task,
+                images=images,
+                robot_description=self.robot_description,
+                camera_description=self.camera_description,
+            )
+            for images, task in samples
+        ]
+        pad_id = self._processor.tokenizer.pad_token_id
+        if pad_id is None:
+            pad_id = self._processor.tokenizer.eos_token_id
+        if pad_id is None:
+            raise ValueError("RynnValue tokenizer must define a pad or EOS token")
+
+        encoded = {
+            "input_ids": _pad_sequences([output["input_ids"] for output in outputs], padding_value=pad_id),
+            "attention_mask": _pad_sequences(
+                [output["attention_mask"] for output in outputs], padding_value=0
+            ),
+            "pixel_values": torch.cat([output["pixel_values"].flatten(0, 1) for output in outputs], dim=0),
+            "image_grid_thw": torch.cat(
+                [output["image_grid_thw"].flatten(0, 1) for output in outputs], dim=0
+            ),
+        }
+        if all("mm_token_type_ids" in output for output in outputs):
+            encoded["mm_token_type_ids"] = _pad_sequences(
+                [output["mm_token_type_ids"] for output in outputs], padding_value=0
+            )
+        return encoded
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "checkpoint_path": self.checkpoint_path,
+            "checkpoint_revision": self.checkpoint_revision,
+            "image_key": self.image_key,
+            "task_key": self.task_key,
+            "default_task": self.default_task,
+            "max_frames": self.max_frames,
+            "max_image_side": self.max_image_side,
+            "robot_description": self.robot_description,
+            "camera_description": self.camera_description,
+            "use_meta": self.use_meta,
+        }
+
+
+def make_rynnvalue_pre_post_processors(
+    config: RynnValueConfig,
+    dataset_stats: dict[str, dict[str, Any]] | None = None,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    del dataset_stats
+    preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+        steps=[
+            AddBatchDimensionProcessorStep(),
+            RynnValueEncoderProcessorStep(
+                checkpoint_path=str(config.pretrained_path),
+                checkpoint_revision=config.pretrained_revision,
+                image_key=config.image_key,
+                task_key=config.task_key,
+                default_task=config.default_task,
+                max_frames=config.max_frames,
+                max_image_side=config.max_image_side,
+                robot_description=config.robot_description,
+                camera_description=config.camera_description,
+                use_meta=config.use_meta,
+            ),
+            DeviceProcessorStep(device=config.device or "cpu"),
+        ],
+        name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+    )
+    postprocessor = PolicyProcessorPipeline(
+        name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
+        to_transition=policy_action_to_transition,
+    )
+    return preprocessor, postprocessor

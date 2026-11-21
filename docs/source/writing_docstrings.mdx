@@ -249,8 +249,10 @@ autodoc block.
 - **Private members.** Anything starting with `_` is not part of the public API.
 - **The type annotation restated as prose.** `port (`str`): A string.` adds nothing. Say what it is for.
 - **Vendored upstream code.** `src/lerobot/policies/molmoact2/molmoact2_hf_model/` is vendored from
-  `transformers` and already carries upstream-style docstrings. Leave it alone — restyling it only creates
-  conflicts on the next sync. It is excluded from the API reference and from the docstring checks.
+  `transformers`, and `src/lerobot/rewards/rynnvalue/rynn_value_lang/` from the RynnValue checkpoint's
+  remote code. Both carry upstream-style docstrings. Leave them alone — restyling them only creates
+  conflicts on the next sync. They are excluded from the API reference and from `interrogate`, and
+  `molmoact2_hf_model` also from the `ruff` `D` rules.
 
 ## How this is enforced
 

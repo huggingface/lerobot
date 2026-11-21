@@ -28,6 +28,7 @@ from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from .classifier.configuration_classifier import RewardClassifierConfig
 from .pretrained import PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig
+from .rynnvalue.configuration_rynnvalue import RynnValueConfig
 from .sarm.configuration_sarm import SARMConfig
 from .topreward.configuration_topreward import TOPRewardConfig
 
@@ -90,7 +91,7 @@ def make_reward_model_config(reward_type: str, **kwargs: Any) -> RewardModelConf
 
     Args:
         reward_type: A registered reward model type, such as
-                     "reward_classifier", "sarm", "robometer" or "topreward".
+                     "reward_classifier", "sarm", "robometer", "topreward" or "rynnvalue".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -146,7 +147,7 @@ def make_reward_model(
     return reward_model
 
 
-def make_frame_scorer(model: PreTrainedRewardModel, *, batch_size: int = 32) -> "FrameScorer":
+def make_frame_scorer(model: PreTrainedRewardModel, *, batch_size: int | None = None) -> "FrameScorer":
     """
     Create the standard offline frame scorer for a reward model.
 
@@ -157,8 +158,8 @@ def make_frame_scorer(model: PreTrainedRewardModel, *, batch_size: int = 32) -> 
 
     Args:
         model: The reward model the scorer will run.
-        batch_size: Number of predictions computed together. Scorers that cannot batch
-            their inputs ignore it.
+        batch_size: Number of predictions computed together. Defaults to the scorer's own
+            default. Scorers that cannot batch their inputs ignore it.
 
     Returns:
         A frame scorer that can be passed to :func:`lerobot.rewards.scoring.score_dataset`.
@@ -228,6 +229,14 @@ def make_reward_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
+    elif isinstance(reward_cfg, RynnValueConfig):
+        from lerobot.rewards.rynnvalue.processor_rynnvalue import make_rynnvalue_pre_post_processors
+
+        return make_rynnvalue_pre_post_processors(
+            config=reward_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
     else:
         try:
             processors = _make_processors_from_reward_model_config(
@@ -286,7 +295,7 @@ def _make_processors_from_reward_model_config(
 def _make_frame_scorer_from_reward_model_config(
     config: RewardModelConfig,
     model: PreTrainedRewardModel,
-    batch_size: int,
+    batch_size: int | None,
 ) -> "FrameScorer":
     """Create a frame scorer from a reward model configuration using dynamic imports.
 
@@ -296,7 +305,7 @@ def _make_frame_scorer_from_reward_model_config(
     Args:
         config: The reward model configuration object.
         model: The reward model the scorer will run.
-        batch_size: Number of predictions computed together.
+        batch_size: Number of predictions computed together, or `None` for the scorer's default.
 
     Returns:
         The frame scorer returned by ``make_<type>_frame_scorer``.
@@ -308,4 +317,4 @@ def _make_frame_scorer_from_reward_model_config(
     function = getattr(module, f"make_{config.type}_frame_scorer", None)
     if function is None:
         raise ValueError(f"Frame scorer for reward model type '{config.type}' is not implemented.")
-    return function(model=model, batch_size=batch_size)
+    return function(model=model) if batch_size is None else function(model=model, batch_size=batch_size)
