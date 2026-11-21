@@ -50,3 +50,8 @@ class RTCAttentionSchedule(str, Enum):
     ONES = "ONES"
     LINEAR = "LINEAR"
     EXP = "EXP"
+
+
+class RTCGuidanceJacobian(str, Enum):
+    IDENTITY = "identity"
+    VJP = "vjp"
