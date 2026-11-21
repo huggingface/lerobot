@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamConfig, DiffuserSchedulerConfig
 
+from ..rtc.configuration_rtc import RTCConfig
+
 
 @PreTrainedConfig.register_subclass("multi_task_dit")
 @dataclass
@@ -113,6 +115,9 @@ class MultiTaskDiTConfig(PreTrainedConfig):
 
     # Auto-calculated
     drop_n_last_frames: int | None = None
+
+    # Real-Time Chunking (RTC), set by the rollout when --inference.type=rtc; None disables guidance.
+    rtc_config: RTCConfig | None = None
 
     def __post_init__(self):
         super().__post_init__()
