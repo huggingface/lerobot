@@ -430,6 +430,50 @@ def test_finalize_flushes_buffered_metadata(tmp_path):
     assert len(parquet_files) > 0
 
 
+@pytest.mark.parametrize("metadata_buffer_size", [1, 2, 10])
+@pytest.mark.parametrize("missing_first", [False, True])
+def test_metadata_buffer_preserves_missing_camera_stats(tmp_path, metadata_buffer_size, missing_first):
+    from lerobot.datasets.io_utils import load_nested_dataset
+
+    key = "observation.images.laptop"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/optional_stats",
+        fps=DEFAULT_FPS,
+        features=VIDEO_FEATURES,
+        root=tmp_path / "optional_stats",
+        metadata_buffer_size=metadata_buffer_size,
+    )
+    meta.save_episode_tasks(["Task 1"])
+    missing = [missing_first, not missing_first, missing_first, not missing_first]
+    try:
+        for index, omit_camera in enumerate(missing):
+            stats = _make_dummy_stats(meta.features)
+            if omit_camera:
+                stats.pop(key)
+            meta.save_episode(index, 5, ["Task 1"], stats, {})
+        meta.finalize()
+    finally:
+        # Do not retry a failed flush during interpreter shutdown.
+        meta._finalized = True
+        if meta._pq_writer is not None:
+            meta._pq_writer.close()
+
+    episodes = load_nested_dataset(meta.root / "meta/episodes")
+    assert list(episodes[f"stats/{key}/count"]) == [None if omit else [5] for omit in missing]
+    assert list(episodes[f"stats/{key}/mean"]) == [
+        None if omit else [[[0.5]], [[0.5]], [[0.5]]] for omit in missing
+    ]
+    for episode in episodes:
+        path = meta.root / (
+            f"meta/episodes/chunk-{episode['meta/episodes/chunk_index']:03d}/"
+            f"file-{episode['meta/episodes/file_index']:03d}.parquet"
+        )
+        assert path.exists()
+    reloaded = LeRobotDatasetMetadata("test/optional_stats", root=meta.root)
+    np.testing.assert_array_equal(reloaded.stats[key]["count"], [10])
+    np.testing.assert_array_equal(reloaded.stats["action"]["count"], [20])
+
+
 # ── Tools accessor ───────────────────────────────────────────────────
 
 

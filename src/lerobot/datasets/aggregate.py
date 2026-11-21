@@ -209,6 +209,14 @@ def update_meta_data(
         pd.DataFrame: Updated DataFrame with adjusted indices and timestamps.
     """
 
+    for key in dst_meta.camera_keys:
+        count_column = f"stats/{key}/count"
+        if count_column in df:
+            df[count_column] = [
+                None if count is None else np.minimum(count, length)
+                for count, length in zip(df[count_column], df["length"], strict=True)
+            ]
+
     df["meta/episodes/chunk_index"] = df["meta/episodes/chunk_index"] + meta_idx["chunk"]
     df["meta/episodes/file_index"] = df["meta/episodes/file_index"] + meta_idx["file"]
 

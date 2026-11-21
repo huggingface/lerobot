@@ -77,6 +77,12 @@ def load_nested_dataset(
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
+    if features is None and pq_dir.name == Path(EPISODES_DIR).name:
+        # A short streaming episode can omit camera stats even in the first shard.
+        # Infer their nullable columns from all metadata shards, not just the first.
+        schema = pa.unify_schemas([pq.read_schema(path) for path in paths], promote_options="permissive")
+        features = datasets.Features.from_arrow_schema(schema)
+
     with SuppressProgressBars():
         # We use .from_parquet() memory-mapped loading for efficiency
         filters = pa_ds.field("episode_index").isin(episodes) if episodes is not None else None

@@ -104,9 +104,12 @@ def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> d
     parquet_path = src_dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
     df = pd.read_parquet(parquet_path)
 
-    episode_row = df[df["episode_index"] == episode_idx].iloc[0]
-
-    return episode_row.to_dict()
+    episode_row = df[df["episode_index"] == episode_idx].iloc[0].to_dict()
+    for key in src_dataset.meta.camera_keys:
+        count_column = f"stats/{key}/count"
+        if count_column in episode_row and episode_row[count_column] is not None:
+            episode_row[count_column] = np.minimum(episode_row[count_column], episode_row["length"])
+    return episode_row
 
 
 def delete_episodes(
@@ -1040,10 +1043,12 @@ def _copy_and_reindex_episodes_metadata(
                         ignored_stats_features.add(feature_name)
                         continue
 
+                    value = src_episode_full[key]
+                    if value is None:
+                        continue
                     if feature_name not in episode_stats:
                         episode_stats[feature_name] = {}
 
-                    value = src_episode_full[key]
                     feature_dtype = dst_meta.features[feature_name]["dtype"]
                     if feature_dtype in ["image", "video"] and stat_name != "count":
                         # Stats are channel-first (C, 1, 1)

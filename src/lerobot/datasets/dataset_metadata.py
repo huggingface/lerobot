@@ -41,6 +41,7 @@ from .io_utils import (
     get_file_size_in_mb,
     load_episodes,
     load_info,
+    load_nested_dataset,
     load_stats,
     load_tasks,
     write_info,
@@ -51,6 +52,7 @@ from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
 from .storage import DEFAULT_STORAGE_FORMAT, dataset_location
 from .utils import (
     DEFAULT_EPISODES_PATH,
+    EPISODES_DIR,
     check_version_compatibility,
     get_safe_version,
     has_legacy_hub_download_metadata,
@@ -156,11 +158,14 @@ class LeRobotDatasetMetadata:
         if not hasattr(self, "_metadata_buffer") or len(self._metadata_buffer) == 0:
             return
 
-        combined_dict: dict[str, list] = {}
+        combined_dict: dict[str, list] = {key: [] for episode in self._metadata_buffer for key in episode}
+        if self._pq_writer is not None:
+            for key in self._pq_writer.schema.names:
+                combined_dict.setdefault(key, [])
         for episode_dict in self._metadata_buffer:
-            for key, value in episode_dict.items():
-                if key not in combined_dict:
-                    combined_dict[key] = []
+            for key in combined_dict:
+                # Missing camera statistics stay null, including in an entirely missing batch.
+                value = episode_dict.get(key)
                 # Extract value and serialize numpy arrays
                 # because PyArrow's from_pydict function doesn't support numpy arrays
                 val = value[0] if isinstance(value, list) else value
@@ -183,7 +188,8 @@ class LeRobotDatasetMetadata:
             # order, which can differ between batches (e.g. episodes originally stored in
             # different parquet shards with different column orders). Realign to the
             # writer's established schema so `write_table` doesn't reject a reordered match.
-            table = table.select(self._pq_writer.schema.names)
+            # Preserve the established types when a batch contains only null camera statistics.
+            table = table.select(self._pq_writer.schema.names).cast(self._pq_writer.schema)
 
         self._pq_writer.write_table(table)
 
@@ -221,6 +227,41 @@ class LeRobotDatasetMetadata:
         self.tasks = load_tasks(self.root) if self.total_tasks > 0 else None
         self.episodes = load_episodes(self.root) if self.total_episodes > 0 else None
         self.stats = load_stats(self.root)
+        self._normalize_legacy_image_stats()
+
+    def _normalize_legacy_image_stats(self) -> None:
+        """Reweight legacy streaming image statistics by episode length, without rewriting source files."""
+        if self.episodes is None or self.stats is None or not self.camera_keys:
+            return
+        episodes = load_nested_dataset(self.root / EPISODES_DIR)
+        lengths = np.asarray(episodes["length"])
+        for key in self.camera_keys:
+            prefix = f"stats/{key}/"
+            count_column = f"{prefix}count"
+            if key not in self.stats or count_column not in episodes.column_names:
+                continue
+            if not any(
+                count is not None and np.any(np.asarray(count) > length)
+                for count, length in zip(episodes[count_column], lengths, strict=True)
+            ):
+                continue
+            # Rebuild the aggregate, not just its count: old episodes may have different pixel weights.
+            columns = [column for column in episodes.column_names if column.startswith(prefix)]
+            stats = []
+            for episode in episodes.select_columns(["length", *columns]):
+                # Episodes with fewer than two encoded frames have no camera statistics.
+                if episode[count_column] is None:
+                    continue
+                # Optional statistics (e.g. quantiles) can be null in older episode rows.
+                feature_stats = {
+                    column[len(prefix) :]: np.asarray(episode[column])
+                    for column in columns
+                    if episode[column] is not None
+                }
+                # A smaller frame count is legitimate when the encoder queue dropped frames.
+                feature_stats["count"] = np.minimum(feature_stats["count"], episode["length"])
+                stats.append({key: feature_stats})
+            self.stats[key] = aggregate_stats(stats)[key]
 
     def ensure_readable(self) -> None:
         """Guarantee metadata is fully loaded for read operations.
@@ -621,8 +662,15 @@ class LeRobotDatasetMetadata:
 
                 av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
 
-                if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
-                    # Size limit is reached, flush buffer and prepare new parquet file
+                new_columns = self._pq_writer is not None and not set(episode_dict).issubset(
+                    self._pq_writer.schema.names
+                )
+                if (
+                    new_columns
+                    or latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb
+                ):
+                    # A later episode may introduce camera stats omitted by the first batch.
+                    # Start a new shard rather than silently dropping the new columns.
                     self._flush_metadata_buffer()
                     chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
                     self._close_writer()
