@@ -104,7 +104,8 @@ class PraxisConfig(PreTrainedConfig):
             runs and ``flash-attn-4`` is installed, else ``triton``).
         return_prediction: Also return the model's predicted camera frames as a
             ``PolicyOutput`` prediction (for ``--display_data``). Costs one VAE
-            decode per call.
+            decode per call, and the video decoder of the last Euler step, which the
+            sampler skips without it (the commands are the same either way).
         text_pad_to_multiple_of: Padding of the tokenized prompt. 1 encodes the prompt
             without padding; 32 is the praxis setting (the default).
     """

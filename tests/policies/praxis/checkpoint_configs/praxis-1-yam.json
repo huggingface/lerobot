@@ -256,7 +256,7 @@
     "pose_layout": "[L: xyz(3) quat_wxyz(4) grip(1) | R: same]"
   },
   "normalization": {
-    "domain": "xingu_yam",
+    "domain": "yam",
     "action_q01": [
       -0.1886110007762909,
       -0.20701800286769867,
