@@ -1,0 +1,88 @@
+# NAT VLA
+
+NAT VLA is a vision-language-action model built on LFM2-VL that writes robot actions as tokens of the NAT action tokenizer, introduced in the paper [NAT: Scaling Neural Action Tokenizers Across Embodiments](https://ahadjawaid.com/nat-paper). The pretrained checkpoint is [`ahad-j/nat-vla-450m`](https://huggingface.co/ahad-j/nat-vla-450m).
+
+## Model Overview
+
+The NAT tokenizer encodes a chunk of actions into tokens ordered in time: the first tokens describe the first steps, and its causal decoder turns a prefix of the tokens into exactly those steps. Actions with more columns than the tokenizer encodes at once are split into groups, each tokenized on its own.
+
+The policy builds on this in three ways:
+
+- **Streaming.** `select_action` hands over each step's action as soon as the tokens that describe it are generated, so the robot starts moving before the chunk is finished, and a chunk of `n_action_steps` steps generates only the tokens those steps need.
+- **Token-prefix real-time chunking.** The actions that run while the next chunk is generated are tokenized, and their tokens start the next chunk. The model continues these actions from the new observation instead of starting a new chunk, so consecutive chunks join without a jump and the robot never waits.
+- **A prompt in a processor.** `NATVLATokenizerProcessorStep` writes each sample's prompt token ids (the camera images, the task, the robot's `setup`, its binned state and its `control_mode`) and the image inputs. It is saved with the checkpoint, with the VLM's processor as `vlm/`, so a checkpoint loads offline and serves remotely.
+
+## Installation
+
+```bash
+pip install -e ".[nat_vla,training]"
+```
+
+Add `libero` to train or evaluate on LIBERO.
+
+> [!NOTE]
+> Without the optional `causal-conv1d` package, transformers warns that LFM2's convolution layers run a slower PyTorch implementation; for NAT VLA, training and generation took the same time with and without it on an RTX 4090. If you install it (`pip install --no-build-isolation causal-conv1d`, compiled against your PyTorch), do so only on GPU machines: transformers then uses its CUDA kernels on every device, and the model fails on CPU.
+
+## Fine-tune
+
+`--policy.type=nat_vla` starts from the weights of the pretrained NAT VLA in `--policy.vlm` (by default `ahad-j/nat-vla-450m`). For example, on LIBERO:
+
+```bash
+lerobot-train \
+  --policy.type=nat_vla \
+  --policy.setup="single franka robotic arm in libero" \
+  --policy.control_mode="delta end-effector pose" \
+  --policy.repo_id=${HF_USER}/nat_vla_libero \
+  --dataset.repo_id=lerobot/libero \
+  --batch_size=64 \
+  --steps=50000 \
+  --output_dir=outputs/nat_vla_libero
+```
+
+The paper fine-tunes with batch 64 for 50,000 steps. Batch 64 needs more than 24 GB of GPU memory: on a 24 GB GPU such as an RTX 4090, use `--batch_size=16 --accelerator.gradient_accumulation.steps=4` for the same effective batch (about 18 GB, 0.37 s per step) with `--steps=200000`, since `--steps` counts batches of 16. For your own robot, change `--dataset.repo_id`, and `--policy.setup` and `--policy.control_mode`, which describe the robot in the prompt.
+
+The NAT tokenizer encodes actions in [-1, 1], so actions use min-max normalization (the config rejects other modes). With the default normalization, the dataset's statistics need `min` and `max` for `action` and `q01` and `q99` for `observation.state`. The model runs in `bfloat16` by default (`--policy.dtype` changes it); the NAT tokenizer always runs in `float32`. To continue from a fine-tuned checkpoint, use `--policy.path` instead of `--policy.type`; a new `setup`, `control_mode` or set of cameras replaces the checkpoint's in the prompt.
+
+## Evaluate
+
+Evaluate the LIBERO fine-tune in simulation:
+
+```bash
+lerobot-eval \
+  --policy.path=outputs/nat_vla_libero/checkpoints/last/pretrained_model \
+  --env.type=libero \
+  --env.task=libero_spatial
+```
+
+## Deploy with real-time chunking
+
+Token-prefix real-time chunking works with each `lerobot-rollout` inference backend. With the default tokenizer, it needs actions of at most 7 dimensions, and `rtc_steps` can be 8, 16 or 24; another tokenizer lists its values in `prefix_token_counts`.
+
+- **Synchronous** (`--inference.type=sync`, the default): with `--policy.rtc_steps`, `select_action` generates the next chunk in the background while the current chunk's last `rtc_steps` actions run, starting from their tokens. It needs `rtc_steps <= n_action_steps <= chunk_size - rtc_steps`.
+- **Asynchronous** (`--inference.type=rtc`) and **remote** (a [policy server](./remote_inference) serving `rtc_guided`, with `--inference.mode=rtc_guided` on the client): the inference engine passes `predict_action_chunk` the number of steps that run during inference (`inference_delay`) and the rest of the previous chunk, and the new chunk starts from the tokens of the smallest of those step counts that covers the delay. Keep `--inference.rtc.execution_horizon` at least that long. The guidance settings do not apply.
+
+Deploy a checkpoint fine-tuned on your robot, here an SO-100:
+
+```bash
+lerobot-rollout \
+  --policy.path=${HF_USER}/nat_vla_so100 \
+  --policy.n_action_steps=16 \
+  --policy.rtc_steps=8 \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+  --task="pick up the cube" \
+  --duration=60
+```
+
+or, with the asynchronous engine, `--inference.type=rtc --inference.rtc.execution_horizon=16` in place of `--policy.n_action_steps=16 --policy.rtc_steps=8`.
+
+## Another NAT tokenizer
+
+A new policy loads its tokenizer from `--policy.action_tokenizer`, a Hub repository or local folder holding a NAT tokenizer's `config.json` and `model.safetensors` (default [`ahad-j/nat-tokenizer-h32-l4-c6400`](https://huggingface.co/ahad-j/nat-tokenizer-h32-l4-c6400)). The policy takes its chunk length, token counts, streaming boundaries and number of action-token rows from that tokenizer and saves the tokenizer in its checkpoint. Set `--policy.chunk_size` to the tokenizer's time horizon and `--policy.n_action_steps` to it or less.
+
+Hub downloads are pinned to the commits in `--policy.vlm_revision` and `--policy.action_tokenizer_revision`; set them together with `--policy.vlm` or `--policy.action_tokenizer`.
+
+## License
+
+The code is under the Apache License 2.0. The checkpoint is a derivative of LFM2-VL and is released under the LFM Open License v1.0: commercial use is licensed only to organizations with under $10M in annual revenue, and redistributions must include a copy of the license.

@@ -279,6 +279,7 @@ lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[ac
 lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 wall_oss_05 = ["lerobot[transformers-dep]"]
 g05 = ["lerobot[transformers-dep]"]
+nat_vla = ["lerobot[transformers-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -381,6 +382,7 @@ all = [
     "lerobot[lingbot_va]",
     "lerobot[lingbot_vla_v2]",
     "lerobot[g05]",
+    "lerobot[nat_vla]",
     "lerobot[lawam]",
     "lerobot[cosmos3]",
     "lerobot[praxis]",
