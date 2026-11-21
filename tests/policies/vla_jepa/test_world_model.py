@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import pytest
 import torch
+from safetensors.torch import save_file
 
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.vla_jepa.world_model import (
     ActionConditionedVideoPredictor,
 )
@@ -72,3 +74,23 @@ def test_predictor_step_mismatch_raises() -> None:
     frame_tokens = torch.randn(2, 3 * 4, 8)  # 3 steps, 4 tokens each
     with pytest.raises(RuntimeError):
         predictor(frame_tokens, torch.randn(2, 2 * 2, 8))  # 2 steps → mismatch
+
+
+def test_strict_load_drops_the_removed_modules_of_older_checkpoints(tmp_path) -> None:
+    """Older checkpoints carry `state_encoder` and `extrinsics_encoder`; a missing weight still fails."""
+    policy = torch.nn.Module()
+    policy.video_predictor = _make_predictor()
+    state = {key: value.clone() for key, value in policy.state_dict().items()}
+    removed = {
+        f"video_predictor.{module}.{name}": torch.zeros(1)
+        for module in ("state_encoder", "extrinsics_encoder")
+        for name in ("weight", "bias")
+    }
+    file = tmp_path / "model.safetensors"
+    save_file({**state, **removed}, file)
+    PreTrainedPolicy._load_weight_files(policy, [file], "cpu", True)
+
+    del state["video_predictor.action_encoder.weight"]
+    save_file({**state, **removed}, file)
+    with pytest.raises(RuntimeError, match=r"(?i)missing key.*action_encoder"):
+        PreTrainedPolicy._load_weight_files(policy, [file], "cpu", True)
