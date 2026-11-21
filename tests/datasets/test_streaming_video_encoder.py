@@ -859,6 +859,138 @@ def test_streaming_missing_camera_stats_across_sessions(tmp_path, legacy):
         assert path.read_bytes() == data
 
 
+@pytest.fixture(params=["shards", "nullable"])
+def optional_streaming_stats_dataset(legacy_streaming_dataset, request):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from lerobot.datasets.io_utils import load_stats, write_stats
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = legacy_streaming_dataset
+    key = "observation.images.cam"
+    path = next((root / "meta/episodes").glob("*/*.parquet"))
+    table = pq.read_table(path)
+    quantiles = [column for column in table.column_names if column.startswith(f"stats/{key}/q")]
+    assert len(quantiles) == 5
+    # Historical basic summaries have the core stats and pixel count, but no quantiles.
+    pq.write_table(table.drop(quantiles), path)
+    stats = load_stats(root)
+    stats[key] = {name: value for name, value in stats[key].items() if not name.startswith("q")}
+    write_stats(stats, root)
+
+    dataset = LeRobotDataset.resume(
+        "test/legacy",
+        root=root,
+        streaming_encoding=True,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=18),
+    )
+    _record_constant_episode(dataset, 2, 255)
+    dataset.finalize()
+    paths = sorted((root / "meta/episodes").glob("*/*.parquet"))
+    assert len(paths) == 2
+    if request.param == "nullable":
+        # Also cover a single nullable schema, as a historical metadata concat can write.
+        table = pa.concat_tables([pq.read_table(path) for path in paths], promote_options="permissive")
+        column = "meta/episodes/file_index"
+        index = table.schema.get_field_index(column)
+        table = table.set_column(index, table.schema.field(index), pa.array([0, 0]))
+        pq.write_table(table, paths[0])
+        paths[1].unlink()
+    videos = sorted((root / "videos").rglob("*.mp4"))
+    assert len(videos) == 2
+    for path in videos:
+        with av.open(str(path)) as video:
+            assert sum(1 for _ in video.decode(video=0)) == 2
+    return root
+
+
+@pytest.mark.parametrize("operation", ["metadata", "load", "resume"])
+def test_streaming_missing_optional_stats_load(optional_streaming_stats_dataset, operation):
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+    from lerobot.datasets.io_utils import load_nested_dataset
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = optional_streaming_stats_dataset
+    original = {path: path.read_bytes() for path in (root / "meta").rglob("*") if path.is_file()}
+    if operation == "metadata":
+        meta = LeRobotDatasetMetadata("test/legacy", root=root)
+    else:
+        factory = LeRobotDataset if operation == "load" else LeRobotDataset.resume
+        dataset = factory("test/legacy", root=root, video_backend="pyav")
+        meta = dataset.meta
+        dataset.finalize()
+    key = "observation.images.cam"
+    np.testing.assert_array_equal(meta.stats[key]["count"], [4])
+    np.testing.assert_allclose(meta.stats[key]["mean"], 0.5, atol=1e-6)
+    np.testing.assert_allclose(meta.stats[key]["std"], 0.5, atol=1e-6)
+    # Missing optional fields are omitted, not fabricated or copied from the newer episode.
+    assert set(meta.stats[key]) == {"min", "max", "mean", "std", "count"}
+    episodes = load_nested_dataset(root / "meta/episodes")
+    assert list(episodes[f"stats/{key}/count"]) == [[2 * 64 * 96], [2]]
+    for name in ["q01", "q10", "q50", "q90", "q99"]:
+        values = list(episodes[f"stats/{key}/{name}"])
+        assert values[0] is None
+        assert values[1] is not None
+    assert {path: path.read_bytes() for path in original} == original
+
+
+def test_streaming_missing_optional_stats_edit_merge(optional_streaming_stats_dataset, tmp_path):
+    from lerobot.datasets.dataset_tools import delete_episodes, merge_datasets, split_dataset
+    from lerobot.datasets.io_utils import load_nested_dataset
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = optional_streaming_stats_dataset
+    original = {path: path.read_bytes() for path in (root / "meta").rglob("*") if path.is_file()}
+    key = "observation.images.cam"
+    source = LeRobotDataset("test/legacy", root=root, video_backend="pyav")
+    edited = delete_episodes(source, [1], output_dir=tmp_path / "basic_only")
+    splits = split_dataset(source, {"basic": [0], "quantiles": [1]}, output_dir=tmp_path / "splits")
+    for subset in [edited, splits["basic"]]:
+        assert set(subset.meta.stats[key]) == {"min", "max", "mean", "std", "count"}
+        np.testing.assert_array_equal(subset.meta.stats[key]["count"], [2])
+        np.testing.assert_allclose(subset.meta.stats[key]["mean"], 0)
+    assert "q01" in splits["quantiles"].meta.stats[key]
+    for name, inputs in [("source", [source]), ("splits", [splits["basic"], splits["quantiles"]])]:
+        merged = merge_datasets(
+            inputs,
+            output_repo_id=f"test/optional_{name}",
+            output_dir=tmp_path / f"merged_{name}",
+            concatenate_videos=False,
+            concatenate_data=False,
+        )
+        restored = LeRobotDataset("test/optional", root=merged.root, video_backend="pyav")
+        np.testing.assert_array_equal(restored.meta.stats[key]["count"], [4])
+        np.testing.assert_allclose(restored.meta.stats[key]["mean"], 0.5, atol=1e-6)
+        np.testing.assert_allclose(restored.meta.stats[key]["std"], 0.5, atol=1e-6)
+        assert set(restored.meta.stats[key]) == {"min", "max", "mean", "std", "count"}
+        episodes = load_nested_dataset(merged.root / "meta/episodes")
+        assert list(episodes[f"stats/{key}/count"]) == [[2], [2]]
+        assert list(episodes[f"stats/{key}/q01"])[0] is None
+        assert list(episodes[f"stats/{key}/q01"])[1] is not None
+    assert {path: path.read_bytes() for path in original} == original
+
+
+def test_streaming_missing_optional_stats_reject_missing_core(optional_streaming_stats_dataset):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
+    root = optional_streaming_stats_dataset
+    path = sorted((root / "meta/episodes").glob("*/*.parquet"))[0]
+    table = pq.read_table(path)
+    column = "stats/observation.images.cam/mean"
+    field = table.schema.field(column)
+    values = table[column].to_pylist()
+    values[0] = None
+    table = table.set_column(table.schema.get_field_index(column), field, pa.array(values, type=field.type))
+    pq.write_table(table, path)
+    # A missing optional quantile is valid; a missing required mean must still be rejected.
+    with pytest.raises(KeyError, match="mean"):
+        LeRobotDatasetMetadata("test/legacy", root=root)
+
+
 class TestStreamingEncoderIntegration:
     def test_add_frame_save_episode_streaming(self, tmp_path):
         """Full integration test: add_frame -> save_episode with streaming encoding."""

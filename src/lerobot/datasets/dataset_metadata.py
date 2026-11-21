@@ -252,7 +252,12 @@ class LeRobotDatasetMetadata:
                 # Episodes with fewer than two encoded frames have no camera statistics.
                 if episode[count_column] is None:
                     continue
-                feature_stats = {column[len(prefix) :]: np.asarray(episode[column]) for column in columns}
+                # Optional statistics (e.g. quantiles) can be null in older episode rows.
+                feature_stats = {
+                    column[len(prefix) :]: np.asarray(episode[column])
+                    for column in columns
+                    if episode[column] is not None
+                }
                 # A smaller frame count is legitimate when the encoder queue dropped frames.
                 feature_stats["count"] = np.minimum(feature_stats["count"], episode["length"])
                 stats.append({key: feature_stats})
