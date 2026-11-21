@@ -157,6 +157,13 @@ class VQBeTConfig(PreTrainedConfig):
         if not len(self.image_features) == 1:
             raise ValueError("You must provide only one image among the inputs.")
 
+        if self.env_state_feature is not None:
+            # The GPT input has one token per camera, one for `observation.state` and the action query token per
+            # observation step; there is no token for an environment state, so it cannot be used.
+            raise ValueError(
+                "VQ-BeT does not support an `observation.environment_state` input; remove it from `input_features`."
+            )
+
         if self.crop_shape is not None:
             for key, image_ft in self.image_features.items():
                 if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:

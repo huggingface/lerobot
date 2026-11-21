@@ -45,7 +45,7 @@ from lerobot.policies.factory import (
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.policies.vqbet.modeling_vqbet import VQBeTHead
+from lerobot.policies.vqbet.modeling_vqbet import VQBeTHead, VQBeTPolicy
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import is_package_available
@@ -804,3 +804,21 @@ def test_vqbet_discretize_keeps_buffers_on_device():
         "vq_layer.freeze_codebook was moved off the model device after discretize(). "
         "Use .fill_(True) instead of = torch.tensor(True) to keep the buffer on device."
     )
+
+
+def test_vqbet_rejects_an_environment_state_input():
+    """VQ-BeT builds tokens for the cameras and ``observation.state`` only. An ``observation.environment_state``
+    input used to be counted in the action-token index without a token of its own, so ``forward`` failed
+    later with ``IndexError: index 19 is out of bounds for dimension 0 with size 17``."""
+    config = VQBeTConfig(
+        input_features={
+            OBS_IMAGES: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 96, 96)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+            OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(10,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+        crop_shape=(84, 84),
+        pretrained_backbone_weights=None,
+    )
+    with pytest.raises(ValueError, match="environment_state"):
+        VQBeTPolicy(config)
