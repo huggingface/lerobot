@@ -49,6 +49,17 @@ def test_libero_rejects_nonpositive_fps():
         LiberoEnvConfig(fps=0)
 
 
+def test_libero_num_steps_wait_is_passed_to_env():
+    cfg = LiberoEnvConfig(num_steps_wait=3)
+
+    assert cfg.gym_kwargs["num_steps_wait"] == 3
+
+
+def test_libero_rejects_negative_num_steps_wait():
+    with pytest.raises(ValueError, match="num_steps_wait must be non-negative"):
+        LiberoEnvConfig(num_steps_wait=-1)
+
+
 def test_identity_processors():
     """Base class get_env_processors() returns identity pipelines."""
     cfg = make_env_config("aloha")
