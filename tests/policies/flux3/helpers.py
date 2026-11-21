@@ -98,6 +98,10 @@ class FakeVideoVAE:
         x = torch.einsum("nchw,oc->nohw", x, self.proj)
         return x.reshape(b, tp, 96, h // 32, w // 32).transpose(1, 2).to(torch.bfloat16)
 
+    def encode_task(self, video: torch.Tensor) -> torch.Tensor:
+        # Native VAE floor temporal reduction, with no padded tail.
+        return self.encode(video[:, :, : 1 + 4 * ((video.shape[2] - 1) // 4)])
+
 
 def droid_features():
     inputs = {k: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 360, 640)) for k in DROID_CAMS}
@@ -145,12 +149,6 @@ def single_config(**overrides) -> Flux3Config:
     }
     kwargs.update(overrides)
     return Flux3Config(**kwargs)
-
-
-class TaskVideoVAE(FakeVideoVAE):
-    def encode_task(self, video):
-        # Native VAE floor temporal reduction; unlike DROID, no externally padded tail.
-        return self.encode(video[:, :, : 1 + 4 * ((video.shape[2] - 1) // 4)])
 
 
 def task_config(**overrides):

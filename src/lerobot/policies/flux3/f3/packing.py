@@ -231,12 +231,11 @@ def encode_video(
 
 @torch.no_grad()
 def encode_single_frame(vae, frame: Tensor, latent_hw: tuple[int, int]) -> Tensor:
-    """``(3, Hc, Wc)`` -> ``(1, 96, 1, *latent_hw)``: the inference-time conditioning latent.
+    """``(3, Hc, Wc)`` -> ``(1, 96, 1, *latent_hw)``: one frame encoded on its own.
 
-    Only the current frame is supplied. The production VAE repeats it to a 45-frame chunk,
-    encodes that chunk and retains its first latent frame (the reference inference behavior).
+    Used for a frame checkpoint's current frame at inference and for every history snapshot.
     """
-    lat = vae.encode(frame[None, :, None].to(torch.bfloat16))  # (1, 96, 1, H/32, W/32)
+    lat = vae.encode_task(frame[None, :, None].to(torch.bfloat16))  # (1, 96, 1, H/32, W/32)
     return lat[..., : latent_hw[0], : latent_hw[1]].clone()
 
 
@@ -460,8 +459,7 @@ def pack_history_video(
         else [round(j * (history - 1) / (snapshots - 1)) for j in range(snapshots)]
     )
     for i in indices:
-        lat = torch.cat([vae.encode_task(v[None, :, i : i + 1].to(torch.bfloat16)).clone() for v in videos])
-        lat = lat[..., : hw[0], : hw[1]]
+        lat = torch.cat([encode_single_frame(vae, v[:, i], hw) for v in videos])
         tok, pos = batched_prc_vid(lat, times_to_ids(torch.full((b, 1), i / fps)))
         tokens.append(tok)
         ids.append(pos)
@@ -574,7 +572,9 @@ def frame_pack_video(config: Flux3Config, vae: Any, videos: Tensor, *, targets: 
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=videos.device.type == "cuda"):
             latents = torch.cat([encode_video(vae, v, config.latent_hw) for v in videos])
             return pack_video(latents, fps=video_fps)
-    # Preserve the reference inference encoder's repeated-frame behavior, without autocast.
+    # Training conditions on the first latent of the whole clip above. The encoder is causal in time, so
+    # that latent depends on the first frame alone, and encoding the frame by itself gives it up to
+    # rounding. No autocast, as in the reference inference.
     latents = torch.cat([encode_single_frame(vae, v[:, 0], config.latent_hw) for v in videos])
     cond, ids = batched_prc_vid(
         latents.to(torch.bfloat16), video_time_ids(1, 0, latents.shape[0], fps=video_fps)

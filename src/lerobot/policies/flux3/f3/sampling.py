@@ -36,6 +36,7 @@ import torch
 from torch import Tensor
 
 from ..utils import rational_time_shift
+from .transformer import TextStream
 
 Samples = dict[str, Tensor]
 
@@ -45,13 +46,13 @@ def cfg_two_pass(
     flow: Samples,
     fixed: dict[str, Tensor],
     timesteps: dict[str, Tensor],
-    ctx_uc: tuple[Tensor, Tensor],
-    ctx_c: tuple[Tensor, Tensor],
+    ctx_uc: tuple[Tensor, Tensor, TextStream],
+    ctx_c: tuple[Tensor, Tensor, TextStream],
     cfg_by_key: dict[str, float],
 ) -> Samples:
     """pred = uc + cfg * (c - uc) per flow stream. ``fixed`` = ids, cond streams, vector."""
 
-    def forward(ctx: Tensor, ctx_ids: Tensor) -> dict[str, Tensor]:
+    def forward(ctx: Tensor, ctx_ids: Tensor, text_stream: TextStream) -> dict[str, Tensor]:
         return model(
             **flow,
             **fixed,
@@ -59,6 +60,7 @@ def cfg_two_pass(
             ctx=ctx,
             ctx_ids=ctx_ids,
             timesteps_ctx=torch.zeros(ctx.shape[:2], device=ctx.device, dtype=ctx.dtype),
+            text_stream=text_stream,
         )
 
     pred_uc = forward(*ctx_uc)
