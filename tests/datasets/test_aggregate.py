@@ -16,6 +16,7 @@
 
 import json
 import logging
+import shutil
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -28,7 +29,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
+from lerobot.configs import VIDEO_ENCODER_INFO_KEYS, RGBEncoderConfig
 from lerobot.datasets.aggregate import aggregate_datasets, merge_video_feature_info_for_aggregate
 from lerobot.datasets.feature_utils import features_equal_for_merge
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -970,3 +971,98 @@ def test_aggregate_updates_per_episode_stats(tmp_path):
             else:
                 expected = base
             assert np.allclose(got, expected), f"ep{ep} {col}: {got} != {expected}"
+
+
+def _count_files(root) -> int:
+    return sum(1 for p in root.rglob("*") if p.is_file()) if root.exists() else 0
+
+
+def _make_small_video_dataset(root, repo_suffix, encoder, episodes=2, frames=4):
+    """Create a tiny video dataset whose declared features are identical across calls."""
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": None},
+        "observation.images.top": {
+            "dtype": "video",
+            "shape": (32, 48, 3),
+            "names": ["height", "width", "channels"],
+        },
+    }
+    ds = LeRobotDataset.create(
+        repo_id=f"{DUMMY_REPO_ID}_{repo_suffix}",
+        fps=10,
+        features=features,
+        root=root,
+        use_videos=True,
+        rgb_encoder=RGBEncoderConfig(**encoder),
+    )
+    rng = np.random.default_rng(0)
+    for _ in range(episodes):
+        for _ in range(frames):
+            ds.add_frame(
+                {
+                    "task": "pick up the block",
+                    "observation.state": rng.standard_normal(2).astype(np.float32),
+                    # dtypes/shapes must match `features`, so the declared encoder info stays identical.
+                    "observation.images.top": rng.integers(0, 256, (32, 48, 3), dtype=np.uint8),
+                }
+            )
+        ds.save_episode()
+    ds.finalize()
+    return ds
+
+
+_BASE_ENCODER = {"vcodec": "h264", "pix_fmt": "yuv420p", "g": 6, "crf": 30}
+_SWAPPED_ENCODER = {"vcodec": "h264", "pix_fmt": "yuv444p", "g": 6, "crf": 30}
+
+
+def test_aggregate_fails_before_writing_incompatible_videos(tmp_path):
+    """A source whose actual streams differ from its declared info must fail before any write.
+
+    `validate_all_metadata` only compares `info.json`: `features_equal_for_merge` keeps
+    `video.codec` / `video.pix_fmt` (they are stream-derived), but a dataset whose video files were
+    re-encoded in place still declares the old values. `aggregate_datasets` then discovers the
+    mismatch inside `concatenate_video_files`, i.e. after earlier sources were already copied.
+    """
+    try:
+        swapped_encoder = RGBEncoderConfig(**_SWAPPED_ENCODER)
+    except ValueError:
+        pytest.skip("this FFmpeg build cannot encode yuv444p with the h264 encoder")
+    del swapped_encoder
+
+    key = "observation.images.top"
+    sources = [_make_small_video_dataset(tmp_path / name, name, _BASE_ENCODER) for name in ("a", "b", "c")]
+    # Replace b's encoded videos with yuv444p files, leaving b's info.json untouched.
+    swapped = _make_small_video_dataset(tmp_path / "swap", "swap", _SWAPPED_ENCODER)
+    src_videos = sorted((tmp_path / "b" / "videos" / key).rglob("*.mp4"))
+    swapped_videos = sorted((swapped.root / "videos" / key).rglob("*.mp4"))
+    assert src_videos and len(src_videos) == len(swapped_videos)
+    for dst, src in zip(src_videos, swapped_videos, strict=True):
+        shutil.copyfile(src, dst)
+
+    aggr_root = tmp_path / "aggr"
+    with pytest.raises(ValueError) as excinfo:
+        aggregate_datasets(
+            repo_ids=[d.repo_id for d in sources],
+            roots=[d.root for d in sources],
+            aggr_repo_id=f"{DUMMY_REPO_ID}_aggr",
+            aggr_root=aggr_root,
+        )
+
+    # The error must name the offending source, not just the file it tripped over.
+    assert sources[1].repo_id in str(excinfo.value)
+    assert _count_files(aggr_root) == 0, (
+        f"aggregation wrote {_count_files(aggr_root)} files before detecting the mismatch"
+    )
+
+
+def test_aggregate_compatible_videos(tmp_path):
+    """The pre-flight check must not reject sources whose streams actually agree."""
+    sources = [_make_small_video_dataset(tmp_path / name, name, _BASE_ENCODER) for name in ("a", "b")]
+    aggr_root = tmp_path / "aggr"
+    aggregate_datasets(
+        repo_ids=[d.repo_id for d in sources],
+        roots=[d.root for d in sources],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_aggr",
+        aggr_root=aggr_root,
+    )
+    assert _count_files(aggr_root) > 0

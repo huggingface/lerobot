@@ -49,7 +49,12 @@ from .utils import (
     DEFAULT_VIDEO_PATH,
     update_chunk_file_indices,
 )
-from .video_utils import concatenate_video_files, get_video_duration_in_s
+from .video_utils import (
+    concatenate_video_files,
+    get_incompatible_video_keys,
+    get_video_duration_in_s,
+    get_video_info,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +160,81 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]) -> tuple[i
             )
 
     return fps, robot_type, features
+
+
+def validate_video_files_compatibility(
+    all_metadata: list[LeRobotDatasetMetadata],
+    video_keys: list[str],
+) -> None:
+    """Checks that every source video file can be concatenated, before anything is written.
+
+    ``validate_all_metadata`` deliberately ignores the video encoder info (see
+    ``features_equal_for_merge``), so two datasets can declare identical features while their mp4
+    files use a different codec, pixel format, resolution or fps.
+    ``concatenate_video_files(..., compatibility_check=True)`` catches that, but only when a source
+    is appended to an already written destination file, i.e. after part of the aggregated dataset
+    has been copied to disk. This pre-flight check probes the source videos once and fails before
+    the destination dataset is created, so a failed aggregation leaves no partial output behind.
+
+    Args:
+        all_metadata: Metadata of every source dataset, in aggregation order.
+        video_keys: Video feature keys to check.
+
+    Raises:
+        ValueError: If two source videos of the same feature cannot be concatenated.
+        FileNotFoundError: If a video file declared in the metadata is missing.
+    """
+    for key in video_keys:
+        reference_video_info: dict | None = None
+        reference_path: Path | None = None
+        reference_repo_id: str | None = None
+
+        for src_meta in all_metadata:
+            chunk_index_col = f"videos/{key}/chunk_index"
+            file_index_col = f"videos/{key}/file_index"
+            if chunk_index_col not in src_meta.episodes.column_names:
+                continue
+
+            unique_chunk_file_pairs: list[ChunkFile] = sorted(
+                {
+                    (chunk, file)
+                    for chunk, file in zip(
+                        src_meta.episodes[chunk_index_col],
+                        src_meta.episodes[file_index_col],
+                        strict=False,
+                    )
+                }
+            )
+
+            for chunk_index, file_index in unique_chunk_file_pairs:
+                src_path = src_meta.root / DEFAULT_VIDEO_PATH.format(
+                    video_key=key,
+                    chunk_index=chunk_index,
+                    file_index=file_index,
+                )
+                video_info = get_video_info(src_path)
+
+                if reference_video_info is None:
+                    reference_video_info = video_info
+                    reference_path = src_path
+                    reference_repo_id = src_meta.repo_id
+                    continue
+
+                mismatched_keys = get_incompatible_video_keys(reference_video_info, video_info)
+                if mismatched_keys:
+                    differences = ", ".join(
+                        f"{mismatched_key}={video_info.get(mismatched_key)!r} "
+                        f"(expected {reference_video_info.get(mismatched_key)!r})"
+                        for mismatched_key in mismatched_keys
+                    )
+                    raise ValueError(
+                        f"Video feature '{key}' cannot be aggregated: {src_path} "
+                        f"(from '{src_meta.repo_id}') is not compatible with {reference_path} "
+                        f"(from '{reference_repo_id}'): {differences}. All source videos of a feature "
+                        "must share the same resolution, fps, codec and pixel format to be concatenated. "
+                        "Re-encode the differing videos, or pass concatenate_videos=False to keep one "
+                        "video file per source."
+                    )
 
 
 def update_data_df(
@@ -402,6 +482,12 @@ def aggregate_datasets(
     features = merge_video_feature_info_for_aggregate(all_metadata)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
 
+    # Fail before the destination dataset is created: a stream incompatibility discovered while
+    # copying would leave a partially written dataset behind. Skipped when videos are kept separate,
+    # as no concatenation happens in that case.
+    if video_keys and concatenate_videos:
+        validate_video_files_compatibility(all_metadata, video_keys)
+
     dst_meta = LeRobotDatasetMetadata.create(
         repo_id=aggr_repo_id,
         fps=fps,
@@ -551,7 +637,9 @@ def aggregate_videos(
                 current_dst_duration = dst_file_durations.get(dst_key, 0)
                 videos_idx[key]["src_to_offset"][(src_chunk_idx, src_file_idx)] = current_dst_duration
                 videos_idx[key]["src_to_dst"][(src_chunk_idx, src_file_idx)] = dst_key
-                # TODO(CarolinePascal): Move the check before the loop to avoid failing in the middle + add possibility to re-encode the video if the check fails
+                # TODO(CarolinePascal): Re-encode the source video instead of failing when it is not
+                # compatible. Stream compatibility is already validated before any write, so this
+                # check only guards against a regression in validate_video_files_compatibility.
                 concatenate_video_files(
                     [dst_path, src_path],
                     dst_path,

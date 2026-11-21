@@ -57,6 +57,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Stream properties that must be identical for ffmpeg's concat demuxer (stream copy, no re-encode)
+# to produce a valid file. Kept in one place so every caller checks the same set of keys.
+VIDEO_CONCAT_COMPAT_KEYS = (
+    "video.height",
+    "video.width",
+    "video.fps",
+    "video.codec",
+    "video.pix_fmt",
+)
+
+
+def get_incompatible_video_keys(reference: Mapping[str, Any], other: Mapping[str, Any]) -> list[str]:
+    """Return the ``video.*`` keys on which ``other`` differs from ``reference``.
+
+    Args:
+        reference: Video info dict of the reference video, as returned by :func:`get_video_info`.
+        other: Video info dict of the video to compare against the reference.
+
+    Returns:
+        The list of differing keys, empty when both videos can be concatenated.
+    """
+    return [key for key in VIDEO_CONCAT_COMPAT_KEYS if reference.get(key) != other.get(key)]
+
 
 def depth_encoder_configs(meta: "LeRobotDatasetMetadata") -> dict[str, DepthEncoderConfig]:
     """Quantization settings of every depth video stream, used to dequantize decoded frames."""
@@ -731,15 +754,15 @@ def concatenate_video_files(
         reference_video_info = get_video_info(input_video_paths[0])
         for input_path in input_video_paths[1:]:
             video_info = get_video_info(input_path)
-            if (
-                video_info["video.height"] != reference_video_info["video.height"]
-                or video_info["video.width"] != reference_video_info["video.width"]
-                or video_info["video.fps"] != reference_video_info["video.fps"]
-                or video_info["video.codec"] != reference_video_info["video.codec"]
-                or video_info["video.pix_fmt"] != reference_video_info["video.pix_fmt"]
-            ):
+            mismatched_keys = get_incompatible_video_keys(reference_video_info, video_info)
+            if mismatched_keys:
+                differences = ", ".join(
+                    f"{key}={video_info.get(key)!r} (expected {reference_video_info.get(key)!r})"
+                    for key in mismatched_keys
+                )
                 raise ValueError(
-                    f"Input video {input_path} is not compatible with the reference video {input_video_paths[0]}."
+                    f"Input video {input_path} is not compatible with the reference video "
+                    f"{input_video_paths[0]}: {differences}."
                 )
 
     # Create a temporary .ffconcat file to list the input video paths
