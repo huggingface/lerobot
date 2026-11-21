@@ -107,7 +107,7 @@ lerobot-train \
 
 **float32 weights, bfloat16 compute** — `--policy.dtype=float32 --accelerator.mixed_precision=bf16` keeps the trainable weights in float32, so the small AdamW updates that `--policy.dtype=bfloat16` would round away still land (see [Key Training Parameters](#key-training-parameters)). float32 storage needs more memory, hence batch 32: in [arXiv:2610.31859](https://arxiv.org/abs/2610.31859), π₀.₅'s full fine-tune with float32 weights fit on one 80 GB GPU at batch 32 with gradient checkpointing (about 75 GB at peak, with AdamW updating one tensor at a time). `--policy.optimizer_fused=true` avoids extra optimizer memory: PyTorch's default AdamW allocates a temporary buffer as large as the trainable weights in each step, the fused one does not.
 
-Then evaluate a checkpoint with `lerobot-eval` and compare against the reference success rates — see [LIBERO](./libero).
+Then evaluate a checkpoint with `lerobot-eval` and compare against the reference success rates — see [LIBERO](./libero). Pass `--policy.dtype=bfloat16` when you evaluate: the checkpoint saves `dtype: float32`, and without the flag inference runs the whole model in float32, with about twice the memory.
 
 ### Quantile statistics
 
@@ -174,7 +174,7 @@ lerobot-train \
 
 - **`--policy.compile_model=true`**: Enables model compilation for faster training
 - **`--policy.gradient_checkpointing=true`**: Reduces memory usage significantly during training
-- **`--policy.dtype=float32 --accelerator.mixed_precision=bf16`**: Mixed precision training: AdamW updates float32 weights while autocast runs the compute in bfloat16 (see [mixed precision](./torch_accelerators#mixed-precision)). `--policy.dtype=bfloat16` is not mixed precision: it stores the trainable weights themselves in bfloat16 with no float32 copy, so AdamW rounds away every update smaller than 1/512 of a weight ([arXiv:2610.31859](https://arxiv.org/abs/2610.31859)). float32 storage takes 4 bytes per weight instead of 2 for the weights, their gradients and both AdamW states; lower `--batch_size` if you run out of memory
+- **`--policy.dtype=float32 --accelerator.mixed_precision=bf16`**: Mixed precision training: AdamW updates float32 weights while autocast runs the compute in bfloat16 (see [mixed precision](./torch_accelerators#mixed-precision)). `--policy.dtype=bfloat16` is not mixed precision: it stores the trainable weights themselves in bfloat16 with no float32 copy, so AdamW rounds away every update smaller than 1/512 of a weight ([arXiv:2610.31859](https://arxiv.org/abs/2610.31859)). float32 storage takes 4 bytes per weight instead of 2 for the weights, their gradients and both AdamW states; lower `--batch_size` if you run out of memory. At inference, pass `--policy.dtype=bfloat16` to `lerobot-eval` or `lerobot-rollout`: the checkpoint saves `dtype: float32` and would otherwise run entirely in float32
 - **`--batch_size=64`**: Batch size for training, adapt this based on your GPU memory
 - **`--policy.pretrained_path=lerobot/pi05_base`**: The base π₀.₅ model you want to finetune, options are:
   - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
@@ -217,6 +217,7 @@ Use the resulting checkpoint with trained RTC explicitly:
 lerobot-rollout \
     --strategy.type=base \
     --policy.path=outputs/pi05_rtc/checkpoints/last/pretrained_model \
+    --policy.dtype=bfloat16 \
     --inference.type=rtc \
     --inference.rtc.mode=trained \
     --inference.rtc.execution_horizon=10 \
