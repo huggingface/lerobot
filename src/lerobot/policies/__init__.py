@@ -38,9 +38,11 @@ from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config as L
 from .longwam.configuration_longwam import LongWAMConfig as LongWAMConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config as MolmoAct2Config
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as MultiTaskDiTConfig
+from .nat_vla.configuration_nat_vla import NATVLAConfig as NATVLAConfig
 from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
 from .pi05.configuration_pi05 import PI05Config as PI05Config
+from .praxis.configuration_praxis import PraxisConfig as PraxisConfig
 from .pretrained import PreTrainedPolicy as PreTrainedPolicy
 from .rtc import (
     ActionQueue,
@@ -79,6 +81,7 @@ __all__ = [
     "GrootConfig",
     "LaWAMConfig",
     "LingBotVAConfig",
+    "NATVLAConfig",
     "LingbotVLAV2Config",
     "LongWAMConfig",
     "MolmoAct2Config",
@@ -86,6 +89,7 @@ __all__ = [
     "PI0Config",
     "PI0FastConfig",
     "PI05Config",
+    "PraxisConfig",
     "SmolVLAConfig",
     "TDMPCConfig",
     "VLAJEPAConfig",

@@ -116,7 +116,7 @@ FROM base AS metaworld_native
 RUN uv pip install "metaworld==3.0.0" "mujoco==3.15.0"
 
 # ---------------------------------------------------------------------------- EnvHub
-# Any EnvHub repository (user/repo[@revision][:env.py]), from the `envhub` build context that
+# Any EnvHub Space (user/repo[@revision][:env.py]), from the `envhub` build context that
 # `lerobot-env-server --envhub=... --docker=true` downloads on the host. Each layer is rebuilt only when the files it
 # copies change: apt packages (packages.txt, as in Hugging Face Spaces), Python requirements (resolved across
 # indexes as pip does), then the rest of the repository.
@@ -144,8 +144,7 @@ RUN git clone https://github.com/robocasa/robocasa.git ~/robocasa && \
     git clone https://github.com/ARISE-Initiative/robosuite.git ~/robosuite && \
     git -C ~/robosuite checkout ${ROBOSUITE_SHA} && \
     uv pip install --no-cache -e ~/robocasa --no-deps && \
-    uv pip install --no-cache -e ~/robosuite && \
-    uv pip install --no-cache \
+    uv pip install --no-cache -e ~/robosuite \
       "numpy==2.2.5" "numba==0.61.2" "scipy==1.15.3" "mujoco==3.3.1" \
       "pygame==2.6.1" "Pillow==12.2.0" "opencv-python==4.13.0.92" \
       "pyyaml==6.0.3" "pynput==1.8.1" "tqdm==4.67.3" "termcolor==3.3.0" \

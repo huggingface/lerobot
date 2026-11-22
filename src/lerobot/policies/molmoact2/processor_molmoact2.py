@@ -1267,6 +1267,7 @@ def make_molmoact2_pre_post_processors_from_pretrained(
         postprocessor_overrides=prepared_postprocessor_overrides,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
+        trust_remote_code=config.trust_remote_code,
     )
 
 

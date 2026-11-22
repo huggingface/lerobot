@@ -15,7 +15,7 @@
 """Run an env server from a YAML config or an EnvHub repository.
 
 lerobot-env-server --config_path=docker/sim/configs/libero.yaml --docker=true   # in its Docker image, on :7448
-lerobot-env-server --envhub=<user/repo[@revision]> --docker=true                 # serve an EnvHub repository
+lerobot-env-server --envhub=<user/repo@commit> --trust_remote_code=true --docker=true  # serve an EnvHub repository
 lerobot-env-server --config_path=docker/sim/configs/metaworld.yaml             # in the current Python environment
 
 Every key of the config takes a nested override, e.g. `--sim.task=libero_10`.
@@ -53,8 +53,13 @@ class EnvServerLaunchConfig(EnvServerConfig):
 
     Args:
         envhub (`str`, *optional*):
-            EnvHub repository to serve: `user/repo[@revision]`, or a local directory. Its `env.py` is trusted
-            and run. Settings left unset come from its `LEROBOT_SIM`, else from the EnvHub defaults.
+            EnvHub repository to serve: `user/repo[@revision]`, or a local directory. Settings left unset come
+            from its `LEROBOT_SIM`, else from the EnvHub defaults. Serving it runs its code, so it needs
+            `trust_remote_code`.
+        trust_remote_code (`bool`, *optional*, defaults to `False`):
+            Consent to run an EnvHub repository's code, from `envhub` or a YAML's `sim`: its `env.py` and, with
+            `docker`, the installation of its `requirements.txt` and `packages.txt`. A YAML gives it at its top
+            level, as `trust_remote_code: true`.
         docker (`bool`, *optional*, defaults to `False`):
             Run the server in its Docker image, built from this LeRobot checkout, on `localhost:7448`.
         build (`bool`, *optional*, defaults to `False`):
@@ -64,6 +69,7 @@ class EnvServerLaunchConfig(EnvServerConfig):
     """
 
     envhub: str | None = None
+    trust_remote_code: bool = False
     docker: bool = False
     build: bool = False
     stop: bool = False
@@ -78,13 +84,28 @@ class EnvServerLaunchConfig(EnvServerConfig):
             if self.sim.type not in ("", "envhub"):
                 raise ValueError(f"--envhub serves an EnvHub repository, not sim.type={self.sim.type!r}")
             self.sim.type = "envhub"
-            self.sim.kwargs = {
-                "make_env_kwargs": {},
-                **self.sim.kwargs,
-                "hub_path": self.envhub,
-                "trust_remote_code": True,
-            }
+            self.sim.kwargs = {"make_env_kwargs": {}, **self.sim.kwargs, "hub_path": self.envhub}
             self.deployment = self.deployment or "envhub"
+        if self.sim.type == "envhub":
+            if "trust_remote_code" in self.sim.kwargs:
+                raise ValueError(
+                    "Give your consent with trust_remote_code at the top level (--trust_remote_code=true, or "
+                    "trust_remote_code: true at the top of the YAML), not in sim.kwargs"
+                )
+            # Checked before anything is downloaded or built: a Docker build installs the repository's packages.
+            if not (self.trust_remote_code or self.stop):
+                hub_path = str(self.sim.kwargs.get("hub_path", ""))
+                pin = (
+                    ""
+                    if Path(hub_path.split(":")[0]).is_dir()
+                    else ", pin the commit you read (user/repo@<commit>)"
+                )
+                raise ValueError(
+                    f"Serving the EnvHub repository {hub_path} runs its code. Read its env.py, requirements.txt "
+                    f"and packages.txt{pin}, then pass --trust_remote_code=true"
+                )
+            # The EnvHub loader reads the consent from the simulator's options.
+            self.sim.kwargs = {**self.sim.kwargs, "trust_remote_code": self.trust_remote_code}
         super().__post_init__()
 
 
@@ -97,7 +118,7 @@ def envhub_context(hub_path: str, directory: Path) -> Path:
     if Path(location).is_dir():
         return Path(location).resolve()
     repo, _, revision = location.partition("@")
-    snapshot = snapshot_download(repo, revision=revision or None)
+    snapshot = snapshot_download(repo, repo_type="space", revision=revision or None)
     context = directory / "envhub" / re.sub(r"[^a-z0-9_.-]+", "-", repo.lower())
     shutil.rmtree(context, ignore_errors=True)
     shutil.copytree(snapshot, context)
@@ -132,6 +153,9 @@ def run_in_docker(cfg: EnvServerLaunchConfig) -> None:
         env.setdefault("SIM_TAG", re.sub(r"[^a-z0-9_.-]+", "-", name.lower()).lstrip("-.")[:128])
         _, separator, file_path = hub_path.partition(":")
         data["sim"]["kwargs"]["hub_path"] = ENVHUB_IMAGE_DIR + separator + file_path
+        # The server in the container takes the same consent, at its config's top level.
+        del data["sim"]["kwargs"]["trust_remote_code"]
+        data["trust_remote_code"] = cfg.trust_remote_code
     # The container bind-mounts this file; keep it after startup so a restarted container can read it.
     content = yaml.safe_dump(data, sort_keys=False)
     config = directory / f"{hashlib.sha256(content.encode()).hexdigest()}.yaml"
@@ -162,11 +186,16 @@ def serve(cfg: EnvServerLaunchConfig) -> None:
         return
     init_logging()
     server = EnvServer(cfg)
-    previous_handlers = {
-        sig: signal.signal(sig, lambda *_: server.stop()) for sig in (signal.SIGTERM, signal.SIGINT)
-    }
+    shutdown_requested = False
+
+    def request_shutdown(_signum: int, _frame: object) -> None:
+        # Event.wait can hold the same non-reentrant lock that stop() would acquire.
+        nonlocal shutdown_requested
+        shutdown_requested = True
+
+    previous_handlers = {sig: signal.signal(sig, request_shutdown) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
-        server.serve()
+        server.serve(should_stop=lambda: shutdown_requested)
     finally:
         for sig, handler in previous_handlers.items():
             signal.signal(sig, handler)

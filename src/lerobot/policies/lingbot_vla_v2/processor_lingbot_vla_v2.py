@@ -50,6 +50,7 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available
 
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config
@@ -223,10 +224,13 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
                 "transformers is required for LingbotVLAV2ImageProcessorStep. "
                 "Install it with `pip install 'lerobot[lingbot_vla_v2]'`."
             )
+        repo_id, revision = split_hub_reference(self.tokenizer_path)
         self._image_processor = AutoImageProcessor.from_pretrained(
-            self.tokenizer_path,
+            repo_id,
             max_pixels=self.image_max_pixels,
             min_pixels=self.image_min_pixels,
+            revision=revision,
+            code_revision=revision,
         )
 
     def __call__(self, transition):
@@ -307,7 +311,8 @@ class LingbotVLAV2ChatTemplateProcessorStep(ProcessorStep):
             )
         if self.tokenizer_name is None:
             raise ValueError("LingbotVLAV2ChatTemplateProcessorStep requires a tokenizer_name.")
-        self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+        repo_id, revision = split_hub_reference(self.tokenizer_name)
+        self._tokenizer = AutoTokenizer.from_pretrained(repo_id, revision=revision, code_revision=revision)
 
     def __call__(self, transition):
         transition = transition.copy()
@@ -451,4 +456,5 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
         postprocessor_overrides=post,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
+        trust_remote_code=config.trust_remote_code,
     )

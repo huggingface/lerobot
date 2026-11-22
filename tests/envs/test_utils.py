@@ -21,8 +21,11 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.envs.factory import descriptor_features, make_task_env
 from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoint
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
+from lerobot.sim import EnvDescriptor
+from lerobot.utils.feature_spec import FeatureSpec
 from tests.fixtures.toy_env import ToyEnvConfig
 
 
@@ -49,7 +52,7 @@ def _decodes_action(*shape: int) -> PolicyProcessorPipeline:
 
 
 def test_checkpoint_admission():
-    env = ToyEnvConfig().create_env()
+    env = make_task_env(ToyEnvConfig())
     descriptor = env.descriptor
     env.close()
     config = SimpleNamespace(
@@ -104,6 +107,36 @@ def test_checkpoint_admission():
     validate_checkpoint(descriptor, config, rename_map, env_preprocessor=builds_state)
     with pytest.raises(ValueError, match="shape mismatch"):
         validate_checkpoint(descriptor, config, rename_map)
+
+
+def test_removed_create_methods_name_the_factory():
+    with pytest.raises(RuntimeError, match="make_env"):
+        ToyEnvConfig().create_envs(n_envs=1)
+    with pytest.raises(RuntimeError, match="make_task_env"):
+        ToyEnvConfig().create_env()
+
+
+def test_env_features_are_typed_as_dataset_features():
+    descriptor = EnvDescriptor(
+        sim_type="toy",
+        semantics="toy-v1",
+        features=(
+            FeatureSpec("observation.image", (8, 8, 3), "uint8", "rgb", semantics="toy-v1"),
+            FeatureSpec("observation.state", (2,), "float32", semantics="toy-v1"),
+            FeatureSpec("observation.environment_state", (4,), "float32", semantics="toy-v1"),
+        ),
+        action_feature=FeatureSpec("action", (2,), "float32", names=("x", "y"), semantics="toy-v1"),
+        control_mode="delta",
+        fps=10,
+        tasks={"reach": [0]},
+        max_episode_steps=10,
+    )
+    assert descriptor_features(descriptor) == {
+        "observation.image": PolicyFeature(FeatureType.VISUAL, (8, 8, 3)),
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+        "observation.environment_state": PolicyFeature(FeatureType.ENV, (4,)),
+        "action": PolicyFeature(FeatureType.ACTION, (2,)),
+    }
 
 
 def test_prepare_canonical_observation():
