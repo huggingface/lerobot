@@ -25,8 +25,6 @@ from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Unpack
 
 import torch
-from safetensors import safe_open
-from safetensors.torch import load_file
 from torch import Tensor
 from torch.nn import functional
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
@@ -41,6 +39,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
 )
 from lerobot.utils.device_utils import resolve_safetensors_device
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import (
     _kernels_available,
     _liger_kernel_available,
@@ -48,6 +47,7 @@ from lerobot.utils.import_utils import (
     require_package,
 )
 
+from ..checkpoint import SafetensorsCheckpoint
 from ..common.vla_utils import make_att_2d_masks
 from ..pi05.modeling_pi05 import (
     PI05Policy,
@@ -85,7 +85,10 @@ _LOC_TOKENIZER_CACHE: dict[str, Any] = {}
 def _get_loc_tokenizer(tok_name: str, auto_tokenizer_cls: Any, register_loc_fn: Any) -> Any:
     tokenizer = _LOC_TOKENIZER_CACHE.get(tok_name)
     if tokenizer is None:
-        tokenizer = register_loc_fn(auto_tokenizer_cls.from_pretrained(tok_name))
+        repo_id, revision = split_hub_reference(tok_name)
+        tokenizer = register_loc_fn(
+            auto_tokenizer_cls.from_pretrained(repo_id, revision=revision, code_revision=revision)
+        )
         _LOC_TOKENIZER_CACHE[tok_name] = tokenizer
     return tokenizer
 
@@ -1468,15 +1471,15 @@ class FineARTVLAPolicy(PI05Policy):
         return torch.multinomial(probs, num_samples=1).squeeze(-1)
 
     @classmethod
-    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+    def _load_checkpoint(
+        cls, model: FineARTVLAPolicy, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> FineARTVLAPolicy:
         """Load native FineART-VLA weights, converting PI0.5/OpenPI ones such as ``lerobot/pi05_base``."""
-        with safe_open(model_file, framework="pt") as checkpoint:
-            # safe_open handles expose .keys() but are not iterable themselves.
-            native = all(key.startswith("model.") for key in checkpoint.keys())  # noqa: SIM118
+        native = all(key.startswith("model.") for key in checkpoint.keys())  # noqa: SIM118
         if native:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
-        logger.info("FineART-VLA: converting PI0.5-format checkpoint %s", model_file)
-        state_dict = load_file(model_file, device=resolve_safetensors_device(map_location))
+            return super()._load_checkpoint(model, checkpoint, map_location, strict)
+        logger.info("FineART-VLA: converting PI0.5-format checkpoint %s", checkpoint.files)
+        state_dict = checkpoint.load_state_dict(device=resolve_safetensors_device(map_location))
         state_dict = model._convert_openpi_state_dict(state_dict)
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=strict)
         log_model_loading_keys(missing_keys, unexpected_keys)

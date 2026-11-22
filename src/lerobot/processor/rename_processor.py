@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
@@ -41,11 +42,7 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
     rename_map: dict[str, str] = field(default_factory=dict)
 
     def observation(self, observation):
-        processed_obs = {}
-        for key, value in observation.items():
-            processed_obs[_rename_key_with_metadata(key, self.rename_map)] = value
-
-        return processed_obs
+        return rename_keys(observation, self.rename_map)
 
     def get_config(self) -> dict[str, Any]:
         return {"rename_map": self.rename_map}
@@ -58,9 +55,9 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
         - Keys not in `rename_map` remain unchanged.
         """
         new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = features.copy()
-        new_features[PipelineFeatureType.OBSERVATION] = {
-            self.rename_map.get(k, k): v for k, v in features[PipelineFeatureType.OBSERVATION].items()
-        }
+        new_features[PipelineFeatureType.OBSERVATION] = rename_keys(
+            features[PipelineFeatureType.OBSERVATION], self.rename_map
+        )
         return new_features
 
 
@@ -83,11 +80,10 @@ def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -
     """
     if not stats:
         return {}
-    renamed: dict[str, dict[str, Any]] = {}
-    for old_key, sub_stats in stats.items():
-        new_key = rename_map.get(old_key, old_key)
-        renamed[new_key] = deepcopy(sub_stats) if sub_stats is not None else {}
-    return renamed
+    return {
+        key: deepcopy(sub_stats) if sub_stats is not None else {}
+        for key, sub_stats in rename_keys(stats, rename_map).items()
+    }
 
 
 def _rename_key_with_metadata(key: str, rename_map: dict[str, str]) -> str:
@@ -106,4 +102,26 @@ def rename_batch_keys(batch: dict[str, Any], rename_map: dict[str, str] | None) 
     """Canonicalize raw dataset keys before they are grouped into a transition."""
     if not rename_map:
         return batch
-    return {_rename_key_with_metadata(key, rename_map): value for key, value in batch.items()}
+    return rename_keys(batch, rename_map)
+
+
+def rename_keys[V](mapping: Mapping[str, V], rename_map: dict[str, str] | None) -> dict[str, V]:
+    """Rename the keys of `mapping` (and their temporal padding keys) with `rename_map`.
+
+    Raises:
+        ValueError: Two keys get the same name, e.g. `{"action.cartesian": "action"}` on data that
+            already has an `action`. Rename the existing key as well, e.g. `{"action": "action.joint"}`.
+    """
+    renamed: dict[str, V] = {}
+    sources: dict[str, str] = {}
+    for key, value in mapping.items():
+        new_key = _rename_key_with_metadata(key, rename_map or {})
+        if new_key in sources:
+            raise ValueError(
+                f"Both {sources[new_key]!r} and {key!r} are named {new_key!r} after rename_map. Map one of "
+                f"them to another name as well, e.g. add {{{new_key!r}: {new_key + '.original'!r}}} to rename "
+                f"a key onto an existing {new_key!r}."
+            )
+        renamed[new_key] = value
+        sources[new_key] = key
+    return renamed

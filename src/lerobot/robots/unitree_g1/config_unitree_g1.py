@@ -37,6 +37,9 @@ class UnitreeG1Config(RobotConfig):
     # Control loop timestep
     control_dt: float = 1.0 / 250.0  # 250Hz
 
+    # Joint target blend duration after connect/reset, in seconds. 0 disables.
+    ease_in_s: float = 2.0
+
     # Launch mujoco simulation
     is_simulation: bool = True
 
@@ -93,4 +96,6 @@ class UnitreeG1Config(RobotConfig):
             camera_port=self.sim_camera_port,
             onscreen=self.sim_onscreen,
             end_effector=self.end_effector,
+            # The robot's own simulation repository, trusted as it always was.
+            trust_remote_code=True,
         )

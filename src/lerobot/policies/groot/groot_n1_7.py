@@ -27,6 +27,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
 from torch import nn
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..common.flow_matching import (
@@ -280,7 +281,7 @@ class Qwen3Backbone(nn.Module):
                 "Install a transformers version with Qwen3-VL support."
             )
         super().__init__()
-        transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": True}
+        transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": False}
 
         extra_kwargs: dict[str, Any] = {}
         if use_flash_attention:
@@ -295,10 +296,10 @@ class Qwen3Backbone(nn.Module):
             extra_kwargs["torch_dtype"] = torch.bfloat16
 
         if load_pretrained_weights:
+            loading_kwargs = dict(transformers_loading_kwargs)
+            repo_id, revision = split_hub_reference(model_name, loading_kwargs.pop("revision", None))
             self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-                model_name,
-                **extra_kwargs,
-                **transformers_loading_kwargs,
+                repo_id, revision=revision, **extra_kwargs, **loading_kwargs
             ).eval()
         else:
             self.model = self._from_backbone_config(
@@ -359,7 +360,12 @@ class Qwen3Backbone(nn.Module):
         if _is_cosmos_reason2_backbone(model_name):
             backbone_config = _cosmos_reason2_qwen3_vl_config()
         else:
-            backbone_config = AutoConfig.from_pretrained(model_name, **config_kwargs)
+            loading_kwargs = dict(config_kwargs)
+            code_revision = loading_kwargs.pop("code_revision", None)
+            repo_id, revision = split_hub_reference(model_name, loading_kwargs.pop("revision", None))
+            backbone_config = AutoConfig.from_pretrained(
+                repo_id, revision=revision, code_revision=revision or code_revision, **loading_kwargs
+            )
         return Qwen3VLForConditionalGeneration._from_config(backbone_config, **model_kwargs)
 
     def prepare_input(self, batch: dict[str, Any]) -> BatchFeature:
@@ -765,7 +771,7 @@ class GR00TN17ActionHead(nn.Module):
 
 
 def _is_cosmos_reason2_backbone(model_name: str) -> bool:
-    return str(model_name).rstrip("/") == "nvidia/Cosmos-Reason2-2B"
+    return str(split_hub_reference(model_name)[0]).rstrip("/") == "nvidia/Cosmos-Reason2-2B"
 
 
 def _cosmos_reason2_qwen3_vl_config() -> PretrainedConfig:
@@ -850,7 +856,7 @@ class GR00TN17(PreTrainedModel):
     ):
         _register_with_transformers()
         super().__init__(config)
-        transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": True}
+        transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": False}
         self.config = config
         backbone_cls = get_backbone_cls(config)
         self.backbone = backbone_cls(
@@ -918,7 +924,7 @@ class GR00TN17(PreTrainedModel):
         tune_diffusion_model = kwargs.pop("tune_diffusion_model", True)
         tune_vlln = kwargs.pop("tune_vlln", True)
         transformers_loading_kwargs = kwargs.pop("transformers_loading_kwargs", None) or {
-            "trust_remote_code": True
+            "trust_remote_code": False
         }
         load_backbone_weights = kwargs.pop("load_backbone_weights", False)
         for key in ("cache_dir", "local_files_only", "token"):

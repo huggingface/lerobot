@@ -53,6 +53,8 @@ FLUX 3 Action (`flux3`) is Black Forest Labs' video-action model: the FLUX.3 vid
 [LingBot-VLA 2.0](https://github.com/Robbyant/lingbot-vla-v2) is a cross-embodiment Vision-Language-Action policy that pairs a Qwen3-VL-4B backbone with a sparse-MoE Qwen2 action expert, predicting action chunks via flow matching over a unified 55-D canonical state/action space.
 {% elif model_name == "lawam" %}
 [LaWAM](https://arxiv.org/abs/2606.15768) is a latent world action model that pairs a Qwen3-VL backbone with a latent action/world model and a flow-matching action head for dynamics-aware robot policies.
+{% elif model_name == "praxis" %}
+[Praxis-1](https://runway.com/news/praxis-1-is-now-available) is Runway's open-weight World Action Model: a video pre-trained, chunk-causal video diffusion backbone (a 27B mixture-of-experts transformer) with an action expert that denoises Cartesian robot commands alongside the next seconds of camera video. The released checkpoint drives a single-arm DROID rig.
 {% elif model_name == "dm05" %}
 [DM05](https://huggingface.co/Dexmal/DM05) is Dexmal's Vision-Language-Action model for robot control. It conditions on camera observations, robot state, and language instructions to predict continuous action chunks with a flow-matching action expert.
 {% elif model_name == "fineart_vla" %}
@@ -62,6 +64,11 @@ FineART-VLA is a single end-to-end policy from Scale AI and Hugging Face that ex
 
 > [!IMPORTANT]
 > This checkpoint is a derivative work of G0.5 and is licensed under the [G0.5 Community License Agreement](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5) (non-commercial use only), not Apache-2.0. Redistributions must include the `LICENSE` and `NOTICE` files of the G0.5 checkpoint it was derived from. It is not endorsed by Galaxea.
+{% elif model_name == "nat_vla" %}
+NAT VLA is a vision-language-action model built on LFM2-VL that writes robot actions as NAT action tokens.
+
+> [!IMPORTANT]
+> This checkpoint is a derivative work of LFM2-VL and is licensed under the [LFM Open License v1.0](https://huggingface.co/LiquidAI/LFM2-VL-450M/blob/main/LICENSE), not Apache-2.0. Commercial use is licensed only to organizations with under $10M in annual revenue, and redistributions must include a copy of the license.
 {% elif model_name == "cosmos3_nano" or model_name == "cosmos3_edge" %}
 [Cosmos3](https://research.nvidia.com/labs/cosmos-lab/cosmos3/) is a world action model for robot control, built on NVIDIA's Cosmos 3 omnimodal world models. Its Mixture-of-Transformers backbone jointly predicts the future video frames and the next robot action chunk from camera observations and a language instruction, with flow matching over the Wan2.2 VAE latents and the actions.
 {% else %}
@@ -114,9 +121,11 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "lingbot_va": "lingbot_va",
   "lingbot_vla_v2": "lingbot_vla_v2",
   "lawam": "lawam",
+  "praxis": "praxis",
   "dm05": "dm05",
   "fineart_vla": "fineart_vla",
   "g05": "g05",
+  "nat_vla": "nat_vla",
   "cosmos3_nano": "cosmos3",
   "cosmos3_edge": "cosmos3"
 } %}

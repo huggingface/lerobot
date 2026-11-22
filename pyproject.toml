@@ -99,7 +99,7 @@ dependencies = [
 # ── Feature-scoped extras ──────────────────────────────────
 lancedb = [
     "lerobot[dataset]",
-    "lancedb>=0.37.1,<0.40.0",
+    "lancedb>=0.37.1,<1.0.0",
 ]
 lancedb-convert = [
     "lerobot[lancedb]",
@@ -177,7 +177,7 @@ rustypot-dep = ["rustypot>=1.13.1,<2.0.0"]
 deepdiff-dep = ["deepdiff>=7.0.1,<9.0.0"]
 pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
-motorbridge-dep = ["motorbridge>=0.5,<0.6"]
+motorbridge-dep = ["motorbridge>=0.6,<0.7"]
 motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
 timm-dep = ["timm>=1.0.0,<1.1.0"]
 
@@ -216,7 +216,6 @@ reachy2 = [
 rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
 yam = [
     "lerobot[motorbridge-dep]",
-    "lerobot[can-dep]",
     "lerobot[placo-dep]",
 ]
 kinematics = ["lerobot[placo-dep]"]
@@ -280,11 +279,17 @@ lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[ac
 lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 wall_oss_05 = ["lerobot[transformers-dep]"]
 g05 = ["lerobot[transformers-dep]"]
+nat_vla = ["lerobot[transformers-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
 ]
 cosmos3 = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
+# praxis (Runway Praxis-1): Qwen3.5 text encoder via transformers; the Wan2.2 VAE and the
+# model are in-tree.
+# The optional kernels of the checkpoint's validation setup (flash-attn-4, causal-conv1d,
+# flash-linear-attention) are documented in docs/source/praxis.mdx; they are not an extra.
+praxis = ["lerobot[transformers-dep]"]
 
 # Features
 # Remote inference transport and serialization.
@@ -311,10 +316,10 @@ test = ["pytest>=8.1.0,<10.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
-# NOTE: Explicitly listing scipy helps flatten the dependecy tree.
+# NOTE: Explicitly listing scipy helps flatten the dependency tree.
 aloha = ["lerobot[dataset]", "gym-aloha>=0.1.5,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["lerobot[dataset]", "gym-pusht>=0.1.8,<0.2.0"]
-libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
+libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.5,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
 metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
 # NOTE: vlabench is NOT exposed as a `lerobot` extra. Its only distribution
 # is the OpenMOSS/VLABench GitHub repo (package name `VLABench`, no PyPI
@@ -377,8 +382,10 @@ all = [
     "lerobot[lingbot_va]",
     "lerobot[lingbot_vla_v2]",
     "lerobot[g05]",
+    "lerobot[nat_vla]",
     "lerobot[lawam]",
     "lerobot[cosmos3]",
+    "lerobot[praxis]",
     "lerobot[remote]",
     "lerobot[dev]",
     "lerobot[test]",
@@ -469,6 +476,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403", "E402", "D104"]
+# N803: Triton kernels name their constexpr arguments in upper case by convention
+"src/lerobot/policies/praxis/praxis_core/kernels/*.py" = ["N803"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 
@@ -491,6 +500,7 @@ ignore = [
 "src/lerobot/cameras/**" = ["D"]
 "src/lerobot/common/**" = ["D"]
 "src/lerobot/configs/**" = ["D"]
+"src/lerobot/controllers/**" = ["D"]
 "src/lerobot/data_processing/**" = ["D"]
 "src/lerobot/datasets/**" = ["D"]
 "src/lerobot/distributed/**" = ["D"]
@@ -538,7 +548,7 @@ exclude_dirs = [
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
 [tool.typos]
-default.extend-words = { trak = "trak", nd = "nd" }
+default.extend-words = { trak = "trak", nd = "nd", dout = "dout" }
 default.extend-ignore-re = [
     "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",                      # spellchecker:disable-line
     "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on", # spellchecker:<on|off>

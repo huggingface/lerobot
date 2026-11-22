@@ -20,15 +20,16 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
 from lerobot.utils.feature_spec import FeatureSpec
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..chunk import ChunkPolicySpec
@@ -90,11 +91,13 @@ class VLAJEPAModel(nn.Module):
 
         # JEPA world model components
         if config.enable_world_model:
+            repo_id, revision = split_hub_reference(config.jepa_encoder_name)
             self.video_encoder = AutoModel.from_pretrained(
-                config.jepa_encoder_name,
-                torch_dtype=config.dtype,
+                repo_id, torch_dtype=config.dtype, revision=revision, code_revision=revision
             )
-            self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
+            self.video_processor = AutoVideoProcessor.from_pretrained(
+                repo_id, revision=revision, code_revision=revision
+            )
             num_views = config.num_world_model_views
             tubelet_size = self.video_encoder.config.tubelet_size
             image_size = getattr(self.video_encoder.config, "image_size", None)
@@ -567,15 +570,17 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         return self._queues[ACTION].popleft()
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+    def _load_checkpoint(
+        cls, model: T, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> T:
         reinit_prefixes = model.config.reinit_modules
         if not reinit_prefixes:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
+            return super()._load_checkpoint(model, checkpoint, map_location, strict)
 
         # `resolve_safetensors_device` is what keeps every rank from materializing the whole
         # checkpoint on GPU 0: safetensors maps the bare string "cuda" to cuda:0 regardless of
         # torch.cuda.current_device(), and `config.device` is exactly that bare string.
-        state_dict = load_file(model_file, device=resolve_safetensors_device(map_location))
+        state_dict = checkpoint.load_state_dict(device=resolve_safetensors_device(map_location))
         current = model.state_dict()
 
         reinitialized: list[str] = []
