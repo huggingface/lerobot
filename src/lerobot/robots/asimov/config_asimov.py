@@ -62,6 +62,57 @@ class AsimovConfig(RobotConfig):
     # Largest change of any arm target per send_action() call (rad).
     max_arm_step_rad: float = 0.1
 
+    # "arms" only. The settings below let a learned arm policy run from lerobot-rollout.
+    # Instead of the gantry or a seat, the robot stands on its own feet in a leg stance held
+    # by start_pose, under the lean watchdog, and is handed to Menlo's walking policy at the
+    # end (exit_mode="balance" is required).
+    free_standing: bool = False
+    # Rate (Hz) of the setpoint loop that re-sends the latest targets between send_action()
+    # calls. Asimov Edge DAMPs 2 s after the last setpoint, so a slow or paused caller
+    # (a rollout reset phase, an interactive prompt) must not stop the setpoints.
+    arm_loop_hz: float = 50.0
+    # Joint targets (rad) to ease into when arm control starts, e.g. a leg stance, a neck aim or
+    # an arm home pose. Keys are joint names, with each ankle given as "<L|R>_Ankle_Pitch" /
+    # "<L|R>_Ankle_Roll" instead of its motors A/B; omitted joints keep their measured position.
+    # When set, arm control starts in connect() (otherwise on the first action), easing over
+    # start_pose_s.
+    start_pose: dict[str, float] = field(default_factory=dict)
+    start_pose_s: float = 3.0
+    # PD gains sent with every setpoint, both or neither: 25 values each, in the firmware joint
+    # order (ASIMOV_JOINTS). Without them Asimov Edge applies its own per-joint gain table.
+    kp: list[float] | None = None
+    kd: list[float] | None = None
+    # What happens when arm control ends (stop(), disconnect(), a lost setpoint loop, the lean
+    # watchdog):
+    # "release": setpoints stop and Asimov Edge DAMPs 2 s later. For a robot hanging from its
+    #   gantry or seated, under which the walking policy must not start.
+    # "balance": the arms, waist and neck glide back to the pose arm control started from (over
+    #   exit_glide_s, 0 to skip), then stand() and balance() hand the robot to Menlo's walking
+    #   policy. For a robot with its feet on the ground (rope slack, or free-standing).
+    exit_mode: str = "release"
+    exit_glide_s: float = 4.0
+    # Lean watchdog: extra tilt (deg) beyond the lean measured when arm control started that
+    # ends arm control at once (no glide). None: 6 deg free-standing, off otherwise; 0: off.
+    max_extra_lean_deg: float | None = None
+    # Also observe joint velocities (<joint>.vel, rad/s, firmware order like the positions).
+    observe_velocities: bool = False
+
+    # Asimov's head camera, streamed over LiveKit through Asimov Manager (the SDK's "hybrid"
+    # connection: control and state stay on UDP). Needs an SDK credential from the Developer
+    # page of Asimov Manager in the MENLO_CREDENTIAL environment variable (kept off the
+    # command line). Observed as "head" (RGB), "head.age_s" (seconds since capture, with
+    # head_camera_latency_s added) and "head.frame" (counts distinct frames).
+    head_camera: bool = False
+    # Asimov Manager's address; empty: http://<host>.
+    manager_url: str = ""
+    # Frames of another size are resized to this one.
+    head_camera_width: int = 1280
+    head_camera_height: int = 720
+    # Capture-to-reception delay (s) of the stream; measure it on your network (about 0.1 s
+    # over Wi-Fi has been seen). Added to every frame's age.
+    head_camera_latency_s: float = 0.0
+    head_camera_timeout_s: float = 5.0
+
     # "whole_body" only. A Hub repo with a Menlo lower-body locomotion policy.onnx.
     controller_repo_id: str = "Menlo/asimov1-locomotion-26-10-26-lower-body-27dof"
     # Time to move from the measured pose to the policy's default pose before it starts.
@@ -96,11 +147,14 @@ class AsimovConfig(RobotConfig):
             value = getattr(self, name)
             if not isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive.")
-        if self.control_mode == "arms" and not self.robot_supported:
+        if self.control_mode == "arms" and not (self.robot_supported or self.free_standing):
             raise ValueError(
                 "Arm control turns Asimov's walking policy off, so a free-standing robot falls. "
-                "Support the robot (gantry or seated), then pass --robot.robot_supported=true."
+                "Support the robot (gantry or seated), then pass --robot.robot_supported=true, or "
+                "hold it in a leg stance with --robot.free_standing=true (see the Asimov docs)."
             )
+        self._validate_arm_policy_options()
+        self._validate_head_camera()
         if self.control_mode == "whole_body" and not self.is_simulation and not self.robot_supported:
             raise ValueError(
                 "Whole-body control turns Asimov's walking policy off and is not yet validated on "
@@ -133,3 +187,72 @@ class AsimovConfig(RobotConfig):
             # The robot's own simulation repository, as for the G1.
             trust_remote_code=True,
         )
+
+    @property
+    def lean_limit_deg(self) -> float:
+        """The lean watchdog's extra-tilt limit in degrees; 0 when it is off."""
+        if self.max_extra_lean_deg is None:
+            return 6.0 if self.free_standing else 0.0
+        return self.max_extra_lean_deg
+
+    def _validate_arm_policy_options(self) -> None:
+        # Joint names and gain lengths are checked by the robot, which owns the joint list.
+        if self.control_mode != "arms":
+            arm_only = {
+                "free_standing": self.free_standing,
+                "start_pose": bool(self.start_pose),
+                "kp": self.kp is not None,
+                "kd": self.kd is not None,
+                "exit_mode": self.exit_mode != "release",
+                "max_extra_lean_deg": self.max_extra_lean_deg is not None,
+            }
+            used = [name for name, value in arm_only.items() if value]
+            if used:
+                raise ValueError(f"{', '.join(used)} only apply to --robot.control_mode=arms.")
+            return
+        if self.exit_mode not in ("release", "balance"):
+            raise ValueError("exit_mode must be 'release' or 'balance'.")
+        if not isfinite(self.arm_loop_hz) or not 5.0 <= self.arm_loop_hz <= 200.0:
+            raise ValueError("arm_loop_hz must be between 5 and 200.")
+        for name in ("start_pose_s", "exit_glide_s"):
+            value = getattr(self, name)
+            if not isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative.")
+        if self.max_extra_lean_deg is not None and (
+            not isfinite(self.max_extra_lean_deg) or not 0 <= self.max_extra_lean_deg <= 45
+        ):
+            raise ValueError("max_extra_lean_deg must be between 0 (off) and 45.")
+        if (self.kp is None) != (self.kd is None):
+            raise ValueError("Pass both kp and kd, or neither (Asimov Edge ignores a lone gain).")
+        if any(not isfinite(value) for value in self.start_pose.values()):
+            raise ValueError("start_pose values must be finite.")
+        if self.free_standing:
+            if self.exit_mode != "balance":
+                raise ValueError(
+                    "A free-standing robot must be handed to the walking policy when arm control "
+                    "ends: pass --robot.exit_mode=balance."
+                )
+            stance = {f"{side}_{joint}" for side in "LR" for joint in ("Hip_Pitch", "Knee", "Ankle_Pitch")}
+            if missing := sorted(stance - self.start_pose.keys()):
+                raise ValueError(
+                    "Free-standing arm control needs a leg stance in start_pose that keeps the robot "
+                    f"upright with the walking policy off; missing {', '.join(missing)}."
+                )
+            if self.lean_limit_deg <= 0:
+                raise ValueError(
+                    "Free-standing arm control needs the lean watchdog (max_extra_lean_deg > 0)."
+                )
+
+    def _validate_head_camera(self) -> None:
+        if not self.head_camera:
+            return
+        if self.is_simulation:
+            raise ValueError("The Asimov simulation has no LiveKit head camera; use sim_publish_images.")
+        for name in ("head_camera_width", "head_camera_height"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer.")
+        if not isfinite(self.head_camera_latency_s) or self.head_camera_latency_s < 0:
+            raise ValueError("head_camera_latency_s must be finite and non-negative.")
+        if not isfinite(self.head_camera_timeout_s) or self.head_camera_timeout_s <= 0:
+            raise ValueError("head_camera_timeout_s must be finite and positive.")
