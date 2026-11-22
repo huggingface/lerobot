@@ -76,6 +76,7 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.feature_utils import feature_names
 
 from .configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
@@ -566,15 +567,9 @@ def _apply_groot_action_decode_transform(
                 step.libero_gripper_binarize = True
 
 
-def _resolve_feature_names_from_dataset_meta(dataset_meta: Any | None, feature_key: str) -> list[str] | None:
-    features = getattr(dataset_meta, "features", {}) or {}
-    feature = features.get(feature_key) if isinstance(features, dict) else None
-    names = feature.get("names") if isinstance(feature, dict) else getattr(feature, "names", None)
-    return list(names) if names is not None else None
-
-
 def _resolve_action_feature_names_from_dataset_meta(dataset_meta: Any | None) -> list[str] | None:
-    return _resolve_feature_names_from_dataset_meta(dataset_meta, ACTION)
+    features = getattr(dataset_meta, "features", None) or {}
+    return feature_names(features.get(ACTION))
 
 
 def _resolve_visual_modality_keys_from_dataset_meta(dataset_meta: Any | None) -> list[str] | None:

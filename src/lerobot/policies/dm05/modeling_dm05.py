@@ -32,15 +32,13 @@ from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION
+from lerobot.utils.feature_utils import feature_names
 from lerobot.utils.import_utils import require_package
 
 from ..common.vla_utils import pad_vector
 from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
 from .configuration_dm05 import DM05Config
-from .core.adapter import (
-    flatten_feature_names,
-    import_dm05_core,
-)
+from .core.adapter import import_dm05_core
 from .core.utils import build_action_prefix_mask, validate_action_prefill_pair
 from .processor_dm05 import MODEL_INPUT_PREFIX
 
@@ -205,9 +203,7 @@ class DM05Policy(PreTrainedPolicy):
         config.validate_features()
         is_lerobot_checkpoint = _has_dm05_core_config_payload(config)
         if dataset_meta is not None and hasattr(dataset_meta, "features"):
-            config.action_feature_names = flatten_feature_names(
-                dataset_meta.features.get(ACTION, {}).get("names")
-            )
+            config.action_feature_names = feature_names(dataset_meta.features.get(ACTION))
 
         raw_source = config.pretrained_name_or_path
         if not is_lerobot_checkpoint and not raw_source:

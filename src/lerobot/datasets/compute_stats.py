@@ -23,6 +23,7 @@ import numpy as np
 from lerobot.configs import is_depth_map
 from lerobot.processor import RelativeActionsProcessorStep
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.feature_utils import feature_names
 
 from .io_utils import load_image_as_numpy
 
@@ -744,7 +745,7 @@ def compute_relative_action_stats(
         exclude_joints = []
 
     action_dim = features[ACTION]["shape"][0]
-    action_names = features.get(ACTION, {}).get("names")
+    action_names = feature_names(features.get(ACTION))
     mask_step = RelativeActionsProcessorStep(
         enabled=True,
         exclude_joints=exclude_joints,

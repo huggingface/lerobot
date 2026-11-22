@@ -16,6 +16,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.feature_utils import feature_names
 
 
 def _bbox_binding(camera: str) -> str:
@@ -254,14 +255,6 @@ def derive_g05_slots(names: Sequence[str], width: int) -> tuple[int, ...]:
         slots.append(offsets[part] + used[part])
         used[part] += 1
     return tuple(slots)
-
-
-def _feature_names(feature: Any) -> list[str] | None:
-    """Flat per-dimension names of a dataset feature, or None when it has none."""
-    names = feature.get("names") if isinstance(feature, dict) else None
-    if isinstance(names, dict):
-        names = [name for group in names.values() for name in group]
-    return list(names) if names else None
 
 
 @PreTrainedConfig.register_subclass("g05")
@@ -503,7 +496,7 @@ class G05Config(PreTrainedConfig):
         """Derive the slots of a robot without a named embodiment from the dataset's joint names."""
         if self.slot_mapping is not None:
             return
-        state_names, action_names = (_feature_names(features.get(key)) for key in (OBS_STATE, ACTION))
+        state_names, action_names = (feature_names(features.get(key)) for key in (OBS_STATE, ACTION))
         if state_names is None or action_names is None:
             missing = [
                 key for key, names in ((OBS_STATE, state_names), (ACTION, action_names)) if names is None

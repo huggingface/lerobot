@@ -82,6 +82,13 @@ def test_validate_features_sets_action_dim_from_feature() -> None:
     assert config.state_dim == 10
 
 
+def test_dataset_metadata_flattens_grouped_action_names() -> None:
+    config = make_config(action_dim=6, state_dim=10)
+    names = [f"joint_{i}" for i in range(6)]
+    config.set_dataset_feature_metadata({ACTION: {"shape": (6,), "names": {"motors": names}}})
+    assert config.action_feature_names == names
+
+
 def test_dataset_metadata_survives_validate_features() -> None:
     """Cross-embodiment fine-tuning: the dataset dims must win over the checkpoint's."""
     config = make_config(action_dim=6, state_dim=10)

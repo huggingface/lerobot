@@ -45,7 +45,7 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
-from lerobot.utils.feature_utils import dataset_to_policy_features
+from lerobot.utils.feature_utils import dataset_to_policy_features, feature_names
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .pretrained import PreTrainedPolicy
@@ -358,14 +358,9 @@ def make_policy(
             ),
             None,
         )
-        action_names = raw_action_feature.get("names") if raw_action_feature is not None else None
+        action_names = feature_names(raw_action_feature)
         if action_names is not None:
-            # Grouped metadata stores dimension names in the values, not the group keys.
-            if isinstance(action_names, dict) and all(
-                isinstance(group, (list, tuple)) for group in action_names.values()
-            ):
-                action_names = [name for group in action_names.values() for name in group]
-            cfg.action_feature_names = list(action_names)
+            cfg.action_feature_names = action_names
     if ds_meta is not None:
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
         if callable(set_dataset_feature_metadata):
