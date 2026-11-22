@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import gymnasium as gym
 import numpy as np
@@ -31,7 +33,7 @@ from lerobot.policies import PreTrainedPolicy
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
-from lerobot.scripts.lerobot_eval import eval_policy_all, rollout
+from lerobot.scripts.lerobot_eval import eval_policy, eval_policy_all, rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.fixtures.toy_env import ToyEnvConfig
 from tests.policies.flux3.helpers import task_config
@@ -286,3 +288,21 @@ def test_rollout_saves_recordings_at_the_step_cap(tmp_path):
         dataset = LeRobotDataset(repo_id=f"eval_recording_env_{index}", root=root)
         assert [bool(dataset[i]["next.done"].item()) for i in range(len(dataset))] == expected
         assert bool(dataset[len(dataset) - 1]["next.success"].item()) == (index == 0)
+
+
+@pytest.mark.parametrize("n_episodes", [0, -1])
+def test_eval_policy_rejects_nonpositive_n_episodes(n_episodes):
+    policy = MagicMock(spec=PreTrainedPolicy)
+    policy.training = False
+    policy.config = SimpleNamespace(save_predicted_video=False)
+
+    with pytest.raises(ValueError, match="n_episodes"):
+        eval_policy(
+            env=MagicMock(),
+            policy=policy,
+            env_preprocessor=MagicMock(),
+            env_postprocessor=MagicMock(),
+            preprocessor=MagicMock(),
+            postprocessor=MagicMock(),
+            n_episodes=n_episodes,
+        )

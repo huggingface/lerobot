@@ -493,6 +493,8 @@ def eval_policy(
     Returns:
         Dictionary with metrics and data regarding the rollouts.
     """
+    if n_episodes < 1:
+        raise ValueError(f"n_episodes must be at least 1, got {n_episodes}.")
     if max_episodes_rendered > 0 and not videos_dir:
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
