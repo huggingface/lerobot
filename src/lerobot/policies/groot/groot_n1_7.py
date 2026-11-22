@@ -882,6 +882,13 @@ class GR00TN17ActionHead(nn.Module):
             for graph in self.__dict__.pop("_denoise_graphs", {}).values():
                 graph.retire()
 
+    def __getstate__(self) -> dict[str, Any]:
+        # the lock and captured graphs can't be copied: a copy captures its own on first use
+        state = dict(super().__getstate__())
+        state.pop("_denoise_graph_lock", None)
+        state.pop("_denoise_graphs", None)
+        return state
+
     def _apply(self, fn, recurse=True):
         self.reset_denoise_graphs()
         return super()._apply(fn, recurse)

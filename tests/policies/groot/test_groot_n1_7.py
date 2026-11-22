@@ -14,9 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import inspect
 import json
+import pickle
 import sys
+import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -3252,6 +3255,55 @@ def test_groot_denoise_cuda_graph_runs_the_eager_loop_off_cuda():
     with_flag = _get_action(head, *inputs, graph=True)
     assert torch.equal(eager, with_flag)
     assert not head.__dict__.get("_denoise_graphs")
+
+
+def test_groot_action_head_copies_after_a_graphed_chunk():
+    pytest.importorskip("diffusers")
+    pytest.importorskip("transformers")
+
+    from lerobot.policies.groot.groot_n1_7 import GR00TN17ActionHead
+
+    class CpuGraph:
+        """Runs the real loop on CPU and, like a CUDA capture, can't be copied."""
+
+        def __init__(self, loop, inputs):
+            self.loop = loop
+            self.uncopyable = threading.Lock()
+
+        def __call__(self, inputs):
+            return self.loop(**inputs)
+
+        def retire(self):
+            pass
+
+    torch.manual_seed(0)
+    head = GR00TN17ActionHead(_small_action_head_config()).eval()
+    inputs = _action_head_inputs(head.config, batch_size=1, seq_len=5, seed=0, device="cpu")
+    with (
+        patch.object(GR00TN17ActionHead, "_use_denoise_graph", return_value=True),
+        patch("lerobot.policies.groot.groot_n1_7._DenoiseGraph", CpuGraph),
+    ):
+        expected = _get_action(head, *inputs, graph=True)
+        head_graphs = list(head._denoise_graphs.values())
+
+        clone = copy.deepcopy(head)
+        assert "_denoise_graphs" not in clone.__dict__
+        assert "_denoise_graph_lock" not in clone.__dict__
+        assert torch.equal(_get_action(clone, *inputs, graph=True), expected)
+        assert next(iter(clone._denoise_graphs.values())).loop.__self__ is clone
+
+        # the original keeps its captures, and a pickle round trip works too
+        assert list(head._denoise_graphs.values()) == head_graphs
+        assert torch.equal(_get_action(pickle.loads(pickle.dumps(head)), *inputs, graph=True), expected)
+
+        # reset_denoise_graphs keeps the lock, which must not block a copy either
+        head.reset_denoise_graphs()
+        copy.deepcopy(head)
+
+    # nn.Module's own state cleanup still runs
+    head.compile(backend="eager")
+    pickle.dumps(head)
+    assert "_compiled_call_impl" not in copy.deepcopy(head).__dict__
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
