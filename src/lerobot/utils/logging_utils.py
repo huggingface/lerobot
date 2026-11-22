@@ -237,11 +237,10 @@ class MetricsTracker:
             if name not in self.metrics:
                 self.metrics[name] = _PolicyMetric(name)
             meter = self.metrics[name]
-            # Keep one rank's share, so reducing again after more updates counts
-            # observations from this window only once.
-            meter.sum = total / world_size
-            meter.count = counts[name] / world_size
-            meter.avg = total / counts[name]
+            if isinstance(meter, _PolicyMetric):
+                meter.avg = total / counts[name]
+                # Retain the local observation count so a second reduction counts each update once.
+                meter.sum = meter.avg * meter.count
 
         buckets: dict[str, list[str]] = defaultdict(list)
         for name, meter in sorted(self.metrics.items()):

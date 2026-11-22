@@ -292,3 +292,24 @@ def test_repeated_policy_metric_reduction_counts_each_update_once(monkeypatch):
     tracker.update_metrics({"shared": 5.0})
     tracker.reduce_across_ranks()
     assert tracker.shared.avg == 3.0
+
+
+def test_local_meter_keeps_value_when_peer_reports_same_policy_key(monkeypatch):
+    tracker = MetricsTracker(1, 8, 2, {"local": AverageMeter("local")})
+    tracker.local = 1.0
+
+    def gather(out, local):
+        out[:] = [local, {"local": (8.0, 1), "peer_only": (4.0, 1)}]
+
+    monkeypatch.setattr(logging_utils.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(logging_utils.dist, "get_world_size", lambda: 2)
+    monkeypatch.setattr(logging_utils.dist, "all_gather_object", gather)
+
+    tracker.reduce_across_ranks()
+    assert tracker.local.avg == 1.0
+    assert tracker.peer_only.avg == 4.0
+
+    tracker.update_metrics({"peer_only": 10.0})
+    tracker.reduce_across_ranks()
+    assert tracker.local.avg == 1.0
+    assert tracker.peer_only.avg == 7.0
