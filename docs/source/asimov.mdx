@@ -74,20 +74,22 @@ Configure standard LeRobot cameras, for example a USB camera connected to the Le
   --robot.cameras='{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}'
 ```
 
-ZMQ cameras and depth-capable camera backends are also supported. This adapter uses UDP, which carries no onboard video; Menlo's native LiveKit camera/audio streams are not connected by this integration.
+ZMQ cameras and depth-capable camera backends are also supported. UDP carries no onboard video; to use Asimov's own head camera, see [Head camera](#head-camera).
 
-| Feature                    | Units and meaning                                                        |
-| -------------------------- | ------------------------------------------------------------------------ |
-| `x.vel`, `y.vel` (actions) | Forward and left body-frame velocity, m/s                                |
-| `theta.vel` (action)       | Counter-clockwise yaw rate, **deg/s**; converted to rad/s for Menlo      |
-| `<joint>.pos`              | 25 measured joint motor positions, radians, using Menlo's firmware names |
-| `imu.gravity.x/y/z`        | Projected gravity in the body frame (unit vector)                        |
-| `imu.gyro.x/y/z`           | Angular velocity, rad/s                                                  |
-| `imu.quat.w/x/y/z`         | Orientation quaternion, scalar first                                     |
-| `mode`, `faulted`          | Reported firmware mode and fault indicator, stored as numeric scalars    |
-| Configured camera names    | RGB images `(height, width, 3)`; optional `<name>_depth`                 |
+| Feature                            | Units and meaning                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------ |
+| `x.vel`, `y.vel` (actions)         | Forward and left body-frame velocity, m/s                                |
+| `theta.vel` (action)               | Counter-clockwise yaw rate, **deg/s**; converted to rad/s for Menlo      |
+| `<joint>.pos`                      | 25 measured joint motor positions, radians, using Menlo's firmware names |
+| `<joint>.vel`                      | With `--robot.observe_velocities=true`: 25 joint motor velocities, rad/s |
+| `imu.gravity.x/y/z`                | Projected gravity in the body frame (unit vector)                        |
+| `imu.gyro.x/y/z`                   | Angular velocity, rad/s                                                  |
+| `imu.quat.w/x/y/z`                 | Orientation quaternion, scalar first                                     |
+| `mode`, `faulted`                  | Reported firmware mode and fault indicator, stored as numeric scalars    |
+| `head`, `head.age_s`, `head.frame` | With `--robot.head_camera=true`: see [Head camera](#head-camera)         |
+| Configured camera names            | RGB images `(height, width, 3)`; optional `<name>_depth`                 |
 
-Feature names and shapes are available before connecting. The adapter verifies the SDK's 25-joint order on connection. Missing IMU fields, changed joint layouts, non-finite readings, and observations older than `max_state_age_s` (default 0.5 seconds) raise an error instead of recording fabricated values. Joint velocities, battery telemetry, and base odometry are not part of this schema. Joint positions are observations only: direct joint trajectories and whole-body learning are outside this locomotion adapter.
+Feature names and shapes are available before connecting. The adapter verifies the SDK's 25-joint order on connection. Missing IMU fields, changed joint layouts, non-finite readings, and observations older than `max_state_age_s` (default 0.5 seconds) raise an error instead of recording fabricated values. Battery telemetry and base odometry are not part of this schema.
 
 ## Command lifetime and cleanup
 
@@ -107,8 +109,12 @@ The IK uses Menlo's open-source [25-DOF URDF](https://github.com/menloresearch/a
   Menlo's joint control puts **every** joint under position control with the
   walking policy **off**: the robot does not balance. Hang Asimov from its
   gantry or seat it on a stool or bench first. Legs, waist and neck are held at
-  the pose measured on the first command. When commands stop, Asimov Edge DAMPs
-  the robot two seconds later.
+  the pose measured on the first command (or `--robot.start_pose`). A background
+  loop re-sends the targets at `--robot.arm_loop_hz` (default 50 Hz) between
+  commands. When arm control ends (`stop()`, `disconnect()`, DAMP or a fault),
+  the setpoints stop and Asimov Edge DAMPs the robot two seconds later, unless
+  `--robot.exit_mode=balance` (see [Running an arm
+  policy](#running-an-arm-policy)).
 </Tip>
 
 Exoskeleton calibrations are shared with the G1 teleoperator. Verify the retargeting in the browser without the robot (this also calibrates uncalibrated arms):
@@ -137,6 +143,58 @@ uv run --locked lerobot-teleoperate \
 Arm actions are `<joint>.pos` targets in radians for the ten `L_*`/`R_*` shoulder, elbow and wrist joints. Each command moves a target by at most `--robot.max_arm_step_rad` (default 0.1 rad), so the arms ramp from their measured pose instead of jumping. `lerobot-record` stores these step-limited targets. Other options: `--teleop.frozen_joints="L_Wrist_Yaw,R_Wrist_Yaw"` keeps joints out of the IK, `--teleop.arm_scale` overrides the reach scale, and `--teleop.rotation_weight` (default 0.02) trades orientation against position.
 
 Asimov's wrist yaw is at its joint limit at zero, so in the exoskeleton's neutral wrist pose the hand can only roll one way. The exoskeleton joystick does not drive locomotion here, because the walking policy is off during arm control.
+
+## Running an arm policy
+
+`lerobot-rollout` can run a learned arm policy (for example one trained in simulation) with `--robot.control_mode=arms`. A rollout pauses between episodes, at interactive prompts and on slow ticks, so the background setpoint loop keeps the targets streaming: Asimov Edge never DAMPs the robot while LeRobot holds it. These options set up the rest:
+
+| Option                                     | What it does                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--robot.start_pose='{Neck_Pitch: 0.3}'`   | Joint targets (rad) eased into over `--robot.start_pose_s` (default 3 s) as `connect()` takes control, before the policy's first observation. Ankles are named `<L\|R>_Ankle_Pitch` / `_Roll`.                                                                                                                  |
+| `--robot.kp='[...]'`, `--robot.kd='[...]'` | PD gains sent with every setpoint: 25 positive values each, firmware order. Without them Asimov Edge uses its own gain table.                                                                                                                                                                                   |
+| `--robot.exit_mode=balance`                | When arm control ends, the arms, waist and neck glide back over `--robot.exit_glide_s` (default 4 s, 0 to skip) to where control started, then `stand()` and `balance()` hand the robot to Menlo's walking policy; the mode is checked again 2.5 s later. Default `release`: the setpoints stop and Edge DAMPs. |
+| `--robot.observe_velocities=true`          | Adds `<joint>.vel` observations.                                                                                                                                                                                                                                                                                |
+| `--robot.max_extra_lean_deg`               | Lean watchdog: tilt beyond the lean measured when control started that ends arm control at once (no glide). Default 6 deg free-standing, off otherwise.                                                                                                                                                         |
+
+`exit_mode=balance` starts the walking policy, so use it only with the robot's feet on the ground (gantry rope slack, or free-standing), never seated. With it, when a failure ends arm control (the watchdog, a stale link, a rejected setpoint), the robot refuses further arm actions until you reconnect: it is not taken back from the walking policy silently. After an explicit `stop()`, the next action starts arm control again from the measured pose. A DAMP or fault ends arm control without a handover.
+
+### Free-standing
+
+With the walking policy off the robot does not balance, but a leg stance that puts the centre of mass over the feet can hold it upright while the arms move (Asimov's own STAND pose may not). `--robot.free_standing=true` replaces `robot_supported` and requires `exit_mode=balance`, the lean watchdog and the stance's hip, knee and ankle pitch for both legs in `start_pose`:
+
+```bash
+uv run --locked lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=${HF_USER}/my_asimov_arm_policy \
+  --robot.type=asimov \
+  --robot.host=192.168.22.32 \
+  --robot.control_mode=arms \
+  --robot.free_standing=true \
+  --robot.exit_mode=balance \
+  --robot.start_pose='{L_Hip_Pitch: -0.5, L_Knee: 0.55, L_Ankle_Pitch: -0.21, R_Hip_Pitch: 0.5, R_Knee: -0.55, R_Ankle_Pitch: 0.21}' \
+  --robot.head_camera=true \
+  --fps=50 --duration=60
+```
+
+Find a stance in simulation for your robot first. Prepare STAND (armed) or MOVE in Asimov Manager with the gantry rope **taut**, start the command (the robot moves into the stance on connect), then lower the rope until slack. Keep the E-Stop in reach. Moving the arms far while free-standing shifts the centre of mass: set `--robot.exit_glide_s=0` if the glide back would tip the robot. If the process is killed, nothing hands the robot over and Edge DAMPs it two seconds later.
+
+## Head camera
+
+`--robot.head_camera=true` streams Asimov's head camera through Asimov Manager over LiveKit (the SDK's `hybrid` connection; control and state stay on UDP). Create an SDK credential on the Developer page of Asimov Manager and export it, so it stays off the command line:
+
+```bash
+export MENLO_CREDENTIAL=...
+```
+
+Asimov Manager is reached at `http://<host>` unless `--robot.manager_url` says otherwise. Connecting waits for a first frame (`--robot.head_camera_timeout_s`, default 5 s). Each observation then carries:
+
+| Feature      | Meaning                                                                                                                       |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `head`       | Newest RGB frame, resized to `--robot.head_camera_width` × `--robot.head_camera_height` (default 1280 × 720) if it differs    |
+| `head.age_s` | Seconds since the frame was received, plus `--robot.head_camera_latency_s` (capture to reception; measure it on your network) |
+| `head.frame` | Count of distinct frames received: unchanged while the camera has not sent a new one                                          |
+
+The camera runs at its own rate, slower than a 50 Hz control loop, so a policy that tracks a moving object should use `head.age_s` to place each frame in time and `head.frame` to tell new frames from repeated ones.
 
 ## Simulation
 

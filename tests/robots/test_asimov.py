@@ -42,7 +42,9 @@ class Velocity:
 def setup_robot(monkeypatch, tmp_path):
     state = SimpleNamespace(
         joints=tuple(
-            SimpleNamespace(name=name, pos=i / 100, vel=0.0) for i, name in enumerate(ASIMOV_JOINTS)
+            # Ankles at zero: a pose inside the firmware's ankle limits, which trajectory() enforces.
+            SimpleNamespace(name=name, pos=0.0 if "Ankle" in name else i / 100, vel=0.0)
+            for i, name in enumerate(ASIMOV_JOINTS)
         ),
         gravity=(0.0, 0.0, -1.0),
         gyro=(0.1, 0.2, 0.3),
@@ -574,3 +576,288 @@ def test_missing_sdk_has_actionable_install_error(monkeypatch, tmp_path):
     monkeypatch.setitem(import_utils._require_package_cache, "menlo", False)
     with pytest.raises(ImportError, match="asimov"):
         Asimov(AsimovConfig(host="192.0.2.10", calibration_dir=tmp_path))
+
+
+# ---------------------------------------------------------------- arms: running a learned arm policy
+
+STANCE = {
+    "L_Hip_Pitch": -0.5,
+    "L_Knee": 0.55,
+    "L_Ankle_Pitch": -0.21,
+    "R_Hip_Pitch": 0.5,
+    "R_Knee": -0.55,
+    "R_Ankle_Pitch": 0.21,
+}
+FREE_STANDING = {
+    "control_mode": "arms",
+    "free_standing": True,
+    "exit_mode": "balance",
+    "start_pose": STANCE,
+    "start_pose_s": 0.02,
+    "exit_glide_s": 0.02,
+    "arm_loop_hz": 200.0,
+}
+
+
+@pytest.fixture
+def fast_handover(monkeypatch):
+    monkeypatch.setattr(module, "HANDOVER_CHECK_S", 0.0)
+
+
+def wait_for(condition, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.002)
+    return condition()
+
+
+def tilt(state, degrees_):
+    state.gravity = (np.sin(np.radians(degrees_)), 0.0, -np.cos(np.radians(degrees_)))
+
+
+def test_setpoint_loop_keeps_targets_alive_between_actions(setup_robot):
+    env = setup_robot
+    robot = make_arms_robot(env, arm_loop_hz=100.0)
+    sent = robot.send_action({"L_Elbow.pos": 0.0})
+    calls = env.client.trajectory.call_count
+    # A caller that pauses (a reset phase, a prompt) must not let Asimov Edge DAMP.
+    assert wait_for(lambda: env.client.trajectory.call_count >= calls + 3)
+    (positions,), _ = env.client.trajectory.call_args
+    assert positions[ASIMOV_JOINTS.index("L_Elbow")] == pytest.approx(sent["L_Elbow.pos"])
+    robot.stop()
+    calls = env.client.trajectory.call_count
+    time.sleep(0.05)
+    assert env.client.trajectory.call_count == calls  # Released: no setpoint after stop().
+    env.client.balance.assert_not_called()
+
+
+def test_setpoint_loop_reports_damp_to_the_next_action(setup_robot):
+    env = setup_robot
+    robot = make_arms_robot(env, arm_loop_hz=200.0)
+    robot.send_action({})
+    env.state.mode = 0
+    assert wait_for(lambda: robot._joint_targets is None)
+    with pytest.raises(RuntimeError, match="DAMP"):
+        robot.send_action({})
+    env.client.stand.assert_not_called()
+
+
+def test_gains_are_sent_with_every_setpoint(setup_robot):
+    env = setup_robot
+    kp, kd = [float(i + 1) for i in range(25)], [0.5] * 25
+    robot = make_arms_robot(env, kp=kp, kd=kd)
+    robot.send_action({"R_Elbow.pos": 0.0})
+    _, kwargs = env.client.trajectory.call_args
+    assert kwargs == {"timeout": 0.0, "kp": kp, "kd": kd}
+
+
+def test_start_pose_is_eased_into_on_connect(setup_robot):
+    pytest.importorskip("menlo")
+    env = setup_robot
+    robot = env.make(
+        control_mode="arms",
+        robot_supported=True,
+        start_pose={**STANCE, "Neck_Pitch": 0.3},
+        start_pose_s=0.05,
+        arm_loop_hz=100.0,
+    )
+    robot.connect()
+    assert env.client.trajectory.call_count >= 5  # Eased, not snapped.
+    (first,), _ = env.client.trajectory.call_args_list[0]
+    (last,), _ = env.client.trajectory.call_args_list[-1]
+    joints = module.motors_to_joints(last)
+    for name in ("L_Hip_Pitch", "L_Knee", "R_Hip_Pitch", "R_Knee", "Neck_Pitch"):
+        assert joints[ASIMOV_JOINTS.index(name)] == pytest.approx({**STANCE, "Neck_Pitch": 0.3}[name])
+    assert joints[ASIMOV_JOINTS.index("L_Ankle_A")] == pytest.approx(-0.21)  # Ankle pitch, joint space.
+    assert joints[ASIMOV_JOINTS.index("L_Ankle_B")] == pytest.approx(0.0)  # Roll kept as measured.
+    assert abs(first[0] - (-0.5)) > abs(last[0] - (-0.5))
+    assert robot.get_observation()["L_Elbow.pos"] == pytest.approx(0.15)
+    robot.disconnect()
+    env.client.balance.assert_not_called()  # exit_mode defaults to release.
+
+
+def test_balance_exit_glides_upper_body_back_then_stands_and_balances(setup_robot, fast_handover):
+    pytest.importorskip("menlo")
+    env = setup_robot
+    robot = env.make(**FREE_STANDING)
+    robot.connect()
+    start = module.motors_to_joints([joint.pos for joint in env.state.joints])
+    robot.send_action({"R_Elbow.pos": 1.0})
+    env.client.reset_mock()
+    robot.stop()
+    names = [call[0] for call in env.client.mock_calls if call[0] in ("trajectory", "stand", "balance")]
+    assert names[-2:] == ["stand", "balance"] and "trajectory" in names[:-2]
+    (last,), _ = env.client.trajectory.call_args
+    joints = module.motors_to_joints(last)
+    assert joints[12:] == pytest.approx(start[12:])  # Arms, waist and neck back where they started.
+    assert joints[ASIMOV_JOINTS.index("L_Hip_Pitch")] == pytest.approx(-0.5)  # Legs keep the stance.
+    env.client.balance.assert_called_once_with(timeout=5.0)
+
+
+def test_handover_retries_when_the_robot_does_not_stay_in_move(setup_robot, fast_handover):
+    pytest.importorskip("menlo")
+    env = setup_robot
+    robot = env.make(**FREE_STANDING)
+    robot.connect()
+    env.client.balance.side_effect = lambda **_: setattr(env.state, "mode", 1)  # Stays in STAND.
+    robot.disconnect()
+    assert env.client.balance.call_count == 2 and env.client.stand.call_count == 2
+    env.client.close.assert_called_once()
+
+
+def test_lean_watchdog_hands_over_without_glide_and_refuses_further_actions(setup_robot, fast_handover):
+    pytest.importorskip("menlo")
+    env = setup_robot
+    robot = env.make(**FREE_STANDING, max_extra_lean_deg=5.0)
+    robot.connect()
+    tilt(env.state, 4.0)
+    robot.send_action({})  # Within the margin.
+    calls = env.client.trajectory.call_count
+    tilt(env.state, 7.0)
+    assert wait_for(lambda: env.client.balance.called)
+    assert env.client.trajectory.call_count == calls  # No glide while tipping.
+    env.client.stand.assert_called_once()
+    for _ in range(2):  # Handed to the walking policy: never taken back silently.
+        with pytest.raises(RuntimeError, match="leans"):
+            robot.send_action({})
+    assert env.client.trajectory.call_count == calls
+
+
+def test_no_handover_from_damp(setup_robot, fast_handover):
+    pytest.importorskip("menlo")
+    env = setup_robot
+    robot = env.make(**FREE_STANDING)
+    robot.connect()
+    env.state.mode = 0
+    assert wait_for(lambda: robot._joint_targets is None)
+    env.client.stand.assert_not_called()
+    env.client.balance.assert_not_called()
+
+
+def test_joint_velocities_are_observed_on_request(setup_robot):
+    env = setup_robot
+    robot = env.make(observe_velocities=True)
+    assert len(robot.observation_features) == 37 + 25
+    robot.connect()
+    observation = robot.get_observation()
+    assert set(observation) == set(robot.observation_features)
+    assert observation["R_Elbow.vel"] == 0.0
+
+
+@pytest.mark.parametrize(
+    "kwargs,match",
+    [
+        ({"control_mode": "arms", "free_standing": True, "start_pose": STANCE}, "exit_mode=balance"),
+        ({"control_mode": "arms", "free_standing": True, "exit_mode": "balance"}, "stance"),
+        ({**FREE_STANDING, "max_extra_lean_deg": 0.0}, "watchdog"),
+        ({"control_mode": "arms", "robot_supported": True, "kp": [1.0] * 25}, "both"),
+        ({"control_mode": "arms", "robot_supported": True, "exit_mode": "damp"}, "exit_mode"),
+        ({"control_mode": "arms", "robot_supported": True, "arm_loop_hz": 1.0}, "arm_loop_hz"),
+        ({"start_pose": STANCE}, "only apply"),
+        ({"exit_mode": "balance"}, "only apply"),
+        ({"head_camera": True, "head_camera_width": 0}, "head_camera_width"),
+        ({"head_camera": True, "head_camera_latency_s": -0.1}, "latency"),
+    ],
+)
+def test_invalid_arm_policy_and_head_camera_config(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        AsimovConfig(**{"host": "192.0.2.10", **kwargs})
+
+
+def test_head_camera_is_not_simulated():
+    with pytest.raises(ValueError, match="head camera"):
+        AsimovConfig(control_mode="whole_body", is_simulation=True, head_camera=True)
+
+
+@pytest.mark.parametrize(
+    "kwargs,match",
+    [
+        ({"start_pose": {"L_Ankle_A": 0.1}}, "Unknown start_pose"),
+        ({"kp": [1.0] * 24, "kd": [1.0] * 24}, "25"),
+        ({"kp": [0.0] * 25, "kd": [1.0] * 25}, "positive"),
+    ],
+)
+def test_invalid_arm_options_checked_against_the_joint_list(setup_robot, kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        setup_robot.make(control_mode="arms", robot_supported=True, **kwargs)
+
+
+# ---------------------------------------------------------------- head camera
+
+
+def raw_frame(image, encoding="rgb8", age=0.02):
+    return SimpleNamespace(encoding=encoding, to_numpy=lambda: image, age_s=age)
+
+
+@pytest.fixture
+def head_camera(setup_robot, monkeypatch):
+    env = setup_robot
+    monkeypatch.setenv("MENLO_CREDENTIAL", "test-credential")
+    env.sdk.ManagerConfig = Mock(side_effect=lambda **kw: SimpleNamespace(**kw))
+    image = np.zeros((72, 128, 3), dtype=np.uint8)
+    image[..., 0] = 200  # Red in RGB.
+    env.frame = raw_frame(image)
+    env.client.camera.latest.side_effect = lambda: env.frame
+    return env
+
+
+def test_head_camera_connects_hybrid_and_observes_frame_age_and_count(head_camera):
+    env = head_camera
+    robot = env.make(head_camera=True, head_camera_width=64, head_camera_height=36, head_camera_latency_s=0.1)
+    assert robot.observation_features["head"] == (36, 64, 3)
+    robot.connect()
+    env.client.connect.assert_called_once_with("hybrid", timeout=5.0, media_timeout=5.0, persist=False)
+    livekit = env.sdk.ConnectionConfig.call_args.kwargs["livekit"]
+    assert livekit.url == "http://192.0.2.10" and livekit.credential == "test-credential"
+    env.client.camera.photo.assert_called_once_with(timeout=5.0)
+
+    first = robot.get_observation()
+    assert set(first) == set(robot.observation_features)
+    assert first["head"].shape == (36, 64, 3) and first["head"][0, 0, 0] == 200
+    assert first["head.age_s"] == pytest.approx(0.12)
+    assert first["head.frame"] == 1.0
+    assert robot.get_observation()["head.frame"] == 1.0  # Same frame: same count.
+    bgr = np.zeros((36, 64, 3), dtype=np.uint8)
+    bgr[..., 2] = 50  # Red in BGR.
+    env.frame = raw_frame(bgr, encoding="bgr8", age=0.0)
+    second = robot.get_observation()
+    assert second["head.frame"] == 2.0 and second["head"][0, 0, 0] == 50
+
+
+def test_head_camera_uses_manager_url(head_camera):
+    robot = head_camera.make(head_camera=True, manager_url="http://asimov.local:8080")
+    robot.connect()
+    assert head_camera.sdk.ConnectionConfig.call_args.kwargs["livekit"].url == "http://asimov.local:8080"
+
+
+def test_head_camera_needs_credential_from_environment(head_camera, monkeypatch):
+    monkeypatch.delenv("MENLO_CREDENTIAL")
+    robot = head_camera.make(head_camera=True)
+    with pytest.raises(RuntimeError, match="MENLO_CREDENTIAL"):
+        robot.connect()
+    assert not robot.is_connected
+
+
+def test_head_camera_collides_with_a_camera_named_head(setup_robot):
+    with pytest.raises(ValueError, match="collides"):
+        setup_robot.make(head_camera=True, cameras={"head": SimpleNamespace(width=48, height=32, fps=30)})
+
+
+def test_jpeg_and_gray_frames_decode_to_rgb():
+    import cv2
+
+    rgb = np.zeros((8, 16, 3), dtype=np.uint8)
+    rgb[..., 1] = 255
+    ok, jpeg = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+    assert ok
+    decoded = module.frame_to_rgb(SimpleNamespace(encoding="jpeg", data=jpeg.tobytes()), 16, 8)
+    assert decoded.shape == (8, 16, 3) and decoded[4, 8, 1] > 240 and decoded[4, 8, 0] < 15
+    gray = module.frame_to_rgb(raw_frame(np.full((8, 16), 7, dtype=np.uint8), encoding="gray8"), 16, 8)
+    assert gray.shape == (8, 16, 3) and (gray == 7).all()
+    with pytest.raises(ValueError, match="h264"):
+        module.frame_to_rgb(SimpleNamespace(encoding="h264"), 16, 8)
+
+
+def test_lean_from_gravity():
+    assert module.lean_deg((0.0, 0.0, -1.0)) == pytest.approx(0.0)
+    assert module.lean_deg((0.20, -0.01, -0.98)) == pytest.approx(11.5, abs=0.1)
