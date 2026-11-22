@@ -65,6 +65,13 @@ class AverageMeter:
         return fmtstr.format(**self.__dict__)
 
 
+class _PolicyMetric(AverageMeter):
+    """A scalar reported by the policy, which may be absent on some ranks."""
+
+    def __init__(self, name: str):
+        super().__init__(name, ":.3f", reduction="mean")
+
+
 class MetricsTracker:
     """
     A helper class to track and log metrics over time.
@@ -193,23 +200,19 @@ class MetricsTracker:
             if name in self._caller_metrics:
                 continue
             if name not in self.metrics:
-                self.metrics[name] = AverageMeter(name, ":.3f", reduction="mean")
+                self.metrics[name] = _PolicyMetric(name)
             self.metrics[name].update(float(value))
 
     def reduce_across_ranks(self) -> None:
         """
-        Synchronises the running averages of every metric whose ``reduction`` is not ``"none"``
-        across all distributed processes (in-place).
+        Synchronise running averages across the world group before logging.
 
-        This is a collective operation and MUST be invoked on every rank — typically just before
-        logging. Outside distributed runs it is a no-op. Without it, metrics reported by the
-        main process only reflect rank 0; for bottleneck-style timings (``dataloading_s``,
-        ``update_s``, ...) that means the slowest worker's stall is invisible.
+        Each scalar reported through an auto-registered policy meter counts once in the mean for
+        its name. A rank can receive a metric that only its peers reported. Caller-supplied meters
+        use their configured reductions on the per-rank averages. Supply the same reduced meter
+        names and reductions on all ranks.
 
-        Torch-native on purpose: metrics code carries no Accelerator dependency.
-        Note the reduction spans the WORLD group — correct for count-free averages (loss values
-        are identical within a context-parallel group, so including CP peers is a weighted
-        no-op).
+        All ranks must call this collective. Outside distributed runs it is a no-op.
         """
         if not dist.is_initialized() or dist.get_world_size() <= 1:
             return
@@ -220,7 +223,7 @@ class MetricsTracker:
         local = {
             name: (meter.sum, meter.count)
             for name, meter in self.metrics.items()
-            if name not in self._caller_metrics and meter.count
+            if isinstance(meter, _PolicyMetric) and meter.count
         }
         gathered: list[dict[str, tuple[float, float]]] = [{} for _ in range(world_size)]
         dist.all_gather_object(gathered, local)
@@ -232,7 +235,7 @@ class MetricsTracker:
                 counts[name] += count
         for name, total in sums.items():
             if name not in self.metrics:
-                self.metrics[name] = AverageMeter(name, ":.3f", reduction="mean")
+                self.metrics[name] = _PolicyMetric(name)
             meter = self.metrics[name]
             # Keep one rank's share, so reducing again after more updates counts
             # observations from this window only once.
@@ -241,9 +244,8 @@ class MetricsTracker:
             meter.avg = total / counts[name]
 
         buckets: dict[str, list[str]] = defaultdict(list)
-        for name in sorted(self._caller_metrics):
-            meter = self.metrics[name]
-            if meter.reduction != "none":
+        for name, meter in sorted(self.metrics.items()):
+            if not isinstance(meter, _PolicyMetric) and meter.reduction != "none":
                 buckets[meter.reduction].append(name)
         if not buckets:
             return
