@@ -208,6 +208,12 @@ class EvalConfig:
     max_episode_steps: int | None = None
 
     def __post_init__(self) -> None:
+        if self.n_episodes < 1:
+            raise ValueError(f"eval.n_episodes must be at least 1, got {self.n_episodes}.")
+        if self.batch_size < 0:
+            raise ValueError(
+                f"eval.batch_size must be non-negative (0 auto-sizes based on CPU count), got {self.batch_size}."
+            )
         if self.recording_repo_id is not None and not self.recording:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
         if self.max_episode_steps is not None and self.max_episode_steps < 1:
