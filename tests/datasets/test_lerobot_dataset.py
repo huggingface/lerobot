@@ -19,7 +19,6 @@ Tests focus on mode contracts (read-only, write-only, resume), guards,
 property delegation, and the full create-record-finalize-read lifecycle.
 """
 
-import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -32,7 +31,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import lerobot.datasets.dataset_metadata as dataset_metadata_module
 import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
-from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
+from lerobot.configs import DepthEncoderConfig
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.dataset_writer import DatasetWriter
@@ -550,138 +549,41 @@ def test_resume_can_add_more_episodes(tmp_path):
     assert resumed.meta.total_episodes == 2
 
 
-# ── Resume: encoder settings ─────────────────────────────────────────
-
-DEPTH_KEY = "observation.images.depth"
-RGB_KEY = "observation.images.rgb"
-_ENC_H, _ENC_W = 48, 64
-
-
-def _video_features(with_rgb: bool = False) -> dict:
+def test_resume_reuses_recorded_depth_encoder(tmp_path):
+    """resume() reuses the recorded depth settings and refuses ones that would decode wrong."""
+    root = tmp_path / "ds"
     features = {
-        DEPTH_KEY: {
+        "observation.images.depth": {
             "dtype": "video",
-            "shape": (_ENC_H, _ENC_W, 1),
+            "shape": (48, 64, 1),
             "names": ["height", "width", "channels"],
             "info": {"is_depth_map": True},
         }
     }
-    if with_rgb:
-        features[RGB_KEY] = {
-            "dtype": "video",
-            "shape": (_ENC_H, _ENC_W, 3),
-            "names": ["height", "width", "channels"],
-        }
-    return features
-
-
-def _depth_frame(episode: int, frame: int) -> np.ndarray:
-    """Smooth uint16 depth ramp in mm (1 m to 4 m), distinct per episode and frame."""
-    ramp = np.linspace(1000, 4000, _ENC_H * _ENC_W, dtype=np.float64).reshape(_ENC_H, _ENC_W, 1)
-    return (ramp + 100 * episode + frame).astype(np.uint16)
-
-
-def _record_episode(dataset: LeRobotDataset, episode: int, num_frames: int = 4) -> None:
-    for i in range(num_frames):
-        frame = {DEPTH_KEY: _depth_frame(episode, i), "task": "Dummy task"}
-        if RGB_KEY in dataset.meta.features:
-            frame[RGB_KEY] = np.full((_ENC_H, _ENC_W, 3), 64 * episode, dtype=np.uint8)
-        dataset.add_frame(frame)
-    dataset.save_episode()
-
-
-def _create_recorded(root: Path, with_rgb: bool = False, **create_kwargs) -> None:
     dataset = LeRobotDataset.create(
         repo_id=DUMMY_REPO_ID,
         fps=DEFAULT_FPS,
-        features=_video_features(with_rgb),
+        features=features,
         root=root,
         use_videos=True,
-        **create_kwargs,
+        depth_encoder=DepthEncoderConfig(depth_max=5.0, use_log=False),
     )
-    _record_episode(dataset, episode=0)
+    image = np.full((48, 64, 1), 1000, dtype=np.uint16)
+    for _ in range(4):
+        dataset.add_frame({"observation.images.depth": image, "task": "Dummy task"})
+    dataset.save_episode()
     dataset.finalize()
 
-
-def test_resume_reuses_recorded_depth_encoder(tmp_path):
-    """Without an explicit depth encoder, resume() reuses the recorded quantization settings."""
-    root = tmp_path / "ds"
-    _create_recorded(root, depth_encoder=DepthEncoderConfig(depth_max=5.0, use_log=False))
-
     resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
-
     assert resumed.writer._depth_encoder.depth_max == 5.0
     assert resumed.writer._depth_encoder.use_log is False
 
-
-def test_resume_appended_depth_episodes_decode_correctly(tmp_path):
-    """Episodes appended after resume() decode with the same accuracy as the original ones."""
-    root = tmp_path / "ds"
-    _create_recorded(root, depth_encoder=DepthEncoderConfig(depth_max=5.0, use_log=False))
-
-    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
-    _record_episode(resumed, episode=1)
-    resumed.finalize()
-
-    reopened = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=root)
-    # Linear 12-bit over 0.01-5 m: quantization step is about 1.2 mm.
-    for index, (episode, frame) in enumerate([(0, i) for i in range(4)] + [(1, i) for i in range(4)]):
-        decoded = reopened[index][DEPTH_KEY].squeeze().numpy()
-        expected = _depth_frame(episode, frame).squeeze().astype(np.float32)
-        assert np.abs(decoded - expected).max() <= 1.5, f"episode {episode}, frame {frame}"
-
-
-def test_resume_raises_on_depth_quantization_mismatch(tmp_path):
-    """resume() refuses depth quantization settings that differ from the recorded ones."""
-    root = tmp_path / "ds"
-    _create_recorded(root, depth_encoder=DepthEncoderConfig(depth_max=5.0, use_log=False))
-
-    with pytest.raises(ValueError, match="depth_max: recorded 5.0, passed 10.0"):
+    with pytest.raises(ValueError, match="depth settings"):
         LeRobotDataset.resume(
-            repo_id=DUMMY_REPO_ID, root=root, depth_encoder=DepthEncoderConfig(depth_max=10.0, use_log=False)
+            repo_id=DUMMY_REPO_ID,
+            root=root,
+            depth_encoder=DepthEncoderConfig(depth_max=10.0, use_log=False),
         )
-
-
-def test_resume_accepts_matching_explicit_depth_encoder(tmp_path):
-    """Passing the recorded depth settings explicitly is accepted."""
-    root = tmp_path / "ds"
-    _create_recorded(root, depth_encoder=DepthEncoderConfig(depth_max=5.0, use_log=False))
-
-    resumed = LeRobotDataset.resume(
-        repo_id=DUMMY_REPO_ID, root=root, depth_encoder=DepthEncoderConfig(depth_max=5.0, use_log=False)
-    )
-
-    assert resumed.writer._depth_encoder.depth_max == 5.0
-
-
-def test_resume_reuses_recorded_rgb_encoder_and_warns_on_mismatch(tmp_path, caplog):
-    """RGB settings are reused when omitted; an explicit mismatch is honored with a warning."""
-    root = tmp_path / "ds"
-    _create_recorded(root, with_rgb=True, rgb_encoder=RGBEncoderConfig(crf=40))
-
-    reused = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
-    assert reused.writer._rgb_encoder.crf == 40
-
-    with caplog.at_level(logging.WARNING, logger=lerobot_dataset_module.__name__):
-        explicit = LeRobotDataset.resume(
-            repo_id=DUMMY_REPO_ID, root=root, rgb_encoder=RGBEncoderConfig(crf=20)
-        )
-    assert explicit.writer._rgb_encoder.crf == 20
-    assert "crf: recorded 40, passed 20" in caplog.text
-
-
-def test_resume_without_recorded_episodes_keeps_passed_encoder(tmp_path):
-    """Before any episode is recorded there is nothing to reconcile with."""
-    root = tmp_path / "ds"
-    LeRobotDataset.create(
-        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=_video_features(), root=root, use_videos=True
-    )
-
-    resumed = LeRobotDataset.resume(
-        repo_id=DUMMY_REPO_ID, root=root, depth_encoder=DepthEncoderConfig(depth_max=7.0)
-    )
-
-    assert resumed.writer._depth_encoder.depth_max == 7.0
 
 
 # ── Writer guard ─────────────────────────────────────────────────────

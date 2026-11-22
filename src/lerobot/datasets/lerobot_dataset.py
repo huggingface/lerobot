@@ -15,8 +15,7 @@
 # limitations under the License.
 import contextlib
 import logging
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast, overload
 
@@ -49,91 +48,6 @@ from .utils import (
 from .video_utils import StreamingVideoEncoder
 
 logger = logging.getLogger(__name__)
-
-# Depth settings that define how stored codes map back to depth. Appending episodes encoded with
-# other values would make them decode incorrectly, since frames are dequantized with the values
-# recorded in info.json.
-DEPTH_RESUME_STRICT_FIELDS: tuple[str, ...] = ("pix_fmt", *sorted(DEPTH_ENCODER_INFO_FIELD_NAMES))
-
-
-def _encoder_diff(a: VideoEncoderConfig, b: VideoEncoderConfig) -> list[str]:
-    """Names of the fields whose values differ between two encoder configs."""
-    fields_a, fields_b = asdict(a), asdict(b)
-    return [name for name, value in fields_a.items() if fields_b.get(name) != value]
-
-
-def _describe_diff(stored: VideoEncoderConfig, passed: VideoEncoderConfig, names: Sequence[str]) -> str:
-    return ", ".join(
-        f"{name}: recorded {getattr(stored, name)!r}, passed {getattr(passed, name)!r}" for name in names
-    )
-
-
-def _stored_encoder[EncoderT: VideoEncoderConfig](
-    meta: LeRobotDatasetMetadata,
-    keys: Sequence[str],
-    config_cls: type[EncoderT],
-    strict: Sequence[str],
-) -> EncoderT | None:
-    """Rebuild the encoder settings recorded in ``info.json`` for ``keys`` (one config for all of them)."""
-    configs: dict[str, EncoderT] = {}
-    for key in keys:
-        try:
-            configs[key] = config_cls.from_video_info(meta.features[key].get("info"))
-        except ValueError as e:
-            logger.warning(
-                f"Could not rebuild the encoder settings recorded for '{key}' ({e}). "
-                "New episodes will use the encoder passed to resume(), or the defaults."
-            )
-    if not configs:
-        return None
-
-    reference_key, reference = next(iter(configs.items()))
-    for key, config in configs.items():
-        diff = _encoder_diff(reference, config)
-        strict_diff = [name for name in diff if name in strict]
-        if strict_diff:
-            raise ValueError(
-                f"Video keys '{reference_key}' and '{key}' were recorded with different depth settings "
-                f"({', '.join(strict_diff)}), but resume() applies a single depth encoder to all depth keys."
-            )
-        if diff:
-            logger.warning(
-                f"Video keys '{reference_key}' and '{key}' were recorded with different encoder settings "
-                f"({', '.join(diff)}). New episodes will use the settings recorded for '{reference_key}'."
-            )
-    return reference
-
-
-def _reconcile_resume_encoder[EncoderT: VideoEncoderConfig](
-    meta: LeRobotDatasetMetadata,
-    keys: Sequence[str],
-    passed: EncoderT | None,
-    config_cls: type[EncoderT],
-    strict: Sequence[str],
-) -> EncoderT | None:
-    """Pick the encoder for episodes appended by ``resume()``, see ``LeRobotDataset._resolve_resume_encoders``."""
-    stored = _stored_encoder(meta, keys, config_cls, strict)
-    if stored is None:
-        return passed
-    if passed is None:
-        logger.info(f"Resuming with the encoder settings recorded in info.json: {stored}")
-        return stored
-
-    diff = _encoder_diff(stored, passed)
-    strict_diff = [name for name in diff if name in strict]
-    if strict_diff:
-        raise ValueError(
-            f"Cannot resume with depth settings that differ from the recorded ones "
-            f"({_describe_diff(stored, passed, strict_diff)}). Existing episodes are decoded with the "
-            "recorded values, so appended episodes would decode to wrong depth. Pass the recorded values, "
-            "or omit `depth_encoder` to reuse them."
-        )
-    if diff:
-        logger.warning(
-            f"New episodes will be encoded with settings that differ from the recorded ones "
-            f"({_describe_diff(stored, passed, diff)}). info.json keeps describing the first episode."
-        )
-    return passed
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
@@ -531,31 +445,53 @@ class LeRobotDataset(torch.utils.data.Dataset):
         rgb_encoder: RGBEncoderConfig | None,
         depth_encoder: DepthEncoderConfig | None,
     ) -> tuple[RGBEncoderConfig | None, DepthEncoderConfig | None]:
-        """Reconcile the encoders passed to :meth:`resume` with the ones recorded in ``info.json``.
+        """Reuse encoders recorded in ``info.json`` when :meth:`resume` is not given one.
 
-        Video info is only written when the first episode is encoded, so episodes appended
-        with different settings are never reflected in the metadata. For depth this corrupts
-        data: frames are dequantized with the *stored* parameters, so appending with a
-        different ``depth_max`` (for instance) silently returns wrong depth values.
-
-        - No encoder passed: reuse the stored settings, so new episodes match existing ones.
-        - Encoder passed: it is used, but a mismatch on the depth quantization settings
-          (``pix_fmt``, ``depth_min``, ``depth_max``, ``shift``, ``use_log``) raises, and any
-          other difference (codec, ``crf``, ``g``, ...) logs a warning.
-
-        Returns the ``(rgb_encoder, depth_encoder)`` pair to hand to the writer. ``None`` means
-        the writer's defaults apply (nothing recorded yet and nothing passed).
+        ``None`` means nothing is recorded yet (or nothing was passed) and the writer defaults apply.
+        A passed depth encoder that changes ``pix_fmt`` or the quantization settings raises, because
+        frames are decoded with the stored values and ``info.json`` is not updated after episode 0.
         """
         if meta.total_episodes == 0:
             return rgb_encoder, depth_encoder
 
+        def resolve[EncoderT: VideoEncoderConfig](
+            keys: list[str],
+            passed: EncoderT | None,
+            config_cls: type[EncoderT],
+            strict: tuple[str, ...],
+        ) -> EncoderT | None:
+            stored: EncoderT | None = None
+            for key in keys:
+                config = config_cls.from_video_info(meta.features[key].get("info"))
+                if stored is None:
+                    stored = config
+                    continue
+                if any(getattr(stored, name) != getattr(config, name) for name in strict):
+                    raise ValueError(f"'{key}' was recorded with different depth settings.")
+                if config != stored:
+                    logger.warning(
+                        f"'{key}' was recorded with different encoder settings; using the first key's."
+                    )
+            if stored is None:
+                return passed
+            if passed is None:
+                return stored
+            if any(getattr(stored, name) != getattr(passed, name) for name in strict):
+                raise ValueError(
+                    "Cannot resume with depth settings that differ from the recorded ones. "
+                    "Omit depth_encoder to reuse them."
+                )
+            if passed != stored:
+                logger.warning("New episodes use encoder settings that differ from the recorded ones.")
+            return passed
+
+        depth_strict = ("pix_fmt", *DEPTH_ENCODER_INFO_FIELD_NAMES)
         rgb_keys = [key for key in meta.video_keys if key not in meta.depth_keys]
         depth_keys = [key for key in meta.video_keys if key in meta.depth_keys]
-        resolved_rgb = _reconcile_resume_encoder(meta, rgb_keys, rgb_encoder, RGBEncoderConfig, strict=())
-        resolved_depth = _reconcile_resume_encoder(
-            meta, depth_keys, depth_encoder, DepthEncoderConfig, strict=DEPTH_RESUME_STRICT_FIELDS
+        return (
+            resolve(rgb_keys, rgb_encoder, RGBEncoderConfig, ()),
+            resolve(depth_keys, depth_encoder, DepthEncoderConfig, depth_strict),
         )
-        return resolved_rgb, resolved_depth
 
     @staticmethod
     def _build_streaming_encoder(
@@ -1054,15 +990,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos.
             rgb_encoder: Video encoder settings for cameras (codec, quality, etc.).
-                When ``None``, the settings recorded in ``info.json`` are reused so new
-                episodes match existing ones (or :func:`~lerobot.configs.video.rgb_encoder_defaults`
-                when nothing is recorded yet). Differences from the recorded settings log a warning.
+                When ``None``, the settings recorded in ``info.json`` are reused
+                (or the defaults when nothing is recorded yet).
             depth_encoder: Video encoder settings for depth cameras (codec, quality, etc.).
-                When ``None``, the settings recorded in ``info.json`` are reused (or
-                :func:`~lerobot.configs.video.depth_encoder_defaults` when nothing is recorded yet).
-                A mismatch on the depth quantization settings (``pix_fmt``, ``depth_min``,
-                ``depth_max``, ``shift``, ``use_log``) raises a ``ValueError``, since appended
-                episodes would otherwise be decoded with the wrong values.
+                When ``None``, the settings recorded in ``info.json`` are reused
+                (or the defaults when nothing is recorded yet). Settings that change how
+                stored depth is decoded raise ``ValueError``.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             image_writer_processes: Subprocesses for async image writing.
