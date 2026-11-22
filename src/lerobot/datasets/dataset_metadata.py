@@ -231,6 +231,11 @@ class LeRobotDatasetMetadata:
         """
         if self.episodes is None:
             self._load_metadata()
+        elif len(self.episodes) != self.info.total_episodes:
+            # Episodes were appended on this instance after this view was loaded
+            # (create/resume + save_episode). The view is stale; reload it so
+            # reads on the same instance include the appended episodes.
+            self.episodes = load_episodes(self.root)
 
     def filter_episodes(
         self,

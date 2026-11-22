@@ -528,6 +528,40 @@ def test_resume_preserves_episode_count(tmp_path):
     assert resumed.meta.total_episodes == 1
 
 
+def test_resume_window_read_on_same_instance(tmp_path):
+    """Reads with delta_timestamps work on the resume() instance after appending episodes.
+
+    Regression test for #5318: save_episode() updated info.total_episodes but the
+    in-memory per-episode metadata view stayed stale, so windowed reads failed with
+    'Invalid key: 1 is out of bounds for size 1' for the appended episodes.
+    Reopening the dataset worked; the same instance did not.
+    """
+    root = tmp_path / "resume_window_ds"
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root
+    )
+    for value in (0.0, 1.0, 2.0):
+        dataset.add_frame({"task": "first", "state": torch.tensor([value, value])})
+    dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+    for value in (10.0, 11.0):
+        resumed.add_frame({"task": "first", "state": torch.tensor([value, value])})
+    resumed.save_episode()
+    resumed.finalize()
+
+    assert resumed.meta.total_episodes == 2
+
+    resumed.delta_timestamps = {"state": [-0.1, 0.0, 0.1]}
+    item = resumed[3]
+    assert torch.allclose(item["state"], torch.tensor([[10.0, 10.0], [10.0, 10.0], [11.0, 11.0]]))
+    assert "state_is_pad" in item
+
+    reopened = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=root, delta_timestamps={"state": [-0.1, 0.0, 0.1]})
+    assert torch.allclose(reopened[3]["state"], item["state"])
+
+
 def test_resume_can_add_more_episodes(tmp_path):
     """After resume(), new episodes can be added."""
     root = tmp_path / "resume_ds"
