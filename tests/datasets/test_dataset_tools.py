@@ -40,12 +40,16 @@ from lerobot.datasets.dataset_tools import (
     merge_datasets,
     modify_features,
     modify_tasks,
+    recompute_stats,
     reencode_dataset,
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_episodes, load_info
+from lerobot.datasets.io_utils import load_episodes, load_info, write_info
+from lerobot.datasets.language import language_feature_info
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import DEFAULT_DATA_PATH
+from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY, DUMMY_REPO_ID
 from tests.fixtures.dataset_factories import add_frames
@@ -1892,3 +1896,44 @@ def test_remove_camera_then_split_dataset(sample_dataset, tmp_path):
             assert not any(column.startswith(f"stats/{camera}/") for column in pq.read_schema(path).names)
     assert camera in sample_dataset.meta.features
     assert camera in sample_dataset.meta.stats
+
+
+def test_recompute_stats_skips_sparse_language_events(tmp_path):
+    """Language features must be excluded from recompute_stats like string features.
+
+    A frame with no event followed by a frame with one event yields variable-length
+    lists that cannot be stacked, so including language columns crashes with
+    'all input arrays must have the same shape' (#5342)."""
+    dataset = LeRobotDataset.create(
+        DUMMY_REPO_ID,
+        root=tmp_path / "dataset",
+        fps=DEFAULT_FPS,
+        features={"state": {"dtype": "float32", "shape": (2,), "names": None}},
+        use_videos=False,
+    )
+    for value in (0, 2):
+        dataset.add_frame({"state": np.array([value, value + 1], dtype=np.float32), "task": "tidy"})
+    dataset.save_episode()
+    dataset.finalize()
+
+    # Annotate after recording: one event on the second frame only (sparse events).
+    data_path = tmp_path / "dataset" / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
+    df = pd.read_parquet(data_path)
+    event = {
+        "role": "user",
+        "content": "stop",
+        "style": "interjection",
+        "camera": None,
+        "tool_calls": None,
+    }
+    df[LANGUAGE_EVENTS] = [[], [event]]
+    df.to_parquet(data_path)
+    dataset.meta.info.features.update(language_feature_info())
+    write_info(dataset.meta.info, tmp_path / "dataset")
+
+    for skip_image_video in (True, False):
+        result = recompute_stats(dataset, skip_image_video=skip_image_video)
+        assert "state" in result.meta.stats
+        assert result.meta.stats["state"]["count"].tolist() == [2]
+        assert LANGUAGE_EVENTS not in result.meta.stats
+        assert LANGUAGE_PERSISTENT not in result.meta.stats
