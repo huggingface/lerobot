@@ -19,11 +19,7 @@ Spotlight Video: https://www.youtube.com/watch?v=NmJnHcI04_Q
 
 ## Usage
 
-To use DynamicVLA in LeRobot, the policy type as:
-
-```python
-policy.type = dynamicvla
-```
+Select DynamicVLA with `--policy.type=dynamicvla` (or load a trained checkpoint with `--policy.path`).
 
 ## Training
 
@@ -34,15 +30,24 @@ lerobot-train \
   --dataset.repo_id hzxie/DOM
 ```
 
-## Inference
+## LIBERO
 
-Use the following command to test DynamicVLA on LIBERO dataset:
+[hzxie/dynamic-vla-LIBERO](https://huggingface.co/hzxie/dynamic-vla-LIBERO) is fine-tuned on [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero) (all four suites) from the DOM-pretrained model, for 40k steps with batch size 72 (3 GPUs × 24) and image augmentation. LIBERO actions are already relative end-effector commands, so train with `--policy.use_delta_action=false`.
+
+Success rates (10 tasks per suite, 50 episodes per task):
+
+| LIBERO-Spatial | LIBERO-Object | LIBERO-Goal | LIBERO-10 | Average  |
+| :------------: | :-----------: | :---------: | :-------: | :------: |
+|      96.6      |     98.4      |    93.4     |   93.6    | **95.5** |
+
+To reproduce the evaluation (repeat for `libero_object`, `libero_goal` and `libero_10`):
 
 ```bash
 lerobot-eval \
-  --policy.path=/path/to/ckpt \
+  --policy.path=hzxie/dynamic-vla-LIBERO \
   --env.type=libero \
-  --env.task=libero_object \
+  --env.task=libero_spatial \
+  --eval.batch_size=10 \
   --eval.n_episodes=50
 ```
 
