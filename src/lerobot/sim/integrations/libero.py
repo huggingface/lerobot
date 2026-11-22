@@ -249,9 +249,16 @@ class LiberoEnv(gym.Env):
                     "pixels": spaces.Dict(images),
                 }
             )
-        elif self.obs_type == "pixels_agent_pos":
+        elif self.obs_type in ("pixels_agent_pos", "pixels_agent_pos_joints"):
+            # "pixels_agent_pos_joints" also gives the arm's joint angles, as `observation.joint_pos`.
+            joint_pos = (
+                {"joint_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float64)}
+                if self.obs_type == "pixels_agent_pos_joints"
+                else {}
+            )
             self.observation_space = spaces.Dict(
                 {
+                    **joint_pos,
                     "pixels": spaces.Dict(images),
                     "robot_state": spaces.Dict(
                         {
@@ -357,7 +364,7 @@ class LiberoEnv(gym.Env):
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}
 
-        if self.obs_type == "pixels_agent_pos":
+        if self.obs_type in ("pixels_agent_pos", "pixels_agent_pos_joints"):
             # Validate required fields are present
             if eef_pos is None or eef_quat is None or gripper_qpos is None:
                 raise ValueError(
@@ -365,11 +372,16 @@ class LiberoEnv(gym.Env):
                     f"Got eef_pos={eef_pos is not None}, eef_quat={eef_quat is not None}, "
                     f"gripper_qpos={gripper_qpos is not None}"
                 )
+            if self.obs_type == "pixels_agent_pos_joints":
+                if joint_pos is None:
+                    raise ValueError("Missing robot0_joint_pos in raw observation.")
+                obs["joint_pos"] = np.asarray(joint_pos, dtype=np.float64)
             return obs
 
         raise NotImplementedError(
             f"The observation type '{self.obs_type}' is not supported in LiberoEnv. "
-            "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
+            "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos', "
+            "'pixels_agent_pos_joints')."
         )
 
     def reset(self, seed=None, **kwargs):

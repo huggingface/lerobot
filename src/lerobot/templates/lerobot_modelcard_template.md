@@ -45,6 +45,8 @@ This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the pol
 [FastWAM](https://arxiv.org/abs/2603.16666) is a World Action Model policy that keeps video world-modeling during training but predicts actions directly at inference time, initializing its visual world-model components from the Wan2.2 video-diffusion stack.
 {% elif model_name == "longwam" %}
 [Long-WAM](https://nvlabs.github.io/LongLive/Long-WAM/) is a world-action model that conditions robot action prediction on an extended history of observations.
+{% elif model_name == "sana_robot" %}
+[SANA-Robot](https://nvlabs.github.io/Sana/Robot/) is a world action model with hybrid memory: one diffusion transformer denoises the future video latents of every camera and the action chunk together, on a memory of the whole episode.
 {% elif model_name == "flux3" %}
 FLUX 3 Action (`flux3`) is Black Forest Labs' video-action model: the FLUX.3 video trunk with an action modality that is denoised jointly with the next video frames, finetuned per robot embodiment with fresh action heads.
 {% elif model_name == "lingbot_va" %}
@@ -117,6 +119,7 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "evo1": "evo1",
   "fastwam": "fastwam",
   "longwam": "longwam",
+  "sana_robot": "sana_robot",
   "flux3": "flux3",
   "lingbot_va": "lingbot_va",
   "lingbot_vla_v2": "lingbot_vla_v2",

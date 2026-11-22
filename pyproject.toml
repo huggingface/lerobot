@@ -280,6 +280,7 @@ lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 wall_oss_05 = ["lerobot[transformers-dep]"]
 g05 = ["lerobot[transformers-dep]"]
 nat_vla = ["lerobot[transformers-dep]"]
+sana_robot = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -383,6 +384,7 @@ all = [
     "lerobot[lingbot_vla_v2]",
     "lerobot[g05]",
     "lerobot[nat_vla]",
+    "lerobot[sana_robot]",
     "lerobot[lawam]",
     "lerobot[cosmos3]",
     "lerobot[praxis]",
@@ -630,7 +632,12 @@ enable_error_code = [
 # One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
 # molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
 [[tool.mypy.overrides]]
-module = ["lerobot.rl.*", "lerobot.policies.molmoact2.molmoact2_hf_model.*"]
+module = [
+    "lerobot.rl.*",
+    "lerobot.policies.molmoact2.molmoact2_hf_model.*",
+    # Vendored from the SANA-Robot code release; kept in sync with the upstream files.
+    "lerobot.policies.sana_robot.sana_robot_core.*",
+]
 ignore_errors = true
 
 # ZeroMQ's public stubs re-export names from Python modules. Follow those modules

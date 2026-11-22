@@ -1,0 +1,196 @@
+<!-- Copyright 2026 NVIDIA CORPORATION & AFFILIATES -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# SANA-Robot
+
+[Project and demos](https://nvlabs.github.io/Sana/Robot/)
+
+SANA-Robot is a 4.5B world action model: one diffusion transformer denoises the future video latents of every
+camera and the robot's action chunk together, each at its own noise level. `sana_robot` is the LeRobot adapter of
+SANA-Robot-AR, the policy with memory, for inference and evaluation of its released checkpoints.
+
+## Model overview
+
+- **Autoregressive over action chunks.** Every chunk is generated from the current observation and state, the
+  first frame of the episode and the memory of the chunks before it.
+- **Hybrid memory.** A quarter of the 32 layers are softmax attention, which reads the first frame and the clean
+  latents of the last chunk. The others are Gated DeltaNet layers (linear attention with a recurrent state),
+  which carry one state over every past chunk, so the cost of a chunk does not grow with the episode.
+- **Frozen encoders.** The camera frames are encoded by the LTX-2 video VAE, frame block by frame block as they
+  arrive, and the prompts by Gemma 2 2B.
+
+The model code is vendored in `lerobot/policies/sana_robot/sana_robot_core` from the SANA-Robot code release;
+the file headers name the upstream commit and paths. LeRobot runs the plain PyTorch path: the inference kernels,
+CUDA graphs and asynchronous execution of the original deployment are not part of this integration, and neither
+is training.
+
+## Install
+
+From a LeRobot source checkout:
+
+```bash
+pip install -e ".[sana_robot]"
+```
+
+## Checkpoints
+
+LeRobot loads the released SANA-Robot checkpoints as they are, named by `policy.checkpoint`:
+
+| Checkpoint                                                                                    | Trained on                    | Files                                      |
+| --------------------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------ |
+| [SANA-Robot-AR-LIBERO](https://huggingface.co/Efficient-Large-Model/SANA-Robot-AR-LIBERO)     | the four LIBERO suites, 20 Hz | weights, `meta.json`, `normalization.json` |
+| [SANA-Robot-AR-Pretrain](https://huggingface.co/Efficient-Large-Model/SANA-Robot-AR-Pretrain) | the pretraining mix           | weights                                    |
+
+- The weights (a `.pth` file) are loaded when the policy is built.
+- `meta.json` describes the dataset the checkpoint was finetuned on and sets the config's `view_slots`,
+  `view_descriptions`, `resize`, `embodiment`, `action_mode`, `state_slots`, `action_slots` and `fps`.
+- `normalization.json` gives the pre/post-processors the statistics of the state and of the actions.
+
+The released files do not hold the camera keys, the view sizes, the spatial layout or the sampling settings: the
+config's defaults are those of the LIBERO checkpoint. The pretrained checkpoint holds weights only, so every robot
+field of the config is yours to set. `save_pretrained` writes a LeRobot checkpoint (`config.json`, safetensors
+weights and the processors), which loads with `--policy.path` and no longer reads the released files.
+
+The two frozen encoders are downloaded when the first action is requested:
+
+| Encoder      | Config field               | Default                                                                                                                                       |
+| ------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Video VAE    | `policy.vae_path`          | [Efficient-Large-Model/LTX-2.3-Diffusers](https://huggingface.co/Efficient-Large-Model/LTX-2.3-Diffusers), of which only `vae/` is downloaded |
+| Text encoder | `policy.text_encoder_path` | [google/gemma-2-2b-it](https://huggingface.co/google/gemma-2-2b-it)                                                                           |
+
+Gemma 2 is a gated model: accept its terms on the Hub and log in (`hf auth login`) before the first run. Both
+downloads are pinned to a Hub commit (`policy.vae_revision`, `policy.text_encoder_revision`). Both fields also
+take a local folder; the VAE folder holds the diffusers layout with a `vae` subfolder.
+
+## Inputs and outputs
+
+A checkpoint stores what its training data fixed, in its config: the cameras and the size the policy reads each
+of them at, the control frequency, the texts of its prompts, and which slots of SANA-Robot's 80-slot robot row
+the state and the actions fill. `observation.state` and `action` hold those slots in order, in the units of the
+training data; the processors normalize them with the checkpoint's statistics and resize the camera frames as the
+training frames were resized.
+
+The LIBERO checkpoint reads the joint angles, the pose of the flange in the arm's base frame (position and 6D
+rotation) and the gripper closedness (17 values), and predicts the target flange pose and the gripper closedness
+(10 values). With a LIBERO environment the conversion from and to LIBERO's own state and commands is added
+automatically (see [Evaluation](#evaluation)).
+
+## Inference
+
+```python
+from lerobot.policies import make_pre_post_processors
+from lerobot.policies.sana_robot.modeling_sana_robot import SanaRobotPolicy
+
+policy = SanaRobotPolicy.from_pretrained("Efficient-Large-Model/SANA-Robot-AR-LIBERO")
+preprocess, postprocess = make_pre_post_processors(policy.config)
+policy.reset()
+# observation holds the current frame of every camera, observation.state and task.
+# Repeat on every control step.
+action = postprocess(policy.select_action(preprocess(observation)))
+```
+
+Call `select_action` on **every control step**: the memory reads a camera frame every `video_frame_stride` steps
+and a new chunk is generated every `n_action_steps` steps, from the frames seen since the start of the episode.
+`reset()` starts a new episode. The policy runs one episode at a time (batch size 1); `predict_action_chunk` is
+not supported because a chunk cannot be requested at an arbitrary step. A new instruction takes over at the next
+chunk and keeps the memory.
+
+| Parameter             | Meaning                                                | LIBERO checkpoint |
+| --------------------- | ------------------------------------------------------ | ----------------- |
+| `chunk_size`          | Control steps per action chunk                         | 32                |
+| `n_action_steps`      | Control steps between two generated chunks             | 16                |
+| `video_frame_stride`  | Control steps between two frames the policy reads      | 4                 |
+| `num_inference_steps` | Denoising steps per chunk                              | 2                 |
+| `video_cfg_scale`     | Classifier-free guidance of the video (1 turns it off) | 1.0               |
+
+On one H100 with BF16 weights, a step that generates a chunk takes 0.23 s with the LIBERO checkpoint and every
+other step about 2 ms; the policy and its encoders use 15 GB of GPU memory.
+
+## Evaluation
+
+The LIBERO checkpoint is evaluated with LIBERO's absolute control mode and with the joint angles in the
+observation, from which the processors compute the flange pose the policy reads:
+
+```bash
+pip install -e ".[sana_robot,libero]"
+
+lerobot-eval --policy.type=sana_robot \
+  --policy.checkpoint=Efficient-Large-Model/SANA-Robot-AR-LIBERO \
+  --policy.device=cuda \
+  --env.type=libero --env.task=libero_spatial \
+  --env.obs_type=pixels_agent_pos_joints --env.control_mode=absolute \
+  --env.observation_height=256 --env.observation_width=256 \
+  --eval.batch_size=1 --eval.n_episodes=50
+```
+
+Use `libero_object`, `libero_goal` or `libero_10` for the other suites, and `--env.type=libero_plus` for
+[LIBERO-plus](./libero_plus).
+
+LIBERO-plus appends the perturbation tags of a task variant to its instruction (`... on the plate view 0 0 100 0 0
+initstate 1`). The processors remove them, as the checkpoint's own evaluation does.
+
+## Results
+
+`lerobot-eval` on [LIBERO-plus](./libero_plus) with the LIBERO checkpoint: every one of the 10,030 task variants
+once, from its first initial state.
+
+| Suite          | Success rate |       Episodes |
+| -------------- | -----------: | -------------: |
+| libero_spatial |       94.84% |  2,278 / 2,402 |
+| libero_object  |       97.02% |  2,443 / 2,518 |
+| libero_goal    |       87.19% |  2,259 / 2,591 |
+| libero_10      |       93.65% |  2,359 / 2,519 |
+| **Total**      |   **93.11%** | 9,339 / 10,030 |
+
+| Perturbation          | Success rate |      Episodes |
+| --------------------- | -----------: | ------------: |
+| Camera viewpoints     |       83.18% | 1,330 / 1,599 |
+| Robot initial states  |       97.16% | 1,506 / 1,550 |
+| Language instructions |       93.23% | 1,433 / 1,537 |
+| Light conditions      |       99.30% | 1,134 / 1,142 |
+| Background textures   |       98.33% | 1,058 / 1,076 |
+| Sensor noise          |       93.07% | 1,490 / 1,601 |
+| Objects layout        |       91.02% | 1,388 / 1,525 |
+
+Reproduce, per suite:
+
+```bash
+lerobot-eval --policy.type=sana_robot \
+  --policy.checkpoint=Efficient-Large-Model/SANA-Robot-AR-LIBERO \
+  --policy.device=cuda \
+  --env.type=libero_plus --env.task=libero_spatial \
+  --env.obs_type=pixels_agent_pos_joints --env.control_mode=absolute \
+  --env.observation_height=256 --env.observation_width=256 \
+  --eval.batch_size=1 --eval.n_episodes=1 --env.max_parallel_tasks=1 --tf32=false
+```
+
+The numbers were measured on H100 GPUs with BF16 weights, 2 denoising steps and a new chunk every 16 control steps,
+on torch 2.14.1 (CUDA 12.6), mujoco 3.7.0 and robosuite 1.4.1, with LeRobot's step limits of 280 / 280 / 300 / 520
+and the perturbation tags removed from the instructions (see above). An episode takes about 8 s; the sensor-noise
+variants take up to two minutes, because the simulator filters every frame on the CPU.
+
+The fog variants of the sensor noise (272 of the 10,030) call `np.float_`, which NumPy 2 no longer has. They ran
+with `numpy.float_ = numpy.float64` set before the simulator is imported.
+
+## Agreement with the original code
+
+On four LIBERO training episodes of six chunks each (H100, LeRobot's locked dependencies with torch 2.14.1):
+
+- The vendored model code gives the same actions, video latents and text embeddings as the SANA-Robot package,
+  bit for bit, in BF16 and in FP32.
+- Through `from_pretrained` on the released checkpoint, the processors and `select_action`, the actions are the
+  same bit for bit in BF16 and within 1e-6 in FP32.
+
+The original code calls flash-attn for the text cross-attention; LeRobot runs the same attention with
+`scaled_dot_product_attention`, which changes the BF16 actions by rounding only (2e-3 on average, the same as
+between two software stacks).
+
+## Citation
+
+```bibtex
+@article{zhao2026sanarobot,
+  title={SANA-Robot: Efficient World Action Model with Hybrid Memory},
+  author={Zhao, Yuyang and Li, Zekai and Pan, Yicheng and Tang, Jiaming and Zhang, Zhuoyang and Xing, Jiaxu and Reuss, Moritz and Peng, Quanquan and Chen, Junsong and Xie, Enze and Liu, Zhijian and Han, Song},
+  year={2026}
+}
+```
