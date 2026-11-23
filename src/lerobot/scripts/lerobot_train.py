@@ -691,11 +691,15 @@ def train(cfg: TrainPipelineConfig) -> None:
             preprocessor_overrides["normalizer_processor"]["stats"] = processor_dataset_stats
             postprocessor_overrides["unnormalizer_processor"]["stats"] = processor_dataset_stats
         if getattr(active_cfg, "use_relative_actions", False):
-            preprocessor_overrides["relative_actions_processor"] = {
+            relative_overrides: dict[str, Any] = {
                 "enabled": True,
                 "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
-                "action_names": getattr(active_cfg, "action_feature_names", None),
             }
+            # On resume, the saved action names are authoritative too: they built the relative mask
+            # the saved stats go with, and re-deriving them from the dataset can change that mask.
+            if not cfg.resume:
+                relative_overrides["action_names"] = getattr(active_cfg, "action_feature_names", None)
+            preprocessor_overrides["relative_actions_processor"] = relative_overrides
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
         processor_kwargs["postprocessor_overrides"] = postprocessor_overrides

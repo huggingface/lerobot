@@ -112,14 +112,14 @@ def feature_names(feature: Mapping[str, Any] | None) -> list[str] | None:
     """Return the per-dimension names of a 1D feature, in dimension order.
 
     ``names`` can be a list (``["x", "y"]``), groups (``{"arm": ["x", "y"]}``) or a name to index
-    mapping (``{"x": 0, "y": 1}``).
+    mapping listed in index order (``{"x": 0, "y": 1}``).
 
     Args:
         feature (Mapping | None): A LeRobot feature dictionary.
 
     Returns:
-        list[str] | None: The names, or ``None`` if the feature is not 1D, has no names, or has
-        names that do not match its shape.
+        list[str] | None: The names, or ``None`` if the feature is not 1D, has no usable names, or
+        has names that do not match its shape.
     """
     if not feature:
         return None
@@ -131,9 +131,10 @@ def feature_names(feature: Mapping[str, Any] | None) -> list[str] | None:
         values = list(names.values())
         if all(isinstance(value, (list, tuple)) for value in values):
             names = [name for group in values for name in group]
-        elif all(type(value) is int for value in values) and sorted(values) == list(range(len(values))):
-            # Name to index mapping; `type() is int` rejects bools.
-            names = sorted(names, key=names.__getitem__)
+        elif all(type(value) is int for value in values) and values == list(range(len(values))):
+            # Name to index mapping. `build_dataset_frame` records values in key order, so the
+            # indices must follow it; `type() is int` rejects bools.
+            names = list(names)
         else:
             return None
     if not isinstance(names, (list, tuple)) or not names or not all(isinstance(name, str) for name in names):

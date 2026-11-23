@@ -35,11 +35,6 @@ from lerobot.utils.feature_utils import feature_names
         pytest.param(
             {"shape": (2,), "names": {"delta_x": 0, "delta_y": 1}}, ["delta_x", "delta_y"], id="name_to_index"
         ),
-        pytest.param(
-            {"shape": (3,), "names": {"gripper": 2, "delta_x": 0, "delta_y": 1}},
-            ["delta_x", "delta_y", "gripper"],
-            id="name_to_index_out_of_order",
-        ),
     ],
 )
 def test_feature_names_flattens_every_layout(feature, expected):
@@ -57,6 +52,8 @@ def test_feature_names_flattens_every_layout(feature, expected):
         # bool is a subclass of int, but True/False are not dimension indices.
         pytest.param({"shape": (2,), "names": {"a": True, "b": False}}, id="bool_values"),
         pytest.param({"shape": (2,), "names": {"a": 0, "b": 2}}, id="index_gap"),
+        # Frames are recorded in key order, so indices that disagree with it are ambiguous.
+        pytest.param({"shape": (2,), "names": {"b": 1, "a": 0}}, id="index_out_of_key_order"),
         pytest.param({"shape": (3,), "names": ["x", "y"]}, id="fewer_names_than_shape"),
         pytest.param({"shape": (2,), "names": {"motors": ["m0", "m1", "m2"]}}, id="group_longer_than_shape"),
         pytest.param({"shape": (2,), "names": [0, 1]}, id="non_string_names"),

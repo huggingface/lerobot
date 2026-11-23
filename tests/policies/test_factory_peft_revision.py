@@ -112,10 +112,11 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch,
         ({"right": ("shoulder", "elbow"), "left": ("gripper",)}, ["shoulder", "elbow", "gripper"]),
         ({"unused": [], "motors": ["shoulder", "elbow", "gripper"]}, ["shoulder", "elbow", "gripper"]),
         ({"shoulder": 0, "elbow": 1, "gripper": 2}, ["shoulder", "elbow", "gripper"]),
+        # Declared but unusable names still replace the pretrained ones; missing names keep them.
         ([], None),
         ({}, None),
         (["shoulder", "elbow"], None),
-        (None, None),
+        (None, ["pretrained_joint"]),
     ],
 )
 def test_make_policy_reads_action_names(monkeypatch, action_key, raw_names, expected_names):
@@ -126,7 +127,7 @@ def test_make_policy_reads_action_names(monkeypatch, action_key, raw_names, expe
         use_peft=False,
         input_features={},
         output_features={},
-        action_feature_names=None,
+        action_feature_names=["pretrained_joint"],
     )
     dataset_meta = SimpleNamespace(
         features={

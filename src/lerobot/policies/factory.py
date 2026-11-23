@@ -358,9 +358,10 @@ def make_policy(
             ),
             None,
         )
-        action_names = feature_names(raw_action_feature)
-        if action_names is not None:
-            cfg.action_feature_names = action_names
+        # Declared names replace the pretrained ones even when unusable (None), so the relative-action
+        # mask matches the stats computed from the dataset.
+        if raw_action_feature is not None and raw_action_feature.get("names") is not None:
+            cfg.action_feature_names = feature_names(raw_action_feature)
     if ds_meta is not None:
         set_dataset_feature_metadata = getattr(cfg, "set_dataset_feature_metadata", None)
         if callable(set_dataset_feature_metadata):
