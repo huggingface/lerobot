@@ -385,6 +385,31 @@ def test_factory_creates_rabc_weighter(sample_progress_parquet):
     assert isinstance(weighter, SampleWeighter)
 
 
+def test_factory_rabc_accepts_ddp_wrapped_policy(sample_progress_parquet):
+    """Under DDP the training loop passes the DistributedDataParallel wrapper, which has no `config`."""
+    import socket
+
+    import torch.distributed as dist
+    from torch.nn.parallel import DistributedDataParallel
+
+    if dist.is_initialized():
+        pytest.skip("a process group is already initialized")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    dist.init_process_group("gloo", init_method=f"tcp://127.0.0.1:{port}", rank=0, world_size=1)
+    try:
+        policy = torch.nn.Linear(2, 2)
+        policy.config = Mock(chunk_size=5)
+        config = SampleWeightingConfig(type="rabc", progress_path=str(sample_progress_parquet))
+
+        weighter = make_sample_weighter(config, DistributedDataParallel(policy), torch.device("cpu"))
+
+        assert weighter.get_stats()["chunk_size"] == 5
+    finally:
+        dist.destroy_process_group()
+
+
 def test_rabc_weights_normalization(sample_progress_parquet):
     """Test that RABCWeights normalizes weights to sum to batch_size."""
     from lerobot.rewards.sarm.rabc import RABCWeights

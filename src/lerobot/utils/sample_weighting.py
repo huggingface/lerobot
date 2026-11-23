@@ -38,9 +38,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import torch
+from torch.nn.parallel import DistributedDataParallel
 
 if TYPE_CHECKING:
     from lerobot.policies.pretrained import PreTrainedPolicy
@@ -102,7 +103,7 @@ class SampleWeightingConfig:
 
 def make_sample_weighter(
     config: SampleWeightingConfig | None,
-    policy: PreTrainedPolicy,
+    policy: PreTrainedPolicy | DistributedDataParallel,
     device: torch.device,
     dataset_root: str | None = None,
     dataset_repo_id: str | None = None,
@@ -114,13 +115,17 @@ def make_sample_weighter(
 
     Args:
         config: Sample weighting configuration, or None to disable weighting.
-        policy: The policy being trained (used to extract chunk_size, etc.)
+        policy: The policy being trained (used to extract chunk_size, etc.), or the
+            DistributedDataParallel wrapper the training loop holds after `accelerator.prepare()`.
         device: Device to place weight tensors on.
         dataset_root: Local path to dataset root (for auto-detecting progress_path).
         dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
     """
     if config is None:
         return None
+
+    if isinstance(policy, DistributedDataParallel):
+        policy = cast("PreTrainedPolicy", policy.module)
 
     if config.type == "rabc":
         return _make_rabc_weighter(config, policy, device, dataset_root, dataset_repo_id)
