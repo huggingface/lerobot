@@ -35,11 +35,6 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     policy_action_to_transition,
 )
-from lerobot.rewards.robometer.configuration_robometer import (
-    ROBOMETER_SPECIAL_TOKENS,
-    RobometerConfig,
-)
-from lerobot.rewards.robometer.modeling_robometer import ROBOMETER_FEATURE_PREFIX
 from lerobot.utils.constants import (
     OBS_IMAGES,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
@@ -47,6 +42,12 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from .configuration_robometer import (
+    ROBOMETER_SPECIAL_TOKENS,
+    RobometerConfig,
+)
+from .modeling_robometer import ROBOMETER_FEATURE_PREFIX
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoProcessor

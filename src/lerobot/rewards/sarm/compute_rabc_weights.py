@@ -52,8 +52,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-import matplotlib.gridspec as gridspec
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -62,9 +60,14 @@ from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.import_utils import (
     _av_available,
     _datasets_available,
+    _matplotlib_available,
     _pyarrow_available,
     require_package,
 )
+
+if TYPE_CHECKING or _matplotlib_available:
+    import matplotlib.gridspec as gridspec
+    import matplotlib.pyplot as plt
 
 if TYPE_CHECKING or _pyarrow_available:
     import pyarrow as pa
@@ -253,6 +256,7 @@ def visualize_sarm_predictions(
         num_display_frames: Number of frames to display in thumbnail strip (default: 5)
         stride: Compute predictions every N frames, interpolate the rest (default: 1)
     """
+    require_package("matplotlib", extra="sarm")
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -493,6 +497,8 @@ def compute_sarm_progress(
         stride: Compute progress every N frames, interpolate the rest (default: 1 = every frame)
     """
     require_package("pyarrow", extra="dataset")
+    if num_visualizations > 0:
+        require_package("matplotlib", extra="sarm")
 
     dataset, reward_model, preprocess = load_sarm_resources(dataset_repo_id, reward_model_path, device)
 
@@ -813,6 +819,7 @@ Examples:
 
     # Handle visualize-only mode
     if args.visualize_only:
+        require_package("matplotlib", extra="sarm")
         dataset, reward_model, preprocess = load_sarm_resources(
             args.dataset_repo_id, reward_model_path, args.device
         )

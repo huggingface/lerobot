@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from lerobot.rewards.sarm import SARMOutput
+from lerobot.rewards.sarm import SARMOutput, compute_rabc_weights
 
 
 @pytest.mark.dataset
@@ -30,8 +30,6 @@ def test_compute_sarm_progress_writes_progress_parquet(
 ) -> None:
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
-    pytest.importorskip("matplotlib")
-    from lerobot.rewards.sarm import compute_rabc_weights
 
     image_key = "observation.images.top"
 

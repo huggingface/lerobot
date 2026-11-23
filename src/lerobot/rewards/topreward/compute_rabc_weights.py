@@ -47,15 +47,16 @@ from tqdm import tqdm
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import create_transition
-from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
-from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-from lerobot.rewards.topreward.processor_topreward import TOPRewardEncoderProcessorStep
 from lerobot.utils.import_utils import (
     _av_available,
     _datasets_available,
     _pyarrow_available,
     require_package,
 )
+
+from .configuration_topreward import TOPRewardConfig
+from .modeling_topreward import TOPRewardModel
+from .processor_topreward import TOPRewardEncoderProcessorStep
 
 if TYPE_CHECKING or _pyarrow_available:
     import pyarrow as pa
