@@ -108,6 +108,7 @@ lancedb-convert = [
 mcap = [
     "lerobot[dataset]",
     "mcap>=1.1,<2.0",
+    "mcap-protobuf-support",
 ]
 dataset = [
     "datasets>=4.8.0,<6.0.0",

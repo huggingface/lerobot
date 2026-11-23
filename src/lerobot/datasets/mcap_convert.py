@@ -33,6 +33,7 @@ that lets the reader map fixed-grid indices back onto real message timestamps.
 
 from __future__ import annotations
 
+import base64
 import io
 import shutil
 from dataclasses import dataclass
@@ -229,12 +230,22 @@ class ChannelSpec:
     from, ingestion needs the caller to supply it (except for ``video`` channels, whose
     shape is inferred by decoding the first message).
 
-    ``codec`` marks a ``video`` channel as a continuous GOP-compressed bitstream (e.g.
-    ``foxglove.CompressedVideo``-style messages, each one a raw H.264/HEVC/AV1 packet
-    that depends on prior packets) rather than the default: independently-decodable
-    image bytes per message (PNG/JPEG). It names the codec for
-    ``av.CodecContext.create(codec, "r")`` (e.g. ``"h264"``) and is only valid for
-    ``kind="video"``.
+    For ``kind="video"``, ``codec`` marks the channel as a continuous GOP-compressed
+    bitstream (e.g. ``foxglove.CompressedVideo``-style messages, each one a raw
+    H.264/HEVC/AV1 packet that depends on prior packets) rather than the default:
+    independently-decodable image bytes per message (PNG/JPEG). It names the codec for
+    ``av.CodecContext.create(codec, "r")`` (e.g. ``"h264"``).
+
+    For ``kind="tabular"``, ``codec`` marks the channel as a foreign (vendor-native)
+    message encoding -- e.g. ``"protobuf"`` -- decoded directly from the source bytes at
+    *read* time (see ``McapDatasetReader._decode_message``) instead of being transcoded
+    into LeRobot's own packed-tensor format at convert time. The source file's own
+    ``mcap`` schema record is captured automatically; ``field_paths`` is the one thing
+    the caller must still supply: a flat, ordered list of dotted attribute paths into the
+    decoded message object (e.g. ``["position.x", "position.y", "position.z"]``) that
+    produces the declared ``shape`` when concatenated. A path may resolve to a scalar or
+    to a repeated field (e.g. a single ``"position"`` path on a 6-element repeated float
+    field) -- both are flattened and concatenated in ``field_paths`` order.
     """
 
     key: str
@@ -243,10 +254,16 @@ class ChannelSpec:
     dtype: str | None = None
     shape: tuple[int, ...] | None = None
     codec: str | None = None
+    field_paths: list[str] | None = None
 
     def __post_init__(self) -> None:
-        if self.codec is not None and self.kind != "video":
-            raise ValueError(f"channel '{self.key}': codec is only valid for kind='video'.")
+        if self.field_paths is not None and self.kind != "tabular":
+            raise ValueError(f"channel '{self.key}': field_paths is only valid for kind='tabular'.")
+        if self.kind == "tabular" and self.codec is not None and self.field_paths is None:
+            raise ValueError(
+                f"channel '{self.key}': a tabular codec requires field_paths to flatten the decoded "
+                "message into the declared shape."
+            )
 
 
 def _peek_first_message(mcap_path: Path, topic: str) -> bytes | None:
@@ -255,6 +272,18 @@ def _peek_first_message(mcap_path: Path, topic: str) -> bytes | None:
         reader = make_reader(f)
         for _schema, _channel, message in reader.iter_messages(topics=[topic]):
             return message.data
+    return None
+
+
+def _peek_first_schema(mcap_path: Path, topic: str):
+    """The source channel's own mcap ``Schema`` record for ``topic`` (its native message
+    encoding/descriptor), reused verbatim so a tabular codec channel never needs the
+    caller to redeclare it -- see ``ChannelSpec.codec`` (kind="tabular")."""
+    require_package("mcap", extra="mcap")
+    with open(mcap_path, "rb") as f:
+        reader = make_reader(f)
+        for schema, _channel, _message in reader.iter_messages(topics=[topic]):
+            return schema
     return None
 
 
@@ -320,6 +349,17 @@ def ingest_mcap_episodes(
             if c.dtype is None or c.shape is None:
                 raise ValueError(f"Tabular channel '{c.key}' needs an explicit dtype and shape.")
             features[c.key] = {"dtype": c.dtype, "shape": tuple(c.shape), "names": None}
+            if c.codec is not None:
+                schema = next(
+                    (s for p in mcap_paths if (s := _peek_first_schema(p, c.topic)) is not None), None
+                )
+                if schema is None:
+                    raise ValueError(f"No messages found on topic '{c.topic}' for channel '{c.key}'.")
+                features[c.key]["codec"] = c.codec
+                features[c.key]["schema_name"] = schema.name
+                features[c.key]["schema_encoding"] = schema.encoding
+                features[c.key]["schema_data"] = base64.b64encode(schema.data).decode("ascii")
+                features[c.key]["field_paths"] = list(c.field_paths)
 
     task_to_index: dict[str, int] = {}
     # Whether any episode's GOP channel ever decoded a B-frame -- determines, per
@@ -338,7 +378,7 @@ def ingest_mcap_episodes(
         # must never appear in the index used for matching or episode-boundary intersection.
         gop_kf_positions: dict[str, np.ndarray] = {}
         for c in channels:
-            if c.codec is not None:
+            if c.kind == "video" and c.codec is not None:
                 time_index[c.topic], gop_kf_positions[c.key], ep_has_bframes, ep_shape = (
                     build_gop_time_and_keyframe_index(src_path, c.topic, c.codec)
                 )
@@ -382,7 +422,7 @@ def ingest_mcap_episodes(
         }
         for c in channels:
             record[log_time_column(c.key)] = time_index[c.topic].tolist()
-            if c.codec is not None:
+            if c.kind == "video" and c.codec is not None:
                 record[keyframe_index_column(c.key)] = gop_kf_positions[c.key].tolist()
         episode_records.append(record)
         abs_idx += n_frames

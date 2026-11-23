@@ -666,6 +666,216 @@ def test_ingest_gop_video_decode_caches_across_reads(gop_ingest_root):
         assert neighbor[GOP_VIDEO_KEY].shape == first[GOP_VIDEO_KEY].shape
 
 
+# --- Tabular codec ingest: a vendor's native protobuf message, decoded at read time,
+# never transcoded into LeRobot's own packed-tensor format at convert time. ---
+
+TABULAR_CODEC_KEY = "observation.state"
+TABULAR_CODEC_TOPIC = "/robot/pose"
+TABULAR_CODEC_FPS = 10
+TABULAR_CODEC_EPISODE_FRAMES = (6, 4)
+
+
+def _build_test_pose_message_class():
+    """A tiny, self-contained protobuf message (3 float fields) built directly from a
+    FileDescriptorProto -- no compiled .proto/_pb2 module needed -- standing in for a
+    real vendor schema (e.g. foxglove.PoseInFrame.position). Returns the generated
+    message class and the FileDescriptorSet bytes mcap stores as the channel's schema."""
+    pytest.importorskip("mcap_protobuf")
+    from google.protobuf import descriptor_pb2
+    from google.protobuf.descriptor_pool import DescriptorPool
+    from google.protobuf.message_factory import GetMessageClass
+
+    fdp = descriptor_pb2.FileDescriptorProto()
+    fdp.name = "lerobot_test_pose.proto"
+    fdp.package = "lerobot_test"
+    fdp.syntax = "proto3"
+    msg = fdp.message_type.add()
+    msg.name = "Pose"
+    for i, fname in enumerate(["x", "y", "z"], start=1):
+        field = msg.field.add()
+        field.name = fname
+        field.number = i
+        field.type = descriptor_pb2.FieldDescriptorProto.TYPE_FLOAT
+        field.label = descriptor_pb2.FieldDescriptorProto.LABEL_OPTIONAL
+
+    pool = DescriptorPool()
+    pool.Add(fdp)
+    message_class = GetMessageClass(pool.FindMessageTypeByName("lerobot_test.Pose"))
+
+    fds = descriptor_pb2.FileDescriptorSet()
+    fds.file.append(fdp)
+    return message_class, fds.SerializeToString()
+
+
+def _write_raw_tabular_protobuf_mcap(
+    path: Path,
+    topic: str,
+    values: list[tuple[float, float, float]],
+    fps: int,
+    message_class,
+    schema_data: bytes,
+) -> None:
+    """One raw mcap episode whose only channel is a protobuf-encoded tabular topic --
+    exactly what a real vendor recording pipeline (e.g. a foxglove.PoseInFrame-style
+    proprio topic) produces. No LeRobot packed-tensor bytes anywhere in this file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        writer = Writer(f)
+        writer.start()
+        schema_id = writer.register_schema(name="lerobot_test.Pose", encoding="protobuf", data=schema_data)
+        channel_id = writer.register_channel(topic=topic, message_encoding="protobuf", schema_id=schema_id)
+        for i, (x, y, z) in enumerate(values):
+            t_ns = round(i / fps * 1e9) + 1_000_000_000  # comfortably positive, arbitrary origin
+            data = message_class(x=x, y=y, z=z).SerializeToString()
+            writer.add_message(channel_id=channel_id, log_time=t_ns, data=data, publish_time=t_ns)
+        writer.finish()
+
+
+@pytest.fixture
+def tabular_codec_ingest_root(tmp_path) -> tuple[Path, list[list[tuple[float, float, float]]]]:
+    message_class, schema_data = _build_test_pose_message_class()
+    raw_dir = tmp_path / "raw_tabular_codec"
+    ground_truth: list[list[tuple[float, float, float]]] = []
+    paths = []
+    for ep_idx, n_frames in enumerate(TABULAR_CODEC_EPISODE_FRAMES):
+        values = [(float(ep_idx * 100 + i), float(i) * 2.0, float(i) * 3.0) for i in range(n_frames)]
+        path = raw_dir / f"ep_{ep_idx}.mcap"
+        _write_raw_tabular_protobuf_mcap(
+            path, TABULAR_CODEC_TOPIC, values, TABULAR_CODEC_FPS, message_class, schema_data
+        )
+        paths.append(path)
+        ground_truth.append(values)
+
+    dst_root = tmp_path / "tabular_codec_mcap"
+    ingest_mcap_episodes(
+        mcap_paths=paths,
+        channels=[
+            ChannelSpec(
+                key=TABULAR_CODEC_KEY,
+                topic=TABULAR_CODEC_TOPIC,
+                kind="tabular",
+                dtype="float32",
+                shape=(3,),
+                codec="protobuf",
+                field_paths=["x", "y", "z"],
+            )
+        ],
+        dst_root=dst_root,
+        fps=TABULAR_CODEC_FPS,
+        robot_type="tabular-codec-bench",
+        tasks="pose test",
+    )
+    return dst_root, ground_truth
+
+
+def test_ingest_tabular_codec_metadata(tabular_codec_ingest_root):
+    """A protobuf-codec tabular channel must round-trip its codec/schema/field_paths
+    through meta/info.json unchanged -- the signal the reader keys its decode path on."""
+    dst_root, _ = tabular_codec_ingest_root
+    ds = LeRobotDataset("tabular-codec/mcap", root=dst_root)
+    ft = ds.meta.features[TABULAR_CODEC_KEY]
+    assert ft["codec"] == "protobuf"
+    assert ft["schema_name"] == "lerobot_test.Pose"
+    assert ft["schema_encoding"] == "protobuf"
+    assert ft["field_paths"] == ["x", "y", "z"]
+    assert ds.reader._tabular_codec[TABULAR_CODEC_KEY] == "protobuf"
+
+
+def test_ingest_tabular_codec_values(tabular_codec_ingest_root):
+    """Reading back a frame must decode the vendor's native protobuf bytes directly --
+    no convert-time transcode into LeRobot's packed-tensor format ever happens."""
+    dst_root, ground_truth = tabular_codec_ingest_root
+    ds = LeRobotDataset("tabular-codec/mcap", root=dst_root)
+
+    for ep_idx, values in enumerate(ground_truth):
+        start = int(ds.meta.episodes[ep_idx]["dataset_from_index"])
+        for local_idx, expected in enumerate(values):
+            item = ds[start + local_idx]
+            np.testing.assert_allclose(
+                item[TABULAR_CODEC_KEY].numpy(), np.array(expected, dtype=np.float32)
+            )
+
+
+def test_ingest_tabular_codec_repeated_field(tmp_path):
+    """A single field_path may point at a repeated (array-valued) protobuf field -- e.g.
+    a real vendor arm-state message's ``position`` being 6 floats, not 6 separate scalar
+    fields -- and must flatten/concatenate exactly like a mix of scalar paths would."""
+    pytest.importorskip("mcap_protobuf")
+    from google.protobuf import descriptor_pb2
+    from google.protobuf.descriptor_pool import DescriptorPool
+    from google.protobuf.message_factory import GetMessageClass
+
+    fdp = descriptor_pb2.FileDescriptorProto()
+    fdp.name = "lerobot_test_arm_state.proto"
+    fdp.package = "lerobot_test"
+    fdp.syntax = "proto3"
+    msg = fdp.message_type.add()
+    msg.name = "ArmState"
+    field = msg.field.add()
+    field.name = "position"
+    field.number = 1
+    field.type = descriptor_pb2.FieldDescriptorProto.TYPE_FLOAT
+    field.label = descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED
+
+    pool = DescriptorPool()
+    pool.Add(fdp)
+    message_class = GetMessageClass(pool.FindMessageTypeByName("lerobot_test.ArmState"))
+    fds = descriptor_pb2.FileDescriptorSet()
+    fds.file.append(fdp)
+    schema_data = fds.SerializeToString()
+
+    key, topic, fps = "action.left_arm", "/left-arm-action", TABULAR_CODEC_FPS
+    values = [[float(i), float(i) + 0.5, float(i) * 2, 1.0, 2.0, 3.0] for i in range(5)]
+    path = tmp_path / "raw" / "ep_0.mcap"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        writer = Writer(f)
+        writer.start()
+        schema_id = writer.register_schema(name="lerobot_test.ArmState", encoding="protobuf", data=schema_data)
+        channel_id = writer.register_channel(topic=topic, message_encoding="protobuf", schema_id=schema_id)
+        for i, position in enumerate(values):
+            t_ns = round(i / fps * 1e9) + 1_000_000_000
+            data = message_class(position=position).SerializeToString()
+            writer.add_message(channel_id=channel_id, log_time=t_ns, data=data, publish_time=t_ns)
+        writer.finish()
+
+    dst_root = tmp_path / "mcap"
+    ingest_mcap_episodes(
+        mcap_paths=[path],
+        channels=[
+            ChannelSpec(
+                key=key, topic=topic, kind="tabular", dtype="float32", shape=(6,),
+                codec="protobuf", field_paths=["position"],
+            )
+        ],
+        dst_root=dst_root,
+        fps=fps,
+        tasks="repeated field test",
+    )
+    ds = LeRobotDataset("tabular-codec-repeated/mcap", root=dst_root)
+    start = int(ds.meta.episodes[0]["dataset_from_index"])
+    for local_idx, expected in enumerate(values):
+        item = ds[start + local_idx]
+        np.testing.assert_allclose(item[key].numpy(), np.array(expected, dtype=np.float32))
+
+
+def test_tabular_codec_requires_field_paths():
+    with pytest.raises(ValueError, match="field_paths"):
+        ChannelSpec(
+            key=TABULAR_CODEC_KEY,
+            topic=TABULAR_CODEC_TOPIC,
+            kind="tabular",
+            dtype="float32",
+            shape=(3,),
+            codec="protobuf",
+        )
+
+
+def test_field_paths_rejected_for_video_channel():
+    with pytest.raises(ValueError, match="field_paths"):
+        ChannelSpec(key=GOP_VIDEO_KEY, topic=GOP_TOPIC, kind="video", codec="h264", field_paths=["x"])
+
+
 def test_default_gop_frame_cache_bytes_sums_served_episodes():
     """The computed default must equal the SUM of every served episode's total
     decoded-frame bytes across every GOP key, times the documented margin -- not just

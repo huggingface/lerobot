@@ -37,7 +37,9 @@ public entry point is ``LeRobotDataset`` (see :mod:`lerobot.datasets.storage`).
 
 from __future__ import annotations
 
+import base64
 import contextlib
+import functools
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -50,7 +52,7 @@ import torch
 from numpy.typing import DTypeLike
 
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT
-from lerobot.utils.import_utils import _mcap_available, require_package
+from lerobot.utils.import_utils import _mcap_available, _mcap_protobuf_available, require_package
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader
@@ -76,6 +78,9 @@ from .video_utils import FrameTimestampError
 
 if TYPE_CHECKING or _mcap_available:
     from mcap.reader import make_reader
+    from mcap.records import Schema
+if TYPE_CHECKING or _mcap_protobuf_available:
+    from mcap_protobuf.decoder import DecoderFactory
 
 # Administrative columns that are pure functions of (episode metadata, grid index) —
 # they're never stored as mcap messages, just computed on read (see _build_item).
@@ -214,6 +219,12 @@ def _convert_frame_dtype(array_uint8_chw: np.ndarray, dtype: DTypeLike) -> np.nd
     if np.issubdtype(dtype, np.floating):
         array /= 255.0
     return array
+
+
+def _resolve_field_path(msg: Any, path: str) -> float:
+    """Dotted attribute path into a decoded foreign (e.g. protobuf) message object --
+    see ``ChannelSpec.field_paths``, which fixes the order these get concatenated in."""
+    return functools.reduce(getattr, path.split("."), msg)
 
 
 class McapDatasetReader(BaseDatasetReader):
@@ -409,6 +420,36 @@ class McapDatasetReader(BaseDatasetReader):
         self._gop_has_bframes: dict[str, bool] = {
             key: bool(self.meta.features[key].get("video_has_bframes", False)) for key in self._gop_codec
         }
+
+        # A tabular key whose feature dict carries "codec" stores a foreign message
+        # encoding (e.g. a vendor's native protobuf topic, ingested byte-for-byte via
+        # ChannelSpec(kind="tabular", codec=...) -- see mcap_convert.ingest_mcap_episodes)
+        # rather than LeRobot's own packed-tensor bytes. Decoding it happens here, at read
+        # time, never at convert time -- see _decode_message below.
+        self._tabular_codec: dict[str, str] = {
+            key: codec
+            for key in self._tabular_keys
+            if (codec := self.meta.features[key].get("codec")) is not None
+        }
+        self._tabular_decoders: dict[str, Callable[[bytes], Any]] = {}
+        self._tabular_field_paths: dict[str, list[str]] = {}
+        if self._tabular_codec:
+            require_package("mcap-protobuf-support", extra="mcap", import_name="mcap_protobuf")
+            factory = DecoderFactory()
+            # DecoderFactory caches the generated message class by schema.id (not by
+            # schema content) -- a shared factory across multiple tabular-codec keys
+            # needs a distinct id per key, or the second key's decoder_for call would
+            # hit the first key's cache entry and decode as the wrong message type.
+            for schema_id, key in enumerate(self._tabular_codec, start=1):
+                ft = self.meta.features[key]
+                schema = Schema(
+                    id=schema_id,
+                    data=base64.b64decode(ft["schema_data"]),
+                    encoding=ft["schema_encoding"],
+                    name=ft["schema_name"],
+                )
+                self._tabular_decoders[key] = factory.decoder_for(ft["schema_encoding"], schema)
+                self._tabular_field_paths[key] = ft["field_paths"]
 
         # Mirrors the lance backend's "videos table is missing byte-index columns... Re-convert
         # the dataset with a converter that writes {VIDEO_INDEX_COLUMNS}" check: the sync-index
@@ -750,6 +791,16 @@ class McapDatasetReader(BaseDatasetReader):
             return load_image_as_numpy(
                 data, dtype=np.uint8 if self.return_uint8 else np.float32, is_depth=False
             )
+        if key in self._tabular_codec:
+            msg = self._tabular_decoders[key](data)
+            # Each field_path may resolve to a scalar (e.g. "nanos") or a repeated field
+            # (e.g. a 6-element "position") -- np.atleast_1d + concatenate treats both
+            # uniformly, in field_paths order, without the caller needing to know which.
+            parts = [
+                np.atleast_1d(np.asarray(_resolve_field_path(msg, path), dtype=self._np_dtypes[key]))
+                for path in self._tabular_field_paths[key]
+            ]
+            return np.concatenate(parts).reshape(self._feature_shapes[key])
         return unpack_tensor(data, self._np_dtypes[key], self._feature_shapes[key])
 
     def _decode_gop_episode(

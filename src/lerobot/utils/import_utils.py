@@ -134,6 +134,7 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
 # ML / training
 _lancedb_available = is_package_available("lancedb")
 _mcap_available = is_package_available("mcap")
+_mcap_protobuf_available = is_package_available("mcap-protobuf-support", import_name="mcap_protobuf")
 _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
 _accelerate_available = is_package_available("accelerate")
