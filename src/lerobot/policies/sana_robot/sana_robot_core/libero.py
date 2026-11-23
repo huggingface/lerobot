@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Vendored from the SANA-Robot code release (https://nvlabs.github.io/Sana/Robot/) at commit bac6da0e4,
+# Vendored from the SANA-Robot code release (https://github.com/NVlabs/Sana/tree/robot) at commit 1e7d6cc51,
 # original path sana_robot/data/utils/convert_libero.py. Import paths are rewritten to the LeRobot package;
 # the robot rows of a LIBERO observation and the frames of the simulated Panda; the dataset converter is not vendored, and hand_pose is the first half of the upstream grip_site_pose.
 # Keep this file in sync with the upstream file.

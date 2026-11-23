@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Vendored from the SANA-Robot code release (https://nvlabs.github.io/Sana/Robot/) at commit bac6da0e4,
+# Vendored from the SANA-Robot code release (https://github.com/NVlabs/Sana/tree/robot) at commit 1e7d6cc51,
 # original path sana_robot/deploy/memory/view_stream.py. Import paths are rewritten to the LeRobot package;
 # the plain path; the CUDA graphs of an optimized stream are not vendored, and strip_view_latents comes from sana_robot/data/ar/teacher_forcing.py.
 # Keep this file in sync with the upstream file.

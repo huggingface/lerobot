@@ -3,7 +3,9 @@
 
 # SANA-Robot
 
-[Project and demos](https://nvlabs.github.io/Sana/Robot/)
+[Paper](https://github.com/NVlabs/Sana/blob/robot/asset/SANA-Robot.pdf) ·
+[Project and demos](https://nvlabs.github.io/Sana/Robot/) ·
+[Code](https://github.com/NVlabs/Sana/tree/robot)
 
 SANA-Robot is a 4.5B world action model: one diffusion transformer denoises the future video latents of every
 camera and the robot's action chunk together, each at its own noise level. `sana_robot` is the LeRobot adapter of
@@ -19,10 +21,11 @@ SANA-Robot-AR, the policy with memory, for inference and evaluation of its relea
 - **Frozen encoders.** The camera frames are encoded by the LTX-2 video VAE, frame block by frame block as they
   arrive, and the prompts by Gemma 2 2B.
 
-The model code is vendored in `lerobot/policies/sana_robot/sana_robot_core` from the SANA-Robot code release;
-the file headers name the upstream commit and paths. LeRobot runs the plain PyTorch path: the inference kernels,
-CUDA graphs and asynchronous execution of the original deployment are not part of this integration, and neither
-is training.
+The model code is vendored in `lerobot/policies/sana_robot/sana_robot_core` from the
+[SANA-Robot code release](https://github.com/NVlabs/Sana/tree/robot); the file headers name the upstream commit
+and paths. LeRobot runs the plain PyTorch path: the inference kernels, CUDA graphs and asynchronous execution of
+the original deployment are not part of this integration, and neither is training. Both are in the SANA-Robot
+repository.
 
 ## Install
 

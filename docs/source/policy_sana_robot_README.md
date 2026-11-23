@@ -3,7 +3,11 @@
 
 ## Research Paper
 
-Project page: [SANA-Robot: Efficient World Action Model with Hybrid Memory](https://nvlabs.github.io/Sana/Robot/)
+Paper: [SANA-Robot: Efficient World Action Model with Hybrid Memory](https://github.com/NVlabs/Sana/blob/robot/asset/SANA-Robot.pdf)
+
+Project page: https://nvlabs.github.io/Sana/Robot/
+
+Code: https://github.com/NVlabs/Sana/tree/robot
 
 ## Citation
 
