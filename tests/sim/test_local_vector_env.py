@@ -31,7 +31,7 @@ from lerobot.envs.factory import descriptor_features, make_env, make_task_env
 from lerobot.sim import SimConfig
 from lerobot.sim.integrations.utils import canonical_observation
 from lerobot.sim.local_vector_env import LocalVectorEnv, _ProcessEnv
-from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
+from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig, ToyVectorEnv
 
 
 def _register_integration(monkeypatch, name, env_fns, adapter=canonical_observation):
@@ -336,5 +336,41 @@ def test_a_new_simulator_needs_only_its_factories_and_observation_adapter(monkey
         np.testing.assert_array_equal(obs["observation.state"], [[0.25]])
         # Once to describe the observations, once for the reset.
         assert len(adapted) == 2
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("end", ["terminated", "truncated"])
+def test_batched_simulator_can_reuse_observation_storage(monkeypatch, end):
+    # A native vector simulator can step finished rows because it steps the whole batch.
+    # Its output array may also be a reusable buffer.
+    def observe(self):
+        return {"agent_pos": self.state}
+
+    monkeypatch.setattr(ToyVectorEnv, "_obs", observe)
+    if end == "truncated":
+        step = ToyVectorEnv.step
+
+        def truncate(self, actions):
+            obs, reward, done, _, info = step(self, actions)
+            return obs, reward, np.zeros_like(done), done, info
+
+        monkeypatch.setattr(ToyVectorEnv, "step", truncate)
+    config = replace(ToyEnvConfig().sim_config(), type="toy_vector")
+    env = LocalVectorEnv(config, num_envs=2)
+    try:
+        env.reset(seed=[4, 5])
+        terminal_obs, _, terminated, truncated, _ = env.step(np.array([[2, 0], [0, 0]], np.float32))
+        assert terminated.tolist() == [end == "terminated", False]
+        assert truncated.tolist() == [end == "truncated", False]
+
+        obs, reward, terminated, truncated, _ = env.step(np.array([[-1, 0], [0.25, 0]], np.float32))
+        actual = obs["observation.state"]
+        previous = terminal_obs["observation.state"]
+        np.testing.assert_array_equal(actual[0], previous[0])
+        assert actual[1, 0] == pytest.approx(previous[1, 0] + 0.25)
+        assert reward[0] == 0.0
+        assert terminated.tolist() == [end == "terminated", False]
+        assert truncated.tolist() == [end == "truncated", False]
     finally:
         env.close()

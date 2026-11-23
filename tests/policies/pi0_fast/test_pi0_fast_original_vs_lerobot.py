@@ -55,6 +55,9 @@ IMAGE_HEIGHT = 224
 IMAGE_WIDTH = 224
 DEVICE = "cuda"
 MODEL_PATH_LEROBOT = "lerobot/pi0fast-base"
+MODEL_REVISION = "308eb844dabdf46cd9dcd5138c1988b7a234f1d9"
+FAST_REVISION = "3d4d8dd847c5333f1cb0f54d00074ba22b14a5b7"
+TEXT_REVISION = "35e4f46485b4d07967e7e9935bc3786aad50687c"
 
 # Expected action token shape: (batch_size, max_decoding_steps)
 EXPECTED_ACTION_TOKENS_SHAPE = (1, 2)
@@ -93,11 +96,21 @@ def instantiate_lerobot_pi0_fast(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Instantiate LeRobot PI0Fast policy with preprocessor and postprocessor."""
+    """Instantiate PI0Fast, explicitly trusting its FAST action tokenizer for these integration checks."""
     if from_pretrained:
+        config = PI0FastConfig.from_pretrained(
+            model_path,
+            revision=MODEL_REVISION,
+            trust_remote_code=True,
+        )
+        config.action_tokenizer_name = f"lerobot/fast-action-tokenizer@{FAST_REVISION}"
+        config.text_tokenizer_name = f"google/paligemma-3b-pt-224@{TEXT_REVISION}"
         policy = PI0FastPolicy.from_pretrained(
             pretrained_name_or_path=model_path,
+            revision=MODEL_REVISION,
+            config=config,
             strict=True,
+            trust_remote_code=True,
         )
         policy.config.validate_action_token_prefix = False
         policy.config.max_action_tokens = 2
@@ -106,6 +119,9 @@ def instantiate_lerobot_pi0_fast(
         policy.config.n_action_steps = 2
     else:
         config = PI0FastConfig(
+            action_tokenizer_name=f"lerobot/fast-action-tokenizer@{FAST_REVISION}",
+            text_tokenizer_name=f"google/paligemma-3b-pt-224@{TEXT_REVISION}",
+            trust_remote_code=True,
             n_action_steps=2,
             max_action_dim=DUMMY_ACTION_DIM,
             max_state_dim=DUMMY_STATE_DIM,
