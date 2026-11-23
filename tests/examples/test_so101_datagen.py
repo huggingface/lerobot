@@ -16,6 +16,7 @@
 
 import json
 import os
+from itertools import combinations
 
 import numpy as np
 import pytest
@@ -1136,3 +1137,425 @@ def test_imported_containers_require_complete_local_preparation(tmp_path, monkey
         scene.container_asset_directory("white_dish")
     (root / "collision_001.obj").touch()
     assert scene.container_asset_directory("white_dish") == root
+
+
+def test_sorting_scene_has_two_unambiguous_color_groups_and_reserved_capacity():
+    from collections import Counter
+    from copy import deepcopy
+
+    from examples.so101_datagen.tasks import footprint
+
+    cfg = GenerationConfig()
+    cfg.tasks.weights = {"sort_objects": 1}
+    task = TASKS["sort_objects"]
+    sampled_cfg = task.scene_config(cfg)
+    assert cfg.objects.mesh_prob == 0.5  # Task-specific restrictions do not mutate other tasks.
+    assert sampled_cfg.objects.mesh_prob == 0
+    assert cfg.tasks.weights == {"sort_objects": 1}
+    meshes = load_meshes()
+    for seed in (0, 14, 24, 32):
+        ep = prepare(seed, cfg, meshes)
+        objects, bins = ep.scene.objects, ep.scene.containers
+        assert sorted(Counter(obj.color for obj in objects).values()) == [1, 2]
+        assert len({obj.label for obj in objects}) == 3
+        assert len({b.label for b in bins}) == 2
+        assert len({b.color for b in bins}) == 2
+        assert {obj.color for obj in objects}.isdisjoint({b.color for b in bins})
+        assert len({t.id for t in ep.instance.transfers}) == 3
+        assert sorted(Counter(t.target_name for t in ep.instance.transfers).values()) == [1, 2]
+        targets_by_color = {}
+        for transfer in ep.instance.transfers:
+            obj, target = find(ep.scene, transfer.object_name), find(ep.scene, transfer.target_name)
+            targets_by_color.setdefault(obj.color, set()).add(target.name)
+            c, s = np.cos(target.yaw), np.sin(target.yaw)
+            local = np.array([[c, s], [-s, c]]) @ (np.array(transfer.position) - target.pos)
+            assert np.all(np.abs(local) + footprint(obj) + 0.008 <= target.inner_half_xy + 1e-9)
+        assert all(len(targets) == 1 for targets in targets_by_color.values())
+        assert len({next(iter(targets)) for targets in targets_by_color.values()}) == 2
+        for a, b in combinations(ep.instance.transfers, 2):
+            if a.target_name == b.target_name:
+                assert np.linalg.norm(np.array(a.position) - b.position) >= (
+                    footprint(find(ep.scene, a.object_name))
+                    + footprint(find(ep.scene, b.object_name))
+                    + 0.012
+                    - 1e-9
+                )
+
+    ambiguous = deepcopy(ep.scene)
+    ambiguous.containers[1].label = ambiguous.containers[0].label
+    assert task.sample(ambiguous, np.random.default_rng(1), cfg) is None
+    ambiguous = deepcopy(ep.scene)
+    ambiguous.containers[1].color = ambiguous.containers[0].color
+    assert task.sample(ambiguous, np.random.default_rng(1), cfg) is None
+
+
+def test_sorting_second_transfer_retry_preserves_three_distinct_goals(monkeypatch):
+    cfg = GenerationConfig()
+    cfg.tasks.weights = {"sort_objects": 1}
+    cfg.recovery.miss_prob = 0
+    ep = prepare(0, cfg, {})
+    original = Planner._pick_once
+    missed = []
+
+    def miss_second(planner, obj):
+        if planner.transfer_id == ep.instance.transfers[1].id and not missed:
+            missed.append(obj.name)
+            planner._miss_mode = "high"
+            planner._miss_distance = 0.03
+        return original(planner, obj)
+
+    monkeypatch.setattr(Planner, "_pick_once", miss_second)
+    simulate(ep, TASKS[ep.task], cfg.fps)
+    assert missed
+    assert len(ep.plan.completed_transfers) == 3
+    assert len({o.id for o in ep.instance.objectives}) == len(ep.instance.objectives)
+    second = [a for a in ep.plan.attempts if a.transfer_id == ep.instance.transfers[1].id]
+    assert [a.success for a in second] == [False, True]
+    assert TASKS[ep.task].success(ep.instance, ep.model, _final_data(ep), ep.info)
+    rows = persistent_rows(ep.instance, ep.plan, cfg.annotation)
+    assert all("retry" not in atom["content"].lower() for _, atom in rows if atom["style"] == "plan")
+    for attempt in ep.plan.attempts:
+        transfer = next(t for t in ep.instance.transfers if t.id == attempt.transfer_id)
+        assert attempt.object_name == transfer.object_name
+        assert attempt.objective_id == f"{transfer.id}:pick"
+    # Moving one correctly placed object into the other bin invalidates the entire task.
+    data = _final_data(ep)
+    transfer = ep.instance.transfers[0]
+    target = next(c for c in ep.scene.containers if c.name != transfer.target_name)
+    body = ep.info.object_bodies[transfer.object_name]
+    address = ep.model.jnt_qposadr[ep.model.body_jntadr[body]]
+    data.qpos[address : address + 2] = target.pos
+    mujoco.mj_forward(ep.model, data)
+    assert not TASKS[ep.task].success(ep.instance, ep.model, data, ep.info)
+    assert not TASKS[ep.task].completed_transfer_valid(transfer.id, ep.instance, ep.model, data, ep.info)
+
+
+# Append to tests/examples/test_so101_datagen.py after registry integration.
+def test_arrange_row_uses_front_camera_order_and_clear_reserved_centers():
+    from examples.so101_datagen.tasks import footprint
+    from examples.so101_datagen.tasks.arrange_row import ROW_GAP, front_horizontal, front_right
+
+    cfg = GenerationConfig()
+    cfg.tasks.weights = {"arrange_row": 1}
+    meshes = load_meshes()
+    for seed in (0, 1, 2, 3, 8, 9):
+        ep = prepare(seed, cfg, meshes)
+        ordered = sorted(ep.instance.transfers, key=lambda t: t.id)
+        assert len(ordered) == 3
+        objects = [find(ep.scene, t.object_name) for t in ordered]
+        points = np.array([t.position for t in ordered])
+        right = front_right(ep.scene)
+        assert np.all(np.diff(points @ right) > 0)
+        xyz = np.array([[*t.position, obj.half_size[-1]] for obj, t in zip(objects, ordered, strict=True)])
+        assert np.all(np.diff(front_horizontal(ep.scene, xyz)) > 0)
+        assert np.allclose((points - points[1]) @ np.array([-right[1], right[0]]), 0)
+        for i in (0, 1):
+            assert (
+                np.linalg.norm(points[i + 1] - points[i])
+                >= footprint(objects[i]) + footprint(objects[i + 1]) + ROW_GAP - 1e-9
+            )
+        for obj, point in zip(objects, points, strict=True):
+            assert np.linalg.norm(point - obj.pos) > 0.04
+            assert all(
+                np.linalg.norm(point - other.pos) > footprint(obj) + footprint(other) + 0.012
+                for other in ep.scene.objects
+                if other.name != obj.name
+            )
+
+
+def test_arrange_row_completed_position_and_full_task_success_are_distinct():
+    from examples.so101_datagen.tasks.arrange_row import POSITION_TOLERANCE
+
+    cfg = GenerationConfig()
+    cfg.tasks.weights = {"arrange_row": 1}
+    cfg.recovery.miss_prob = 0
+    ep = prepare(0, cfg, load_meshes())
+    simulate(ep, TASKS[ep.task], cfg.fps)
+    assert len(ep.plan.completed_transfers) == 3
+    assert len({o.id for o in ep.instance.objectives}) == len(ep.instance.objectives)
+    assert TASKS[ep.task].success(ep.instance, ep.model, _final_data(ep), ep.info)
+    assert [t.id for t in ep.instance.transfers] == [r.transfer_id for r in ep.plan.completed_transfers]
+    data = _final_data(ep)
+    first = ep.instance.transfers[0]
+    body = ep.info.object_bodies[first.object_name]
+    address = ep.model.jnt_qposadr[ep.model.body_jntadr[body]]
+    data.qpos[address] += POSITION_TOLERANCE + 0.02
+    mujoco.mj_forward(ep.model, data)
+    assert not TASKS[ep.task].transfer_success(first.id, ep.instance, ep.model, data, ep.info)
+    assert not TASKS[ep.task].completed_transfer_valid(first.id, ep.instance, ep.model, data, ep.info)
+    assert not TASKS[ep.task].success(ep.instance, ep.model, data, ep.info)
+
+
+def test_swap_objects_fixed_original_goals_and_distinct_second_pick(monkeypatch):
+    cfg = GenerationConfig()
+    cfg.tasks.weights = {"swap_objects": 1}
+    cfg.recovery.miss_prob = 0
+    ep = prepare(2, cfg, load_meshes())
+    transfers = ep.instance.transfers
+    first, second = (find(ep.scene, transfers[i].object_name) for i in (0, 1))
+    assert [t.object_name for t in transfers] == [first.name, second.name, first.name]
+    assert [t.id for t in transfers] == ["transfer_0", "transfer_1", "transfer_2"]
+    np.testing.assert_allclose(transfers[1].position, first.pos)
+    np.testing.assert_allclose(transfers[2].position, second.pos)
+    original = Planner._pick_once
+    missed = []
+
+    def miss_final_pick(planner, obj):
+        if planner.transfer_id == "transfer_2" and not missed:
+            missed.append(obj.name)
+            planner._miss_mode = "high"
+            planner._miss_distance = 0.03
+        return original(planner, obj)
+
+    monkeypatch.setattr(Planner, "_pick_once", miss_final_pick)
+    simulate(ep, TASKS[ep.task], cfg.fps)
+    assert missed == [first.name]
+    assert [r.transfer_id for r in ep.plan.completed_transfers] == [t.id for t in transfers]
+    third = [attempt for attempt in ep.plan.attempts if attempt.transfer_id == "transfer_2"]
+    assert [attempt.success for attempt in third] == [False, True]
+    assert all(attempt.object_name == first.name for attempt in third)
+    assert all(attempt.objective_id == "transfer_2:pick" for attempt in third)
+    assert len({o.id for o in ep.instance.objectives}) == len(ep.instance.objectives)
+    assert sum(o.label == f"pick up the {first.label}" for o in ep.instance.objectives) == 2
+    rows = persistent_rows(ep.instance, ep.plan, cfg.annotation)
+    plans = [atom["content"] for _, atom in rows if atom["style"] == "plan"]
+    assert plans[0].count(f"pick up the {first.label}") == 2
+    assert all("retry" not in text.lower() for text in plans)
+    data = _final_data(ep)
+    assert TASKS[ep.task].success(ep.instance, ep.model, data, ep.info)
+    for transfer in transfers[1:]:
+        point = data.xpos[ep.info.object_bodies[transfer.object_name], :2]
+        assert np.linalg.norm(point - transfer.position) <= 0.02
+
+
+def test_swap_buffer_goal_only_retires_after_precondition(monkeypatch):
+    cfg = GenerationConfig()
+    cfg.tasks.weights = {"swap_objects": 1}
+    cfg.recovery.miss_prob = 0
+    ep = prepare(2, cfg, load_meshes())
+    task = TASKS[ep.task]
+    original = task.prepare_transfer
+    verified = []
+
+    def observe(transfer, scene, planner, rng):
+        if transfer.id == "transfer_2":
+            assert ep.instance.active_transfer_id == "transfer_1"
+            assert planner.rollout.transfer_satisfied("transfer_0")
+            assert planner.rollout.transfer_satisfied("transfer_1")
+            original(transfer, scene, planner, rng)
+            data = planner.rollout.data
+            obj = ep.instance.transfers[0].object_name
+            body = ep.info.object_bodies[obj]
+            address = ep.model.jnt_qposadr[ep.model.body_jntadr[body]]
+            saved = data.qpos.copy()
+            data.qpos[address] += 0.06
+            mujoco.mj_forward(ep.model, data)
+            assert not task.completed_transfer_valid("transfer_0", ep.instance, ep.model, data, ep.info)
+            with pytest.raises(PlanningError, match="buffer goal was lost"):
+                original(transfer, scene, planner, rng)
+            # Retirement applies only to A's temporary goal, never B's final placement.
+            ep.instance.active_transfer_id = "transfer_2"
+            assert task.completed_transfer_valid("transfer_0", ep.instance, ep.model, data, ep.info)
+            assert task.completed_transfer_valid("transfer_1", ep.instance, ep.model, data, ep.info)
+            other = ep.instance.transfers[1].object_name
+            other_body = ep.info.object_bodies[other]
+            other_address = ep.model.jnt_qposadr[ep.model.body_jntadr[other_body]]
+            data.qpos[other_address] += 0.06
+            mujoco.mj_forward(ep.model, data)
+            assert not task.completed_transfer_valid("transfer_1", ep.instance, ep.model, data, ep.info)
+            data.qpos[:] = saved
+            mujoco.mj_forward(ep.model, data)
+            ep.instance.active_transfer_id = "transfer_1"
+            verified.append(True)
+            return
+        return original(transfer, scene, planner, rng)
+
+    monkeypatch.setattr(task, "prepare_transfer", observe)
+    simulate(ep, task, cfg.fps)
+    assert verified == [True]
+    assert task.success(ep.instance, ep.model, _final_data(ep), ep.info)
+
+
+@pytest.mark.parametrize("seed", [0, 1])
+def test_put_all_in_includes_every_object_and_preserves_every_goal(seed):
+    from examples.so101_datagen.tasks import footprint
+
+    cfg = GenerationConfig()
+    cfg.tasks.weights = {"put_all_in": 1}
+    cfg.recovery.miss_prob = 0
+    original_count = cfg.objects.count
+    ep = prepare(seed, cfg, load_meshes())
+    assert cfg.objects.count == original_count
+    assert len(ep.scene.objects) == (3 if seed == 0 else 2)
+    assert {t.object_name for t in ep.instance.transfers} == {obj.name for obj in ep.scene.objects}
+    assert len({t.id for t in ep.instance.transfers}) == len(ep.scene.objects)
+    target = ep.scene.containers[0]
+    c, s = np.cos(target.yaw), np.sin(target.yaw)
+    rotation = np.array([[c, s], [-s, c]])
+    for t in ep.instance.transfers:
+        obj = find(ep.scene, t.object_name)
+        local = rotation @ (np.array(t.position) - target.pos)
+        assert np.all(np.abs(local) + footprint(obj) + 0.008 <= target.inner_half_xy + 1e-9)
+    for first, second in combinations(ep.instance.transfers, 2):
+        assert np.linalg.norm(np.array(first.position) - second.position) >= (
+            footprint(find(ep.scene, first.object_name))
+            + footprint(find(ep.scene, second.object_name))
+            + 0.012
+            - 1e-9
+        )
+    simulate(ep, TASKS[ep.task], cfg.fps)
+    assert len(ep.plan.completed_transfers) == len(ep.scene.objects)
+    assert TASKS[ep.task].success(ep.instance, ep.model, _final_data(ep), ep.info)
+    # One object outside the bin invalidates universal completion even after other objects succeeded.
+    data = _final_data(ep)
+    transfer = ep.instance.transfers[-1]
+    body = ep.info.object_bodies[transfer.object_name]
+    address = ep.model.jnt_qposadr[ep.model.body_jntadr[body]]
+    data.qpos[address : address + 2] = find(ep.scene, transfer.object_name).pos
+    mujoco.mj_forward(ep.model, data)
+    assert not TASKS[ep.task].success(ep.instance, ep.model, data, ep.info)
+
+
+def test_put_all_in_second_transfer_local_retry_keeps_first_goal(monkeypatch):
+    cfg = GenerationConfig()
+    cfg.tasks.weights = {"put_all_in": 1}
+    cfg.recovery.miss_prob = 0
+    ep = prepare(0, cfg, load_meshes())
+    original = Planner._pick_once
+    missed = []
+
+    def miss_second(planner, obj):
+        if planner.transfer_id == ep.instance.transfers[1].id and not missed:
+            missed.append(obj.name)
+            planner._miss_mode = "high"
+            planner._miss_distance = 0.03
+        return original(planner, obj)
+
+    monkeypatch.setattr(Planner, "_pick_once", miss_second)
+    simulate(ep, TASKS[ep.task], cfg.fps)
+    assert len(ep.plan.completed_transfers) == 3
+    attempts = [a for a in ep.plan.attempts if a.transfer_id == ep.instance.transfers[1].id]
+    assert [a.success for a in attempts] == [False, True]
+    assert TASKS[ep.task].success(ep.instance, ep.model, _final_data(ep), ep.info)
+
+
+def test_unblocking_requires_a_real_gripper_collision_dependency():
+    from types import SimpleNamespace
+
+    from examples.so101_datagen.tasks.unblock_then_place import swept_gripper_clearance
+
+    cfg = GenerationConfig()
+    cfg.tasks.weights = {"unblock_then_place": 1}
+    cfg.recovery.miss_prob = 0
+    ep = prepare(5, cfg, load_meshes())
+    task = TASKS[ep.task]
+    simulate(ep, task, cfg.fps)
+    proof = ep.instance.evidence
+    assert proof["initial_front_objects_visible"]
+    assert proof["initial_surface_gap_lower_bound"] >= 0.005
+    assert proof["dependency_checked"]
+    assert proof["counterfactual_gripper_clearance"] < -0.0005
+    assert proof["cleared_gripper_clearance"] >= cfg.motion.approach_clearance
+    assert proof["target_displacement_before_pick"] <= 0.01
+    assert len(ep.plan.completed_transfers) == 2
+    assert [r.transfer_id for r in ep.plan.completed_transfers] == ["clear_blocker", "place_target"]
+    data = _final_data(ep)
+    assert task.success(ep.instance, ep.model, data, ep.info)
+    # Replaying the actual selected approach with the blocker restored intersects the physical
+    # gripper. The counterfactual check itself leaves both the scene state and IK scene untouched.
+    attempt = next(a for a in ep.plan.attempts if a.object_name == ep.instance.roles["target_object"])
+    frames = list(ep.plan.commands[attempt.looked : attempt.approach_end + 1])
+    before = data.qpos.copy()
+    scene_before = ep.arm.scene_qpos.copy()
+    distance = swept_gripper_clearance(
+        SimpleNamespace(arm=ep.arm),
+        ep.instance.roles["blocker"],
+        frames,
+        qpos=data.qpos,
+        info=ep.info,
+        restore_initial=True,
+        initial_pose=proof["initial_blocker_pose"],
+    )
+    assert distance < 0
+    np.testing.assert_array_equal(data.qpos, before)
+    np.testing.assert_array_equal(ep.arm.scene_qpos, scene_before)
+    # Matching final positions cannot substitute for proving the dependency.
+    ep.instance.evidence["dependency_checked"] = False
+    assert not task.success(ep.instance, ep.model, data, ep.info)
+    ep.instance.evidence["dependency_checked"] = True
+    blocker = ep.info.object_bodies[ep.instance.roles["blocker"]]
+    address = ep.model.jnt_qposadr[ep.model.body_jntadr[blocker]]
+    data.qpos[address : address + 7] = ep.model.qpos0[address : address + 7]
+    mujoco.mj_forward(ep.model, data)
+    assert not task.completed_transfer_valid("clear_blocker", ep.instance, ep.model, data, ep.info)
+    assert not task.success(ep.instance, ep.model, data, ep.info)
+
+
+def test_unblocking_rechecks_dependency_for_a_new_grasp_path(monkeypatch):
+    from types import SimpleNamespace
+
+    from examples.so101_datagen.config import MotionConfig
+    from examples.so101_datagen.tasks import unblock_then_place
+    from examples.so101_datagen.tasks.collect_objects import CollectObjects
+
+    initial_pose = [0.2, 0.0, 0.02, 1.0, 0.0, 0.0, 0.0]
+    instance = TaskInstance(
+        "unblock_then_place",
+        "Move the blocker, then place the target.",
+        {"target_object": "target", "blocker": "blocker"},
+        evidence={"initial_blocker_pose": initial_pose},
+    )
+    rollout = SimpleNamespace(
+        episode=SimpleNamespace(instance=instance, info=SimpleNamespace()),
+        data=SimpleNamespace(qpos=np.zeros(7)),
+    )
+    original_cfg = MotionConfig()
+    planner = SimpleNamespace(
+        rollout=rollout,
+        cfg=original_cfg,
+        frames=[np.zeros(6), np.full(6, 0.5)],
+        marks={"looked": 0, "grasp_approach_end": 1},
+    )
+    obj = SimpleNamespace(name="target")
+    grasp = SimpleNamespace(tilt=45.0, style="object_aligned")
+    checked_paths, placed_paths = [], []
+
+    def clearance(planner, blocker_name, frames, *, restore_initial, **kwargs):
+        assert blocker_name == "blocker"
+        if restore_initial:
+            assert kwargs["initial_pose"] == initial_pose
+            checked_paths.append(np.array(frames).copy())
+            # The first preflight is genuinely blocked. A later retry chooses another approach
+            # that no longer needs the blocker removed and must therefore be rejected.
+            return -0.002 if len(checked_paths) == 1 else 0.01
+        return 0.02
+
+    def two_grasp_paths(self, obj, planner, place, *, preflight=False, objective_id=None):
+        assert preflight
+        assert objective_id == "place_target:pick"
+        # Mimic the preflight call before a physical grasp. Its proof cannot authorize a later,
+        # different grasp candidate after a missed pick or carry-drop recovery.
+        planner.rollout = None
+        try:
+            place(grasp)
+        finally:
+            planner.rollout = rollout
+        planner.frames = [np.full(6, 1.0), np.full(6, 1.5)]
+        place(grasp)
+
+    def place(grasp):
+        placed_paths.append(np.array(planner.frames).copy())
+
+    monkeypatch.setattr(unblock_then_place, "swept_gripper_clearance", clearance)
+    monkeypatch.setattr(CollectObjects, "pick_and_place", two_grasp_paths)
+    with pytest.raises(PlanningError, match="does not obstruct"):
+        TASKS["unblock_then_place"].pick_and_place(
+            obj, planner, place, preflight=True, objective_id="place_target:pick"
+        )
+    assert len(checked_paths) == 2
+    assert not np.array_equal(checked_paths[0], checked_paths[1])
+    assert len(placed_paths) == 1
+    assert planner.cfg is original_cfg
+    assert planner.rollout is rollout
+    assert len(instance.evidence["dependency_checks"]) == 1
+    assert instance.evidence["dependency_checks"][0]["validation_phase"] == "preflight"

@@ -164,6 +164,7 @@ class CollectObjects(Task):
         planner.objectives = list(instance.objectives)
         for transfer in route:
             self.prepare_transfer(transfer, scene, planner, rng)
+            instance.active_transfer_id = transfer.id
             obj = find(scene, transfer.object_name)
             container = (
                 None
@@ -211,7 +212,15 @@ class CollectObjects(Task):
                 planner.completed_transfers.append(TransferResult(transfer.id, obj.name, len(planner.frames)))
         if return_rest:
             planner.subtask(
-                "go back to the rest position", memory="I placed both objects.", objective_id="rest"
+                "go back to the rest position",
+                memory=(
+                    "I placed both objects."
+                    if len({t.object_name for t in route}) == 2
+                    else "I placed all three objects."
+                    if len({t.object_name for t in route}) == 3
+                    else "I placed all the objects."
+                ),
+                objective_id="rest",
             )
             planner.transit(REST + rng.uniform(-3, 3, 6) * [1, 1, 1, 1, 1, 0])
 

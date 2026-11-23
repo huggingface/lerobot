@@ -45,6 +45,7 @@ class ObjectsConfig:
 class ContainerConfig:
     inner_size: Range = (0.08, 0.13)
     collection_inner_size: Range = (0.14, 0.20)
+    sorting_inner_size: Range = (0.12, 0.16)
     clearing_wall_height: Range = (0.012, 0.022)
     wall_height: Range = (0.012, 0.045)
     wall_thickness: Range = (0.003, 0.006)

@@ -48,7 +48,7 @@ need observed physics.
 
 Plans use objective IDs so retries do not add future failures to the initial plan. Generation
 sidecars record the objective IDs, transfer/object identities, grasp outcomes and completed-transfer
-frame boundaries. The two transfers count as intended actions, rather than as a retry.
+frame boundaries. Each declared transfer is an intentional action with its own identity.
 
 `ordered_transfers` performs two explicitly ordered transfers. Half the proposed scenes put one object
 in a container and the other next to a stationary third object, sampling both orders. The other half
@@ -67,6 +67,50 @@ into one. Final success requires both objects physically supported on the table,
 each other, with the tray empty. Clearance planning uses the actual rotated tray footprint. Trays use
 `generation.container.clearing_wall_height` (1.2–2.2 cm), independently of other task families.
 Enable with `--generation.tasks.weights='{"clear_container":1}'`; it remains opt-in.
+
+
+`sort_objects` sorts three objects from two color groups into two distinctly named containers. Two
+objects share one color and destination, with distinct shape names (for example, a red block and a
+red cylinder); the third uses another color and container. This family uses colored primitives so
+color-group instructions remain true, preserving their existing size ranges. Other families retain
+scanned objects and source textures. The expert compares estimated travel distance for all six transfer orders,
+reserves non-overlapping landing points and refreshes free floor space from observed placements.
+Every completed object must stay in its assigned bin; a partial or incorrectly sorted result fails.
+Procedural interiors use `generation.container.sorting_inner_size` (12–16 cm), allowing room for two
+containers in the reachable workspace; imported sizes retain their configured bounds. Layouts without
+capacity, reachable centers or unique labels are rejected. Defaults remain unchanged.
+Enable with `--generation.tasks.weights='{"sort_objects":1}'`.
+
+
+`put_all_in` transfers **every graspable object on the table** into one named container, starting
+with two or three objects. It differs from `collect_objects`, which selects two explicitly named
+objects and can leave distractors behind. Source sizes and materials are retained. Collision-free
+landing positions reserve 8 mm wall margins and 12 mm footprint gaps; capacity and reachability
+are checked before execution, and occupied reservations refresh against observed physics.
+
+`arrange_row` places three named objects in a specified left-to-right order as viewed by the static
+front camera. It reserves reachable table centers, requires final centers within 2 cm, and rejects
+overlapping footprints or an incorrect projected order. Other table objects remain protected.
+
+`swap_objects` exchanges two original positions through a reserved free buffer: A to buffer, B to
+A's original position, then A to B's original position. Three distinct transfer identities preserve
+both intentional picks of A in the plan. The buffer goal remains protected until A is intentionally
+picked again; B's completed final goal remains protected throughout. Final centers must be within
+2 cm of the original positions.
+
+`unblock_then_place` moves a blocker aside before placing its target in a bin. Initial scenes keep
+both objects visible and physically separate. The selected target approach is checked against a
+counterfactual with the blocker restored to its settled initial pose: the original blocker must
+obstruct the gripper, while the parked blocker must clear it. Each preflight and executed approach
+is rechecked, including retries and carry-drop recovery. The proof is stored as `task_evidence` in
+generation sidecars. This initial family uses two objects, with unchanged size ranges.
+
+All four families reuse continuous physics, local retries and the 120-second long-task limit.
+They are opt-in through the same dictionary, for example:
+
+```bash
+--generation.tasks.weights='{"put_all_in":1,"arrange_row":1,"swap_objects":1,"unblock_then_place":1}'
+```
 
 Imported containers are opt-in through `generation.container.style`:
 
@@ -99,4 +143,4 @@ distinct recolored assets. Sampled scenes record style and appearance for replay
 Scanned GSO and RoboCasa objects already retain their native textures. Primitives retain their named
 colors because they do not have a source texture.
 
-Additional longer-task families will be introduced individually after visual review of each stage.
+New task families remain opt-in pending visual review; the default three-task weights are unchanged.

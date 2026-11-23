@@ -1,0 +1,84 @@
+# Experimental FineART-VLA training contract, not a drop-in autonomous runtime.
+# Requires a controller that parses the three tagged fields, persists generated
+# memory/plan and sends only the selected instruction/context to action control.
+# Stock /autosteer accepts one subtask string and cannot consume this response.
+#
+# Ordinary frames: 70% action conditioning, 30% joint state/plan/subtask targets.
+# Sparse VQA frames route first; their two weights select between matching views,
+# NOT a guaranteed percentage of all frames. Keep camera identity explicit.
+#
+# Before training spatial targets: fix/declare FineART coordinate units. These
+# annotations use [0,1] fractions; its current loc helper assumes [0,1000].
+# Full autonomous memory also needs initial anchors/inventory and terminal done
+# labels; existing short narrative memory rows do not supply those automatically.
+
+blend:
+  low_level_execution:
+    weight: 0.70
+    messages:
+      - role: user
+        stream: low_level
+        if_present: subtask
+        content: |-
+          Original task: ${task}
+          <memory>${memory}</memory>
+          <plan>${plan}</plan>
+          Execute only this subtask: ${subtask}
+
+  checkpoint:
+    weight: 0.30
+    bindings:
+      previous_memory: "nth_prev(style=memory, offset=1)"
+      previous_plan: "nth_prev(style=plan, offset=1)"
+      previous_subtask: "nth_prev(style=subtask, offset=1)"
+    messages:
+      - role: user
+        stream: high_level
+        content: |-
+          Original task: ${task}
+          <previous_memory>${previous_memory}</previous_memory>
+          <previous_plan>${previous_plan}</previous_plan>
+          <last_command_issued>${previous_subtask}</last_command_issued>
+          Update memory from the observations. A command is not proof of success.
+          Preserve initial object anchors and confirmed completed objectives.
+          Keep the current objective if it is unfinished; retry locally if needed.
+          Return <memory>updated state</memory>, <plan>remaining objectives</plan>,
+          and <subtask>one executable instruction, or done</subtask>.
+      - role: assistant
+        stream: high_level
+        target: true
+        if_present: subtask
+        content: |-
+          <memory>${memory}</memory>
+          <plan>${plan}</plan>
+          <subtask>${subtask}</subtask>
+
+  grounding_front:
+    weight: 1.0
+    route: vqa
+    bindings:
+      question: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
+      answer: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
+    messages:
+      - role: user
+        stream: high_level
+        if_present: question
+        content:
+          - {type: image, feature: observation.images.front}
+          - {type: text, text: "Camera: observation.images.front. ${question}"}
+      - {role: assistant, stream: high_level, target: true, content: "${answer}", if_present: answer}
+
+  grounding_wrist:
+    weight: 1.0
+    route: vqa
+    bindings:
+      question: "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
+      answer: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"
+    messages:
+      - role: user
+        stream: high_level
+        if_present: question
+        content:
+          - {type: image, feature: observation.images.wrist}
+          - {type: text, text: "Camera: observation.images.wrist. ${question}"}
+      - {role: assistant, stream: high_level, target: true, content: "${answer}", if_present: answer}

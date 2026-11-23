@@ -58,6 +58,10 @@ class TaskInstance:
     phrasings: list[str] = field(default_factory=list)
     objectives: list[Objective] = field(default_factory=list)
     transfers: list[Transfer] = field(default_factory=list)
+    # Runtime execution phase; temporary goals can be superseded by a later intentional transfer.
+    active_transfer_id: str | None = None
+    # Geometric proof or task-specific validation recorded in generation sidecars.
+    evidence: dict[str, object] = field(default_factory=dict)
 
 
 class Task(ABC):
@@ -223,10 +227,15 @@ def resting_on_table(name: str, model: mujoco.MjModel, data: mujoco.MjData, info
 
 
 from . import (  # noqa: E402, F401
+    arrange_row,
     clear_container,
     collect_objects,
     ordered_transfers,
     pick_lift,
     place_in,
     place_near,
+    put_all_in,
+    sort_objects,
+    swap_objects,
+    unblock_then_place,
 )

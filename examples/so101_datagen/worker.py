@@ -265,6 +265,7 @@ def run_shard(job: ShardJob) -> dict:
                 "task": episode.task,
                 "instruction": episode.instance.instruction,
                 "roles": episode.instance.roles,
+                "task_evidence": episode.instance.evidence,
                 "start_mode": episode.start_mode,
                 "start": episode.start.tolist(),
                 "attempts": len(episode.plan.attempts),
