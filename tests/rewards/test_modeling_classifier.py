@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
 import pytest
 import torch
 
@@ -20,6 +22,27 @@ from lerobot.rewards.classifier.configuration_classifier import RewardClassifier
 from lerobot.rewards.classifier.modeling_classifier import ClassifierOutput
 from lerobot.utils.constants import OBS_IMAGE, REWARD
 from tests.utils import skip_if_package_missing
+
+
+@pytest.fixture
+def local_encoder(monkeypatch):
+    """Exercise a real ResNet without downloading weights or running Hub code."""
+    transformers = pytest.importorskip("transformers")
+    encoder = transformers.ResNetModel(
+        transformers.ResNetConfig(
+            embedding_size=8,
+            hidden_sizes=[8, 16, 32, 64],
+            depths=[1, 1, 1, 1],
+            layer_type="basic",
+        )
+    )
+
+    def from_pretrained(model_name, *, trust_remote_code, revision=None, code_revision=None):
+        assert model_name == "lerobot/resnet10"
+        assert trust_remote_code is False
+        return encoder
+
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", from_pretrained)
 
 
 def test_classifier_output():
@@ -36,7 +59,60 @@ def test_classifier_output():
 
 
 @skip_if_package_missing("transformers")
-def test_binary_classifier_with_default_params():
+@pytest.mark.parametrize("caller_trust", [None, False, True])
+def test_environment_checkpoint_cannot_authorize_encoder_code(monkeypatch, tmp_path, caller_trust):
+    from transformers import AutoModel
+
+    from lerobot.configs.train import TrainPipelineConfig
+    from lerobot.processor.hil_processor import RewardClassifierProcessorStep
+
+    classifier_path = tmp_path / "classifier"
+    classifier_path.mkdir()
+    (classifier_path / "config.json").write_text(
+        json.dumps(
+            {"type": "reward_classifier", "model_name": "user/custom-encoder", "trust_remote_code": True}
+        )
+    )
+    (tmp_path / "train_config.json").write_text(
+        json.dumps(
+            {
+                "dataset": {"repo_id": "user/data"},
+                "env": {
+                    "type": "gym_manipulator",
+                    "processor": {
+                        "reward_classifier": {
+                            "pretrained_path": str(classifier_path),
+                            "trust_remote_code": True,
+                        }
+                    },
+                },
+            }
+        )
+    )
+    args = (
+        []
+        if caller_trust is None
+        else [f"--env.processor.reward_classifier.trust_remote_code={str(caller_trust).lower()}"]
+    )
+    config = TrainPipelineConfig.from_pretrained(tmp_path, cli_args=args)
+    observed = []
+
+    def load_encoder(name, *, trust_remote_code, **kwargs):
+        assert name == "user/custom-encoder"
+        observed.append(trust_remote_code)
+        raise RuntimeError("Stopped before loading encoder code")
+
+    monkeypatch.setattr(AutoModel, "from_pretrained", load_encoder)
+    classifier = config.env.processor.reward_classifier
+    with pytest.raises(RuntimeError, match="Stopped before loading encoder code"):
+        RewardClassifierProcessorStep(
+            pretrained_path=classifier.pretrained_path, trust_remote_code=classifier.trust_remote_code
+        )
+    assert observed == [caller_trust is True]
+
+
+@skip_if_package_missing("transformers")
+def test_binary_classifier_with_default_params(local_encoder):
     from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     config = RewardClassifierConfig()
@@ -83,7 +159,7 @@ def test_binary_classifier_with_default_params():
 
 
 @skip_if_package_missing("transformers")
-def test_multiclass_classifier():
+def test_multiclass_classifier(local_encoder):
     from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     num_classes = 5
@@ -126,7 +202,7 @@ def test_multiclass_classifier():
 
 
 @skip_if_package_missing("transformers")
-def test_default_device():
+def test_default_device(local_encoder):
     from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     config = RewardClassifierConfig()
@@ -142,7 +218,7 @@ def test_default_device():
 
 
 @skip_if_package_missing("transformers")
-def test_explicit_device_setup():
+def test_explicit_device_setup(local_encoder):
     from lerobot.rewards.classifier.modeling_classifier import Classifier
 
     config = RewardClassifierConfig(device="cpu")

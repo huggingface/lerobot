@@ -19,7 +19,7 @@
 import json
 import shutil
 from dataclasses import asdict, dataclass
-from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import draccus
 import numpy as np
@@ -28,7 +28,7 @@ import torch
 
 pytest.importorskip("transformers")
 
-from safetensors.torch import save_file  # noqa: E402
+from huggingface_hub import save_torch_state_dict
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig  # noqa: E402
 from lerobot.policies import (  # noqa: E402
@@ -37,7 +37,10 @@ from lerobot.policies import (  # noqa: E402
     make_policy_config,
     make_pre_post_processors,
 )
-from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy  # noqa: E402
+from lerobot.policies.fineart_vla.modeling_fineart_vla import (  # noqa: E402
+    FineARTVLAPolicy,
+    _get_loc_tokenizer,
+)
 from lerobot.policies.fineart_vla.processor_fineart_vla import (  # noqa: E402
     _loc_token,
     _messages_vqa_to_loc,
@@ -56,6 +59,43 @@ from tests.utils import require_cuda  # noqa: E402
 @dataclass
 class _CLIConfig:
     policy: PreTrainedConfig
+
+
+@pytest.mark.parametrize("reference", ["hub", "pinned", "local"])
+def test_generation_tokenizer_resolves_reference(monkeypatch, tmp_path, reference):
+    monkeypatch.setattr("lerobot.policies.fineart_vla.modeling_fineart_vla._LOC_TOKENIZER_CACHE", {})
+    repo_id = "google/paligemma-3b-pt-224"
+    revision = "0123456789abcdef" if reference == "pinned" else None
+    name = f"{repo_id}@{revision}" if revision else repo_id
+    if reference == "local":
+        local_path = tmp_path / "tokenizer@local"
+        local_path.mkdir()
+        name = repo_id = str(local_path)
+    loader = MagicMock()
+    register = MagicMock()
+
+    tokenizer = _get_loc_tokenizer(name, loader, register)
+
+    loader.from_pretrained.assert_called_once_with(repo_id, revision=revision, code_revision=revision)
+    register.assert_called_once_with(loader.from_pretrained.return_value)
+    assert tokenizer is register.return_value
+    assert _get_loc_tokenizer(name, loader, register) is tokenizer
+    assert loader.from_pretrained.call_count == register.call_count == 1
+
+
+def test_generation_tokenizer_cache_keeps_revisions_separate(monkeypatch):
+    monkeypatch.setattr("lerobot.policies.fineart_vla.modeling_fineart_vla._LOC_TOKENIZER_CACHE", {})
+    loader = MagicMock()
+    loader.from_pretrained.side_effect = [object(), object()]
+    register = MagicMock(side_effect=lambda tokenizer: tokenizer)
+    names = [f"google/paligemma-3b-pt-224@{revision}" for revision in ("first-sha", "second-sha")]
+
+    first, second = (_get_loc_tokenizer(name, loader, register) for name in names)
+
+    assert first is not second
+    assert _get_loc_tokenizer(names[0], loader, register) is first
+    assert _get_loc_tokenizer(names[1], loader, register) is second
+    assert loader.from_pretrained.call_count == register.call_count == 2
 
 
 def test_policy_is_registered_under_its_canonical_name():
@@ -214,7 +254,7 @@ def test_processor_save_load_roundtrip_embeds_action_tokenizer(tmp_path, monkeyp
     # The checkpoint must be self-contained: the original tokenizer directory is gone.
     shutil.rmtree(source_tokenizer)
     loaded, _ = make_pre_post_processors(
-        SimpleNamespace(type="fineart_vla", auto_fit_fast_tokenizer=False), pretrained_path=str(checkpoint)
+        FineARTVLAConfig(device="cpu", auto_fit_fast_tokenizer=False), pretrained_path=str(checkpoint)
     )
     assert asdict(loaded.steps[1].recipe) == asdict(recipe)
     torch.testing.assert_close(loaded.steps[0].state_dict()["action.min"], torch.tensor([-1.0, -2.0]))
@@ -305,13 +345,17 @@ class _TinyPolicy(torch.nn.Module):
 
 
 @pytest.mark.parametrize("native", [True, False])
-def test_loader_converts_only_pi05_format_checkpoints(tmp_path, native):
+@pytest.mark.parametrize("sharded", [False, True])
+def test_loader_converts_only_pi05_format_checkpoints(tmp_path, native, sharded):
     source = torch.nn.Linear(2, 2)
     prefix = "model." if native else ""
-    checkpoint = tmp_path / "model.safetensors"
-    save_file({f"{prefix}{key}": value for key, value in source.state_dict().items()}, str(checkpoint))
-
-    policy = FineARTVLAPolicy._load_as_safetensor(_TinyPolicy(), str(checkpoint), "cpu", strict=True)
+    save_torch_state_dict(
+        {f"{prefix}{key}": value for key, value in source.state_dict().items()},
+        tmp_path,
+        max_shard_size=1 if sharded else "1TB",
+    )
+    files = FineARTVLAPolicy._resolve_weight_files(str(tmp_path))
+    policy = FineARTVLAPolicy._load_weight_files(_TinyPolicy(), files, "cpu", strict=True)
 
     assert policy.converted is not native
     torch.testing.assert_close(policy.model.weight, source.weight)

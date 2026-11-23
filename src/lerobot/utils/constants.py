@@ -18,6 +18,8 @@ from typing import Final
 
 from huggingface_hub.constants import HF_HOME
 
+TRAIN_CONFIG_NAME = "train_config.json"
+
 OBS_STR = "observation"
 OBS_PREFIX = OBS_STR + "."
 OBS_ENV_STATE = OBS_STR + ".environment_state"
@@ -99,6 +101,9 @@ HF_LEROBOT_HUB_CACHE = HF_LEROBOT_HOME / "hub"
 # calibration dir
 default_calibration_path = HF_LEROBOT_HOME / "calibration"
 HF_LEROBOT_CALIBRATION = Path(os.getenv("HF_LEROBOT_CALIBRATION", default_calibration_path)).expanduser()
+
+# Hub dataset holding the robot URDF models
+ROBOT_URDFS_REPO_ID = "lerobot/robot-urdfs"
 
 
 # Dataset meta-features (auto-populated by the recording pipeline)

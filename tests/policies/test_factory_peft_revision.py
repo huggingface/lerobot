@@ -154,6 +154,36 @@ def test_make_policy_reads_action_names(monkeypatch, action_key, raw_names, expe
     assert cfg.output_features[ACTION].type is FeatureType.ACTION
 
 
+def test_make_policy_refuses_a_rename_onto_an_existing_action(monkeypatch):
+    """DROID keeps joint actions in `action` and cartesian ones in `action.cartesian`."""
+    cfg = SimpleNamespace(
+        type="mock",
+        device="cpu",
+        pretrained_path=None,
+        use_peft=False,
+        input_features={},
+        output_features={},
+        action_feature_names=None,
+    )
+    dataset_meta = SimpleNamespace(
+        features={
+            ACTION: {"dtype": "float32", "shape": (8,), "names": [f"joint_{i}" for i in range(8)]},
+            "action.cartesian": {"dtype": "float32", "shape": (7,), "names": list("xyzrpwg")},
+        },
+        stats={},
+    )
+    policy = torch.nn.Linear(1, 1)
+    monkeypatch.setattr(policy_factory, "get_policy_class", lambda _: MagicMock(return_value=policy))
+
+    with pytest.raises(ValueError, match="are named 'action' after rename_map"):
+        policy_factory.make_policy(cfg, ds_meta=dataset_meta, rename_map={"action.cartesian": ACTION})
+
+    rename_map = {"action.cartesian": ACTION, ACTION: "action.joint"}
+    policy_factory.make_policy(cfg, ds_meta=dataset_meta, rename_map=rename_map)
+    assert cfg.action_feature_names == list("xyzrpwg")
+    assert cfg.output_features[ACTION].shape == (7,)
+
+
 def test_make_policy_loads_resume_weights_and_keeps_the_parent(monkeypatch):
     """A resume loads the checkpoint, while `pretrained_path` keeps naming the fine-tuned-from model."""
     cfg = SimpleNamespace(

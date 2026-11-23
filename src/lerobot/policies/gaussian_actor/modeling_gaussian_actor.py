@@ -25,6 +25,7 @@ from torch.distributions import MultivariateNormal, TanhTransform, Transform, Tr
 
 from lerobot.configs import PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 
 from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
@@ -563,7 +564,12 @@ class PretrainedImageEncoder(nn.Module):
         """Set up CNN encoder"""
         from transformers import AutoModel
 
-        self.image_enc_layers = AutoModel.from_pretrained(config.vision_encoder_name, trust_remote_code=True)
+        if config.vision_encoder_name is None:
+            raise ValueError("vision_encoder_name is required for a pretrained image encoder.")
+        repo_id, revision = split_hub_reference(config.vision_encoder_name)
+        self.image_enc_layers = AutoModel.from_pretrained(
+            repo_id, trust_remote_code=config.trust_remote_code, revision=revision, code_revision=revision
+        )
 
         if hasattr(self.image_enc_layers.config, "hidden_sizes"):
             self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]  # Last channel dimension
