@@ -198,6 +198,8 @@ class RuntimeContext:
     # must forward it to the timer it builds in ``run()``, since a session mutes
     # everything below ERROR.
     cadence_report: Callable[[str], None] | None = None
+    # Optional simulator reset, called after the active segment ends. Returns the new goal.
+    reset_environment: Callable[[], str] | None = None
 
 
 @dataclass

@@ -2273,3 +2273,238 @@ def test_recipe_training_uses_the_rendered_task_rephrasing():
 
     assert rephrased["command"] == "gather every cube in the blue square"
     assert canonical["command"] == "operator task"
+
+
+@pytest.mark.dataset
+def test_scratchpad_recipe_preserves_causal_inputs_and_native_cot_action_path():
+    from dataclasses import asdict
+
+    from lerobot.datasets.language_render import render_sample
+    from lerobot.datasets.recipe import TrainingRecipe
+    from lerobot.policies.g05.scratchpad_g05 import Scratchpad, runtime_command
+
+    recipe = TrainingRecipe.from_yaml(Path(__file__).parents[3] / "examples/training/so101_g05/recipe.yaml")
+    persistent = [
+        {"role": "assistant", "style": style, "content": content, "timestamp": time}
+        for time, style, content in [
+            (0, "memory", "initial scene"),
+            (0, "plan", "pick; place"),
+            (0, "subtask", "pick cup"),
+            (1, "memory", "cup held"),
+            (1, "plan", "place"),
+            (1, "subtask", "place cup"),
+        ]
+    ]
+    rendered = render_sample(
+        recipe=recipe.blend["scratchpad_cot"],
+        persistent=persistent,
+        events=[],
+        t=1,
+        sample_idx=0,
+        task="move cup",
+    )
+    config = _config(predict_cot=True, runtime_system="system2", memory_scratchpad=True)
+    batch = _policy_batch("move cup")
+    batch.update(rendered)
+    sample = prepare_g05_policy_batch(config, batch)["samples"][0]
+    assert "cup held" not in sample["command"]
+    assert "<previous_memory>initial scene</previous_memory>" in sample["command"]
+    state = Scratchpad.parse(sample["atomic_task"].removeprefix("Subtask: "))
+    assert state.memory == "cup held"
+    assert "<command_text_!_768>" in sample["template"]
+    assert (
+        runtime_command(
+            asdict(recipe), "move cup", Scratchpad("initial scene", "pick; place", "", "pick cup")
+        )
+        == sample["command"]
+    )
+    assert all(stream == "low_level" for stream in rendered["message_streams"])
+
+
+def test_scratchpad_grasp_target_filters_other_vqas_and_rejects_non_normalized_points():
+    from lerobot.policies.g05.scratchpad_g05 import grasp_target
+
+    def answer(payload):
+        return [{"content": "GraspJSON: " + json.dumps(payload)}]
+
+    assert (
+        grasp_target(answer({"point": [0.2, 0.4], "label": "cup center"}), [0], "observation.images.front")
+        == ""
+    )
+    target = json.loads(
+        grasp_target(
+            answer({"point": [0.2, 0.4], "label": "grasp point of cup"}), [0], "observation.images.front"
+        )
+    )
+    assert target["point"] == [0.2, 0.4]
+    assert target["camera"] == "observation.images.front"
+    with pytest.raises(ValueError, match="xy pair"):
+        grasp_target(
+            answer({"point": [200, 400], "label": "grasp point of cup"}), [0], "observation.images.front"
+        )
+
+
+@pytest.mark.dataset
+def test_scratchpad_prediction_feedback_goal_change_invalid_response_done_and_reset():
+    from dataclasses import asdict
+
+    from lerobot.datasets.recipe import TrainingRecipe
+    from lerobot.policies.g05.scratchpad_g05 import Scratchpad
+    from lerobot.policies.g05.tokenizer_g05 import G05SequenceBatch
+
+    recipe = TrainingRecipe.from_yaml(Path(__file__).parents[3] / "examples/training/so101_g05/recipe.yaml")
+    config = _config(
+        predict_cot=True, runtime_system="system2", memory_scratchpad=True, recipe=asdict(recipe)
+    )
+    backend = TinyG05Backend()
+    backend.processor = SimpleNamespace(
+        encode_text=lambda text: text.split(),
+        encode_inference=lambda samples, device: G05SequenceBatch(
+            torch.zeros(1, 3, dtype=torch.long), torch.full((1, 3), -100), torch.zeros(1, 3)
+        ),
+    )
+    answer = [
+        "Subtask: <memory>initial</memory><plan>pick; place</plan><grasp_point></grasp_point><subtask>pick cup</subtask>"
+    ]
+    original = backend.predict_action
+
+    def predict(batch):
+        result = original(batch)
+        result["cot_text"] = answer.copy()
+        return result
+
+    backend.predict_action = predict
+    policy = G05Policy(config, backend=backend)
+    batch = _prepared_policy_batch(policy, _policy_batch("move cup"), predict_cot=True)
+    prediction = policy.predict_action_chunk(batch)["prediction"]
+    assert prediction["language"]["subtask"] == ["pick cup"]
+    assert policy._scratchpad.memory == "initial"
+    policy.predict_action_chunk(batch)
+    assert "<previous_memory>initial</previous_memory>" in backend.last_samples[0]["command"]
+    assert policy.completed_task is None
+    answer[0] = (
+        "Subtask: <memory>finished</memory><plan></plan><grasp_point></grasp_point><subtask>done</subtask>"
+    )
+    policy.predict_action_chunk(batch)
+    assert policy.completed_task == "move cup"
+    changed = _prepared_policy_batch(policy, _policy_batch("new goal"), predict_cot=True)
+    policy.predict_action_chunk(changed)
+    assert "<previous_memory></previous_memory>" in backend.last_samples[0]["command"]
+    state = policy._scratchpad
+    answer[0] = "Subtask: malformed"
+    with pytest.raises(ValueError, match="Expected memory"):
+        policy.predict_action_chunk(changed)
+    assert policy._scratchpad == state
+    policy.reset()
+    assert policy._scratchpad is None and policy.completed_task is None
+    with pytest.raises(ValueError, match="native CoT/action"):
+        policy.generate_text(batch)
+    assert Scratchpad.parse(
+        "<memory>done</memory><plan></plan><grasp_point></grasp_point><subtask>done</subtask>"
+    ).done
+
+
+def test_preserve_pretrained_processors_keeps_serialized_calibration_during_recipe_rebuild(tmp_path):
+    from lerobot.processor import NormalizerProcessorStep
+
+    source = _config(
+        predict_cot=True,
+        runtime_system="system2",
+        normalization_mapping={
+            "STATE": NormalizationMode.QUANTILES,
+            "ACTION": NormalizationMode.QUANTILES,
+            "VISUAL": NormalizationMode.IDENTITY,
+        },
+    )
+    stats = {
+        OBS_STATE: {"q01": torch.full((7,), -7.0), "q99": torch.full((7,), 7.0)},
+        ACTION: {"q01": torch.full((7,), -3.0), "q99": torch.full((7,), 3.0)},
+    }
+    pre, post = make_pre_post_processors(source, dataset_stats=stats)
+    pre.save_pretrained(tmp_path)
+    post.save_pretrained(tmp_path)
+    source.pretrained_path = tmp_path
+    source.preserve_pretrained_processors = True
+    source.use_language_recipe = True
+    rebuilt, _ = make_pre_post_processors(source, dataset_stats={})
+    before = next(s for s in pre.steps if isinstance(s, NormalizerProcessorStep))
+    after = next(s for s in rebuilt.steps if isinstance(s, NormalizerProcessorStep))
+    torch.testing.assert_close(
+        torch.as_tensor(after.stats[ACTION]["q01"]), torch.as_tensor(before.stats[ACTION]["q01"])
+    )
+    assert next(s for s in rebuilt.steps if isinstance(s, RenderTrainingMessagesStep)).recipe is not None
+
+
+@pytest.mark.dataset
+def test_hf_job_profile_reports_optimizer_timing_and_effective_batch(tmp_path):
+    from examples.training.so101_g05.hf_job import parse_profile
+
+    log = tmp_path / "profile.log"
+    log.write_text("loss:1.0 step_s:1.5 mem_gb:80\nloss:0.8 step_s:1.7 mem_gb:82\n")
+    profile = parse_profile(log, accumulation=2, batch=16)
+    assert profile["effective_batch"] == 32
+    assert profile["seconds_per_update"] == pytest.approx(3.2)
+    assert profile["max_logged_allocated_GiB"] == 82
+    log.write_text("loss:nan step_s:1.5\nloss:nan step_s:1.6\n")
+    with pytest.raises(ValueError, match="finite"):
+        parse_profile(log, accumulation=1, batch=32)
+
+
+def test_job_trackio_bridge_records_optimizer_steps_without_uploading_weights(monkeypatch):
+    import sys
+
+    logs = []
+    monkeypatch.setitem(
+        sys.modules,
+        "trackio",
+        SimpleNamespace(
+            init=lambda **kwargs: None, finish=lambda: None, log=lambda data, step: logs.append((data, step))
+        ),
+    )
+    monkeypatch.setenv("G05_ACCUMULATION", "2")
+    from examples.training.so101_g05.job_train import TrackioBridge
+
+    bridge = TrackioBridge.__new__(TrackioBridge)
+    bridge.log_dict({"loss": 1.2}, step=12)
+    bridge.log_policy(Path("checkpoint"))
+    assert logs == [({"train/loss": 1.2, "train/optimizer_step": 6}, 12)]
+
+
+@pytest.mark.dataset
+@pytest.mark.parametrize(
+    "version,capability,safe",
+    [("3.6.0", 9, False), ("3.7.0", 9, False), ("3.7.1", 9, True), ("3.6.0", 8, True)],
+)
+def test_job_rejects_unsafe_hopper_triton_before_downloading(version, capability, safe):
+    from examples.training.so101_g05.hf_job import check_triton_version
+
+    if safe:
+        check_triton_version(version, capability)
+    else:
+        with pytest.raises(RuntimeError, match="Triton >= 3.7.1"):
+            check_triton_version(version, capability)
+
+
+@pytest.mark.dataset
+def test_job_reuses_only_complete_matching_validation(tmp_path):
+    import hashlib
+
+    from examples.training.so101_g05.hf_job import reusable_validation
+
+    code = tmp_path / "validator.py"
+    code.write_text("checked validator")
+    inputs = dict.fromkeys(
+        ("dataset_repo", "dataset_revision", "checkpoint_repo", "checkpoint_revision", "recipe_sha256"),
+        "pinned",
+    )
+    cache = {
+        **inputs,
+        "source_sha256": {str(code): hashlib.sha256(code.read_bytes()).hexdigest()},
+        "report": {"full_dataset": True, "episodes": 4000},
+    }
+    spec = {**inputs, "cached_validation": cache}
+    assert reusable_validation(spec)["episodes"] == 4000
+    code.write_text("changed validator")
+    with pytest.raises(ValueError, match="code changed"):
+        reusable_validation(spec)
+    assert reusable_validation(inputs) is None

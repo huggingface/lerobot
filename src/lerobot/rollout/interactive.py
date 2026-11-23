@@ -143,7 +143,13 @@ class InteractiveSession:
                 " <goal>|off",
                 "let the policy pick its own subtasks toward a high-level goal",
             ),
-            "reset": (self._cmd_reset, "", "stop movement, return to initial position, restore the task"),
+            "reset": (
+                self._cmd_reset,
+                "",
+                "stop movement, load a fresh scene and its task"
+                if getattr(ctx.runtime, "reset_environment", None) is not None
+                else "stop movement, return to initial position, restore the task",
+            ),
             "stop": (self._cmd_stop, "", "end the session and shut down"),
             "help": (self._cmd_help, "", "show this help"),
         }
@@ -186,18 +192,26 @@ class InteractiveSession:
             log_say("Starting rollout", self._play_sounds)
             self._print(
                 f"Rollout running — task {_format_task(self.controller.task)}. "
-                "/subtask <text> to change it, /reset to return to initial position, /stop to shut down."
+                "/subtask <text> to change it, /reset to reset the environment, /stop to shut down."
             )
         elif event is RolloutEvent.SEGMENT_ENDED:
             self._print(
                 "Rollout run ended. Robot is holding position — "
-                "/start to run again, /reset to return to initial position, /stop to shut down."
+                "/start to run again, /reset to reset the environment, /stop to shut down."
             )
         elif event is RolloutEvent.RESET_STARTED:
             log_say("Resetting robot to initial position", self._play_sounds)
-            self._print("Resetting — returning the robot to its initial position...")
+            self._print(
+                "Resetting — loading a fresh scene..."
+                if getattr(self._runtime, "reset_environment", None) is not None
+                else "Resetting — returning the robot to its initial position..."
+            )
         elif event is RolloutEvent.RESET_DONE:
-            self._print("Robot reset — holding at initial position. /start to run.")
+            self._print(
+                f"New scene ready — task {_format_task(self.controller.task)}. /start to run."
+                if getattr(self._runtime, "reset_environment", None) is not None
+                else "Robot reset — holding at initial position. /start to run."
+            )
         elif event is RolloutEvent.RESET_SKIPPED:
             self._print("Robot paused — no initial position captured, holding current pose. /start to run.")
         elif event is RolloutEvent.RESET_FAILED:
@@ -216,7 +230,7 @@ class InteractiveSession:
             if answer.completed:
                 self._print(
                     f"Planner reports {answer.question!r} complete{_format_latency(answer)} — run ended, "
-                    "robot holding. /reset to return to initial position."
+                    "robot holding. /reset to reset the environment."
                 )
             elif answer.ok and answer.held:
                 self._print(

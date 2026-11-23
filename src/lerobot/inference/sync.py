@@ -34,7 +34,8 @@ from lerobot.processor import (
 from lerobot.utils import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
-from .base import InferenceEngine, PolicyQuery
+from .base import InferenceEngine, PolicyQuery, QueryAnswer
+from .contracts import QueryKind
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,19 @@ class SyncInferenceEngine(InferenceEngine):
             observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
             observation = self._preprocessor(observation)
             transition = policy_output_to_transition(self._policy.select_action(observation))
+            completed_task = getattr(self._policy, "completed_task", None)
+            if isinstance(completed_task, str) and completed_task == task:
+                self._policy.drop_queued_actions()
+                if self.task == task:
+                    self._publish_answer(
+                        QueryAnswer(
+                            question=task,
+                            answer="done",
+                            kind=QueryKind.NEXT_SUBTASK,
+                            completed=True,
+                        )
+                    )
+                return None
             # Only the action goes through the postprocessor; the prediction travels beside it.
             action = self._postprocessor(transition_to_policy_action(transition))
         action_tensor = action.squeeze(0).cpu()
@@ -136,7 +150,11 @@ class SyncInferenceEngine(InferenceEngine):
         Inline inference has no worker to pause, so the planner hold is applied here: the
         control loop clears interpolation and holds the robot until the first reply.
         """
-        return not self.hold_for_planner()
+        completed_task = getattr(self._policy, "completed_task", None)
+        return (
+            not (isinstance(completed_task, str) and completed_task == self.task)
+            and not self.hold_for_planner()
+        )
 
     # ------------------------------------------------------------------
     # Text queries

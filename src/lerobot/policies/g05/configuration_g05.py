@@ -318,6 +318,10 @@ class G05Config(PreTrainedConfig):
     processor_metadata: dict[str, Any] = field(default_factory=dict)
     prompt_template: str = ""
     use_language_recipe: bool = False
+    # Opt-in joint memory/plan/subtask text in the native Subtask CoT slot.
+    memory_scratchpad: bool = False
+    # Keep the working checkpoint's action/camera calibration for language fine-tuning.
+    preserve_pretrained_processors: bool = False
     # A recipe YAML read once into `recipe` when the config is built; it is not saved.
     recipe_path: str | None = None
     recipe: dict[str, Any] | None = field(default_factory=_g05_default_recipe)

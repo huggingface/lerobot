@@ -2254,3 +2254,67 @@ def test_vlm_planner_first_turn_does_not_present_the_goal_as_current_instruction
     history = (({}, "pick up the red cube"),)
     later = planner.request_text(PolicyQuery(QueryKind.NEXT_SUBTASK, goal, history=history), goal)
     assert f"Current instruction: {goal}" in later
+
+
+@pytest.mark.parametrize("retarget", [False, True])
+def test_native_cot_completion_holds_instead_of_dispatching_generated_action(retarget):
+    from lerobot.inference import SyncInferenceEngine
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    policy.completed_task = None
+
+    def complete(observation):
+        policy.completed_task = "move cup"
+        if retarget:
+            engine.set_task("new goal")
+        return torch.zeros(1, 2)
+
+    policy.select_action.side_effect = complete
+    postprocessor = MagicMock()
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=lambda obs: obs,
+        postprocessor=postprocessor,
+        dataset_features={},
+        ordered_action_keys=[],
+        task="move cup",
+        device="cpu",
+        robot_type="mock",
+    )
+    answers = []
+    engine.set_answer_observer(answers.append)
+    assert engine.dispatch_allowed()
+    assert engine.get_action({"observation.state": np.zeros(2, dtype=np.float32)}) is None
+    postprocessor.assert_not_called()
+    assert engine.dispatch_allowed() is retarget
+    engine.pump_query(None)
+    if retarget:
+        assert not answers
+    else:
+        assert answers[0].completed
+    engine.set_task("new goal")
+    assert engine.dispatch_allowed()
+
+
+@pytest.mark.parametrize("retarget", [False, True])
+def test_environment_reset_changes_goal_after_clearing_control_state(retarget):
+    controller, events, strategy, engine, _parent, _started = _make_controller()
+    seen = []
+
+    def reset_environment():
+        seen.append("reset")
+        if retarget:
+            engine.set_task("operator override")
+        return "put the blue cube in the tray"
+
+    controller._ctx.runtime.reset_environment = reset_environment
+    assert not controller.reset()
+    controller._reset_robot()
+    strategy.reset_control_state.assert_called_once()
+    strategy.return_to_initial_position.assert_not_called()
+    assert seen == ["reset"]
+    assert controller.initial_task == "put the blue cube in the tray"
+    assert engine.task == ("operator override" if retarget else controller.initial_task)
+    assert RolloutEvent.RESET_DONE in events
+    assert not controller.running

@@ -1762,6 +1762,8 @@ class G05Policy(PreTrainedPolicy):
         config.validate_features()
         self.backend = backend if backend is not None else _native_backend(config, checkpoint_dir)
         self._action_queue: deque[Tensor] = deque()
+        self._scratchpad_task: str | None = None
+        self._scratchpad = None
 
     def supports_text_generation(self) -> bool:
         """G0.5 can generate text."""
@@ -1770,6 +1772,10 @@ class G05Policy(PreTrainedPolicy):
     @torch.no_grad()
     def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Generate G0.5's native System-2 text from model-ready observations."""
+        if self.config.memory_scratchpad:
+            raise ValueError(
+                "Scratchpad G05 uses its native CoT/action stream; use /start rather than /autosteer"
+            )
         if not self.config.predict_cot:
             raise ValueError("G0.5 text generation requires a checkpoint with predict_cot=True.")
         _, metadata = self._run_inference(batch, system_mode="system2")
@@ -1847,6 +1853,12 @@ class G05Policy(PreTrainedPolicy):
     def reset(self) -> None:
         """Clear the queued actions."""
         self._action_queue.clear()
+        self._scratchpad_task = None
+        self._scratchpad = None
+
+    @property
+    def completed_task(self) -> str | None:
+        return self._scratchpad_task if self._scratchpad is not None and self._scratchpad.done else None
 
     def _apply_author_inference_precision(self) -> None:
         """Match the released serving path's BF16 weights with declared FP32 islands."""
@@ -1898,6 +1910,28 @@ class G05Policy(PreTrainedPolicy):
             raise ValueError(
                 "G0.5 system mode does not match the token sequence emitted by its input processor."
             )
+        if self.config.memory_scratchpad and system_mode == "system2":
+            from .scratchpad_g05 import Scratchpad, runtime_command
+
+            samples = [dict(sample) for sample in prepared["samples"]]
+            if len(samples) != 1:
+                raise ValueError("Stateful G05 scratchpad inference requires one episode per policy instance")
+            goal = samples[0]["command"]
+            if goal != self._scratchpad_task:
+                self._scratchpad_task, self._scratchpad = goal, Scratchpad()
+            samples[0]["command"] = runtime_command(self.config.recipe, goal, self._scratchpad)
+            if len(self.backend.processor.encode_text(samples[0]["command"])) > 768:
+                raise ValueError("Scratchpad context exceeds 768 tokens; refusing silent truncation")
+            prepared["samples"] = samples
+            sequence = self.backend.processor.encode_inference(samples, device=prepared[G05_INPUT_IDS].device)
+            prepared.update(
+                {
+                    G05_INPUT_IDS: sequence.input_ids,
+                    G05_LABELS: sequence.labels,
+                    G05_TOKEN_TYPES: sequence.token_types,
+                    G05_SPLIT_INDEX: sequence.split_index,
+                }
+            )
         device = next(self.backend.parameters()).device
         with torch.autocast(
             device_type=device.type,
@@ -1905,6 +1939,11 @@ class G05Policy(PreTrainedPolicy):
             enabled=self.config.dtype == torch.bfloat16 and device.type == "cuda",
         ):
             result = self.backend.predict_action(prepared)
+        if self.config.memory_scratchpad and system_mode == "system2":
+            from .scratchpad_g05 import Scratchpad
+
+            text = _cot_subtask(_first_cot_text(result) or "")
+            self._scratchpad = Scratchpad.parse(text or "")
         action = result["ar_action"] if self.config.action_head == "actioncodec" else result[ACTION]
         metadata = (
             {"cot_text": result["cot_text"]} if system_mode == "system2" and "cot_text" in result else {}
@@ -1922,6 +1961,17 @@ class G05Policy(PreTrainedPolicy):
         subtasks = [_cot_subtask(text) for text in texts]
         boxes = [_cot_boxes(text) for text in texts]
         prediction = PolicyPrediction()
+        if self.config.memory_scratchpad and texts:
+            from .scratchpad_g05 import Scratchpad
+
+            states = [Scratchpad.parse(text or "") for text in subtasks]
+            prediction["language"] = {
+                "subtask": [s.subtask for s in states],
+                "memory": [s.memory for s in states],
+                "plan": [s.plan for s in states],
+                "grasp_point": [s.grasp_point for s in states],
+            }
+            subtasks = []
         if any(subtask is not None for subtask in subtasks):
             prediction["language"] = {"subtask": [subtask or "" for subtask in subtasks]}
         if any(answer is not None for answer in boxes):

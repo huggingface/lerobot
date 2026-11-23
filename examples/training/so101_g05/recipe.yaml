@@ -1,0 +1,36 @@
+# Native G05 CoT and actions share one forward pass. All branches retain action loss.
+# Previous annotations are inputs; current annotations are supervised CoT targets.
+blend:
+  scratchpad_cot:
+    weight: 0.8
+    bindings:
+      previous_memory: "nth_prev(style=memory, offset=1)"
+      previous_plan: "nth_prev(style=plan, offset=1)"
+      previous_subtask: "nth_prev(style=subtask, offset=1)"
+      bbox: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
+      grasp: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
+    messages:
+      - role: user
+        stream: low_level
+        content: |-
+          Original task: ${task}
+          <previous_memory>${previous_memory}</previous_memory>
+          <previous_plan>${previous_plan}</previous_plan>
+          <last_command_issued>${previous_subtask}</last_command_issued>
+          Update from the images. A command is not proof of success.
+          Preserve initial anchors and confirmed completed objectives.
+          Keep or retry the current objective until it succeeds.
+      - {role: assistant, stream: low_level, target: true, content: "BBoxJSON: ${bbox}", if_present: bbox}
+      - role: assistant
+        stream: low_level
+        target: true
+        if_present: subtask
+        content: |-
+          Subtask: <memory>${memory}</memory><plan>${plan}</plan><grasp_point></grasp_point><subtask>${subtask}</subtask>
+      # The adapter retains only explicitly labelled grasp answers, filtering other VQAs.
+      - {role: assistant, stream: low_level, target: true, content: "GraspJSON: ${grasp}", if_present: grasp}
+
+  atomic_task:
+    weight: 0.2
+    messages:
+      - {role: user, stream: low_level, content: "${subtask}", if_present: subtask}

@@ -860,6 +860,22 @@ def _apply_recipe_cot(
 
     subtask, bbox_json = _recipe_cot_targets(batch, index, batch_size)
     bbox = format_g05_bbox_target(bbox_json)
+    if subtask is not None and getattr(config, "memory_scratchpad", False):
+        from .scratchpad_g05 import Scratchpad, grasp_target
+
+        messages = _sample_messages(batch, index, batch_size)
+        targets = batch.get("target_message_indices", [])
+        if (
+            isinstance(targets, Tensor)
+            and targets.ndim > 1
+            or isinstance(targets, (list, tuple))
+            and targets
+            and isinstance(targets[0], (list, tuple, Tensor))
+        ):
+            targets = targets[index]
+        point = grasp_target(messages, targets, config.cot_bbox_camera or config.camera_order[0])
+        subtask = subtask.replace("<grasp_point></grasp_point>", f"<grasp_point>{point}</grasp_point>")
+        Scratchpad.parse(subtask)
 
     fields = tuple(field for field, value in (("bbox", bbox), ("subtask", subtask)) if value)
     if not fields:
@@ -869,6 +885,8 @@ def _apply_recipe_cot(
         fields=fields,
         flow_only=flow_only,
     )
+    if getattr(config, "memory_scratchpad", False):
+        sample["template"] = sample["template"].replace("<command_text_!_200>", "<command_text_!_768>")
     if bbox is not None:
         sample["bbox"] = bbox
     if subtask is not None:
@@ -1015,6 +1033,7 @@ def _tokenizer_policy_config(config: G05Config) -> dict[str, Any]:
         "cot_bbox_camera": config.cot_bbox_camera,
         "runtime_cot_fields": config.runtime_cot_fields,
         "proprio_dropout_p": config.proprio_dropout_p,
+        "memory_scratchpad": config.memory_scratchpad,
     }
 
 
@@ -1139,7 +1158,13 @@ def reconcile_g05_processors(
             steps[index] = RenderTrainingMessagesStep(recipe, dataset_ctx=step.dataset_ctx)
         if isinstance(step, G05TokenizerStep):
             step.policy_config = _tokenizer_policy_config(config)
+        if isinstance(step, RenderRuntimeMessagesStep):
+            step.recipe = _training_recipe(config)
     preprocessor.steps = steps
+    for step in postprocessor.steps:
+        if isinstance(step, G05StepwiseUnnormalizerStep):
+            step.n_action_steps = config.n_action_steps
+            step.reset()
     return preprocessor, postprocessor
 
 
@@ -1207,6 +1232,15 @@ def make_g05_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """Build serializable G0.5 pipelines from checkpoint-authoritative metadata."""
+
+    if config.preserve_pretrained_processors:
+        if config.pretrained_path is None:
+            raise ValueError("Preserving processors requires a pretrained checkpoint")
+        return make_g05_pre_post_processors_from_pretrained(
+            config,
+            str(config.pretrained_path),
+            preprocessor_overrides={"device_processor": {"device": config.device or "cpu"}},
+        )
 
     if dataset_stats:
         for key, feature_type in ((OBS_STATE, "STATE"), (ACTION, "ACTION")):

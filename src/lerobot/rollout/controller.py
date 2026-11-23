@@ -171,6 +171,7 @@ class RolloutController:
         self._global_shutdown = stop_event.parent
         self._on_event = on_event
         self._initial_task = ctx.policy.inference.task
+        self._reset_task_version = ctx.policy.inference.task_version
         self._autosteer_interval_s = ctx.runtime.cfg.autosteer_interval_s
 
         # Serializes the control methods so multi-writer task updates keep their call order.
@@ -259,7 +260,10 @@ class RolloutController:
             # Back to square one, so the sequencer stops too: it would overwrite the restored task.
             self._ctx.policy.inference.stop_autosteer()
             # Restore here, not later on the serve thread, so a following set_task() survives.
-            restored = self._ctx.policy.inference.set_task(self._initial_task)
+            self._reset_task_version = self._ctx.policy.inference.task_version
+            restored = False
+            if getattr(self._ctx.runtime, "reset_environment", None) is None:
+                restored = self._ctx.policy.inference.set_task(self._initial_task)
             self._reset_requested.set()
             self._ctx.policy.inference.pause()
             self._segment_stop.set()
@@ -464,6 +468,24 @@ class RolloutController:
         """Pause inference and return the robot home (the task was restored by :meth:`reset`)."""
         self._emit(RolloutEvent.RESET_STARTED)
         self._ctx.policy.inference.pause()
+        reset_environment = getattr(self._ctx.runtime, "reset_environment", None)
+        if reset_environment is not None:
+            try:
+                self._strategy.reset_control_state()
+                goal = reset_environment()
+                if not isinstance(goal, str) or not goal.strip():
+                    raise ValueError("Environment reset must return its default goal")
+                with self._control_lock:
+                    self._initial_task = goal
+                    if self._ctx.policy.inference.task_version == self._reset_task_version:
+                        self._ctx.policy.inference.set_task(goal)
+                self._ctx.hardware.robot_wrapper.get_observation()
+            except Exception:
+                logger.exception("Environment reset failed")
+                self._emit(RolloutEvent.RESET_FAILED)
+            else:
+                self._emit(RolloutEvent.RESET_DONE)
+            return
         if not self._ctx.hardware.initial_position:
             logger.warning("No initial position captured — skipping the return move")
             self._emit(RolloutEvent.RESET_SKIPPED)
