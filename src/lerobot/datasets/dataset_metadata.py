@@ -24,6 +24,7 @@ import numpy as np
 import packaging.version
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from huggingface_hub import snapshot_download, sync_bucket
 from huggingface_hub.utils import WeakFileLock
@@ -41,7 +42,6 @@ from .io_utils import (
     get_file_size_in_mb,
     load_episodes,
     load_info,
-    load_nested_dataset,
     load_stats,
     load_tasks,
     write_info,
@@ -52,7 +52,6 @@ from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
 from .storage import DEFAULT_STORAGE_FORMAT, dataset_location
 from .utils import (
     DEFAULT_EPISODES_PATH,
-    EPISODES_DIR,
     check_version_compatibility,
     get_safe_version,
     has_legacy_hub_download_metadata,
@@ -225,25 +224,33 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root) if self.total_tasks > 0 else None
-        self.episodes = load_episodes(self.root) if self.total_episodes > 0 else None
+        self.episodes = load_episodes(self.root, include_stats=True) if self.total_episodes > 0 else None
         self.stats = load_stats(self.root)
         self._normalize_legacy_image_stats()
+        if self.episodes is not None:
+            # Keep the public episode index lightweight after checking its statistics.
+            self.episodes = self.episodes.select_columns(
+                [key for key in self.episodes.column_names if not key.startswith("stats/")]
+            )
 
     def _normalize_legacy_image_stats(self) -> None:
         """Reweight legacy streaming image statistics by episode length, without rewriting source files."""
         if self.episodes is None or self.stats is None or not self.camera_keys:
             return
-        episodes = load_nested_dataset(self.root / EPISODES_DIR)
-        lengths = np.asarray(episodes["length"])
+        episodes = self.episodes
+        lengths = episodes.data.column("length")
         for key in self.camera_keys:
             prefix = f"stats/{key}/"
             count_column = f"{prefix}count"
             if key not in self.stats or count_column not in episodes.column_names:
                 continue
-            if not any(
-                count is not None and np.any(np.asarray(count) > length)
-                for count, length in zip(episodes[count_column], lengths, strict=True)
-            ):
+            counts_column = episodes.data.column(count_column)
+            if pa.types.is_null(counts_column.type):
+                continue
+            # Counts have shape (1,); Arrow preserves null rows for omitted camera stats.
+            # Avoid materializing every count as a Python/numpy object for current datasets.
+            counts = pc.list_element(counts_column, 0)
+            if not pc.any(pc.greater(counts, lengths)).as_py():
                 continue
             # Rebuild the aggregate, not just its count: old episodes may have different pixel weights.
             columns = [column for column in episodes.column_names if column.startswith(prefix)]
@@ -261,7 +268,9 @@ class LeRobotDatasetMetadata:
                 # A smaller frame count is legitimate when the encoder queue dropped frames.
                 feature_stats["count"] = np.minimum(feature_stats["count"], episode["length"])
                 stats.append({key: feature_stats})
-            self.stats[key] = aggregate_stats(stats)[key]
+            rebuilt = aggregate_stats(stats)[key]
+            # Keep stored statistics that incomplete legacy episode summaries cannot reconstruct.
+            self.stats[key] = {**self.stats[key], **rebuilt}
 
     def ensure_readable(self) -> None:
         """Guarantee metadata is fully loaded for read operations.

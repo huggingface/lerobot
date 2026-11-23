@@ -216,12 +216,20 @@ def write_episodes(episodes: Dataset, local_dir: Path) -> None:
     episodes.to_parquet(fpath)
 
 
-def load_episodes(local_dir: Path) -> datasets.Dataset:
+def load_episodes(local_dir: Path, *, include_stats: bool = False) -> datasets.Dataset:
+    """Load episode metadata, optionally retaining statistics for compatibility checks.
+
+    Args:
+        local_dir: Root directory of the dataset.
+        include_stats: Keep per-episode statistics in the returned dataset. By default,
+            only references to episode data and videos are retained for faster access.
+
+    Returns:
+        Episode metadata with or without statistics columns.
+    """
     episodes = load_nested_dataset(local_dir / EPISODES_DIR)
-    # Select episode features/columns containing references to episode data and videos
-    # (e.g. tasks, dataset_from_index, dataset_to_index, data/chunk_index, data/file_index, etc.)
-    # This is to speedup access to these data, instead of having to load episode stats.
-    episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
+    if not include_stats:
+        episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
     return episodes
 
 
