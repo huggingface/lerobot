@@ -528,6 +528,36 @@ def test_resume_preserves_episode_count(tmp_path):
     assert resumed.meta.total_episodes == 1
 
 
+def test_filter_episodes_while_recording_after_resume(tmp_path):
+    """Filtering episodes while recording is active must not fail.
+
+    Regression test: refreshing the episode view while the episode metadata
+    writer is still open read a parquet file that had not been fully written
+    yet, which raised a DatasetGenerationError ("Parquet magic bytes not found
+    in footer"). The refresh now happens after the writer is closed.
+    """
+    root = tmp_path / "resume_filter_ds"
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root
+    )
+    for _ in range(3):
+        dataset.add_frame(_make_frame())
+    dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+    for _ in range(10):
+        for _ in range(2):
+            resumed.add_frame(_make_frame())
+        resumed.save_episode()
+
+    # Recording is still active here: filtering an existing episode must work.
+    assert resumed.meta.filter_episodes(lambda row: True, candidates=[0]) == [0]
+
+    resumed.finalize()
+    assert resumed.meta.filter_episodes(lambda row: True, candidates=[0]) == [0]
+
+
 def test_resume_window_read_on_same_instance(tmp_path):
     """Reads with delta_timestamps work on the resume() instance after appending episodes.
 

@@ -580,6 +580,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return
         if self.writer is not None:
             self.writer.finalize()
+            # The episode metadata writer is closed now, so the episode view can
+            # be refreshed safely. Episodes appended on this instance (resume)
+            # are on disk but not yet in the in-memory view.
+            self.meta.reload_episodes()
         self._is_finalized = True
 
     # ── Core Dataset methods ──────────────────────────────────────────
