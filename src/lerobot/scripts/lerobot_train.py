@@ -174,11 +174,11 @@ def _preprocess_dataset_batch(
     rename_map: dict[str, str],
     preprocessor: Any,
 ) -> Any:
-    """Prepare a raw dataset batch identically for training and held-out evaluation.
+    """Prepare a raw dataset batch the same way for training and held-out eval.
 
-    `rename_map` is applied to the raw batch here. The processor keeps the same map for
-    robots whose observations still use the original names, but applying it again to this
-    batch would move keys that this call just produced.
+    The rename map is applied to the raw batch here. The processor keeps that map for a
+    robot that still uses the original key names. Applying it again would rename keys
+    this call just created.
     """
     for cam_key in camera_keys:
         if cam_key in batch and batch[cam_key].dtype == torch.uint8:
@@ -192,7 +192,7 @@ def _call_preprocessor_without_repeating_rename(
     batch: dict[str, Any],
     rename_map: dict[str, str],
 ) -> Any:
-    """Run `preprocessor` without applying `rename_map` a second time."""
+    """Run the preprocessor without applying `rename_map` again."""
     if not rename_map:
         return preprocessor(batch)
     steps = getattr(preprocessor, "steps", None)

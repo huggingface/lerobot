@@ -397,9 +397,9 @@ The recipe trains on DROID. `lerobot/droid_1.0.1` holds the Cartesian pose as si
 columns; the 7-D `observation.state.cartesian` and `action.cartesian` columns of
 [PR #11](https://huggingface.co/datasets/lerobot/droid_1.0.1/discussions/11) pre-assemble them
 (use `--dataset.revision=refs/pr/11` until it is merged). The dataset's own `observation.state`
-and `action` are joint-space. Two columns cannot share one name, so the map moves those joint
-columns aside and puts the Cartesian columns in their place. It also puts the two cameras under
-the keys the policy reads:
+and `action` are joint positions. The policy reads Cartesian values under those names, so the map
+moves the joint columns to `observation.state.original` and `action.original` and puts the Cartesian
+columns there. The two cameras are renamed to the keys the policy reads:
 
 ```bash
 RENAME='{"observation.state":"observation.state.original","action":"action.original",
@@ -407,8 +407,8 @@ RENAME='{"observation.state":"observation.state.original","action":"action.origi
 "observation.images.exterior_1_left":"observation.images.exterior","observation.images.wrist_left":"observation.images.wrist"}'
 ```
 
-`lerobot-train` renames the raw batch once. The processor pipeline keeps this map for a robot
-whose observations still use the original names, and does not apply it again to that batch.
+`lerobot-train` applies this map to the raw batch once. The processor keeps the map for a robot
+that still reports the original key names, and skips it on the batch that was just renamed.
 
 About half of the DROID episodes have no instruction and some are shorter than a window; the
 recipe leaves them out. `examples/praxis/select_droid_episodes.py` writes the list for
