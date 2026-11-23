@@ -846,7 +846,8 @@ def test_pretrained_load_stages_lawam_checkpoint_on_cpu(tmp_path, monkeypatch) -
             return nn.Module.to(self, device)
         return self
 
-    monkeypatch.setattr(PreTrainedPolicy, "_load_as_safetensor", classmethod(fake_load))
+    monkeypatch.setattr(PreTrainedPolicy, "_load_checkpoint", classmethod(fake_load))
+    (tmp_path / "model.safetensors").touch()
     monkeypatch.setattr(LaWAMPolicy, "to", fake_to)
     native_model = _FakeNativeLaWAM()
     monkeypatch.setattr(native_model, "to", lambda device: native_model)

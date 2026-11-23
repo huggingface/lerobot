@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.utils import ActionInterpolator as ActionInterpolator
+from lerobot.utils.action_interpolator import ActionInterpolator as ActionInterpolator
+from lerobot.utils.feature_spec import FeatureSpec
 
 from .act.configuration_act import ACTConfig as ACTConfig
-from .chunk import (
-    ChunkPolicySpec,
-    ExecutionMode,
-    FeatureSpec,
-)
+from .chunk import ChunkPolicySpec, ExecutionMode
 from .cosmos3.configuration_cosmos3 import (
     Cosmos3EdgeConfig as Cosmos3EdgeConfig,
     Cosmos3NanoConfig as Cosmos3NanoConfig,
@@ -44,6 +41,7 @@ from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as M
 from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
 from .pi05.configuration_pi05 import PI05Config as PI05Config
+from .praxis.configuration_praxis import PraxisConfig as PraxisConfig
 from .pretrained import PreTrainedPolicy as PreTrainedPolicy
 from .rtc import (
     ActionQueue,
@@ -89,6 +87,7 @@ __all__ = [
     "PI0Config",
     "PI0FastConfig",
     "PI05Config",
+    "PraxisConfig",
     "SmolVLAConfig",
     "TDMPCConfig",
     "VLAJEPAConfig",

@@ -100,6 +100,9 @@ HF_LEROBOT_HUB_CACHE = HF_LEROBOT_HOME / "hub"
 default_calibration_path = HF_LEROBOT_HOME / "calibration"
 HF_LEROBOT_CALIBRATION = Path(os.getenv("HF_LEROBOT_CALIBRATION", default_calibration_path)).expanduser()
 
+# Hub dataset holding the robot URDF models
+ROBOT_URDFS_REPO_ID = "lerobot/robot-urdfs"
+
 
 # Dataset meta-features (auto-populated by the recording pipeline)
 DEFAULT_FEATURES = {

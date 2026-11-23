@@ -11,10 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
+import logging
+
 import draccus
 import pytest
 
 from lerobot.configs.default import DatasetConfig
+from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 
 
 def test_dataset_config_valid():
@@ -108,3 +112,41 @@ def test_dataset_config_eval_split():
     DatasetConfig(repo_id="user/repo", repo_type="bucket", eval_split=0.1)
     with pytest.raises(ValueError, match="streaming"):
         DatasetConfig(repo_id="user/repo", streaming=True, eval_split=0.1)
+
+
+@pytest.mark.parametrize("revision_key", ["revision", "REVISION"])
+def test_dataset_config_storage_options_rejects_revision(revision_key):
+    with pytest.raises(ValueError, match="storage_options.*revision"):
+        DatasetConfig(repo_id="user/repo", storage_options={revision_key: "main"})
+
+    DatasetConfig(repo_id="user/repo", revision="main", storage_options={})
+
+
+@pytest.mark.parametrize("storage_options", [{}, {"aws_region": "us-east-1"}])
+def test_dataset_config_streaming_rejects_storage_options(storage_options):
+    with pytest.raises(ValueError, match="storage_options.*streaming"):
+        DatasetConfig(repo_id="user/repo", streaming=True, storage_options=storage_options)
+
+
+def test_dataset_config_removes_credentials_before_saving(tmp_path, caplog):
+    storage_options = {
+        "aws_endpoint": "https://s3.example.com",
+        "aws_region": "us-east-1",
+        "aws_secret_access_key": "secret-access-key",
+        "AWS_SESSION_TOKEN": "session-token",
+        "azure_storage_account_key": "storage-account-key",
+    }
+
+    with caplog.at_level(logging.WARNING, logger="lerobot.configs.default"):
+        dataset_config = DatasetConfig(repo_id="user/repo", storage_options=storage_options)
+
+    expected_options = {
+        "aws_endpoint": "https://s3.example.com",
+        "aws_region": "us-east-1",
+    }
+    assert dataset_config.storage_options == expected_options
+    assert "environment variables" in caplog.text
+
+    TrainPipelineConfig(dataset=dataset_config)._save_pretrained(tmp_path)
+    saved_config = json.loads((tmp_path / TRAIN_CONFIG_NAME).read_text())
+    assert saved_config["dataset"]["storage_options"] == expected_options

@@ -62,9 +62,9 @@ from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import require_package
 
-from ..chunk import FeatureSpec
 from ..common.flow_matching import (
     FlowConvention,
     euler_integrate,
