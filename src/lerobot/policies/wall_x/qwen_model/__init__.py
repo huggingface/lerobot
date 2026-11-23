@@ -17,7 +17,6 @@
 from .configuration_qwen2_5_vl import (
     Qwen2_5_VLConfig,
     Qwen2_5_VLTextConfig,
-    Qwen2_5_VLVisionConfig,
 )
 from .qwen2_5_vl_moe import (
     BlockSparseMLP,
@@ -38,7 +37,6 @@ __all__ = [
     "Qwen2_5_VLDecoderLayer_with_MoE",
     "Qwen2_5_VLMoEModel",
     "Qwen2_5_VLTextConfig",
-    "Qwen2_5_VLVisionConfig",
     "SparseMoeBlock",
     "WallXVisionAttention",
     "configure_wall_x_vision_attention",

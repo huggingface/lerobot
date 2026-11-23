@@ -125,7 +125,7 @@ every finetuning flag.
 | `policy.training_stage`                       | `stage1`                    | `stage1` trains the action head; `stage2` finetunes VLM branches  |
 | `policy.apply_training_stage_defaults`        | `true`                      | Reapplies stage finetuning defaults after loading a checkpoint    |
 | `policy.vlm_num_layers`                       | `14`                        | Number of InternVL3 language layers kept for the policy           |
-| `policy.vlm_dtype`                            | `bfloat16`                  | Requested VLM dtype                                               |
+| `policy.dtype`                                | `bfloat16`                  | Requested VLM dtype                                               |
 | `policy.use_flash_attn`                       | `true`                      | Requests FlashAttention when installed; otherwise falls back      |
 | `policy.enable_gradient_checkpointing`        | `true`                      | Enables checkpointing on supported InternVL3 modules              |
 | `policy.gradient_checkpointing_use_reentrant` | `false`                     | Reentrant setting passed to gradient checkpointing when supported |
@@ -142,9 +142,10 @@ every finetuning flag.
 Try it out with a trained EVO1 checkpoint:
 
 ```bash
+# --inference.type=rtc is optional
 lerobot-rollout \
   --policy.path=your-org/your-evo1-checkpoint \
-  --inference.type=rtc \ # optional
+  --inference.type=rtc \
   ...
 ```
 
@@ -208,7 +209,7 @@ uv run accelerate launch --num_processes=2 -m lerobot.scripts.lerobot_train \
   --policy.apply_training_stage_defaults=true \
   --policy.vlm_model_name="${VLM_DIR}" \
   --policy.vlm_num_layers=14 \
-  --policy.vlm_dtype=bfloat16 \
+  --policy.dtype=bfloat16 \
   --policy.device=cuda \
   --policy.use_amp=true \
   --policy.use_flash_attn=true \
@@ -237,7 +238,7 @@ uv run accelerate launch --num_processes=2 -m lerobot.scripts.lerobot_train \
   --prefetch_factor=2 \
   --persistent_workers=true \
   --seed=1000 \
-  --wandb.enable=false \
+  --trackio.enable=false \
   --output_dir=./outputs/evo1-libero-stage1-g128-5k
 ```
 
@@ -258,7 +259,7 @@ uv run accelerate launch --num_processes=2 -m lerobot.scripts.lerobot_train \
   --policy.apply_training_stage_defaults=true \
   --policy.vlm_model_name="${VLM_DIR}" \
   --policy.vlm_num_layers=14 \
-  --policy.vlm_dtype=float32 \
+  --policy.dtype=float32 \
   --policy.device=cuda \
   --policy.use_amp=true \
   --policy.use_flash_attn=true \
@@ -288,7 +289,7 @@ uv run accelerate launch --num_processes=2 -m lerobot.scripts.lerobot_train \
   --prefetch_factor=2 \
   --persistent_workers=true \
   --seed=1000 \
-  --wandb.enable=false \
+  --trackio.enable=false \
   --output_dir=./outputs/evo1-libero-stage2-g128-80k
 ```
 
@@ -337,7 +338,7 @@ for task_id in {0..9}; do
     --policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf \
     --policy.device=cuda \
     --policy.use_amp=true \
-    --policy.vlm_dtype=bfloat16 \
+    --policy.dtype=bfloat16 \
     --policy.use_flash_attn=false \
     --policy.enable_gradient_checkpointing=false \
     --policy.vlm_num_layers=14 \

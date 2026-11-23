@@ -26,10 +26,17 @@ import torch.nn.functional as F  # noqa: N812
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
 from torch import nn
-from torch.distributions import Beta
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..common.flow_matching import (
+    FlowConvention,
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_beta,
+    sample_noise,
+)
 from .action_head.cross_attention_dit import AlternateVLDiT, DiT, SelfAttentionTransformer
 from .configuration_groot import N1_7_DEFAULT_IMAGE_CROP_SIZE, N1_7_DEFAULT_IMAGE_TARGET_SIZE
 
@@ -274,7 +281,7 @@ class Qwen3Backbone(nn.Module):
                 "Install a transformers version with Qwen3-VL support."
             )
         super().__init__()
-        transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": True}
+        transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": False}
 
         extra_kwargs: dict[str, Any] = {}
         if use_flash_attention:
@@ -289,10 +296,10 @@ class Qwen3Backbone(nn.Module):
             extra_kwargs["torch_dtype"] = torch.bfloat16
 
         if load_pretrained_weights:
+            loading_kwargs = dict(transformers_loading_kwargs)
+            repo_id, revision = split_hub_reference(model_name, loading_kwargs.pop("revision", None))
             self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-                model_name,
-                **extra_kwargs,
-                **transformers_loading_kwargs,
+                repo_id, revision=revision, **extra_kwargs, **loading_kwargs
             ).eval()
         else:
             self.model = self._from_backbone_config(
@@ -353,7 +360,12 @@ class Qwen3Backbone(nn.Module):
         if _is_cosmos_reason2_backbone(model_name):
             backbone_config = _cosmos_reason2_qwen3_vl_config()
         else:
-            backbone_config = AutoConfig.from_pretrained(model_name, **config_kwargs)
+            loading_kwargs = dict(config_kwargs)
+            code_revision = loading_kwargs.pop("code_revision", None)
+            repo_id, revision = split_hub_reference(model_name, loading_kwargs.pop("revision", None))
+            backbone_config = AutoConfig.from_pretrained(
+                repo_id, revision=revision, code_revision=revision or code_revision, **loading_kwargs
+            )
         return Qwen3VLForConditionalGeneration._from_config(backbone_config, **model_kwargs)
 
     def prepare_input(self, batch: dict[str, Any]) -> BatchFeature:
@@ -513,7 +525,6 @@ class GR00TN17ActionHead(nn.Module):
         self.state_dropout_prob = config.state_dropout_prob
         self._noise_beta_alpha = config.noise_beta_alpha
         self._noise_beta_beta = config.noise_beta_beta
-        self._beta_dist = None
         self.num_timestep_buckets = config.num_timestep_buckets
         self.set_trainable_parameters(config.tune_projector, config.tune_diffusion_model, config.tune_vlln)
 
@@ -552,11 +563,9 @@ class GR00TN17ActionHead(nn.Module):
                 self.vl_self_attention.eval()
 
     def sample_time(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        if self._beta_dist is None:
-            beta_alpha = torch.tensor(self._noise_beta_alpha, device="cpu", dtype=torch.float32)
-            beta_beta = torch.tensor(self._noise_beta_beta, device="cpu", dtype=torch.float32)
-            self._beta_dist = Beta(beta_alpha, beta_beta, validate_args=False)
-        sample = self._beta_dist.sample([batch_size]).to(device, dtype=dtype)
+        # The cast precedes the complement/scale, so the transform runs in the action dtype.
+        # Letting the shared helper cast the transformed value instead would change results.
+        sample = sample_beta(self._noise_beta_alpha, self._noise_beta_beta, batch_size, device, dtype=dtype)
         return (1 - sample) * self.config.noise_s
 
     def process_backbone_output(self, backbone_output: BatchFeature) -> BatchFeature:
@@ -583,12 +592,12 @@ class GR00TN17ActionHead(nn.Module):
             state_features = state_features * (1 - do_dropout[:, None, None].to(dtype=state_features.dtype))
 
         actions = action_input.action
-        noise = torch.randn(actions.shape, device=actions.device, dtype=actions.dtype)
+        noise = sample_noise(actions.shape, actions.device, dtype=actions.dtype)
         t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
-        t = t[:, None, None]
-        noisy_trajectory = (1 - t) * noise + t * actions
-        velocity = actions - noise
-        t_discretized = (t[:, 0, 0] * self.num_timestep_buckets).long()
+        noisy_trajectory, velocity, model_time = make_flow_matching_inputs(
+            actions, noise, t, convention=FlowConvention.NOISE_AT_ZERO
+        )
+        t_discretized = (model_time * self.num_timestep_buckets).long()
         action_features = self.action_encoder(noisy_trajectory, t_discretized, embodiment_id)
 
         if self.config.add_pos_embed:
@@ -650,16 +659,19 @@ class GR00TN17ActionHead(nn.Module):
         backbone_output: BatchFeature,
         action_input: BatchFeature,
         options: dict[str, Any] | None = None,
+        *,
+        noise: torch.Tensor | None = None,
     ) -> BatchFeature:
         vl_embeds = backbone_features
         batch_size = vl_embeds.shape[0]
         device = vl_embeds.device
-        actions = torch.randn(
-            size=(batch_size, self.config.action_horizon, self.action_dim),
-            dtype=vl_embeds.dtype,
-            device=device,
-        )
-        dt = 1.0 / self.num_inference_timesteps
+        if noise is None:
+            actions = sample_noise(
+                (batch_size, self.config.action_horizon, self.action_dim), device, dtype=vl_embeds.dtype
+            )
+        else:
+            # The RTC prefix below writes into the actions in place, so keep the caller's tensor intact.
+            actions = noise.to(device=device, dtype=vl_embeds.dtype).clone()
         vel_strength = torch.ones_like(actions)
 
         if "action" in action_input:
@@ -680,7 +692,9 @@ class GR00TN17ActionHead(nn.Module):
                 None, :, None
             ].to(device)
 
-        for t_step in range(self.num_inference_timesteps):
+        def denoise_step(actions: torch.Tensor, time_tensor: torch.Tensor, t_step: int) -> torch.Tensor:
+            # Bucket off the solver's step counter, not its float32 time: the buckets keep being
+            # derived from the exact `t_step / num_inference_timesteps`, without a device sync.
             t_cont = t_step / float(self.num_inference_timesteps)
             t_discretized = int(t_cont * self.num_timestep_buckets)
             timesteps_tensor = torch.full(size=(batch_size,), fill_value=t_discretized, device=device)
@@ -705,7 +719,16 @@ class GR00TN17ActionHead(nn.Module):
                     timestep=timesteps_tensor,
                 )
             pred = self.action_decoder(model_output, embodiment_id)
-            actions = actions + dt * pred[:, -self.action_horizon :] * vel_strength
+            return pred[:, -self.action_horizon :]
+
+        actions = euler_integrate(
+            denoise_step,
+            actions,
+            self.num_inference_timesteps,
+            convention=FlowConvention.NOISE_AT_ZERO,
+            step_aware=True,
+            velocity_scale=vel_strength,
+        )
 
         return BatchFeature(
             data={
@@ -721,6 +744,8 @@ class GR00TN17ActionHead(nn.Module):
         backbone_output: BatchFeature,
         action_input: BatchFeature,
         options: dict[str, Any] | None = None,
+        *,
+        noise: torch.Tensor | None = None,
     ) -> BatchFeature:
         features = self._encode_features(backbone_output, action_input)
         return self.get_action_with_features(
@@ -730,6 +755,7 @@ class GR00TN17ActionHead(nn.Module):
             backbone_output=backbone_output,
             action_input=action_input,
             options=options,
+            noise=noise,
         )
 
     @property
@@ -745,7 +771,7 @@ class GR00TN17ActionHead(nn.Module):
 
 
 def _is_cosmos_reason2_backbone(model_name: str) -> bool:
-    return str(model_name).rstrip("/") == "nvidia/Cosmos-Reason2-2B"
+    return str(split_hub_reference(model_name)[0]).rstrip("/") == "nvidia/Cosmos-Reason2-2B"
 
 
 def _cosmos_reason2_qwen3_vl_config() -> PretrainedConfig:
@@ -830,7 +856,7 @@ class GR00TN17(PreTrainedModel):
     ):
         _register_with_transformers()
         super().__init__(config)
-        transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": True}
+        transformers_loading_kwargs = transformers_loading_kwargs or {"trust_remote_code": False}
         self.config = config
         backbone_cls = get_backbone_cls(config)
         self.backbone = backbone_cls(
@@ -871,10 +897,16 @@ class GR00TN17(PreTrainedModel):
         backbone_outputs = self.backbone(backbone_inputs)
         return self.action_head(backbone_outputs, action_inputs)
 
-    def get_action(self, inputs: dict[str, Any], options: dict[str, Any] | None = None) -> BatchFeature:
+    def get_action(
+        self,
+        inputs: dict[str, Any],
+        options: dict[str, Any] | None = None,
+        *,
+        noise: torch.Tensor | None = None,
+    ) -> BatchFeature:
         backbone_inputs, action_inputs = self.prepare_input(inputs)
         backbone_outputs = self.backbone(backbone_inputs)
-        return self.action_head.get_action(backbone_outputs, action_inputs, options)
+        return self.action_head.get_action(backbone_outputs, action_inputs, options, noise=noise)
 
     @property
     def device(self) -> torch.device:
@@ -892,7 +924,7 @@ class GR00TN17(PreTrainedModel):
         tune_diffusion_model = kwargs.pop("tune_diffusion_model", True)
         tune_vlln = kwargs.pop("tune_vlln", True)
         transformers_loading_kwargs = kwargs.pop("transformers_loading_kwargs", None) or {
-            "trust_remote_code": True
+            "trust_remote_code": False
         }
         load_backbone_weights = kwargs.pop("load_backbone_weights", False)
         for key in ("cache_dir", "local_files_only", "token"):

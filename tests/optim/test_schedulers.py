@@ -20,6 +20,7 @@ from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
     DiffuserSchedulerConfig,
     VQBeTSchedulerConfig,
+    WarmupStableDecaySchedulerConfig,
     load_scheduler_state,
     save_scheduler_state,
 )
@@ -84,6 +85,30 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
     expected_state_dict = {
         "_get_lr_called_within_step": False,
         "_last_lr": [0.0001818181818181819],
+        "_step_count": 2,
+        "base_lrs": [0.001],
+        "last_epoch": 1,
+        "lr_lambdas": [None],
+    }
+
+    if Version(torch.__version__) >= Version("2.8"):
+        expected_state_dict["_is_initial"] = False
+
+    assert scheduler.state_dict() == expected_state_dict
+
+
+def test_warmup_stable_decay_scheduler(optimizer):
+    config = WarmupStableDecaySchedulerConfig(
+        num_warmup_steps=10, num_decay_steps=80, num_stable_steps=10, decay_type="linear"
+    )
+    scheduler = config.build(optimizer, num_training_steps=100)
+    assert isinstance(scheduler, LambdaLR)
+
+    optimizer.step()
+    scheduler.step()
+    expected_state_dict = {
+        "_get_lr_called_within_step": False,
+        "_last_lr": [0.0001],
         "_step_count": 2,
         "base_lrs": [0.001],
         "last_epoch": 1,

@@ -57,6 +57,7 @@ from __future__ import annotations
 import builtins
 import logging
 import os
+from copy import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -72,6 +73,7 @@ from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.processor_topreward import TOPREWARD_FEATURE_PREFIX, TOPREWARD_INPUT_KEYS
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -97,6 +99,7 @@ def _torch_dtype(name: str) -> torch.dtype | str:
 class TOPRewardModel(PreTrainedRewardModel):
     """TOPReward zero-shot reward model."""
 
+    config: TOPRewardConfig
     name = "topreward"
     config_class = TOPRewardConfig
 
@@ -106,11 +109,15 @@ class TOPRewardModel(PreTrainedRewardModel):
         self.config = config
 
         torch_dtype = _torch_dtype(config.torch_dtype)
-        model_kwargs: dict[str, Any] = {"dtype": torch_dtype, "trust_remote_code": True}
+        model_kwargs: dict[str, Any] = {"dtype": torch_dtype, "trust_remote_code": config.trust_remote_code}
         if config.attn_implementation is not None:
             model_kwargs["attn_implementation"] = config.attn_implementation
 
-        self.model = Qwen3VLForConditionalGeneration.from_pretrained(config.vlm_name, **model_kwargs)
+        loading_kwargs = dict(model_kwargs)
+        repo_id, revision = split_hub_reference(config.vlm_name, loading_kwargs.pop("revision", None))
+        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+            repo_id, revision=revision, **loading_kwargs
+        )
 
     def compute_reward(self, batch: dict[str, Any]) -> Tensor:
         """Return one log-prob reward per sample in the batch."""
@@ -155,6 +162,7 @@ class TOPRewardModel(PreTrainedRewardModel):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool | None = None,
         strict: bool = False,  # noqa: ARG003 — accepted for API parity; unused (no safetensors to load)
         **kwargs: Any,
     ) -> T:
@@ -169,8 +177,12 @@ class TOPRewardModel(PreTrainedRewardModel):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                trust_remote_code=bool(trust_remote_code),
                 **kwargs,
             )
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
         if not isinstance(config, TOPRewardConfig):
             raise TypeError(
                 f"Expected a TOPRewardConfig, got {type(config).__name__}. Make sure "
@@ -187,8 +199,6 @@ class TOPRewardModel(PreTrainedRewardModel):
                     revision=revision,
                     cache_dir=cache_dir,
                     force_download=force_download,
-                    proxies=proxies,
-                    resume_download=resume_download,
                     token=token,
                     local_files_only=local_files_only,
                 )

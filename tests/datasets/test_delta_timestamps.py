@@ -21,6 +21,8 @@ from lerobot.datasets.feature_utils import (
 )
 from tests.fixtures.constants import DUMMY_MOTOR_FEATURES
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.fixture(scope="module")
 def valid_delta_timestamps_factory():

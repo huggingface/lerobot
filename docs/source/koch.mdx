@@ -18,7 +18,7 @@ For a visual walkthrough of the assembly process, you can refer to [this video t
 
 To install LeRobot follow, our [Installation Guide](./installation)
 
-In addition to these instructions, you need to install the Dynamixel SDK:
+In addition to these instructions, you need to install the Dynamixel SDK (if you installed LeRobot from PyPI, run `pip install 'lerobot[dynamixel]'` instead):
 
 ```bash
 pip install -e ".[dynamixel]"
@@ -90,7 +90,7 @@ If you are repurposing motors from another robot, you will probably also need to
 
 #### Follower
 
-Connect the usb cable from your computer and the 5V power supply to the follower arm's controller board. Then, run the following command or run the API example with the port you got from the previous step. You'll also need to give your leader arm a name with the `id` parameter.
+Connect the usb cable from your computer and the 12V power supply to the follower arm's controller board (the leader arm uses the 5V power supply). Then, run the following command or run the API example with the port you got from the previous step. You'll also need to give your follower arm a name with the `id` parameter.
 
 For a visual reference on how to set the motor ids please refer to [this video](https://huggingface.co/docs/lerobot/en/so101#setup-motors-video) where we follow the process for the SO101 arm.
 
@@ -176,7 +176,7 @@ Do the same steps for the leader arm but modify the command or script accordingl
 ```bash
 lerobot-setup-motors \
     --teleop.type=koch_leader \
-    --teleop.port=/dev/tty.usbmodem575E0031751 \  # <- paste here the port found at previous step
+    --teleop.port=/dev/tty.usbmodem575E0031751
 ```
 
 </hfoption>
@@ -211,10 +211,11 @@ Run the following command or API example to calibrate the follower arm:
 <hfoption id="Command">
 
 ```bash
+# Use the port of your follower arm, and give the arm a unique name with --robot.id
 lerobot-calibrate \
     --robot.type=koch_follower \
-    --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
-    --robot.id=my_awesome_follower_arm  # <- Give the robot a unique name
+    --robot.port=/dev/tty.usbmodem58760431551 \
+    --robot.id=my_awesome_follower_arm
 ```
 
 </hfoption>
@@ -249,10 +250,11 @@ Do the same steps to calibrate the leader arm, run the following command or API 
 <hfoption id="Command">
 
 ```bash
+# Use the port of your leader arm, and give the arm a unique name with --teleop.id
 lerobot-calibrate \
     --teleop.type=koch_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
-    --teleop.id=my_awesome_leader_arm  # <- Give the robot a unique name
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=my_awesome_leader_arm
 ```
 
 </hfoption>

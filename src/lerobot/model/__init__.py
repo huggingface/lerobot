@@ -14,6 +14,6 @@
 
 # Kinematics utilities for robot modeling.
 
-from .kinematics import RobotKinematics as RobotKinematics
+from .kinematics import GravityCompensation as GravityCompensation, RobotKinematics as RobotKinematics
 
-__all__ = ["RobotKinematics"]
+__all__ = ["GravityCompensation", "RobotKinematics"]

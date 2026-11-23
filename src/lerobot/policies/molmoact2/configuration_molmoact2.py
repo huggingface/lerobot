@@ -361,7 +361,7 @@ class MolmoAct2Config(PreTrainedConfig):
     # fp32; operator compute follows bf16 autocast plus explicit sensitive fp32
     # math.
     # ``float32`` keeps both the full model and compute in fp32.
-    dtype: str = "bfloat16"
+    dtype: torch.dtype | None = torch.bfloat16
     # Official fine-tuning from the released ``allenai/MolmoAct2`` HF base
     # explicitly applies unmasked residual dropout 0.1 and disables the
     # response-only variant.  The converted HF decoder therefore matches the
@@ -400,7 +400,11 @@ class MolmoAct2Config(PreTrainedConfig):
         super().__post_init__()
         if (self.joint_signs is None) != (self.joint_offsets is None):
             raise ValueError("joint_signs and joint_offsets must both be set or both be None.")
-        if self.joint_signs is not None and len(self.joint_signs) != len(self.joint_offsets):
+        if (
+            self.joint_signs is not None
+            and self.joint_offsets is not None
+            and len(self.joint_signs) != len(self.joint_offsets)
+        ):
             raise ValueError("joint_signs and joint_offsets must have the same length.")
         if self.action_mode not in {"continuous", "discrete", "both"}:
             raise ValueError(
@@ -435,8 +439,8 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.expected_max_action_dim != 32:
             raise ValueError("MolmoAct2 released checkpoints use expected_max_action_dim=32.")
-        if self.dtype not in {"float32", "bfloat16"}:
-            raise ValueError(f"Unsupported dtype={self.dtype!r}. Expected 'float32' or 'bfloat16'.")
+        if self.dtype not in {torch.float32, torch.bfloat16}:
+            raise ValueError(f"Unsupported dtype={self.dtype!r}. Expected torch.float32 or torch.bfloat16.")
         if not 0 <= self.llm_residual_dropout <= 1:
             raise ValueError(f"llm_residual_dropout must be in [0, 1], got {self.llm_residual_dropout}.")
         if self.lora_rank < 1:

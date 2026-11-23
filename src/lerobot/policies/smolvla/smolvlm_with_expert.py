@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import torch
 from torch import nn
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -87,18 +88,21 @@ class SmolVLMWithExpertModel(nn.Module):
     ):
         super().__init__()
         require_package("transformers", extra="smolvla")
+        repo_id, revision = split_hub_reference(model_id)
         if load_vlm_weights:
             print(f"Loading  {model_id} weights ...")
             self.vlm = AutoModelForImageTextToText.from_pretrained(
-                model_id,
+                repo_id,
                 torch_dtype="bfloat16",
                 low_cpu_mem_usage=True,
+                revision=revision,
+                code_revision=revision,
             )
             config = self.vlm.config
         else:
-            config = AutoConfig.from_pretrained(model_id)
+            config = AutoConfig.from_pretrained(repo_id, revision=revision, code_revision=revision)
             self.vlm = SmolVLMForConditionalGeneration(config=config)
-        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.processor = AutoProcessor.from_pretrained(repo_id, revision=revision, code_revision=revision)
         if num_vlm_layers > 0:
             print(f"Reducing the number of VLM layers to {num_vlm_layers} ...")
             self.get_vlm_model().text_model.layers = self.get_vlm_model().text_model.layers[:num_vlm_layers]
@@ -270,6 +274,10 @@ class SmolVLMWithExpertModel(nn.Module):
         key_states = apply_rope(key_states, position_ids_)
 
         if use_cache:
+            if past_key_values is None:
+                raise ValueError(
+                    "`use_cache=True` requires a `past_key_values` cache (forward() creates one on prefill)."
+                )
             # `DynamicCache` stores tensors as [batch, heads, seq, head_dim]; this module works with
             # [batch, seq, heads, head_dim]. During prefix prefill this stores the (post-RoPE) K/V and
             # returns them unchanged; during denoising it appends the suffix K/V and returns
@@ -412,9 +420,15 @@ class SmolVLMWithExpertModel(nn.Module):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: "DynamicCache | None" = None,
-        inputs_embeds: list[torch.FloatTensor] = None,
+        inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
     ):
+        if inputs_embeds is None:
+            raise ValueError(
+                "`inputs_embeds` is required: pass the [prefix, suffix] embeddings (either may be None)."
+            )
+        # `None` means "no cache", like `False`.
+        use_cache = bool(use_cache)
         models = [self.get_vlm_model().text_model, self.lm_expert]
         model_layers = self.get_model_layers(models)
         for hidden_states in inputs_embeds:

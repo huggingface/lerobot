@@ -17,13 +17,15 @@
 import builtins
 import logging
 from collections import deque
+from copy import copy
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
 import numpy as np
 import torch
 from torch import Tensor, nn
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
@@ -109,7 +111,7 @@ class PI0FastPaliGemma(nn.Module):
         self,
         vlm_config,
         use_adarms=None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
+        precision: torch.dtype = torch.bfloat16,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -145,10 +147,10 @@ class PI0FastPaliGemma(nn.Module):
 
         self.to_bfloat16_for_selected_params(precision)
 
-    def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
-        if precision == "bfloat16":
+    def to_bfloat16_for_selected_params(self, precision: torch.dtype = torch.bfloat16):
+        if precision == torch.bfloat16:
             self.to(dtype=torch.bfloat16)
-        elif precision == "float32":
+        elif precision == torch.float32:
             self.to(dtype=torch.float32)
             return
         else:
@@ -189,12 +191,14 @@ class PI0FastPaliGemma(nn.Module):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: list[torch.FloatTensor] | None = None,
-        inputs_embeds: list[torch.FloatTensor] | None = None,
+        inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
-        adarms_cond: list[torch.Tensor] | None = None,
+        adarms_cond: list[torch.Tensor | None] | None = None,
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
+        if inputs_embeds is None:
+            raise ValueError("inputs_embeds must be a [prefix, suffix] pair (either entry may be None)")
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.model.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
@@ -231,7 +235,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.paligemma_with_expert = PI0FastPaliGemma(
             paligemma_config,
             use_adarms=[False, True],
-            precision=config.dtype,
+            precision=cast(torch.dtype, config.dtype),
         )
 
         # Initialize gradient checkpointing flag
@@ -239,9 +243,16 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Compile model if requested
         if config.compile_model:
-            torch.set_float32_matmul_precision("high")
             self.sample_actions_fast = torch.compile(self.sample_actions_fast, mode=config.compile_mode)
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
+
+    def _require_paligemma_tokenizer(self) -> "AutoTokenizer":
+        """The PaliGemma tokenizer autoregressive decoding needs for its BOS / end-of-action ids."""
+        if self._paligemma_tokenizer is None:
+            raise ValueError(
+                "PI0FastPytorch needs a PaliGemma tokenizer to decode actions; pass `paligemma_tokenizer`."
+            )
+        return self._paligemma_tokenizer
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -500,12 +511,12 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
     @torch.no_grad()
     def sample_actions_fast(
         self,
-        images,
-        img_masks,
-        tokens,
-        masks,
-        max_decoding_steps=None,
-        temperature=0.0,
+        images: list[torch.Tensor],
+        img_masks: list[torch.Tensor],
+        tokens: torch.Tensor,
+        masks: torch.Tensor,
+        max_decoding_steps: int | None = None,
+        temperature: float = 0.0,
     ) -> torch.Tensor:
         """
         Inefficient but safe autoregressive decoding for FAST tokens.
@@ -518,11 +529,10 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         bsize = tokens.shape[0]
         device = tokens.device
         lm_head = self.paligemma_with_expert.paligemma.lm_head
+        tokenizer = self._require_paligemma_tokenizer()
 
         # add bos token after tokens
-        bos_token = torch.full(
-            (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
-        )
+        bos_token = torch.full((bsize, 1), tokenizer.bos_token_id, dtype=torch.long, device=device)
         tokens = torch.cat([tokens, bos_token], dim=1)
         masks = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
 
@@ -595,12 +605,12 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
     @torch.no_grad()
     def sample_actions_fast_kv_cache(
         self,
-        images,
-        img_masks,
-        tokens,
-        masks,
-        max_decoding_steps=None,
-        temperature=0.0,
+        images: list[torch.Tensor],
+        img_masks: list[torch.Tensor],
+        tokens: torch.Tensor,
+        masks: torch.Tensor,
+        max_decoding_steps: int | None = None,
+        temperature: float = 0.0,
     ) -> torch.Tensor:
         """
         Optimized autoregressive decoding for FAST tokens using KV Caching.
@@ -617,20 +627,19 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         bsize = tokens.shape[0]
         device = tokens.device
         lm_head = self.paligemma_with_expert.paligemma.lm_head
+        tokenizer = self._require_paligemma_tokenizer()
 
         # detokenize_actions() cuts at the first "|", so greedy decoding can stop once
         # every sequence has emitted it. Keep stochastic decoding unchanged because
         # skipping multinomial calls would shift the RNG state for subsequent calls.
-        end_of_action_token_id = self._paligemma_tokenizer.convert_tokens_to_ids("|")
+        end_of_action_token_id = tokenizer.convert_tokens_to_ids("|")
         finished = torch.zeros(bsize, dtype=torch.bool, device=device) if temperature == 0 else None
 
         # --- 1. PREFILL PHASE ---
         # Process Images + Text Prompt + BOS token once to populate the KV cache.
 
         # Add BOS token to the prompt
-        bos_token = torch.full(
-            (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
-        )
+        bos_token = torch.full((bsize, 1), tokenizer.bos_token_id, dtype=torch.long, device=device)
         tokens_in = torch.cat([tokens, bos_token], dim=1)
         masks_in = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
 
@@ -761,20 +770,36 @@ class PI0FastPolicy(PreTrainedPolicy):
         # Load tokenizers first
         try:
             # Load FAST tokenizer
+            repo_id, revision = split_hub_reference(config.action_tokenizer_name)
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                config.action_tokenizer_name, trust_remote_code=True
+                repo_id, trust_remote_code=config.trust_remote_code, revision=revision, code_revision=revision
             )
 
             # Load PaliGemma tokenizer for token conversion
+            repo_id, revision = split_hub_reference(config.text_tokenizer_name)
             self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-                config.text_tokenizer_name, trust_remote_code=True, add_eos_token=True, add_bos_token=False
+                repo_id,
+                trust_remote_code=config.trust_remote_code,
+                add_eos_token=True,
+                add_bos_token=False,
+                revision=revision,
+                code_revision=revision,
             )
 
             logging.info("Loaded FAST tokenizer for action detokenization")
         except Exception as e:
             logging.error(f"Failed to load FAST tokenizer for action detokenization: {e}")
             logging.error("Tokenizer loading is required for proper policy initialization; aborting.")
-            raise RuntimeError("Failed to load required tokenizers for PI0FastPolicy initialization") from e
+            hint = (
+                ""
+                if config.trust_remote_code
+                else " The FAST action tokenizer runs custom code: after reviewing it, pass "
+                "--policy.trust_remote_code=true (--model.trust_remote_code=true for lerobot-policy-server) "
+                "or trust_remote_code=True in Python."
+            )
+            raise RuntimeError(
+                f"Failed to load required tokenizers for PI0FastPolicy initialization.{hint}"
+            ) from e
 
         # Initialize the core PI0Fast model
         self.init_rtc_processor()
@@ -803,6 +828,7 @@ class PI0FastPolicy(PreTrainedPolicy):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool | None = None,
         strict: bool = True,
         **kwargs,
     ) -> T:
@@ -826,8 +852,13 @@ class PI0FastPolicy(PreTrainedPolicy):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                trust_remote_code=bool(trust_remote_code),
                 **kwargs,
             )
+
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs
@@ -842,13 +873,11 @@ class PI0FastPolicy(PreTrainedPolicy):
                 resolved_file = cached_file(
                     pretrained_name_or_path,
                     "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    token=token,
+                    revision=revision,
+                    local_files_only=local_files_only,
                 )
                 from safetensors.torch import load_file
 
@@ -1242,6 +1271,8 @@ class PI0FastPolicy(PreTrainedPolicy):
 
         # Detokenize action tokens to continuous actions
         action_horizon = self.config.n_action_steps
+        if self.config.output_features is None:
+            raise ValueError("output_features must be set (validate_features) before predicting actions")
         action_dim = self.config.output_features[ACTION].shape[0]
 
         continuous_actions = self.detokenize_actions(

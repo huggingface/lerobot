@@ -1,0 +1,411 @@
+# SPDX-License-Identifier: LicenseRef-G0.5-Community-1.0
+# Copyright (c) 2026 Galaxea
+# Modified for LeRobot in 2026.
+
+"""The G0.5 checkpoint-native tokenizer, shared by the policy and its processor pipeline.
+
+Split out of `processor_g05.py`: both `modeling_g05.py` and `processor_g05.py` need
+these, and keeping them here is what lets the dependency run one way.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import torch
+from torch import Tensor
+
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+from .action_codec_g05 import g05_codec_parts
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoTokenizer
+else:
+    AutoTokenizer = None
+
+G05_RUNTIME_PREDICT_COT = "g05_runtime_predict_cot"
+G05_INPUT_IDS = "g05.input_ids"
+G05_LABELS = "g05.labels"
+G05_TOKEN_TYPES = "g05.token_types"  # nosec B105
+G05_SPLIT_INDEX = "g05.split_index"
+
+IGNORE_INDEX = -100
+
+
+class G05TokenType:
+    """Token categories stored in G0.5's attention-mask tensor."""
+
+    PADDING = 0
+    IMAGE = 1
+    PROPRIO = 2
+    ACTION = 3
+    TEXT = 4
+    COT = 5
+    PRED_TEXT = 6
+
+
+@dataclass
+class G05SequenceBatch:
+    """One padded batch of G0.5 token sequences."""
+
+    input_ids: Tensor
+    labels: Tensor
+    token_types: Tensor
+    split_index: int | None = None
+
+
+@dataclass
+class _Segment:
+    """One parsed piece of a prompt template."""
+
+    kind: str
+    content: str = ""
+    sample_key: str = ""
+    processor: str = ""
+    masked: bool = False
+    max_tokens: int | None = None
+
+
+class G05Tokenizer:
+    """Checkpoint-compatible G0.5 tokenizer and template serializer.
+
+    G0.5 extends Qwen3.5's tokenizer with ActionCodec codes, per-group
+    residual markers, ``<EOV>``, and ``<state>``. Registration order is model
+    state: changing it changes the rows used by the tied language head.
+    """
+
+    _PLACEHOLDER = re.compile(r"<([^<>|]+)>")
+
+    def __init__(self, processor_path: str | Path, model_config: dict[str, Any]) -> None:
+        """Load the checkpoint's text tokenizer and action token ranges."""
+        require_package("transformers", extra="g05")
+        self.processor_path = Path(processor_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.processor_path,
+            trust_remote_code=False,
+            local_files_only=True,
+        )
+        self.model_config = model_config
+        at_config = model_config["AT_CONFIG"]
+        architecture = at_config["model_arch"]
+
+        self.action_tokens = [f"<action{index:04d}>" for index in range(int(architecture["codebook_size"]))]
+        self.neural_parts, self.rule_parts, self.group_tokens = g05_codec_parts(at_config)
+        self.tokenizer.add_tokens(self.action_tokens + self.group_tokens + ["<EOV>", "<state>"])
+
+        self.pad_token_id = int(model_config["pad_token_id"])
+        self.eos_token_id = int(model_config["eos_token_id"])
+        self.image_token_id = int(model_config["image_token_index"])
+        self.vision_start_token_id = int(self.tokenizer.convert_tokens_to_ids("<|vision_start|>"))
+        self.vision_end_token_id = int(self.tokenizer.convert_tokens_to_ids("<|vision_end|>"))
+        self.eov_token_id = int(self.tokenizer.convert_tokens_to_ids("<EOV>"))
+        self.state_token_id = int(self.tokenizer.convert_tokens_to_ids("<state>"))
+        self.action_token_begin = int(self.tokenizer.convert_tokens_to_ids(self.action_tokens[0]))
+        self.action_token_end = self.action_token_begin + len(self.action_tokens)
+        self.action_token_end_with_markers = self.action_token_end + len(self.group_tokens)
+
+    def __len__(self) -> int:
+        """Number of tokens in the underlying text tokenizer."""
+        return len(self.tokenizer)
+
+    def encode_text(self, text: str) -> list[int]:
+        """Encode text to ids without adding special tokens."""
+        return self.tokenizer(text, add_special_tokens=False)["input_ids"]
+
+    def decode(self, ids: Tensor | list[int]) -> str:
+        """Decode ids back to text, keeping special tokens visible."""
+        if isinstance(ids, Tensor):
+            ids = ids.detach().cpu().tolist()
+        return self.tokenizer.decode(ids, skip_special_tokens=False)
+
+    @staticmethod
+    def _resolve_template(template: str) -> str:
+        """Substitute the author's chat placeholders with this tokenizer's equivalents."""
+        replacements = {
+            "<bos>": "",
+            "<eos>": "<|endoftext|>",
+            "<chat_user_prefix>": "",
+            "<chat_user_suffix>": "",
+            "<chat_assistant_prefix>": "",
+        }
+        for placeholder, value in replacements.items():
+            template = template.replace(placeholder, value)
+        return template
+
+    def _parse(self, template: str) -> list[_Segment]:
+        """Split a prompt template into static text, control and placeholder segments."""
+        template = self._resolve_template(template)
+        segments: list[_Segment] = []
+        last = 0
+        for match in self._PLACEHOLDER.finditer(template):
+            if match.start() > last:
+                segments.append(_Segment("static", template[last : match.start()]))
+            raw = match.group(1).strip()
+            if raw in {"EOC", "EOV"}:
+                segments.append(_Segment("control", raw))
+                last = match.end()
+                continue
+
+            max_tokens = None
+            limit = re.match(r"^(.+)_(\d+)$", raw)
+            if limit:
+                raw, max_tokens = limit.group(1), int(limit.group(2))
+            masked = raw.endswith("_!")
+            key = raw[:-2] if masked else raw
+            if "_" not in key:
+                token = f"<{raw}>"
+                token_id = self.tokenizer.convert_tokens_to_ids(token)
+                if token_id is None:
+                    raise ValueError(f"Unknown G0.5 template token {token!r}.")
+                segments.append(_Segment("static", token))
+            else:
+                sample_key, processor = key.rsplit("_", 1)
+                segments.append(
+                    _Segment(
+                        "dynamic",
+                        sample_key=sample_key,
+                        processor=processor,
+                        masked=masked,
+                        max_tokens=max_tokens,
+                    )
+                )
+            last = match.end()
+        if last < len(template):
+            segments.append(_Segment("static", template[last:]))
+        return segments
+
+    @staticmethod
+    def _slice_segments(segments: list[_Segment], mode: str | None, *, pred_eov: bool) -> list[_Segment]:
+        """Keep the segments one encoding mode needs, around the EOC and EOV markers."""
+        eoc = next(
+            (
+                index
+                for index, segment in enumerate(segments)
+                if segment.kind == "control" and segment.content == "EOC"
+            ),
+            None,
+        )
+        eov = next(
+            (
+                index
+                for index, segment in enumerate(segments)
+                if segment.kind == "control" and segment.content == "EOV"
+            ),
+            None,
+        )
+
+        def strip(values: list[_Segment], keep_eov: bool) -> list[_Segment]:
+            """Drop segments after EOC, optionally keeping the EOV marker itself."""
+            output: list[_Segment] = []
+            after_eoc = False
+            for segment in values:
+                if segment.kind == "control":
+                    if segment.content == "EOC":
+                        after_eoc = True
+                    elif segment.content == "EOV" and keep_eov:
+                        output.append(
+                            _Segment(
+                                "dynamic",
+                                content="<EOV>",
+                                processor="text",
+                                masked=not pred_eov,
+                            )
+                        )
+                    continue
+                if after_eoc and segment.kind == "static":
+                    output.append(
+                        _Segment("dynamic", content=segment.content, processor="text", masked=False)
+                    )
+                else:
+                    output.append(segment)
+            return output
+
+        if mode == "context":
+            return strip(segments if eoc is None else segments[:eoc], keep_eov=True)
+        if mode == "prefix":
+            return strip(segments if eov is None else segments[: eov + 1], keep_eov=True)
+        if mode == "suffix":
+            return [] if eov is None else strip(segments[eov + 1 :], keep_eov=False)
+        return strip(segments, keep_eov=True)
+
+    def _serialize_segment(
+        self,
+        segment: _Segment,
+        sample: dict[str, Any],
+        *,
+        action_codec: Any | None,
+        action_ids: list[int] | None = None,
+    ) -> tuple[list[int], list[int], list[float]]:
+        """Encode one segment into its ids, labels and per-token type codes."""
+        if segment.kind == "static":
+            ids = self.encode_text(segment.content)
+            return ids, [IGNORE_INDEX] * len(ids), [float(G05TokenType.TEXT)] * len(ids)
+
+        if segment.sample_key:
+            if segment.sample_key not in sample:
+                raise KeyError(f"G0.5 prompt is missing sample field {segment.sample_key!r}.")
+            value = sample[segment.sample_key]
+        else:
+            value = segment.content
+
+        if segment.processor == "text":
+            ids = self.encode_text(value if isinstance(value, str) else str(value))
+            token_type = G05TokenType.TEXT if segment.masked else G05TokenType.PRED_TEXT
+            labels = [IGNORE_INDEX] * len(ids) if segment.masked else ids.copy()
+        elif segment.processor == "image":
+            if not isinstance(value, tuple | list) or len(value) != 2:
+                raise ValueError("G0.5 image placeholders require an (height, width) pair.")
+            height, width = (int(item) for item in value)
+            vision = self.model_config["vision"]
+            count = (height // int(vision["patch_size"]) // int(vision["spatial_merge_size"])) * (
+                width // int(vision["patch_size"]) // int(vision["spatial_merge_size"])
+            )
+            ids = [self.vision_start_token_id] + [self.image_token_id] * count + [self.vision_end_token_id]
+            labels = [IGNORE_INDEX] * len(ids)
+            types = (
+                [float(G05TokenType.TEXT)] + [float(G05TokenType.IMAGE)] * count + [float(G05TokenType.TEXT)]
+            )
+            return ids, labels, types
+        elif segment.processor == "proprio":
+            state = value["value"] if isinstance(value, dict) else value
+            count = 1 if torch.as_tensor(state).ndim <= 1 else int(torch.as_tensor(state).shape[0])
+            ids = [self.state_token_id] * count
+            labels = [IGNORE_INDEX] * count
+            token_type = G05TokenType.PROPRIO
+        elif segment.processor == "action":
+            if action_ids is None:
+                raise RuntimeError(
+                    "This G0.5 template has an ActionCodec target but the sample has no action."
+                )
+            ids = list(action_ids)
+            labels = ids.copy()
+            token_type = G05TokenType.ACTION
+        else:
+            ids = self.encode_text(value if isinstance(value, str) else str(value))
+            labels = [IGNORE_INDEX] * len(ids) if segment.masked else ids.copy()
+            token_type = G05TokenType.COT
+
+        if segment.max_tokens is not None:
+            ids = ids[: segment.max_tokens]
+            labels = labels[: segment.max_tokens]
+        return ids, labels, [float(token_type)] * len(ids)
+
+    def _serialize(
+        self,
+        sample: dict[str, Any],
+        *,
+        mode: str | None,
+        action_codec: Any | None,
+        action_ids: list[int] | None = None,
+        drop_proprio: bool = False,
+    ) -> tuple[list[int], list[int], list[float]]:
+        """Encode a whole sample into ids, labels and per-token type codes."""
+        pred_eov = bool(self.model_config.get("input_preprocessor", {}).get("pred_eov", False))
+        segments = self._slice_segments(self._parse(sample["template"]), mode, pred_eov=pred_eov)
+        ids: list[int] = []
+        labels: list[int] = []
+        types: list[float] = []
+        for segment in segments:
+            if drop_proprio and segment.processor == "proprio":
+                continue
+            segment_ids, segment_labels, segment_types = self._serialize_segment(
+                segment, sample, action_codec=action_codec, action_ids=action_ids
+            )
+            ids.extend(segment_ids)
+            labels.extend(segment_labels)
+            types.extend(segment_types)
+        return ids, labels, types
+
+    def _pad(
+        self,
+        rows: list[tuple[list[int], list[int], list[float]]],
+        *,
+        right_align: bool,
+    ) -> G05SequenceBatch:
+        """Pad encoded rows to a common length, left- or right-aligned, on the host."""
+        length = max(len(row[0]) for row in rows)
+        input_ids = torch.full((len(rows), length), self.pad_token_id, dtype=torch.long)
+        labels = torch.full((len(rows), length), IGNORE_INDEX, dtype=torch.long)
+        token_types = torch.zeros((len(rows), length), dtype=torch.float32)
+        for index, (ids, row_labels, types) in enumerate(rows):
+            start = length - len(ids) if right_align else 0
+            stop = start + len(ids)
+            input_ids[index, start:stop] = torch.tensor(ids, dtype=torch.long)
+            labels[index, start:stop] = torch.tensor(row_labels, dtype=torch.long)
+            token_types[index, start:stop] = torch.tensor(types, dtype=torch.float32)
+        return G05SequenceBatch(input_ids, labels, token_types)
+
+    def encode_inference(
+        self,
+        samples: list[dict[str, Any]],
+        *,
+        device: torch.device,
+    ) -> G05SequenceBatch:
+        """Encode context-only samples, right-aligned so generation starts at the end."""
+        rows = [self._serialize(sample, mode="context", action_codec=None) for sample in samples]
+        sequence = self._pad(rows, right_align=True)
+        return G05SequenceBatch(
+            sequence.input_ids.to(device), sequence.labels.to(device), sequence.token_types.to(device)
+        )
+
+    def encode_train(
+        self,
+        samples: list[dict[str, Any]],
+        *,
+        device: torch.device,
+        action_codec: Any | None,
+        proprio_dropout_p: float = 0.0,
+    ) -> G05SequenceBatch:
+        """Encode prefix and suffix samples for supervised training.
+
+        The action chunks go through the codec in one batch, and the padded sequences are
+        built on the host and moved to ``device`` in one copy per tensor. Each sample drops
+        its <state> token with probability ``proprio_dropout_p`` (upstream's ``mlp_dropout``).
+        """
+        action_ids = self._encode_actions(samples, action_codec)
+        drop_proprio = [proprio_dropout_p > 0 and float(torch.rand(())) < proprio_dropout_p for _ in samples]
+        prefix_rows = [
+            self._serialize(
+                sample, mode="prefix", action_codec=action_codec, action_ids=ids, drop_proprio=drop
+            )
+            for sample, ids, drop in zip(samples, action_ids, drop_proprio, strict=True)
+        ]
+        suffix_rows = [
+            self._serialize(sample, mode="suffix", action_codec=action_codec, action_ids=ids)
+            for sample, ids in zip(samples, action_ids, strict=True)
+        ]
+        prefix = self._pad(prefix_rows, right_align=True)
+        suffix = self._pad(suffix_rows, right_align=False)
+        return G05SequenceBatch(
+            input_ids=torch.cat((prefix.input_ids, suffix.input_ids), dim=1).to(device),
+            labels=torch.cat((prefix.labels, suffix.labels), dim=1).to(device),
+            token_types=torch.cat((prefix.token_types, suffix.token_types), dim=1).to(device),
+            split_index=prefix.input_ids.shape[1],
+        )
+
+    def _encode_actions(
+        self, samples: list[dict[str, Any]], action_codec: Any | None
+    ) -> list[list[int] | None]:
+        """ActionCodec ids of every sample whose template has an action target, in one batch."""
+        targets = [
+            index
+            for index, sample in enumerate(samples)
+            if "action" in sample
+            and any(segment.processor == "action" for segment in self._parse(sample["template"]))
+        ]
+        action_ids: list[list[int] | None] = [None] * len(samples)
+        if not targets:
+            return action_ids
+        if action_codec is None:
+            raise RuntimeError(
+                "This G0.5 training template includes ActionCodec targets, but the "
+                "checkpoint has no native ActionCodec sidecar loaded."
+            )
+        encoded = action_codec.encode_batch_for_language([samples[index]["action"] for index in targets])
+        for index, ids in zip(targets, encoded, strict=True):
+            action_ids[index] = ids
+        return action_ids

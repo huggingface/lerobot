@@ -379,13 +379,13 @@ def test_reward_model_generate_model_card_renders_expected_fields(_offline_model
     assert "--reward_model.type=" in body  # reward-model-specific usage block
 
 
-def test_reward_model_generate_model_card_uses_default_license(_offline_model_card):
-    """When config.license is None the card falls back to apache-2.0."""
+def test_reward_model_generate_model_card_leaves_an_unknown_license_out(_offline_model_card):
+    """When config.license is None and there is no Hub parent, the card states no license."""
     model, _ = _make_dummy_reward_model()
 
     card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
 
-    assert card.data.license == "apache-2.0"
+    assert card.data.license is None
 
 
 def test_publish_trained_model_uploads_expected_reward_files(monkeypatch, _offline_model_card):
@@ -505,3 +505,111 @@ def test_reward_model_push_model_to_hub_shim_warns_and_publishes(monkeypatch, _o
     assert CONFIG_NAME in all_files
     assert TRAIN_CONFIG_NAME in all_files
     assert "README.md" in all_files
+
+
+def test_make_reward_model_loads_resume_weights_and_keeps_the_parent(monkeypatch):
+    """A resume loads the checkpoint, while `pretrained_path` keeps naming the fine-tuned-from model."""
+    import lerobot.rewards.factory as reward_factory
+
+    cfg = SimpleNamespace(
+        type="mock", device="cpu", pretrained_path="user/base-reward", pretrained_revision=None
+    )
+    seen_while_building = []
+
+    def from_pretrained(**kwargs):
+        seen_while_building.append(cfg.pretrained_path)
+        model = torch.nn.Linear(1, 1)
+        model.config = cfg
+        return model
+
+    monkeypatch.setattr(
+        reward_factory, "get_reward_model_class", lambda _: SimpleNamespace(from_pretrained=from_pretrained)
+    )
+
+    model = reward_factory.make_reward_model(cfg, pretrained_path="run/checkpoints/000002/pretrained_model")
+
+    assert seen_while_building == ["run/checkpoints/000002/pretrained_model"]
+    assert cfg.pretrained_path == "user/base-reward"
+    assert model.config.pretrained_path == "user/base-reward"
+
+
+@pytest.mark.parametrize("trust_remote_code", [False, True])
+def test_reward_checkpoint_consent_is_runtime_only(tmp_path, trust_remote_code):
+    reward = _DummyHubReward(_DummyHubRewardConfig(device="cpu", trust_remote_code=True))
+    reward.save_pretrained(tmp_path)
+    loaded = _DummyHubReward.from_pretrained(tmp_path, trust_remote_code=trust_remote_code)
+    assert loaded.config.trust_remote_code is trust_remote_code
+    torch.testing.assert_close(loaded.bias, reward.bias)
+
+
+@pytest.mark.parametrize("trust_remote_code", [False, True])
+@pytest.mark.parametrize(
+    ("module_name", "class_name", "loader_name", "config_type"),
+    [
+        ("topreward.modeling_topreward", "TOPRewardModel", "Qwen3VLForConditionalGeneration", "topreward"),
+        ("robometer.modeling_robometer", "RobometerRewardModel", "AutoModelForImageTextToText", "robometer"),
+        ("topreward.processor_topreward", "TOPRewardEncoderProcessorStep", "AutoProcessor", None),
+        ("robometer.processor_robometer", "RobometerEncoderProcessorStep", "AutoProcessor", None),
+        ("robometer.configuration_robometer", "RobometerConfig", "AutoConfig", None),
+        ("classifier.modeling_classifier", "Classifier", "AutoModel", "reward_classifier"),
+    ],
+)
+def test_reward_loaders_require_caller_consent(
+    monkeypatch, trust_remote_code, module_name, class_name, loader_name, config_type
+):
+    import importlib
+    import sys
+
+    module = importlib.import_module(f"lerobot.rewards.{module_name}")
+
+    class LoaderReachedError(Exception):
+        pass
+
+    def from_pretrained(*args, **kwargs):
+        assert kwargs["trust_remote_code"] is trust_remote_code
+        raise LoaderReachedError
+
+    loader = SimpleNamespace(from_pretrained=from_pretrained)
+    if loader_name == "AutoModel":
+        monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(AutoModel=loader))
+    else:
+        monkeypatch.setattr(module, loader_name, loader)
+    if hasattr(module, "require_package"):
+        monkeypatch.setattr(module, "require_package", lambda *args, **kwargs: None)
+    constructor = getattr(module, class_name)
+    with pytest.raises(LoaderReachedError):
+        if config_type is None:
+            constructor(trust_remote_code=trust_remote_code)
+        else:
+            kwargs = {"vlm_config": {"text_config": {"vocab_size": 10}}} if config_type == "robometer" else {}
+            config = RewardModelConfig.get_choice_class(config_type)(
+                device="cpu", pretrained_path=None, trust_remote_code=trust_remote_code, **kwargs
+            )
+            constructor(config)
+
+
+@pytest.mark.parametrize(
+    "config_consent,consent", [(False, None), (True, None), (True, False), (False, True)]
+)
+@pytest.mark.parametrize("topreward", [False, True])
+def test_explicit_reward_consent_overrides_supplied_config(
+    monkeypatch, tmp_path, consent, config_consent, topreward
+):
+    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
+
+    model_cls = TOPRewardModel if topreward else _DummyHubReward
+    config = model_cls.config_class(device="cpu", trust_remote_code=config_consent)
+
+    class ConstructionReachedError(Exception):
+        pass
+
+    def construct(self, received):
+        assert received.trust_remote_code is (config_consent if consent is None else consent)
+        assert (received is config) is (consent is None)
+        raise ConstructionReachedError
+
+    monkeypatch.setattr(model_cls, "__init__", construct)
+    kwargs = {} if consent is None else {"trust_remote_code": consent}
+    with pytest.raises(ConstructionReachedError):
+        model_cls.from_pretrained(tmp_path, config=config, **kwargs)
+    assert config.trust_remote_code is config_consent

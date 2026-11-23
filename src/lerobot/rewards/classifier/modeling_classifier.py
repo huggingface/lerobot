@@ -18,6 +18,7 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.utils.constants import OBS_IMAGE, REWARD
+from lerobot.utils.hub import split_hub_reference
 
 from ..pretrained import PreTrainedRewardModel
 from .configuration_classifier import RewardClassifierConfig
@@ -100,6 +101,7 @@ class SpatialLearnedEmbeddings(nn.Module):
 class Classifier(PreTrainedRewardModel):
     """Image classifier built on top of a pre-trained encoder."""
 
+    config: RewardClassifierConfig
     name = "reward_classifier"
     config_class = RewardClassifierConfig
 
@@ -114,7 +116,13 @@ class Classifier(PreTrainedRewardModel):
         self.config = config
 
         # Set up encoder
-        encoder = AutoModel.from_pretrained(self.config.model_name, trust_remote_code=True)
+        repo_id, revision = split_hub_reference(self.config.model_name)
+        encoder = AutoModel.from_pretrained(
+            repo_id,
+            trust_remote_code=self.config.trust_remote_code,
+            revision=revision,
+            code_revision=revision,
+        )
         # Extract vision model if we're given a multimodal model
         if hasattr(encoder, "vision_model"):
             logging.info("Multimodal model detected - using vision encoder only")
@@ -238,6 +246,8 @@ class Classifier(PreTrainedRewardModel):
         """Returns 1.0 for success, 0.0 for failure based on image observations."""
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
         output = self.predict(images)
+        if output.probabilities is None:
+            raise ValueError("Classifier.predict() returned no probabilities")
 
         if self.config.num_classes == 2:
             return (output.probabilities > 0.5).float()

@@ -1,14 +1,28 @@
 # Motors
 
-`MotorsBus` is the low-level interface to a chain of servos on a serial bus. Robots use it to read positions
-and write goal positions; you rarely touch it directly unless you are adding hardware.
+`SerialMotorsBus` is the low-level interface to a chain of Feetech or Dynamixel servos on a serial bus. Robots use it
+to read positions and write goal positions; you rarely touch it directly unless you are adding hardware. Each motor's
+model is looked up in [rustypot](https://github.com/pollen-robotics/rustypot), which holds the control tables and the
+facts that differ between families, and also owns the serial port. `FeetechMotorsBus` and `DynamixelMotorsBus` are
+deprecated aliases of it, kept for one release.
+
+### Migrating from the SDK-based buses
+
+The aliases keep the class names, not the old SDK attributes and model tables:
+
+- `bus.model_resolution_table[model]` becomes `bus.resolution(model)`; the other model tables (`model_ctrl_table`,
+  `model_number_table`, ...) are now rustypot's servo definitions.
+- Operating modes are selected by name, `bus.set_operating_mode("position")`, instead of writing an `OperatingMode`
+  value to the `Operating_Mode` register.
+- The SDK port and packet handlers are no longer exposed: rustypot owns the serial port.
+- `protocol_version` is ignored: each motor's model gives its protocol.
 
 See [Bring Your Own Hardware](../integrate_hardware) for adding a new bus, and
 [Updating Feetech Firmware](../feetech) and [Damiao Motors and CAN Bus](../damiao) for device-specific notes.
 
-## MotorsBus
+## SerialMotorsBus
 
-[[autodoc]] lerobot.motors.motors_bus.MotorsBus
+[[autodoc]] lerobot.motors.motors_bus.SerialMotorsBus
 
 ## Motor
 
@@ -21,3 +35,14 @@ See [Bring Your Own Hardware](../integrate_hardware) for adding a new bus, and
 ## MotorNormMode
 
 [[autodoc]] lerobot.motors.MotorNormMode
+
+## DriveMode
+
+`DriveMode` has two members, `NON_INVERTED = 0` and `INVERTED = 1`. Use `.value` where the integer is expected, in a
+`Drive_Mode` register or in `MotorCalibration.drive_mode`:
+
+```python
+bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
+```
+
+[[autodoc]] lerobot.motors.DriveMode

@@ -89,7 +89,7 @@ lerobot-train \
     --policy.device=cuda \
     --policy.repo_id=$HF_USERNAME/omx_pickandplace_act \
     --steps=20000 \
-    --wandb.enable=true
+    --trackio.enable=true
 ```
 
 A pretrained `ACT` policy is already available here [`maximellerbach/omx_pickandplace_act`](https://huggingface.co/maximellerbach/omx_pickandplace_act).

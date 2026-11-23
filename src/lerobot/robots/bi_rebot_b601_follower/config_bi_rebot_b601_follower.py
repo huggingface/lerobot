@@ -25,7 +25,7 @@ from ..rebot_b601_follower import RebotB601FollowerConfig
 @RobotConfig.register_subclass("bi_rebot_b601_follower")
 @dataclass
 class BiRebotB601FollowerConfig(RobotConfig):
-    """Configuration class for the bimanual reBot B601-DM follower robot."""
+    """Configuration class for the bimanual reBot B601 follower robot."""
 
     left_arm_config: RebotB601FollowerConfig
     right_arm_config: RebotB601FollowerConfig

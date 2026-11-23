@@ -15,8 +15,11 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
+
+import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -108,6 +111,10 @@ class VLAJEPAConfig(PreTrainedConfig):
     repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
     # If True, encode the world-model context causally instead of slicing it from the leaky shared pass (#4153).
     causal_world_model_context: bool = False
+    # If True, the world predictor uses the rotary expansion from before #4835 (frequency blocks repeated, not
+    # interleaved per coordinate pair). Only for checkpoints whose world model was trained before that fix; new
+    # training keeps the default.
+    world_model_rope_legacy: bool = False
 
     resize_images_to: tuple[int, int] | None = None
     # Gripper post-processing from the starVLA LIBERO eval loop. Off by default: only correct for
@@ -123,7 +130,11 @@ class VLAJEPAConfig(PreTrainedConfig):
     # Action-dimension names identifying the gripper. When these match `action_feature_names`,
     # the resolved index wins over `gripper_dim`.
     gripper_joint_names: list[str] = field(default_factory=lambda: ["gripper"])
-    torch_dtype: str = "bfloat16"
+    dtype: torch.dtype | None = torch.bfloat16
+
+    # Deprecated and ignored: superseded by `dtype`. Declared only so configs written before the
+    # rename still parse — draccus rejects config.json keys the dataclass no longer declares.
+    torch_dtype: str | None = None
 
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
@@ -135,7 +146,19 @@ class VLAJEPAConfig(PreTrainedConfig):
     scheduler_decay_lr: float = 2.5e-6
 
     def __post_init__(self) -> None:
+        if self.torch_dtype is not None:
+            warnings.warn(
+                "`torch_dtype` is deprecated; use `--policy.dtype` instead.",
+                FutureWarning,
+                stacklevel=3,
+            )
+            self.torch_dtype = None
+
         super().__post_init__()
+        if self.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
+            raise ValueError(
+                f"Unsupported dtype={self.dtype!r}. Expected torch.float32, torch.float16 or torch.bfloat16."
+            )
         if self.freeze_qwen and self.enable_world_model:
             # freezing qwen backbone makes world model training irrelevant since no grad flows
             self.enable_world_model = False
@@ -204,6 +227,8 @@ class VLAJEPAConfig(PreTrainedConfig):
         `observation.state` into `input_features` so it gets normalized.
         """
         if OBS_STATE in dataset_features:
+            if self.input_features is None:
+                raise ValueError("`input_features` must be resolved before `set_dataset_feature_metadata()`.")
             shape = tuple(dataset_features[OBS_STATE]["shape"])
             self.state_dim = shape[0]
             self.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=shape)
