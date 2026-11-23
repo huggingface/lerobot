@@ -306,8 +306,10 @@ class _NormalizationMixin:
         """Return an epsilon that stays representable in ``dtype``.
 
         The configured ``eps`` (default ``1e-8``) underflows to zero in float16, so
-        constant features would still divide by zero after stats are adapted to the
-        input dtype. Floor at ``torch.finfo(dtype).tiny`` for floating-point dtypes.
+        a zero denominator (constant features) would still divide by zero after stats
+        are adapted to the input dtype. Callers substitute this value only where the
+        denominator is exactly zero. Floor at ``torch.finfo(dtype).tiny`` for
+        floating-point dtypes.
 
         The floor only guarantees a finite result when the input equals the constant
         training value. In float16 the denominator is still small (``~6.1e-5``), so
@@ -374,9 +376,15 @@ class _NormalizationMixin:
                 )
 
             mean, std = stats["mean"], stats["std"]
-            # Avoid division by zero by adding a small epsilon that stays
-            # representable in the input dtype (float16 cannot hold 1e-8).
-            denom = std + self._eps_for_dtype(tensor.dtype)
+            # Avoid division by zero: keep std + eps, then substitute a
+            # dtype-representable floor only where that denominator is zero
+            # (float16 cannot hold 1e-8).
+            denom = std + self.eps
+            denom = torch.where(
+                denom == 0,
+                torch.tensor(self._eps_for_dtype(tensor.dtype), device=tensor.device, dtype=denom.dtype),
+                denom,
+            )
             if inverse:
                 return tensor * std + mean
             return (tensor - mean) / denom

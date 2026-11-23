@@ -2183,3 +2183,29 @@ def test_fp16_constant_feature_stays_finite_with_default_eps(dtype, mode):
         assert output[1].item() == pytest.approx(0.5, abs=1e-3)
     else:
         assert output[0].item() == pytest.approx(-1.0, abs=1e-3)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+def test_mean_std_small_representable_std_preserves_scale(dtype):
+    """A one-std input with small but representable std must still normalize to ~1.
+
+    Adding a dtype-representable floor to every MEAN_STD denominator would double
+    std=2**-14 in float16 and reconstruct half the original action (see #4991).
+    """
+    std_val = 2**-14
+    features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(1,))}
+    norm_map = {FeatureType.ACTION: NormalizationMode.MEAN_STD}
+    stats = {ACTION: {"mean": [0.0], "std": [std_val]}}
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    action = torch.tensor([std_val], dtype=dtype)
+    normalized = normalizer(create_transition(action=action))
+    normalized_action = normalized[TransitionKey.ACTION]
+
+    assert normalized_action.dtype == dtype
+    assert normalized_action.item() == pytest.approx(1.0, abs=1e-3)
+
+    reconstructed = unnormalizer(normalized)[TransitionKey.ACTION]
+    assert reconstructed.dtype == dtype
+    torch.testing.assert_close(reconstructed, action, rtol=1e-3, atol=1e-5)
