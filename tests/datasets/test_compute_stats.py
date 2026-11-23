@@ -28,13 +28,14 @@ from lerobot.datasets.compute_stats import (
     aggregate_feature_stats,
     aggregate_stats,
     compute_episode_stats,
+    compute_relative_action_stats,
     estimate_num_samples,
     get_feature_stats,
     sample_images,
     sample_indices,
 )
 from lerobot.datasets.io_utils import load_stats, write_stats
-from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 pytestmark = pytest.mark.dataset
 
@@ -174,6 +175,34 @@ def test_get_feature_stats_single_value():
     np.testing.assert_equal(result["mean"], np.array(1337.0))
     np.testing.assert_equal(result["std"], np.array(0.0))
     np.testing.assert_equal(result["count"], np.array([1]))
+
+
+def test_compute_relative_action_stats_single_sample():
+    features = {
+        ACTION: {"dtype": "float32", "shape": (2,), "names": ["joint_a", "joint_b"]},
+        OBS_STATE: {"dtype": "float32", "shape": (2,), "names": ["joint_a", "joint_b"]},
+    }
+    hf_dataset = {
+        ACTION: np.array([[1.0, 2.0]], dtype=np.float32),
+        OBS_STATE: np.array([[0.5, 0.5]], dtype=np.float32),
+        "episode_index": np.array([0]),
+    }
+
+    stats = compute_relative_action_stats(hf_dataset, features, chunk_size=1, exclude_joints=["joint_b"])
+
+    quantile_keys = ("q01", "q10", "q50", "q90", "q99")
+    assert set(stats) == {"min", "max", "mean", "std", "count", *quantile_keys}
+    for key in ("min", "max", "mean", "std", *quantile_keys):
+        assert stats[key].shape == (2,)
+    assert stats["count"].shape == (1,)
+    assert stats["count"].item() == 1
+    # joint_b is excluded from relative conversion, so it stays absolute.
+    np.testing.assert_allclose(stats["mean"], [0.5, 2.0])
+    np.testing.assert_allclose(stats["min"], [0.5, 2.0])
+    np.testing.assert_allclose(stats["max"], [0.5, 2.0])
+    np.testing.assert_allclose(stats["std"], [0.0, 0.0])
+    for key in quantile_keys:
+        np.testing.assert_allclose(stats[key], [0.5, 2.0])
 
 
 def test_compute_episode_stats():
