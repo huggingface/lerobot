@@ -106,7 +106,7 @@ lancedb-convert = [
     "lerobot-lancedb>=0.3.1,<0.4.0",
 ]
 dataset = [
-    "datasets>=4.8.0,<6.0.0",
+    "datasets>=5.2.0,<6.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
     "pyarrow>=21.0.0,<30.0.0", # NOTE: Transitive dependency of datasets
     "lerobot[av-dep]",
@@ -403,7 +403,6 @@ all = [
 ]
 
 [project.scripts]
-lerobot-build-mp4-sidecar="lerobot.scripts.lerobot_build_mp4_sidecar:main"
 lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
 lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
 lerobot-find-port="lerobot.scripts.lerobot_find_port:main"

@@ -790,7 +790,7 @@ def _keep_episodes_from_video_with_av(
 
     v_in = in_container.streams.video[0]
 
-    out = av.open(str(output_path), mode="w", options={"movflags": "faststart"})
+    out = av.open(str(output_path), mode="w")
 
     # Convert fps to Fraction for PyAV compatibility.
     fps_fraction = Fraction(fps).limit_denominator(1000)
