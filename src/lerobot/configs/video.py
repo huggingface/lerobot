@@ -252,15 +252,21 @@ class VideoEncoderConfig:
                 self.extra_options.get(key) is not None
                 for key in ("b", "ab", "constant_bit_rate", "flags", "global_quality")
             )
-            if (
-                self.crf is not None
-                and platform.machine() == "arm64"
-                and not may_use_software
-                and not has_custom_rate_control
-            ):
-                quality = round(max(1, min(100, 100 - self.crf)))
-                set_if("flags", "+qscale")
-                set_if("global_quality", quality * 118)  # FFmpeg's FF_QP2LAMBDA
+            if self.crf is not None:
+                if platform.machine() != "arm64":
+                    ignored_reason = "constant quality requires an arm64 process"
+                elif may_use_software:
+                    ignored_reason = "extra_options allow or require software encoding"
+                elif has_custom_rate_control:
+                    ignored_reason = "extra_options specify encoder flags or rate control"
+                else:
+                    ignored_reason = None
+                    quality = round(max(1, min(100, 100 - self.crf)))
+                    set_if("flags", "+qscale")
+                    set_if("global_quality", quality * 118)  # FFmpeg's FF_QP2LAMBDA
+
+                if ignored_reason is not None:
+                    logger.warning("Ignoring CRF=%s for %s because %s", self.crf, self.vcodec, ignored_reason)
         elif self.vcodec in ("h264_nvenc", "hevc_nvenc"):
             set_if("rc", 0)
             set_if("qp", self.crf)

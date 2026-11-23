@@ -17,6 +17,7 @@
 """Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``lerobot.configs.video.VideoEncoderConfig`` config class."""
 
 import json
+import logging
 import platform
 import shutil
 from fractions import Fraction
@@ -191,6 +192,43 @@ class TestCodecOptions:
         expected = {"g": 2, **expected_options}
         assert cfg.get_codec_options() == expected
         assert cfg.get_codec_options(as_strings=True) == {key: str(value) for key, value in expected.items()}
+
+    @pytest.mark.parametrize("vcodec", ["h264_videotoolbox", "hevc_videotoolbox"])
+    @pytest.mark.parametrize(
+        ("machine", "crf", "extra_options", "reason"),
+        [
+            ("arm64", 12, {"flags": "+cgop"}, "encoder flags or rate control"),
+            ("arm64", 12, {"allow_sw": 1}, "software encoding"),
+            ("arm64", 12, {"require_sw": 1}, "software encoding"),
+            ("x86_64", 12, {}, "arm64"),
+            ("arm64", 12, {}, None),
+            ("arm64", None, {"flags": "+cgop"}, None),
+        ],
+    )
+    def test_videotoolbox_warns_when_crf_is_ignored(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        vcodec: str,
+        machine: str,
+        crf: int | None,
+        extra_options: dict[str, str | int],
+        reason: str | None,
+    ) -> None:
+        monkeypatch.setattr(RGBEncoderConfig, "__post_init__", lambda self: None)
+        monkeypatch.setattr(platform, "machine", lambda: machine)
+        cfg = RGBEncoderConfig(vcodec=vcodec, crf=crf, extra_options=extra_options)
+
+        with caplog.at_level(logging.WARNING, logger="lerobot.configs.video"):
+            cfg.get_codec_options()
+
+        if reason is None:
+            assert not caplog.records
+        else:
+            assert len(caplog.records) == 1
+            assert f"CRF={crf}" in caplog.messages[0]
+            assert vcodec in caplog.messages[0]
+            assert reason in caplog.messages[0]
 
     @require_nvenc
     def test_nvenc_options(self):
@@ -507,6 +545,38 @@ class TestGetVideoInfo:
 
 
 class TestEncodeVideoFrames:
+    @pytest.mark.skipif(
+        platform.system() != "Darwin" or platform.machine() != "arm64",
+        reason="VideoToolbox constant quality requires native Apple Silicon",
+    )
+    @pytest.mark.parametrize(
+        "vcodec",
+        [
+            pytest.param("h264_videotoolbox", marks=require_videotoolbox),
+            pytest.param("hevc_videotoolbox", marks=_require_encoder("hevc_videotoolbox")),
+        ],
+    )
+    def test_videotoolbox_crf_changes_output_size(self, tmp_path: Path, vcodec: str) -> None:
+        imgs_dir = tmp_path / "imgs"
+        imgs_dir.mkdir()
+        num_frames = 8
+        rng = np.random.default_rng(0)
+        frames = rng.integers(0, 256, (num_frames, 128, 192, 3), dtype=np.uint8)
+        for index, frame in enumerate(frames):
+            write_image(frame, imgs_dir / f"frame-{index:06d}.png")
+
+        sizes = {}
+        for crf in (12, 60):
+            path = tmp_path / f"crf-{crf}.mp4"
+            config = RGBEncoderConfig(vcodec=vcodec, crf=crf, extra_options={"allow_sw": 0})
+            encode_video_frames(imgs_dir, path, fps=30, video_encoder=config)
+
+            with av.open(str(path)) as container:
+                assert sum(1 for _ in container.decode(video=0)) == num_frames
+            sizes[crf] = path.stat().st_size
+
+        assert sizes[12] > sizes[60]
+
     @require_libsvtav1
     def test_produces_readable_mp4(self, tmp_path):
         video_path = _encode_video(tmp_path / "out.mp4")
