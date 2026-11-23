@@ -35,7 +35,7 @@ from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBO
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
 
-from .compute_stats import aggregate_stats
+from .compute_stats import aggregate_stats, cap_legacy_image_count
 from .depth_utils import MM_PER_METRE
 from .feature_utils import canonicalize_depth_marker, create_empty_dataset_info
 from .io_utils import (
@@ -265,8 +265,7 @@ class LeRobotDatasetMetadata:
                     for column in columns
                     if episode[column] is not None
                 }
-                # A smaller frame count is legitimate when the encoder queue dropped frames.
-                feature_stats["count"] = np.minimum(feature_stats["count"], episode["length"])
+                feature_stats["count"] = cap_legacy_image_count(feature_stats["count"], episode["length"])
                 stats.append({key: feature_stats})
             rebuilt = aggregate_stats(stats)[key]
             # Keep stored statistics that incomplete legacy episode summaries cannot reconstruct.

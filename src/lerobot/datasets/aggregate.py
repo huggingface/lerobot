@@ -28,7 +28,7 @@ import tqdm
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 
-from .compute_stats import aggregate_stats
+from .compute_stats import aggregate_stats, cap_legacy_image_count
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import canonicalize_depth_marker, features_equal_for_merge, get_hf_features_from_features
 from .io_utils import (
@@ -213,7 +213,7 @@ def update_meta_data(
         count_column = f"stats/{key}/count"
         if count_column in df:
             df[count_column] = [
-                None if count is None else np.minimum(count, length)
+                None if count is None else cap_legacy_image_count(count, length)
                 for count, length in zip(df[count_column], df["length"], strict=True)
             ]
 
