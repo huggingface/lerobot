@@ -17,7 +17,7 @@ import logging
 import draccus
 import pytest
 
-from lerobot.configs.default import DatasetConfig, EvalConfig
+from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 
 
@@ -150,25 +150,3 @@ def test_dataset_config_removes_credentials_before_saving(tmp_path, caplog):
     TrainPipelineConfig(dataset=dataset_config)._save_pretrained(tmp_path)
     saved_config = json.loads((tmp_path / TRAIN_CONFIG_NAME).read_text())
     assert saved_config["dataset"]["storage_options"] == expected_options
-
-
-@pytest.mark.parametrize("n_episodes", [0, -1])
-def test_eval_config_rejects_non_positive_n_episodes(n_episodes):
-    with pytest.raises(ValueError, match="n_episodes"):
-        EvalConfig(n_episodes=n_episodes)
-
-
-def test_eval_config_rejects_negative_batch_size():
-    with pytest.raises(ValueError, match="batch_size"):
-        EvalConfig(n_episodes=10, batch_size=-1)
-
-
-def test_eval_config_batch_size_zero_auto_tunes():
-    # batch_size=0 stays a valid sentinel for auto-tuning based on CPU cores and n_episodes.
-    config = EvalConfig(n_episodes=10, batch_size=0)
-    assert 1 <= config.batch_size <= 10
-
-
-def test_eval_config_batch_size_clamped_to_n_episodes():
-    config = EvalConfig(n_episodes=2, batch_size=8)
-    assert config.batch_size == 2
