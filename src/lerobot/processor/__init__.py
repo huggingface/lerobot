@@ -23,6 +23,7 @@ from lerobot.lerobot_types import (
     TransitionKey,
 )
 
+from .action_safety_processor import ActionSafetyProcessorStep
 from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
     batch_to_transition,
@@ -108,6 +109,7 @@ from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcesso
 
 __all__ = [
     "ActionProcessorStep",
+    "ActionSafetyProcessorStep",
     "AddTeleopActionAsComplimentaryDataStep",
     "AddTeleopEventsAsInfoStep",
     "ComplementaryDataProcessorStep",
