@@ -243,6 +243,8 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -416,6 +418,26 @@ def get_output_path(
     return output_repo_id, output_path, backup_path
 
 
+@contextmanager
+def _restore_backup_on_failure(backup_path: Path | None, output_dir: Path) -> Iterator[None]:
+    """If an in-place edit fails, drop its partial output and move the original dataset back."""
+    try:
+        yield
+    except BaseException:
+        if backup_path is not None:
+            try:
+                if output_dir.exists():
+                    shutil.rmtree(output_dir)
+                shutil.move(backup_path, output_dir)
+            except Exception:
+                logging.exception(
+                    f"Edit failed and the original dataset could not be restored: it is at {backup_path}"
+                )
+            else:
+                logging.error(f"Edit failed, the original dataset is back at {output_dir}")
+        raise
+
+
 def _require_repo_id(cfg: EditDatasetConfig) -> str:
     """Return the input dataset identifier; every operation except merge needs one."""
     if not cfg.repo_id:
@@ -453,12 +475,13 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
         dataset.root = backup_path
 
     logging.info(f"Deleting episodes {cfg.operation.episode_indices} from {cfg.repo_id}")
-    new_dataset = delete_episodes(
-        dataset,
-        episode_indices=cfg.operation.episode_indices,
-        output_dir=output_dir,
-        repo_id=output_repo_id,
-    )
+    with _restore_backup_on_failure(backup_path, output_dir):
+        new_dataset = delete_episodes(
+            dataset,
+            episode_indices=cfg.operation.episode_indices,
+            output_dir=output_dir,
+            repo_id=output_repo_id,
+        )
 
     logging.info(f"Dataset saved to {output_dir}")
     logging.info(f"Episodes: {new_dataset.meta.total_episodes}, Frames: {new_dataset.meta.total_frames}")
@@ -569,12 +592,13 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         dataset.root = backup_path
 
     logging.info(f"Removing features {cfg.operation.feature_names} from {cfg.repo_id}")
-    new_dataset = remove_feature(
-        dataset,
-        feature_names=cfg.operation.feature_names,
-        output_dir=output_dir,
-        repo_id=output_repo_id,
-    )
+    with _restore_backup_on_failure(backup_path, output_dir):
+        new_dataset = remove_feature(
+            dataset,
+            feature_names=cfg.operation.feature_names,
+            output_dir=output_dir,
+            repo_id=output_repo_id,
+        )
 
     logging.info(f"Dataset saved to {output_dir}")
     logging.info(f"Remaining features: {list(new_dataset.meta.features.keys())}")
