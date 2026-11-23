@@ -493,8 +493,6 @@ ignore = [
 "scripts/**" = ["D"]
 "setup.py" = ["D"]
 "src/lerobot/templates/**" = ["D"]
-# Vendored from transformers; keeps its upstream docstring style so syncs stay clean.
-"src/lerobot/policies/molmoact2/molmoact2_hf_model/**" = ["D"]
 # Awaiting conversion, one PR per module.
 "src/lerobot/annotations/**" = ["D"]
 "src/lerobot/cameras/**" = ["D"]
@@ -590,7 +588,6 @@ fail-under = 52
 output-format = "term-missing"
 color = true
 paths = ["src/lerobot"]
-exclude = ["src/lerobot/policies/molmoact2/molmoact2_hf_model"]
 
 [tool.pytest.ini_options]
 markers = [
@@ -627,10 +624,9 @@ enable_error_code = [
 # strict_equality_for_none = true  # 40: keep None guards on config fields, `--field=null` yields None
 # check_untyped_defs = true        # 195: most valuable; decide first how Optional dataset metadata is accessed
 
-# One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
-# molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
+# One ruleset for all checked code. Excluded: lerobot.rl (not typed yet).
 [[tool.mypy.overrides]]
-module = ["lerobot.rl.*", "lerobot.policies.molmoact2.molmoact2_hf_model.*"]
+module = ["lerobot.rl.*"]
 ignore_errors = true
 
 # ZeroMQ's public stubs re-export names from Python modules. Follow those modules

@@ -243,7 +243,7 @@ def make_my_policy_pre_post_processors_from_pretrained(
     return preprocessor, postprocessor
 ```
 
-For working examples, see [`processor_evo1.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/evo1/processor_evo1.py) (re-pads normalization stats), [`processor_groot.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/groot/processor_groot.py) (handles raw upstream checkpoints), and [`processor_molmoact2.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/molmoact2/processor_molmoact2.py) (renames override keys).
+For working examples, see [`processor_evo1.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/evo1/processor_evo1.py) (re-pads normalization stats), [`processor_groot.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/groot/processor_groot.py) (handles raw upstream checkpoints), and [`processor_molmoact2.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/molmoact2/processor_molmoact2.py) (adapts new dataset stats and applies the current config to the loaded steps).
 
 ### Returning a prediction besides actions (imagined frames, subtasks, boxes)
 

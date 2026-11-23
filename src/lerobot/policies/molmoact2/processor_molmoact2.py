@@ -12,44 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MolmoAct2 pre/post processing pipeline.
+"""MolmoAct2 pre- and post-processing.
 
-Builds the multimodal prompt (images, discretised state, task text),
-tokenises it via the vendored MolmoAct2 processor, and handles quantile
-normalisation with optional per-dimension gripper masking.
+The preprocessor normalizes the state (and the action targets in training) and packs the cameras, the discretized
+state and the task into the MolmoAct2 prompt with transformers' Molmo2 processor. The postprocessor clips and
+unnormalizes the predicted actions. This module also holds the FAST action tokenizer and its constrained decoding.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import math
 import re
-from contextlib import suppress
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import numpy as np
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
+    JointAffineProcessorStep,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
     load_pretrained_policy_processors,
-    policy_action_to_transition,
-    transition_to_policy_action,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -58,112 +56,70 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 from .configuration_molmoact2 import MolmoAct2Config
-from .utils_molmoact2 import (
-    hf_token as _hf_token,
-    position_ids_from_attention_mask as _position_ids_from_attention_mask,
-    resolve_checkpoint_location as _resolve_checkpoint_location,
-)
 
 if TYPE_CHECKING:
-    from lerobot.processor.normalize_processor import _NormalizationMixin as _MaskedNormalizationBase
+    from lerobot.datasets import LeRobotDatasetMetadata
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import (
+        Molmo2ImageProcessor,
+        Molmo2Processor,
+        Molmo2VideoProcessor,
+        PreTrainedTokenizerFast,
+        Qwen2Tokenizer,
+    )
+    from transformers.image_utils import PILImageResampling
+    from transformers.models.molmo2.image_processing_molmo2 import (
+        Molmo2ImageProcessorKwargs,
+        arange_for_pooling,
+        batch_pixels_to_patches,
+        build_resized_image,
+    )
+    from transformers.utils import cached_file
 else:
-    _MaskedNormalizationBase = object
+    Molmo2ImageProcessor = Molmo2Processor = object
+    Molmo2ImageProcessorKwargs = TypedDict
+    Molmo2VideoProcessor = PILImageResampling = PreTrainedTokenizerFast = Qwen2Tokenizer = None
+    arange_for_pooling = batch_pixels_to_patches = build_resized_image = cached_file = None
+
+if TYPE_CHECKING or _scipy_available:
+    from scipy.fft import dct, idct
+else:
+    dct = idct = None
 
 logger = logging.getLogger(__name__)
 
-MOLMOACT2_DEFAULT_NUM_IMAGES = 2
-MOLMOACT2_IMAGE_TOKENS_PER_IMAGE = 196
-MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET = 80
-MOLMOACT2_TASK_TOKEN_BUDGET = 32
-MOLMOACT2_SEQUENCE_LENGTH_MARGIN = 32
-MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE = 64
+# Token ids of the released MolmoAct2 vocabulary (upstream config names).
+EOS_TOKEN_ID = 151645  # "<|im_end|>", also the BOS token
+_ACTION_START_TOKEN_ID = 151932
+_ACTION_END_TOKEN_ID = 151933
+_ACTION_TOKEN_START_ID = 151934  # "<action_k>" is FAST bin k
+_NUM_ACTION_TOKENS = 2048
+
+_DEFAULT_NUM_STATE_TOKENS = 256
 # Collapse nearby prompt/action lengths onto the same torch.compile graph while
-# adding at most seven masked tokens per batch. BOS is inserted afterward, so
-# the final model width is ``8k + 1`` rather than a tensor-core-aligned multiple.
-MOLMOACT2_SEQUENCE_BUCKET_MULTIPLE = 8
-MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS = 4
-MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP = 6
-MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM = 0.95
+# adding at most seven masked tokens per batch. transformers' ``Molmo2Processor``
+# prepends BOS to the text before tokenizing, so the final width is a multiple of 8
+# (the vendored upstream processor inserted BOS after padding: ``8k + 1``).
+_SEQUENCE_PAD_MULTIPLE = 8
 
+_ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
+_ACTION_START_TOKEN = "<action_start>"  # nosec B105
+_ACTION_END_TOKEN = "<action_end>"  # nosec B105
+_STATE_START_TOKEN = "<state_start>"  # nosec B105
+_STATE_END_TOKEN = "<state_end>"  # nosec B105
+_SETUP_START_TOKEN = "<setup_start>"  # nosec B105
+_SETUP_END_TOKEN = "<setup_end>"  # nosec B105
+_CONTROL_START_TOKEN = "<control_start>"  # nosec B105
+_CONTROL_END_TOKEN = "<control_end>"  # nosec B105
 
-def _round_up(value: int, multiple: int) -> int:
-    return int(math.ceil(value / multiple) * multiple)
-
-
-def infer_molmoact2_max_sequence_length(
-    *,
-    num_images: int,
-    state_dim: int,
-    action_dim: int,
-    action_horizon: int,
-    include_discrete_action: bool,
-) -> int:
-    """Infer the padded text/image sequence cap from MolmoAct2's fixed token layout."""
-    if num_images < 1:
-        num_images = MOLMOACT2_DEFAULT_NUM_IMAGES
-    if state_dim < 0:
-        state_dim = 0
-    if action_dim < 1:
-        action_dim = 1
-    if action_horizon < 1:
-        action_horizon = 1
-
-    image_tokens = num_images * MOLMOACT2_IMAGE_TOKENS_PER_IMAGE
-    prompt_tokens = (
-        MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET
-        + MOLMOACT2_TASK_TOKEN_BUDGET
-        + state_dim
-        + MOLMOACT2_SEQUENCE_LENGTH_MARGIN
-    )
-    action_tokens = 0
-    if include_discrete_action:
-        action_tokens_per_step = max(
-            MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP,
-            math.ceil(action_dim * MOLMOACT2_DISCRETE_ACTION_TOKENS_PER_DIM),
-        )
-        action_tokens = MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS + action_horizon * action_tokens_per_step
-
-    return _round_up(
-        image_tokens + prompt_tokens + action_tokens,
-        MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE,
-    )
-
-
-if TYPE_CHECKING or _transformers_available:
-    from transformers import Qwen2Tokenizer
-
-    from .molmoact2_hf_model.image_processing_molmoact2 import MolmoAct2ImageProcessor
-    from .molmoact2_hf_model.processing_molmoact2 import MolmoAct2Processor
-    from .molmoact2_hf_model.video_processing_molmoact2 import MolmoAct2VideoProcessor
-else:
-    Qwen2Tokenizer = None
-    MolmoAct2ImageProcessor = None
-    MolmoAct2Processor = None
-    MolmoAct2VideoProcessor = None
-
-if TYPE_CHECKING or (_transformers_available and _scipy_available):
-    from .molmoact2_hf_model.action_tokenizer import UniversalActionProcessor
-else:
-    UniversalActionProcessor = None
-
-ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
-ACTION_START_TOKEN = "<action_start>"  # nosec B105
-ACTION_END_TOKEN = "<action_end>"  # nosec B105
-ACTION_TOKEN_PREFIX = "<action_"  # nosec B105
-STATE_START_TOKEN = "<state_start>"  # nosec B105
-STATE_END_TOKEN = "<state_end>"  # nosec B105
-STATE_TOKEN_PREFIX = "<state_"  # nosec B105
-SETUP_START_TOKEN = "<setup_start>"  # nosec B105
-SETUP_END_TOKEN = "<setup_end>"  # nosec B105
-CONTROL_START_TOKEN = "<control_start>"  # nosec B105
-CONTROL_END_TOKEN = "<control_end>"  # nosec B105
-
-_QUESTION_TRAILING_SENTENCE_PUNCTUATION = ".,!?;:,\u2026"
-_QUESTION_TRAILING_CLOSERS = "\"'\u201d\u2019)]}"
-_QUESTION_SURROUNDING_DELIMITERS = "\"'`\u201c\u201d\u2018\u2019[](){}"
+_QUESTION_TRAILING_SENTENCE_PUNCTUATION = ".,!?;:,…"
+_QUESTION_TRAILING_CLOSERS = "\"'”’)]}"
+_QUESTION_SURROUNDING_DELIMITERS = "\"'`“”‘’[](){}"
 _QUESTION_PREFIX_PATTERNS = tuple(
     re.compile(pattern, flags=re.IGNORECASE)
     for pattern in (
@@ -173,164 +129,477 @@ _QUESTION_PREFIX_PATTERNS = tuple(
 )
 
 
-def _load_hf_norm_stats_for_tag(
-    checkpoint_path: str,
-    *,
-    revision: str | None,
-    force_download: bool,
-    norm_tag: str | None,
-    norm_stats_path: str | None = None,
-) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    norm_tag = str(norm_tag or "").strip()
-    if not norm_tag:
-        raise ValueError("MolmoAct2 HF checkpoint inference requires `policy.norm_tag` for normalization.")
+# Molmo2 processor
 
-    norm_stats_filename = "norm_stats.json"
-    if norm_stats_path is not None:
-        stats_path = Path(norm_stats_path).expanduser().resolve(strict=True)
-        norm_stats_filename = stats_path.name
-        if not stats_path.is_file():
-            raise ValueError(f"MolmoAct2 norm_stats_path must be a JSON file, got {stats_path}.")
-    else:
-        checkpoint_location = Path(
-            _resolve_checkpoint_location(
-                checkpoint_path,
-                revision=revision,
-                force_download=force_download,
+
+# The mypy hook has no transformers, so it sees `object` as the base and rejects `total`.
+class MolmoAct2ImageProcessorKwargs(Molmo2ImageProcessorKwargs, total=False):  # type: ignore[call-arg]
+    crop_mode: str
+
+
+class MolmoAct2ImageProcessor(Molmo2ImageProcessor):
+    """Molmo2 image processor with the `crop_mode="resize"` layout of the MolmoAct2 checkpoints.
+
+    Each image is resized to `size` (378x378, bilinear, no antialiasing), cut into 14x14 patches and pooled 2x2 into
+    a 14x14 token grid `[rows, cols, 0, 0]`, without high-resolution crops. The overlapping crop modes are Molmo2's.
+    """
+
+    valid_kwargs = MolmoAct2ImageProcessorKwargs
+    image_mean = [0.5, 0.5, 0.5]
+    image_std = [0.5, 0.5, 0.5]
+    crop_mode = "resize"
+
+    def _image_batch_to_patches_and_grids(
+        self,
+        images: torch.Tensor,
+        max_crops: int,
+        overlap_margins: list[int],
+        crop_size: int,
+        resample: PILImageResampling,
+        do_rescale: bool,
+        rescale_factor: float,
+        do_normalize: bool,
+        image_mean: list[float],
+        image_std: list[float],
+        image_patch_size: int,
+        image_pooling_w: int,
+        image_pooling_h: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.crop_mode in ("overlap-and-resize-c2", "overlap-and-resize"):
+            return super()._image_batch_to_patches_and_grids(
+                images,
+                max_crops,
+                overlap_margins,
+                crop_size,
+                resample,
+                do_rescale,
+                rescale_factor,
+                do_normalize,
+                image_mean,
+                image_std,
+                image_patch_size,
+                image_pooling_w,
+                image_pooling_h,
             )
+        if self.crop_mode != "resize":
+            raise ValueError(f"Unsupported MolmoAct2 crop_mode {self.crop_mode!r}.")
+        resized, index_grid = build_resized_image(
+            self,
+            images,
+            crop_size,
+            resample,
+            do_rescale,
+            rescale_factor,
+            do_normalize,
+            image_mean,
+            image_std,
+            image_patch_size,
         )
-        config_path = checkpoint_location / "config.json"
-        if config_path.exists():
-            with suppress(OSError, json.JSONDecodeError):
-                norm_stats_filename = str(
-                    json.loads(config_path.read_text()).get("norm_stats_filename") or norm_stats_filename
-                )
-        stats_path = checkpoint_location / norm_stats_filename
-    if not stats_path.exists():
-        raise FileNotFoundError(
-            f"MolmoAct2 HF checkpoint is missing {norm_stats_filename!r}; cannot resolve norm_tag={norm_tag!r}."
+        pooling_indices, num_rows, num_cols = arange_for_pooling(index_grid, image_pooling_h, image_pooling_w)
+        num_images = images.shape[0]
+        # One crop per image: [N, 1, num_patches, pixels_per_patch].
+        patches = batch_pixels_to_patches(resized.flatten(0, 1), image_patch_size).unsqueeze(1)
+        image_grid = torch.tensor([[num_rows, num_cols, 0, 0]], dtype=torch.int64, device=images.device)
+        return (
+            image_grid.expand(num_images, -1),
+            patches,
+            pooling_indices.unsqueeze(0).expand(num_images, -1, -1),
         )
-    payload = json.loads(stats_path.read_text())
-    metadata_by_tag = payload.get("metadata_by_tag")
-    if not isinstance(metadata_by_tag, dict):
-        raise ValueError(f"MolmoAct2 norm stats file {stats_path} has no metadata_by_tag mapping.")
-    metadata = metadata_by_tag.get(norm_tag)
-    if metadata is None:
-        available = sorted(str(tag) for tag in metadata_by_tag)
-        raise ValueError(f"Unknown MolmoAct2 norm_tag={norm_tag!r}. Available tags: {available}.")
-    if not isinstance(metadata, dict):
-        raise ValueError(f"MolmoAct2 norm_tag={norm_tag!r} metadata must be a mapping.")
 
-    def numeric_stats(raw_stats: dict[str, Any]) -> dict[str, Any]:
-        stats: dict[str, Any] = {}
-        for key, value in raw_stats.items():
-            if key == "names":
-                continue
-            if isinstance(value, (list, tuple)) and any(isinstance(item, str) for item in value):
-                continue
-            stats[key] = deepcopy(value)
-        return stats
+    def get_image_grid_and_crops(
+        self, height: int, width: int, images_kwargs: dict[str, Any] | None = None
+    ) -> tuple[list[int], int]:
+        """Return the pooled grid `[low_res_h, low_res_w, high_res_h, high_res_w]` and the crop count of an image.
 
-    action_stats = metadata.get("action_stats")
-    state_stats = metadata.get("state_stats")
-    if not isinstance(action_stats, dict) or not isinstance(state_stats, dict):
-        raise ValueError(f"MolmoAct2 norm_tag={norm_tag!r} must define action_stats and state_stats.")
-    return {ACTION: numeric_stats(action_stats), OBS_STATE: numeric_stats(state_stats)}, metadata
+        Args:
+            height (`int`):
+                Image height in pixels.
+            width (`int`):
+                Image width in pixels.
+            images_kwargs (`dict[str, Any]`, *optional*):
+                Overrides of the processor's settings.
+
+        Returns:
+            `tuple[list[int], int]`: The pooled grid and the number of crops.
+        """
+        image_grid, num_crops = super().get_image_grid_and_crops(height, width, images_kwargs)
+        if self.crop_mode != "resize":
+            return image_grid, num_crops
+        return [image_grid[0], image_grid[1], 0, 0], 1
 
 
-def _strip_processor_config(config: dict[str, Any], *metadata_keys: str) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in config.items()
-        if key not in {"auto_map", "processor_class", *metadata_keys}
-    }
+class MolmoAct2Processor(Molmo2Processor):
+    """Molmo2 processor that writes the image tokens of `crop_mode="resize"` images as the MolmoAct2 checkpoints do.
+
+    An image with grid `[rows, cols, 0, 0]` becomes `<im_start>`, `rows` rows of `cols` `<im_patch>` tokens (each
+    followed by `<im_col>` when single-crop column tokens are on) and `<im_end>`.
+    """
+
+    def replace_image_token(self, image_inputs: dict, image_idx: int, **kwargs: Any) -> str:
+        """Return the tokens that replace the `image_idx`-th `<|image|>` placeholder.
+
+        Args:
+            image_inputs (`dict`):
+                Output of the image processor, with `image_grids`.
+            image_idx (`int`):
+                Index of the image in the batch.
+            **kwargs:
+                Passed to [`~transformers.Molmo2Processor.replace_image_token`] for images with crops.
+
+        Returns:
+            `str`: The image tokens.
+        """
+        resized_h, resized_w, height, width = (int(value) for value in image_inputs["image_grids"][image_idx])
+        if height and width:
+            return super().replace_image_token(image_inputs, image_idx, **kwargs)
+        use_col_tokens = (
+            self.image_use_col_tokens
+            if self.use_single_crop_col_tokens is None
+            else self.use_single_crop_col_tokens
+        )
+        tokens_per_row = ["<im_patch>"] * resized_w + (["<im_col>"] if use_col_tokens else [])
+        return "".join(["<im_start>", *(tokens_per_row * resized_h), "<im_end>"])
 
 
-def _load_local_molmoact2_processor(checkpoint_location: str) -> Any:
-    if (
-        Qwen2Tokenizer is None
-        or MolmoAct2ImageProcessor is None
-        or MolmoAct2Processor is None
-        or MolmoAct2VideoProcessor is None
-    ):
-        raise RuntimeError("transformers is required to load MolmoAct2 processor.")
+# Image part of the upstream `processor_config.json`, identical in every released MolmoAct2 checkpoint. The pack
+# step saves it in `policy_preprocessor.json`, so LeRobot checkpoints carry their processor; only the tokenizer
+# files come from the upstream repo. The video settings are left out: MolmoAct2 takes no video.
+_PROCESSOR_CONFIG: dict[str, Any] = {
+    "image_processor": {
+        "crop_mode": "resize",
+        "do_convert_rgb": True,
+        "image_mean": [0.5, 0.5, 0.5],
+        "image_std": [0.5, 0.5, 0.5],
+        "max_crops": 8,
+        "overlap_margins": [4, 4],
+        "patch_size": 14,
+        "pooling_size": [2, 2],
+        "resample": 2,
+        "size": {"height": 378, "width": 378},
+    },
+    "image_use_col_tokens": True,
+    "use_single_crop_col_tokens": False,
+    "use_single_crop_start_token": True,
+}
 
-    checkpoint_path = Path(checkpoint_location)
-    processor_config_path = checkpoint_path / "processor_config.json"
-    if not processor_config_path.exists():
-        raise FileNotFoundError(f"MolmoAct2 checkpoint is missing {processor_config_path}.")
-    processor_config = json.loads(processor_config_path.read_text())
 
-    image_config = _strip_processor_config(
-        dict(processor_config.get("image_processor") or {}),
-        "image_processor_type",
-    )
-    video_config = _strip_processor_config(
-        dict(processor_config.get("video_processor") or {}),
-        "video_processor_type",
-    )
-    image_processor = MolmoAct2ImageProcessor(**image_config)
-    video_processor = MolmoAct2VideoProcessor(**video_config)
-    tokenizer = Qwen2Tokenizer.from_pretrained(
-        checkpoint_location,
-        token=_hf_token(),
-    )
-    # ``MolmoAct2Processor.insert_bos`` preserves padding by locating the first
-    # valid token, so its batched path requires left-padded tokenizer output.
-    # Released checkpoints do not consistently persist this tokenizer setting
-    # and Qwen2 otherwise defaults to right padding.
+def _load_molmoact2_processor(processor_config: dict[str, Any], tokenizer_name: str) -> MolmoAct2Processor:
+    """Build the MolmoAct2 processor from its image settings and the upstream tokenizer files, running no code.
+
+    The upstream repos are remote-code repos, so `AutoProcessor` would need `trust_remote_code`; only the tokenizer
+    files are downloaded, never the weights or the code.
+    """
+    require_package("transformers", extra="molmoact2")
+    repo_id, revision = split_hub_reference(tokenizer_name)
+    tokenizer = Qwen2Tokenizer.from_pretrained(repo_id, revision=revision)
+    # Left padding keeps the last prompt token of every row in the last column, where
+    # discrete generation continues. Released checkpoints do not consistently persist
+    # this tokenizer setting and Qwen2 otherwise defaults to right padding.
     tokenizer.padding_side = "left"
-
-    chat_template_path = checkpoint_path / "chat_template.jinja"
-    chat_template = chat_template_path.read_text() if chat_template_path.exists() else None
+    options = {key: value for key, value in processor_config.items() if key != "image_processor"}
     return MolmoAct2Processor(
-        image_processor=image_processor,
-        video_processor=video_processor,
+        image_processor=MolmoAct2ImageProcessor(**processor_config["image_processor"]),
+        video_processor=Molmo2VideoProcessor(),
         tokenizer=tokenizer,
-        chat_template=chat_template,
-        image_use_col_tokens=processor_config.get("image_use_col_tokens", True),
-        use_single_crop_col_tokens=processor_config.get("use_single_crop_col_tokens"),
-        use_single_crop_start_token=processor_config.get("use_single_crop_start_token", True),
-        video_use_col_tokens=processor_config.get("video_use_col_tokens", False),
-        use_frame_special_tokens=processor_config.get("use_frame_special_tokens", True),
+        chat_template=tokenizer.chat_template,
+        **options,
     )
 
 
-def _to_numpy(value: Any) -> np.ndarray:
-    if isinstance(value, np.ndarray):
-        return value
-    if torch.is_tensor(value):
-        return value.detach().cpu().numpy()
-    return np.asarray(value)
+# FAST action tokenizer
 
 
-def _normalize_image(value: Any) -> np.ndarray:
-    arr = _to_numpy(value)
-    while arr.ndim > 3 and int(arr.shape[0]) == 1:
-        arr = arr[0]
-    if arr.ndim == 2:
-        arr = np.stack([arr] * 3, axis=-1)
-    if arr.ndim == 3 and arr.shape[0] in {1, 3, 4} and arr.shape[-1] not in {1, 3, 4}:
-        arr = np.moveaxis(arr, 0, -1)
-    if arr.ndim == 3 and arr.shape[-1] == 1:
-        arr = np.repeat(arr, 3, axis=-1)
-    if arr.ndim != 3 or arr.shape[-1] not in {3, 4}:
-        raise ValueError(f"Unsupported image shape for MolmoAct2: {arr.shape}.")
-    if arr.shape[-1] == 4:
-        arr = arr[..., :3]
-    if arr.dtype in (np.float16, np.float32, np.float64):
-        if arr.size > 0 and float(np.nanmax(arr)) <= 1.0:
-            arr = arr * 255.0
-        arr = np.clip(arr, 0, 255).astype(np.uint8)
-    elif arr.dtype != np.uint8:
-        arr = np.clip(arr, 0, 255).astype(np.uint8)
-    return arr
+class UniversalActionProcessor:
+    """FAST action tokenizer: DCT over time, scaled and rounded coefficients, then BPE.
+
+    Port of `UniversalActionProcessor` from `allenai/MolmoAct2-FAST-Tokenizer`, without `fit`.
+
+    Args:
+        bpe_tokenizer (`PreTrainedTokenizerFast`):
+            BPE tokenizer over the characters `chr(coefficient - min_token)`.
+        scale (`float`, *optional*, defaults to 10.0):
+            Factor applied to the DCT coefficients before rounding.
+        min_token (`int`, *optional*, defaults to 0):
+            Smallest rounded coefficient.
+    """
+
+    def __init__(
+        self, bpe_tokenizer: PreTrainedTokenizerFast, scale: float = 10.0, min_token: int = 0
+    ) -> None:
+        require_package("scipy", extra="molmoact2")
+        self.bpe_tokenizer = bpe_tokenizer
+        self.scale = scale
+        self.min_token = min_token
+
+    @classmethod
+    def from_pretrained(
+        cls, repo_id_or_path: str = "allenai/MolmoAct2-FAST-Tokenizer", revision: str | None = None
+    ) -> UniversalActionProcessor:
+        """Load the tokenizer from its `tokenizer.json` and `processor_config.json`, running no code from the repo.
+
+        Args:
+            repo_id_or_path (`str`, *optional*, defaults to `"allenai/MolmoAct2-FAST-Tokenizer"`):
+                Hub repo id or local directory, optionally pinned as `repo@revision`.
+            revision (`str`, *optional*):
+                Hub branch, tag or commit, when `repo_id_or_path` does not pin one.
+
+        Returns:
+            `UniversalActionProcessor`: The tokenizer.
+        """
+        require_package("transformers", extra="molmoact2")
+        repo_id, revision = split_hub_reference(repo_id_or_path, revision)
+        config_path = cached_file(
+            repo_id,
+            "processor_config.json",
+            revision=revision,
+            _raise_exceptions_for_missing_entries=False,
+        )
+        config = json.loads(Path(config_path).read_text()) if config_path is not None else {}
+        return cls(
+            PreTrainedTokenizerFast.from_pretrained(repo_id, revision=revision),
+            scale=config.get("scale", 10.0),
+            min_token=config.get("min_token", 0),
+        )
+
+    def __call__(self, actions: np.ndarray) -> list[list[int]]:
+        """Encode action chunks `(T, D)` or `(B, T, D)` into one list of token ids per chunk."""
+        actions = np.asarray(actions)
+        if actions.ndim == 2:
+            actions = actions[None]
+        coefficients = np.around(dct(actions, axis=1, norm="ortho") * self.scale)
+        tokens = []
+        for chunk_coefficients in coefficients:
+            characters = np.maximum(chunk_coefficients.flatten() - self.min_token, 0).astype(int)
+            tokens.append(self.bpe_tokenizer("".join(map(chr, characters)))["input_ids"])
+        return tokens
+
+    def decode(self, tokens: Sequence[Sequence[int]], time_horizon: int, action_dim: int) -> np.ndarray:
+        """Decode token ids into action chunks `(len(tokens), time_horizon, action_dim)`.
+
+        A sequence that does not decode to `time_horizon * action_dim` coefficients becomes zeros, with a warning.
+        """
+        actions = []
+        for sequence in tokens:
+            try:
+                text = self.bpe_tokenizer.decode(list(sequence))
+                coefficients = np.array([ord(character) for character in text]) + self.min_token
+                coefficients = coefficients.reshape(time_horizon, action_dim)
+            except Exception as error:  # noqa: BLE001
+                # Generated sequences can be malformed, including ids outside the FAST vocabulary.
+                logger.warning("Could not decode FAST tokens %s: %s", list(sequence), error)
+                coefficients = np.zeros((time_horizon, action_dim))
+            actions.append(idct(coefficients / self.scale, axis=0, norm="ortho"))
+        return np.stack(actions)
+
+
+def _build_discrete_action_string_from_action(action: np.ndarray, fast: UniversalActionProcessor) -> str:
+    """Encode a normalized action chunk `(T, D)` as `<action_start><action_k>...<action_end>` text."""
+    (token_ids,) = fast(action)
+    return _ACTION_START_TOKEN + "".join(f"<action_{token_id}>" for token_id in token_ids) + _ACTION_END_TOKEN
+
+
+def _extract_discrete_token_bins(generated_ids: list[int]) -> list[int]:
+    """FAST bins of the action tokens after `<action_start>` (or from the start), up to `<action_end>`."""
+    start = generated_ids.index(_ACTION_START_TOKEN_ID) + 1 if _ACTION_START_TOKEN_ID in generated_ids else 0
+    span = generated_ids[start:]
+    if _ACTION_END_TOKEN_ID in span:
+        span = span[: span.index(_ACTION_END_TOKEN_ID)]
+    return [
+        token_id - _ACTION_TOKEN_START_ID
+        for token_id in span
+        if _ACTION_TOKEN_START_ID <= token_id < _ACTION_TOKEN_START_ID + _NUM_ACTION_TOKENS
+    ]
+
+
+def select_constrained_discrete_action_token(
+    logits: Tensor,
+    generated_ids: list[list[int]],
+    *,
+    action_tokenizer: UniversalActionProcessor,
+    target_coefficients: int,
+) -> Tensor:
+    """Select each row's best token that preserves a fixed-size FAST action span.
+
+    Port of upstream's `_select_constrained_discrete_action_token`, batched (upstream takes one row): force
+    `<action_start>`, take the most likely action token whose BPE expansion still fits, force `<action_end>` once
+    the span decodes to exactly `target_coefficients` values, then EOS.
+
+    Args:
+        logits (`Tensor`):
+            Next-token logits `[B, vocab]`.
+        generated_ids (`list[list[int]]`):
+            Tokens generated so far, per row.
+        action_tokenizer (`UniversalActionProcessor`):
+            The FAST tokenizer.
+        target_coefficients (`int`):
+            `chunk_size * action_dim`, the length of one decoded chunk.
+
+    Returns:
+        `Tensor`: The next token of each row, `[B]`.
+    """
+    next_tokens = []
+    for row, ids in enumerate(generated_ids):
+        if _ACTION_START_TOKEN_ID not in ids:
+            next_tokens.append(_ACTION_START_TOKEN_ID)
+            continue
+        span_ids = ids[ids.index(_ACTION_START_TOKEN_ID) + 1 :]
+        if _ACTION_END_TOKEN_ID in span_ids:
+            next_tokens.append(EOS_TOKEN_ID)
+            continue
+        token_bins = _extract_discrete_token_bins(span_ids)
+        decoded_length = len(action_tokenizer.bpe_tokenizer.decode(token_bins))
+        if decoded_length > target_coefficients:
+            raise RuntimeError(
+                "Constrained FAST generation exceeded its target coefficient count: "
+                f"{decoded_length} > {target_coefficients}."
+            )
+        if decoded_length == target_coefficients:
+            next_tokens.append(_ACTION_END_TOKEN_ID)
+            continue
+        action_logits = logits[row, _ACTION_TOKEN_START_ID : _ACTION_TOKEN_START_ID + _NUM_ACTION_TOKENS]
+        for candidate_bin in action_logits.argsort(descending=True).tolist():
+            candidate_length = len(action_tokenizer.bpe_tokenizer.decode([*token_bins, candidate_bin]))
+            if decoded_length < candidate_length <= target_coefficients:
+                next_tokens.append(_ACTION_TOKEN_START_ID + candidate_bin)
+                break
+        else:
+            raise RuntimeError(
+                "No action BPE token can advance constrained FAST generation without "
+                f"overshooting {target_coefficients} coefficients from {decoded_length}."
+            )
+    return torch.tensor(next_tokens, device=logits.device)
+
+
+def decode_discrete_action_chunk(
+    generated_ids: list[list[int]],
+    action_tokenizer: UniversalActionProcessor,
+    action_horizon: int,
+    action_dim: int,
+) -> np.ndarray:
+    """Decode each row's generated FAST span into a normalized action chunk `(B, action_horizon, action_dim)`."""
+    token_bins = [_extract_discrete_token_bins(ids) for ids in generated_ids]
+    if not all(token_bins):
+        raise RuntimeError("Model generated no decodable action tokens between <action_start>/<action_end>.")
+    return action_tokenizer.decode(token_bins, action_horizon, action_dim)
+
+
+# Normalization
+
+
+def _to_float64(value: Any) -> np.ndarray:
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().double().numpy()
+    return np.asarray(value, dtype=np.float64)
+
+
+def _like(reference: Any, values: np.ndarray) -> Any:
+    if isinstance(reference, torch.Tensor):
+        return torch.as_tensor(values, dtype=reference.dtype, device=reference.device)
+    if isinstance(reference, np.ndarray):
+        return values.astype(reference.dtype)
+    return values.tolist()
+
+
+def _normalization_stats(
+    stats: dict[str, dict[str, Any]],
+    names: dict[str, list[str] | None],
+    normalize_gripper: bool | None = None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Adjust the stats so LeRobot's `QUANTILES` normalizer and unnormalizer reproduce MolmoAct2's normalization.
+
+    Two upstream rules are written into the state and action stats:
+
+    - Gripper dims (by name, or where the stats' `mask` is False) pass through when `normalize_gripper` is False,
+      or when it is None and their min and max lie in [-1, 1]: their bounds become -1 and 1.
+    - Constant dims normalize to 0: the normalizer bounds become `v - 1` and `v + 1`, while the unnormalizer keeps
+      `v`.
+
+    Returns:
+        The normalizer stats and the unnormalizer stats.
+    """
+    normalizer_stats = deepcopy(stats)
+    unnormalizer_stats = deepcopy(stats)
+    for key in (OBS_STATE, ACTION):
+        if key not in stats:
+            continue
+        feature_stats = stats[key]
+        min_values = _to_float64(feature_stats["min"])
+        max_values = _to_float64(feature_stats["max"])
+        dim = min_values.shape[-1]
+        in_unit_range = (min_values >= -1.0) & (max_values <= 1.0)
+
+        mask = feature_stats.get("mask")
+        if normalize_gripper is not True and mask is not None:
+            passthrough = ~np.asarray(mask, dtype=bool)
+        else:
+            is_gripper = np.zeros(dim, dtype=bool)
+            feature_names = names.get(key)
+            if normalize_gripper is not True:
+                if feature_names is None or len(feature_names) != dim:
+                    logger.warning(
+                        "MolmoAct2 can't find the gripper dims of %r (expected %d names, got %r): all dims are "
+                        "normalized.",
+                        key,
+                        dim,
+                        feature_names,
+                    )
+                else:
+                    is_gripper = np.array(["gripper" in name.lower() for name in feature_names], dtype=bool)
+            passthrough = is_gripper if normalize_gripper is False else is_gripper & in_unit_range
+        if (passthrough & ~in_unit_range).any():
+            logger.warning(
+                "MolmoAct2 passes the gripper dims of %r through, but they leave [-1, 1] and will be clipped. Set "
+                "normalize_gripper=True to normalize them.",
+                key,
+            )
+        constant = min_values == max_values
+
+        for stat_name, bound in (("q01", -1.0), ("q99", 1.0), ("min", -1.0), ("max", 1.0)):
+            if stat_name not in feature_stats:
+                continue
+            unnormalizer_values = np.where(passthrough, bound, _to_float64(feature_stats[stat_name]))
+            normalizer_values = np.where(constant, min_values + bound, unnormalizer_values)
+            normalizer_stats[key][stat_name] = _like(feature_stats[stat_name], normalizer_values)
+            unnormalizer_stats[key][stat_name] = _like(feature_stats[stat_name], unnormalizer_values)
+        normalizer_stats[key].pop("mask", None)
+        unnormalizer_stats[key].pop("mask", None)
+    return normalizer_stats, unnormalizer_stats
+
+
+def _load_norm_tag(config: MolmoAct2Config) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """Load the stats and metadata of `config.norm_tag` from the `norm_stats.json` of `config.norm_stats_path`.
+
+    Args:
+        config (`MolmoAct2Config`):
+            The policy config.
+
+    Returns:
+        `tuple[dict[str, dict[str, Any]], dict[str, Any]]`: The state and action stats, and the tag's metadata
+        (`setup_type`, `control_mode`, `camera_keys`, `action_horizon`, ...).
+    """
+    source = config.norm_stats_path or "allenai/MolmoAct2"
+    path = Path(source).expanduser()
+    if not path.is_file():
+        path = Path(cached_file(source, "norm_stats.json"))
+    metadata_by_tag = json.loads(path.read_text())["metadata_by_tag"]
+    if config.norm_tag not in metadata_by_tag:
+        raise ValueError(
+            f"Unknown norm_tag {config.norm_tag!r} in {path}. Available tags: {sorted(metadata_by_tag)}."
+        )
+    metadata = metadata_by_tag[config.norm_tag]
+    stats = {
+        key: {name: value for name, value in metadata[stats_key].items() if name != "names"}
+        for key, stats_key in ((OBS_STATE, "state_stats"), (ACTION, "action_stats"))
+    }
+    return stats, metadata
+
+
+# Prompt
 
 
 def _normalize_question_text(text: str) -> str:
-    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
-    if not normalized:
-        return ""
+    """Normalize a task like MolmoAct2 training: no quotes, "Task:" prefix or final punctuation, lowercase."""
+    normalized = re.sub(r"\s+", " ", text).strip()
     previous = None
     while normalized and normalized != previous:
         previous = normalized
@@ -340,721 +609,259 @@ def _normalize_question_text(text: str) -> str:
         normalized = normalized.rstrip(_QUESTION_TRAILING_SENTENCE_PUNCTUATION).rstrip()
         normalized = normalized.rstrip(_QUESTION_TRAILING_CLOSERS).rstrip()
         normalized = normalized.rstrip(_QUESTION_TRAILING_SENTENCE_PUNCTUATION).rstrip()
-    chunks = [chunk.strip() for chunk in re.split(r"[.!?]+", normalized) if chunk.strip()]
-    if len(chunks) > 1:
-        normalized = "; ".join(chunks)
+    sentences = [sentence.strip() for sentence in re.split(r"[.!?]+", normalized) if sentence.strip()]
+    if len(sentences) > 1:
+        normalized = "; ".join(sentences)
     return normalized.lower()
 
 
-def _wrap_setup_text(setup_type: str, add_setup_tokens: bool) -> str:
-    setup_type = str(setup_type or "")
-    if setup_type.startswith(SETUP_START_TOKEN) and setup_type.endswith(SETUP_END_TOKEN):
+def _wrap_setup_text(setup_type: str) -> str:
+    if not setup_type or (
+        setup_type.startswith(_SETUP_START_TOKEN) and setup_type.endswith(_SETUP_END_TOKEN)
+    ):
         return setup_type
-    if not setup_type or not add_setup_tokens:
-        return setup_type
-    return f"{SETUP_START_TOKEN}{setup_type}{SETUP_END_TOKEN}"
+    return f"{_SETUP_START_TOKEN}{setup_type}{_SETUP_END_TOKEN}"
 
 
-def _wrap_control_text(control_mode: str, add_control_tokens: bool) -> str:
-    control_mode = str(control_mode or "")
-    if control_mode.startswith(CONTROL_START_TOKEN) and control_mode.endswith(CONTROL_END_TOKEN):
+def _wrap_control_text(control_mode: str) -> str:
+    if not control_mode or (
+        control_mode.startswith(_CONTROL_START_TOKEN) and control_mode.endswith(_CONTROL_END_TOKEN)
+    ):
         return control_mode
-    if not control_mode or not add_control_tokens:
-        return control_mode
-    return f"{CONTROL_START_TOKEN}{control_mode}{CONTROL_END_TOKEN}"
+    return f"{_CONTROL_START_TOKEN}{control_mode}{_CONTROL_END_TOKEN}"
 
 
-def _build_discrete_state_string(state: np.ndarray, num_state_tokens: int) -> str:
-    if num_state_tokens <= 0:
-        raise ValueError(f"num_state_tokens must be > 0, got {num_state_tokens}.")
-    arr = np.asarray(state, dtype=np.float32)
-    arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=-1.0)
-    arr = np.clip(arr, -1.0, 1.0)
-    scaled = (arr + 1.0) / 2.0 * float(num_state_tokens - 1)
-    token_ids = np.clip(np.rint(scaled).astype(np.int64), 0, int(num_state_tokens) - 1).reshape(-1)
-    return f"{STATE_START_TOKEN}{''.join(f'{STATE_TOKEN_PREFIX}{int(token_id)}>' for token_id in token_ids)}{STATE_END_TOKEN}"
+def _discretize_normalized_state(state: np.ndarray) -> np.ndarray:
+    """Bin each normalized state dim of [-1, 1] into one of 256 state tokens."""
+    state = np.clip(np.nan_to_num(state, nan=0.0, posinf=1.0, neginf=-1.0), -1.0, 1.0)
+    return np.rint((state + 1.0) / 2.0 * (_DEFAULT_NUM_STATE_TOKENS - 1)).astype(np.int64)
+
+
+def _build_discrete_state_string(state: np.ndarray) -> str:
+    token_ids = _discretize_normalized_state(state)
+    return _STATE_START_TOKEN + "".join(f"<state_{int(k)}>" for k in token_ids) + _STATE_END_TOKEN
 
 
 def _build_robot_text(
-    *,
-    task: str,
-    discrete_state_string: str,
-    setup_type: str,
-    control_mode: str,
-    add_setup_tokens: bool,
-    add_control_tokens: bool,
-    num_images: int,
+    task: str, discrete_state_string: str, setup_type: str, control_mode: str, num_images: int
 ) -> str:
-    setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
-    control_text = _wrap_control_text(control_mode, add_control_tokens=add_control_tokens)
-    state_clause = (
-        f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
-    )
+    """Return the MolmoAct2 prompt of one sample."""
     prompt = (
-        f"The task is to {task}. The setup is {setup_text}.{state_clause} "
-        f"The expected control mode is {control_text}. Given these, what action should the robot take to complete the task?"
+        f"The task is to {task}. The setup is {_wrap_setup_text(setup_type)}. "
+        f"The current state of the robot is {discrete_state_string}. The expected control mode is "
+        f"{_wrap_control_text(control_mode)}. Given these, what action should the robot take to complete the task?"
     )
-    if num_images <= 0:
-        image_prefix = ""
-    elif num_images == 1:
-        image_prefix = "<|image|>"
-    else:
-        image_prefix = "".join(f"Image {idx + 1}<|image|>" for idx in range(num_images))
-    return f"{image_prefix}<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n{ACTION_OUTPUT_TOKEN}"
+    image_prefix = (
+        "<|image|>" if num_images == 1 else "".join(f"Image {idx + 1}<|image|>" for idx in range(num_images))
+    )
+    return (
+        f"{image_prefix}<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n{_ACTION_OUTPUT_TOKEN}"
+    )
 
 
-def _as_text_list(value: Any, batch_size: int) -> list[str]:
-    if value is None:
-        return [""] * batch_size
-    if isinstance(value, str):
-        return [value] * batch_size
-    if torch.is_tensor(value):
-        if value.ndim == 0:
-            return [str(value.item())] * batch_size
-        flat = value.detach().cpu().reshape(-1).tolist()
-        texts = [str(item) for item in flat]
-    elif isinstance(value, np.ndarray):
-        if value.ndim == 0:
-            return [str(value.item())] * batch_size
-        texts = [str(item) for item in value.reshape(-1).tolist()]
-    elif isinstance(value, (list, tuple)):
-        texts = [str(item) for item in value]
-    else:
-        texts = [str(value)]
-    if len(texts) == batch_size:
-        return texts
-    if len(texts) == 1:
-        return texts * batch_size
-    raise ValueError(f"Expected {batch_size} task strings, got {len(texts)}.")
-
-
-def _tokenize_discrete_action(action: np.ndarray, processor: Any) -> list[int]:
-    arr = np.asarray(action, dtype=np.float32)
-    if arr.ndim == 2:
-        arr = arr[None, :, :]
-    elif arr.ndim == 1:
-        arr = arr[None, None, :]
-    tokens_out = processor(arr)
-    if isinstance(tokens_out, dict):
-        tokens_out = tokens_out.get("input_ids", next(iter(tokens_out.values())))
-    if isinstance(tokens_out, np.ndarray):
-        tokens_out = tokens_out.tolist()
-    if torch.is_tensor(tokens_out):
-        tokens_out = tokens_out.detach().cpu().tolist()
-    if not isinstance(tokens_out, list):
-        raise TypeError(f"Unexpected discrete action tokenizer output type: {type(tokens_out)}")
-    if tokens_out and isinstance(tokens_out[0], (list, tuple, np.ndarray)):
-        tokens_out = tokens_out[0]
-    return [int(token_id) for token_id in tokens_out]
-
-
-def _build_discrete_action_string(action: np.ndarray, processor: Any) -> str:
-    token_ids = _tokenize_discrete_action(action, processor)
-    pieces = "".join(f"{ACTION_TOKEN_PREFIX}{int(token_id)}>" for token_id in token_ids)
-    return f"{ACTION_START_TOKEN}{pieces}{ACTION_END_TOKEN}"
-
-
-def _single_token_id(tokenizer: Any, token: str) -> int:
-    token_ids = tokenizer.encode(token, add_special_tokens=False)
-    if len(token_ids) != 1:
-        raise ValueError(f"MolmoAct2 token {token!r} must encode to one token, got {token_ids}.")
-    return int(token_ids[0])
-
-
-def _flatten_feature_names(raw_names: Any) -> list[str] | None:
-    if raw_names is None:
-        return None
-    if isinstance(raw_names, dict):
-        names: list[str] = []
-        for value in raw_names.values():
-            if isinstance(value, (list, tuple)):
-                names.extend(str(item) for item in value)
-            elif value is not None:
-                names.append(str(value))
-        return names or None
-    if isinstance(raw_names, (list, tuple)):
-        names = [str(item) for item in raw_names]
-        return names or None
-    return [str(raw_names)]
-
-
-def _feature_dim(stats: dict[str, Any] | None) -> int | None:
-    if not isinstance(stats, dict):
-        return None
-    for key in ("mean", "std", "min", "max", "q01", "q99", "q10", "q90", "mask"):
-        value = stats.get(key)
-        if value is None:
-            continue
-        if torch.is_tensor(value):
-            return int(value.shape[-1]) if value.ndim > 0 else None
-        arr = np.asarray(value)
-        return int(arr.shape[-1]) if arr.ndim > 0 else None
-    return None
-
-
-def _stats_array(value: Any) -> np.ndarray | None:
-    if value is None:
-        return None
-    if torch.is_tensor(value):
-        return value.detach().cpu().numpy() if value.ndim > 0 else None
-    arr = np.asarray(value)
-    return arr if arr.ndim > 0 else None
-
-
-def _validate_masked_passthrough_stats(feature_stats: dict[str, Any], mask: list[bool], key: str) -> None:
-    min_values = _stats_array(feature_stats.get("min"))
-    max_values = _stats_array(feature_stats.get("max"))
-    if min_values is None or max_values is None:
-        return
-
-    mask_array = np.asarray(mask, dtype=bool)
-    if (
-        mask_array.ndim != 1
-        or min_values.shape[-1] != mask_array.shape[0]
-        or max_values.shape[-1] != mask_array.shape[0]
-        or not bool((~mask_array).any())
-    ):
-        return
-
-    passthrough_min = min_values[..., ~mask_array]
-    passthrough_max = max_values[..., ~mask_array]
-    if bool(((passthrough_min < -1.0) | (passthrough_max > 1.0)).any()):
-        raise ValueError(
-            f"MolmoAct2 {key} gripper values are not under [-1, 1]. Please set normalize_gripper=True."
-        )
-
-
-def _feature_names_from_meta(dataset_meta: Any | None, feature_key: str) -> list[str] | None:
-    if dataset_meta is None:
-        return None
-
-    root = getattr(dataset_meta, "root", None)
-    candidate_roots = []
-    if root is not None:
-        repo_id = str(getattr(dataset_meta, "repo_id", "") or "").strip()
-        if repo_id:
-            candidate_roots.append(Path(root) / repo_id)
-        candidate_roots.append(Path(root))
-    for candidate_root in candidate_roots:
-        info_path = candidate_root / "meta" / "info.json"
-        if info_path.exists():
-            try:
-                with info_path.open("r", encoding="utf-8") as f:
-                    info = json.load(f)
-                names = _flatten_feature_names((info.get("features") or {}).get(feature_key, {}).get("names"))
-                if names:
-                    return names
-            except (OSError, json.JSONDecodeError, AttributeError):
-                pass
-
-    for container in (
-        getattr(getattr(dataset_meta, "info", None), "features", None),
-        getattr(dataset_meta, "features", None),
-    ):
-        if not isinstance(container, dict):
-            continue
-        feature = container.get(feature_key)
-        if not isinstance(feature, dict):
-            continue
-        names = _flatten_feature_names(feature.get("names"))
-        if names:
-            return names
-    return None
-
-
-def _add_gripper_masks_to_stats(
-    dataset_stats: dict[str, dict[str, Any]] | None,
-    dataset_meta: Any | None,
-    *,
-    normalize_gripper: bool,
-    dataset_feature_names: dict[str, Any] | None = None,
-) -> dict[str, dict[str, Any]] | None:
-    if not dataset_stats:
-        return dataset_stats
-
-    stats = deepcopy(dataset_stats)
-    for key in (ACTION, OBS_STATE):
-        feature_stats = stats.get(key)
-        if not isinstance(feature_stats, dict):
-            continue
-        dim = _feature_dim(feature_stats)
-        if dim is None:
-            continue
-
-        if normalize_gripper:
-            feature_stats["mask"] = [True] * dim
-            continue
-
-        existing_mask = feature_stats.get("mask")
-        if isinstance(existing_mask, Tensor):
-            existing_mask = existing_mask.detach().cpu().tolist()
-        if (
-            isinstance(existing_mask, list)
-            and len(existing_mask) == dim
-            and all(isinstance(value, bool) for value in existing_mask)
-        ):
-            _validate_masked_passthrough_stats(feature_stats, existing_mask, key)
-            feature_stats["mask"] = existing_mask
-            continue
-
-        names = _flatten_feature_names((dataset_feature_names or {}).get(key))
-        if names is None:
-            names = _feature_names_from_meta(dataset_meta, key)
-        if names is None:
-            names = _flatten_feature_names(feature_stats.get("names"))
-        if names is None or len(names) != dim:
-            raise ValueError(
-                f"MolmoAct2 normalize_gripper=False cannot identify the gripper dimension for {key!r}: "
-                f"expected {dim} feature names, got {names!r}. Supply policy.dataset_feature_names, "
-                "use tagged stats with an explicit mask, or set normalize_gripper=True."
-            )
-        mask = ["gripper" not in name.lower() for name in names]
-        _validate_masked_passthrough_stats(feature_stats, mask, key)
-        feature_stats["mask"] = mask
-    return stats
-
-
-def _normalization_masks_from_stats(
-    dataset_stats: dict[str, dict[str, Any]] | None,
-) -> dict[str, list[bool]]:
-    masks: dict[str, list[bool]] = {}
-    for key in (ACTION, OBS_STATE):
-        feature_stats = (dataset_stats or {}).get(key)
-        if not isinstance(feature_stats, dict):
-            continue
-        mask = feature_stats.get("mask")
-        if isinstance(mask, Tensor):
-            mask = mask.detach().cpu().tolist()
-        if isinstance(mask, list) and all(isinstance(value, bool) for value in mask):
-            masks[key] = mask
-    return masks
-
-
-class _MolmoAct2MaskedNormalizationMixin(_MaskedNormalizationBase):
-    """Masks normalization to a per-feature subset; mixed into the Normalizer/Unnormalizer steps below."""
-
-    @staticmethod
-    def _broadcast_feature_mask(mask: Tensor, tensor: Tensor) -> Tensor | None:
-        mask = mask.to(device=tensor.device, dtype=torch.bool)
-        if mask.ndim != 1 or tensor.shape[-1] != mask.shape[0]:
-            return None
-        while mask.ndim < tensor.ndim:
-            mask = mask.unsqueeze(0)
-        return mask
-
-    @staticmethod
-    def _validate_masked_passthrough_range(tensor: Tensor, mask: Tensor, key: str) -> None:
-        passthrough_mask = ~mask.expand_as(tensor)
-        if not bool(passthrough_mask.any()):
-            return
-        passthrough_values = tensor[passthrough_mask]
-        if bool(((passthrough_values < -1.0) | (passthrough_values > 1.0)).any()):
-            raise ValueError(
-                f"MolmoAct2 {key} gripper values are not under [-1, 1]. Please set normalize_gripper=True."
-            )
-
-    def _apply_transform(
-        self, tensor: Tensor, key: str, feature_type: FeatureType, *, inverse: bool = False
-    ) -> Tensor:
-        transformed = super()._apply_transform(tensor, key, feature_type, inverse=inverse)
-        stats = getattr(self, "_tensor_stats", {}).get(key, {})
-        mask = stats.get("mask") if isinstance(stats, dict) else None
-        if mask is None:
-            return transformed
-        mask = self._broadcast_feature_mask(mask, tensor)
-        if mask is None:
-            return transformed
-        if not inverse:
-            self._validate_masked_passthrough_range(tensor, mask, key)
-        return torch.where(mask, transformed, tensor)
-
-
-@ProcessorStepRegistry.register(name="molmoact2_masked_normalizer")
-@dataclass
-class MolmoAct2MaskedNormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixin, NormalizerProcessorStep):
-    pass
-
-
-@ProcessorStepRegistry.register(name="molmoact2_masked_unnormalizer")
-@dataclass
-class MolmoAct2MaskedUnnormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixin, UnnormalizerProcessorStep):
-    pass
-
-
-@ProcessorStepRegistry.register(name="molmoact2_clamp_normalized")
-@dataclass
-class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
-    """Clamp q01/q99-normalized state and action to the range used by the old trainer."""
-
-    normalization_masks: dict[str, list[bool]] | None = None
-
-    @staticmethod
-    def _broadcast_feature_mask(mask: list[bool], tensor: Tensor) -> Tensor | None:
-        tensor_mask = torch.tensor(mask, device=tensor.device, dtype=torch.bool)
-        if tensor_mask.ndim != 1 or tensor.shape[-1] != tensor_mask.shape[0]:
-            return None
-        while tensor_mask.ndim < tensor.ndim:
-            tensor_mask = tensor_mask.unsqueeze(0)
-        return tensor_mask
-
-    @staticmethod
-    def _validate_masked_passthrough_range(tensor: Tensor, mask: Tensor, key: str) -> None:
-        passthrough_mask = ~mask.expand_as(tensor)
-        if not bool(passthrough_mask.any()):
-            return
-        passthrough_values = tensor[passthrough_mask]
-        if bool(((passthrough_values < -1.0) | (passthrough_values > 1.0)).any()):
-            raise ValueError(
-                f"MolmoAct2 {key} gripper values are not under [-1, 1]. Please set normalize_gripper=True."
-            )
-
-    def _clamp_tensor(self, tensor: Tensor, key: str) -> Tensor:
-        mask = (self.normalization_masks or {}).get(key)
-        if mask is None:
-            return tensor.clamp(-1.0, 1.0)
-        tensor_mask = self._broadcast_feature_mask(mask, tensor)
-        if tensor_mask is None:
-            return tensor.clamp(-1.0, 1.0)
-        self._validate_masked_passthrough_range(tensor, tensor_mask, key)
-        return torch.where(tensor_mask, tensor.clamp(-1.0, 1.0), tensor)
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        transition = transition.copy()
-        observation = transition.get(TransitionKey.OBSERVATION)
-        if isinstance(observation, dict) and OBS_STATE in observation:
-            observation = observation.copy()
-            observation[OBS_STATE] = self._clamp_tensor(torch.as_tensor(observation[OBS_STATE]), OBS_STATE)
-            transition[TransitionKey.OBSERVATION] = observation
-        action = transition.get(TransitionKey.ACTION)
-        if action is not None:
-            transition[TransitionKey.ACTION] = self._clamp_tensor(torch.as_tensor(action), ACTION)
-        return transition
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
-
-    def get_config(self) -> dict[str, Any]:
-        return {"normalization_masks": deepcopy(self.normalization_masks)}
+# Processor steps
 
 
 @ProcessorStepRegistry.register(name="molmoact2_pack_inputs")
 @dataclass
 class MolmoAct2PackInputsProcessorStep(ProcessorStep):
-    checkpoint_path: str
-    checkpoint_revision: str | None = None
-    checkpoint_force_download: bool = False
-    action_mode: str = "continuous"
-    discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
+    """Build the MolmoAct2 model inputs from a normalized batch.
+
+    Each sample becomes a prompt with its cameras ("Image k<|image|>"), task, setup, discretized state and control
+    mode, tokenized with left padding. With an action (training), the action is clipped to [-1, 1] and zero padded
+    to `max_action_dim`, the cameras can be shuffled, and with `action_mode` "discrete" or "both" the prompt is
+    followed by the action's FAST tokens, which become the `labels`.
+
+    Args:
+        tokenizer_name (`str`, *optional*, defaults to `"allenai/MolmoAct2"`):
+            Hub repo id or local directory of the upstream MolmoAct2 tokenizer files, optionally pinned as
+            `repo@revision`.
+        processor_config (`dict[str, Any]`, *optional*):
+            Image processor settings and image token options of upstream's `processor_config.json`. Defaults to
+            those of the released checkpoints.
+        action_mode (`str`, *optional*, defaults to `"both"`):
+            Training objective: "continuous", "discrete" or "both".
+        action_tokenizer_name (`str`, *optional*, defaults to `"allenai/MolmoAct2-FAST-Tokenizer"`):
+            FAST tokenizer of the action tokens, optionally pinned as `repo@revision`.
+        image_keys (`list[str]`, *optional*):
+            Cameras in prompt order. Empty uses every `observation.images.*` key, sorted.
+        random_camera_order (`str`, *optional*, defaults to `"none"`):
+            Shuffle the cameras in training: "none", once per "episode", or for "all" samples.
+        setup_type (`str`, *optional*, defaults to `""`):
+            Embodiment description of the prompt.
+        control_mode (`str`, *optional*, defaults to `""`):
+            Action space description of the prompt.
+        action_dim (`int`, *optional*, defaults to 32):
+            Number of real action dims at inference; in training, the action's own size is used.
+        max_action_dim (`int`, *optional*, defaults to 32):
+            Action size of the model.
+    """
+
+    tokenizer_name: str = "allenai/MolmoAct2"
+    processor_config: dict[str, Any] = field(default_factory=lambda: deepcopy(_PROCESSOR_CONFIG))
+    action_mode: str = "both"
+    action_tokenizer_name: str = "allenai/MolmoAct2-FAST-Tokenizer"
     image_keys: list[str] = field(default_factory=list)
-    allow_image_key_fallback: bool = False
+    random_camera_order: str = "none"
     setup_type: str = ""
     control_mode: str = ""
-    normalize_language: bool = True
-    add_setup_tokens: bool = True
-    add_control_tokens: bool = True
-    num_state_tokens: int = 256
-    max_sequence_length: int | None = None
-    chunk_size: int = 30
+    action_dim: int = 32
     max_action_dim: int = 32
-    env_action_dim: int | None = None
 
     def __post_init__(self) -> None:
-        require_package("transformers", extra="molmoact2")
+        self._processor = _load_molmoact2_processor(self.processor_config, self.tokenizer_name)
+        self._fast: UniversalActionProcessor | None = None
+        if self.action_mode in ("discrete", "both"):
+            self._fast = UniversalActionProcessor.from_pretrained(self.action_tokenizer_name)
+        tokenizer = self._processor.tokenizer
+        self._eos_id = tokenizer.eos_token_id
+        self._action_start_id = tokenizer.convert_tokens_to_ids(_ACTION_START_TOKEN)
+        self._action_end_id = tokenizer.convert_tokens_to_ids(_ACTION_END_TOKEN)
 
-        checkpoint_location = _resolve_checkpoint_location(
-            self.checkpoint_path,
-            revision=self.checkpoint_revision,
-            force_download=bool(self.checkpoint_force_download),
+    def _tasks(
+        self, observation: dict[str, Any], complementary: dict[str, Any], batch_size: int
+    ) -> list[str]:
+        sources = (
+            complementary.get("task"),
+            observation.get("task"),
+            observation.get("observation.language"),
+            complementary.get("language_instruction"),
         )
-        self.processor = _load_local_molmoact2_processor(checkpoint_location)
-        self.action_processor = None
-        if self.action_mode in {"discrete", "both"}:
-            require_package("scipy", extra="molmoact2")
-            if UniversalActionProcessor is None:
-                raise RuntimeError("transformers and scipy are required to load MolmoAct2 action tokenizer.")
-            self.action_processor = UniversalActionProcessor.from_pretrained_local(
-                self.discrete_action_tokenizer,
-            )
-        self._action_start_id = _single_token_id(self.processor.tokenizer, ACTION_START_TOKEN)
-        self._action_end_id = _single_token_id(self.processor.tokenizer, ACTION_END_TOKEN)
-        self._eos_token = self.processor.tokenizer.eos_token or ""
-        self._eos_token_id = self.processor.tokenizer.eos_token_id
+        task = next((source for source in sources if source is not None), "")
+        tasks = [task] if isinstance(task, str) else [str(item) for item in task]
+        if len(tasks) == 1:
+            tasks *= batch_size
+        if len(tasks) != batch_size:
+            raise ValueError(f"MolmoAct2 expected {batch_size} tasks, got {len(tasks)}.")
+        return [_normalize_question_text(task) for task in tasks]
 
-    def get_config(self) -> dict[str, Any]:
-        return {
-            "checkpoint_path": self.checkpoint_path,
-            "checkpoint_revision": self.checkpoint_revision,
-            "checkpoint_force_download": self.checkpoint_force_download,
-            "action_mode": self.action_mode,
-            "discrete_action_tokenizer": self.discrete_action_tokenizer,
-            "image_keys": list(self.image_keys),
-            "allow_image_key_fallback": self.allow_image_key_fallback,
-            "setup_type": self.setup_type,
-            "control_mode": self.control_mode,
-            "normalize_language": self.normalize_language,
-            "add_setup_tokens": self.add_setup_tokens,
-            "add_control_tokens": self.add_control_tokens,
-            "num_state_tokens": self.num_state_tokens,
-            "max_sequence_length": self.max_sequence_length,
-            "chunk_size": self.chunk_size,
-            "max_action_dim": self.max_action_dim,
-            "env_action_dim": self.env_action_dim,
-        }
+    def _camera_orders(
+        self, num_cameras: int, complementary: dict[str, Any], batch_size: int
+    ) -> list[list[int]]:
+        if self.random_camera_order == "none" or num_cameras < 2:
+            return [list(range(num_cameras))] * batch_size
+        if self.random_camera_order == "episode":
+            episodes = torch.as_tensor(complementary["episode_index"]).reshape(-1).tolist()
+            generators = [torch.Generator().manual_seed(int(episode)) for episode in episodes]
+            return [torch.randperm(num_cameras, generator=generator).tolist() for generator in generators]
+        return [torch.randperm(num_cameras).tolist() for _ in range(batch_size)]
 
-    def _resolve_max_sequence_length(
-        self,
-        *,
-        num_images: int,
-        state_dim: int,
-        action_dim: int,
-        action_horizon: int,
-        include_discrete_action: bool,
-    ) -> int:
-        if self.max_sequence_length is not None:
-            return int(self.max_sequence_length)
-        return infer_molmoact2_max_sequence_length(
-            num_images=num_images,
-            state_dim=state_dim,
-            action_dim=action_dim,
-            action_horizon=action_horizon,
-            include_discrete_action=include_discrete_action,
-        )
-
-    def _batch_size(self, observation: dict[str, Any], action: Tensor | None) -> int:
-        if action is not None:
-            return int(action.shape[0])
-        state = observation.get(OBS_STATE)
-        if isinstance(state, (Tensor, np.ndarray)):
-            return int(state.shape[0]) if getattr(state, "ndim", 0) > 1 else 1
-        for key in self._resolve_image_keys(observation):
-            value = observation[key]
-            if isinstance(value, (Tensor, np.ndarray)):
-                return int(value.shape[0]) if getattr(value, "ndim", 0) == 4 else 1
-        return 1
-
-    @staticmethod
-    def _observation_image_keys(observation: dict[str, Any]) -> list[str]:
-        keys = [key for key in observation if str(key).startswith(f"{OBS_IMAGES}.")]
-        if not keys:
-            keys = [key for key in observation if str(key).startswith("observation.image")]
-        return sorted(keys)
-
-    def _resolve_image_keys(self, observation: dict[str, Any]) -> list[str]:
-        if self.image_keys:
-            missing = [key for key in self.image_keys if key not in observation]
-            if missing:
-                fallback_keys = self._observation_image_keys(observation)
-                if self.allow_image_key_fallback and fallback_keys:
-                    return fallback_keys
-                raise ValueError(f"MolmoAct2 image_keys missing from observation: {missing}.")
-            return list(self.image_keys)
-        keys = self._observation_image_keys(observation)
-        if not keys:
-            raise ValueError("MolmoAct2 requires at least one image observation.")
-        return sorted(keys)
-
-    def _extract_images(self, observation: dict[str, Any], batch_size: int) -> list[list[np.ndarray]]:
-        images_by_example: list[list[np.ndarray]] = [[] for _ in range(batch_size)]
-        for key in self._resolve_image_keys(observation):
-            value = observation[key]
-            for batch_idx in range(batch_size):
-                item = value
-                if (torch.is_tensor(value) or isinstance(value, np.ndarray)) and getattr(
-                    value, "ndim", 0
-                ) >= 4:
-                    item = value[batch_idx]
-                images_by_example[batch_idx].append(_normalize_image(item))
-        return images_by_example
-
-    def _extract_state(self, observation: dict[str, Any], batch_size: int) -> Tensor:
-        if OBS_STATE not in observation:
-            raise ValueError("MolmoAct2 requires observation.state for discrete state prompting.")
-        state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32)
-        if state.ndim == 1:
-            state = state.unsqueeze(0)
-        if int(state.shape[0]) != batch_size:
-            raise ValueError(f"State batch size {state.shape[0]} does not match batch size {batch_size}.")
-        return state
-
-    def _pad_action(self, action: Tensor) -> tuple[Tensor, Tensor, Tensor]:
-        if action.ndim == 2:
-            action = action.unsqueeze(1)
-        if action.ndim != 3:
-            raise ValueError(f"MolmoAct2 expected action shape [B, T, D], got {tuple(action.shape)}.")
-        if action.shape[-1] > self.max_action_dim:
-            raise ValueError(
-                f"Action dim {action.shape[-1]} exceeds MolmoAct2 max_action_dim={self.max_action_dim}."
-            )
-        padded = torch.zeros(
-            (*action.shape[:-1], self.max_action_dim),
-            device=action.device,
-            dtype=torch.float32,
-        )
-        padded[..., : action.shape[-1]] = action.to(dtype=torch.float32)
-        action_dim_is_pad = torch.ones(
-            (action.shape[0], self.max_action_dim), device=action.device, dtype=torch.bool
-        )
-        action_dim_is_pad[:, : action.shape[-1]] = False
-        # LeRobot clamps future actions at episode ends and marks them as padding. The
-        # original MolmoAct2 training objective keeps supervising those clamped actions
-        # for fixed-horizon fine-tuning, so the horizon mask is intentionally all false.
-        action_horizon_is_pad = torch.zeros(action.shape[:2], device=action.device, dtype=torch.bool)
-        return padded, action_horizon_is_pad, action_dim_is_pad
-
-    def _build_labels(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
+    def _labels(self, input_ids: Tensor) -> Tensor:
+        """Label the `<action_start>...<action_end>` span of each row and the `<|im_end|>` after it."""
         labels = torch.full_like(input_ids, -100)
-        for batch_idx in range(input_ids.shape[0]):
-            valid = attention_mask[batch_idx].to(dtype=torch.bool)
-            row = input_ids[batch_idx]
-            starts = (row == self._action_start_id).nonzero(as_tuple=False).flatten().tolist()
-            ends = (row == self._action_end_id).nonzero(as_tuple=False).flatten().tolist()
-            end_ptr = 0
-            for start in starts:
-                while end_ptr < len(ends) and ends[end_ptr] < start:
-                    end_ptr += 1
-                if end_ptr >= len(ends):
-                    raise ValueError(
-                        "Found <action_start> without matching <action_end> in MolmoAct2 labels."
-                    )
-                end = int(ends[end_ptr])
-                label_end = end + 1
-                if (
-                    self._eos_token_id is not None
-                    and label_end < int(row.shape[0])
-                    and int(row[label_end]) == int(self._eos_token_id)
-                ):
-                    label_end += 1
-                labels[batch_idx, start:label_end] = row[start:label_end]
-                end_ptr += 1
-            if not starts:
-                raise ValueError("No discrete action span found in MolmoAct2 training text.")
-            labels[batch_idx] = torch.where(
-                valid, labels[batch_idx], torch.full_like(labels[batch_idx], -100)
-            )
+        for row, ids in enumerate(input_ids.tolist()):
+            start = ids.index(self._action_start_id)
+            end = ids.index(self._action_end_id, start) + 1
+            if end < len(ids) and ids[end] == self._eos_id:
+                end += 1
+            labels[row, start:end] = input_ids[row, start:end]
         return labels
+
+    def _get_encoder_attention_mask(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
+        """Mask of the prompt tokens the action expert attends to.
+
+        With `action_mode="both"`, the action expert never sees `<|im_end|>` (also the BOS token) or the
+        `<action_start> ... <action_end>` span, as in upstream training. The released checkpoints are "both"
+        checkpoints, but the mask follows the action mode of the run: continuous-only training and its
+        inference keep the ordinary prompt mask.
+        """
+        mask = attention_mask.bool()
+        if self.action_mode != "both":
+            return mask
+        is_end = input_ids == self._action_end_id
+        started = (input_ids == self._action_start_id).cumsum(-1)
+        ended = is_end.cumsum(-1)
+        in_span = (started > ended) | (is_end & (started >= ended))
+        return mask & (input_ids != self._eos_id) & ~in_span
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
         observation = transition.get(TransitionKey.OBSERVATION) or {}
-        if not isinstance(observation, dict):
-            raise ValueError("MolmoAct2 expected an observation dictionary.")
         complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
-
-        raw_action = transition.get(TransitionKey.ACTION)
-        action = torch.as_tensor(raw_action, dtype=torch.float32) if raw_action is not None else None
-        batch_size = self._batch_size(observation, action)
-        state = self._extract_state(observation, batch_size)
-        images_by_example = self._extract_images(observation, batch_size)
-
-        task_source = complementary.get("task")
-        if task_source is None:
-            task_source = observation.get("task")
-        if task_source is None:
-            task_source = observation.get("observation.language")
-        if task_source is None:
-            task_source = complementary.get("language_instruction")
-        tasks = _as_text_list(task_source, batch_size)
-        if self.normalize_language:
-            tasks = [_normalize_question_text(task) for task in tasks]
+        if OBS_STATE not in observation:
+            raise ValueError(f"MolmoAct2 needs {OBS_STATE!r} for its prompt.")
+        state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32)
+        batch_size = state.shape[0]
+        tasks = self._tasks(observation, complementary, batch_size)
         complementary["task"] = tasks
+        action = transition.get(TransitionKey.ACTION)
 
-        action_padded = None
-        action_horizon_is_pad = None
-        action_dim_is_pad = torch.ones((batch_size, self.max_action_dim), dtype=torch.bool)
-        real_action_dim = int(self.env_action_dim or 0)
-        if action is not None:
-            action_padded, action_horizon_is_pad, action_dim_is_pad = self._pad_action(action)
-            real_action_dim = int(action.shape[-1])
-        elif real_action_dim > 0:
-            action_dim_is_pad[:, :real_action_dim] = False
-
-        prompt_texts: list[str] = []
-        full_texts: list[str] = []
-        flat_images: list[np.ndarray] = []
-        state_np = state.detach().cpu().numpy()
-        build_action_labels = action is not None and self.action_mode in {"discrete", "both"}
-        for batch_idx in range(batch_size):
-            images = images_by_example[batch_idx]
-            flat_images.extend(images)
-            discrete_state = _build_discrete_state_string(state_np[batch_idx], self.num_state_tokens)
-            prompt = _build_robot_text(
-                task=tasks[batch_idx],
-                discrete_state_string=discrete_state,
-                setup_type=self.setup_type,
-                control_mode=self.control_mode,
-                add_setup_tokens=self.add_setup_tokens,
-                add_control_tokens=self.add_control_tokens,
-                num_images=len(images),
-            )
-            prompt_texts.append(prompt)
-            if build_action_labels and action is not None:
-                if self.action_processor is None:
-                    raise ValueError("Discrete MolmoAct2 training requires an action tokenizer.")
-                answer = _build_discrete_action_string(
-                    action[batch_idx].detach().cpu().numpy(), self.action_processor
-                )
-                full_texts.append(f"{prompt}{answer}{self._eos_token}")
-            else:
-                full_texts.append(prompt)
-
-        if action is None:
-            action_horizon = self.chunk_size
-        elif action.ndim == 2:
-            action_horizon = 1
-        else:
-            action_horizon = int(action.shape[1])
-        max_sequence_length = self._resolve_max_sequence_length(
-            num_images=max((len(images) for images in images_by_example), default=0),
-            state_dim=int(state.shape[-1]),
-            action_dim=max(real_action_dim, 1),
-            action_horizon=action_horizon,
-            include_discrete_action=build_action_labels,
+        image_keys = self.image_keys or sorted(key for key in observation if key.startswith(f"{OBS_IMAGES}."))
+        missing = [key for key in image_keys if key not in observation]
+        if missing or not image_keys:
+            raise ValueError(f"MolmoAct2 needs the camera images {missing or f'{OBS_IMAGES}.*'}.")
+        cameras = []
+        for key in image_keys:
+            images = torch.as_tensor(observation[key])
+            if images.is_floating_point():
+                # Float images are in [0, 1]; the cast to uint8 truncates, as in upstream training.
+                images = (images * 255.0).clamp(0, 255).to(torch.uint8)
+            # Channels-first tensors stay on their device: the Molmo2 image processor resizes and patchifies them
+            # there (on the GPU after GPU augmentation or streaming), without a round trip through the CPU.
+            cameras.append(images)
+        orders = (
+            self._camera_orders(len(cameras), complementary, batch_size)
+            if action is not None
+            else [list(range(len(cameras)))] * batch_size
         )
-        text = full_texts if build_action_labels else prompt_texts
-        inputs = self.processor(
-            text=text,
-            images=flat_images,
+        images_per_sample = [
+            cameras[camera][sample] for sample in range(batch_size) for camera in orders[sample]
+        ]
+
+        texts = [
+            _build_robot_text(
+                task,
+                _build_discrete_state_string(sample_state),
+                self.setup_type,
+                self.control_mode,
+                len(image_keys),
+            )
+            for task, sample_state in zip(tasks, state.cpu().numpy(), strict=True)
+        ]
+        action_dim = self.action_dim
+        if action is not None:
+            # Clamp the normalized targets to the range used by the old trainer (robot_processing.py).
+            action = torch.as_tensor(action, dtype=torch.float32).clamp(-1.0, 1.0)
+            if action.ndim != 3 or action.shape[-1] > self.max_action_dim:
+                raise ValueError(
+                    f"MolmoAct2 expects actions [B, T, D] with D <= {self.max_action_dim}, got {tuple(action.shape)}."
+                )
+            action_dim = action.shape[-1]
+            if self._fast is not None:
+                eos = self._processor.tokenizer.eos_token
+                action_texts = [
+                    _build_discrete_action_string_from_action(chunk, self._fast)
+                    for chunk in action.cpu().numpy()
+                ]
+                texts = [
+                    f"{text}{action_text}{eos}" for text, action_text in zip(texts, action_texts, strict=True)
+                ]
+            transition[TransitionKey.ACTION] = F.pad(action, (0, self.max_action_dim - action_dim))
+
+        inputs = self._processor(
+            text=texts,
+            images=images_per_sample,
             return_tensors="pt",
             padding=True,
-            pad_to_multiple_of=MOLMOACT2_SEQUENCE_BUCKET_MULTIPLE,
+            pad_to_multiple_of=_SEQUENCE_PAD_MULTIPLE,
         )
-        valid_sequence_length = int(inputs["attention_mask"].sum(dim=1).max().item())
-        if valid_sequence_length > max_sequence_length:
-            raise ValueError(
-                f"MolmoAct2 valid sequence length {valid_sequence_length} exceeds "
-                f"max_sequence_length={max_sequence_length}."
-            )
-        # The tokenizer pads before the vendored processor inserts BOS, so the
-        # final tensor width is ``8k + 1``. Bound that masked width separately
-        # from the valid-token cap to catch malformed/unbounded processor output.
-        max_padded_sequence_length = (
-            _round_up(max_sequence_length - 1, MOLMOACT2_SEQUENCE_BUCKET_MULTIPLE) + 1
+        input_ids = inputs["input_ids"].long()
+        attention_mask = inputs["attention_mask"].long()
+        complementary.update(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            # Native MolmoAct2 training assigns positions only across valid tokens, so keep the real
+            # prompt/image tokens at 0..N-1 instead of shifting them by each row's left-padding length.
+            position_ids=(attention_mask.cumsum(-1) - 1).clamp(min=0),
+            mm_token_type_ids=inputs["mm_token_type_ids"].long(),
+            encoder_attention_mask=self._get_encoder_attention_mask(input_ids, attention_mask),
+            pixel_values=inputs["pixel_values"].float(),
+            image_token_pooling=inputs["image_token_pooling"].long(),
+            image_grids=inputs["image_grids"].long(),
+            action_dim_is_pad=(torch.arange(self.max_action_dim) >= action_dim).repeat(batch_size, 1),
         )
-        padded_sequence_length = int(inputs["input_ids"].shape[1])
-        if padded_sequence_length > max_padded_sequence_length:
-            raise ValueError(
-                f"MolmoAct2 padded sequence length {padded_sequence_length} exceeds "
-                f"the bounded width {max_padded_sequence_length}."
-            )
-
-        # The local processor must left-pad so batched image placeholders and BOS
-        # insertion stay aligned. Native MolmoAct2 training assigns positions only
-        # across valid tokens, so keep the real prompt/image tokens at 0..N-1
-        # instead of shifting them by each row's left-padding length.
-        inputs["position_ids"] = _position_ids_from_attention_mask(inputs["attention_mask"])
-
-        if build_action_labels:
-            inputs["labels"] = self._build_labels(inputs["input_ids"], inputs["attention_mask"])
-
-        complementary.update(dict(inputs))
-        complementary["action_dim_is_pad"] = action_dim_is_pad
-        if action_horizon_is_pad is not None:
-            complementary["action_horizon_is_pad"] = action_horizon_is_pad
-
-        if action_padded is not None:
-            transition[TransitionKey.ACTION] = action_padded
+        if action is not None and self._fast is not None:
+            complementary["labels"] = self._labels(input_ids)
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
 
@@ -1063,177 +870,138 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
-
-@ProcessorStepRegistry.register(name="molmoact2_state_frame_transform")
-@dataclass
-class MolmoAct2StateFrameTransformStep(ProcessorStep):
-    """Convert robot state from arm frame to model frame before normalization.
-
-    Required for zero-shot deployment of MolmoAct2-SO100_101 on SO-100/101
-    arms calibrated with LeRobot >= 0.5.0 (v3.0 convention). The checkpoint
-    was trained on data using a different joint convention (sign flip on
-    shoulder_lift, 90 deg offset on shoulder_lift and elbow_flex).
-
-    No-op when joint_signs and joint_offsets are None (default), so this
-    step has no effect on fine-tuned models or other embodiments.
-
-    state_model = signs * arm_state + offsets
-
-    See: https://huggingface.co/docs/lerobot/backwardcomp
-    """
-
-    joint_signs: list[float] | None = None
-    joint_offsets: list[float] | None = None
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        if self.joint_signs is None or self.joint_offsets is None:
-            return transition
-        observation = transition.get(TransitionKey.OBSERVATION)
-        if not isinstance(observation, dict) or OBS_STATE not in observation:
-            return transition
-        transition = transition.copy()
-        observation = observation.copy()
-        state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32).clone()
-        n = len(self.joint_signs)
-        signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=state.device)
-        offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=state.device)
-        state[..., :n] = signs * state[..., :n] + offsets
-        observation[OBS_STATE] = state
-        transition[TransitionKey.OBSERVATION] = observation
-        return transition
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
-
     def get_config(self) -> dict[str, Any]:
-        return {"joint_signs": self.joint_signs, "joint_offsets": self.joint_offsets}
-
-
-@ProcessorStepRegistry.register(name="molmoact2_action_frame_transform")
-@dataclass
-class MolmoAct2ActionFrameTransformStep(ProcessorStep):
-    """Convert model action from model frame back to arm frame after unnormalization.
-
-    Inverse of MolmoAct2StateFrameTransformStep. Required for zero-shot
-    MolmoAct2-SO100_101 on SO-100/101 arms. No-op when both fields are None.
-
-    action_arm = signs * (model_action - offsets)
-
-    See: https://huggingface.co/docs/lerobot/backwardcomp
-    """
-
-    joint_signs: list[float] | None = None
-    joint_offsets: list[float] | None = None
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        if self.joint_signs is None or self.joint_offsets is None:
-            return transition
-        action = transition.get(TransitionKey.ACTION)
-        if action is None:
-            return transition
-        transition = transition.copy()
-        action = torch.as_tensor(action, dtype=torch.float32).clone()
-        n = len(self.joint_signs)
-        signs = torch.tensor(self.joint_signs, dtype=torch.float32, device=action.device)
-        offsets = torch.tensor(self.joint_offsets, dtype=torch.float32, device=action.device)
-        action[..., :n] = signs * (action[..., :n] - offsets)
-        transition[TransitionKey.ACTION] = action
-        return transition
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
-
-    def get_config(self) -> dict[str, Any]:
-        return {"joint_signs": self.joint_signs, "joint_offsets": self.joint_offsets}
-
-
-@ProcessorStepRegistry.register(name="molmoact2_clamp_action")
-@dataclass
-class MolmoAct2ClampActionProcessorStep(ProcessorStep):
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        transition = transition.copy()
-        action = transition.get(TransitionKey.ACTION)
-        if action is not None:
-            transition[TransitionKey.ACTION] = torch.as_tensor(action).clamp(-1.0, 1.0)
-        return transition
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        return features
-
-
-def _translate_pretrained_processor_overrides(
-    overrides: dict[str, dict[str, Any]] | None,
-    *,
-    standard_name: str,
-    molmoact2_name: str,
-) -> dict[str, dict[str, Any]]:
-    """Translate LeRobot's standard normalization override to the masked step."""
-    translated = {name: dict(values) for name, values in (overrides or {}).items()}
-    standard_override = translated.pop(standard_name, None)
-    if standard_override is not None:
-        translated[molmoact2_name] = {
-            **standard_override,
-            **translated.get(molmoact2_name, {}),
+        return {
+            "tokenizer_name": self.tokenizer_name,
+            "processor_config": deepcopy(self.processor_config),
+            "action_mode": self.action_mode,
+            "action_tokenizer_name": self.action_tokenizer_name,
+            "image_keys": list(self.image_keys),
+            "random_camera_order": self.random_camera_order,
+            "setup_type": self.setup_type,
+            "control_mode": self.control_mode,
+            "action_dim": self.action_dim,
+            "max_action_dim": self.max_action_dim,
         }
-    return translated
 
 
-def _prepare_pretrained_processor_overrides(
+@ProcessorStepRegistry.register(name="molmoact2_clip_actions")
+@dataclass
+class MolmoAct2ClipActionsProcessorStep(PolicyActionProcessorStep):
+    """Clip normalized actions to [-1, 1] before unnormalizing them, as upstream does."""
+
+    def action(self, action: PolicyAction) -> PolicyAction:
+        return action.clamp(-1.0, 1.0)
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+# Pipelines
+
+
+def _feature_names(
+    config: MolmoAct2Config, dataset_meta: LeRobotDatasetMetadata | None
+) -> dict[str, list[str] | None]:
+    """Per-dimension names of the state and action, which locate the gripper dims."""
+    # lerobot-train passes no `dataset_meta` to the processors; `make_policy` attaches it to the config.
+    meta = dataset_meta if dataset_meta is not None else getattr(config, "_runtime_dataset_meta", None)
+    names = meta.names if meta is not None else {}
+    return {key: names.get(key) for key in (OBS_STATE, ACTION)}
+
+
+def make_molmoact2_pre_post_processors(
     config: MolmoAct2Config,
-    preprocessor_overrides: dict[str, dict[str, Any]] | None,
-    postprocessor_overrides: dict[str, dict[str, Any]] | None,
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Translate generic overrides and make fine-tuning stats mask-aware."""
-    translated_preprocessor_overrides = _translate_pretrained_processor_overrides(
-        preprocessor_overrides,
-        standard_name="normalizer_processor",
-        molmoact2_name="molmoact2_masked_normalizer",
-    )
-    translated_postprocessor_overrides = _translate_pretrained_processor_overrides(
-        postprocessor_overrides,
-        standard_name="unnormalizer_processor",
-        molmoact2_name="molmoact2_masked_unnormalizer",
-    )
+    dataset_stats: dict[str, dict[str, Any]] | None = None,
+    dataset_meta: LeRobotDatasetMetadata | None = None,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Build the MolmoAct2 preprocessor and postprocessor.
 
-    preprocessor_stats = translated_preprocessor_overrides.get("molmoact2_masked_normalizer", {}).get("stats")
-    postprocessor_stats = translated_postprocessor_overrides.get("molmoact2_masked_unnormalizer", {}).get(
-        "stats"
-    )
-    incoming_stats = preprocessor_stats or postprocessor_stats
-    if incoming_stats:
-        masked_stats = _add_gripper_masks_to_stats(
-            incoming_stats,
-            getattr(config, "_runtime_dataset_meta", None),
-            normalize_gripper=config.normalize_gripper,
-            dataset_feature_names=config.dataset_feature_names,
-        )
-        normalization_masks = _normalization_masks_from_stats(masked_stats)
-        translated_preprocessor_overrides.setdefault("molmoact2_masked_normalizer", {})["stats"] = (
-            masked_stats
-        )
-        translated_postprocessor_overrides.setdefault("molmoact2_masked_unnormalizer", {})["stats"] = (
-            masked_stats
-        )
-        translated_preprocessor_overrides.setdefault("molmoact2_clamp_normalized", {})[
-            "normalization_masks"
-        ] = normalization_masks
+    The preprocessor renames the observations, adds a batch dim, maps the state (and action targets) to the
+    checkpoint's joint units and frame, normalizes them, packs the model inputs and moves them to `config.device`.
+    The postprocessor clips and unnormalizes the actions, maps them back to the robot's joint units and frame and
+    moves them to the CPU. Dataset stats are mapped to the checkpoint's joint units too.
 
-    return translated_preprocessor_overrides, translated_postprocessor_overrides
+    With `config.norm_tag`, the stats come from that embodiment of the checkpoint's `norm_stats.json`, and so do the
+    setup type, control mode and cameras left unset in the config.
+
+    Args:
+        config (`MolmoAct2Config`):
+            The policy config.
+        dataset_stats (`dict[str, dict[str, Any]]`, *optional*):
+            Dataset stats per feature key.
+        dataset_meta (`LeRobotDatasetMetadata`, *optional*):
+            Dataset metadata, for the names of the state and action dims. Defaults to the one `make_policy`
+            attaches to the config.
+
+    Returns:
+        `tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]`: The preprocessor and the postprocessor.
+    """
+    # Zero-shot MolmoAct2-SO100_101 on SO-100/101 arms calibrated with LeRobot >= 0.5.0 needs a sign flip on
+    # shoulder_lift and 90 deg offsets on shoulder_lift and elbow_flex; MolmoAct2-BimanualYAM needs radians and
+    # grippers in [0, 1].
+    joint_transform = JointAffineProcessorStep(scales=config.joint_scales or [], offsets=config.joint_offsets)
+    stats = dataset_stats or {}
+    metadata: dict[str, Any] = {}
+    if config.norm_tag:
+        stats, metadata = _load_norm_tag(config)
+    else:
+        # The dataset's stats are in the robot's units; the normalizer sees the checkpoint's.
+        stats = joint_transform.transform_stats(stats)
+    normalizer_stats, unnormalizer_stats = _normalization_stats(
+        stats, _feature_names(config, dataset_meta), config.normalize_gripper
+    )
+    image_keys = list(config.image_keys)
+    camera_keys = metadata.get("camera_keys") or []
+    if not image_keys and camera_keys and all(key in config.input_features for key in camera_keys):
+        image_keys = list(camera_keys)
+    action_feature = config.output_features.get(ACTION)
+
+    steps = make_default_policy_processor_steps(config, normalizer_stats)
+    input_steps: list[ProcessorStep] = [
+        steps.rename_observations,
+        steps.add_batch_dim,
+        joint_transform,
+        steps.normalize,
+        MolmoAct2PackInputsProcessorStep(
+            tokenizer_name=config.tokenizer_name,
+            action_mode=config.action_mode,
+            action_tokenizer_name=config.action_tokenizer_name,
+            image_keys=image_keys,
+            random_camera_order=config.random_camera_order,
+            setup_type=config.setup_type or metadata.get("setup_type", ""),
+            control_mode=config.control_mode or metadata.get("control_mode", ""),
+            action_dim=action_feature.shape[0] if action_feature is not None else config.max_action_dim,
+            max_action_dim=config.max_action_dim,
+        ),
+        steps.to_device,
+    ]
+    output_steps: list[ProcessorStep] = [
+        MolmoAct2ClipActionsProcessorStep(),
+        # Constant dims normalize with centred stats but unnormalize with the original ones.
+        UnnormalizerProcessorStep(
+            features=config.output_features, norm_map=config.normalization_mapping, stats=unnormalizer_stats
+        ),
+        JointAffineProcessorStep(
+            scales=config.joint_scales or [], offsets=config.joint_offsets, inverse=True
+        ),
+        steps.to_cpu,
+    ]
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
 
 
 def make_molmoact2_pre_post_processors_from_pretrained(
     config: MolmoAct2Config,
-    pretrained_path: str,
+    pretrained_path: str | Path,
     *,
     revision: str | None = None,
-    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
-    dataset_meta: Any | None = None,
+    dataset_stats: dict[str, dict[str, Any]] | None = None,
+    dataset_meta: LeRobotDatasetMetadata | None = None,
     preprocessor_overrides: dict[str, dict[str, Any]] | None = None,
     postprocessor_overrides: dict[str, dict[str, Any]] | None = None,
     preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
@@ -1242,141 +1010,81 @@ def make_molmoact2_pre_post_processors_from_pretrained(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Load saved MolmoAct2 pipelines with LeRobot's runtime overrides.
+    """Load saved MolmoAct2 pipelines, adjusting the new stats of a fine-tuning run.
 
-    LeRobot entry points use the standard normalizer registry names when
-    overriding the device, rename map, feature schema, and fine-tuning dataset
-    statistics. MolmoAct2 uses mask-aware normalization steps, so translate the
-    two names and add gripper masks before replacing saved fine-tuning stats.
-    When no stats are supplied (checkpoint resume), the serialized processor
-    stats and clamp masks remain authoritative.
+    Fine-tuning passes the new dataset's stats as `stats` overrides of `normalizer_processor` and
+    `unnormalizer_processor`; they are mapped to the checkpoint's joint units and adjusted as when the processors are
+    first built (or replaced by the stats of `config.norm_tag`). Without new stats (resume, inference), the saved
+    stats are kept. The image processor settings are the saved ones. The joint transform, the tokenizer, the training
+    objective, the real action size and the camera shuffling follow the current config, and so do the setup type,
+    control mode and cameras when the config (or the norm tag, for the first two) sets them, e.g. when fine-tuning the
+    base checkpoint, whose prompt has none.
+
+    Args:
+        config (`MolmoAct2Config`):
+            The policy config.
+        pretrained_path (`str | Path`):
+            Hub repo id or local directory of the saved pipelines.
+        revision (`str`, *optional*):
+            Hub branch, tag or commit of `pretrained_path`.
+        dataset_stats (`dict[str, dict[str, Any]]`, *optional*):
+            Unused: new stats arrive through the overrides.
+        dataset_meta (`LeRobotDatasetMetadata`, *optional*):
+            Dataset metadata, for the names of the state and action dims. Defaults to the one `make_policy`
+            attaches to the config.
+        preprocessor_overrides (`dict[str, dict[str, Any]]`, *optional*):
+            Constructor overrides of the preprocessor steps, by registry name.
+        postprocessor_overrides (`dict[str, dict[str, Any]]`, *optional*):
+            Constructor overrides of the postprocessor steps, by registry name.
+        preprocessor_config_filename (`str`, *optional*, defaults to `"policy_preprocessor.json"`):
+            File name of the saved preprocessor.
+        postprocessor_config_filename (`str`, *optional*, defaults to `"policy_postprocessor.json"`):
+            File name of the saved postprocessor.
+
+    Returns:
+        `tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]`: The preprocessor and the postprocessor.
     """
-    # Fine-tuning stats reach MolmoAct2 through the normalizer overrides, not these two.
-    del dataset_stats, dataset_meta
-    prepared_preprocessor_overrides, prepared_postprocessor_overrides = (
-        _prepare_pretrained_processor_overrides(
-            config,
-            preprocessor_overrides,
-            postprocessor_overrides,
+    del dataset_stats
+    preprocessor_overrides = {name: dict(values) for name, values in (preprocessor_overrides or {}).items()}
+    postprocessor_overrides = {name: dict(values) for name, values in (postprocessor_overrides or {}).items()}
+    normalizer_overrides = preprocessor_overrides.setdefault("normalizer_processor", {})
+    unnormalizer_overrides = postprocessor_overrides.setdefault("unnormalizer_processor", {})
+    joint_transform = JointAffineProcessorStep(scales=config.joint_scales or [], offsets=config.joint_offsets)
+    for overrides in (preprocessor_overrides, postprocessor_overrides):
+        overrides["joint_affine_processor"] = {
+            "scales": joint_transform.scales,
+            "offsets": joint_transform.offsets,
+        }
+    stats = normalizer_overrides.get("stats") or unnormalizer_overrides.get("stats")
+    metadata: dict[str, Any] = {}
+    if stats and config.norm_tag:
+        stats, metadata = _load_norm_tag(config)
+    elif stats:
+        # The dataset's stats are in the robot's units; the normalizer sees the checkpoint's.
+        stats = joint_transform.transform_stats(stats)
+    if stats:
+        normalizer_overrides["stats"], unnormalizer_overrides["stats"] = _normalization_stats(
+            stats, _feature_names(config, dataset_meta), config.normalize_gripper
         )
-    )
+    pack_overrides = preprocessor_overrides.setdefault("molmoact2_pack_inputs", {})
+    pack_overrides["tokenizer_name"] = config.tokenizer_name
+    pack_overrides["action_mode"] = config.action_mode
+    pack_overrides["random_camera_order"] = config.random_camera_order
+    action_feature = config.output_features.get(ACTION)
+    if action_feature is not None:
+        pack_overrides["action_dim"] = action_feature.shape[0]
+    prompt = {
+        "setup_type": config.setup_type or metadata.get("setup_type"),
+        "control_mode": config.control_mode or metadata.get("control_mode"),
+        "image_keys": config.image_keys,
+    }
+    pack_overrides.update({name: value for name, value in prompt.items() if value})
     return load_pretrained_policy_processors(
         pretrained_path,
         revision=revision,
-        preprocessor_overrides=prepared_preprocessor_overrides,
-        postprocessor_overrides=prepared_postprocessor_overrides,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
         trust_remote_code=config.trust_remote_code,
-    )
-
-
-def make_molmoact2_pre_post_processors(
-    config: MolmoAct2Config,
-    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
-    dataset_meta: Any | None = None,
-) -> tuple[
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
-]:
-    env_action_dim = None
-    if config.output_features and ACTION in config.output_features:
-        env_action_dim = int(config.output_features[ACTION].shape[0])
-
-    hf_metadata: dict[str, Any] = {}
-    if str(config.norm_tag or "").strip():
-        dataset_stats, hf_metadata = _load_hf_norm_stats_for_tag(
-            config.checkpoint_path,
-            revision=config.checkpoint_revision,
-            force_download=bool(config.checkpoint_force_download),
-            norm_tag=config.norm_tag,
-            norm_stats_path=config.norm_stats_path,
-        )
-
-    image_keys = list(config.image_keys)
-    visual_feature_keys = [
-        key for key, feature in config.input_features.items() if feature.type == FeatureType.VISUAL
-    ]
-    if not image_keys and isinstance(hf_metadata.get("camera_keys"), list):
-        metadata_image_keys = [str(key) for key in hf_metadata["camera_keys"]]
-        if not visual_feature_keys or all(key in config.input_features for key in metadata_image_keys):
-            image_keys = metadata_image_keys
-    if not image_keys:
-        image_keys = visual_feature_keys
-    setup_type = config.setup_type or str(hf_metadata.get("setup_type") or "")
-    control_mode = config.control_mode or str(hf_metadata.get("control_mode") or "")
-    chunk_size = int(hf_metadata.get("action_horizon") or config.chunk_size)
-
-    masked_dataset_stats = _add_gripper_masks_to_stats(
-        dataset_stats,
-        dataset_meta,
-        normalize_gripper=config.normalize_gripper,
-        dataset_feature_names=config.dataset_feature_names,
-    )
-    normalization_masks = _normalization_masks_from_stats(masked_dataset_stats)
-    if config.device is None:
-        raise ValueError(
-            "MolmoAct2 processors require `config.device`; `PreTrainedConfig.__post_init__` resolves it."
-        )
-
-    input_steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),
-        AddBatchDimensionProcessorStep(),
-        MolmoAct2StateFrameTransformStep(
-            joint_signs=config.joint_signs,
-            joint_offsets=config.joint_offsets,
-        ),
-        MolmoAct2MaskedNormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=masked_dataset_stats,
-        ),
-        MolmoAct2ClampNormalizedProcessorStep(normalization_masks=normalization_masks),
-        MolmoAct2PackInputsProcessorStep(
-            checkpoint_path=config.checkpoint_path,
-            checkpoint_revision=config.checkpoint_revision,
-            checkpoint_force_download=config.checkpoint_force_download,
-            action_mode=config.action_mode,
-            discrete_action_tokenizer=config.discrete_action_tokenizer,
-            image_keys=image_keys,
-            allow_image_key_fallback=not bool(config.image_keys),
-            setup_type=setup_type,
-            control_mode=control_mode,
-            normalize_language=config.normalize_language,
-            add_setup_tokens=config.add_setup_tokens,
-            add_control_tokens=config.add_control_tokens,
-            num_state_tokens=config.num_state_tokens,
-            max_sequence_length=config.max_sequence_length,
-            chunk_size=chunk_size,
-            max_action_dim=config.expected_max_action_dim,
-            env_action_dim=env_action_dim,
-        ),
-        DeviceProcessorStep(device=config.device),
-    ]
-
-    output_steps: list[ProcessorStep] = [
-        MolmoAct2ClampActionProcessorStep(),
-        MolmoAct2MaskedUnnormalizerProcessorStep(
-            features=config.output_features,
-            norm_map=config.normalization_mapping,
-            stats=masked_dataset_stats,
-        ),
-        MolmoAct2ActionFrameTransformStep(
-            joint_signs=config.joint_signs,
-            joint_offsets=config.joint_offsets,
-        ),
-        DeviceProcessorStep(device="cpu"),
-    ]
-
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
     )

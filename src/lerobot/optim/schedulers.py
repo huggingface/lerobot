@@ -183,6 +183,45 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
         return LambdaLR(optimizer, lr_lambda, -1)
 
 
+@LRSchedulerConfig.register_subclass("molmoact2_cosine_with_warmup")
+@dataclass
+class MolmoAct2CosineWithWarmupSchedulerConfig(LRSchedulerConfig):
+    """Official MolmoAct2 warmup followed by cosine decay.
+
+    The shared LeRobot Pi0 scheduler evaluates its cosine against the absolute
+    global step. That creates a learning-rate discontinuity at the end of
+    warmup (especially visible in short profiles). Native MolmoAct2 instead
+    starts cosine time at zero after warmup and applies the same multiplier to
+    every component-specific base LR, so each group decays to `alpha_f` of its
+    own peak. The decay ends at the last training step unless `num_decay_steps`
+    is set, as native MolmoAct2 ends it at `max_duration`.
+    """
+
+    num_warmup_steps: int
+    alpha_f: float = 0.1
+    num_decay_steps: int | None = None
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        decay_steps = max(self.num_decay_steps or num_training_steps, 1)
+        warmup_steps = min(self.num_warmup_steps, decay_steps)
+        alpha = self.alpha_f
+
+        def lr_lambda(current_step: int) -> float:
+            # LambdaLR installs lambda(0) before the first optimizer update and
+            # LeRobot advances it after every update. Official MolmoAct2 first
+            # increments global_step, then evaluates the LR before that
+            # update, so its kth optimizer update uses f(k), not f(k - 1).
+            step = current_step + 1
+            if step < warmup_steps:
+                return step / warmup_steps
+            if step >= decay_steps:
+                return alpha
+            progress = (step - warmup_steps) / (decay_steps - warmup_steps)
+            return alpha + (1.0 - alpha) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+        return LambdaLR(optimizer, lr_lambda, -1)
+
+
 def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:
     state_dict = scheduler.state_dict()
     write_json(state_dict, save_dir / SCHEDULER_STATE)

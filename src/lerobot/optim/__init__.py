@@ -19,6 +19,7 @@ from .grad_scaler import (
 from .optimizers import (
     AdamConfig as AdamConfig,
     AdamWConfig as AdamWConfig,
+    MolmoAct2AdamWConfig as MolmoAct2AdamWConfig,
     MultiAdamConfig as MultiAdamConfig,
     OptimizerConfig as OptimizerConfig,
     PraxisAdamWConfig as PraxisAdamWConfig,
@@ -31,6 +32,7 @@ from .schedulers import (
     CosineDecayWithWarmupSchedulerConfig as CosineDecayWithWarmupSchedulerConfig,
     DiffuserSchedulerConfig as DiffuserSchedulerConfig,
     LRSchedulerConfig as LRSchedulerConfig,
+    MolmoAct2CosineWithWarmupSchedulerConfig as MolmoAct2CosineWithWarmupSchedulerConfig,
     VQBeTSchedulerConfig as VQBeTSchedulerConfig,
     load_scheduler_state,
     save_scheduler_state,
@@ -44,6 +46,7 @@ __all__ = [
     # Optimizer configs
     "AdamConfig",
     "AdamWConfig",
+    "MolmoAct2AdamWConfig",
     "MultiAdamConfig",
     "OptimizerConfig",
     "PraxisAdamWConfig",
@@ -53,6 +56,7 @@ __all__ = [
     "CosineDecayWithWarmupSchedulerConfig",
     "DiffuserSchedulerConfig",
     "LRSchedulerConfig",
+    "MolmoAct2CosineWithWarmupSchedulerConfig",
     "VQBeTSchedulerConfig",
     # State management
     "load_optimizer_state",
