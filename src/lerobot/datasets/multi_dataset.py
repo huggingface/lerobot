@@ -16,7 +16,6 @@
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import datasets
 import torch
@@ -37,11 +36,9 @@ def _child_root(root: str | Path, repo_id: str) -> str | Path:
     """Append ``repo_id`` to ``root`` without turning an object-store URI into a local path."""
     if not isinstance(root, str):
         return root / repo_id
-    scheme, netloc, path, query, fragment = urlsplit(root)
-    path = f"{path.rstrip('/')}/{repo_id}"
-    suffix = f"?{query}" if query else ""
-    suffix += f"#{fragment}" if fragment else ""
-    return f"{scheme}://{netloc}{path}{suffix}"
+    # Literal append: object-store keys may contain ``#`` and schemes may be uppercase or contain
+    # underscores, none of which URL reassembly preserves. The root is a prefix, not a signed URL.
+    return root + ("" if root.endswith("/") else "/") + repo_id
 
 
 class MultiLeRobotDataset(torch.utils.data.Dataset):

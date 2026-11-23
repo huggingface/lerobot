@@ -489,10 +489,28 @@ def test_multilerobot_dataset_set_image_transforms_propagates(tmp_path, lerobot_
     assert all(child.image_transforms is None for child in dataset._datasets)
 
 
+def _record_multi_child_roots(monkeypatch):
+    child_roots = {}
+
+    def fake_lerobot_dataset(repo_id, root, **kwargs):
+        child_roots[repo_id] = root
+        return SimpleNamespace(
+            features={"state": {"dtype": "float32", "shape": (1,), "names": None}},
+            meta=SimpleNamespace(stats={}),
+            set_image_transforms=lambda transforms: None,
+        )
+
+    monkeypatch.setattr(multi_dataset_module, "LeRobotDataset", fake_lerobot_dataset)
+    return child_roots
+
+
 @pytest.mark.parametrize(
     ("root", "expected_child_prefix"),
     [
         ("s3://bucket/multi", "s3://bucket/multi/"),
+        ("S3://Bucket/multi", "S3://Bucket/multi/"),
+        ("my_store://bucket/multi", "my_store://bucket/multi/"),
+        ("s3://bucket/run#2", "s3://bucket/run#2/"),
         ("hf://datasets/owner/base/", "hf://datasets/owner/base/"),
         ("gs://bucket/multi/", "gs://bucket/multi/"),
         ("az://container/multi", "az://container/multi/"),
@@ -500,19 +518,7 @@ def test_multilerobot_dataset_set_image_transforms_propagates(tmp_path, lerobot_
     ],
 )
 def test_multilerobot_dataset_joins_remote_roots(monkeypatch, root, expected_child_prefix):
-    child_roots = {}
-
-    class FakeLeRobotDataset:
-        features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
-
-        def __init__(self, repo_id, root, **kwargs):
-            child_roots[repo_id] = root
-            self.meta = SimpleNamespace(stats={})
-
-        def set_image_transforms(self, transforms):
-            pass
-
-    monkeypatch.setattr(multi_dataset_module, "LeRobotDataset", FakeLeRobotDataset)
+    child_roots = _record_multi_child_roots(monkeypatch)
     dataset = MultiLeRobotDataset(["lerobot/a", "lerobot/b"], root=root)
 
     assert dataset.root == root
@@ -520,6 +526,16 @@ def test_multilerobot_dataset_joins_remote_roots(monkeypatch, root, expected_chi
         "lerobot/a": f"{expected_child_prefix}lerobot/a",
         "lerobot/b": f"{expected_child_prefix}lerobot/b",
     }
+
+
+def test_multilerobot_dataset_uses_hf_home_by_default(monkeypatch):
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+
+    child_roots = _record_multi_child_roots(monkeypatch)
+    dataset = MultiLeRobotDataset(["lerobot/a"])
+
+    assert dataset.root == HF_LEROBOT_HOME
+    assert child_roots == {"lerobot/a": HF_LEROBOT_HOME / "lerobot/a"}
 
 
 @pytest.mark.parametrize(
