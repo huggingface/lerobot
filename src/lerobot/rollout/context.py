@@ -72,7 +72,7 @@ from lerobot.robots.sim_robot import SimRobot
 from lerobot.robots.utils import check_control_rate
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.constants import OBS_STATE
-from lerobot.utils.feature_utils import combine_feature_dicts, feature_names, hw_to_dataset_features
+from lerobot.utils.feature_utils import combine_feature_dicts, get_dimension_names, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .configs import RolloutConfig
@@ -177,7 +177,7 @@ def _assert_state_matches_action_order(dataset_features: dict, ordered_action_ke
     state_ft = dataset_features.get(OBS_STATE)
     if state_ft is None or not ordered_action_keys:
         return
-    state_names = feature_names(state_ft) or []
+    state_names = get_dimension_names(state_ft) or []
     if state_names == ordered_action_keys or set(state_names) != set(ordered_action_keys):
         return
     raise ValueError(
@@ -705,7 +705,7 @@ def _feature_spec(name: str, feature: dict, semantics: str) -> FeatureSpec:
         shape=tuple(feature["shape"]),
         dtype="uint8" if image else feature["dtype"],
         kind="rgb" if image else "tensor",
-        names=tuple(feature_names(feature) or ()),
+        names=tuple(get_dimension_names(feature) or ()),
         semantics=semantics,
     )
 

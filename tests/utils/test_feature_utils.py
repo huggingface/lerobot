@@ -17,7 +17,7 @@
 
 import pytest
 
-from lerobot.utils.feature_utils import feature_names
+from lerobot.utils.feature_utils import get_dimension_names
 
 
 @pytest.mark.parametrize(
@@ -37,8 +37,8 @@ from lerobot.utils.feature_utils import feature_names
         ),
     ],
 )
-def test_feature_names_flattens_every_layout(feature, expected):
-    assert feature_names(feature) == expected
+def test_get_dimension_names_flattens_every_layout(feature, expected):
+    assert get_dimension_names(feature) == expected
 
 
 @pytest.mark.parametrize(
@@ -62,12 +62,12 @@ def test_feature_names_flattens_every_layout(feature, expected):
         pytest.param({"shape": (2, 2), "names": ["a", "b"]}, id="2d"),
     ],
 )
-def test_feature_names_returns_none_without_usable_names(feature):
-    assert feature_names(feature) is None
+def test_get_dimension_names_returns_none_without_usable_names(feature):
+    assert get_dimension_names(feature) is None
 
 
-def test_feature_names_returns_a_copy():
+def test_get_dimension_names_returns_a_copy():
     names = ["x", "y"]
-    result = feature_names({"shape": (2,), "names": names})
+    result = get_dimension_names({"shape": (2,), "names": names})
     assert result == names
     assert result is not names

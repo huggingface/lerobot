@@ -23,7 +23,7 @@ from torch import nn
 from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
-from lerobot.utils.feature_utils import build_dataset_frame, feature_names
+from lerobot.utils.feature_utils import build_dataset_frame, get_dimension_names
 
 
 def populate_queues(
@@ -212,7 +212,7 @@ def make_robot_action(action_tensor: PolicyAction, ds_features: dict[str, dict])
     action_tensor = action_tensor.to("cpu")
 
     action_feature = ds_features[ACTION]
-    action_names = feature_names(action_feature)
+    action_names = get_dimension_names(action_feature)
     if action_names is None:
         raise ValueError(
             f"Expected one name per action value, got names={action_feature.get('names')!r} "

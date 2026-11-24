@@ -31,7 +31,7 @@ from huggingface_hub.utils import WeakFileLock
 from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig, is_depth_map
 from lerobot.streaming.location import hf_bucket_uri
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
-from lerobot.utils.feature_utils import _validate_feature_names, feature_names
+from lerobot.utils.feature_utils import _validate_feature_names, get_dimension_names
 from lerobot.utils.utils import flatten_dict
 
 from .compute_stats import aggregate_stats
@@ -492,8 +492,8 @@ class LeRobotDatasetMetadata:
 
     @property
     def names(self) -> dict[str, list[str] | None]:
-        """Per-dimension names of each feature (see :func:`feature_names`), or ``None`` if it has none."""
-        return {key: feature_names(ft) for key, ft in self.features.items()}
+        """Per-dimension names of each feature, or ``None`` (see :func:`get_dimension_names`)."""
+        return {key: get_dimension_names(ft) for key, ft in self.features.items()}
 
     @property
     def shapes(self) -> dict:

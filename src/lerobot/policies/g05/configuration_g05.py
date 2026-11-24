@@ -16,7 +16,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.feature_utils import feature_names
+from lerobot.utils.feature_utils import get_dimension_names
 
 
 def _bbox_binding(camera: str) -> str:
@@ -496,7 +496,7 @@ class G05Config(PreTrainedConfig):
         """Derive the slots of a robot without a named embodiment from the dataset's joint names."""
         if self.slot_mapping is not None:
             return
-        state_names, action_names = (feature_names(features.get(key)) for key in (OBS_STATE, ACTION))
+        state_names, action_names = (get_dimension_names(features.get(key)) for key in (OBS_STATE, ACTION))
         if state_names is None or action_names is None:
             missing = [
                 key for key, names in ((OBS_STATE, state_names), (ACTION, action_names)) if names is None

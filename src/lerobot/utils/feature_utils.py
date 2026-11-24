@@ -108,7 +108,7 @@ def hw_to_dataset_features(
     return features
 
 
-def feature_names(feature: Mapping[str, Any] | None) -> list[str] | None:
+def get_dimension_names(feature: Mapping[str, Any] | None) -> list[str] | None:
     """Return the per-dimension names of a 1D feature, in dimension order.
 
     ``names`` can be a list (``["x", "y"]``), groups (``{"arm": ["x", "y"]}``) or a name to index

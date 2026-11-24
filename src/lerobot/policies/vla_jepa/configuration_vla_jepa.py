@@ -26,7 +26,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.feature_utils import feature_names
+from lerobot.utils.feature_utils import get_dimension_names
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +235,7 @@ class VLAJEPAConfig(PreTrainedConfig):
             self.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=shape)
         if ACTION in dataset_features:
             self.action_dim = dataset_features[ACTION]["shape"][0]
-            names = feature_names(dataset_features[ACTION])
+            names = get_dimension_names(dataset_features[ACTION])
             if names:
                 self.action_feature_names = names
 

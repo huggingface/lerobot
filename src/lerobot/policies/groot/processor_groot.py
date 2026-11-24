@@ -76,7 +76,7 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
-from lerobot.utils.feature_utils import feature_names
+from lerobot.utils.feature_utils import get_dimension_names
 
 from .configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
@@ -569,7 +569,7 @@ def _apply_groot_action_decode_transform(
 
 def _resolve_action_feature_names_from_dataset_meta(dataset_meta: Any | None) -> list[str] | None:
     features = getattr(dataset_meta, "features", None) or {}
-    return feature_names(features.get(ACTION))
+    return get_dimension_names(features.get(ACTION))
 
 
 def _resolve_visual_modality_keys_from_dataset_meta(dataset_meta: Any | None) -> list[str] | None:

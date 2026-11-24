@@ -24,7 +24,7 @@ import torch
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
-from lerobot.utils.feature_utils import dataset_to_policy_features, feature_names
+from lerobot.utils.feature_utils import dataset_to_policy_features, get_dimension_names
 
 from .core.utils import DM05_STATE_BINS
 
@@ -240,7 +240,7 @@ class DM05Config(PreTrainedConfig):
                 }
             )
         self.input_features = input_features
-        self.action_feature_names = feature_names(features.get(ACTION))
+        self.action_feature_names = get_dimension_names(features.get(ACTION))
 
     def get_optimizer_preset(self) -> AdamWConfig:
         """Build the standard DM05 AdamW optimizer configuration."""
