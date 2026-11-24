@@ -67,9 +67,12 @@ def test_gamepad_and_leader_commands_are_combined_and_sticks_return_to_neutral(t
     teleop, pipeline = make_mobile_teleop(
         robot, base, arm, base_mapping=GamepadToBaseActionProcessorStep(linear_speed=0.2)
     )
-    with patch("lerobot.teleoperators.gamepad.gamepad_utils.GamepadController", return_value=backend):
+    with patch(
+        "lerobot.teleoperators.gamepad.gamepad_utils.GamepadController", return_value=backend
+    ) as controller:
         try:
             teleop.connect()
+            controller.assert_called_once_with(right_stick_axis="x")
             assert set(teleop.action_features) == {"delta_x", "delta_y", "delta_z", "arm_joint.pos"}
             assert pipeline((teleop.get_action(), {"arm_joint.pos": 8.0})) == {
                 "x.vel": 0.2,
@@ -103,6 +106,7 @@ def test_missing_controller_fails_connection_and_releases_backend(tmp_path):
 def test_gamepad_rejects_incompatible_base_configuration(tmp_path):
     base = GamepadTeleop(GamepadTeleopConfig(calibration_dir=tmp_path))
     assert base.action_features["gripper"] is int
+    assert base.right_stick_axis == "y"
     with pytest.raises(ValueError, match="use_gripper=false"):
         make_mobile_teleop(SimpleNamespace(action_features={}), base)
     base.config.use_gripper = False
@@ -163,3 +167,15 @@ def test_shared_mapping_cli_uses_device_defaults_or_explicit_settings(kind, opti
         base = make_teleoperator_from_config(cfg.base_teleop)
     _, pipeline = make_mobile_teleop(SimpleNamespace(action_features={}), base, base_mapping=cfg.base_mapping)
     assert pipeline((action, {})) == {"x.vel": speed, "y.vel": 0.0, "theta.vel": 0.0}
+
+
+@pytest.mark.parametrize("axis,expected", [("x", -0.5), ("y", 0.25)])
+def test_gamepad_backend_selects_the_requested_right_stick_axis(axis, expected):
+    from lerobot.teleoperators.gamepad import gamepad_utils
+
+    with patch.object(gamepad_utils, "require_package"):
+        backend = gamepad_utils.GamepadController(right_stick_axis=axis)
+    backend.joystick = MagicMock()
+    backend.joystick.get_axis.side_effect = [0.0, 0.0, 0.5 if axis == "x" else -0.25]
+    assert backend.get_deltas() == (0.0, 0.0, expected)
+    assert backend.joystick.get_axis.call_args.args == (2 if axis == "x" else 3,)

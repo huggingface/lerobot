@@ -60,6 +60,7 @@ class GamepadTeleop(Teleoperator):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
+        self.right_stick_axis = config.right_stick_axis or "y"
 
         self.gamepad: InputController | None = None
 
@@ -85,11 +86,11 @@ class GamepadTeleop(Teleoperator):
         if self.hidapi_fallback:
             from .gamepad_utils import GamepadControllerHID
 
-            self.gamepad = GamepadControllerHID()
+            self.gamepad = GamepadControllerHID(right_stick_axis=self.right_stick_axis)
         else:
             from .gamepad_utils import GamepadController
 
-            self.gamepad = GamepadController()
+            self.gamepad = GamepadController(right_stick_axis=self.right_stick_axis)
         self.gamepad.start()
         if not self.gamepad.running:
             self.disconnect()

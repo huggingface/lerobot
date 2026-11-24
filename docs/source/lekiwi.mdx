@@ -286,7 +286,7 @@ lerobot-teleoperate \
 
 The same flags work with `lerobot-record` and `lerobot-rollout`. Customize controls through `--teleop.mapping`, e.g. `--teleop.mapping.linear_speeds='[0.05,0.1,0.2]'`. Select `--teleop.mapping.layout=azerty` or `qwertz` for those keyboards (`qwerty` is the default). Translation keys are WASD / ZQSD / WASD, and rotation keys are ZX / WX / YX, respectively. A complete `key_bindings` mapping overrides the preset.
 
-To drive the base with a gamepad, install `lerobot[gamepad]` and replace `--base_teleop.type=keyboard` with `--base_teleop.type=gamepad --base_teleop.use_gripper=false`. The existing gamepad mapping uses the left stick for translation and the right stick's vertical axis for rotation. To customize the mapping, select `--base_mapping.type=gamepad` and set maximum speeds with `--base_mapping.linear_speed=0.1` (m/s) and `--base_mapping.angular_speed=30` (deg/s). The same optional leader arm and held-joint behavior apply. Controller axis assignments can vary; check the commands before driving the robot.
+To drive the base with a gamepad, install `lerobot[gamepad]` and replace `--base_teleop.type=keyboard` with `--base_teleop.type=gamepad --base_teleop.use_gripper=false`. The existing gamepad mapping uses the left stick for translation and the right stick's horizontal axis for rotation. To customize the mapping, select `--base_mapping.type=gamepad` and set maximum speeds with `--base_mapping.linear_speed=0.1` (m/s) and `--base_mapping.angular_speed=30` (deg/s). The same optional leader arm and held-joint behavior apply. Controller axis assignments can vary; check the commands before driving the robot.
 
 ### Wired version
 

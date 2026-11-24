@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from typing import Literal
 
 from ..config import TeleoperatorConfig
 
@@ -25,3 +26,5 @@ class GamepadTeleopConfig(TeleoperatorConfig):
     use_gripper: bool = True
     # Use hidapi instead of pygame for controllers that pygame cannot detect reliably.
     hidapi_fallback: bool = False
+    # None selects vertical for end-effector control, horizontal for a mobile base.
+    right_stick_axis: Literal["x", "y"] | None = None

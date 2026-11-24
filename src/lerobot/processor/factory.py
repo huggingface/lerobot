@@ -76,6 +76,8 @@ def make_default_teleop_action_processor(
         base = teleop.devices[0][0]
         if isinstance(base, GamepadTeleop) and base.config.use_gripper:
             raise ValueError("A gamepad base input requires --teleop.base.use_gripper=false.")
+        if isinstance(base, GamepadTeleop) and base.config.right_stick_axis is None:
+            base.right_stick_axis = "x"
         mapping_type = BaseActionProcessorStep.get_known_choices().get(base.name)
         mapping = teleop.mapping
         if mapping is None:
