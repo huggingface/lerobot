@@ -29,6 +29,7 @@ import torch.utils.checkpoint
 from torch import Tensor
 
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
 
@@ -78,10 +79,9 @@ class EO1Policy(PreTrainedPolicy):
 
         if config.pretrained_path is None:
             # Initialize from pretrained VLM
+            repo_id, revision = split_hub_reference(config.vlm_base)
             vlm_backbone = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                config.vlm_base,
-                dtype=config.dtype,
-                attn_implementation=config.attn_implementation,
+                repo_id, dtype=config.dtype, attn_implementation=config.attn_implementation, revision=revision
             )
         else:
             vlm_backbone = Qwen2_5_VLForConditionalGeneration._from_config(
@@ -151,10 +151,13 @@ class EO1Policy(PreTrainedPolicy):
 
     def _get_text_processor(self):
         if self._text_processor is None:
+            repo_id, revision = split_hub_reference(self.config.vlm_base)
             self._text_processor = Qwen2_5_VLProcessor.from_pretrained(
-                self.config.vlm_base,
+                repo_id,
                 use_fast=self.config.use_fast_processor,
                 fix_mistral_regex=True,
+                revision=revision,
+                code_revision=revision,
             )
             self._text_processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
         return self._text_processor

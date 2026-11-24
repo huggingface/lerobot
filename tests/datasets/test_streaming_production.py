@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import importlib
 import threading
 import time
 from itertools import islice
@@ -191,6 +192,35 @@ def test_streaming_rgb_video_matches_map_style(
                 int(sample["index"]),
                 float((sample[camera_key] - reference[camera_key]).abs().max()),
             )
+
+
+@pytest.mark.parametrize("video_backend", ["torchcodec", "pyav"])
+def test_torchcodec_is_imported_before_episode_tables_load(
+    tmp_path: Path, lerobot_dataset_factory, monkeypatch, video_backend: str
+) -> None:
+    # datasets fails to build a table on one thread while another thread imports TorchCodec.
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(root=root, repo_id=DUMMY_REPO_ID, total_episodes=2, total_frames=20)
+    events: list[str] = []
+    import_module = importlib.import_module
+    load_episode = StreamingLeRobotDataset._load_episode_dataset
+
+    def recording_import_module(name, *args):
+        if name == "torchcodec.decoders":
+            events.append("import")
+        return import_module(name, *args)
+
+    def recording_load_episode(self, *args):
+        events.append("load")
+        return load_episode(self, *args)
+
+    monkeypatch.setattr(importlib, "import_module", recording_import_module)
+    monkeypatch.setattr(StreamingLeRobotDataset, "_load_episode_dataset", recording_load_episode)
+    next(iter(StreamingLeRobotDataset(DUMMY_REPO_ID, root=root, video_backend=video_backend)))
+
+    imports_torchcodec = video_backend == "torchcodec"
+    assert events[0] == ("import" if imports_torchcodec else "load")
+    assert events.count("import") == int(imports_torchcodec)
 
 
 def test_streaming_applies_rgb_transforms_and_preserves_uint8(

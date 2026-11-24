@@ -36,6 +36,7 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import normalize_semantic_messages
 from lerobot.utils.transition import move_state_dict_to_device
@@ -291,10 +292,13 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
 
     def __post_init__(self):
         require_package("transformers", extra="eo1")
+        repo_id, revision = split_hub_reference(self.processor_name)
         self._processor = Qwen2_5_VLProcessor.from_pretrained(
-            self.processor_name,
+            repo_id,
             use_fast=self.use_fast_processor,
             fix_mistral_regex=True,
+            revision=revision,
+            code_revision=revision,
         )
         self._processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
         self._state_token_id = self._processor.tokenizer.convert_tokens_to_ids(DEFAULT_STATE_TOKEN)

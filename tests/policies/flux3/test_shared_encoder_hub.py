@@ -30,7 +30,7 @@ def test_text_model_and_processor_share_location(monkeypatch, tmp_path, local):
     repo = spec if local else "org/base"
     assert calls == [
         ("model", repo, {"torch_dtype": torch.bfloat16, **expected}),
-        ("processor", repo, expected),
+        ("processor", repo, {**expected, "code_revision": None if local else "immutable"}),
     ]
 
 

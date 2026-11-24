@@ -61,6 +61,7 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.rotation import Rotation
 
 from .configuration_praxis import PRAXIS_ACTION_DIM, PRAXIS_COMMAND_DIM, PRAXIS_POSE_DIM, PraxisConfig
@@ -391,7 +392,8 @@ class PraxisTokenizerProcessorStep(ProcessorStep):
         if self.tokenizer is None:
             from transformers import AutoProcessor
 
-            self.tokenizer = AutoProcessor.from_pretrained(self.tokenizer_id)
+            repo_id, revision = split_hub_reference(self.tokenizer_id)
+            self.tokenizer = AutoProcessor.from_pretrained(repo_id, revision=revision, code_revision=revision)
         return self.tokenizer
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:

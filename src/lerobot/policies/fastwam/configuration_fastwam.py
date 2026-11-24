@@ -206,6 +206,8 @@ class FastWAMConfig(PreTrainedConfig):
             without text cross-attention modules and receives no text/proprioceptive
             context; language and proprioception condition only the video backbone, and
             the action expert reads all conditioning through the fused video keys.
+        return_predicted_video (bool): Also return predicted camera frames from
+            `select_action` (for `--display_data`). Adds a video denoising pass per chunk.
     """
 
     n_obs_steps: int = 1
@@ -244,6 +246,7 @@ class FastWAMConfig(PreTrainedConfig):
     lite_kv_fusion: bool = False
     retracted_1d_rope: bool = False
     world_model_only_conditioning: bool = False
+    return_predicted_video: bool = False
     dtype: torch.dtype | None = torch.bfloat16
 
     # Deprecated and ignored: superseded by `dtype`. Declared only so configs written before the
