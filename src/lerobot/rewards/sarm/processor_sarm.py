@@ -48,13 +48,13 @@ else:
     Faker = None  # type: ignore[assignment, misc]
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.lerobot_types import PolicyAction, TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
+    ObservationProcessorStep,
     PolicyProcessorPipeline,
-    ProcessorStep,
     RenameObservationsProcessorStep,
     from_tensor_to_numpy,
     policy_action_to_transition,
@@ -78,7 +78,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SARMEncodingProcessorStep(ProcessorStep):
+class SARMEncodingProcessorStep(ObservationProcessorStep):
     """ProcessorStep that encodes images and text with CLIP and generates stage and progress labels for SARM."""
 
     def __init__(
@@ -272,9 +272,9 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
         return annotations
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
         """
-        Encode images, text, and normalize states in the transition.
+        Encode images, text, and normalize states in the observation.
 
         Implements SARM training data preparation:
         - Applies language perturbation (20% probability)
@@ -282,11 +282,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         - Generates stage+tau targets for all frames
         - Outputs lengths tensor for valid sequence masking
         """
-        new_transition = transition.copy()
-        observation = new_transition.get(TransitionKey.OBSERVATION)
-        if observation is None:
-            raise ValueError("SARMEncodingProcessorStep requires an observation in the transition")
-        comp_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        comp_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
 
         frame_index = comp_data.get("index")
         episode_index = comp_data.get("episode_index")
@@ -411,8 +407,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
                     )
                 observation["dense_targets"] = dense_targets
 
-        new_transition[TransitionKey.OBSERVATION] = observation
-        return new_transition
+        return observation
 
     def _compute_batch_targets(
         self,

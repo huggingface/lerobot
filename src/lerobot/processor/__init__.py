@@ -56,13 +56,15 @@ from .factory import (
 )
 from .gym_action_processor import (
     Numpy2TorchActionProcessorStep,
+    Numpy2TorchTeleopActionProcessorStep,
     Torch2NumpyActionProcessorStep,
 )
 from .hil_processor import (
     AddTeleopActionAsComplimentaryDataStep,
     AddTeleopEventsAsInfoStep,
     GripperPenaltyProcessorStep,
-    GymHILAdapterProcessorStep,
+    GymHILInfoAdapterStep,
+    GymHILTeleopDataAdapterStep,
     ImageCropResizeProcessorStep,
     InterventionActionProcessorStep,
     RewardClassifierProcessorStep,
@@ -129,7 +131,8 @@ __all__ = [
     "DoneProcessorStep",
     "EnvAction",
     "EnvTransition",
-    "GymHILAdapterProcessorStep",
+    "GymHILInfoAdapterStep",
+    "GymHILTeleopDataAdapterStep",
     "GripperPenaltyProcessorStep",
     "hotswap_stats",
     "IdentityProcessorStep",
@@ -154,6 +157,7 @@ __all__ = [
     "NewLineTaskProcessorStep",
     "NormalizerProcessorStep",
     "Numpy2TorchActionProcessorStep",
+    "Numpy2TorchTeleopActionProcessorStep",
     "ObservationProcessorStep",
     "PolicyAction",
     "PolicyActionProcessorStep",
