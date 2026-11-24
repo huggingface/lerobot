@@ -1,4 +1,160 @@
 # Train and evaluate a policy in simulation
 
-> [!NOTE]
-> This page is being written as part of the docs redesign. It will cover a complete run without a robot: train a policy on a simulation dataset and measure its success rate in simulation.
+**Goal:** a policy that solves a simulated task, and its success rate. **Time:** 10 minutes to set up, then several hours of training on a GPU. **You need:** LeRobot [installed](./installation), and an NVIDIA GPU, on your computer or in the cloud. No robot.
+
+> [!TIP]
+> **Key idea:** in [simulation](./glossary#simulation), the computer can run your policy over and over, from the same starting positions, and check each time whether it succeeded. That gives you its [success rate](./glossary#success-rate): one number that says how good the policy is, and lets you compare policies fairly.
+
+This page uses **PushT**, a small 2D simulation that runs on any computer. A blue dot pushes a grey T-shaped block onto the green T-shaped target. The policy sees a 96×96 image from above and the position of the dot, and decides where the dot moves next (the red cross). An episode succeeds when the block covers at least 95% of the target, within 300 steps (30 seconds).
+
+<!-- TODO(docs redesign): move this GIF to huggingface/documentation-images in the visuals batch. -->
+
+![A trained policy pushing the T-shaped block onto the green target in PushT](https://raw.githubusercontent.com/huggingface/lerobot/f04958527e70cac3aa95265badd97b53f3ef7633/media/gym/pusht_diffusion.gif)
+
+## Step 1: Install the simulation
+
+```bash
+pip install 'lerobot[training,pusht,diffusion,evaluation]'
+```
+
+This adds the PushT simulation (`pusht`), the training tools, [Diffusion Policy](./diffusion), the policy you'll train (`diffusion`), and video saving (`evaluation`).
+
+## Step 2: Look at the data
+
+Open [`lerobot/pusht`](https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/pusht/episode_0) in the dataset visualizer. It holds 206 [episodes](./glossary#episode) of a person doing the task: the image, the position of the dot, and where they moved it at each step, 10 times per second. Your policy learns from these episodes.
+
+## Step 3: Train
+
+```bash
+lerobot-train \
+    --dataset.repo_id=lerobot/pusht \
+    --policy.type=diffusion \
+    --policy.horizon=16 \
+    --policy.n_action_steps=8 \
+    --policy.crop_shape='[84,84]' \
+    --policy.device=cuda \
+    --policy.push_to_hub=false \
+    --env.type=pusht \
+    --batch_size=64 \
+    --steps=200000 \
+    --output_dir=outputs/train/diffusion_pusht \
+    --job_name=diffusion_pusht \
+    --trackio.enable=true
+```
+
+What the options mean:
+
+- `--dataset.repo_id`: the PushT episodes from Step 2.
+- `--policy.type=diffusion` and the three `--policy.*` settings after it: the PushT recipe from the Diffusion Policy paper. The policy plans 16 steps (1.6 seconds) ahead and carries out 8 of them before planning again, and it learns from random 84×84 crops of the image, which makes it more robust.
+- `--policy.push_to_hub=false`: keep the policy on your computer. To upload it to the Hub, see "Go further" below.
+- `--env.type=pusht`: the simulation to evaluate the policy in during training.
+- `--batch_size` and `--steps`: 200,000 steps of 64 samples each, as for the reference policy [`lerobot/diffusion_pusht`](https://huggingface.co/lerobot/diffusion_pusht).
+
+<!-- TODO(docs redesign): time a full run on one NVIDIA GPU (or on Hugging Face Jobs) and give the duration here. -->
+
+Training needs a GPU. On an Apple silicon Mac (`--policy.device=mps`), one step takes about 1.6 seconds, so the full run would take almost four days. Without a GPU, train on [Hugging Face Jobs](#train-on-hugging-face-jobs) instead.
+
+## Step 4: Watch the success rate grow
+
+Every 20,000 steps, LeRobot saves a [checkpoint](./glossary#checkpoint) and evaluates it: it runs 50 episodes in the simulation and logs the success rate.
+
+- **In the training log**, look for the line `Suite overall aggregated`: its `pc_success` value is the success rate, in percent.
+- **In Trackio** (`trackio show --project lerobot`), the `eval/pc_success` curve shows it over time.
+- **In videos**: each evaluation saves a few episodes in `outputs/train/diffusion_pusht/eval/videos_step_020000/` (then `040000`, and so on). Watch them to see how the policy behaves.
+
+The success rate is 0% at first and grows as the policy learns.
+
+## Step 5: Evaluate the final policy
+
+```bash
+lerobot-eval \
+    --policy.path=outputs/train/diffusion_pusht/checkpoints/last/pretrained_model \
+    --policy.device=cuda \
+    --env.type=pusht \
+    --eval.n_episodes=100 \
+    --output_dir=outputs/eval/diffusion_pusht
+```
+
+`lerobot-eval` runs the policy for 100 episodes and prints the result, for example:
+
+```text
+Success rate 64.0% (64/100 episodes, 95% Wilson interval 54.2% to 72.7%)
+```
+
+It also saves the numbers in `outputs/eval/diffusion_pusht/eval_info.json`, and videos of the first 10 episodes in `outputs/eval/diffusion_pusht/videos/`.
+
+## Check it worked
+
+- `lerobot-eval` prints a success rate, and its videos show the policy pushing the block toward the target.
+- After the full 200,000 steps, the success rate is close to the reference policy's: **65%** over 500 episodes.
+
+The **95% interval** is the range the true success rate is likely in. With 100 episodes, it is about ±10 points wide, so two policies whose scores differ by a few points may be equally good. Run more episodes (`--eval.n_episodes`) when you compare policies.
+
+<details>
+<summary>If something goes wrong</summary>
+
+- **`Device 'cuda' is not available. Switching to 'mps'`** (or `cpu`): there's no NVIDIA GPU on this computer, and training will be very slow. Train on [Hugging Face Jobs](#train-on-hugging-face-jobs).
+- **`No module named 'gym_pusht'`**: the simulation isn't installed. Run the command from Step 1.
+- **CUDA out of memory**: lower `--batch_size`, for example to `32`.
+- **The success rate stays at 0%** after the first evaluations: check that you used the three `--policy.*` settings from Step 3. Without them, the policy plans 64 steps ahead, which suits robots recording 30 frames per second, not PushT's 10.
+
+</details>
+
+<details>
+<summary>Go further</summary>
+
+### Train on Hugging Face Jobs
+
+[Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) runs the training on a rented cloud GPU, billed per second (`hf jobs hardware` lists the GPUs and their prices). Log in first, as in [3. Record a dataset](./record_dataset), then add `--job.target` and a Hub name for the policy:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=lerobot/pusht \
+    --policy.type=diffusion \
+    --policy.horizon=16 \
+    --policy.n_action_steps=8 \
+    --policy.crop_shape='[84,84]' \
+    --policy.repo_id=${HF_USER}/diffusion_pusht \
+    --env.type=pusht \
+    --batch_size=64 \
+    --steps=200000 \
+    --job.target=a10g-small
+```
+
+The policy is uploaded to `${HF_USER}/diffusion_pusht` when the job ends. Evaluate it with `--policy.path=${HF_USER}/diffusion_pusht` in Step 5. See [5. Train a policy](./train_policy) for more about jobs.
+
+### Share your policy on the Hub
+
+Replace `--policy.push_to_hub=false` with `--policy.repo_id=${HF_USER}/diffusion_pusht` in Step 3: the policy is uploaded when training ends.
+
+### Try ACT on a two-arm task
+
+The [ALOHA](https://tonyzhaozh.github.io/aloha/) simulation has two arms that pass a cube from one to the other. Train [ACT](./act) on it:
+
+```bash
+pip install 'lerobot[training,aloha,evaluation]'
+```
+
+```bash
+lerobot-train \
+    --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
+    --policy.type=act \
+    --policy.device=cuda \
+    --policy.push_to_hub=false \
+    --env.type=aloha \
+    --env.task=AlohaTransferCube-v0 \
+    --output_dir=outputs/train/act_aloha_transfer_cube \
+    --job_name=act_aloha_transfer_cube
+```
+
+### Evaluate a pretrained policy on a benchmark
+
+Benchmarks such as [LIBERO](./libero) come with pretrained policies that you can evaluate without training, on Linux with a GPU. See [Simulation: when and why](./simulation_overview) to pick one.
+
+</details>
+
+## Next steps
+
+- **Pick a benchmark or another simulation:** [Simulation: when and why](./simulation_overview).
+- **Move to a real robot:** a policy trained in simulation doesn't run on a real robot, but everything you did here works the same way there. Start with [Choose a robot](./robots), then [Teach your robot a task](./il_robots).
+- **Learn by trial and error instead:** [Practice reinforcement learning in simulation](./hilserl_sim).
