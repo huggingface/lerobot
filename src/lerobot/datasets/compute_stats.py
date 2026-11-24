@@ -429,7 +429,9 @@ def _compute_basic_stats(
         sample_count: Number of samples represented in the data
 
     Returns:
-        Dictionary with basic statistics and quantiles set to mean values
+        Dictionary with basic statistics and quantiles set to mean values. The array is
+        promoted to float64 first, so every statistic except the integer ``count`` has the
+        same dtype as the running-statistics path used for longer episodes.
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES

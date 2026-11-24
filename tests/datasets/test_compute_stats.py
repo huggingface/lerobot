@@ -185,6 +185,8 @@ def test_get_feature_stats_single_sample_is_floating_like_multi_sample(dtype):
     assert single.keys() == multi.keys()
     for key in multi:
         if key == "count":
+            assert np.issubdtype(multi[key].dtype, np.integer), key
+            assert np.issubdtype(single[key].dtype, np.integer), key
             continue
         assert np.issubdtype(multi[key].dtype, np.floating), key
         assert np.issubdtype(single[key].dtype, np.floating), key
