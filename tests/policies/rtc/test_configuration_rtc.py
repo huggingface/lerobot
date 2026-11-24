@@ -33,6 +33,7 @@ def test_rtc_config_default_initialization():
     assert config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR
     assert config.max_guidance_weight == 10.0
     assert config.execution_horizon == 10
+    assert config.action_dim_weights is None
     assert config.debug is False
     assert config.debug_maxlen == 100
 
@@ -72,4 +73,30 @@ def test_rtc_config_partial_initialization():
     # Other values should be defaults
     assert config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR
     assert config.execution_horizon == 10
+    assert config.action_dim_weights is None
     assert config.debug is False
+
+
+def test_rtc_config_action_dim_weights_valid():
+    """Test RTCConfig accepts and normalizes valid action_dim_weights."""
+    cfg_list = RTCConfig(action_dim_weights=[1, 1.0, 0.35, 0.0])
+    assert cfg_list.action_dim_weights == [1.0, 1.0, 0.35, 0.0]
+
+    cfg_tuple = RTCConfig(action_dim_weights=(1.0, 0.5))
+    assert cfg_tuple.action_dim_weights == [1.0, 0.5]
+
+
+@pytest.mark.parametrize(
+    "bad_weights",
+    [
+        [],
+        [-0.1, 1.0],
+        [1.0, float("nan")],
+        [1.0, float("inf")],
+        [True, 1.0],
+    ],
+)
+def test_rtc_config_rejects_invalid_action_dim_weights(bad_weights):
+    """Test RTCConfig rejects empty, negative, non-finite, or boolean action_dim_weights."""
+    with pytest.raises(ValueError, match="action_dim_weights"):
+        RTCConfig(action_dim_weights=bad_weights)
