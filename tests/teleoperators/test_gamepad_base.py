@@ -20,13 +20,16 @@ from unittest.mock import MagicMock, patch
 import draccus
 import pytest
 
-from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.processor import BaseActionProcessorStep, RobotProcessorPipeline
+from lerobot.processor import (
+    RobotProcessorPipeline,
+    make_default_teleop_action_processor,
+)
 from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
 from lerobot.processor.gamepad_base_processor import GamepadToBaseActionProcessorStep
 from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from lerobot.teleoperators import TeleoperatorConfig, make_teleoperator_from_config
+from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.teleoperators.gamepad import GamepadTeleop, GamepadTeleopConfig
 from lerobot.utils.errors import DeviceNotConnectedError
 from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
@@ -64,9 +67,9 @@ def test_gamepad_and_leader_commands_are_combined_and_sticks_return_to_neutral(t
     )
     arm.motors = ["joint"]
     robot = SimpleNamespace(arm_action_prefix="arm_", action_features={"arm_joint.pos": float})
-    teleop, pipeline = make_mobile_teleop(
-        robot, base, arm, base_mapping=GamepadToBaseActionProcessorStep(linear_speed=0.2)
-    )
+    teleop = CompositeTeleoperator([(base, ""), (arm, "")])
+    teleop.mapping = GamepadToBaseActionProcessorStep(linear_speed=0.2)
+    pipeline = make_default_teleop_action_processor(teleop, robot)
     with patch(
         "lerobot.teleoperators.gamepad.gamepad_utils.GamepadController", return_value=backend
     ) as controller:
@@ -107,21 +110,21 @@ def test_gamepad_rejects_incompatible_base_configuration(tmp_path):
     base = GamepadTeleop(GamepadTeleopConfig(calibration_dir=tmp_path))
     assert base.action_features["gripper"] is int
     assert base.right_stick_axis == "y"
+    teleop = CompositeTeleoperator([(base, "")])
     with pytest.raises(ValueError, match="use_gripper=false"):
-        make_mobile_teleop(SimpleNamespace(action_features={}), base)
+        make_default_teleop_action_processor(teleop, SimpleNamespace(action_features={}))
     base.config.use_gripper = False
     with pytest.raises(ValueError, match="must match"):
-        make_mobile_teleop(
-            SimpleNamespace(action_features={}), base, base_mapping=KeyboardToBaseActionProcessorStep()
-        )
+        teleop.mapping = KeyboardToBaseActionProcessorStep()
+        make_default_teleop_action_processor(teleop, SimpleNamespace(action_features={}))
 
 
 def test_saved_pipeline_replaces_delta_features_and_restores_speed_settings(tmp_path):
     base = GamepadTeleop(GamepadTeleopConfig(use_gripper=False, calibration_dir=tmp_path))
-    _, pipeline = make_mobile_teleop(
-        SimpleNamespace(action_features={"joint.pos": float}),
-        base,
-        base_mapping=GamepadToBaseActionProcessorStep(linear_speed=0.2, angular_speed=60.0),
+    teleop = CompositeTeleoperator([(base, "")])
+    teleop.mapping = GamepadToBaseActionProcessorStep(linear_speed=0.2, angular_speed=60.0)
+    pipeline = make_default_teleop_action_processor(
+        teleop, SimpleNamespace(action_features={"joint.pos": float})
     )
     feature = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
     features = pipeline.transform_features(
@@ -147,7 +150,7 @@ def test_saved_pipeline_replaces_delta_features_and_restores_speed_settings(tmp_
         ("gamepad", [], {"delta_x": 1.0, "delta_y": 0.0, "delta_z": 0.0}, 0.1),
         (
             "gamepad",
-            ["--base_mapping.type=gamepad", "--base_mapping.linear_speed=0.2"],
+            ["--teleop.mapping.type=gamepad", "--teleop.mapping.linear_speed=0.2"],
             {"delta_x": 1.0, "delta_y": 0.0, "delta_z": 0.0},
             0.2,
         ),
@@ -156,16 +159,15 @@ def test_saved_pipeline_replaces_delta_features_and_restores_speed_settings(tmp_
 def test_shared_mapping_cli_uses_device_defaults_or_explicit_settings(kind, options, action, speed):
     @dataclass
     class Config:
-        base_teleop: TeleoperatorConfig
-        base_mapping: BaseActionProcessorStep | None = None
+        teleop: TeleoperatorConfig
 
-    args = [f"--base_teleop.type={kind}", *options]
+    args = ["--teleop.type=composite", f"--teleop.base.type={kind}", *options]
     if kind == "gamepad":
-        args.append("--base_teleop.use_gripper=false")
+        args.append("--teleop.base.use_gripper=false")
     cfg = draccus.parse(Config, args=args)
     with patch("lerobot.teleoperators.keyboard.teleop_keyboard.require_package"):
-        base = make_teleoperator_from_config(cfg.base_teleop)
-    _, pipeline = make_mobile_teleop(SimpleNamespace(action_features={}), base, base_mapping=cfg.base_mapping)
+        teleop = make_teleoperator_from_config(cfg.teleop)
+    pipeline = make_default_teleop_action_processor(teleop, SimpleNamespace(action_features={}))
     assert pipeline((action, {})) == {"x.vel": speed, "y.vel": 0.0, "theta.vel": 0.0}
 
 
