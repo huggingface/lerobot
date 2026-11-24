@@ -450,22 +450,33 @@ def _validate_rows_match_episodes(dataset: LeRobotDataset, name: str, keys: pa.T
 
 def _get_scores_path(dataset: LeRobotDataset, name: str, *, download: bool, token: str | bool | None) -> Path:
     path = _scores_path(dataset, name)
-    if path.is_file() or not download:
+    if path.is_file():
         return path
-    root = Path(dataset.root)
-    in_snapshot = root.parent.name == "snapshots" and root.is_relative_to(HF_LEROBOT_HUB_CACHE)
-    location = {"cache_dir": HF_LEROBOT_HUB_CACHE} if in_snapshot else {"local_dir": root}
-    downloaded_root = Path(
-        snapshot_download(
-            dataset.repo_id,
-            repo_type="dataset",
-            revision=root.name if in_snapshot else dataset.revision,
-            allow_patterns=[f"{SCORES_DIR}/{path.name}"],
-            token=token,
-            **location,
+    searched = str(path)
+    if download:
+        root = Path(dataset.root)
+        in_snapshot = root.parent.name == "snapshots" and root.is_relative_to(HF_LEROBOT_HUB_CACHE)
+        location = {"cache_dir": HF_LEROBOT_HUB_CACHE} if in_snapshot else {"local_dir": root}
+        revision = root.name if in_snapshot else dataset.revision
+        downloaded_root = Path(
+            snapshot_download(
+                dataset.repo_id,
+                repo_type="dataset",
+                revision=revision,
+                allow_patterns=[f"{SCORES_DIR}/{path.name}"],
+                token=token,
+                **location,
+            )
         )
-    )
-    return downloaded_root / SCORES_DIR / path.name
+        path = downloaded_root / SCORES_DIR / path.name
+        searched += f" or hf://datasets/{dataset.repo_id} at revision {revision}"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Scores {name!r} not found in {searched}. Score the dataset with `lerobot-score`, or convert "
+            "an RA-BC progress file such as sarm_progress.parquet with "
+            "examples/dataset/convert_rabc_progress_to_scores.py"
+        )
+    return path
 
 
 def load_scores(
@@ -495,6 +506,7 @@ def load_scores(
 
     Raises:
         TypeError: If ``dataset`` is a ``MultiLeRobotDataset``.
+        FileNotFoundError: If the scores are neither local nor, with ``download``, on the Hub.
         ValueError: If the file is not a score file, or its rows no longer match the dataset's
             episodes, for example after episodes were deleted or reordered.
     """
@@ -542,6 +554,9 @@ def load_scores_info(
 
     Returns:
         The ``info`` passed when the scores were written.
+
+    Raises:
+        FileNotFoundError: If the scores are neither local nor, with ``download``, on the Hub.
     """
     path = _get_scores_path(dataset, name, download=download, token=token)
     return json.loads(_read_schema(path).metadata[_INFO_KEY])
