@@ -63,11 +63,23 @@ class _LastStep:
         return self.terminated or self.truncated
 
 
+def _wrapper_attr(env: Any, name: str) -> Any:
+    """Read metadata through scalar lookup APIs or a vector wrapper's immediate layers."""
+    get_wrapper_attr = getattr(env, "get_wrapper_attr", None)
+    if get_wrapper_attr is not None:
+        return get_wrapper_attr(name)
+    try:
+        return getattr(env, name)
+    except AttributeError:
+        if not isinstance(env, gym.vector.VectorWrapper):
+            raise
+    return _wrapper_attr(env.env, name)
+
+
 def _max_episode_steps(env: Any) -> int | None:
     """Return the env's episode limit, looked up through Gymnasium wrappers, or None if it has none."""
-    get_wrapper_attr = getattr(env, "get_wrapper_attr", None)
     try:
-        limit = get_wrapper_attr("_max_episode_steps") if get_wrapper_attr else env._max_episode_steps
+        limit = _wrapper_attr(env, "_max_episode_steps")
     except AttributeError:
         return None
     return None if limit is None else int(limit)
@@ -75,10 +87,9 @@ def _max_episode_steps(env: Any) -> int | None:
 
 def _task_attribute(env: Any) -> tuple[str, Any] | None:
     """Find the preferred task attribute through wrappers, distinguishing missing from falsey values."""
-    get_wrapper_attr = getattr(env, "get_wrapper_attr", None)
     for name in ("task_description", "task"):
         try:
-            value = get_wrapper_attr(name) if get_wrapper_attr is not None else getattr(env, name)
+            value = _wrapper_attr(env, name)
         except AttributeError:
             continue
         return name, value
