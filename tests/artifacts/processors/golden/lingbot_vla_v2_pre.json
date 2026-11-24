@@ -1,0 +1,226 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "action_names": null,
+        "enabled": false,
+        "exclude_joints": [
+          "gripper"
+        ]
+      },
+      "registry_name": "relative_actions_processor"
+    },
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          },
+          "observation.image.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.images.cam": {
+            "shape": [
+              3,
+              96,
+              96
+            ],
+            "type": "VISUAL"
+          },
+          "observation.state": {
+            "shape": [
+              6
+            ],
+            "type": "STATE"
+          }
+        },
+        "norm_map": {
+          "ACTION": "MEAN_STD",
+          "STATE": "MEAN_STD",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "normalizer_processor",
+      "state_file": "policy_preprocessor_step_3_normalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "action_spans": {
+          "arm.position": [
+            [
+              0,
+              14
+            ]
+          ],
+          "base.velocity": [
+            [
+              48,
+              51
+            ]
+          ],
+          "effector.position": [
+            [
+              28,
+              30
+            ]
+          ],
+          "end.position": [
+            [
+              14,
+              28
+            ]
+          ],
+          "hand.position": [
+            [
+              30,
+              42
+            ]
+          ],
+          "head.position": [
+            [
+              46,
+              48
+            ]
+          ],
+          "reserved.slots": [
+            [
+              51,
+              55
+            ]
+          ],
+          "waist.position": [
+            [
+              42,
+              46
+            ]
+          ]
+        },
+        "canonical_joints": {
+          "arm.position": 14,
+          "base.velocity": 3,
+          "effector.position": 2,
+          "end.position": 14,
+          "hand.position": 12,
+          "head.position": 2,
+          "reserved.slots": 4,
+          "waist.position": 4
+        },
+        "chunk_size": 50,
+        "max_action_dim": 55,
+        "max_state_dim": 55,
+        "state_spans": {
+          "arm.position": [
+            [
+              0,
+              14
+            ]
+          ],
+          "base.velocity": [
+            [
+              48,
+              51
+            ]
+          ],
+          "effector.position": [
+            [
+              28,
+              30
+            ]
+          ],
+          "end.position": [
+            [
+              14,
+              28
+            ]
+          ],
+          "hand.position": [
+            [
+              30,
+              42
+            ]
+          ],
+          "head.position": [
+            [
+              46,
+              48
+            ]
+          ],
+          "reserved.slots": [
+            [
+              51,
+              55
+            ]
+          ],
+          "waist.position": [
+            [
+              42,
+              46
+            ]
+          ]
+        }
+      },
+      "registry_name": "lingbot_vla_v2_slot_mapping"
+    },
+    {
+      "config": {
+        "cameras": [
+          "observation.image.cam",
+          "cam"
+        ],
+        "image_max_pixels": 65536,
+        "image_min_pixels": 65536,
+        "resize_imgs_with_padding": [
+          256,
+          256
+        ],
+        "tokenizer_path": "Qwen/Qwen3-VL-4B-Instruct"
+      },
+      "registry_name": "lingbot_vla_v2_image"
+    },
+    {
+      "config": {
+        "task_key": "task",
+        "tokenizer_name": "Qwen/Qwen3-VL-4B-Instruct"
+      },
+      "registry_name": "lingbot_vla_v2_chat_template"
+    },
+    {
+      "config": {
+        "max_length": 72,
+        "padding": "max_length",
+        "padding_side": "right",
+        "task_key": "task",
+        "tokenizer_name": "Qwen/Qwen3-VL-4B-Instruct",
+        "truncation": true
+      },
+      "registry_name": "tokenizer_processor"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}

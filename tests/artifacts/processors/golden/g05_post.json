@@ -1,0 +1,67 @@
+{
+  "name": "policy_postprocessor",
+  "steps": [
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              20
+            ],
+            "type": "ACTION"
+          }
+        },
+        "norm_map": {
+          "ACTION": "IDENTITY",
+          "STATE": "IDENTITY",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "unnormalizer_processor",
+      "state_file": "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "action_slots": [
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "embodiment": "so100",
+        "policy_action_dim": 20
+      },
+      "registry_name": "g05_inverse_action_projection"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    },
+    {
+      "config": {
+        "enabled": false
+      },
+      "registry_name": "absolute_actions_processor"
+    },
+    {
+      "config": {
+        "inverse": true,
+        "joint_offsets": [],
+        "joint_signs": []
+      },
+      "registry_name": "g05_action_frame_transform"
+    },
+    {
+      "config": {
+        "num_obs_steps": 1
+      },
+      "registry_name": "g05_action_history_crop"
+    }
+  ]
+}

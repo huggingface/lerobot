@@ -1,0 +1,91 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "default_task": "Execute the robot action."
+      },
+      "registry_name": "dm05_task_processor"
+    },
+    {
+      "config": {
+        "action_names": null,
+        "enabled": false,
+        "exclude_joints": [
+          "gripper"
+        ]
+      },
+      "registry_name": "relative_actions_processor"
+    },
+    {
+      "config": {
+        "eps": 1e-06,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          },
+          "observation.state": {
+            "shape": [
+              6
+            ],
+            "type": "STATE"
+          }
+        },
+        "norm_map": {
+          "ACTION": "QUANTILES",
+          "STATE": "QUANTILES",
+          "VISUAL": "IDENTITY"
+        },
+        "normalize_observation_keys": [
+          "observation.state"
+        ]
+      },
+      "registry_name": "normalizer_processor",
+      "state_file": "policy_preprocessor_step_4_normalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "clip_action": true,
+        "clip_state": true
+      },
+      "registry_name": "dm05_clip_normalized_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "dm05_state_bins_processor"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    },
+    {
+      "config": {
+        "add_state": true,
+        "default_task": "Execute the robot action.",
+        "image_keys": [
+          "observation.image.cam",
+          "observation.images.cam"
+        ],
+        "processor_name_or_path": "Dexmal/DM05",
+        "tokenizer_max_length": 1024
+      },
+      "registry_name": "dm05_tokenizer_processor"
+    }
+  ]
+}

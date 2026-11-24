@@ -1,0 +1,22 @@
+{
+  "name": "policy_postprocessor",
+  "steps": [
+    {
+      "config": {
+        "absolute_dims": [],
+        "action_dim": 6,
+        "action_representation": "delta",
+        "normalization_clip": 6.0
+      },
+      "registry_name": "flux3_action_history_unnormalizer",
+      "state_file": "policy_postprocessor_step_0_flux3_action_history_unnormalizer.safetensors"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}
