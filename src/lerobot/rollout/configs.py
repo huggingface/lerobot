@@ -27,7 +27,7 @@ import draccus
 from lerobot.configs import PreTrainedConfig, parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.inference import InferenceEngineConfig, RemoteInferenceConfig, SyncInferenceConfig
-from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
+from lerobot.processor.base_action_processor import BaseActionProcessorStep
 from lerobot.robots.config import RobotConfig
 from lerobot.robots.sim_robot import SimRobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
@@ -290,8 +290,8 @@ class RolloutConfig:
     teleop: TeleoperatorConfig | None = None
     # Optional mobile base input, composed with teleop for corrections and resets.
     base_teleop: TeleoperatorConfig | None = None
-    # Key bindings and speed presets for a keyboard base input.
-    base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
+    # Defaults to the mapping registered for the selected base input.
+    base_mapping: BaseActionProcessorStep | None = None
 
     # Policy (loaded from --policy.path via __post_init__)
     policy: PreTrainedConfig | None = None

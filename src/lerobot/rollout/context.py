@@ -375,7 +375,7 @@ def _prepare_rollout_devices(
                 robot,
                 base=make_teleoperator_from_config(cfg.base_teleop),
                 arm=teleop,
-                keyboard_mapping=cfg.base_mapping,
+                base_mapping=cfg.base_mapping,
                 action_processor=processors.teleop_action_processor,
             )
     except BaseException:

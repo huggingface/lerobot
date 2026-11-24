@@ -20,7 +20,8 @@ from typing import Any
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import RobotAction
 
-from .pipeline import ProcessorStepRegistry, RobotActionProcessorStep
+from .base_action_processor import BaseActionProcessorStep
+from .pipeline import ProcessorStepRegistry
 
 
 def default_base_key_bindings(layout: str = "qwerty") -> dict[str, str]:
@@ -39,9 +40,10 @@ def default_base_key_bindings(layout: str = "qwerty") -> dict[str, str]:
     }
 
 
+@BaseActionProcessorStep.register_subclass("keyboard")
 @ProcessorStepRegistry.register("keyboard_to_base_action")
 @dataclass
-class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
+class KeyboardToBaseActionProcessorStep(BaseActionProcessorStep):
     """Map pressed-key dictionaries to x/y velocities in m/s and theta velocity in deg/s.
 
     Opposite directions cancel. Speed changes once per key press and resets to the lowest preset.

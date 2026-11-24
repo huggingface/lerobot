@@ -83,12 +83,12 @@ def test_escaped_keyboard_stops_the_base_and_the_arm_is_still_cleaned_up(keyboar
 def test_setup_copies_mapping_state_and_keeps_custom_pipeline_hooks(keyboard):
     robot = SimpleNamespace(action_features={})
     mapping = KeyboardToBaseActionProcessorStep()
-    _, first = make_mobile_teleop(robot, keyboard, keyboard_mapping=mapping)
+    _, first = make_mobile_teleop(robot, keyboard, base_mapping=mapping)
     assert first(({"w": None, "+": None}, {}))["x.vel"] == 0.2
     custom = make_default_processors()[0]
     hook = MagicMock()
     custom.after_step_hooks.append(hook)
-    _, second = make_mobile_teleop(robot, keyboard, keyboard_mapping=mapping, action_processor=custom)
+    _, second = make_mobile_teleop(robot, keyboard, base_mapping=mapping, action_processor=custom)
     assert second(({"w": None}, {}))["x.vel"] == 0.1
     assert hook.call_count == len(second.steps)
     assert len(custom.steps) == len(make_default_processors()[0].steps)

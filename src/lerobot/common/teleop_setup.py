@@ -17,11 +17,10 @@ from typing import TYPE_CHECKING
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.processor import RobotProcessorPipeline, make_default_processors
+from lerobot.processor.base_action_processor import BaseActionProcessorStep
 from lerobot.processor.hold_joints_processor import HoldUncommandedJointsProcessorStep
-from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from lerobot.teleoperators import Teleoperator
 from lerobot.teleoperators.composite import CompositeTeleoperator
-from lerobot.teleoperators.keyboard import KeyboardTeleop
 
 if TYPE_CHECKING:
     from lerobot.robots import Robot
@@ -32,10 +31,10 @@ def make_mobile_teleop(
     base: Teleoperator,
     arm: Teleoperator | None = None,
     *,
-    keyboard_mapping: KeyboardToBaseActionProcessorStep | None = None,
+    base_mapping: BaseActionProcessorStep | None = None,
     action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction] | None = None,
 ) -> tuple[Teleoperator, RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]]:
-    """Combine a base input and an optional arm leader, mapping keyboard keys and holding other joints.
+    """Combine a base input and an optional arm leader, mapping base inputs and holding other joints.
 
     Reuse the returned pipeline across recording/reset phases; reset it for a new session.
     """
@@ -46,9 +45,14 @@ def make_mobile_teleop(
     )
     pipeline = action_processor if action_processor is not None else make_default_processors()[0]
     steps = list(pipeline.steps)
-    if type(base) is KeyboardTeleop:
-        # Copy so a reused config object does not share speed/key state across sessions.
-        steps.insert(0, replace(keyboard_mapping or KeyboardToBaseActionProcessorStep()))
+    mapping_type = BaseActionProcessorStep.get_known_choices().get(base.name)
+    if base_mapping is None:
+        base_mapping = mapping_type() if mapping_type is not None else None
+    elif mapping_type is None or not isinstance(base_mapping, mapping_type):
+        raise ValueError(f"The base mapping must match the {base.name!r} base input.")
+    if base_mapping is not None:
+        # Each session owns its mapping state (e.g. keyboard speed and pressed keys).
+        steps.insert(0, replace(base_mapping))
     steps.append(
         HoldUncommandedJointsProcessorStep(
             tuple(key for key in robot.action_features if key.endswith(".pos"))

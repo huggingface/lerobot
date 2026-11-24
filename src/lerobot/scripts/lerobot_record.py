@@ -91,7 +91,7 @@ lerobot-record \\
 
 import logging
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pprint import pformat
 
 from lerobot.cameras import CameraConfig  # noqa: F401
@@ -116,7 +116,7 @@ from lerobot.processor import (
     RobotProcessorPipeline,
     make_default_processors,
 )
-from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
+from lerobot.processor.base_action_processor import BaseActionProcessorStep
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -181,8 +181,8 @@ class RecordConfig:
     teleop: TeleoperatorConfig | None = None
     # Base input, e.g. keyboard. Without a leader, uncommanded joints hold their initial positions.
     base_teleop: TeleoperatorConfig | None = None
-    # Key bindings and speed presets for a keyboard base input.
-    base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
+    # Defaults to the mapping registered for the selected base input.
+    base_mapping: BaseActionProcessorStep | None = None
     # Display all cameras on screen
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
@@ -399,7 +399,7 @@ def record(
             robot,
             base=make_teleoperator_from_config(cfg.base_teleop),
             arm=arm_teleop,
-            keyboard_mapping=cfg.base_mapping,
+            base_mapping=cfg.base_mapping,
             action_processor=teleop_action_processor,
         )
 

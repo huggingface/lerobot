@@ -18,7 +18,7 @@ import draccus
 import pytest
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.processor import RobotProcessorPipeline
+from lerobot.processor import BaseActionProcessorStep, RobotProcessorPipeline
 from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
 from lerobot.processor.hold_joints_processor import HoldUncommandedJointsProcessorStep
 from lerobot.processor.keyboard_base_processor import (
@@ -117,9 +117,7 @@ def test_features_and_serialization_preserve_arm_and_held_channels(tmp_path):
 def test_layout_cli_mapping_and_session_copy(layout, keys):
     @dataclass
     class Config:
-        base_mapping: KeyboardToBaseActionProcessorStep = field(
-            default_factory=KeyboardToBaseActionProcessorStep
-        )
+        base_mapping: BaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
 
     config = draccus.parse(Config, args=[f"--base_mapping.layout={layout}"])
     mapping = replace(config.base_mapping)

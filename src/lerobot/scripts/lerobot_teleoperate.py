@@ -80,7 +80,7 @@ lerobot-teleoperate \
 
 import logging
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pprint import pformat
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
@@ -94,7 +94,7 @@ from lerobot.processor import (
     RobotProcessorPipeline,
     make_default_processors,
 )
-from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
+from lerobot.processor.base_action_processor import BaseActionProcessorStep
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -154,8 +154,8 @@ class TeleoperateConfig:
     teleop: TeleoperatorConfig | None = None
     # Optional base input; teleop controls the arms when both are set.
     base_teleop: TeleoperatorConfig | None = None
-    # Key bindings and speed presets for a keyboard base input.
-    base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
+    # Defaults to the mapping registered for the selected base input.
+    base_mapping: BaseActionProcessorStep | None = None
     # Limit the maximum frames per second.
     fps: int = 60
     teleop_time_s: float | None = None
@@ -300,7 +300,7 @@ def teleoperate(cfg: TeleoperateConfig):
             robot,
             base=make_teleoperator_from_config(cfg.base_teleop),
             arm=arm,
-            keyboard_mapping=cfg.base_mapping,
+            base_mapping=cfg.base_mapping,
             action_processor=teleop_action_processor,
         )
     else:

@@ -382,6 +382,7 @@ def test_lekiwi_cli_registration_in_a_fresh_process(command):
             f"lerobot.scripts.lerobot_{command}",
             "--robot.type=lekiwi_client",
             "--base_teleop.type=keyboard",
+            "--base_mapping.type=keyboard",
             "--help",
         ],
         capture_output=True,
