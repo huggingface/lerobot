@@ -101,7 +101,7 @@ Each successful action refreshes the bounded hold. If the recording, policy, or 
 
 The exoskeleton arms used for the [Unitree G1](./unitree_g1) also drive Asimov's arms. As for the G1, exoskeleton forward kinematics gives each hand pose; it is expressed relative to the exoskeleton shoulder, scaled to Asimov's shorter reach (about 0.84), placed at Asimov's shoulder, and solved with Asimov arm IK. Asimov's 5-DOF arms (shoulder pitch/roll/yaw, elbow, wrist yaw) match the exoskeleton's five joints; position is weighted above orientation.
 
-The IK uses Menlo's open-source [25-DOF URDF](https://github.com/menloresearch/asimov-1/tree/main/sim-model/asimov_1_25dof) (CERN-OHL-S-2.0). A copy at a pinned commit is downloaded on first use from the public [`lerobot/robot-urdfs`](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/asimov) bucket into `$HF_LEROBOT_HOME/robot-urdfs/asimov/`; meshes are fetched only for the visualization. It needs Pinocchio (`pip install pin`); no CasADi bindings are required.
+The IK uses Menlo's open-source [25-DOF URDF](https://github.com/menloresearch/asimov-1/tree/main/sim-model/asimov_1_25dof) (CERN-OHL-S-2.0). A copy at a pinned commit is downloaded on first use from the public [`lerobot/robot-urdfs`](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/asimov) bucket into `$HF_LEROBOT_HOME/robot-urdfs/asimov/`; meshes are fetched only for the visualization. It needs Pinocchio, from the `kinematics` extra (`uv sync --locked --extra asimov --extra unitree_g1 --extra kinematics`); no CasADi bindings are required.
 
 <Tip warning={true}>
   Menlo's joint control puts **every** joint under position control with the
@@ -137,6 +137,48 @@ uv run --locked lerobot-teleoperate \
 Arm actions are `<joint>.pos` targets in radians for the ten `L_*`/`R_*` shoulder, elbow and wrist joints. Each command moves a target by at most `--robot.max_arm_step_rad` (default 0.1 rad), so the arms ramp from their measured pose instead of jumping. `lerobot-record` stores these step-limited targets. Other options: `--teleop.frozen_joints="L_Wrist_Yaw,R_Wrist_Yaw"` keeps joints out of the IK, `--teleop.arm_scale` overrides the reach scale, and `--teleop.rotation_weight` (default 0.02) trades orientation against position.
 
 Asimov's wrist yaw is at its joint limit at zero, so in the exoskeleton's neutral wrist pose the hand can only roll one way. The exoskeleton joystick does not drive locomotion here, because the walking policy is off during arm control.
+
+## Gantry bring-up
+
+These steps bring a robot from a fresh boot to whole-body control with the robot hanging from its gantry. Keep Asimov Manager's E-Stop at hand throughout.
+
+**Point Asimov Edge at this computer.** Asimov Edge sends state to one host only, its `udp-state-host`. Over SSH on the robot's onboard computer, set it to the IP address of the computer running LeRobot, then render the config and restart Edge:
+
+```bash
+asimovctl config get asimov_edge.params.udp-state-host
+asimovctl config set asimov_edge.params.udp-state-host <this-computer-ip>
+asimovctl apply
+asimovctl restart asimov-edge
+```
+
+`asimovctl apply` only writes the config; Edge reads it when it restarts. If LeRobot reports `no state from the robot ... within 5.0s`, this setting is the first thing to check.
+
+**Clear a latched fault.** The robot reports `FAULT_DAMP` with `faulted=True` after a fault, and the fault stays latched until the firmware restarts. A robot that sits limp can latch `JOINT_OUT_OF_RANGE` on its own: a sagging head is enough to put the neck pitch past its limit. Move the joints back into range by hand, with the robot supported, then restart the firmware:
+
+```bash
+asimovctl restart asimov-firmware
+```
+
+**Run the staged gantry test.** [`examples/asimov/gantry_test.py`](https://github.com/huggingface/lerobot/blob/main/examples/asimov/gantry_test.py) sends STAND, waits until the robot is armed, then hands the joints to LeRobot, printing the mode, fault flag, attitude and alerts once a second. The exoskeleton joysticks are never read, so the robot does not walk. Run the stages in order:
+
+```bash
+# Legs balanced by LeRobot's locomotion policy at zero velocity; both arms held.
+uv run --locked python examples/asimov/gantry_test.py --host <robot-ip>
+
+# Legs held in STAND (no balancing); the right arm follows the exoskeleton.
+uv run --locked python examples/asimov/gantry_test.py --host <robot-ip> \
+  --legs stand --exo-arms right --arm-speed 1.2 \
+  --exo-id <calibration-id> --left-port /dev/ttyACM0 --right-port /dev/ttyACM1
+
+# Faster arm tracking once the retargeting looks right.
+uv run --locked python examples/asimov/gantry_test.py --host <robot-ip> \
+  --legs stand --exo-arms right --arm-speed 2.0 \
+  --exo-id <calibration-id> --left-port /dev/ttyACM0 --right-port /dev/ttyACM1
+```
+
+`--exo-arms` takes `left`, `right` or `both`. `--arm-speed` caps how fast an exoskeleton-driven joint target moves; the robot's own `max_arm_step_rad` limit (0.1 rad per command, 3 rad/s at 30 Hz) applies on top. Ctrl+C stops the setpoints, and Asimov Edge DAMPs the robot about two seconds later.
+
+In whole-body mode the locomotion policy runs on the computer running LeRobot at 50 Hz and sends all 25 joint targets with gains to the robot every tick, so the balance loop crosses the network. Prefer a wired or uncongested link. The policy also tracks small lateral commands poorly: in simulation, 0.2 m/s sideways barely moves the robot, and 0.4 m/s gives about 0.2 m/s.
 
 ## Simulation
 
