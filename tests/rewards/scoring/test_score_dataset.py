@@ -269,6 +269,25 @@ def test_score_dataset_rejects_repeated_frame_indices(tmp_path: Path) -> None:
         score_dataset(dataset, scorer)
 
 
+@pytest.mark.parametrize("allow_nan", [False, True])
+def test_score_dataset_accepts_nan_only_where_the_descriptor_allows_it(
+    tmp_path: Path, allow_nan: bool
+) -> None:
+    dataset = FakeDataset(tmp_path / "dataset", lengths=(2,))
+    descriptor = SignalDescriptor(description="Task progress", greater_is_better=True, allow_nan=allow_nan)
+    scorer = FakeScorer(
+        descriptors={"progress": descriptor},
+        result=FrameSignals(np.asarray([0, 1]), {"progress": np.asarray([0.5, np.nan])}),
+    )
+
+    if not allow_nan:
+        with pytest.raises(ValueError, match="does not allow them"):
+            score_dataset(dataset, scorer)
+        return
+    score_dataset(dataset, scorer)
+    assert np.isnan(load_scores(dataset, scorer.name)["progress"][1])
+
+
 @pytest.mark.parametrize("values", [np.asarray(["text"]), np.asarray([1.0 + 2.0j])])
 def test_score_dataset_rejects_non_numeric_signals(tmp_path: Path, values: np.ndarray) -> None:
     dataset = FakeDataset(tmp_path / "dataset", lengths=(1,))

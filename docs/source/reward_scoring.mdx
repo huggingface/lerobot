@@ -261,7 +261,7 @@ Every Parquet file of scores contains:
 - semantic descriptors: a description, `greater_is_better` (`True`, `False`, or `None`), optional unit and bounds, whether NaN is allowed, and, for a categorical signal such as a predicted subtask, the `labels` its values index;
 - provenance for the dataset, model, scorer options, and LeRobot version.
 
-`bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run. Scoring validates structure and alignment; descriptor bounds and `allow_nan` remain metadata for consumers.
+`bounds` describes the signal's theoretical or semantic range, not the minimum and maximum observed in one run; it is metadata for consumers. A frame without a row was not scored. A NaN value marks a frame the scorer could not score, and scoring rejects NaN in signals whose descriptor does not set `allow_nan`. Loading scores rejects files whose rows no longer match the dataset's episodes, for example after episodes were deleted or reordered.
 
 Descriptors and scorer provenance are stored in the score file's info. The store records dataset identity and LeRobot version separately. Metadata is encoded once in the Parquet schema rather than repeated on every frame row.
 
