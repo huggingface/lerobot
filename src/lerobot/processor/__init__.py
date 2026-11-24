@@ -69,6 +69,7 @@ from .hil_processor import (
     TimeLimitProcessorStep,
 )
 from .image_augmentation_processor import ImageAugmentationProcessorStep
+from .joint_affine_processor import JointAffineProcessorStep
 from .joint_reorder_processor import JointReorderProcessorStep
 from .newline_task_processor import NewLineTaskProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
@@ -136,6 +137,7 @@ __all__ = [
     "ImageCropResizeProcessorStep",
     "InfoProcessorStep",
     "InterventionActionProcessorStep",
+    "JointAffineProcessorStep",
     "JointReorderProcessorStep",
     "DefaultPolicyProcessorSteps",
     "load_pretrained_policy_processors",
