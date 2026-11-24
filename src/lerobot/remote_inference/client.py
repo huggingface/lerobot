@@ -48,6 +48,7 @@ from lerobot.transport import (
     ZenohTransport,
 )
 from lerobot.transport.protocol import decode_reply, query_reply, validate_reply
+from lerobot.utils.constants import PREDICTION_PREFIX
 
 from .chunk_contract import (
     RTC_MODEL_SPACE,
@@ -516,12 +517,22 @@ class RemoteClient:
             self.instance_id,
             self.artifact_identity,
         )
+        prediction = response.body.get("prediction", {})
+        if not isinstance(prediction, dict) or any(
+            not key.startswith(PREDICTION_PREFIX) for key in prediction
+        ):
+            raise ProtocolError(ErrorCode.MALFORMED, "Invalid policy prediction")
         return ActionChunk(
             None if model is None else torch.from_numpy(model),
             torch.from_numpy(actions),
             provenance,
             steps,
             response.body.get("server_durations", {}),
+            {
+                key: torch.from_numpy(value) if isinstance(value, np.ndarray) else value
+                for key, value in prediction.items()
+            }
+            or None,
         )
 
     def _validate_context(self, response: Envelope, body: dict, expected: MessageType) -> None:

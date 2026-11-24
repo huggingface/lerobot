@@ -41,7 +41,7 @@ from torch import Tensor
 from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.chunk import ChunkPolicySpec
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, NOISE, VIDEO_NOISE
+from lerobot.utils.constants import ACTION, NOISE, OBS_PREFIX, PREDICTION_PREFIX, STEPS_SUFFIX, VIDEO_NOISE
 from lerobot.utils.import_utils import require_package
 
 from .configuration_lingbot_va import LingBotVAConfig
@@ -100,8 +100,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # from ``config.wan_pretrained_path`` the first time inference runs.
         self._frozen: dict = {}
 
-        self.last_predicted_frames: Tensor | None = None
-        self.last_predicted_latents: Tensor | None = None
         self.reset()
 
     # Frozen-module lazy loading (VAE + UMT5 + tokenizer)
@@ -163,8 +161,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._prompt: str | None = None
         self._prompt_embeds = None
         self._negative_prompt_embeds = None
-        self.last_predicted_frames = None
-        self.last_predicted_latents = None
         self._use_cfg = (cfg.guidance_scale > 1) or (cfg.action_guidance_scale > 1)
         # Two independent flow-matching schedulers (video latent + action streams).
         self._scheduler = FlowMatchScheduler(shift=cfg.snr_shift, sigma_min=0.0, extra_one_step=True)
@@ -423,9 +419,9 @@ class LingBotVAPolicy(PreTrainedPolicy):
         ``frame_chunk_size * 4`` frames are VAE-encoded per chunk, and returns ``chunk_size``
         actions.
 
-        With ``return_predicted_video``, the prediction holds the imagined clip per camera,
-        ``[B, F, 3, H, W]``, its frames spread evenly over the chunk's actions
-        (``observation_steps``).
+        With ``return_predicted_video``, the output also holds the imagined clip per camera as
+        ``prediction.images.<camera>`` ``[B, F, 3, H, W]``, its frames spread evenly over the
+        chunk's actions (``prediction.images.<camera>_steps``).
 
         The batch's ``noise`` is the starting action sample
         ``[1, action_dim, frame_chunk_size, action_per_frame, 1]`` and its ``video_noise`` the
@@ -450,13 +446,15 @@ class LingBotVAPolicy(PreTrainedPolicy):
         clip = self._decode_video_batch(latents)  # [B, F, H, W, 3] uint8
         n_frames, n_actions = clip.shape[1], actions.shape[1]
         cameras = self._split_cameras(clip.flatten(0, 1).permute(0, 3, 1, 2))
-        observation = {key: value.unflatten(0, clip.shape[:2]) for key, value in cameras.items()}
-        # Frame f shows from the first action whose evenly spread frame index reaches it; with
+        # Frame f belongs to the first action whose evenly spread frame index reaches it; with
         # more frames than actions, the trailing frames belong to the chunk's last action.
         steps = [min(-(-f * n_actions // n_frames), n_actions - 1) for f in range(n_frames)]
-        return PolicyOutput(
-            action=actions, prediction={"observation": observation, "observation_steps": steps}
-        )
+        output = PolicyOutput(action=actions)
+        for camera, frames in cameras.items():
+            key = PREDICTION_PREFIX + camera.removeprefix(OBS_PREFIX)
+            output[key] = frames.unflatten(0, clip.shape[:2])
+            output[key + STEPS_SUFFIX] = steps
+        return output
 
     def _predict_chunk(
         self,
@@ -490,12 +488,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
         # actions: [B, action_dim, F, action_per_frame, 1] (model-normalized). Keep for KV feedback.
         self._executed_actions = actions
-
-        if self.config.save_predicted_video:
-            # Match upstream LingBot-VA visualization: collect chunk latents and decode the
-            # concatenated latent sequence once after the rollout finishes.
-            self.last_predicted_frames = None
-            self.last_predicted_latents = latents.detach().to("cpu")
 
         # On the first chunk, frame 0 is the conditioning frame (already "known"): the upstream
         # LIBERO client skips it (start_idx=1), so we drop the first frame's actions here.
@@ -876,17 +868,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         actions[:, ~self._action_mask] *= 0
         return actions, latents
 
-    # Predicted-video decoding (opt-in)
-    @torch.no_grad()
-    def decode_predicted_latents(self, latents) -> Tensor:
-        """Decode a concatenated predicted-latent sequence into ``[T, H, W, 3]`` uint8 frames."""
-        return self._decode_predicted_video(latents)
-
-    @torch.no_grad()
-    def _decode_predicted_video(self, latents) -> Tensor:
-        """VAE-decode predicted latents into the first env's uint8 frame stack ``[T, H, W, 3]`` on CPU."""
-        return self._decode_video_batch(latents)[0]
-
+    # Predicted-video decoding (``return_predicted_video``)
     @torch.no_grad()
     def _decode_video_batch(self, latents) -> Tensor:
         """VAE-decode predicted latents into uint8 frame stacks ``[B, T, H, W, 3]`` on CPU."""

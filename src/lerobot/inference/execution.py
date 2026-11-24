@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import time
+from bisect import bisect_right
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -33,6 +34,7 @@ import torch
 
 from lerobot.lerobot_types import PolicyPrediction
 from lerobot.policies import ActionQueue, QueueSnapshot, RTCConfig
+from lerobot.utils.constants import STEPS_SUFFIX
 
 from .contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
 from .latency import LatencyWindow
@@ -140,6 +142,27 @@ def trained_overlap_valid(conditioned: int, measured: int, maximum: int, has_pre
     return not has_previous or measured <= min(conditioned, maximum)
 
 
+def prediction_at(prediction: PolicyPrediction, index: int, *, first: bool) -> PolicyPrediction | None:
+    """What a chunk's prediction shows at its action ``index``, or ``None`` when nothing new.
+
+    The first played action carries every single value; a value predicted at several actions
+    (``{key}_steps``) shows its latest frame reached, ``[B, ...]``, whenever that frame changes.
+    """
+    shown: PolicyPrediction = {}
+    for key, value in prediction.items():
+        if key.endswith(STEPS_SUFFIX) and key.removesuffix(STEPS_SUFFIX) in prediction:
+            continue
+        steps = prediction.get(key + STEPS_SUFFIX)
+        if steps is None:
+            if first:
+                shown[key] = value
+            continue
+        frame = bisect_right(steps, index) - 1
+        if frame >= 0 and (first or frame != bisect_right(steps, index - 1) - 1):
+            shown[key] = value[:, frame]
+    return shown or None
+
+
 class ChunkRuntime:
     """Capacity-one executor scheduling with per-action provenance and latched faults."""
 
@@ -226,7 +249,10 @@ class ChunkRuntime:
         self.generation = 0
         self.pending: ChunkRequest | None = None
         self.current: ActionProvenance | None = None
-        self.prediction: PolicyPrediction | None = None
+        # Accepted chunks' predictions by request: [prediction, first chunk index, next index].
+        self._predictions: dict[str, list] = {}
+        # The prediction for the action the last pop dispatched.
+        self._dispatched_prediction: PolicyPrediction | None = None
         self.failure: str | None = None
         self.active = False
         self.held = False
@@ -278,7 +304,8 @@ class ChunkRuntime:
             self.queue.clear()
             self.pending = None
             self.current = None
-            self.prediction = None
+            self._predictions.clear()
+            self._dispatched_prediction = None
             self.held = held
             self.has_executed = False
             self._last_pop_at = None
@@ -545,7 +572,9 @@ class ChunkRuntime:
                 )
             self.last_accept["accepted"] = accepted
             if accepted and chunk.prediction is not None:
-                self.prediction = chunk.prediction
+                # Actions of the chunk dropped before playback shift its first chunk index.
+                first = self.last_accept.get("trimmed_actions", 0)
+                self._predictions[provenance.request_id] = [chunk.prediction, first, first]
             if accepted and self.starvation_deadline is not None:
                 self.wait_events.append(
                     {"event": "resumed", "wait_s": now - (self.starvation_deadline - self.starvation_grace)}
@@ -615,10 +644,27 @@ class ChunkRuntime:
         return accepted
 
     def take_prediction(self) -> PolicyPrediction | None:
-        """Hand out the latest accepted chunk's prediction once."""
+        """Hand out, once, the prediction for the action the last pop dispatched.
+
+        A chunk's prediction comes with its first played action; values predicted at several
+        actions (``{key}_steps``) come one at a time, with the action each belongs to.
+        """
         with self.lock:
-            prediction, self.prediction = self.prediction, None
+            prediction, self._dispatched_prediction = self._dispatched_prediction, None
             return prediction
+
+    def _prediction_at(self, request_id: str) -> PolicyPrediction | None:
+        """The prediction of ``request_id``'s chunk for its next action; earlier chunks are done."""
+        while self._predictions and next(iter(self._predictions)) != request_id:
+            if request_id not in self._predictions:
+                return None
+            del self._predictions[next(iter(self._predictions))]
+        entry = self._predictions.get(request_id)
+        if entry is None:
+            return None
+        prediction, first, index = entry
+        entry[2] += 1
+        return prediction_at(prediction, index, first=index == first)
 
     def dispatch_allowed(self) -> bool:
         """Check permission and the committed endpoint's age on every motor tick."""
@@ -650,6 +696,7 @@ class ChunkRuntime:
                 return None
             self.current = provenance
             self.has_executed = True
+            self._dispatched_prediction = self._prediction_at(provenance.request_id)
             self._last_pop_at = self.clock()
             if not self.dispatch_allowed():
                 return None

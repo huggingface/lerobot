@@ -24,8 +24,8 @@ from lerobot.inference import FeatureHistory, SyncInferenceEngine, policy_histor
 from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies import ExecutionMode
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE, PREDICTION
-from tests.inference.policy_helpers import ConformingPolicy, tiny_config
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
+from tests.inference.policy_helpers import ConformingPolicy, subtask_config, tiny_config
 from tests.inference.rtc_helpers import Pipeline
 
 
@@ -151,9 +151,9 @@ def test_chunks_play_back_their_execution_steps_and_predictions_ride_on_their_fi
 
         def predict_action_chunk(self, batch) -> PolicyOutput:
             actions = super().predict_action_chunk(batch)[ACTION]
-            return {ACTION: actions, PREDICTION: {"language": {"subtask": [f"chunk {len(self.batches)}"]}}}
+            return {ACTION: actions, "prediction.subtask": [f"chunk {len(self.batches)}"]}
 
-    policy = Predicting(tiny_config())
+    policy = Predicting(subtask_config())
     executor = SyncInferenceEngine(policy, Pipeline(), Pipeline())
     actions, predictions = [], []
     for t in range(7):
@@ -162,7 +162,7 @@ def test_chunks_play_back_their_execution_steps_and_predictions_ride_on_their_fi
         )
         predictions.append(executor.prediction)
     assert [a[0, 0].item() for a in actions] == [100, 101, 102, 200, 201, 202, 300]
-    subtasks = [p["language"]["subtask"][0] if p else None for p in predictions]
+    subtasks = [p["prediction.subtask"][0] if p else None for p in predictions]
     assert subtasks == ["chunk 1", None, None, "chunk 2", None, None, "chunk 3"]
 
 

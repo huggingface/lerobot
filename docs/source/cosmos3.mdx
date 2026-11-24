@@ -25,7 +25,7 @@ As a policy, Cosmos3 runs in the world action model mode of the native action re
 
 - **Inputs**: the camera views are composed into one video canvas (one view as is, two side by side, three with the first on top and the other two below it). The prompt carries the task, the frame rate, the canvas resolution, a description of the canvas layout and the number of idle frames of the chunk.
 - **Training**: the policy encodes the clip of the current frame and the `chunk_size` future frames with the VAE, adds noise to the future latents and to the action chunk, and learns to denoise both. The loss is a weighted sum of a video loss and an action loss.
-- **Inference**: the condition frame is clean, the future video and the actions are sampled jointly with the UniPC solver, and the policy returns the action chunk. The predicted video can be saved during evaluation (see [Evaluation](#evaluation)).
+- **Inference**: the condition frame is clean, the future video and the actions are sampled jointly with the UniPC solver, and the policy returns the action chunk.
 - By default only the generation pathway, the layers around it and the action modules train (`train_gen_stream_only=true`, `freeze_vision_encoder=true`), as in the native post-training recipes.
 
 LeRobot provides the two released sizes as two policy types:
@@ -338,21 +338,6 @@ lerobot-eval \
 - `--env.observation_height=256 --env.observation_width=256` renders the cameras at the 256x256 resolution of the training data.
 - The LIBERO environment adds the Cosmos3 action conversion to its processors automatically: the 10D rot6d actions are converted back to the 7D axis angle actions of LIBERO. When you run the policy outside `lerobot-eval` and a sim robot, build the environment processors with `make_env_pre_post_processors(env_cfg, policy_cfg)` from `lerobot.envs.factory` as well.
 - See the [LIBERO guide](./libero) for the evaluation protocol and the other options.
-
-### Predicted video
-
-Cosmos3 predicts the future frames together with the actions. Pass `--policy.save_predicted_video=true` to decode the predicted video of every chunk with the VAE and write `pred_episode_*.mp4` next to the rendered `eval_episode_*.mp4` videos.
-
-<video
-  src="https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/cosmos3/cosmos3_libero_predicted_video.mp4"
-  autoplay
-  loop
-  muted
-  playsinline
-  width="100%"
-></video>
-
-_Cosmos3 Edge on the LIBERO-10 task "put the black bowl in the bottom drawer of the cabinet and close it". Left: the third person and wrist observations of the rollout. Right: the video predicted by the policy, sampled again every 16 actions from the current observation._
 
 ## Results
 

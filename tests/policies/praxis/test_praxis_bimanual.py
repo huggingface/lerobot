@@ -228,9 +228,9 @@ def test_bimanual_chunk_api_and_prediction_split() -> None:
     policy.reset()
     out = policy.predict_action_chunk(fake_bimanual_observation(0))
     assert out[ACTION].shape == (1, 21, 2 * PRAXIS_COMMAND_DIM)
-    frames = out["prediction"]["observation"]
-    assert set(frames) == set(BIMANUAL_CAMERA_KEYS)
-    assert all(f.shape == (1, 21, 3, *TILE) for f in frames.values())
+    keys = [key.replace("observation.", "prediction.", 1) for key in BIMANUAL_CAMERA_KEYS]
+    assert all(out[key].shape == (1, 21, 3, *TILE) for key in keys)
+    assert all(out[key + "_steps"] == list(range(21)) for key in keys)
 
 
 def test_rel20_to_pose12_composes_each_arm_with_its_own_anchor() -> None:

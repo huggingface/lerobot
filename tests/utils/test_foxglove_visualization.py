@@ -149,18 +149,14 @@ def test_prediction_logs_the_first_env_on_prediction_topics(monkeypatch):
 
     fv._log_foxglove_prediction(
         {
-            "observation": {
-                "observation.images.top": torch.stack([torch.zeros(3, 4, 6), torch.ones(3, 4, 6)]),
-                "observation.state": torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
-            },
-            "language": {"subtask": ["reach", "grasp"]},
-            "boxes": {
-                "observation.images.top": [
-                    {"detections": []},
-                    {"detections": [{"label": "c", "bbox": [0, 0, 1, 1]}]},
-                ],
-                "observation.images.wrist": [{"detections": []}, {"detections": []}],  # camera never logged
-            },
+            "prediction.images.top": torch.stack([torch.zeros(3, 4, 6), torch.ones(3, 4, 6)]),
+            "prediction.state": torch.tensor([[1.0, 2.0], [3.0, 4.0]]),
+            "prediction.subtask": ["reach", "grasp"],
+            "prediction.boxes.top": [
+                {"detections": []},
+                {"detections": [{"label": "c", "bbox": [0, 0, 1, 1]}]},
+            ],
+            "prediction.boxes.wrist": [{"detections": []}, {"detections": []}],  # camera never logged
         },
         compress_images=False,
         log_time=0,

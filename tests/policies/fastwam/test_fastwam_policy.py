@@ -36,7 +36,7 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     UnnormalizerProcessorStep,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE, PREDICTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 
 class FakeFastWAMCore(nn.Module):
@@ -400,13 +400,13 @@ def test_predicted_video_splits_the_clip_back_into_cameras(monkeypatch):
 
     assert output[ACTION].shape == (1, 8, 3)
     # Of the 4 executed actions, the first shows clip frame 1 and the third frame 2.
-    assert output[PREDICTION]["observation_steps"] == [0, 2]
-    frames = output[PREDICTION]["observation"]
-    assert set(frames) == {"observation.images.top", "observation.images.wrist"}
-    assert frames["observation.images.top"].shape == (1, 2, 3, 16, 16)
+    assert output["prediction.images.top_steps"] == output["prediction.images.wrist_steps"] == [0, 2]
+    top, wrist = output["prediction.images.top"], output["prediction.images.wrist"]
+    assert top.shape == (1, 2, 3, 16, 16)
     for row, t in enumerate((1, 2)):
-        assert frames["observation.images.top"][:, row].unique().tolist() == [t]
-        assert frames["observation.images.wrist"][:, row].unique().tolist() == [10 + t]
+        assert top[:, row].unique().tolist() == [t]
+        assert wrist[:, row].unique().tolist() == [10 + t]
+    assert policy.config.prediction_features["prediction.images.top"].shape == (3, 16, 16)
 
 
 def test_cached_inference_paths_support_fullgraph_compile():

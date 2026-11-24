@@ -22,10 +22,10 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.lerobot_types import PolicyOutput, PolicyPrediction
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import NOISE, OBS_STATE
+from lerobot.utils.constants import NOISE, OBS_PREFIX, OBS_STATE, PREDICTION_PREFIX, STEPS_SUFFIX
 from lerobot.utils.import_utils import require_package
 
 from .configuration_fastwam import FastWAMConfig
@@ -309,7 +309,7 @@ class FastWAMPolicy(PreTrainedPolicy):
 
         Returns:
             PolicyOutput: The chunk `[B, action_horizon, action_dim]` under `"action"` and, with
-            `return_predicted_video`, the predicted frames per camera under `"prediction"`.
+            `return_predicted_video`, the predicted frames as `prediction.images.<camera>`.
         """
         noise = batch.get(NOISE)
 
@@ -320,9 +320,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         ).to(device=batch_device(batch), dtype=torch.float32)
         if not self.config.return_predicted_video:
             return PolicyOutput(action=actions)
-        return PolicyOutput(
-            action=actions, prediction=self._video_prediction(self._predict_video(batch, actions))
-        )
+        return PolicyOutput(action=actions, **self._video_prediction(self._predict_video(batch, actions)))
 
     def _per_item_infer_kwargs(
         self, batch: dict[str, Tensor], *, noise: Tensor | None
@@ -358,8 +356,8 @@ class FastWAMPolicy(PreTrainedPolicy):
             ]
         )
 
-    def _video_prediction(self, clip: Tensor) -> PolicyPrediction:
-        """The clip's frames per camera, each with the first executed action it shows.
+    def _video_prediction(self, clip: Tensor) -> dict[str, Any]:
+        """The clip's frames as ``prediction.images.<camera>``, each with the first action it shows.
 
         Action ``s`` of the chunk shows frame ``ceil((s + 1) * (F - 1) / action_horizon)``: the
         clip spans the whole horizon and its first frame is the current observation.
@@ -373,7 +371,12 @@ class FastWAMPolicy(PreTrainedPolicy):
                 frames.append(index)
                 steps.append(step)
         views = self._split_cameras(clip[:, frames].permute(0, 1, 4, 2, 3))  # [B, F, 3, H, W]
-        return {"observation": views, "observation_steps": steps}
+        prediction: dict[str, Any] = {}
+        for camera, view in views.items():
+            key = PREDICTION_PREFIX + camera.removeprefix(OBS_PREFIX)
+            prediction[key] = view
+            prediction[key + STEPS_SUFFIX] = steps
+        return prediction
 
     def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
         """Inverse of the width-wise camera concat in `_stack_video_from_images` (equal widths)."""

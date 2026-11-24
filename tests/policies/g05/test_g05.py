@@ -77,7 +77,6 @@ from lerobot.utils.constants import (
     MESSAGES_RENDERED,
     OBS_STATE,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
-    PREDICTION,
     QUERY_KIND,
     QUERY_TEXT,
 )
@@ -1987,17 +1986,23 @@ def _bbox_target(label: str, xyxy: list[float]) -> str:
     return format_g05_bbox_target(json.dumps({"detections": [{"label": label, "bbox": xyxy}]}))
 
 
+def _boxes_key(policy) -> str:
+    return "prediction.boxes." + policy.config.bbox_camera.removeprefix("observation.images.")
+
+
 def test_system2_chunk_carries_the_cot_subtask_and_boxes_on_the_bbox_camera():
     policy = _policy_with_cot(f"{_bbox_target('cube', [0.25, 0.5, 0.75, 0.875])}|Subtask: grasp the cup")
 
     output = policy.predict_action_chunk({})
 
-    assert output[ACTION].shape == (1, 4, 20)
-    camera = policy.config.bbox_camera
-    assert output[PREDICTION] == {
-        "language": {"subtask": ["grasp the cup"]},
-        "boxes": {camera: [{"detections": [{"label": "cube", "bbox": [0.25, 0.5, 0.75, 0.875]}]}]},
+    assert output["action"].shape == (1, 4, 20)
+    assert {key: value for key, value in output.items() if key != "action"} == {
+        "prediction.subtask": ["grasp the cup"],
+        _boxes_key(policy): [{"detections": [{"label": "cube", "bbox": [0.25, 0.5, 0.75, 0.875]}]}],
     }
+    # The System 2 chain of thought this output comes from declares both.
+    policy.config.runtime_system, policy.config.runtime_cot_fields = "system2", ("bbox", "subtask")
+    assert set(output) - {"action"} == set(policy.config.prediction_features)
 
 
 def test_system2_prediction_has_one_value_per_env():
@@ -2009,23 +2014,19 @@ def test_system2_prediction_has_one_value_per_env():
     output = policy.predict_action_chunk({})
 
     assert output["action"].shape == (2, 4, 20)
-    assert output["prediction"] == {
-        "language": {"subtask": ["grasp the cup", "open the drawer"]},
-        "boxes": {
-            policy.config.bbox_camera: [
-                {"detections": [{"label": "cup", "bbox": [0.125, 0.25, 0.5, 0.75]}]},
-                {"detections": []},
-            ]
-        },
-    }
+    assert output["prediction.subtask"] == ["grasp the cup", "open the drawer"]
+    assert output[_boxes_key(policy)] == [
+        {"detections": [{"label": "cup", "bbox": [0.125, 0.25, 0.5, 0.75]}]},
+        {"detections": []},
+    ]
 
 
-def test_system2_cot_without_fields_returns_the_chunk_alone():
-    assert _policy_with_cot("I see a table.").predict_action_chunk({}).keys() == {ACTION}
+def test_system2_cot_without_fields_returns_only_the_chunk():
+    assert set(_policy_with_cot("I see a table.").predict_action_chunk({})) == {"action"}
 
 
-def test_system1_returns_the_chunk_alone():
-    assert _policy_with_cot().predict_action_chunk({}).keys() == {ACTION}
+def test_system1_chunk_has_no_prediction():
+    assert set(_policy_with_cot().predict_action_chunk({})) == {"action"}
 
 
 def test_relative_anchor_uses_the_last_proprio_history_step():

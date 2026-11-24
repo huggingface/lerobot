@@ -181,6 +181,16 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                 return ft
         return None
 
+    @property
+    def prediction_features(self) -> dict[str, PolicyFeature]:
+        """What ``predict_action_chunk`` returns besides the action, by ``prediction.*`` key.
+
+        Frames are ``VISUAL`` with their own ``(C, H, W)``; language and boxes (stored as language
+        annotations in datasets) are ``LANGUAGE``. Empty by default; a policy declares what its
+        config enables, and runners pass on only what is declared.
+        """
+        return {}
+
     def _save_pretrained(self, save_directory: Path) -> None:
         # Encode against the base class so draccus includes the choice "type" key,
         # which `from_pretrained` needs to resolve the concrete subclass.

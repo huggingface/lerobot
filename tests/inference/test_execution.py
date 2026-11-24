@@ -93,18 +93,30 @@ def test_reset_and_timeout_make_late_results_ineligible():
     assert rt.begin(observation(clock)) is None
 
 
-def test_prediction_is_served_once_and_cleared_with_its_chunk():
+def test_a_chunk_prediction_comes_with_the_actions_it_belongs_to():
     rt, clock = runtime()
     request = rt.begin(observation(clock))
-    assert rt.accept(
-        request, replace(chunk(request), prediction={"language": {"subtask": ["reach"]}}), task_version=0
-    )
-    assert rt.take_prediction() == {"language": {"subtask": ["reach"]}}
-    assert rt.take_prediction() is None
-    rt.invalidate()
+    frames = torch.arange(3.0).reshape(1, 3, 1)  # [B=1, F=3, ...]: frame f holds f
+    prediction = {
+        "prediction.subtask": ["reach"],
+        "prediction.images.top": frames,
+        "prediction.images.top_steps": [0, 2, 3],
+    }
+    assert rt.accept(request, replace(chunk(request), prediction=prediction), task_version=0)
+    assert rt.take_prediction() is None  # nothing dispatched yet
+    shown = []
+    for _ in range(4):
+        assert rt.pop() is not None
+        shown.append(rt.take_prediction())
+    assert shown[0]["prediction.subtask"] == ["reach"]
+    assert all("prediction.images.top_steps" not in step for step in shown if step)
+    frames_shown = [None if step is None else step["prediction.images.top"].item() for step in shown]
+    assert frames_shown == [0.0, None, 1.0, 2.0]
+    assert rt.take_prediction() is None  # handed out once
+
     request = rt.begin(observation(clock))
     assert rt.accept(
-        request, replace(chunk(request), prediction={"language": {"subtask": ["grasp"]}}), task_version=0
+        request, replace(chunk(request), prediction={"prediction.subtask": ["grasp"]}), task_version=0
     )
     rt.invalidate()
     assert rt.take_prediction() is None

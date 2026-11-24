@@ -17,13 +17,14 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import torch
 
+from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.lerobot_types import PolicyPrediction
 from lerobot.policies import PreTrainedPolicy, reanchor_relative_rtc_prefix
 from lerobot.processor import (
@@ -34,9 +35,15 @@ from lerobot.processor import (
 from lerobot.utils.constants import (
     ACTION,
     ACTION_ANCHOR,
+    OBS_IMAGES,
+    OBS_PREFIX,
+    PREDICTED_ACTION,
     PREDICTION,
+    PREDICTION_BOXES,
+    PREDICTION_IMAGES,
     RTC_INFERENCE_DELAY,
     RTC_PREV_CHUNK_LEFT_OVER,
+    STEPS_SUFFIX,
 )
 
 from .contracts import ChunkPolicySpec, ExecutionMode
@@ -119,7 +126,7 @@ def predict_chunk(
 
     ``prepared`` is the preprocessor's output. The policy runs as a
     :class:`~lerobot.processor.PolicyProcessorStep` and the postprocessor on what it
-    returned, so the model chunk (``prediction["action"]``) and the canonical command
+    returned, so the model chunk (``prediction.action``) and the canonical command
     (``action``) come out of one pass. Retain the first model width across calls; canonical
     postprocessing may crop padding; relative RTC requires matching widths and re-anchors
     the continuation on the batch's ``action_anchor``. A complete-execution policy may
@@ -150,8 +157,8 @@ def predict_chunk(
             batch[RTC_PREV_CHUNK_LEFT_OVER] = prefix
         output = PolicyProcessorStep(policy).predict(batch)
         predicted_at = time.perf_counter()
-        prediction: dict[str, Any] = dict(output[PREDICTION])
-        predicted = prediction.pop("action")
+        prediction: PolicyPrediction = dict(output[PREDICTION])
+        predicted = prediction.pop(PREDICTED_ACTION)
         if (
             predicted.ndim != 3
             or (predicted.shape[0] != 1 and mode is not ExecutionMode.CHUNK)
@@ -179,9 +186,76 @@ def predict_chunk(
         if not canonical.is_floating_point() or not torch.isfinite(canonical).all():
             raise ValueError("Policy/processor returned non-finite or non-floating actions.")
         steps = spec.steps_to_execute(prediction_steps) if mode is ExecutionMode.CHUNK else prediction_steps
+        if prediction:
+            prediction = validate_prediction(
+                prediction, policy.config.prediction_features, predicted.shape[0], prediction_steps
+            )
         return ChunkPrediction(
             predicted.detach()[:, :steps],
             canonical[:, :steps].detach(),
             predicted_at,
-            cast(PolicyPrediction, prediction) if prediction else None,
+            prediction or None,
         )
+
+
+def validate_prediction(
+    prediction: PolicyPrediction, declared: Mapping[str, PolicyFeature], batch_size: int, chunk_length: int
+) -> PolicyPrediction:
+    """Check what a policy predicted against its ``prediction_features``; tensors move to the CPU.
+
+    Frames (``VISUAL``) are ``[B, C, H, W]``, or ``[B, F, C, H, W]`` with ``{key}_steps``: one
+    ascending chunk index per frame. Language and boxes (``LANGUAGE``) hold one value per env.
+    """
+    checked: PolicyPrediction = {}
+    for key, value in prediction.items():
+        if key.endswith(STEPS_SUFFIX) and key.removesuffix(STEPS_SUFFIX) in prediction:
+            continue
+        feature = declared.get(key)
+        if feature is None:
+            raise ValueError(f"The policy predicted {key!r}, which its config's prediction_features omit.")
+        steps = prediction.get(key + STEPS_SUFFIX)
+        if feature.type is FeatureType.VISUAL:
+            shape = (
+                (batch_size, *feature.shape) if steps is None else (batch_size, len(steps), *feature.shape)
+            )
+            if not isinstance(value, torch.Tensor) or tuple(value.shape) != shape:
+                got = tuple(value.shape) if isinstance(value, torch.Tensor) else type(value).__name__
+                raise ValueError(f"Prediction {key!r} must be a {shape} tensor, got {got}.")
+            value = value.detach().cpu()
+        elif not isinstance(value, list) or len(value) != batch_size:
+            raise ValueError(f"Prediction {key!r} must hold one value per environment ({batch_size}).")
+        if steps is not None:
+            if (
+                not isinstance(steps, list)
+                or any(type(step) is not int for step in steps)
+                or steps != sorted(steps)
+                or not all(0 <= step < chunk_length for step in steps)
+            ):
+                raise ValueError(
+                    f"{key + STEPS_SUFFIX!r} must list ascending chunk indices below {chunk_length}."
+                )
+            checked[key + STEPS_SUFFIX] = steps
+        checked[key] = value
+    return checked
+
+
+def rename_prediction(prediction: PolicyPrediction, names: Mapping[str, str]) -> PolicyPrediction:
+    """Name the cameras a prediction refers to as the robot does.
+
+    ``names`` maps the policy's observation keys to the robot's (see
+    :func:`~lerobot.inference.history.recorded_names`): with ``observation.images.exterior``
+    recorded as ``observation.images.front``, ``prediction.images.exterior`` becomes
+    ``prediction.images.front`` and ``prediction.boxes.exterior`` ``prediction.boxes.front``.
+    """
+    renamed: PolicyPrediction = {}
+    for key, value in prediction.items():
+        base = key.removesuffix(STEPS_SUFFIX)
+        suffix = key[len(base) :]
+        for prefix in (PREDICTION_IMAGES + ".", PREDICTION_BOXES + "."):
+            if base.startswith(prefix):
+                camera = base.removeprefix(prefix)
+                recorded = names.get(f"{OBS_IMAGES}.{camera}", f"{OBS_IMAGES}.{camera}")
+                camera = recorded.removeprefix(OBS_IMAGES + ".").removeprefix(OBS_PREFIX)
+                key = prefix + camera + suffix
+        renamed[key] = value
+    return renamed

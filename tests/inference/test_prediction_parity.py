@@ -32,6 +32,7 @@ from tests.inference.policy_helpers import (
     local_engine_for,
     observation,
     runner_for,
+    subtask_config,
     tiny_config,
 )
 from tests.utils import wait_for
@@ -157,9 +158,9 @@ def test_shared_prediction_preserves_model_coordinates_before_inplace_postproces
 
 
 def test_shared_prediction_keeps_the_policy_prediction_beside_the_actions():
-    policy = ObservedPolicy(tiny_config())
+    policy = ObservedPolicy(subtask_config())
     # A `PolicyOutput`: the chunk and a prediction batched like it.
-    policy.output = {"action": policy.output, "prediction": {"language": {"subtask": ["pick"]}}}
+    policy.output = {"action": policy.output, "prediction.subtask": ["pick"]}
     prediction = predict_chunk(
         policy,
         lambda batch: batch,
@@ -173,15 +174,15 @@ def test_shared_prediction_keeps_the_policy_prediction_beside_the_actions():
     torch.testing.assert_close(
         prediction.model_actions, torch.arange(9, dtype=torch.float32).reshape(1, 3, 3)
     )
-    assert prediction.prediction == {"language": {"subtask": ["pick"]}}
+    assert prediction.prediction == {"prediction.subtask": ["pick"]}
 
 
 def _rtc_engine_after_one_chunk(monkeypatch, *, accept=True, after_accept=None):
     """A local RTC engine that ran one chunk of a policy predicting a subtask with it."""
-    config = tiny_config()
+    config = subtask_config()
     config.rtc_config = RTCConfig(enabled=False)
     policy = ObservedPolicy(config)
-    policy.output = {"action": policy.output, "prediction": {"language": {"subtask": ["reach"]}}}
+    policy.output = {"action": policy.output, "prediction.subtask": ["reach"]}
     engine = local_engine_for(policy, queue_threshold=8)
     engine.resume()
     engine._runtime.turnarounds.append(1 / 30)
@@ -206,7 +207,7 @@ def test_rtc_engine_hands_a_chunk_prediction_out_once_with_the_next_action(monke
     engine = _rtc_engine_after_one_chunk(monkeypatch)
 
     first = engine.get_action(None)
-    assert first[TransitionKey.PREDICTION] == {"language": {"subtask": ["reach"]}}
+    assert first[TransitionKey.PREDICTION] == {"prediction.subtask": ["reach"]}
     assert isinstance(engine.get_action(None), torch.Tensor)  # the rest of the chunk is bare
 
 

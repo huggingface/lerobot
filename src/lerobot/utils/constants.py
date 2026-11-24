@@ -46,9 +46,15 @@ RTC_INFERENCE_DELAY = "rtc.inference_delay"
 RTC_PREV_CHUNK_LEFT_OVER = "rtc.prev_chunk_left_over"
 RTC_EXECUTION_HORIZON = "rtc.execution_horizon"
 ACTION_PREFIX = ACTION + "."
-# Batch key of a policy's prediction (see ``PolicyOutput``), and the prefix naming what it predicts:
-# ``observation.images.top`` predicted is ``prediction.images.top``.
+# What a policy predicts besides its action (see ``PolicyPrediction``): the batch key holding it and
+# the prefix of its keys. ``observation.images.top`` predicted is ``prediction.images.top``.
 PREDICTION = "prediction"
+PREDICTION_PREFIX = PREDICTION + "."
+PREDICTED_ACTION = PREDICTION_PREFIX + ACTION  # the chunk as the policy returned it, model coordinates
+PREDICTION_IMAGES = PREDICTION_PREFIX + "images"
+PREDICTION_BOXES = PREDICTION_PREFIX + "boxes"
+# Companion of a value predicted at several actions of a chunk: the chunk index of each.
+STEPS_SUFFIX = "_steps"
 ACTION_TOKENS = ACTION + ".tokens"
 ACTION_TOKEN_MASK = ACTION + ".token_mask"
 ACTION_CODE_TOKEN_MASK = ACTION + ".code_token_mask"

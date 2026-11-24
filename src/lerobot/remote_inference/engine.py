@@ -41,7 +41,10 @@ from lerobot.inference import (
     QueryAnswer,
     QueryKind,
     RemoteInferenceConfig,
+    rename_prediction,
 )
+from lerobot.lerobot_types import EnvTransition
+from lerobot.processor import create_transition
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from .client import RemoteClient, RequestCancelled
@@ -86,6 +89,8 @@ class RemoteInferenceEngine(InferenceEngine):
         self.config = config
         self._features = dataset_features
         self._rename_map = rename_map or {}
+        # Checkpoint names back to the robot's, for the cameras predictions refer to.
+        self._recorded_names = {policy: local for local, policy in self._rename_map.items()}
         self._robot = robot_wrapper
         self._global_shutdown = shutdown_event
         self.runtime = ChunkRuntime(
@@ -605,10 +610,11 @@ class RemoteInferenceEngine(InferenceEngine):
         if self.failed and self._global_shutdown is not None:
             self._global_shutdown.set()
 
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
+    def get_action(self, obs_frame: dict | None) -> torch.Tensor | EnvTransition | None:
         """Pop an eligible endpoint and its task label; observations arrive separately.
 
-        Returns None when unavailable. The caller must still check dispatch permission.
+        Returns None when unavailable, and the action with what the policy predicted for it as
+        a transition when there is a prediction. The caller must still check dispatch permission.
         """
         item = self.runtime.pop()
         if self.runtime.starvation_deadline is not None and self.runtime.held:
@@ -620,7 +626,9 @@ class RemoteInferenceEngine(InferenceEngine):
         if self._record.active:
             with self._lock:
                 self._pending_dispatch = action.detach().cpu().numpy().astype(np.float32)
-        return action
+        if (prediction := self.runtime.take_prediction()) is None:
+            return action
+        return create_transition(action=action, prediction=prediction)
 
     def record_dispatch(self) -> None:
         """Attach a policy action that reached the robot to the tick that pulled it."""
@@ -860,6 +868,10 @@ class RemoteInferenceEngine(InferenceEngine):
                     raise
                 # Acceptance and an operator retarget must have one order: an
                 # old in-flight result cannot pass using a previously read version.
+                if result.prediction:
+                    result = replace(
+                        result, prediction=rename_prediction(result.prediction, self._recorded_names)
+                    )
                 with self._task_lock:
                     accepted = self.runtime.accept(request, result, task_version=self._task_version)
                 self._warn_refill_horizon()

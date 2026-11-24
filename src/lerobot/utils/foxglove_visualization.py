@@ -27,6 +27,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+import torch
 
 from lerobot.lerobot_types import BboxAnswer, PolicyPrediction, RobotAction, RobotObservation
 
@@ -38,8 +39,12 @@ from .constants import (
     OBS_PREFIX,
     OBS_STATE,
     OBS_STR,
+    PREDICTED_ACTION,
     PREDICTION,
+    PREDICTION_BOXES,
+    PREDICTION_PREFIX,
     REWARD,
+    STEPS_SUFFIX,
     SUCCESS,
     TRUNCATED,
 )
@@ -348,39 +353,44 @@ def _log_foxglove_boxes(topic: str, answer: BboxAnswer, size: tuple[int, int], l
 def _log_foxglove_prediction(prediction: PolicyPrediction, *, compress_images: bool, log_time: int) -> None:
     """Log the first environment of a policy's prediction on ``/prediction/...`` topics.
 
-    A predicted ``observation.images.top`` goes to ``/prediction/images/top`` and predicted state to
-    ``/prediction/state``; language goes to ``/prediction/<style>`` (``lerobot.Text`` JSON), and boxes
-    to ``<camera topic>/prediction`` as ``ImageAnnotations`` to overlay on that camera in an Image panel.
+    ``prediction.images.top`` goes to ``/prediction/images/top``, predicted values to
+    ``/prediction/state``, language (``prediction.<style>``) to ``/prediction/<style>``
+    (``lerobot.Text`` JSON), and boxes (``prediction.boxes.top``) to ``<camera topic>/prediction`` as
+    ``ImageAnnotations`` to overlay on that camera in an Image panel.
     """
 
     import foxglove
 
     channels = log_foxglove_data.channels  # type: ignore[attr-defined]
     scalars: dict[str, float] = {}
-    for key, value in prediction.get("observation", {}).items():
-        name = key.removeprefix(OBS_PREFIX)
-        arr = value[0].numpy(force=True)
-        if arr.ndim == 1:
-            scalars.update(_labeled_scalars(name, arr))
-        else:
-            topic = f"/{PREDICTION}/images/{_foxglove_safe_name(name.removeprefix('images.'))}"
-            _log_foxglove_image(topic, name, arr, compress_images=compress_images, log_time=log_time)
-    _log_foxglove_scalars(f"/{PREDICTION}/state", scalars, log_time=log_time)
-    for style, texts in prediction.get("language", {}).items():
-        text = texts[0]
-        topic = f"/{PREDICTION}/{_foxglove_safe_name(style)}"
-        channel = channels.get(topic)
-        if channel is None:
-            channel = channels[topic] = foxglove.Channel(topic, schema=_TEXT_SCHEMA, message_encoding="json")
-        channel.log({"text": text}, log_time=log_time)
-    for camera_key, answers in prediction.get("boxes", {}).items():
-        answer = answers[0]
-        camera_topic = _foxglove_topic(camera_key, is_image=True)
-        size = _IMAGE_SIZES.get(camera_topic)
-        if size is None:
-            logging.debug("Skipping predicted boxes: camera %r was not logged", camera_key)
+    for key, value in prediction.items():
+        if key == PREDICTED_ACTION or key.endswith(STEPS_SUFFIX):
             continue
-        _log_foxglove_boxes(f"{camera_topic}/{PREDICTION}", answer, size, log_time)
+        name = key.removeprefix(PREDICTION_PREFIX)
+        if key.startswith(PREDICTION_BOXES + "."):
+            camera = key.removeprefix(PREDICTION_BOXES + ".")
+            camera_topic = _foxglove_topic(camera, is_image=True)
+            size = _IMAGE_SIZES.get(camera_topic)
+            if size is None:
+                logging.debug("Skipping predicted boxes: camera %r was not logged", camera)
+                continue
+            _log_foxglove_boxes(f"{camera_topic}/{PREDICTION}", value[0], size, log_time)
+        elif isinstance(value, torch.Tensor):
+            arr = value[0].numpy(force=True)
+            if arr.ndim == 1:
+                scalars.update(_labeled_scalars(name, arr))
+            else:
+                topic = f"/{PREDICTION}/images/{_foxglove_safe_name(name.removeprefix('images.'))}"
+                _log_foxglove_image(topic, name, arr, compress_images=compress_images, log_time=log_time)
+        else:
+            topic = f"/{PREDICTION}/{_foxglove_safe_name(name)}"
+            channel = channels.get(topic)
+            if channel is None:
+                channel = channels[topic] = foxglove.Channel(
+                    topic, schema=_TEXT_SCHEMA, message_encoding="json"
+                )
+            channel.log({"text": str(value[0])}, log_time=log_time)
+    _log_foxglove_scalars(f"/{PREDICTION}/state", scalars, log_time=log_time)
 
 
 def log_foxglove_data(

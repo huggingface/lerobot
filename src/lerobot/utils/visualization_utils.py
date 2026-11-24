@@ -23,7 +23,6 @@ this module does not import ``rerun`` or ``foxglove`` (each backend imports its 
 
 from lerobot.lerobot_types import (
     EnvTransition,
-    PolicyPrediction,
     RobotAction,
     RobotObservation,
     TransitionKey,
@@ -58,50 +57,6 @@ def init_visualization(
         raise ValueError(f"Unknown display_mode '{display_mode}'. Expected one of {VISUALIZATION_MODES}.")
 
 
-class PredictionPlayback:
-    """Shows a chunk's stacked predicted frames at the actions they belong to.
-
-    A policy predicts once per chunk; frames it predicted for several actions arrive stacked
-    ``[B, F, C, H, W]`` with the chunk index of each frame in ``observation_steps``. Each call
-    is one action: the frame of the latest index reached is returned when it changes, and the
-    rest of the prediction is returned as it arrives.
-    """
-
-    def __init__(self) -> None:
-        self._frames: dict | None = None
-        self._steps: list[int] = []
-        self._action = 0
-        self._shown = -1
-
-    def __call__(self, prediction: PolicyPrediction | None) -> PolicyPrediction | None:
-        """This action's prediction to display, or ``None`` when nothing new is shown."""
-        if prediction:
-            self._frames = None
-            if "observation_steps" in prediction:
-                self._frames, self._steps = (
-                    dict(prediction["observation"]),
-                    list(prediction["observation_steps"]),
-                )
-                self._action, self._shown = 0, -1
-                prediction = prediction.copy()
-                prediction.pop("observation")
-                prediction.pop("observation_steps")
-        elif self._frames is not None:
-            self._action += 1
-        if self._frames is None:
-            return prediction or None
-        frame = max((i for i, step in enumerate(self._steps) if step <= self._action), default=-1)
-        if frame in (-1, self._shown):
-            return prediction or None
-        self._shown = frame
-        shown = prediction.copy() if prediction else PolicyPrediction()
-        shown["observation"] = {key: value[:, frame] for key, value in self._frames.items()}
-        return shown
-
-
-_playback = PredictionPlayback()
-
-
 def log_visualization_data(
     display_mode: str,
     observation: RobotObservation | None = None,
@@ -112,11 +67,11 @@ def log_visualization_data(
     """Logs observation/action data and the policy's prediction to the backend selected by ``display_mode``.
 
     ``policy_step`` is the transition a policy returned with its action; its prediction (see
-    ``PreTrainedPolicy.predict_action_chunk``) is shown, stacked predicted frames paced over the
-    following calls (see :class:`PredictionPlayback`).
+    ``PreTrainedPolicy.predict_action_chunk``) is shown. Engines hand out each part of a chunk's
+    prediction with the action it belongs to.
     """
 
-    prediction = _playback(policy_step.get(TransitionKey.PREDICTION) if policy_step is not None else None)
+    prediction = policy_step.get(TransitionKey.PREDICTION) if policy_step is not None else None
 
     if display_mode == "rerun":
         log_rerun_data(

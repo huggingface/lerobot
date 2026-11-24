@@ -30,7 +30,7 @@ fed back into the KV cache as the chunk is executed (closed-loop world modeling)
 - Ready-to-use LeRobot-format checkpoints on the Hub (converted from the released upstream ones).
 - Autoregressive dual-stream inference behind the standard `predict_action_chunk` interface
   (single-environment eval, `--eval.batch_size=1`).
-- Opt-in saving of the policy's **predicted (imagined) videos** during eval / training.
+- Opt-in **predicted (imagined) video**, shown live next to each camera during rollouts.
 - Evaluation with `lerobot-eval` on LIBERO and RoboTwin.
 - Training / fine-tuning via the dual-stream flow-matching loss (`policy.forward`), see below.
 
@@ -92,12 +92,6 @@ lerobot-eval \
     --eval.n_episodes=10 --eval.batch_size=1 \
     --output_dir=outputs/eval/lingbot_va_robotwin
 ```
-
-### Saving predicted (imagined) videos
-
-Set `--policy.save_predicted_video=true` to additionally VAE-decode the predicted video
-latents and write `pred_episode_*.mp4` next to the env-rendered `eval_episode_*.mp4` videos.
-The same flag works for the periodic eval during `lerobot-train`.
 
 ### Watching the imagined video live
 

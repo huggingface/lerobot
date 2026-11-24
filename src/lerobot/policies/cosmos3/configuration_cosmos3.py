@@ -412,7 +412,8 @@ class Cosmos3Config(PreTrainedConfig):
     guidance_interval: tuple[float, float] | None = None
     sampling_shift: float = 5.0  # Shift of the sampling noise levels
     sampler: Literal["unipc", "edm"] = "unipc"  # Solver of the flow ODE, EDM is not implemented yet
-    # Keep the predicted video latents of every chunk for lerobot-eval to decode and save.
+    # Removed. Declared only so configs written before still parse (draccus rejects keys the dataclass
+    # no longer declares); setting it raises.
     save_predicted_video: bool = False
 
     # Data layout, has to match the training data. `fps` and `view_size` left at None are taken from the
@@ -460,6 +461,8 @@ class Cosmos3Config(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
+        if self.save_predicted_video:
+            raise ValueError("`save_predicted_video` was removed: Cosmos3 returns the action chunk only.")
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
