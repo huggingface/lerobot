@@ -21,6 +21,9 @@ store saves and compares but never interprets.
 
 Episodes are written one at a time to a staging folder, so an interrupted run can resume, and
 the file is published only once every selected episode is written.
+
+A frame without a row was not scored, for example because its episode was not selected. A file
+that is not a score file, or whose rows no longer match the dataset's episodes, raises when read.
 """
 
 from __future__ import annotations
@@ -415,6 +418,27 @@ def _read_schema(path: Path) -> pa.Schema:
     return schema
 
 
+def _validate_rows_match_episodes(dataset: LeRobotDataset, name: str, keys: pa.Table) -> None:
+    """Raise if a row no longer points at its frame, for example after episodes are deleted or reordered."""
+    if keys.num_rows == 0:
+        return
+    indices = keys.column("index").to_numpy()
+    episodes = keys.column("episode_index").to_numpy()
+    frames = keys.column("frame_index").to_numpy()
+    starts: np.ndarray = np.zeros(int(episodes.max()) + 1, dtype=np.int64)
+    ends = np.zeros_like(starts)
+    for episode_index in np.unique(episodes):
+        episode = dataset.meta.episodes[int(episode_index)]
+        starts[episode_index] = int(episode["dataset_from_index"])
+        ends[episode_index] = int(episode["dataset_to_index"])
+    misaligned = (frames < 0) | (indices != starts[episodes] + frames) | (indices >= ends[episodes])
+    if misaligned.any():
+        episode_index = int(episodes[np.argmax(misaligned)])
+        raise ValueError(
+            f"Scores {name!r} no longer align with episode {episode_index} of this dataset; score it again"
+        )
+
+
 def _get_scores_path(dataset: LeRobotDataset, name: str, *, download: bool, token: str | bool | None) -> Path:
     path = _scores_path(dataset, name)
     if path.is_file() or not download:
@@ -459,6 +483,10 @@ def load_scores(
     Returns:
         The scores as a Hugging Face dataset backed by a memory-mapped Arrow cache.
         A selection with no matching rows returns an empty dataset.
+
+    Raises:
+        ValueError: If the file is not a score file, or its rows no longer match the dataset's
+            episodes, for example after episodes were deleted or reordered.
     """
     path = _get_scores_path(dataset, name, download=download, token=token)
     schema = _read_schema(path)
@@ -468,12 +496,14 @@ def load_scores(
         or identity["total_episodes"] > dataset.meta.total_episodes
         or identity["total_frames"] > dataset.meta.total_frames
     ):
-        raise ValueError("Scores no longer align with this dataset; score it again")
+        raise ValueError(f"Scores {name!r} no longer align with this dataset; score it again")
     selected = sorted(_resolve_episode_indices(dataset, episodes))
     requested = schema.names if columns is None else list(columns)
     filters = pa_ds.field("episode_index").isin(selected)
+    keys = pa_ds.dataset(path, format="parquet").to_table(columns=list(RESERVED_COLUMNS), filter=filters)
+    _validate_rows_match_episodes(dataset, name, keys)
     # Return a typed empty dataset when no score rows match the selection.
-    if pa_ds.dataset(path, format="parquet").count_rows(filter=filters) == 0:
+    if keys.num_rows == 0:
         scores = datasets.Dataset(schema.empty_table().select(requested))
     else:
         scores = datasets.Dataset.from_parquet(
@@ -538,8 +568,8 @@ def merge_scores(
 
     Raises:
         FileExistsError: If the scores exist and ``overwrite`` is ``False``.
-        ValueError: If the scores differ in columns or ``info``, do not fit the dataset, or share
-            an episode.
+        ValueError: If the scores differ in columns or ``info``, no longer match the dataset's
+            episodes, or share an episode.
     """
     if not names:
         raise ValueError("At least one score name must be given to merge")
@@ -566,6 +596,7 @@ def merge_scores(
             or identity["total_frames"] > dataset.meta.total_frames
         ):
             raise ValueError(f"Scores {part!r} no longer align with this dataset; score it again")
+        _validate_rows_match_episodes(dataset, part, pq.read_table(path, columns=list(RESERVED_COLUMNS)))
         if not schema.equals(reference, check_metadata=False) or metadata != reference_metadata:
             raise ValueError(f"Scores {part!r} have different columns or info than {names[0]!r}")
         parquet_file = pq.ParquetFile(path)

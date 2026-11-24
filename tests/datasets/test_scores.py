@@ -607,8 +607,8 @@ def test_merge_scores_combines_scores_from_before_and_after_append(tmp_path, rev
 
 @pytest.mark.parametrize(
     "repo_id,lengths",
-    [("other/dataset", [2, 3]), ("test/dataset", [2]), ("test/dataset", [2, 2])],
-    ids=["different-repository", "deleted-episode", "deleted-frame"],
+    [("other/dataset", [2, 3]), ("test/dataset", [2]), ("test/dataset", [2, 2]), ("test/dataset", [3, 2])],
+    ids=["different-repository", "deleted-episode", "deleted-frame", "moved-episode"],
 )
 def test_merge_scores_rejects_incompatible_dataset(tmp_path, repo_id, lengths):
     dataset = FakeDataset(tmp_path / "dataset", [2, 3])
@@ -692,6 +692,16 @@ def test_scores_remain_valid_after_appending_but_not_deleting_episodes(tmp_path)
     shortened = FakeDataset(dataset.root, [2])
     with pytest.raises(ValueError, match="no longer align"):
         load_scores(shortened, "test")
+
+
+@pytest.mark.parametrize("lengths", [[3, 2], [1, 4]], ids=["reordered", "resized"])
+def test_scores_reject_episodes_moved_with_the_same_totals(tmp_path, lengths):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 3])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+
+    edited = FakeDataset(dataset.root, lengths)
+    with pytest.raises(ValueError, match="no longer align with episode"):
+        load_scores(edited, "test")
 
 
 def test_scores_survive_real_dataset_append_and_parquet_repacking(tmp_path):
