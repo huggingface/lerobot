@@ -265,7 +265,8 @@ def test_score_dataset_rejects_repeated_frame_indices(tmp_path: Path) -> None:
     dataset = FakeDataset(tmp_path / "dataset", lengths=(2,))
     scorer = FakeScorer(result=FrameSignals(np.asarray([0, 0]), {"progress": np.asarray([0.0, 0.5])}))
 
-    with pytest.raises(ValueError, match="repeated"):
+    # ScoreWriter rejects them when the episode is written.
+    with pytest.raises(ValueError, match="without repeats"):
         score_dataset(dataset, scorer)
 
 

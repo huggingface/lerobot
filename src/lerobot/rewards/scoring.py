@@ -145,8 +145,6 @@ def score_dataset(
                 f"Signal names for episode {episode_index} must match the scorer's descriptors: "
                 f"signals={sorted(frame_signals.signals)}, descriptors={sorted(descriptors)}"
             )
-        if np.unique(frame_signals.frame_indices).size != frame_signals.frame_indices.size:
-            raise ValueError(f"Frame indices for episode {episode_index} must not contain repeated values")
         for signal_name, values in frame_signals.signals.items():
             if values.dtype.kind not in "biuf":
                 raise ValueError(
