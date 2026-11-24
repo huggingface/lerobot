@@ -4,9 +4,8 @@
 
 To see what a dataset in this format holds before reading about its layout, open one in the [LeRobot Dataset Visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0): camera recordings, synchronized state and action charts, and every episode, in the browser. See [Explore a Dataset in the Browser](./using_dataset_tools#explore-a-dataset-in-the-browser).
 
-This docs will guide you to:
+To learn how a dataset is organized first, read [What's in a LeRobot dataset](./datasets_explained). This page shows you how to:
 
-- Understand the v3.0 design and directory layout
 - Record a dataset and push it to the Hub
 - Load datasets for training with `LeRobotDataset`
 - Stream datasets without downloading using `StreamingLeRobotDataset`
@@ -49,41 +48,11 @@ lerobot-record \
 # Optional: --dataset.rgb_encoder.vcodec=auto
 ```
 
-See the [recording guide](./il_robots#record-a-dataset) for more details.
+See [3. Record a dataset](./record_dataset) for more details.
 
 ## Format design
 
-A core v3 principle is **decoupling storage from the user API**: data is stored efficiently (few large files), while the public API exposes intuitive episode-level access.
-
-`v3` has three pillars:
-
-1. **Tabular data**: Low‑dimensional, high‑frequency signals (states, actions, timestamps) stored in **Apache Parquet**. Access is memory‑mapped or streamed via the `datasets` stack.
-2. **Visual data**: Camera frames concatenated and encoded into **MP4**. Frames from the same episode are grouped; videos are sharded per camera for practical sizes.
-3. **Metadata**: JSON/Parquet records describing schema (feature names, dtypes, shapes), frame rates, normalization stats, and **episode segmentation** (start/end offsets into shared Parquet/MP4 files).
-
-> To scale to millions of episodes, tabular rows and video frames from multiple episodes are **concatenated** into larger files. Episode‑specific views are reconstructed **via metadata**, not file boundaries.
-
-<div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
-  <figure style="margin:0; text-align:center;">
-    <img
-      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/asset1datasetv3.png"
-      alt="LeRobotDataset v3 diagram"
-      width="220"
-    />
-    <figcaption style="font-size:0.9em; color:#666;">
-      From episode‑based to file‑based datasets
-    </figcaption>
-  </figure>
-</div>
-
-### Directory layout (simplified)
-
-- **`meta/info.json`**: canonical schema (features, shapes/dtypes), FPS, codebase version, and **path templates** to locate data/video shards.
-- **`meta/stats.json`**: global feature statistics (mean/std/min/max) used for normalization; exposed as `dataset.meta.stats`.
-- **`meta/tasks.parquet`**: natural‑language task descriptions mapped to integer IDs for task‑conditioned policies.
-- **`meta/episodes/`**: per‑episode records (lengths, tasks, offsets) stored as **chunked Parquet** for scalability.
-- **`data/`**: frame‑by‑frame **Parquet** shards; each file typically contains **many episodes**.
-- **`videos/`**: **MP4** shards per camera; each file typically contains **many episodes**.
+How a dataset is organized (episodes, frames, features, and the `meta/`, `data/` and `videos/` folders) is explained in [What's in a LeRobot dataset](./datasets_explained#how-its-stored).
 
 ## Load a dataset for training
 

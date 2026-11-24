@@ -1,4 +1,51 @@
 # Reinforcement learning: when to use it
 
+The [tutorial](./il_robots) teaches a robot by showing it what to do: the policy copies your episodes. This is [imitation learning](./glossary#imitation-learning). [Reinforcement learning (RL)](./glossary#reinforcement-learning-rl) teaches it by trial and error instead: the policy tries the task, gets a reward when it succeeds, and gets better with practice.
+
+**Start with imitation learning.** It's simpler, and it's how most policies in LeRobot are trained. Reinforcement learning is a second step, for when a short task must become faster or more reliable than your demonstrations.
+
+## How they compare
+
+|                       | Imitation learning                                                 | Reinforcement learning                                                        |
+| --------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| How the policy learns | It copies your episodes                                            | It tries, gets a reward, and improves                                         |
+| What you provide      | About 50 good episodes                                             | A few episodes, a reward, and your time to watch the robot practise           |
+| How good it can get   | About as good as your episodes                                     | It can become better than your episodes: faster and more reliable             |
+| Setup                 | The [tutorial](./il_robots)                                        | More: a reward, safe limits for the arm's movements, and the robot's 3D model |
+| Policies              | ACT, Diffusion Policy, VLAs, … (see [Choose a policy](./policies)) | `gaussian_actor`, trained with HIL-SERL                                       |
+
+## When it's worth it
+
+**A good fit:**
+
+- Short tasks, done in 5 to 10 seconds, such as pushing a cube to a spot or picking up and lifting it.
+- Tasks where a policy trained by imitation mostly works, but you need it to succeed almost every time, or faster.
+
+**Not a good fit:**
+
+- Your first project with a robot.
+- Long tasks with many steps.
+- Tasks where you can't tell success from failure, by pressing a button or with a [reward model](./reward_models).
+
+## How it works in LeRobot
+
+LeRobot trains with [HIL-SERL](./glossary#hil-serl) (Human-in-the-Loop Sample-Efficient Robotic Reinforcement Learning), a method that learns real tasks in a few hours of practice:
+
+1. **Record a few episodes** with a gamepad, a keyboard or a leader arm, so the policy doesn't start from nothing.
+2. **Choose how the robot gets its reward:** press a success or failure button at the end of each try, or train a reward classifier that recognizes success from the cameras (see [Reward models](./reward_models)).
+3. **Let it practise.** Two programs run at once: the _actor_ runs the policy on the robot, and the _learner_ improves it from what happened. When the robot goes off track or does something unsafe, take over with the gamepad, then hand control back. As it learns, you step in less and less.
+
+You need an NVIDIA GPU, a gamepad (or a keyboard), and the robot's 3D model (a URDF file): the policy moves the gripper in space, and LeRobot works out the joint movements from the model. The guide's examples use SO-100 and SO-101 arms.
+
 > [!NOTE]
-> This page is being written as part of the docs redesign. It will cover how reinforcement learning differs from learning from demonstrations, when it is worth the extra setup, and how to get started in simulation and on a real robot.
+> **Not the same as [Correct a running policy (human-in-the-loop)](./hil_data_collection).** There, you also take over while a policy runs, but your corrections are added to the dataset and the policy is trained again by imitation, with no reward. Try that first: it's simpler, and it works with the policies you already train.
+
+## Start in simulation
+
+Practise the whole loop in simulation before using a real robot. A simulated Franka arm learns to pick up a cube, with the same programs and controls, and nothing can break: see [Practice RL in simulation](./hilserl_sim). Then move to [RL on a real robot (HIL-SERL)](./hilserl).
+
+## Next steps
+
+- **Try it in simulation:** [Practice RL in simulation](./hilserl_sim).
+- **Train on a real robot:** [RL on a real robot (HIL-SERL)](./hilserl).
+- **Learn about rewards:** [Reward models: what they are for](./reward_models).
