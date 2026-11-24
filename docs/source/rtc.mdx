@@ -131,6 +131,13 @@ RTCConfig(execution_horizon=10)
 
 **`inference_delay`**: How many timesteps of inference latency your system has. This is passed to `predict_action_chunk()` rather than the config, since it may vary at runtime.
 
+**`action_dim_weights`** (optional, `guided` mode): Per-action-dimension guidance multipliers of shape `(D,)`. Useful for manipulation policies where continuous arm joints benefit from full temporal smoothing (`1.0`) while discrete/binary gripper transitions should stay responsive (e.g., `0.35`). When shorter than the denoiser's padded action width (such as `max_action_dim=32` in Pi0/Pi0.5), trailing padded dimensions are automatically zero-weighted:
+
+```python
+# 7 arm joints at full guidance weight + 1 gripper dimension at 0.35x (trailing padded dims auto-zeroed)
+RTCConfig(action_dim_weights=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.35])
+```
+
 ## Testing RTC Offline
 
 Before running on a real robot, test RTC with dataset samples to visualize how it works:
