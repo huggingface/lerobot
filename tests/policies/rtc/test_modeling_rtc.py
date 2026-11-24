@@ -795,3 +795,76 @@ def test_denoise_step_deterministic_with_same_inputs():
 
     # Should produce identical results
     assert torch.allclose(result1, result2)
+
+
+# ====================== Per-Dimension Weight Tests ======================
+
+
+def test_get_action_dim_weights_behavior():
+    """Test get_action_dim_weights handles None, exact match, zero-padding, and overflow."""
+    proc_none = RTCProcessor(RTCConfig())
+    assert proc_none.get_action_dim_weights(8, device=torch.device("cpu"), dtype=torch.float32) is None
+
+    proc = RTCProcessor(RTCConfig(action_dim_weights=[1.0, 1.0, 0.35]))
+    w_exact = proc.get_action_dim_weights(3, device=torch.device("cpu"), dtype=torch.float32)
+    assert w_exact.shape == (1, 1, 3)
+    assert torch.allclose(w_exact.squeeze(), torch.tensor([1.0, 1.0, 0.35]))
+
+    # Shorter than action_dim (e.g. 8 real dims padded to max_action_dim=32): trailing dims zero-weighted
+    w_padded = proc.get_action_dim_weights(6, device=torch.device("cpu"), dtype=torch.float32)
+    assert w_padded.shape == (1, 1, 6)
+    assert torch.allclose(w_padded.squeeze(), torch.tensor([1.0, 1.0, 0.35, 0.0, 0.0, 0.0]))
+
+    with pytest.raises(ValueError, match="exceeds action_dim"):
+        proc.get_action_dim_weights(2, device=torch.device("cpu"), dtype=torch.float32)
+
+
+def test_denoise_step_per_dim_weights_scale_and_zero_padded_dims():
+    """Test action_dim_weights scales each dim independently and masks trailing padded dims."""
+    # Real robot has 3 dims (2 arm joints + 1 gripper downweighted to 0.35), model pads to 6 dims
+    config = RTCConfig(
+        prefix_attention_schedule=RTCAttentionSchedule.ONES,
+        max_guidance_weight=10.0,
+        execution_horizon=5,
+        action_dim_weights=[1.0, 0.0, 0.35],
+    )
+    processor = RTCProcessor(config)
+
+    x_t = torch.ones(1, 10, 6)
+    prev_chunk = torch.full((1, 10, 6), 0.2)
+
+    def constant_denoiser(x):
+        return torch.full_like(x, 0.4)
+
+    result = processor.denoise_step(
+        x_t=x_t,
+        prev_chunk_left_over=prev_chunk,
+        inference_delay=5,
+        time=torch.tensor(0.5),
+        original_denoise_step_partial=constant_denoiser,
+    )
+
+    base_v = torch.full_like(x_t, 0.4)
+    delta = result - base_v
+    # Dim 1 (weight=0.0) and padded dims 3..5 (auto zero-weighted) must receive zero correction
+    assert torch.allclose(delta[:, :, 1], torch.zeros_like(delta[:, :, 1]), atol=1e-6)
+    assert torch.allclose(delta[:, :, 3:], torch.zeros_like(delta[:, :, 3:]), atol=1e-6)
+    # Prefix steps on dim 2 (weight=0.35) must receive exactly 0.35x the correction of dim 0 (weight=1.0)
+    assert torch.allclose(delta[:, :5, 2], 0.35 * delta[:, :5, 0], atol=1e-6)
+    assert torch.all(delta[:, :5, 0].abs() > 1e-3)
+
+
+def test_denoise_step_rejects_action_dim_weights_longer_than_action_dim():
+    """Test denoise_step raises ValueError when action_dim_weights exceeds action_dim."""
+    processor = RTCProcessor(RTCConfig(action_dim_weights=[1.0, 1.0, 1.0, 0.35]))
+    x_t = torch.ones(1, 10, 3)
+    prev_chunk = torch.zeros(1, 10, 3)
+
+    with pytest.raises(ValueError, match="exceeds action_dim"):
+        processor.denoise_step(
+            x_t=x_t,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=2,
+            time=torch.tensor(0.5),
+            original_denoise_step_partial=lambda x: torch.zeros_like(x),
+        )
