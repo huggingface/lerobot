@@ -212,6 +212,9 @@ class RTCProcessor:
             .unsqueeze(0)
             .unsqueeze(-1)
         )
+        dim_weights = self.get_action_dim_weights(action_dim, device=x_t.device, dtype=weights.dtype)
+        if dim_weights is not None:
+            weights = weights * dim_weights
 
         with torch.enable_grad():
             v_t = original_denoise_step_partial(x_t)
@@ -251,6 +254,26 @@ class RTCProcessor:
         )
 
         return result
+
+    def get_action_dim_weights(
+        self, action_dim: int, *, device: torch.device, dtype: torch.dtype
+    ) -> Tensor | None:
+        """Build optional per-dimension guidance multipliers of shape ``(1, 1, action_dim)``.
+
+        When ``rtc_config.action_dim_weights`` is shorter than ``action_dim`` (for example,
+        specifying weights for the robot's real DoFs while a policy pads actions to
+        ``max_action_dim``), trailing padded dimensions are automatically zero-weighted.
+        """
+        dim_weights = self.rtc_config.action_dim_weights
+        if dim_weights is None:
+            return None
+        if len(dim_weights) > action_dim:
+            raise ValueError(
+                f"action_dim_weights length ({len(dim_weights)}) exceeds action_dim ({action_dim})"
+            )
+        w = torch.zeros(action_dim, device=device, dtype=dtype)
+        w[: len(dim_weights)] = torch.tensor(dim_weights, device=device, dtype=dtype)
+        return w.view(1, 1, action_dim)
 
     def get_prefix_weights(self, start, end, total):
         start = min(start, end)
