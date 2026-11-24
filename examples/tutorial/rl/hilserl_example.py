@@ -245,7 +245,9 @@ def main():
 
     # A pretrained model (to be used in-distribution!)
     reward_classifier_id = "<user>/reward_classifier_hil_serl_example"
-    reward_classifier = Classifier.from_pretrained(reward_classifier_id)
+    # The training example uses a built-in ResNet encoder. For a custom-code
+    # encoder, review its code and opt in again here; checkpoints do not save consent.
+    reward_classifier = Classifier.from_pretrained(reward_classifier_id, trust_remote_code=False)
 
     reward_classifier.to(device)
     reward_classifier.eval()

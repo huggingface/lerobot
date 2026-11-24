@@ -57,6 +57,7 @@ from lerobot.robots import (  # noqa: F401
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
+    bi_yam_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
@@ -66,9 +67,12 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
+    sim_robot,
     so_follower,
     unitree_g1,
+    yam_follower,
 )
+from lerobot.robots.utils import check_control_rate, episode_ended
 from lerobot.utils.constants import ACTION
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -109,6 +113,7 @@ def replay(cfg: ReplayConfig):
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
 
     actions = dataset.select_columns(ACTION)
+    check_control_rate(robot, dataset.fps)
 
     robot.connect()
 
@@ -134,6 +139,12 @@ def replay(cfg: ReplayConfig):
             with timer.section("send"):
                 processed_action = robot_action_processor((action, robot_obs))
                 _ = robot.send_action(processed_action)
+
+            if episode_ended(robot):
+                logging.info(
+                    "Sim episode ended at frame %d of %d, stopping the replay", idx + 1, dataset.num_frames
+                )
+                break
 
             timer.wait()
     finally:

@@ -21,10 +21,12 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
 
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.factory import get_reward_model_class, make_reward_model_config
-from lerobot.rewards.topreward import TOPRewardConfig
+from lerobot.rewards.topreward import TOPRewardConfig, modeling_topreward
+from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 from lerobot.rewards.topreward.processor_topreward import TOPREWARD_FEATURE_PREFIX, TOPREWARD_INPUT_KEYS
 from tests.utils import skip_if_package_missing
 
@@ -69,8 +71,6 @@ class _FakeQwenModel(torch.nn.Module):
 
 def _patch_build(monkeypatch) -> None:
     """Stub out HF AutoX so TOPReward construction is cheap and offline."""
-    from lerobot.rewards.topreward import modeling_topreward
-
     monkeypatch.setattr(modeling_topreward, "Qwen3VLForConditionalGeneration", _FakeQwenModel)
 
 
@@ -122,8 +122,6 @@ def test_topreward_config_registered():
 
 
 def test_topreward_factory_returns_in_tree_class():
-    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
     assert get_reward_model_class("topreward") is TOPRewardModel
 
 
@@ -155,8 +153,6 @@ def test_topreward_config_rejects_suffix_without_instruction_placeholder():
 @skip_if_package_missing("transformers")
 def test_topreward_compute_log_probability_returns_one_scalar_per_sample(monkeypatch):
     """The native API returns one float32 log-probability per sample."""
-    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
     _patch_build(monkeypatch)
     cfg = TOPRewardConfig(device="cpu")
     model = TOPRewardModel(cfg)
@@ -182,8 +178,6 @@ def test_topreward_compute_log_probability_returns_one_scalar_per_sample(monkeyp
 def test_topreward_compute_log_probability_scores_the_final_target_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
     _patch_build(monkeypatch)
     model = TOPRewardModel(TOPRewardConfig(device="cpu"))
     probabilities = torch.tensor(
@@ -207,45 +201,15 @@ def test_topreward_compute_log_probability_scores_the_final_target_token(
 
 
 @skip_if_package_missing("transformers")
-def test_topreward_compute_log_probability_errors_when_inputs_missing(monkeypatch):
-    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
+@pytest.mark.parametrize("missing_key", TOPREWARD_INPUT_KEYS)
+def test_topreward_compute_log_probability_names_a_missing_input(monkeypatch, missing_key: str):
     _patch_build(monkeypatch)
-    cfg = TOPRewardConfig(device="cpu")
-    model = TOPRewardModel(cfg)
-
-    with pytest.raises(KeyError, match=r"observation\.topreward\.input_ids"):
-        model.compute_log_probability(_make_batch(torch.randint(0, 100, (1, 10)), omit="input_ids"))
-
-
-@skip_if_package_missing("transformers")
-def test_topreward_compute_log_probability_errors_when_labels_missing(monkeypatch):
-    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
-    _patch_build(monkeypatch)
-    cfg = TOPRewardConfig(device="cpu")
-    model = TOPRewardModel(cfg)
-
+    model = TOPRewardModel(TOPRewardConfig(device="cpu"))
     input_ids = torch.randint(0, 100, (1, 10))
-    with pytest.raises(KeyError, match=r"observation\.topreward\.labels"):
-        model.compute_log_probability(_make_batch(input_ids, labels=None))
+    batch = _make_batch(input_ids, labels=_terminal_labels(input_ids), omit=missing_key)
 
-
-@skip_if_package_missing("transformers")
-def test_topreward_compute_log_probability_requires_all_encoder_keys(monkeypatch):
-    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
-    _patch_build(monkeypatch)
-    cfg = TOPRewardConfig(device="cpu")
-    model = TOPRewardModel(cfg)
-
-    input_ids = torch.randint(0, 100, (1, 10))
-    labels = _terminal_labels(input_ids)
-    required_encoder_keys = set(TOPREWARD_INPUT_KEYS) - {"input_ids", "labels"}
-
-    for key in required_encoder_keys:
-        with pytest.raises(KeyError, match=rf"observation\.topreward\.{key}"):
-            model.compute_log_probability(_make_batch(input_ids, labels=labels, omit=key))
+    with pytest.raises(KeyError, match=rf"observation\.topreward\.{missing_key}"):
+        model.compute_log_probability(batch)
 
 
 # ---------------------------------------------------------------------------
@@ -255,10 +219,6 @@ def test_topreward_compute_log_probability_requires_all_encoder_keys(monkeypatch
 
 @skip_if_package_missing("transformers")
 def test_topreward_save_pretrained_writes_only_config_json(monkeypatch, tmp_path):
-    from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
-
-    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
     _patch_build(monkeypatch)
     cfg = TOPRewardConfig(
         device="cpu",
@@ -279,8 +239,6 @@ def test_topreward_save_pretrained_writes_only_config_json(monkeypatch, tmp_path
 def test_topreward_from_pretrained_local_dir_roundtrips_config(
     monkeypatch, tmp_path, cli_overrides: list[str] | None
 ):
-    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
     _patch_build(monkeypatch)
     cfg = TOPRewardConfig(
         device="cpu",
@@ -303,8 +261,6 @@ def test_topreward_from_pretrained_local_dir_roundtrips_config(
 
 @skip_if_package_missing("transformers")
 def test_topreward_is_not_trainable(monkeypatch):
-    from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-
     _patch_build(monkeypatch)
     cfg = TOPRewardConfig(device="cpu")
     model = TOPRewardModel(cfg)

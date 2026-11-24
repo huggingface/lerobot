@@ -23,8 +23,10 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE, PREDICTION
 from lerobot.utils.import_utils import require_package
 
 from .configuration_fastwam import FastWAMConfig
@@ -166,7 +168,9 @@ class FastWAMPolicy(PreTrainedPolicy):
         return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
 
     @classmethod
-    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+    def _load_checkpoint(
+        cls, model: FastWAMPolicy, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> FastWAMPolicy:
         """Shape-aware load that supports cross-embodiment fine-tuning.
 
         `safetensors.load_model(strict=False)` ignores missing/unexpected keys but
@@ -178,27 +182,22 @@ class FastWAMPolicy(PreTrainedPolicy):
         initialized values — and load every compatible tensor. With `strict=True`
         the standard exact-match loader is used.
         """
-        from safetensors import safe_open
-
         model_state_dict = model.state_dict()
-        mismatched = []
-        with safe_open(model_file, framework="pt") as f:
-            checkpoint_keys = list(f.keys())
-            for key in checkpoint_keys:
-                if key in model_state_dict and tuple(model_state_dict[key].shape) != tuple(
-                    f.get_slice(key).get_shape()
-                ):
-                    mismatched.append(key)
+        mismatched = [
+            key
+            for key, shape in checkpoint.shapes().items()
+            if key in model_state_dict and tuple(model_state_dict[key].shape) != shape
+        ]
 
         if not mismatched:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
+            # The core model is already on the target device; stage weights on CPU
+            # to avoid holding a second full copy on the accelerator.
+            return super()._load_checkpoint(model, checkpoint, "cpu", strict)
         if strict:
             raise RuntimeError(
                 f"FastWAM: {len(mismatched)} checkpoint tensors have a shape mismatch under "
                 f"strict=True: {mismatched}"
             )
-
-        from safetensors.torch import load_file
 
         logging.warning(
             "FastWAM cross-embodiment load: reinitializing %d shape-mismatched tensor(s), keeping "
@@ -206,7 +205,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             len(mismatched),
             mismatched,
         )
-        state_dict = load_file(model_file, device="cpu")
+        state_dict = checkpoint.load_state_dict(device="cpu")
         for key in mismatched:
             state_dict.pop(key, None)
         model.load_state_dict(state_dict, strict=False)
@@ -235,6 +234,10 @@ class FastWAMPolicy(PreTrainedPolicy):
         self._cached_prompt: Any = None
         self._cached_context: Tensor | None = None
         self._cached_context_mask: Tensor | None = None
+        # return_predicted_video state
+        self._chunk_clip: Tensor | None = None
+        self._served = 0
+        self._shown_frame = -1
 
     def _encode_prompt_cached(self, prompt: Any) -> tuple[Tensor, Tensor]:
         """Encode `prompt` to `(context, context_mask)`, reusing the cache when the prompt is
@@ -313,8 +316,17 @@ class FastWAMPolicy(PreTrainedPolicy):
         Returns:
             Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
         """
-
         self.eval()
+        per_item = self._per_item_infer_kwargs(batch, noise=noise)
+        action = torch.cat(
+            [_action_from_model_output(self.model.infer_action(**kwargs)) for kwargs in per_item], dim=0
+        )
+        return action.to(device=batch_device(batch), dtype=torch.float32)
+
+    def _per_item_infer_kwargs(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None
+    ) -> list[dict[str, Any]]:
+        """Build the core inference kwargs, one dict per batch item (the core runs batch size 1)."""
         infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
         infer_kwargs["noise"] = noise
         # Encode the task once per episode and reuse it (LingBot-VA parity): swap the raw `prompt`
@@ -328,28 +340,58 @@ class FastWAMPolicy(PreTrainedPolicy):
             infer_kwargs["context_mask"] = context_mask
         batch_size = _infer_kwargs_batch_size(infer_kwargs)
         if batch_size == 1:
-            action = _action_from_model_output(self.model.infer_action(**infer_kwargs))
-        else:
-            action = torch.cat(
-                [
-                    _action_from_model_output(
-                        self.model.infer_action(
-                            **_slice_infer_kwargs(infer_kwargs, index=i, batch_size=batch_size)
-                        )
-                    )
-                    for i in range(batch_size)
-                ],
-                dim=0,
-            )
-        return action.to(device=batch_device(batch), dtype=torch.float32)
+            return [infer_kwargs]
+        return [_slice_infer_kwargs(infer_kwargs, index=i, batch_size=batch_size) for i in range(batch_size)]
+
+    def _predict_video(self, batch: dict[str, Tensor], actions: Tensor) -> Tensor:
+        """Predict the clip `[B, model_video_frames, H, W, 3]` (uint8, CPU) that `actions` lead to."""
+        per_item = self._per_item_infer_kwargs(batch, noise=None)
+        return torch.stack(
+            [
+                self.model.infer_video(
+                    **{key: kwargs[key] for key in _VIDEO_INFER_KEYS},
+                    action=actions[i : i + 1],
+                    num_video_frames=self.config.model_video_frames,
+                )
+                for i, kwargs in enumerate(per_item)
+            ]
+        )
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None
+    ) -> Tensor | PolicyOutput:
         self.eval()
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
-            self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+            actions = self.predict_action_chunk(batch, noise=noise)
+            self._chunk_clip = (
+                self._predict_video(batch, actions) if self.config.return_predicted_video else None
+            )
+            self._action_queue.extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
+            self._served = 0
+            self._shown_frame = -1
+        return self._with_predicted_frame(self._action_queue.popleft())
+
+    def _with_predicted_frame(self, action: Tensor) -> Tensor | PolicyOutput:
+        """Attach the predicted frame for `action`, only when it changes."""
+        served = self._served
+        self._served += 1
+        if self._chunk_clip is None:
+            return action
+        n_frames = self._chunk_clip.shape[1]
+        horizon = self.config.action_horizon
+        index = min(((served + 1) * (n_frames - 1) + horizon - 1) // horizon, n_frames - 1)
+        if index == self._shown_frame:
+            return action
+        self._shown_frame = index
+        frames = self._chunk_clip[:, index].permute(0, 3, 1, 2)
+        return {ACTION: action, PREDICTION: {"observation": self._split_cameras(frames)}}
+
+    def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
+        """Inverse of the width-wise camera concat in `_stack_video_from_images` (equal widths)."""
+        keys = sorted(self.config.image_features)
+        width = int(self.config.image_size[1]) // len(keys)
+        return dict(zip(keys, frames[..., : width * len(keys)].split(width, dim=3), strict=True))
 
     def _build_core_model(self, config: FastWAMConfig) -> FastWAM:
         """Build the FastWAM core for training / inference.
@@ -423,6 +465,20 @@ class FastWAMPolicy(PreTrainedPolicy):
             loss_lambda_action=float(config.loss["lambda_action"]),
             world_model_only_conditioning=config.world_model_only_conditioning,
         )
+
+
+_VIDEO_INFER_KEYS = (
+    "prompt",
+    "input_image",
+    "proprio",
+    "context",
+    "context_mask",
+    "num_inference_steps",
+    "sigma_shift",
+    "seed",
+    "rand_device",
+    "tiled",
+)
 
 
 def _scalar(value: Any) -> Any:

@@ -264,6 +264,20 @@ def test_select_batch_indices_slices_robot_action_dict():
     assert torch.equal(selected[TransitionKey.ACTION]["gripper"], torch.tensor([[2.0], [0.0]]))
 
 
+@pytest.mark.parametrize("dtype,index", [(torch.bool, 2), (torch.uint8, 256), (torch.bfloat16, 257)])
+def test_select_batch_indices_preserves_indices_for_tensor_dtypes(dtype: torch.dtype, index: int) -> None:
+    values = torch.zeros(index + 1, 1, dtype=dtype)
+    values[index] = 1
+    transition = create_transition(complementary_data={"values": values})
+
+    selected = _select_batch_indices(transition, [index, 0], batch_size=len(values))
+
+    torch.testing.assert_close(
+        selected[TransitionKey.COMPLEMENTARY_DATA]["values"],
+        torch.tensor([[1], [0]], dtype=dtype),
+    )
+
+
 def test_select_batch_indices_rejects_misaligned_list():
     transition = create_transition(complementary_data={"task": ["one", "two"]})
 
@@ -309,6 +323,39 @@ def test_training_filter_keeps_messages_observations_and_actions_aligned():
     ]
     assert output[TransitionKey.COMPLEMENTARY_DATA]["target_message_indices"] == [[0]]
     assert transition[TransitionKey.ACTION].shape[0] == 2
+
+
+def test_training_filter_keeps_boolean_padding_masks_aligned() -> None:
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="assistant", content="${subtask}", stream="high_level", target=True, if_present="subtask"
+            )
+        ]
+    )
+    padding = torch.tensor([[False, True], [True, True], [False, False]])
+    transition = create_transition(
+        action=torch.tensor([[1.0], [2.0], [3.0]]),
+        complementary_data={
+            "action_is_pad": padding,
+            "language_persistent": [
+                [],
+                [],
+                [{"role": "assistant", "content": "keep me", "style": "subtask", "timestamp": 0.0}],
+            ],
+            "timestamp": torch.zeros(3),
+            "task": [None, None, None],
+        },
+    )
+
+    output = RenderTrainingMessagesStep(recipe)(transition)
+
+    torch.testing.assert_close(output[TransitionKey.ACTION], torch.tensor([[3.0]]))
+    torch.testing.assert_close(output[TransitionKey.COMPLEMENTARY_DATA]["action_is_pad"], padding[2:3])
+    assert output[TransitionKey.COMPLEMENTARY_DATA]["messages_rendered"] == [
+        [{"role": "assistant", "content": "keep me"}]
+    ]
+    assert transition[TransitionKey.COMPLEMENTARY_DATA]["action_is_pad"] is padding
 
 
 def _task_aug_transition(index: int, rephrasings: list[str]) -> dict:

@@ -33,18 +33,20 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     policy_action_to_transition,
 )
-from lerobot.rewards.topreward.configuration_topreward import (
-    DEFAULT_PROMPT_PREFIX,
-    DEFAULT_PROMPT_SUFFIX_TEMPLATE,
-    TOPRewardConfig,
-)
 from lerobot.utils.constants import (
     OBS_IMAGES,
     OBS_PREFIX,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from .configuration_topreward import (
+    DEFAULT_PROMPT_PREFIX,
+    DEFAULT_PROMPT_SUFFIX_TEMPLATE,
+    TOPRewardConfig,
+)
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoProcessor
@@ -126,6 +128,7 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
     """
 
     vlm_name: str = "Qwen/Qwen3-VL-8B-Instruct"
+    trust_remote_code: bool = False
     image_key: str = OBS_IMAGES + ".top"
     task_key: str = "task"
     default_task: str | None = None
@@ -140,7 +143,10 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="topreward")
-        self._processor = AutoProcessor.from_pretrained(self.vlm_name, trust_remote_code=True)
+        repo_id, revision = split_hub_reference(self.vlm_name)
+        self._processor = AutoProcessor.from_pretrained(
+            repo_id, trust_remote_code=self.trust_remote_code, revision=revision, code_revision=revision
+        )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
@@ -299,6 +305,7 @@ def make_topreward_pre_post_processors(
             AddBatchDimensionProcessorStep(),
             TOPRewardEncoderProcessorStep(
                 vlm_name=config.vlm_name,
+                trust_remote_code=config.trust_remote_code,
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,

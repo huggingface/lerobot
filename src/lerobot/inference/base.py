@@ -64,12 +64,17 @@ class InferenceRobot(Protocol):
         ...
 
     @property
+    def supports_command_hold(self) -> bool:
+        """Return whether the robot implements its own hold()."""
+        ...
+
+    @property
     def supports_position_hold(self) -> bool:
         """Return whether the robot declares compatible position control."""
         ...
 
-    def configure_position_hold(self) -> None:
-        """Validate and enable the robot's local waiting behavior."""
+    def configure_hold(self) -> None:
+        """Enable the robot's own hold() if it declares one, otherwise position hold."""
         ...
 
 

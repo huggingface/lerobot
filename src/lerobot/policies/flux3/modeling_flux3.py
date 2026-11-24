@@ -37,9 +37,9 @@ from dataclasses import dataclass, replace
 from typing import Any, cast
 
 import torch
-from safetensors import safe_open
 from torch import Tensor, nn
 
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.flux3.configuration_flux3 import Flux3Config
 from lerobot.policies.flux3.f3 import (
     REQUIRED_CONTENT_STREAMS,
@@ -257,7 +257,9 @@ class Flux3Policy(PreTrainedPolicy):
             )
 
     @classmethod
-    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+    def _load_checkpoint(
+        cls, model: Flux3Policy, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> Flux3Policy:
         """Strict restore after stream filtering; ``strict=False`` permits fresh embodiment heads only."""
         expected = model.state_dict()
         head_prefixes = tuple(f"dit.{n}." for n in fresh_module_names(model.modality))
@@ -266,21 +268,17 @@ class Flux3Policy(PreTrainedPolicy):
         mismatched: list[str] = []
         foreign: list[str] = []
         # Stage checkpoints on CPU to avoid a second full copy in accelerator memory during restore.
-        with safe_open(model_file, framework="pt", device="cpu") as f:
-            for key in f.keys():  # noqa: SIM118 (safe_open handles are not dicts)
-                if unused_content_key(key, built):
-                    foreign.append(key)
-                    continue
-                tensor = f.get_tensor(key)
-                if key in expected and tuple(expected[key].shape) != tuple(tensor.shape):
-                    mismatch = (
-                        f"{key}: checkpoint {tuple(tensor.shape)} vs model {tuple(expected[key].shape)}"
-                    )
-                    if strict or not key.startswith(head_prefixes):
-                        raise RuntimeError("shape mismatch in " + mismatch)
-                    mismatched.append(mismatch)
-                    continue
-                state[key] = tensor
+        for key, tensor in checkpoint.tensors(device="cpu"):
+            if unused_content_key(key, built):
+                foreign.append(key)
+                continue
+            if key in expected and tuple(expected[key].shape) != tuple(tensor.shape):
+                mismatch = f"{key}: checkpoint {tuple(tensor.shape)} vs model {tuple(expected[key].shape)}"
+                if strict or not key.startswith(head_prefixes):
+                    raise RuntimeError("shape mismatch in " + mismatch)
+                mismatched.append(mismatch)
+                continue
+            state[key] = tensor
         if mismatched:
             logger.warning(
                 "flux3: %d tensors skipped for shape mismatch (fresh heads for this action dim): %s",
