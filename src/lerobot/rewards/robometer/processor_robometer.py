@@ -35,17 +35,19 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     policy_action_to_transition,
 )
-from lerobot.rewards.robometer.configuration_robometer import (
-    ROBOMETER_SPECIAL_TOKENS,
-    RobometerConfig,
-)
-from lerobot.rewards.robometer.modeling_robometer import ROBOMETER_FEATURE_PREFIX
 from lerobot.utils.constants import (
     OBS_IMAGES,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from .configuration_robometer import (
+    ROBOMETER_SPECIAL_TOKENS,
+    RobometerConfig,
+)
+from .modeling_robometer import ROBOMETER_FEATURE_PREFIX
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoProcessor
@@ -128,6 +130,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
     """
 
     base_model_id: str = "Qwen/Qwen3-VL-4B-Instruct"
+    trust_remote_code: bool = False
     image_key: str = OBS_IMAGES + ".top"
     task_key: str = "task"
     default_task: str | None = None
@@ -142,11 +145,14 @@ class RobometerEncoderProcessorStep(ProcessorStep):
         require_package("transformers", extra="robometer")
         require_package("qwen-vl-utils", extra="robometer", import_name="qwen_vl_utils")
 
+        repo_id, revision = split_hub_reference(self.base_model_id)
         self._processor = AutoProcessor.from_pretrained(
-            self.base_model_id,
-            trust_remote_code=True,
+            repo_id,
+            trust_remote_code=self.trust_remote_code,
             do_sample_frames=False,
             padding_side="right",
+            revision=revision,
+            code_revision=revision,
         )
 
         # Register Robometer's special tokens on the tokenizer. The matching
@@ -320,6 +326,7 @@ def make_robometer_pre_post_processors(
             AddBatchDimensionProcessorStep(),
             RobometerEncoderProcessorStep(
                 base_model_id=config.base_model_id,
+                trust_remote_code=config.trust_remote_code,
                 image_key=config.image_key,
                 task_key=config.task_key,
                 default_task=config.default_task,

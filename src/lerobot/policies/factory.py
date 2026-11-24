@@ -20,6 +20,7 @@ import importlib
 import inspect
 import logging
 import os
+from copy import copy
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
@@ -37,6 +38,7 @@ from lerobot.lerobot_types import PolicyAction
 from lerobot.processor import (
     PolicyProcessorPipeline,
     load_pretrained_policy_processors,
+    rename_keys,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -153,6 +155,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
     dataset_meta: Any | None
+    trust_remote_code: bool
 
 
 def make_pre_post_processors(
@@ -185,6 +188,10 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
+    trust_remote_code = kwargs.get("trust_remote_code", policy_cfg.trust_remote_code)
+    if trust_remote_code != policy_cfg.trust_remote_code:
+        policy_cfg = copy(policy_cfg)
+        policy_cfg.trust_remote_code = trust_remote_code
     if pretrained_path:
         preprocessor_config_filename = (
             kwargs.get("preprocessor_config_filename") or f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
@@ -213,6 +220,7 @@ def make_pre_post_processors(
             postprocessor_overrides=kwargs.get("postprocessor_overrides"),
             preprocessor_config_filename=preprocessor_config_filename,
             postprocessor_config_filename=postprocessor_config_filename,
+            trust_remote_code=trust_remote_code,
         )
 
     # Create new processors from the policy config, resolving the per-policy factory
@@ -333,7 +341,7 @@ def make_policy(
         features = env_to_policy_features(env_cfg)
 
     if rename_map:
-        features = {rename_map.get(key, key): feature for key, feature in features.items()}
+        features = rename_keys(features, rename_map)
 
     if ds_meta is not None or not cfg.output_features:
         cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
@@ -363,10 +371,7 @@ def make_policy(
         if callable(set_dataset_feature_metadata):
             ds_feature = ds_meta.features
             if rename_map:  # use the policy-side (renamed) keys
-                ds_feature = {
-                    rename_map.get(dataset_key, dataset_key): feature
-                    for dataset_key, feature in ds_meta.features.items()
-                }
+                ds_feature = rename_keys(ds_meta.features, rename_map)
             set_dataset_feature_metadata(ds_feature)
         cfg._runtime_dataset_meta = ds_meta
 

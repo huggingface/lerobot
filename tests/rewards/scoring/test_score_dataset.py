@@ -226,6 +226,18 @@ def test_score_dataset_round_trips_descriptor_directions(
     assert load_signal_descriptors(dataset, scorer.name) == {"progress": descriptor}
 
 
+def test_score_dataset_round_trips_categorical_labels(tmp_path: Path) -> None:
+    dataset = FakeDataset(tmp_path / "dataset")
+    descriptor = SignalDescriptor(
+        description="Predicted subtask", greater_is_better=None, bounds=(0.0, 1.0), labels=("grasp", "place")
+    )
+    scorer = FakeScorer(descriptors={"progress": descriptor})
+
+    score_dataset(dataset, scorer)
+
+    assert load_signal_descriptors(dataset, scorer.name) == {"progress": descriptor}
+
+
 @pytest.mark.parametrize("invalid_direction", [0, 1, "higher", np.bool_(True)])
 def test_score_dataset_rejects_invalid_directions_before_scoring(
     tmp_path: Path, invalid_direction: Any
@@ -253,8 +265,28 @@ def test_score_dataset_rejects_repeated_frame_indices(tmp_path: Path) -> None:
     dataset = FakeDataset(tmp_path / "dataset", lengths=(2,))
     scorer = FakeScorer(result=FrameSignals(np.asarray([0, 0]), {"progress": np.asarray([0.0, 0.5])}))
 
-    with pytest.raises(ValueError, match="repeated"):
+    # ScoreWriter rejects them when the episode is written.
+    with pytest.raises(ValueError, match="without repeats"):
         score_dataset(dataset, scorer)
+
+
+@pytest.mark.parametrize("allow_nan", [False, True])
+def test_score_dataset_accepts_nan_only_where_the_descriptor_allows_it(
+    tmp_path: Path, allow_nan: bool
+) -> None:
+    dataset = FakeDataset(tmp_path / "dataset", lengths=(2,))
+    descriptor = SignalDescriptor(description="Task progress", greater_is_better=True, allow_nan=allow_nan)
+    scorer = FakeScorer(
+        descriptors={"progress": descriptor},
+        result=FrameSignals(np.asarray([0, 1]), {"progress": np.asarray([0.5, np.nan])}),
+    )
+
+    if not allow_nan:
+        with pytest.raises(ValueError, match="does not allow them"):
+            score_dataset(dataset, scorer)
+        return
+    score_dataset(dataset, scorer)
+    assert np.isnan(load_scores(dataset, scorer.name)["progress"][1])
 
 
 @pytest.mark.parametrize("values", [np.asarray(["text"]), np.asarray([1.0 + 2.0j])])

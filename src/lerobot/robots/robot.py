@@ -45,10 +45,16 @@ class Robot(abc.ABC):
     # Set these in ALL subclasses
     config_class: builtins.type[RobotConfig]
     name: str
+    # Opt-in for a robot-specific hold(), used instead of position hold.
+    supports_command_hold: bool = False
     # Opt-in for retaining the last applied position targets (including gripper).
     # Before the first command, a finite measured pose establishes the targets.
     # Mixed velocity/torque robots require their own stop implementation.
     supports_position_hold: bool = False
+
+    def hold(self) -> None:
+        """Retain a safe controller command when command hold is explicitly supported."""
+        raise NotImplementedError(f"{self.name} does not implement command hold")
 
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name
@@ -56,7 +62,6 @@ class Robot(abc.ABC):
         self.calibration_dir = (
             config.calibration_dir if config.calibration_dir else HF_LEROBOT_CALIBRATION / ROBOTS / self.name
         )
-        self.calibration_dir.mkdir(parents=True, exist_ok=True)
         self.calibration_fpath = self.calibration_dir / f"{self.id}.json"
         self.calibration: dict[str, MotorCalibration] = {}
         if self.calibration_fpath.is_file():
@@ -174,6 +179,7 @@ class Robot(abc.ABC):
             fpath (Path | None): Optional path to save the calibration file. Defaults to `self.calibration_fpath`.
         """
         fpath = self.calibration_fpath if fpath is None else fpath
+        fpath.parent.mkdir(parents=True, exist_ok=True)
         with open(fpath, "w") as f, draccus.config_type("json"):
             draccus.dump(self.calibration, f, indent=4)
 

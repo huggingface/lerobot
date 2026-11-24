@@ -128,7 +128,10 @@ def test_run_score_uses_reward_scoring_api(
     monkeypatch.setattr(
         lerobot_score,
         "push_scores_to_hub",
-        lambda dataset, name: captured.update(push_scores_to_hub=(dataset, name)),
+        lambda dataset, name, *, overwrite: captured.update(push_scores_to_hub=(dataset, name, overwrite)),
+    )
+    monkeypatch.setattr(
+        lerobot_score, "HfApi", lambda: SimpleNamespace(file_exists=lambda *args, **kwargs: False)
     )
 
     cfg = ScoreConfig(
@@ -159,7 +162,7 @@ def test_run_score_uses_reward_scoring_api(
         fake_scorer,
         {"name": expected_name, "episodes": [1], "resume": True, "overwrite": False},
     )
-    assert captured["push_scores_to_hub"] == (fake_dataset, expected_name)
+    assert captured["push_scores_to_hub"] == (fake_dataset, expected_name, False)
 
 
 def test_run_score_requires_a_reward_model(tmp_path: Path):
@@ -189,6 +192,32 @@ def test_run_score_rejects_existing_scores_before_loading_the_model(
 
     with pytest.raises(FileExistsError, match="--overwrite=true"):
         lerobot_score.run_score(cfg)
+
+
+def test_run_score_rejects_scores_on_the_hub_before_loading_the_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pytest.importorskip("datasets")
+    pytest.importorskip("av")
+
+    checked = []
+
+    def file_exists(repo_id, filename, *, repo_type):
+        checked.append((repo_id, filename, repo_type))
+        return True
+
+    monkeypatch.setattr(lerobot_score, "HfApi", lambda: SimpleNamespace(file_exists=file_exists))
+    monkeypatch.setattr(lerobot_score, "make_reward_model", pytest.fail)
+    cfg = ScoreConfig(
+        dataset_repo_id="user/dataset",
+        dataset_root=tmp_path,
+        reward_model=SimpleNamespace(type="robometer"),
+        push_to_hub=True,
+    )
+
+    with pytest.raises(FileExistsError, match="hf://datasets/user/dataset"):
+        lerobot_score.run_score(cfg)
+    assert checked == [("user/dataset", "scores/robometer.parquet", "dataset")]
 
 
 def test_run_score_defaults_the_dataset_root_to_the_lerobot_home(

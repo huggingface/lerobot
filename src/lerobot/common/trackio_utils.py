@@ -25,10 +25,11 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from huggingface_hub.constants import SAFETENSORS_INDEX_FILE, SAFETENSORS_SINGLE_FILE
 from termcolor import colored
 
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.policies.checkpoint import safetensors_shard_names
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 from lerobot.utils.import_utils import _trackio_available, require_package
 
@@ -134,9 +135,20 @@ class TrackioLogger:
                 artifact.add_file(config_file)
         elif standard_model_file.exists():
             artifact.add_file(standard_model_file)
+            config_file = pretrained_model_dir / "config.json"
+            if config_file.exists():
+                artifact.add_file(config_file)
+        elif (pretrained_model_dir / SAFETENSORS_INDEX_FILE).is_file():
+            artifact.add_file(pretrained_model_dir / SAFETENSORS_INDEX_FILE)
+            for name in safetensors_shard_names(pretrained_model_dir / SAFETENSORS_INDEX_FILE):
+                artifact.add_file(pretrained_model_dir / name)
+            config_file = pretrained_model_dir / "config.json"
+            if config_file.exists():
+                artifact.add_file(config_file)
         else:
             logging.warning(
-                f"No {SAFETENSORS_SINGLE_FILE} or adapter_model.safetensors found in {pretrained_model_dir}. "
+                f"No {SAFETENSORS_SINGLE_FILE}, sharded weights or adapter_model.safetensors "
+                f"found in {pretrained_model_dir}. "
                 "Skipping model artifact upload to Trackio."
             )
             return

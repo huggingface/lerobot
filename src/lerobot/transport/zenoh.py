@@ -27,12 +27,14 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from queue import Empty, Full, Queue
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from lerobot.utils.import_utils import _zenoh_available, require_package
 
 if TYPE_CHECKING or _zenoh_available:
     import zenoh
+
+T = TypeVar("T")
 
 
 class TransportError(RuntimeError):
@@ -103,7 +105,9 @@ def _payload(value: bytes, maximum: int) -> None:
         raise TransportError("Payload is not bytes or exceeds transport limit")
 
 
-class BoundedSubscriber[T]:
+# Keep this syntax compatible with Python 3.11 for env servers running inside pinned simulator environments.
+# This does not change the full LeRobot package's Python requirement.
+class BoundedSubscriber(Generic[T]):  # noqa: UP046
     """Bounded callback-to-consumer FIFO; full queues drop incoming values.
 
     Consumers must inspect ``dropped`` and ``oversized``. The transport owns declared
@@ -384,12 +388,15 @@ class ZenohTransport:
         max_replies: int = 16,
         *,
         cancelled: Callable[[], bool] | None = None,
+        congestion_control: Literal["drop", "block"] = "drop",
     ) -> list[bytes]:
         """Collect bounded replies to one publication within a caller-local deadline.
 
         Blocks through routing and reply completion without retrying. All matching
         queryables may reply, up to ``max_replies`` and the aggregate payload bound;
         an empty result is possible. ``cancelled`` is polled on the caller thread.
+        Replies use the same ``congestion_control``: with ``drop``, a congested link may
+        silently lose a reply and the caller times out; ``block`` waits until it is sent.
         Cancellation stops local waiting, not already-admitted remote work.
 
         Raises ``QueryCancelled`` on cancellation, ``TimeoutError`` on expiry,
@@ -447,7 +454,11 @@ class ZenohTransport:
             timeout=timeout,
             target=zenoh.QueryTarget.ALL,
             consolidation=zenoh.ConsolidationMode.NONE,
-            congestion_control=zenoh.CongestionControl.DROP,
+            congestion_control=(
+                zenoh.CongestionControl.BLOCK
+                if congestion_control == "block"
+                else zenoh.CongestionControl.DROP
+            ),
             cancellation_token=cancellation_token,
         )
         try:

@@ -115,7 +115,7 @@ def make_sample_weighter(
         config: Sample weighting configuration, or None to disable weighting.
         policy: The policy being trained (used to extract chunk_size, etc.)
         device: Device to place weight tensors on.
-        dataset: Dataset containing the reward scores.
+        dataset: Dataset containing the scores.
     """
     if config is None:
         return None
@@ -142,7 +142,7 @@ def _make_rabc_weighter(
         config: Sample weighting configuration.
         policy: The policy being trained (used to extract chunk_size).
         device: Device to place weight tensors on.
-        dataset: Dataset containing the reward scores.
+        dataset: Dataset containing the scores.
     """
     # Import here to avoid circular imports and keep RABC code in SARM module
     from lerobot.rewards.sarm.rabc import RABCWeights
@@ -156,7 +156,7 @@ def _make_rabc_weighter(
         )
 
     if dataset is None:
-        raise ValueError("RA-BC sample weighting requires a dataset containing reward scores")
+        raise ValueError("RA-BC sample weighting requires a dataset containing scores")
 
     # Dataset factories import training configs, so keep this type import out of module initialization.
     from lerobot.datasets.multi_dataset import MultiLeRobotDataset
@@ -164,7 +164,7 @@ def _make_rabc_weighter(
     if isinstance(dataset, MultiLeRobotDataset):
         raise ValueError(
             "RA-BC sample weighting does not support MultiLeRobotDataset; "
-            "use a single dataset with its own reward scores"
+            "use a single dataset with its own scores"
         )
     if config.score_name is None or config.signal_name is None:
         raise ValueError("RA-BC sample weighting requires both 'score_name' and 'signal_name'")

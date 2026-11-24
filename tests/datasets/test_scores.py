@@ -30,7 +30,7 @@ from datasets.table import MemoryMappedTable
 from httpx import Request, Response
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.datasets import LeRobotDataset
+from lerobot.datasets import LeRobotDataset, MultiLeRobotDataset, StreamingLeRobotDataset
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
 from lerobot.datasets.scores import (
     ScoreWriter,
@@ -157,17 +157,17 @@ def test_score_writer_rejects_dataset_being_recorded(tmp_path):
     assert not (dataset.root / "scores").exists()
 
 
-def test_scores_accept_repeated_frames_and_string_columns(tmp_path):
+def test_scores_accept_sparse_frames_and_string_columns(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [3])
 
     def function(episode_index: int):
-        return np.asarray([0, 0, 2], dtype=np.int64), {"text": ["a", "b", "c"]}
+        return np.asarray([0, 2], dtype=np.int64), {"text": ["a", "c"]}
 
     add_scores(dataset, "language", function, info=INFO)
 
     table = load_scores(dataset, "language")
-    assert list(table["frame_index"]) == [0, 0, 2]
-    assert list(table["text"]) == ["a", "b", "c"]
+    assert list(table["frame_index"]) == [0, 2]
+    assert list(table["text"]) == ["a", "c"]
 
 
 @pytest.mark.parametrize("tag_exists", [True, False])
@@ -177,6 +177,7 @@ def test_scores_upload_uses_owned_hub_location(monkeypatch, tmp_path, tag_exists
     dataset = FakeDataset(tmp_path / "dataset", [1])
     add_scores(dataset, "test", dense(dataset), info=INFO)
     api = Mock(spec=scores.HfApi)
+    api.file_exists.return_value = False
     api.upload_file.return_value = SimpleNamespace(oid="uploaded-commit")
     if not tag_exists:
         api.delete_tag.side_effect = RevisionNotFoundError(
@@ -192,7 +193,13 @@ def test_scores_upload_uses_owned_hub_location(monkeypatch, tmp_path, tag_exists
     assert captured["path_in_repo"] == "scores/test.parquet"
     assert captured["repo_id"] == dataset.repo_id
     assert captured["repo_type"] == "dataset"
-    assert [call[0] for call in api.method_calls] == ["upload_file", "delete_tag", "create_tag"]
+    assert captured["revision"] is None
+    assert [call[0] for call in api.method_calls] == [
+        "file_exists",
+        "upload_file",
+        "delete_tag",
+        "create_tag",
+    ]
     api.delete_tag.assert_called_once_with(dataset.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
     api.create_tag.assert_called_once_with(
         dataset.repo_id, tag=CODEBASE_VERSION, revision="uploaded-commit", repo_type="dataset"
@@ -205,12 +212,54 @@ def test_scores_upload_failure_leaves_version_tag_unchanged(monkeypatch, tmp_pat
     dataset = FakeDataset(tmp_path / "dataset", [1])
     add_scores(dataset, "test", dense(dataset), info=INFO)
     api = Mock(spec=scores.HfApi)
+    api.file_exists.return_value = False
     api.upload_file.side_effect = OSError("Upload failed")
     monkeypatch.setattr(scores, "HfApi", lambda: api)
 
     with pytest.raises(OSError, match="Upload failed"):
         push_scores_to_hub(dataset, "test")
 
+    api.delete_tag.assert_not_called()
+    api.create_tag.assert_not_called()
+
+
+def test_scores_upload_refuses_to_replace_hub_scores_without_overwrite(monkeypatch, tmp_path):
+    import lerobot.datasets.scores as scores
+
+    dataset = FakeDataset(tmp_path / "dataset", [1])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    api = Mock(spec=scores.HfApi)
+    api.file_exists.return_value = True
+    api.upload_file.return_value = SimpleNamespace(oid="uploaded-commit")
+    monkeypatch.setattr(scores, "HfApi", lambda: api)
+
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        push_scores_to_hub(dataset, "test")
+    api.upload_file.assert_not_called()
+
+    push_scores_to_hub(dataset, "test", overwrite=True)
+    api.upload_file.assert_called_once()
+
+
+def test_scores_upload_to_a_branch_without_moving_the_version_tag(monkeypatch, tmp_path):
+    import lerobot.datasets.scores as scores
+
+    dataset = FakeDataset(tmp_path / "dataset", [1])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    api = Mock(spec=scores.HfApi)
+    api.file_exists.return_value = False
+    api.upload_file.return_value = SimpleNamespace(oid="uploaded-commit")
+    monkeypatch.setattr(scores, "HfApi", lambda: api)
+
+    push_scores_to_hub(dataset, "test", branch="scores", tag_version=False)
+
+    api.file_exists.assert_called_once_with(
+        dataset.repo_id, "scores/test.parquet", repo_type="dataset", revision="scores"
+    )
+    api.create_branch.assert_called_once_with(
+        dataset.repo_id, branch="scores", revision=dataset.revision, repo_type="dataset", exist_ok=True
+    )
+    assert api.upload_file.call_args.kwargs["revision"] == "scores"
     api.delete_tag.assert_not_called()
     api.create_tag.assert_not_called()
 
@@ -504,13 +553,14 @@ def test_scores_reject_snapshot_cache_before_work(monkeypatch, tmp_path):
         (np.asarray([0]), {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)}, "must have 1 values"),
         (np.asarray([0]), {}, "At least one column"),
         (np.asarray([0.0]), {COLUMN: np.asarray([0.5], dtype=np.float32)}, "integer array"),
-        (np.asarray([1, 0]), {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)}, "non-decreasing"),
+        (np.asarray([1, 0]), {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)}, "increasing"),
         (
             np.asarray([1, 0], dtype=np.uint64),
             {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)},
-            "non-decreasing",
+            "increasing",
         ),
-        (np.asarray([2]), {COLUMN: np.asarray([0.5], dtype=np.float32)}, "non-decreasing and in \\[0, 2\\)"),
+        (np.asarray([1, 1]), {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)}, "without repeats"),
+        (np.asarray([2]), {COLUMN: np.asarray([0.5], dtype=np.float32)}, "in \\[0, 2\\)"),
     ],
 )
 def test_scores_reject_structurally_invalid_rows(tmp_path, frame_indices, columns, error):
@@ -606,8 +656,8 @@ def test_merge_scores_combines_scores_from_before_and_after_append(tmp_path, rev
 
 @pytest.mark.parametrize(
     "repo_id,lengths",
-    [("other/dataset", [2, 3]), ("test/dataset", [2]), ("test/dataset", [2, 2])],
-    ids=["different-repository", "deleted-episode", "deleted-frame"],
+    [("other/dataset", [2, 3]), ("test/dataset", [2]), ("test/dataset", [2, 2]), ("test/dataset", [3, 2])],
+    ids=["different-repository", "deleted-episode", "deleted-frame", "moved-episode"],
 )
 def test_merge_scores_rejects_incompatible_dataset(tmp_path, repo_id, lengths):
     dataset = FakeDataset(tmp_path / "dataset", [2, 3])
@@ -626,7 +676,7 @@ def test_merge_scores_keeps_row_order_within_an_episode(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [3, 3])
 
     def function(episode_index: int):
-        return np.asarray([0, 0, 1, 1, 2]), {"text": [f"{episode_index}-{row}" for row in range(5)]}
+        return np.asarray([0, 1, 2]), {"text": [f"{episode_index}-{row}" for row in range(3)]}
 
     add_scores(dataset, "a", function, info=INFO, episodes=[1])
     add_scores(dataset, "b", function, info=INFO, episodes=[0])
@@ -634,7 +684,7 @@ def test_merge_scores_keeps_row_order_within_an_episode(tmp_path):
     merge_scores(dataset, ["a", "b"], name="test")
 
     table = load_scores(dataset, "test")
-    assert list(table["text"]) == [f"{episode}-{row}" for episode in (0, 1) for row in range(5)]
+    assert list(table["text"]) == [f"{episode}-{row}" for episode in (0, 1) for row in range(3)]
 
 
 def test_merge_scores_rejects_shared_episodes(tmp_path):
@@ -666,10 +716,12 @@ def test_merge_scores_replaces_existing_scores_only_with_overwrite(tmp_path):
     merge_scores(dataset, ["a", "b"], name="test", overwrite=True)
 
 
-def test_scores_use_global_ids_for_noncontiguous_episode_views(tmp_path):
-    dataset = FakeDataset(tmp_path / "dataset", [2] * 10, episodes=[2, 5, 9])
+@pytest.mark.parametrize("as_view", [True, False], ids=["dataset-view", "selected-episodes"])
+def test_scores_use_global_ids_for_noncontiguous_episodes(tmp_path, as_view):
+    dataset = FakeDataset(tmp_path / "dataset", [2] * 10, episodes=[2, 5, 9] if as_view else None)
     function = dense(dataset)
-    add_scores(dataset, "test", function, info=INFO)
+    add_scores(dataset, "test", function, info=INFO, episodes=None if as_view else [2, 5, 9])
+    dataset.episodes = [2, 5, 9]
 
     assert function.calls == [2, 5, 9]
     assert list(load_scores(dataset, "test")["index"]) == [4, 5, 10, 11, 18, 19]
@@ -691,6 +743,29 @@ def test_scores_remain_valid_after_appending_but_not_deleting_episodes(tmp_path)
     shortened = FakeDataset(dataset.root, [2])
     with pytest.raises(ValueError, match="no longer align"):
         load_scores(shortened, "test")
+
+
+@pytest.mark.parametrize("lengths", [[3, 2], [1, 4]], ids=["reordered", "resized"])
+def test_scores_reject_episodes_moved_with_the_same_totals(tmp_path, lengths):
+    dataset = FakeDataset(tmp_path / "dataset", [2, 3])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+
+    edited = FakeDataset(dataset.root, lengths)
+    with pytest.raises(ValueError, match="no longer align with episode"):
+        load_scores(edited, "test")
+
+
+def test_scores_reject_streaming_writes_and_multi_dataset_reads(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    streaming = StreamingLeRobotDataset.__new__(StreamingLeRobotDataset)
+    streaming.root = dataset.root
+    multi = MultiLeRobotDataset.__new__(MultiLeRobotDataset)
+
+    with pytest.raises(TypeError, match="only be written for a LeRobotDataset"):
+        ScoreWriter(streaming, "other", info=INFO)
+    with pytest.raises(TypeError, match="MultiLeRobotDataset"):
+        load_scores(multi, "test")
 
 
 def test_scores_survive_real_dataset_append_and_parquet_repacking(tmp_path):

@@ -21,14 +21,17 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
+from safetensors.torch import load_file
 
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.factory import get_reward_model_class, make_reward_model_config
-from lerobot.rewards.robometer import RobometerConfig
+from lerobot.rewards.robometer import RobometerConfig, configuration_robometer, modeling_robometer
 from lerobot.rewards.robometer.configuration_robometer import ROBOMETER_SPECIAL_TOKENS
 from lerobot.rewards.robometer.modeling_robometer import (
     ROBOMETER_FEATURE_PREFIX,
     RobometerOutput,
+    RobometerRewardModel,
     convert_bins_to_continuous,
 )
 from tests.utils import skip_if_package_missing
@@ -135,8 +138,6 @@ def _patch_build(monkeypatch) -> None:
     * ``AutoModelForImageTextToText.from_config``    — checkpoint-reload path
       (``pretrained_path`` is set).
     """
-    from lerobot.rewards.robometer import configuration_robometer, modeling_robometer
-
     monkeypatch.setattr(
         modeling_robometer.AutoModelForImageTextToText,
         "from_pretrained",
@@ -178,8 +179,6 @@ def test_robometer_config_registered(monkeypatch):
 
 
 def test_robometer_factory_returns_in_tree_class():
-    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-
     assert get_reward_model_class("robometer") is RobometerRewardModel
 
 
@@ -209,8 +208,6 @@ def test_robometer_post_init_overwrites_vocab_size_with_tokenizer_length(monkeyp
 
 @skip_if_package_missing("transformers")
 def test_robometer_predict_progress_returns_typed_frame_signals(monkeypatch):
-    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-
     progress = torch.tensor([[-0.1, 1.2], [0.4, 0.6]], dtype=torch.float16)
     success_logits = torch.tensor([[0.0, 5.0], [0.0, -5.0]])
     _patch_build(monkeypatch)
@@ -250,8 +247,6 @@ def test_robometer_predict_progress_returns_typed_frame_signals(monkeypatch):
 
 @skip_if_package_missing("transformers")
 def test_robometer_predict_progress_decodes_discrete_logits(monkeypatch):
-    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-
     progress_logits = torch.full((1, 2, 10), -10.0)
     progress_logits[0, 0, 0] = 10.0
     progress_logits[0, 1, -1] = 10.0
@@ -273,8 +268,6 @@ def test_robometer_predict_progress_decodes_discrete_logits(monkeypatch):
 
 @skip_if_package_missing("transformers")
 def test_robometer_predict_progress_does_not_mutate_input(monkeypatch):
-    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-
     _patch_build(monkeypatch)
     model = RobometerRewardModel(RobometerConfig(device="cpu", progress_loss_type="l2"))
 
@@ -297,8 +290,6 @@ def test_robometer_predict_progress_does_not_mutate_input(monkeypatch):
 
 @skip_if_package_missing("transformers")
 def test_robometer_predict_progress_errors_when_inputs_missing(monkeypatch):
-    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-
     _patch_build(monkeypatch)
 
     cfg = RobometerConfig(device="cpu", progress_loss_type="l2")
@@ -316,11 +307,6 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
     prediction heads (``progress_head``, ``success_head``, ``preference_head``)
     so the published ``Robometer-4B`` checkpoint loads byte-equivalently.
     """
-    from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
-    from safetensors.torch import load_file
-
-    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-
     _patch_build(monkeypatch)
     cfg = RobometerConfig(
         device="cpu",
@@ -338,8 +324,7 @@ def test_robometer_save_pretrained_roundtrips(monkeypatch, tmp_path):
     assert (tmp_path / SAFETENSORS_SINGLE_FILE).exists()
     assert not (tmp_path / "config.yaml").exists()  # we want HF-style, not Hydra
 
-    config_path = tmp_path / CONFIG_NAME
-    saved_config = json.loads(config_path.read_text())
+    saved_config = json.loads((tmp_path / CONFIG_NAME).read_text())
     assert "reward_output" not in saved_config
     assert "success_threshold" not in saved_config
 

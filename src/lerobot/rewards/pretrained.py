@@ -16,6 +16,7 @@ import builtins
 import logging
 import os
 import warnings
+from copy import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -95,6 +96,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool | None = None,
         strict: bool = False,
         **kwargs,
     ) -> T:
@@ -114,8 +116,12 @@ class PreTrainedRewardModel(nn.Module, HubMixin):
                 local_files_only=local_files_only,
                 revision=revision,
                 cli_overrides=cli_overrides,
+                trust_remote_code=bool(trust_remote_code),
                 **kwargs,
             )
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
         if os.path.isdir(model_id):

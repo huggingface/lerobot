@@ -24,6 +24,7 @@ from huggingface_hub import snapshot_download
 from safetensors.torch import load_file
 
 from lerobot.utils.device_utils import auto_select_torch_device
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -83,7 +84,8 @@ class WanTokenizer:
 
     def __init__(self, name: str = WAN_T5_TOKENIZER, seq_len: int = 512) -> None:
         require_package("transformers", extra="fastwam")
-        self.tokenizer = AutoTokenizer.from_pretrained(name)
+        repo_id, revision = split_hub_reference(name)
+        self.tokenizer = AutoTokenizer.from_pretrained(repo_id, revision=revision, code_revision=revision)
         self.seq_len = int(seq_len)
 
     def __call__(
@@ -132,7 +134,10 @@ def load_pretrained_wan_text_encoder(
     embedding table is indexed by the tokenizer's vocabulary.
     """
     require_package("transformers", extra="fastwam")
-    encoder = UMT5EncoderModel.from_pretrained(model_id, subfolder=subfolder, torch_dtype=torch_dtype)
+    repo_id, revision = split_hub_reference(model_id)
+    encoder = UMT5EncoderModel.from_pretrained(
+        repo_id, subfolder=subfolder, torch_dtype=torch_dtype, revision=revision
+    )
     return WanTextEncoder(dtype=torch_dtype, device=device, pretrained=encoder)
 
 

@@ -58,12 +58,13 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch import Tensor, nn
 
-from lerobot.rewards.pretrained import PreTrainedRewardModel
-from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.utils.constants import OBS_PREFIX
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..prediction import ProgressOutput
+from ..pretrained import PreTrainedRewardModel
+from .configuration_robometer import RobometerConfig
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoModelForImageTextToText
@@ -175,10 +176,13 @@ class RobometerRewardModel(PreTrainedRewardModel):
         #     no redundant Qwen weight download.
         torch_dtype = _torch_dtype(config.torch_dtype)
         if config.pretrained_path is None:
+            repo_id, revision = split_hub_reference(config.base_model_id)
             self.model = AutoModelForImageTextToText.from_pretrained(
-                config.base_model_id,
+                repo_id,
                 dtype=torch_dtype,
-                trust_remote_code=True,
+                trust_remote_code=self.config.trust_remote_code,
+                revision=revision,
+                code_revision=revision,
             )
             target_vocab = config.vlm_config["text_config"]["vocab_size"]
             self.model.resize_token_embeddings(target_vocab)
@@ -186,7 +190,7 @@ class RobometerRewardModel(PreTrainedRewardModel):
             self.model = AutoModelForImageTextToText.from_config(
                 config.vlm_backbone_config,
                 dtype=torch_dtype,
-                trust_remote_code=True,
+                trust_remote_code=self.config.trust_remote_code,
             )
 
         # All Qwen-VL backbones Robometer supports expose `text_config.hidden_size`.
