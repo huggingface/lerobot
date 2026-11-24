@@ -39,10 +39,11 @@ import numpy as np
 import pytest
 import requests
 
-from lerobot.common.teleop_setup import make_mobile_teleop
+from lerobot.processor import make_default_teleop_action_processor
 from lerobot.robots.microduck import MicroDuck, MicroDuckConfig
 from lerobot.robots.microduck.microduck import JOINT_NAMES
 from lerobot.robots.microduck.rpc import DuckRpc
+from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.utils.errors import DeviceNotConnectedError
 
 STATE = {
@@ -730,7 +731,8 @@ def test_gamepad_records_commands_without_writing_to_robot(gamepad_robot, robotd
         assert time.monotonic() < deadline
         time.sleep(0.01)
     teleop = MicroDuckGamepad(MicroDuckGamepadConfig(calibration_dir=tmp_path))
-    teleop, pipeline = make_mobile_teleop(gamepad_robot, teleop)
+    teleop = CompositeTeleoperator([(teleop, "")])
+    pipeline = make_default_teleop_action_processor(teleop, gamepad_robot)
     teleop.connect()
     try:
         obs = gamepad_robot.get_observation()
@@ -765,7 +767,8 @@ def test_gamepad_requires_passive_mode_and_fresh_sample(robot, tmp_path):
     from lerobot.teleoperators.microduck_gamepad import MicroDuckGamepad, MicroDuckGamepadConfig
 
     teleop = MicroDuckGamepad(MicroDuckGamepadConfig(calibration_dir=tmp_path))
-    teleop, pipeline = make_mobile_teleop(robot, teleop)
+    teleop = CompositeTeleoperator([(teleop, "")])
+    pipeline = make_default_teleop_action_processor(teleop, robot)
     teleop.connect()
     try:
         with pytest.raises(ValueError, match="control_mode=gamepad"):
@@ -844,9 +847,8 @@ def test_gamepad_record_loop_saves_actions_without_commands(gamepad_robot, robot
     teleop.connect()
     try:
         teleop_processor, action_processor, obs_processor = make_default_processors()
-        teleop, teleop_processor = make_mobile_teleop(
-            gamepad_robot, teleop, action_processor=teleop_processor
-        )
+        teleop = CompositeTeleoperator([(teleop, "")])
+        teleop_processor = make_default_teleop_action_processor(teleop, gamepad_robot, teleop_processor)
         record_loop(
             robot=gamepad_robot,
             events={"exit_early": False},
@@ -931,7 +933,8 @@ def test_gamepad_cli_and_local_dataset(robotd, tmp_path):
             f"--robot.robotd_address={robotd.path}",
             "--robot.control_mode=gamepad",
             "--robot.use_camera=false",
-            "--base_teleop.type=microduck_gamepad",
+            "--teleop.type=composite",
+            "--teleop.base.type=microduck_gamepad",
             "--dataset.repo_id=local/microduck-gamepad",
             f"--dataset.root={dataset_root}",
             "--dataset.push_to_hub=false",
