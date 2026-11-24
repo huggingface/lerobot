@@ -59,11 +59,12 @@ def _make_controller_mock(positions_deg):
 
 
 @contextmanager
-def _connected(*, positions_deg, use_can_fd=True, **config_kwargs):
+def _connected(*, positions_deg, use_can_fd=True, macos=False, **config_kwargs):
     controller = _make_controller_mock(positions_deg)
     with (
         patch(f"{_LEADER}.require_package", lambda *a, **kw: None),
         patch(f"{_ADAPTER}.require_package", lambda *a, **kw: None),
+        patch(f"{_ADAPTER}._is_macos", return_value=macos),
         patch(f"{_ADAPTER}.MotorBridgeController") as controller_cls,
         patch(f"{_ADAPTER}.MotorBridgeMode", MagicMock()),
     ):
@@ -95,3 +96,23 @@ def test_get_action_is_reported_in_degrees():
         action = teleop.get_action()
     for motor, expected in zip(_EXPECTED_MOTORS, positions, strict=True):
         assert action[f"{motor}.pos"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("use_can_fd", "uses_fd"),
+    [(True, True), (False, False)],
+)
+def test_macos_transport(use_can_fd, uses_fd):
+    # On macOS, FD routes through from_socketcanfd (which reaches the libusb PCAN
+    # backend); classic CAN is prefixed with ``pcanfd:`` to hit that backend too.
+    with _connected(positions_deg=list(range(8)), use_can_fd=use_can_fd, macos=True) as (
+        _teleop,
+        _controller,
+        controller_cls,
+    ):
+        if uses_fd:
+            controller_cls.from_socketcanfd.assert_called_once_with("can0")
+            controller_cls.assert_not_called()
+        else:
+            controller_cls.assert_called_once_with(channel="pcanfd:can0")
+            controller_cls.from_socketcanfd.assert_not_called()

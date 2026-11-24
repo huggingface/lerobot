@@ -25,6 +25,7 @@ leader, converting to/from the radian-based ``motorbridge`` API internally.
 
 import logging
 import math
+import platform
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
@@ -43,6 +44,10 @@ else:
     MotorBridgeMode = None
 
 logger = logging.getLogger(__name__)
+
+
+def _is_macos() -> bool:
+    return platform.system() == "Darwin"
 
 
 class MotorBridgeDamiaoBus(MotorsBusBase):
@@ -108,6 +113,12 @@ class MotorBridgeDamiaoBus(MotorsBusBase):
     def connect(self, handshake: bool = True) -> None:
         use_can_fd = self.use_can_fd
         channel = self.port
+        # On macOS, FD traffic already reaches the libusb PCAN backend (motorbridge
+        # feat/pcan-usb-fd-native) through ``from_socketcanfd``. For classic CAN,
+        # prefix the channel with ``pcanfd:`` so it hits that backend instead of PCBUSB.
+        if _is_macos() and not use_can_fd and not channel.startswith("pcanfd:"):
+            channel = f"pcanfd:{channel}"
+
         logger.info(f"Connecting Damiao motors on {channel} (can_fd={use_can_fd})...")
         if use_can_fd:
             self._controller = MotorBridgeController.from_socketcanfd(channel)
