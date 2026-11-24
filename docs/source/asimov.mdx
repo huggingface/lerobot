@@ -148,7 +148,7 @@ uv run --locked lerobot-teleoperate \
   --robot.type=asimov \
   --robot.is_simulation=true \
   --robot.control_mode=whole_body \
-  --teleop.type=keyboard_base
+  --base_teleop.type=keyboard
 ```
 
 The viewer opens with the robot held by an elastic band; press <kbd>9</kbd> in it to release the robot once the policy has taken over, about two seconds after connecting, and <kbd>7</kbd>/<kbd>8</kbd> to lower or raise the band. `--robot.sim_publish_images=true` publishes the head and wrist cameras over ZMQ on port 5555 instead of opening the viewer.

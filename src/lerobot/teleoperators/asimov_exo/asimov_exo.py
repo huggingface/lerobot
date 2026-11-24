@@ -20,6 +20,7 @@ import time
 from functools import cached_property
 from typing import Any
 
+from lerobot.lerobot_types import RobotObservation
 from lerobot.robots.asimov.asimov import ARM_ACTIONS, BASE_ACTIONS
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -145,7 +146,7 @@ class AsimovExoTeleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def get_action(self) -> dict[str, float]:
+    def get_action(self, observation: RobotObservation | None = None) -> dict[str, float]:
         if self.config.control_mode == "velocity":
             return self._joystick_velocity()
         if self.ik_helper is None:
