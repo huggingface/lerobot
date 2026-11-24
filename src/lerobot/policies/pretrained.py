@@ -458,14 +458,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         config = self.config
         if config.n_obs_steps != 1:
             raise ValueError("Chunk inference requires n_obs_steps=1; observation history is unsupported.")
-        for field_name in (
-            "observation_delta_indices",
-            "image_observation_delta_indices",
-            "state_observation_delta_indices",
-        ):
-            indices = getattr(config, field_name, None)
-            if indices is not None and list(indices) != [0]:
-                raise ValueError(f"Chunk inference cannot sample temporal history ({field_name}).")
+        if any(offsets != (0,) for offsets in config.training_deltas.observation.values()):
+            raise ValueError("Chunk inference cannot sample temporal history (training_deltas).")
         if getattr(config, "temporal_ensemble_coeff", None) is not None:
             raise ValueError("Chunk inference does not support temporal ensembling.")
         if getattr(config, "use_visual_memory", False) or getattr(config, "use_proprioceptive_memory", False):

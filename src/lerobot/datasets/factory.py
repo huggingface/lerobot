@@ -23,8 +23,9 @@ import torch
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.types import FeatureType
 from lerobot.transforms import ImageTransforms
-from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFIX, OBS_STATE, REWARD
+from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_STR
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
@@ -36,67 +37,74 @@ from .utils import resolve_episode_indices
 logger = logging.getLogger(__name__)
 
 
+def _observation_type(policy_key: str, feature: dict) -> FeatureType | None:
+    """The type a dataset feature has as the policy's observation ``policy_key``."""
+    if feature.get("dtype") in ("image", "video") or policy_key.startswith(OBS_IMAGE):
+        return FeatureType.VISUAL
+    if policy_key == OBS_ENV_STATE:
+        return FeatureType.ENV
+    if policy_key.startswith(OBS_STR + "."):
+        return FeatureType.STATE
+    return None
+
+
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig | RewardModelConfig,
     ds_meta: LeRobotDatasetMetadata,
     rename_map: dict[str, str] | None = None,
 ) -> dict[str, list[float]] | None:
-    """Resolves delta_timestamps by reading from the 'delta_indices' properties of the config.
+    """Resolves delta_timestamps from the config's ``training_deltas``.
+
+    Each dataset feature gets the offsets its type declares (see
+    :class:`~lerobot.configs.types.Deltas`); ``observation.action`` is read from the
+    ``action`` column at its own offsets.
 
     Args:
-        cfg (PreTrainedConfig | RewardModelConfig): The config to read delta_indices from. Both
-            ``PreTrainedConfig`` and concrete ``RewardModelConfig`` subclasses expose the
-            ``{observation,action,reward}_delta_indices`` properties used below.
+        cfg (PreTrainedConfig | RewardModelConfig): The config whose ``training_deltas`` to load.
         ds_meta (LeRobotDatasetMetadata): The dataset from which features and fps are used to build
             delta_timestamps against.
+        rename_map: Dataset keys renamed to the policy's.
 
     Returns:
         dict[str, list[float]] | None: A dictionary of delta_timestamps, e.g.:
             {
                 "observation.state": [-0.04, -0.02, 0]
-                "observation.action": [-0.02, 0, 0.02]
+                "action": [0, 0.02, 0.04]
             }
             returns `None` if the resulting dict is empty.
     """
-    # Only policies that opt into modality-specific history (currently Pi05 with MEM)
-    # define these; everything else falls back to the shared observation indices.
-    explicit_image_indices = getattr(cfg, "image_observation_delta_indices", None)
-    image_indices = (
-        explicit_image_indices if explicit_image_indices is not None else cfg.observation_delta_indices
-    )
-    explicit_state_indices = getattr(cfg, "state_observation_delta_indices", None)
-    state_indices = (
-        explicit_state_indices if explicit_state_indices is not None else cfg.observation_delta_indices
-    )
-
+    deltas = cfg.training_deltas
+    types = {}
+    for key, feature in ds_meta.features.items():
+        policy_key = (rename_map or {}).get(key, key)
+        types[key] = _observation_type(policy_key, feature)
     delta_timestamps: dict[str, list[float]] = {}
-    matched_image_keys: list[str] = []
     for key in ds_meta.features:
         policy_key = (rename_map or {}).get(key, key)
-        if policy_key == REWARD and cfg.reward_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
-        if policy_key == ACTION and cfg.action_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
-        # `OBS_IMAGE` matches both the `observation.image` and `observation.images.<cam>`
-        # conventions; matching `OBS_IMAGES` alone would silently give singular-key
-        # datasets no image history at all.
-        if policy_key.startswith(OBS_IMAGE):
-            indices = image_indices
-            matched_image_keys.append(key)
-        elif policy_key == OBS_STATE:
-            indices = state_indices
-        else:
-            indices = cfg.observation_delta_indices if policy_key.startswith(OBS_PREFIX) else None
-        if indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in indices]
+        offsets = deltas.of(policy_key, types[key])
+        if offsets is not None:
+            delta_timestamps[key] = [i / ds_meta.fps for i in offsets]
+    if (offsets := deltas.of(OBS_ACTION)) is not None:
+        if ACTION not in ds_meta.features:
+            raise ValueError(f"{type(cfg).__name__} reads observation.action but the dataset has no action.")
+        delta_timestamps[OBS_ACTION] = [i / ds_meta.fps for i in offsets]
 
     # A policy asking for an image history that no dataset key can supply would train
     # on single frames without any error, so fail instead of degrading silently.
-    if explicit_image_indices is not None and len(explicit_image_indices) > 1 and not matched_image_keys:
+    image_offsets = deltas.observation.get(FeatureType.VISUAL, ())
+    if len(image_offsets) > 1 and FeatureType.VISUAL not in types.values():
         raise ValueError(
-            f"{type(cfg).__name__} requests {len(explicit_image_indices)} history frames per camera, but no "
+            f"{type(cfg).__name__} requests {len(image_offsets)} frames per camera, but no "
             f"dataset feature maps to an image key. Dataset features: {sorted(ds_meta.features)}. "
             "Image keys must be named `observation.image*` after applying `--rename_map`."
+        )
+    # A window declared for one feature that the dataset lacks would be dropped silently too.
+    policy_keys = {(rename_map or {}).get(key, key) for key in ds_meta.features}
+    keys = [key for key in deltas.observation if not isinstance(key, FeatureType)]
+    if missing := sorted(key for key in keys if key not in policy_keys):
+        raise ValueError(
+            f"{type(cfg).__name__} declares frames of {missing}, which no dataset feature maps to. "
+            f"Dataset features: {sorted(ds_meta.features)}; rename them with `--rename_map`."
         )
 
     if len(delta_timestamps) == 0:

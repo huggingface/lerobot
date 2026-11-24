@@ -35,7 +35,14 @@ from .io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
-from .utils import delta_window, resolve_episode_indices, shift_timestamps, task_name
+from .utils import (
+    delta_window,
+    merge_delta_aliases,
+    resolve_episode_indices,
+    shift_timestamps,
+    split_delta_aliases,
+    task_name,
+)
 from .video_utils import (
     apply_rgb_transforms,
     convert_image_depth_units,
@@ -164,6 +171,7 @@ class DatasetReader(BaseDatasetReader):
 
         # Setup delta_indices (doesn't depend on hf_dataset)
         self.delta_indices = None
+        delta_timestamps, self._delta_splits = merge_delta_aliases(delta_timestamps)
         if delta_timestamps is not None:
             check_delta_timestamps(delta_timestamps, meta.fps, tolerance_s)
             self.delta_indices = get_delta_indices(delta_timestamps, meta.fps)
@@ -527,5 +535,6 @@ class DatasetReader(BaseDatasetReader):
             apply_rgb_transforms(item, self._image_transforms, self._meta.camera_keys, self._meta.depth_keys)
             convert_image_depth_units(item, self._image_depth_units, self._depth_output_unit)
             item["task"] = task_name(self._meta.tasks, item["task_index"])
+            split_delta_aliases(item, self._delta_splits)
 
         return items

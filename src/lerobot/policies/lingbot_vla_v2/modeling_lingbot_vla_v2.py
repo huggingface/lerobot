@@ -2232,7 +2232,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         """Distillation targets from the frozen teachers, built on first use (training with align_params only)."""
         if TEACHER_IMAGES not in batch:
             raise ValueError(
-                "Training with align_params needs the current and future frames (`image_observation_delta_indices`): "
+                "Training with align_params needs the current and future frames (`training_deltas`): "
                 "train through the lingbot_vla_v2 processor on a LeRobotDataset."
             )
         if self._teachers is None:

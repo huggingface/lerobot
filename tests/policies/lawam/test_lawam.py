@@ -608,7 +608,7 @@ def test_action_horizon_is_independent_of_control_frequency() -> None:
     cfg.chunk_size = 50
     cfg.action_horizon = 8
 
-    assert cfg.action_delta_indices == list(range(8))
+    assert list(cfg.training_deltas.action) == list(range(8))
     policy_cfg = _build_native_policy_config(cfg)
     assert policy_cfg.action_horizon == 50
     assert policy_cfg.effective_action_horizon == 8

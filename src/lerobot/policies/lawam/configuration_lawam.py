@@ -25,7 +25,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs.types import Deltas, FeatureType, NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 
@@ -260,32 +260,19 @@ class LaWAMConfig(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> list[int]:
-        """Return the current timestep for non-visual observations."""
-        return [0]
-
-    @property
-    def image_observation_delta_indices(self) -> list[int]:
-        """Return current and future frames required by the LAM teacher."""
+    def training_deltas(self) -> Deltas:
+        # Future images are the LAM teacher's targets, spread evenly over the action horizon.
         if self.num_video_frames == 1:
-            return [0]
-        last_action_index = self.action_horizon - 1
-        return [
-            round(frame_idx * last_action_index / (self.num_video_frames - 1))
-            for frame_idx in range(self.num_video_frames)
-        ]
+            images = [0]
+        else:
+            last_action_index = self.action_horizon - 1
+            images = [
+                round(frame_idx * last_action_index / (self.num_video_frames - 1))
+                for frame_idx in range(self.num_video_frames)
+            ]
+        observation = {FeatureType.VISUAL: images, FeatureType.STATE: [0], FeatureType.ENV: [0]}
+        return Deltas(observation=observation, action=range(self.action_horizon))
 
     @property
-    def state_observation_delta_indices(self) -> list[int]:
-        """Return only the current robot state."""
-        return [0]
-
-    @property
-    def action_delta_indices(self) -> list[int]:
-        """Return action indices covering the configured prediction horizon."""
-        return list(range(self.action_horizon))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        """Indicate that LaWAM does not request reward history from datasets."""
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

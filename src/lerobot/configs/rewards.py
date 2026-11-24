@@ -32,7 +32,7 @@ from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 from lerobot.utils.hub import HubMixin
 
-from .types import PolicyFeature
+from .types import Deltas, PolicyFeature, reject_removed_delta_properties
 
 T = TypeVar("T", bound="RewardModelConfig")
 logger = logging.getLogger(__name__)
@@ -81,17 +81,14 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
         return choice_name
 
-    @property
-    def observation_delta_indices(self) -> list[int] | None:
-        return None
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        reject_removed_delta_properties(cls)
 
     @property
-    def action_delta_indices(self) -> list[int] | None:
-        return None
-
-    @property
-    def reward_delta_indices(self) -> list[int] | None:
-        return None
+    def training_deltas(self) -> Deltas:
+        """The frames each training batch holds (see :class:`~lerobot.configs.types.Deltas`)."""
+        return Deltas()
 
     def get_optimizer_preset(self) -> OptimizerConfig | None:
         """Default optimizer for this reward model, or ``None`` for zero-shot models."""

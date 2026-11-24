@@ -147,18 +147,6 @@ class RobometerConfig(RewardModelConfig):
             raise ValueError("vlm_config must include `model_type` to reconstruct the backbone config")
         return AutoConfig.for_model(model_type, **config_dict)
 
-    @property
-    def observation_delta_indices(self) -> list[int] | None:
-        return None
-
-    @property
-    def action_delta_indices(self) -> None:
-        return None
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
-
     def validate_features(self) -> None:
         if self.image_key not in self.input_features:
             raise ValueError(f"Robometer requires image input feature {self.image_key!r}")

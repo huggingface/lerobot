@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
@@ -215,8 +216,8 @@ class SARMConfig(RewardModelConfig):
         return self.num_frames
 
     @property
-    def observation_delta_indices(self) -> list[int]:
-        """Bidirectional frame sampling centered on target frame.
+    def training_deltas(self) -> Deltas:
+        """Bidirectional frame sampling centered on target frame, then rewind placeholders.
 
         Example with n_obs_steps=8, gap=30:
         Before: [-120, -90, -60, -30]  (4 frames)
@@ -233,13 +234,7 @@ class SARMConfig(RewardModelConfig):
         # Rewind placeholders
         rewind_deltas = [-self.frame_gap * (i + 1) for i in range(self.max_rewind_steps)]
 
-        return obs_deltas + rewind_deltas
-
-    @property
-    def action_delta_indices(self) -> None:
-        """SARM is a reward model, not an action policy."""
-        return None
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+        frames = obs_deltas + rewind_deltas
+        return Deltas(
+            observation=dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), frames)
+        )

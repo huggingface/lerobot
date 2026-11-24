@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Literal
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -260,13 +260,9 @@ class EO1Config(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def training_deltas(self) -> Deltas:
+        return Deltas(action=range(self.chunk_size))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

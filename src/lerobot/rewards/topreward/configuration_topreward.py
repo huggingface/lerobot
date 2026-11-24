@@ -129,18 +129,6 @@ class TOPRewardConfig(RewardModelConfig):
             self.input_features[self.image_key] = PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL)
         self.output_features.setdefault("reward", PolicyFeature(shape=(1,), type=FeatureType.REWARD))
 
-    @property
-    def observation_delta_indices(self) -> list[int] | None:
-        return None
-
-    @property
-    def action_delta_indices(self) -> None:
-        return None
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
-
     def validate_features(self) -> None:
         if self.image_key not in self.input_features:
             raise ValueError(f"TOPReward requires image input feature {self.image_key!r}")

@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 import torch
 
+from lerobot.configs.types import FeatureType
 from lerobot.optim.optimizers import PraxisAdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.praxis.praxis_core.layers import MoEFeedForward
@@ -118,7 +119,8 @@ def test_window_recipe_constants() -> None:
     policy = make_tiny_policy(seed=0)
     cfg = policy.config
     assert cfg.window_frames == 93 and cfg.drop_n_last_frames == 93
-    assert cfg.observation_delta_indices == list(range(93)) and cfg.action_delta_indices == list(range(93))
+    deltas = cfg.training_deltas
+    assert deltas.observation[FeatureType.VISUAL] == tuple(range(93)) and deltas.action == tuple(range(93))
     assert window_fits(102, 93, 15.0) and not window_fits(93, 93, 15.0)
     # The recipe's last window of a 200-frame episode starts at frame 106 (ends one frame before the
     # last); the episode-aware sampler draws the same starts with `drop_n_last_frames` dropped.

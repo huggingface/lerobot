@@ -51,8 +51,10 @@ from .streaming_sidecar import (
 from .utils import (
     check_version_compatibility,
     delta_window,
+    merge_delta_aliases,
     resolve_episode_indices,
     shift_timestamps,
+    split_delta_aliases,
     task_name,
 )
 from .video_utils import (
@@ -422,6 +424,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         self.delta_timestamps: dict[str, list[float]] | None = None
         self.delta_indices: dict[str, list[int]] | None = None
 
+        delta_timestamps, self._delta_splits = merge_delta_aliases(delta_timestamps)
         if delta_timestamps is not None:
             check_delta_timestamps(delta_timestamps, self.fps, tolerance_s)
             self.delta_timestamps = delta_timestamps
@@ -943,7 +946,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             raise RuntimeError(
                 f"Episode {episode_index} frame {frame_index} has unexpected absolute index {item['index']}"
             )
-        return item
+        return split_delta_aliases(item, self._delta_splits)
 
     @cached_property
     def _delta_arrays(self) -> dict[str, np.ndarray]:

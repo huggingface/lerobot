@@ -28,7 +28,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs.types import Deltas, FeatureType, NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import FrozenWarmupConstantSchedulerConfig
 from lerobot.policies.flux3.f3 import packing
@@ -374,31 +374,30 @@ class Flux3Config(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> list[int]:
-        """Training window for image observations: the conditioning frame plus ``chunk_size`` future frames."""
-        return self.image_observation_delta_indices
-
-    @property
-    def image_observation_delta_indices(self) -> list[int]:
-        return (
-            list(range(1 - self.n_obs_steps, self.chunk_size + 1))
-            if self.conditioning == "history"
-            else list(range(self.window_frames))
+    def training_deltas(self) -> Deltas:
+        if self.conditioning != "history":
+            # Future frames of the window are video targets.
+            images = range(self.window_frames)
+            return Deltas(
+                observation={FeatureType.VISUAL: images, FeatureType.STATE: [0], FeatureType.ENV: images},
+                action=range(self.chunk_size),
+            )
+        images = range(1 - self.n_obs_steps, self.chunk_size + 1)  # past inputs, then future video targets
+        return Deltas(
+            observation={
+                FeatureType.VISUAL: images,
+                FeatureType.STATE: range(1 - self.n_obs_steps, 1),
+                FeatureType.ENV: images,
+            },
+            # The commands before the current frame are history inputs; the first anchors the deltas.
+            action=range(-self.n_obs_steps, self.chunk_size),
         )
 
     @property
-    def state_observation_delta_indices(self) -> list[int]:
-        return list(range(1 - self.n_obs_steps, 1)) if self.conditioning == "history" else [0]
-
-    @property
-    def action_delta_indices(self) -> list[int]:
-        # Extra preceding command establishes the first history delta.
-        return (
-            list(range(-self.n_obs_steps, self.chunk_size))
-            if self.conditioning == "history"
-            else list(range(self.chunk_size))
+    def inference_deltas(self) -> Deltas:
+        if self.conditioning != "history":
+            return Deltas()
+        window = range(1 - self.n_obs_steps, 1)
+        return Deltas(
+            observation={FeatureType.VISUAL: window, FeatureType.STATE: window, FeatureType.ENV: window}
         )
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None

@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Self
 import torch
 from torch import Tensor, nn
 
+from lerobot.configs.types import FeatureType
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
@@ -172,7 +173,7 @@ class LongWAMPolicy(PreTrainedPolicy):
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict[str, float]]:
         cfg = self.config
         images = self._images(batch)
-        if images.ndim != 5 or images.shape[1] != len(cfg.observation_delta_indices):
+        if images.ndim != 5 or images.shape[1] != len(cfg.training_deltas.observation[FeatureType.VISUAL]):
             raise ValueError("Training needs the strided history/current/future window")
         context = self._context(batch, batch["observation.state"][:, cfg.past_obs_steps // cfg.video_stride])
         latents = self._encode_video(images.transpose(1, 2))

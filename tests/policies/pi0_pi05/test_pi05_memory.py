@@ -18,6 +18,7 @@ import pytest
 import torch
 from torch import nn
 
+from lerobot.configs import FeatureType
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pi05.memory import (
     causal_temporal_mask,
@@ -37,10 +38,10 @@ def test_pi05_memory_delta_indices_are_modality_specific():
         memory_frames=6,
         memory_stride=10,
     )
-    assert baseline.image_observation_delta_indices is None
-    assert baseline.state_observation_delta_indices is None
-    assert memory.image_observation_delta_indices == [-50, -40, -30, -20, -10, 0]
-    assert memory.state_observation_delta_indices == [-50, -40, -30, -20, -10, 0]
+    assert FeatureType.VISUAL not in baseline.training_deltas.observation
+    assert FeatureType.STATE not in baseline.training_deltas.observation
+    assert list(memory.training_deltas.observation[FeatureType.VISUAL]) == [-50, -40, -30, -20, -10, 0]
+    assert list(memory.training_deltas.observation[FeatureType.STATE]) == [-50, -40, -30, -20, -10, 0]
 
 
 @pytest.mark.dataset

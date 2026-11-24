@@ -19,6 +19,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.configs.types import Deltas, FeatureType
 from lerobot.optim import AdamConfig, VQBeTSchedulerConfig
 
 
@@ -175,13 +176,17 @@ class VQBeTConfig(PreTrainedConfig):
                 )
 
     @property
-    def observation_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, 1))
+    def training_deltas(self) -> Deltas:
+        window = range(1 - self.n_obs_steps, 1)
+        observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), window)
+        return Deltas(
+            observation=observation,
+            action=range(1 - self.n_obs_steps, self.n_action_pred_token + self.action_chunk_size - 1),
+        )
 
     @property
-    def action_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, self.n_action_pred_token + self.action_chunk_size - 1))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        window = range(1 - self.n_obs_steps, 1)
+        return Deltas(
+            observation=dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), window)
+        )

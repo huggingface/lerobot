@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -165,13 +166,9 @@ class PI0FastConfig(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def training_deltas(self) -> Deltas:
+        return Deltas(action=range(self.chunk_size))
 
     @property
-    def action_delta_indices(self) -> list:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

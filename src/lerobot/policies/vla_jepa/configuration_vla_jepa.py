@@ -22,7 +22,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -256,23 +256,18 @@ class VLAJEPAConfig(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> list[int]:
-        # Only the world model consumes frames past index 0, so without it asking for the full
-        # window would decode `num_video_frames` frames per camera per sample and drop them.
+    def training_deltas(self) -> Deltas:
+        # With the world model, future frames are video targets.
         if not self.enable_world_model:
-            return [0]
-        # Matches the original repo's `range(video_horizon)` when the chunk fits in the video window.
-        # For longer chunks, stride the frames across the chunk rather than clustering them at the
-        # start, so the world model sees dynamics over the whole horizon.
-        if self.num_video_frames >= self.chunk_size:
-            return list(range(self.num_video_frames))
-        stride = (self.chunk_size - 1) // (self.num_video_frames - 1)
-        return [i * stride for i in range(self.num_video_frames)]
+            video = [0]
+        elif self.num_video_frames >= self.chunk_size:
+            video = list(range(self.num_video_frames))
+        else:
+            stride = (self.chunk_size - 1) // (self.num_video_frames - 1)
+            video = [i * stride for i in range(self.num_video_frames)]
+        observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), video)
+        return Deltas(observation=observation, action=range(self.chunk_size))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

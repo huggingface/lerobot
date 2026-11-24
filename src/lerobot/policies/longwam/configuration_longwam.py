@@ -7,6 +7,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig
 
 
@@ -92,17 +93,15 @@ class LongWAMConfig(PreTrainedConfig):
         return self.action_horizon if self.inference_action_horizon is None else self.inference_action_horizon
 
     @property
-    def observation_delta_indices(self) -> list[int]:
-        # Decode only frames consumed by the VAE, not every intervening control tick.
-        return list(range(-self.past_obs_steps, self.future_video_steps + 1, self.video_stride))
+    def training_deltas(self) -> Deltas:
+        video = range(-self.past_obs_steps, self.future_video_steps + 1, self.video_stride)
+        observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), video)
+        return Deltas(observation=observation, action=range(self.action_horizon))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        return list(range(self.action_horizon))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        # The strided past video and the current frame; future frames are predicted.
+        return Deltas(observation={FeatureType.VISUAL: range(-self.past_obs_steps, 1, self.video_stride)})
 
     def validate_features(self) -> None:
         if set(self.image_features) != set(self.camera_keys):

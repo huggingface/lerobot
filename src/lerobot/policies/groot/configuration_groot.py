@@ -23,6 +23,7 @@ from pathlib import Path
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, DiffuserSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -525,24 +526,17 @@ class GrootConfig(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        """Return indices for delta observations (None for Groot)."""
-        return None
-
-    @property
-    def action_delta_indices(self) -> list[int]:
-        """Return indices for delta actions."""
+    def training_deltas(self) -> Deltas:
         model_action_horizon = (
             infer_groot_n1_7_action_horizon(self.base_model_path, self.embodiment_tag) or 40
         )
-        return list(range(min(self.chunk_size, model_action_horizon)))
+        return Deltas(action=range(min(self.chunk_size, model_action_horizon)))
+
+    @property
+    def inference_deltas(self) -> Deltas:
+        return Deltas()
 
     @property
     def drop_n_last_frames(self) -> int:
         """Exclude episode tails that cannot supply a complete N1.7 action chunk."""
-        return max(0, len(self.action_delta_indices) - 1)
-
-    @property
-    def reward_delta_indices(self) -> None:
-        """Return indices for delta rewards (None for Groot)."""
-        return None
+        return max(0, len(self.training_deltas.action or ()) - 1)

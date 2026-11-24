@@ -22,6 +22,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
@@ -263,16 +264,9 @@ class DM05Config(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        """DM05 does not use observation delta features."""
-        return None
+    def training_deltas(self) -> Deltas:
+        return Deltas(action=range(self.chunk_size))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        """Return the action timestep offsets used for chunked training."""
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        """DM05 does not use reward delta features."""
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

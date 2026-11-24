@@ -18,6 +18,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.types import Deltas
 from lerobot.optim import (
     AdamWConfig,
     CosineDecayWithWarmupSchedulerConfig,
@@ -345,18 +346,11 @@ class LingbotVLAV2Config(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def training_deltas(self) -> Deltas:
+        # ``align_params`` supervises the frame at the end of the chunk.
+        images = {FeatureType.VISUAL: [0, self.chunk_size - 1]} if self.align_params else {}
+        return Deltas(observation=images, action=range(self.chunk_size))
 
     @property
-    def image_observation_delta_indices(self) -> list | None:
-        """The distillation teachers also see the chunk's last frame (upstream ``use_future_image``)."""
-        return [0, self.chunk_size - 1] if self.align_params else None
-
-    @property
-    def action_delta_indices(self) -> list:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

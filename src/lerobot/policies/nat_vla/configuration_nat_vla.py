@@ -20,7 +20,7 @@ import torch
 from huggingface_hub import snapshot_download
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs.types import Deltas, NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
@@ -104,16 +104,12 @@ class NATVLAConfig(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def training_deltas(self) -> Deltas:
+        return Deltas(action=range(self.chunk_size))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()
 
 
 def downloaded(repository: str, patterns: list[str], revision: str | None) -> Path:

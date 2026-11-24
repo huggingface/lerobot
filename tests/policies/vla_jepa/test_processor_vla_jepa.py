@@ -309,7 +309,9 @@ def test_action_clipping_is_skipped_unless_min_max(caplog):
 
 def test_observation_delta_indices_collapse_without_world_model():
     """Only the world model reads frames past index 0; asking for more decodes video for nothing."""
-    assert make_config(num_video_frames=8).observation_delta_indices == list(range(8))
+    assert list(make_config(num_video_frames=8).training_deltas.observation[FeatureType.VISUAL]) == list(
+        range(8)
+    )
     cfg = make_config(num_video_frames=8)
     cfg.enable_world_model = False
-    assert cfg.observation_delta_indices == [0]
+    assert list(cfg.training_deltas.observation[FeatureType.VISUAL]) == [0]

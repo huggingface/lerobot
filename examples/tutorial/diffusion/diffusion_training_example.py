@@ -43,13 +43,17 @@ def main():
 
     # To perform action chunking, ACT expects a given number of actions as targets
     delta_timestamps = {
-        "observation.state": make_delta_timestamps(cfg.observation_delta_indices, dataset_metadata.fps),
-        "action": make_delta_timestamps(cfg.action_delta_indices, dataset_metadata.fps),
+        "observation.state": make_delta_timestamps(
+            cfg.training_deltas.observation.get(FeatureType.STATE), dataset_metadata.fps
+        ),
+        "action": make_delta_timestamps(cfg.training_deltas.action, dataset_metadata.fps),
     }
 
     # add image features if they are present
     delta_timestamps |= {
-        k: make_delta_timestamps(cfg.observation_delta_indices, dataset_metadata.fps)
+        k: make_delta_timestamps(
+            cfg.training_deltas.observation.get(FeatureType.VISUAL), dataset_metadata.fps
+        )
         for k in cfg.image_features
     }
 

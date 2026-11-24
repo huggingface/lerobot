@@ -364,7 +364,7 @@ def test_groot_defaults_use_n1_7():
     assert config.max_action_dim == 132
     assert config.chunk_size == 40
     assert config.n_action_steps == 40
-    assert len(config.action_delta_indices) == 40
+    assert len(config.training_deltas.action) == 40
 
 
 @pytest.mark.parametrize("legacy_version", ["n1.5", "n1_5", "n15", "1.5"])

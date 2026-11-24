@@ -59,10 +59,12 @@ def main():
 
     # Another policy-dataset interaction is with the delta_timestamps. Each policy expects a given number frames
     # which can differ for inputs, outputs and rewards (if there are some).
+    # The policy declares them as frame offsets per feature type in `cfg.training_deltas`.
+    deltas = cfg.training_deltas
     delta_timestamps = {
-        "observation.image": [i / dataset_metadata.fps for i in cfg.observation_delta_indices],
-        "observation.state": [i / dataset_metadata.fps for i in cfg.observation_delta_indices],
-        "action": [i / dataset_metadata.fps for i in cfg.action_delta_indices],
+        "observation.image": [i / dataset_metadata.fps for i in deltas.observation[FeatureType.VISUAL]],
+        "observation.state": [i / dataset_metadata.fps for i in deltas.observation[FeatureType.STATE]],
+        "action": [i / dataset_metadata.fps for i in deltas.action],
     }
 
     # In this case with the standard configuration for Diffusion Policy, it is equivalent to this:

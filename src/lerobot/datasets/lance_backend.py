@@ -74,7 +74,7 @@ from .lance_utils import (  # noqa: F401
     resolve_lance_root,
     to_lance_column,
 )
-from .utils import resolve_episode_indices
+from .utils import merge_delta_aliases, resolve_episode_indices, split_delta_aliases
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
 # Per-call limits for multi-sample RGB decoding within each DataLoader worker.
@@ -255,6 +255,7 @@ class LanceDatasetReader(BaseDatasetReader):
             raise ValueError("None of the requested episodes are in the dataset.")
         self.episodes = episodes
         self.delta_indices = None
+        delta_timestamps, self._delta_splits = merge_delta_aliases(delta_timestamps)
         if delta_timestamps is not None:
             check_delta_timestamps(delta_timestamps, self.meta.fps, tolerance_s)
             self.delta_indices = get_delta_indices(delta_timestamps, self.meta.fps)
@@ -934,7 +935,7 @@ class LanceDatasetReader(BaseDatasetReader):
                 item[key] = torch.tensor(data[base])
         item.update(plan["padding"])
         item["task"] = self._task_names[int(item["task_index"].item())]
-        return item
+        return split_delta_aliases(item, self._delta_splits)
 
     def __repr__(self) -> str:
         return (

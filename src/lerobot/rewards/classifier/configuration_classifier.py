@@ -43,18 +43,6 @@ class RewardClassifierConfig(RewardModelConfig):
         }
     )
 
-    @property
-    def observation_delta_indices(self) -> list | None:
-        return None
-
-    @property
-    def action_delta_indices(self) -> list | None:
-        return None
-
-    @property
-    def reward_delta_indices(self) -> list | None:
-        return None
-
     def get_optimizer_preset(self) -> OptimizerConfig:
         return AdamWConfig(
             lr=self.learning_rate,
