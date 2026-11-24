@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import builtins
+from collections.abc import Iterable
+from os import PathLike
 from pathlib import Path
-from tempfile import NamedTemporaryFile, TemporaryDirectory
+from tempfile import TemporaryDirectory
 from typing import Any, TypeVar
 
-from huggingface_hub import HfApi, download_bucket_files
+from huggingface_hub import HfApi
 from huggingface_hub.utils import validate_hf_hub_args
 
 from .constants import CHECKPOINTS_DIR
@@ -25,49 +27,37 @@ from .constants import CHECKPOINTS_DIR
 T = TypeVar("T", bound="HubMixin")
 
 
-def ensure_bucket_file(
-    bucket_id: str,
-    remote_path: str,
-    local_path: str | Path,
-    *,
-    token: str | bool | None = None,
-) -> Path:
-    """Return the cached copy of a bucket file, downloading it first if it's missing.
+def sanitize_checkpoint_consent(config: Any, *, remove: bool = False) -> bool:
+    """Clear serialized code consent recursively; callers apply their overrides afterwards."""
+    modified = False
+    values: Iterable[Any]
+    if isinstance(config, dict):
+        if "trust_remote_code" in config:
+            if remove:
+                config.pop("trust_remote_code")
+            else:
+                config["trust_remote_code"] = False
+            modified = True
+        values = config.values()
+    elif isinstance(config, list):
+        values = config
+    else:
+        return False
+    for value in values:
+        modified = sanitize_checkpoint_consent(value, remove=remove) or modified
+    return modified
 
-    The download is renamed into place once complete, so a failed download leaves no partial file. A cached
-    file is never refreshed; delete it to download a newer version.
 
-    Args:
-        bucket_id (`str`):
-            Bucket ID, e.g. `lerobot/robot-urdfs`.
-        remote_path (`str`):
-            Path of the file in the bucket.
-        local_path (`str` or `Path`):
-            Where the file is cached.
-        token (`str` or `bool`, *optional*):
-            Hub token. `False` downloads anonymously.
-
-    Returns:
-        `Path`: Path of the cached file.
-    """
-    path = Path(local_path)
-    if path.is_file():
-        return path
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(dir=path.parent, suffix=".tmp", delete=False) as temporary:
-        temporary_path = Path(temporary.name)
-    try:
-        download_bucket_files(
-            bucket_id,
-            [(remote_path, temporary_path)],
-            raise_on_missing_files=True,
-            token=token,
-        )
-        temporary_path.replace(path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-    return path
+def split_hub_reference(
+    name: str | PathLike, revision: str | None = None
+) -> tuple[str | PathLike, str | None]:
+    """Resolve ``repo@revision``, preserving local paths and unpinned loader defaults."""
+    if isinstance(name, str) and "@" in name and not Path(name).is_absolute() and not Path(name).exists():
+        repo, revision = name.split("@", 1)
+        if not repo or not revision:
+            raise ValueError(f"Expected 'repo@revision', got {name!r}")
+        return repo, revision
+    return name, revision
 
 
 # Sharded-training resume artifacts (torch DCP shard dirs + shard files). Published model repos

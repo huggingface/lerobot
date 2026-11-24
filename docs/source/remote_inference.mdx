@@ -78,7 +78,7 @@ Copy the [generic configuration](https://github.com/huggingface/lerobot/blob/mai
 cp examples/remote_inference/server.yaml server.yaml
 ```
 
-Set `model.repo_or_path` and `model.device`. For a Hub checkpoint, pin `model.revision` to the commit you intend to validate. Match `features`, `action_feature`, `semantics`, `robot_type` and `execution.action_fps` to your working setup; see the [schema and camera-renaming examples](#configuration-and-networking) below.
+Set `model.repo_or_path` and `model.device`. For a Hub checkpoint, pin `model.revision` to the commit you intend to validate. If the checkpoint's tokenizer needs custom code (PI0-FAST, FineART, WALL-X), review that code and set `model.trust_remote_code: true`; the checkpoint cannot grant this itself. Match `features`, `action_feature`, `semantics`, `robot_type` and `execution.action_fps` to your working setup; see the [schema and camera-renaming examples](#configuration-and-networking) below.
 
 ```bash
 uv run --no-sync lerobot-policy-server --config_path=server.yaml

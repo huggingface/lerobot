@@ -212,6 +212,10 @@ class EvalConfig:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
         if self.max_episode_steps is not None and self.max_episode_steps < 1:
             raise ValueError(f"eval.max_episode_steps must be at least 1, got {self.max_episode_steps}.")
+        if self.n_episodes < 1:
+            raise ValueError(f"eval.n_episodes must be at least 1, got {self.n_episodes}.")
+        if self.batch_size < 0:
+            raise ValueError(f"eval.batch_size must be at least 0, got {self.batch_size}.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:

@@ -701,6 +701,12 @@ The reward classifier is configured using `lerobot/rewards/classifier/configurat
 - **hidden_dim**: Size of hidden representation
 - **dropout_rate**: Regularization parameter
 - **learning_rate**: Learning rate for optimizer
+- **trust_remote_code**: Caller consent for custom encoder code; defaults to `false`
+
+Encoders such as `helper2424/resnet10` may require custom Python code. Review the
+encoder repository before opting in with `--reward_model.trust_remote_code=true`
+or `RewardClassifierConfig(trust_remote_code=True, ...)`. Built-in Transformers
+encoders, such as `microsoft/resnet-18`, do not need this opt-in.
 
 Example configuration for training the reward classifier. Save it as `reward_classifier_train_config.json`:
 
@@ -713,6 +719,7 @@ Example configuration for training the reward classifier. Save it as `reward_cla
   "reward_model": {
     "type": "reward_classifier",
     "model_name": "helper2424/resnet10",
+    "trust_remote_code": true,
     "model_type": "cnn",
     "num_cameras": 2,
     "num_classes": 2,
@@ -761,7 +768,33 @@ To train the classifier, use the `train.py` script with your configuration:
 lerobot-train --config_path reward_classifier_train_config.json
 ```
 
+The example recipe above explicitly opts in to its encoder code. Consent is not
+saved in exported checkpoints. To resume a downloaded training config or train
+from a reward checkpoint using a custom encoder, pass
+`--reward_model.trust_remote_code=true` again.
+
 **Deploying and Testing the Model**
+
+Custom encoder consent must also be supplied when deploying the classifier.
+For direct Python loading, after reviewing the encoder code:
+
+```python
+from lerobot.rewards.classifier.modeling_classifier import Classifier
+
+classifier = Classifier.from_pretrained(
+    "hf_username/model_repo", trust_remote_code=True
+)
+```
+
+For `RewardClassifierProcessorStep`, pass `trust_remote_code=True` to the step
+constructor, or to `DataProcessorPipeline.from_pretrained` when loading a saved
+pipeline. For the environment configuration below, use
+`env.processor.reward_classifier.trust_remote_code`; this consent is separate
+from policy or environment remote-code consent.
+This flag is omitted from exported `train_config.json` files and reset when
+loading a training checkpoint. Pass
+`--env.processor.reward_classifier.trust_remote_code=true` again to authorize
+custom classifier code for the current run.
 
 To use your trained reward classifier, configure the `HILSerlRobotEnvConfig` to use your model:
 
@@ -771,7 +804,8 @@ config = GymManipulatorConfig(
     env=HILSerlRobotEnvConfig(
         processor=HILSerlProcessorConfig(
             reward_classifier=RewardClassifierConfig(
-                pretrained_path="path_to_your_pretrained_trained_model"
+                pretrained_path="path_to_your_pretrained_trained_model",
+                trust_remote_code=True,  # After reviewing the custom encoder code.
             )
         ),
         # Other environment parameters
@@ -790,6 +824,7 @@ or set the argument in the json config file.
     "processor": {
       "reward_classifier": {
         "pretrained_path": "path_to_your_pretrained_model",
+        "trust_remote_code": true,
         "success_threshold": 0.7,
         "success_reward": 1.0
       },

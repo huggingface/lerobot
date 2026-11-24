@@ -138,6 +138,8 @@
       title: LingBot-VLA 2.0
     - local: molmoact2
       title: MolmoAct2
+    - local: nat_vla
+      title: NAT VLA
     - local: vla_jepa
       title: VLA-JEPA
     - local: walloss

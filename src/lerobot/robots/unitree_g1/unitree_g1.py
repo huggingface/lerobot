@@ -104,9 +104,9 @@ def make_robot_controller(name: str | None) -> RobotController | None:
     if name is None:
         return None
     controllers = {
-        "GrootLocomotionController": "lerobot.robots.unitree_g1.controllers.gr00t_locomotion",
-        "HolosomaLocomotionController": "lerobot.robots.unitree_g1.controllers.holosoma_locomotion",
-        "SonicWholeBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
+        "GrootLocomotionController": "lerobot.controllers.unitree_g1.gr00t_locomotion",
+        "HolosomaLocomotionController": "lerobot.controllers.unitree_g1.holosoma_locomotion",
+        "SonicWholeBodyController": "lerobot.controllers.unitree_g1.sonic_whole_body",
     }
     module_path = controllers.get(name)
     if module_path is None:

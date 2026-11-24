@@ -732,6 +732,7 @@ def train(cfg: TrainPipelineConfig) -> None:
         step = resume_before_prepare(cfg)  # step + RNG only; sharded state loads after prepare
 
     dataloader, eval_dataloader = make_dataloaders(cfg, dataset, eval_dataset, step, parallel_dims)
+    train_sampler = dataloader.sampler  # accelerator.prepare reuses this sampler object
 
     # --- prepare & resume phase 2 ---------------------------------------------------------------
     # The FSDP wrap-unit class names resolve right before prepare: user override, else the
@@ -756,6 +757,10 @@ def train(cfg: TrainPipelineConfig) -> None:
     ema = EMA(accelerator.unwrap_model(policy), cfg.ema) if cfg.ema is not None else None
     if cfg.resume:
         resume_after_prepare(cfg, accelerator, policy, optimizer, lr_scheduler, ema)
+        if not cfg.dataset.streaming:
+            # The prepared dataloader calls `sampler.set_epoch(iteration)` at the start of every pass and
+            # `iteration` is not checkpointed, so start it at the epoch the sampler was restored to.
+            dataloader.set_epoch(train_sampler.state_dict()["epoch"])
 
     # --- auxiliaries (after the core assembly, per the construction-order contract) -------------
     sample_weighter = None

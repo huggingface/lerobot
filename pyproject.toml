@@ -177,7 +177,7 @@ rustypot-dep = ["rustypot>=1.13.1,<2.0.0"]
 deepdiff-dep = ["deepdiff>=7.0.1,<9.0.0"]
 pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
-motorbridge-dep = ["motorbridge>=0.5,<0.6"]
+motorbridge-dep = ["motorbridge>=0.6,<0.7"]
 motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
 timm-dep = ["timm>=1.0.0,<1.1.0"]
 
@@ -216,7 +216,6 @@ reachy2 = [
 rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
 yam = [
     "lerobot[motorbridge-dep]",
-    "lerobot[can-dep]",
     "lerobot[placo-dep]",
 ]
 kinematics = ["lerobot[placo-dep]"]
@@ -280,6 +279,7 @@ lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[ac
 lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 wall_oss_05 = ["lerobot[transformers-dep]"]
 g05 = ["lerobot[transformers-dep]"]
+nat_vla = ["lerobot[transformers-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -316,10 +316,10 @@ test = ["pytest>=8.1.0,<10.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
-# NOTE: Explicitly listing scipy helps flatten the dependecy tree.
+# NOTE: Explicitly listing scipy helps flatten the dependency tree.
 aloha = ["lerobot[dataset]", "gym-aloha>=0.1.5,<0.2.0", "lerobot[scipy-dep]"]
 pusht = ["lerobot[dataset]", "gym-pusht>=0.1.8,<0.2.0"]
-libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
+libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.5,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
 metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
 # NOTE: vlabench is NOT exposed as a `lerobot` extra. Its only distribution
 # is the OpenMOSS/VLABench GitHub repo (package name `VLABench`, no PyPI
@@ -382,6 +382,7 @@ all = [
     "lerobot[lingbot_va]",
     "lerobot[lingbot_vla_v2]",
     "lerobot[g05]",
+    "lerobot[nat_vla]",
     "lerobot[lawam]",
     "lerobot[cosmos3]",
     "lerobot[praxis]",
@@ -499,6 +500,7 @@ ignore = [
 "src/lerobot/cameras/**" = ["D"]
 "src/lerobot/common/**" = ["D"]
 "src/lerobot/configs/**" = ["D"]
+"src/lerobot/controllers/**" = ["D"]
 "src/lerobot/data_processing/**" = ["D"]
 "src/lerobot/datasets/**" = ["D"]
 "src/lerobot/distributed/**" = ["D"]
