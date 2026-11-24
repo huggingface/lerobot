@@ -85,7 +85,7 @@ def test_rollout_forwards_initial_state_indices_to_reset(monkeypatch) -> None:
         initial_state_indices=[4, 5],
     )
 
-    assert env.reset_options == {eval_module.NEW_ROLLOUT_OPTION: True, "initial_state_indices": [4, 5]}
+    assert env.reset_options == {"initial_state_indices": [4, 5]}
 
 
 def test_eval_policy_assigns_initial_state_indices_per_batch(monkeypatch) -> None:

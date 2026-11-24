@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("libero")
 
-from lerobot.envs.libero import LiberoEnv
+from lerobot.sim.integrations.libero import LiberoEnv
 
 
 class _FakeController:
