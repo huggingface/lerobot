@@ -93,18 +93,17 @@ def convert(
 ) -> SanaRobotConfig:
     """Write the LeRobot policy directory ``out`` of the released checkpoint folder ``checkpoint``.
 
-    ``device`` is the device written into the config and ``overrides`` are fields of `SanaRobotConfig`. The
-    weights keep the precision of the released file; the config's ``dtype`` is the precision the policy runs at.
+    ``device`` is the device written into the config and the processors, replaced by the one this machine has
+    when it is not available; ``overrides`` are fields of `SanaRobotConfig`. The weights keep the precision of
+    the released file; the config's ``dtype`` is the precision the policy runs at.
     """
     checkpoint = Path(checkpoint)
-    config = build_config(checkpoint, **overrides)
+    config = build_config(checkpoint, device=device, **overrides)
     policy = SanaRobotPolicy(replace(config, device="cpu", dtype=None))
     state = torch.load(weights_file(checkpoint), map_location="cpu", weights_only=True, mmap=True)
     for key in ("state_dict_ema", "state_dict"):
         state = state.get(key, state)
     policy.model.load_state_dict(state, strict=True)
-    # Set after `__post_init__`, which replaces a device this machine does not have.
-    config.device = device
     policy.config = config
     policy.save_pretrained(out)
     stats = normalization_stats(checkpoint, config)
