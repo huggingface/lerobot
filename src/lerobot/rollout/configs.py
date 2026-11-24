@@ -27,7 +27,6 @@ import draccus
 from lerobot.configs import PreTrainedConfig, parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.inference import InferenceEngineConfig, RemoteInferenceConfig, SyncInferenceConfig
-from lerobot.processor.base_action_processor import BaseActionProcessorStep
 from lerobot.robots.config import RobotConfig
 from lerobot.robots.sim_robot import SimRobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
@@ -62,7 +61,7 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     # --dataset.* flags are given (``ctx.data.dataset`` may be None).  "required":
     # --dataset.repo_id is mandatory.
     dataset_mode: ClassVar[str] = "none"
-    # Whether a teleoperator (--teleop.type or --base_teleop.type) is mandatory.
+    # Whether a teleoperator (--teleop.type) is mandatory.
     requires_teleop: ClassVar[bool] = False
     # Whether the strategy can drive a sim robot: it must start a new episode when one ends.
     supports_sim_robot: ClassVar[bool] = False
@@ -288,10 +287,6 @@ class RolloutConfig:
     # Hardware
     robot: RobotConfig | None = None
     teleop: TeleoperatorConfig | None = None
-    # Optional mobile base input, composed with teleop for corrections and resets.
-    base_teleop: TeleoperatorConfig | None = None
-    # Defaults to the mapping registered for the selected base input.
-    base_mapping: BaseActionProcessorStep | None = None
 
     # Policy (loaded from --policy.path via __post_init__)
     policy: PreTrainedConfig | None = None
@@ -376,10 +371,8 @@ class RolloutConfig:
                 f"{strategy.type} strategy does not support a sim robot yet: use --strategy.type=episodic "
                 "to record, or --strategy.type=base to run without recording"
             )
-        if strategy.requires_teleop and self.teleop is None and self.base_teleop is None:
-            raise ValueError(
-                f"{strategy.type} strategy requires --teleop.type or --base_teleop.type to be set"
-            )
+        if strategy.requires_teleop and self.teleop is None:
+            raise ValueError(f"{strategy.type} strategy requires --teleop.type to be set")
         if strategy.dataset_mode == "required" and self.dataset is None:
             raise ValueError(f"{strategy.type} strategy requires --dataset.repo_id to be set")
         if strategy.dataset_mode == "none" and self.dataset is not None:

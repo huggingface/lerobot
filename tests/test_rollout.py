@@ -1836,6 +1836,7 @@ def test_rollout_connects_and_cleans_up_mobile_teleoperator(monkeypatch, with_ar
         _prepare_rollout_devices,
         _resolve_robot_processors,
     )
+    from lerobot.teleoperators.composite import CompositeTeleoperator, CompositeTeleoperatorConfig
     from tests.mocks.mock_robot import MockRobot, MockRobotConfig
     from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
@@ -1844,18 +1845,19 @@ def test_rollout_connects_and_cleans_up_mobile_teleoperator(monkeypatch, with_ar
         policy=SimpleNamespace(device="cpu"),
         strategy=DAggerStrategyConfig(),
         dataset=DatasetRecordConfig(repo_id="user/mobile_rollout"),
-        base_teleop=MockTeleopConfig(n_motors=1),
-        teleop=MockTeleopConfig(n_motors=2) if with_arm else None,
+        teleop=CompositeTeleoperatorConfig(
+            base=MockTeleopConfig(n_motors=1), arm=MockTeleopConfig(n_motors=2) if with_arm else None
+        ),
     )
     robot = MockRobot(cfg.robot)
-    base = MockTeleop(cfg.base_teleop)
-    arm = MockTeleop(cfg.teleop) if with_arm else None
+    base = MockTeleop(cfg.teleop.base)
+    arm = MockTeleop(cfg.teleop.arm) if with_arm else None
     if arm:
         arm.motors = ["motor_2", "motor_3"]
     monkeypatch.setattr("lerobot.rollout.context.make_robot_from_config", lambda _: robot)
     monkeypatch.setattr(
         "lerobot.rollout.context.make_teleoperator_from_config",
-        lambda config: base if config is cfg.base_teleop else arm,
+        lambda config: CompositeTeleoperator([(base, "")] + ([(arm, "")] if arm else [])),
     )
     processors = _resolve_robot_processors(None, None, None)
     wrapper, teleop = _prepare_rollout_devices(cfg, processors=processors)
@@ -1869,16 +1871,19 @@ def test_rollout_connects_and_cleans_up_mobile_teleoperator(monkeypatch, with_ar
 
 
 def test_dagger_correction_holds_joints_where_the_policy_left_them():
-    from lerobot.common.teleop_setup import make_mobile_teleop
+    from lerobot.processor import make_default_teleop_action_processor
     from lerobot.rollout import DAggerStrategyConfig
     from lerobot.rollout.strategies import DAggerStrategy
     from lerobot.rollout.strategies.dagger import DAggerPhase
+    from lerobot.teleoperators.composite import CompositeTeleoperator
     from lerobot.utils.action_interpolator import ActionInterpolator
 
     ctx, _ = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=1)
     base = MagicMock(feedback_features={})
     base.get_action.return_value = {}
-    _, pipeline = make_mobile_teleop(SimpleNamespace(action_features={"m.pos": float}), base)
+    pipeline = make_default_teleop_action_processor(
+        CompositeTeleoperator([(base, "")]), SimpleNamespace(action_features={"m.pos": float})
+    )
     ctx.processors.teleop_action_processor = pipeline
     assert pipeline(({}, {"m.pos": 1.0})) == {"m.pos": 1.0}  # First correction latches 1.0.
 

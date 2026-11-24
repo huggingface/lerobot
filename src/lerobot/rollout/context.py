@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.datasets import (
     LeRobotDataset,
@@ -65,6 +64,7 @@ from lerobot.processor import (
     RobotProcessorPipeline,
     bind_relative_anchor,
     make_default_processors,
+    make_default_teleop_action_processor,
     rename_stats,
 )
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
@@ -369,14 +369,9 @@ def _prepare_rollout_devices(
         if require_hold:
             wrapper.configure_hold()
         teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
-        if cfg.base_teleop is not None:
-            assert processors is not None
-            teleop, processors.teleop_action_processor = make_mobile_teleop(
-                robot,
-                base=make_teleoperator_from_config(cfg.base_teleop),
-                arm=teleop,
-                base_mapping=cfg.base_mapping,
-                action_processor=processors.teleop_action_processor,
+        if processors is not None:
+            processors.teleop_action_processor = make_default_teleop_action_processor(
+                teleop, robot, processors.teleop_action_processor
             )
     except BaseException:
         _disconnect_setup_hardware(robot, None)

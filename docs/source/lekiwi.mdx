@@ -267,25 +267,24 @@ Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward,
 | -   | Decrease speed |
 
 > [!TIP]
-> To change keys or speeds, pass a `KeyboardToBaseActionProcessorStep` as `base_mapping` to `make_mobile_teleop`.
+> To change keys or speeds, use the composite teleoperator’s `mapping` configuration below.
 
 ### From the command line
 
-`lerobot-teleoperate` drives LeKiwi too: `--teleop` takes the leader arm and `--base_teleop` the keyboard that drives the base. Leave out `--teleop` to drive the base from the keyboard alone; the arm then holds the position it had when teleoperation started.
+Use a composite teleoperator to combine the keyboard and leader arm. Omit `--teleop.arm` to drive only the base; the arm holds its initial position.
 
 ```bash
 lerobot-teleoperate \
     --robot.type=lekiwi_client \
     --robot.remote_ip=172.18.134.136 \
-    --teleop.type=so100_leader \
-    --teleop.port=/dev/tty.usbmodem585A0077581 \
-    --teleop.id=my_awesome_leader_arm \
-    --base_teleop.type=keyboard
+    --teleop.type=composite \
+    --teleop.arm.type=so100_leader \
+    --teleop.arm.port=/dev/tty.usbmodem585A0077581 \
+    --teleop.arm.id=my_awesome_leader_arm \
+    --teleop.base.type=keyboard
 ```
 
-The same flags work with `lerobot-record` and `lerobot-rollout`. Customize controls through `--base_mapping`, e.g. `--base_mapping.linear_speeds='[0.05,0.1,0.2]'`. Select `--base_mapping.layout=azerty` or `qwertz` for those keyboards (`qwerty` is the default). Translation keys are WASD / ZQSD / WASD, and rotation keys are ZX / WX / YX, respectively. A complete `key_bindings` mapping overrides the preset.
-
-In Python, including the recording example, pass `base_mapping=KeyboardToBaseActionProcessorStep(layout="azerty")` to `make_mobile_teleop`.
+The same flags work with `lerobot-record` and `lerobot-rollout`. Customize controls through `--teleop.mapping`, e.g. `--teleop.mapping.linear_speeds='[0.05,0.1,0.2]'`. Select `--teleop.mapping.layout=azerty` or `qwertz` for those keyboards (`qwerty` is the default). Translation keys are WASD / ZQSD / WASD, and rotation keys are ZX / WX / YX, respectively. A complete `key_bindings` mapping overrides the preset.
 
 ### Wired version
 

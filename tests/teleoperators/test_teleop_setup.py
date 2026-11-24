@@ -15,12 +15,12 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
+import draccus
 import pytest
 
-from lerobot.common.teleop_setup import make_mobile_teleop
-from lerobot.processor import make_default_processors
+from lerobot.processor import make_default_processors, make_default_teleop_action_processor
 from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
-from lerobot.teleoperators.composite import CompositeTeleoperator
+from lerobot.teleoperators.composite import CompositeTeleoperator, CompositeTeleoperatorConfig
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
@@ -48,7 +48,8 @@ def arm(tmp_path):
 
 def test_keyboard_and_prefixed_arm_are_combined_and_feedback_is_routed(keyboard, arm):
     robot = SimpleNamespace(arm_action_prefix="arm_", action_features={"arm_shoulder.pos": float})
-    teleop, pipeline = make_mobile_teleop(robot, keyboard, arm)
+    teleop = CompositeTeleoperator([(keyboard, ""), (arm, "")])
+    pipeline = make_default_teleop_action_processor(teleop, robot)
     keyboard.event_queue.put(("w", True))
     assert pipeline((teleop.get_action(), {})) == {
         "arm_shoulder.pos": 12.0,
@@ -70,7 +71,8 @@ def test_overlapping_device_keys_are_rejected(keyboard, arm):
 
 def test_escaped_keyboard_stops_the_base_and_the_arm_is_still_cleaned_up(keyboard, arm):
     robot = SimpleNamespace(action_features={})
-    teleop, pipeline = make_mobile_teleop(robot, keyboard, arm)
+    teleop = CompositeTeleoperator([(keyboard, ""), (arm, "")])
+    pipeline = make_default_teleop_action_processor(teleop, robot)
     keyboard.event_queue.put(("w", True))
     assert pipeline((teleop.get_action(), {}))["x.vel"] == 0.1
     with patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=False):
@@ -83,12 +85,32 @@ def test_escaped_keyboard_stops_the_base_and_the_arm_is_still_cleaned_up(keyboar
 def test_setup_copies_mapping_state_and_keeps_custom_pipeline_hooks(keyboard):
     robot = SimpleNamespace(action_features={})
     mapping = KeyboardToBaseActionProcessorStep()
-    _, first = make_mobile_teleop(robot, keyboard, base_mapping=mapping)
+    teleop = CompositeTeleoperator([(keyboard, "")])
+    teleop.mapping = mapping
+    first = make_default_teleop_action_processor(teleop, robot)
     assert first(({"w": None, "+": None}, {}))["x.vel"] == 0.2
     custom = make_default_processors()[0]
     hook = MagicMock()
     custom.after_step_hooks.append(hook)
-    _, second = make_mobile_teleop(robot, keyboard, base_mapping=mapping, action_processor=custom)
+    second = make_default_teleop_action_processor(teleop, robot, custom)
     assert second(({"w": None}, {}))["x.vel"] == 0.1
     assert hook.call_count == len(second.steps)
     assert len(custom.steps) == len(make_default_processors()[0].steps)
+
+
+def test_composite_config_round_trip_keeps_child_types_and_mapping():
+    config = draccus.decode(
+        CompositeTeleoperatorConfig,
+        {
+            "base": {"type": "keyboard"},
+            "arm": {"type": "mock_teleop", "n_motors": 2},
+            "mapping": {"type": "keyboard", "layout": "azerty"},
+        },
+    )
+    restored = draccus.decode(CompositeTeleoperatorConfig, draccus.encode(config))
+    assert isinstance(restored.base, KeyboardTeleopConfig)
+    assert isinstance(restored.arm, MockTeleopConfig)
+    assert restored.arm.n_motors == 2
+    assert restored.mapping.layout == "azerty"
+    with pytest.raises(draccus.utils.DecodingError):
+        draccus.decode(CompositeTeleoperatorConfig, {"base": {"type": "composite"}})

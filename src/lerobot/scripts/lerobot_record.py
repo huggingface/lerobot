@@ -100,7 +100,6 @@ from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.common.control_utils import sanity_check_dataset_robot_compatibility
-from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import (
@@ -115,8 +114,8 @@ from lerobot.processor import (
     RobotObservation,
     RobotProcessorPipeline,
     make_default_processors,
+    make_default_teleop_action_processor,
 )
-from lerobot.processor.base_action_processor import BaseActionProcessorStep
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -146,6 +145,7 @@ from lerobot.teleoperators import (  # noqa: F401
     bi_openarm_mini,
     bi_rebot_102_leader,
     bi_so_leader,
+    composite,
     homunculus,
     keyboard,
     koch_leader,
@@ -178,12 +178,7 @@ from lerobot.utils.visualization_utils import (
 class RecordConfig:
     robot: RobotConfig
     dataset: DatasetRecordConfig
-    # Optional when using base-only control.
     teleop: TeleoperatorConfig | None = None
-    # Base input, e.g. keyboard. Without a leader, uncommanded joints hold their initial positions.
-    base_teleop: TeleoperatorConfig | None = None
-    # Defaults to the mapping registered for the selected base input.
-    base_mapping: BaseActionProcessorStep | None = None
     # Display all cameras on screen
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
@@ -201,10 +196,10 @@ class RecordConfig:
     resume: bool = False
 
     def __post_init__(self):
-        if self.teleop is None and self.base_teleop is None:
+        if self.teleop is None:
             raise ValueError(
                 "A teleoperator is required for recording. "
-                "Use --teleop.type=... to specify one, or --base_teleop.type=... for a mobile base. "
+                "Use --teleop.type=... to specify one. "
                 "For policy-based deployment, use lerobot-rollout instead."
             )
 
@@ -381,8 +376,7 @@ def record(
 
     robot = make_robot_from_config(cfg.robot)
     check_control_rate(robot, cfg.dataset.fps, "--dataset.fps")
-    arm_teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
-    teleop: Teleoperator | None = arm_teleop
+    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     # Fall back to identity pipelines when the caller doesn't supply processors.
     if (
@@ -395,14 +389,7 @@ def record(
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
 
-    if cfg.base_teleop is not None:
-        teleop, teleop_action_processor = make_mobile_teleop(
-            robot,
-            base=make_teleoperator_from_config(cfg.base_teleop),
-            arm=arm_teleop,
-            base_mapping=cfg.base_mapping,
-            action_processor=teleop_action_processor,
-        )
+    teleop_action_processor = make_default_teleop_action_processor(teleop, robot, teleop_action_processor)
 
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(

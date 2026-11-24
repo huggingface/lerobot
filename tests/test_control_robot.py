@@ -25,15 +25,15 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[hardware])")
 
-from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs.dataset import DatasetRecordConfig
-from lerobot.processor import make_default_processors
+from lerobot.processor import make_default_processors, make_default_teleop_action_processor
 from lerobot.robots import make_robot_from_config
 from lerobot.robots.lekiwi import LeKiwiClient
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
 from lerobot.scripts.lerobot_record import RecordConfig, record, record_loop
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
+from lerobot.teleoperators.composite import CompositeTeleoperator, CompositeTeleoperatorConfig
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO100Leader
 from lerobot.utils.feature_utils import hw_to_dataset_features
@@ -93,7 +93,9 @@ def test_record_with_a_base_teleop_alone_holds_the_other_actions(tmp_path):
     cfg = RecordConfig(
         robot=MockRobotConfig(),
         dataset=dataset_cfg,
-        base_teleop=MockTeleopConfig(n_motors=1, random_values=False, static_values=[12.0]),
+        teleop=CompositeTeleoperatorConfig(
+            base=MockTeleopConfig(n_motors=1, random_values=False, static_values=[12.0])
+        ),
         play_sounds=False,
     )
 
@@ -298,7 +300,8 @@ def test_lekiwi_keyboard_cli_drives_the_base_and_holds_the_arm() -> None:
         args=[
             "--robot.type=lekiwi_client",
             "--robot.remote_ip=unused",
-            "--base_teleop.type=keyboard",
+            "--teleop.type=composite",
+            "--teleop.base.type=keyboard",
             "--fps=200",
             "--teleop_time_s=0.02",
         ],
@@ -354,7 +357,8 @@ def test_keyboard_pipeline_speed_survives_recording_and_reset_phases():
     ):
         keyboard = KeyboardTeleop(KeyboardTeleopConfig())
         keyboard.event_queue.put(("w", True))
-        teleop, teleop_processor = make_mobile_teleop(robot, keyboard, arm, action_processor=processors[0])
+        teleop = CompositeTeleoperator([(keyboard, ""), (arm, "")])
+        teleop_processor = make_default_teleop_action_processor(teleop, robot, processors[0])
         for phase, speed_key_pressed in enumerate((True, False, True, True)):
             keyboard.event_queue.put(("+", speed_key_pressed))
             record_loop(
@@ -381,8 +385,9 @@ def test_lekiwi_cli_registration_in_a_fresh_process(command):
             "-m",
             f"lerobot.scripts.lerobot_{command}",
             "--robot.type=lekiwi_client",
-            "--base_teleop.type=keyboard",
-            "--base_mapping.type=keyboard",
+            "--teleop.type=composite",
+            "--teleop.base.type=keyboard",
+            "--teleop.mapping.type=keyboard",
             "--help",
         ],
         capture_output=True,
@@ -390,5 +395,5 @@ def test_lekiwi_cli_registration_in_a_fresh_process(command):
         check=True,
     )
     assert "--robot.remote_ip" in result.stdout
-    assert "--base_mapping.layout" in result.stdout
-    assert "--base_teleop.calibration_dir" in result.stdout
+    assert "--teleop.mapping.layout" in result.stdout
+    assert "--teleop.base.calibration_dir" in result.stdout

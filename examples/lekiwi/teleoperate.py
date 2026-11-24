@@ -16,8 +16,9 @@
 
 import time
 
-from lerobot.common.teleop_setup import make_mobile_teleop
+from lerobot.processor import make_default_processors
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
 from lerobot.utils.robot_utils import precise_sleep
@@ -36,8 +37,9 @@ def main():
     robot = LeKiwiClient(robot_config)
     leader_arm = SO100Leader(teleop_arm_config)
     keyboard = KeyboardTeleop(keyboard_config)
-    # Pass arm=None for keyboard-only control: the arm then holds its position.
-    teleop, action_processor = make_mobile_teleop(robot, base=keyboard, arm=leader_arm)
+    # Omit the leader arm for keyboard-only control; the arm then holds its position.
+    teleop = CompositeTeleoperator([(keyboard, ""), (leader_arm, "arm_")])
+    action_processor, _, _ = make_default_processors(teleop, robot)
 
     # Connect to the robot and teleoperator
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`

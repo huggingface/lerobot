@@ -117,9 +117,9 @@ def test_features_and_serialization_preserve_arm_and_held_channels(tmp_path):
 def test_layout_cli_mapping_and_session_copy(layout, keys):
     @dataclass
     class Config:
-        base_mapping: BaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
+        mapping: BaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
 
-    config = draccus.parse(Config, args=[f"--base_mapping.layout={layout}"])
-    mapping = replace(config.base_mapping)
+    config = draccus.parse(Config, args=[f"--mapping.layout={layout}"])
+    mapping = replace(config.mapping)
     action = mapping.action({**dict.fromkeys(keys), "arm_joint.pos": 12.0})
     assert action == {"x.vel": 0.1, "y.vel": 0.1, "theta.vel": 30.0, "arm_joint.pos": 12.0}

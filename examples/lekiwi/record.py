@@ -14,11 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.datasets import LeRobotDataset
 from lerobot.processor import make_default_processors
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.scripts.lerobot_record import record_loop
+from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -75,12 +75,9 @@ def main():
         if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
             raise ValueError("Robot or teleop is not connected!")
 
+        teleop = CompositeTeleoperator([(keyboard, ""), (leader_arm, "arm_")])
         teleop_action_processor, robot_action_processor, robot_observation_processor = (
-            make_default_processors()
-        )
-
-        teleop, teleop_action_processor = make_mobile_teleop(
-            robot, keyboard, leader_arm, action_processor=teleop_action_processor
+            make_default_processors(teleop, robot)
         )
 
         print("Starting record loop...")

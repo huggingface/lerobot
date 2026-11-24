@@ -13,12 +13,48 @@
 # limitations under the License.
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
+import draccus
+
 from lerobot.lerobot_types import RobotAction
+from lerobot.processor.base_action_processor import BaseActionProcessorStep
 
 from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
+
+
+class DeviceConfig(TeleoperatorConfig, draccus.ChoiceRegistry):
+    """Exclude composites from child choices to keep Draccus CLI expansion finite."""
+
+    @classmethod
+    def __subclasshook__(cls, subclass: type) -> bool:
+        # Draccus uses isinstance to encode optional child configs with their type tags.
+        if cls is DeviceConfig:
+            return TeleoperatorConfig in subclass.__mro__ and subclass is not CompositeTeleoperatorConfig
+        return NotImplemented
+
+    @classmethod
+    def get_known_choices(cls) -> dict[str, type[TeleoperatorConfig]]:
+        return {
+            name: config
+            for name, config in TeleoperatorConfig.get_known_choices().items()
+            if name != "composite"
+        }
+
+    @classmethod
+    def get_choice_class(cls, name: str) -> type[TeleoperatorConfig]:
+        return cls.get_known_choices()[name]
+
+
+@TeleoperatorConfig.register_subclass("composite")
+@dataclass(kw_only=True)
+class CompositeTeleoperatorConfig(TeleoperatorConfig):
+    base: DeviceConfig
+    arm: DeviceConfig | None = None
+    # Defaults to the mapping registered for the base input.
+    mapping: BaseActionProcessorStep | None = None
 
 
 class CompositeTeleoperator(Teleoperator):
@@ -27,12 +63,19 @@ class CompositeTeleoperator(Teleoperator):
     Feedback is routed to each device with its prefix removed.
     """
 
-    config_class = TeleoperatorConfig
+    config_class = CompositeTeleoperatorConfig
     name = "composite"
 
-    def __init__(self, devices: Sequence[tuple[Teleoperator, str]]) -> None:
+    def __init__(
+        self,
+        devices: Sequence[tuple[Teleoperator, str]],
+        config: CompositeTeleoperatorConfig | None = None,
+    ) -> None:
         self.devices = list(devices)
-        super().__init__(TeleoperatorConfig())
+        if not 1 <= len(self.devices) <= 2:
+            raise ValueError("A composite requires a base and optionally an arm.")
+        super().__init__(config or TeleoperatorConfig())
+        self.mapping = config.mapping if config is not None else None
 
     @staticmethod
     def _merge(target: dict, values: dict, prefix: str) -> None:

@@ -306,7 +306,6 @@ def test_rollout_rejects_checkpoint_schema_before_opening_environment(sim_server
     cfg = SimpleNamespace(
         robot=robot.config,
         teleop=None,
-        base_teleop=None,
         rename_map={},
         fps=robot.descriptor.fps,
         interpolation_multiplier=1,
@@ -354,7 +353,6 @@ def test_rollout_checks_a_sim_robot_with_its_env_processors(tmp_path, monkeypatc
     cfg = SimpleNamespace(
         robot=robot.config,
         teleop=None,
-        base_teleop=None,
         rename_map={},
         fps=robot.descriptor.fps,
         interpolation_multiplier=1,
