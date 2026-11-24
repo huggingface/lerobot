@@ -34,21 +34,12 @@ from lerobot.lerobot_types import (
 )
 from lerobot.utils.constants import (
     ACTION,
-    ACTION_ANCHOR,
     DONE,
     INFO,
-    MESSAGES_RENDERED,
-    NOISE,
     OBS_PREFIX,
     PREDICTION,
-    QUERY_KIND,
-    QUERY_TEXT,
     REWARD,
-    RTC_EXECUTION_HORIZON,
-    RTC_INFERENCE_DELAY,
-    RTC_PREV_CHUNK_LEFT_OVER,
     TRUNCATED,
-    VIDEO_NOISE,
 )
 
 
@@ -177,41 +168,22 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
     return x
 
 
-_COMPLEMENTARY_KEYS = (
-    ACTION_ANCHOR,
-    NOISE,
-    VIDEO_NOISE,
-    RTC_INFERENCE_DELAY,
-    RTC_PREV_CHUNK_LEFT_OVER,
-    RTC_EXECUTION_HORIZON,
-    "task",
-    "index",
-    "task_index",
-    "episode_index",
-    "frame_index",
-    "timestamp",
-    "language_persistent",
-    "language_events",
-    MESSAGES_RENDERED,
-    "message_streams",
-    "target_message_indices",
-    # Text-generation request keys: carried into complementary_data so a prompt-formatting
-    # processor step can read the kind and rewrite QUERY_TEXT.
-    QUERY_KIND,
-    QUERY_TEXT,
-)
+# The batch keys that are a transition's own fields, not complementary data.
+_TRANSITION_BATCH_KEYS = frozenset({ACTION, REWARD, DONE, TRUNCATED, INFO, PREDICTION})
 
 
 def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
-    """Extract complementary data from a batch dictionary.
+    """Every batch key that is neither an observation nor a transition field.
 
-    Includes padding flags (any key containing ``_is_pad``) plus the fixed
-    set of metadata / language keys defined in ``_COMPLEMENTARY_KEYS`` —
-    each only when present in ``batch``.
+    Whatever a processor step adds (an anchor, tokens, a policy's private inputs) reaches the next
+    step, the policy and the postprocessor, so `transition_to_batch` and this conversion are exact
+    inverses.
     """
-    pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
-    extras = {k: batch[k] for k in _COMPLEMENTARY_KEYS if k in batch}
-    return {**pad_keys, **extras}
+    return {
+        key: value
+        for key, value in batch.items()
+        if key not in _TRANSITION_BATCH_KEYS and not key.startswith(OBS_PREFIX)
+    }
 
 
 def create_transition(

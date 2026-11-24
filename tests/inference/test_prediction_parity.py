@@ -25,6 +25,7 @@ from lerobot.inference import ExecutionMode, predict_chunk
 from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.pretrained import rtc_inputs
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStep, make_inference_pipeline
 from lerobot.utils.constants import ACTION
 from tests.inference.policy_helpers import (
     ConformingPolicy,
@@ -235,3 +236,60 @@ def test_rtc_engine_reset_right_after_acceptance_drops_the_prediction(monkeypatc
     engine = _rtc_engine_after_one_chunk(monkeypatch, after_accept=reset_concurrently)
     resets[0].join(timeout=3)
     assert engine._runtime.take_prediction() is None
+
+
+class AddPrivateInputStep(ProcessorStep):
+    """A preprocessor step handing its policy and postprocessor a key of its own."""
+
+    def __call__(self, transition):
+        transition = transition.copy()
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        complementary["private_offset"] = torch.tensor(100.0)
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(self, features):
+        return features
+
+
+class OffsetByPrivateInputStep(ProcessorStep):
+    """A postprocessor step reading the preprocessor's key."""
+
+    def __call__(self, transition):
+        transition = transition.copy()
+        offset = transition[TransitionKey.COMPLEMENTARY_DATA]["private_offset"]
+        transition[TransitionKey.ACTION] = transition[TransitionKey.ACTION] + offset
+        return transition
+
+    def transform_features(self, features):
+        return features
+
+
+def test_every_preprocessed_key_reaches_the_policy_and_the_postprocessor():
+    policy = ObservedPolicy(tiny_config())
+    seen = {}
+    predict = policy.predict_action_chunk
+
+    def record(batch):
+        seen.update(batch)
+        return predict(batch)
+
+    policy.predict_action_chunk = record
+    preprocessor = PolicyProcessorPipeline(steps=[AddPrivateInputStep()])
+    postprocessor = PolicyProcessorPipeline(steps=[OffsetByPrivateInputStep()])
+    raw = {"observation.state": torch.zeros(1, 3)}
+    prediction = predict_chunk(
+        policy,
+        postprocessor,
+        preprocessor(raw),
+        spec=policy.chunk_inference_spec(),
+        mode=ExecutionMode.CHUNK,
+        canonical_action_dim=3,
+        model_action_dim=None,
+        device="cpu",
+    )
+    assert seen["private_offset"] == 100
+    torch.testing.assert_close(prediction.canonical_actions, prediction.model_actions + 100)
+    # The single pipeline gives the same command.
+    command = make_inference_pipeline(preprocessor, policy, postprocessor)(raw)[ACTION]
+    torch.testing.assert_close(command[:, :3], prediction.canonical_actions)

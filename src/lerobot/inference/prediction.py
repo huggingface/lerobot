@@ -24,16 +24,20 @@ from typing import Any, cast
 
 import torch
 
-from lerobot.lerobot_types import PolicyPrediction, TransitionKey
+from lerobot.lerobot_types import PolicyPrediction
 from lerobot.policies import PreTrainedPolicy, reanchor_relative_rtc_prefix
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     PolicyProcessorStep,
-    batch_to_transition,
-    transition_to_batch,
 )
-from lerobot.utils.constants import ACTION, ACTION_ANCHOR, RTC_INFERENCE_DELAY, RTC_PREV_CHUNK_LEFT_OVER
+from lerobot.utils.constants import (
+    ACTION,
+    ACTION_ANCHOR,
+    PREDICTION,
+    RTC_INFERENCE_DELAY,
+    RTC_PREV_CHUNK_LEFT_OVER,
+)
 
 from .contracts import ChunkPolicySpec, ExecutionMode
 
@@ -144,9 +148,9 @@ def predict_chunk(
                     raise ValueError("Trained RTC delay exceeds checkpoint or available continuation limits.")
             batch[RTC_INFERENCE_DELAY] = inference_delay
             batch[RTC_PREV_CHUNK_LEFT_OVER] = prefix
-        transition = PolicyProcessorStep(policy)(batch_to_transition(batch))
+        output = PolicyProcessorStep(policy).predict(batch)
         predicted_at = time.perf_counter()
-        prediction: dict[str, Any] = dict(transition[TransitionKey.PREDICTION] or {})
+        prediction: dict[str, Any] = dict(output[PREDICTION])
         predicted = prediction.pop("action")
         if (
             predicted.ndim != 3
@@ -167,7 +171,7 @@ def predict_chunk(
         canonical_width = canonical_action_dim or predicted.shape[2]
         if relative and rtc_horizon and predicted.shape[2] != canonical_width:
             raise ValueError("Relative RTC with different model/canonical widths requires a custom adapter.")
-        canonical = postprocessor(transition_to_batch(transition))[ACTION]
+        canonical = postprocessor(output)[ACTION]
         prediction_steps = predicted.shape[1]
         expected = (predicted.shape[0], prediction_steps, canonical_width)
         if not isinstance(canonical, torch.Tensor) or tuple(canonical.shape) != expected:

@@ -34,7 +34,6 @@ from lerobot.policies.evo1.processor_evo1 import (
     Evo1ActionProcessorStep,
     Evo1PadActionProcessorStep,
     Evo1PadStateProcessorStep,
-    evo1_batch_to_transition,
     make_evo1_pre_post_processors,
     reconcile_evo1_processors,
 )
@@ -450,7 +449,6 @@ def test_evo1_processor_save_load_round_trip_applies_config_overrides(tmp_path):
     eval_config = make_config(binarize_gripper=True, postprocess_action_dim=ACTION_DIM)
     loaded_pre, loaded_post = reconcile_evo1_processors(eval_config, loaded_pre, loaded_post)
 
-    assert loaded_pre.to_transition is evo1_batch_to_transition
     assert sum(isinstance(step, Evo1ActionProcessorStep) for step in loaded_post.steps) == 1
     action_step = next(step for step in loaded_post.steps if isinstance(step, Evo1ActionProcessorStep))
     assert action_step.binarize_gripper is True

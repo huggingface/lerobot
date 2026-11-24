@@ -244,6 +244,26 @@ def test_batch_to_transition_with_index_fields():
     assert comp_data["task"] == batch["task"]
 
 
+def test_batch_transition_round_trip_keeps_every_key() -> None:
+    """A key a processor step adds (tokens, an anchor) survives, whatever its name."""
+    batch = {
+        "observation.state": torch.zeros(1, 2),
+        "action": torch.ones(1, 2),
+        "next.reward": 0.0,
+        "next.done": False,
+        "next.truncated": False,
+        "info": {},
+        "g05_runtime_predict_cot": True,
+        "samples": [{"command": "pick"}],
+    }
+    transition = batch_to_transition(batch)
+    assert transition[TransitionKey.COMPLEMENTARY_DATA] == {
+        "g05_runtime_predict_cot": True,
+        "samples": [{"command": "pick"}],
+    }
+    assert transition_to_batch(transition).keys() == batch.keys()
+
+
 @pytest.mark.parametrize("frame_index", [0, torch.tensor(0), torch.tensor([0, 9])])
 def test_frame_index_survives_batch_transition_round_trip(frame_index: int | torch.Tensor) -> None:
     batch = {OBS_STATE: torch.zeros(2, 7), "frame_index": frame_index}

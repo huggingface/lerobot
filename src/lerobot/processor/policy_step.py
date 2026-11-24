@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, PolicyPrediction, TransitionKey
+from lerobot.lerobot_types import EnvTransition, PolicyPrediction
+from lerobot.utils.constants import ACTION, PREDICTION
 
 from .converters import batch_to_transition, transition_to_batch
 from .pipeline import DataProcessorPipeline, ProcessorStep
@@ -46,7 +47,11 @@ class PolicyProcessorStep(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Predict a chunk from the transition's observation and complementary data."""
-        output = self.policy.predict_action_chunk(transition_to_batch(transition))
+        return batch_to_transition(self.predict(transition_to_batch(transition)))
+
+    def predict(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """The preprocessed batch with the policy's ``action`` and ``prediction`` added."""
+        output = self.policy.predict_action_chunk(batch)
         action = output["action"]
         if not isinstance(action, torch.Tensor):
             raise TypeError(
@@ -54,10 +59,7 @@ class PolicyProcessorStep(ProcessorStep):
             )
         prediction = PolicyPrediction(**output.get("prediction") or {})
         prediction["action"] = action
-        new_transition = transition.copy()
-        new_transition[TransitionKey.ACTION] = action.clone()
-        new_transition[TransitionKey.PREDICTION] = prediction
-        return new_transition
+        return {**batch, ACTION: action.clone(), PREDICTION: prediction}
 
     def reset(self) -> None:
         """Start a new episode."""
@@ -84,6 +86,6 @@ def make_inference_pipeline(
     return DataProcessorPipeline(
         steps=[*preprocessor.steps, PolicyProcessorStep(policy), *postprocessor.steps],
         name="inference",
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
+        to_transition=preprocessor.to_transition,
+        to_output=postprocessor.to_output,
     )
