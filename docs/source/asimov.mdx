@@ -24,7 +24,8 @@ Connecting only reads state. **Use Asimov Manager to prepare the robot and enter
 uv run --locked lerobot-teleoperate \
   --robot.type=asimov \
   --robot.host=192.168.22.32 \
-  --base_teleop.type=keyboard \
+  --teleop.type=composite \
+  --teleop.base.type=keyboard \
   --fps=30
 ```
 
@@ -33,8 +34,8 @@ Replace the address with your robot's IP. The keyboard uses `w`/`s` for forward/
 Linear presets default to `(0.1, 0.2, 0.3)` m/s; angular presets default to `(30, 60, 90)` deg/s. Asimov additionally clamps every command to its configured limits: **0.3 m/s forward, 0.2 m/s sideways, 30 deg/s turning** by default. For gentler keyboard presets, add:
 
 ```bash
-  --base_mapping.linear_speeds='[0.05,0.1,0.2]' \
-  --base_mapping.angular_speeds='[10,20,30]'
+  --teleop.mapping.linear_speeds='[0.05,0.1,0.2]' \
+  --teleop.mapping.angular_speeds='[10,20,30]'
 ```
 
 Robot limits can be lowered with `--robot.max_linear_velocity`, `--robot.max_lateral_velocity`, and `--robot.max_angular_velocity`. Values above the firmware caps (0.4 m/s, 0.4 m/s, and 0.8 rad/s ≈ 45.84 deg/s) are rejected.
@@ -45,7 +46,8 @@ Robot limits can be lowered with `--robot.max_linear_velocity`, `--robot.max_lat
 uv run --locked lerobot-record \
   --robot.type=asimov \
   --robot.host=192.168.22.32 \
-  --base_teleop.type=keyboard \
+  --teleop.type=composite \
+  --teleop.base.type=keyboard \
   --dataset.repo_id="${HF_USER}/asimov-walking" \
   --dataset.single_task="Walk forward and turn left" \
   --dataset.fps=30 \

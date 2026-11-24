@@ -24,10 +24,11 @@ import numpy as np
 import pytest
 
 from lerobot.cameras import DepthCamera
-from lerobot.common.teleop_setup import make_mobile_teleop
+from lerobot.processor import make_default_teleop_action_processor
 from lerobot.robots import RobotConfig, make_robot_from_config
 from lerobot.robots.asimov import Asimov, AsimovConfig, asimov as module
 from lerobot.robots.asimov.asimov import ASIMOV_JOINTS, BASE_ACTIONS
+from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -174,8 +175,8 @@ def test_shared_keyboard_pipeline_drives_asimov(setup_robot, monkeypatch, tmp_pa
     robot = setup_robot.make()
     robot.connect()
     keyboard = KeyboardTeleop(KeyboardTeleopConfig(calibration_dir=tmp_path))
-    teleop, pipeline = make_mobile_teleop(robot, keyboard)
-    assert teleop is keyboard
+    teleop = CompositeTeleoperator([(keyboard, "")])
+    pipeline = make_default_teleop_action_processor(teleop, robot)
 
     observation = robot.get_observation()
     keyboard.event_queue.put(("w", True))
