@@ -39,7 +39,7 @@ from lerobot.teleoperators.so_leader import SO100Leader
 from lerobot.utils.feature_utils import hw_to_dataset_features
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
-from tests.mocks.mock_teleop import MockTeleopConfig
+from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
 pytestmark = [pytest.mark.dataset, pytest.mark.hardware]
 
