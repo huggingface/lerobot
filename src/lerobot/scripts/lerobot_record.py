@@ -147,6 +147,7 @@ from lerobot.teleoperators import (  # noqa: F401
     bi_rebot_102_leader,
     bi_so_leader,
     homunculus,
+    keyboard,
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,

@@ -373,7 +373,7 @@ def test_keyboard_pipeline_speed_survives_recording_and_reset_phases():
     assert dataset.add_frame.call_count == 2
 
 
-@pytest.mark.parametrize("command", ["teleoperate", "record"])
+@pytest.mark.parametrize("command", ["teleoperate", "record", "rollout"])
 def test_lekiwi_cli_registration_in_a_fresh_process(command):
     result = subprocess.run(
         [
@@ -391,3 +391,4 @@ def test_lekiwi_cli_registration_in_a_fresh_process(command):
     )
     assert "--robot.remote_ip" in result.stdout
     assert "--base_mapping.layout" in result.stdout
+    assert "--base_teleop.calibration_dir" in result.stdout
