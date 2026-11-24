@@ -191,7 +191,8 @@ damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
 
 # Robots
-asimov = ["menlo-sdk>=0.1.0,<0.2.0"]
+# onnxruntime runs LeRobot's whole-body controller; mujoco and pyzmq run the lerobot/asimov-mujoco sim.
+asimov = ["menlo-sdk>=0.1.0,<0.2.0", "onnxruntime>=1.16.0,<2.0.0", "mujoco>=3.0.0,<4.0.0", "lerobot[pyzmq-dep]"]
 openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
@@ -501,6 +502,7 @@ ignore = [
 "src/lerobot/cameras/**" = ["D"]
 "src/lerobot/common/**" = ["D"]
 "src/lerobot/configs/**" = ["D"]
+"src/lerobot/controllers/**" = ["D"]
 "src/lerobot/data_processing/**" = ["D"]
 "src/lerobot/datasets/**" = ["D"]
 "src/lerobot/distributed/**" = ["D"]
