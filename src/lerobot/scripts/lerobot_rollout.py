@@ -212,6 +212,7 @@ from lerobot.teleoperators import (  # noqa: F401
     homunculus,
     keyboard,
     koch_leader,
+    microduck_gamepad,
     omx_leader,
     openarm_leader,
     openarm_mini,

@@ -39,6 +39,7 @@ import numpy as np
 import pytest
 import requests
 
+from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.robots.microduck import MicroDuck, MicroDuckConfig
 from lerobot.robots.microduck.microduck import JOINT_NAMES
 from lerobot.robots.microduck.rpc import DuckRpc
@@ -729,10 +730,11 @@ def test_gamepad_records_commands_without_writing_to_robot(gamepad_robot, robotd
         assert time.monotonic() < deadline
         time.sleep(0.01)
     teleop = MicroDuckGamepad(MicroDuckGamepadConfig(calibration_dir=tmp_path))
+    teleop, pipeline = make_mobile_teleop(gamepad_robot, teleop)
     teleop.connect()
     try:
         obs = gamepad_robot.get_observation()
-        action = teleop.get_action(observation=obs)
+        action = pipeline((teleop.get_action(), obs))
         assert action == pytest.approx(
             {
                 "x.vel": 0.4,
@@ -751,7 +753,7 @@ def test_gamepad_records_commands_without_writing_to_robot(gamepad_robot, robotd
         with pytest.raises(ValueError, match="unmodified action"):
             gamepad_robot.send_action({**action, "x.vel": 0})
         with pytest.raises(RuntimeError, match="fresh"):
-            teleop.get_action()
+            pipeline((teleop.get_action(), {}))
         gamepad_robot.disconnect()
         assert set(robotd.methods()) == {"hello", "robot.subscribe"}
         assert robotd.notifications == []
@@ -763,25 +765,32 @@ def test_gamepad_requires_passive_mode_and_fresh_sample(robot, tmp_path):
     from lerobot.teleoperators.microduck_gamepad import MicroDuckGamepad, MicroDuckGamepadConfig
 
     teleop = MicroDuckGamepad(MicroDuckGamepadConfig(calibration_dir=tmp_path))
+    teleop, pipeline = make_mobile_teleop(robot, teleop)
     teleop.connect()
     try:
         with pytest.raises(ValueError, match="control_mode=gamepad"):
-            teleop.get_action(observation=robot.get_observation())
-        action = dict.fromkeys(teleop.action_features, 0.0)
+            pipeline((teleop.get_action(), robot.get_observation()))
+        action = dict.fromkeys(robot.action_features, 0.0)
         with pytest.raises(RuntimeError, match="fresh"):
-            teleop.get_action(
-                observation={"microduck.gamepad": {"action": action, "received_at": time.monotonic() - 2}}
+            pipeline(
+                (
+                    teleop.get_action(),
+                    {"microduck.gamepad": {"action": action, "received_at": time.monotonic() - 2}},
+                )
             )
         assert (
-            teleop.get_action(
-                observation={"microduck.gamepad": {"action": action, "received_at": time.monotonic()}}
+            pipeline(
+                (
+                    teleop.get_action(),
+                    {"microduck.gamepad": {"action": action, "received_at": time.monotonic()}},
+                )
             )
             == action
         )
         teleop.disconnect()
         teleop.connect()
         with pytest.raises(RuntimeError, match="fresh"):
-            teleop.get_action()
+            pipeline((teleop.get_action(), {}))
     finally:
         teleop.disconnect()
 
@@ -835,6 +844,9 @@ def test_gamepad_record_loop_saves_actions_without_commands(gamepad_robot, robot
     teleop.connect()
     try:
         teleop_processor, action_processor, obs_processor = make_default_processors()
+        teleop, teleop_processor = make_mobile_teleop(
+            gamepad_robot, teleop, action_processor=teleop_processor
+        )
         record_loop(
             robot=gamepad_robot,
             events={"exit_early": False},
@@ -919,7 +931,7 @@ def test_gamepad_cli_and_local_dataset(robotd, tmp_path):
             f"--robot.robotd_address={robotd.path}",
             "--robot.control_mode=gamepad",
             "--robot.use_camera=false",
-            "--teleop.type=microduck_gamepad",
+            "--base_teleop.type=microduck_gamepad",
             "--dataset.repo_id=local/microduck-gamepad",
             f"--dataset.root={dataset_root}",
             "--dataset.push_to_hub=false",

@@ -16,13 +16,29 @@
 
 import math
 import time
+from dataclasses import dataclass
 from typing import Any
 
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import RobotAction, TransitionKey
+from lerobot.processor import BaseActionProcessorStep, ProcessorStepRegistry
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
 from .config_microduck_gamepad import MicroDuckGamepadConfig
+
+GAMEPAD_ACTIONS = dict.fromkeys(
+    (
+        "x.vel",
+        "y.vel",
+        "theta.vel",
+        "neck_pitch.pos",
+        "head_pitch.pos",
+        "head_yaw.pos",
+        "head_roll.pos",
+    ),
+    float,
+)
 
 
 class MicroDuckGamepad(Teleoperator):
@@ -35,18 +51,7 @@ class MicroDuckGamepad(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
-        return dict.fromkeys(
-            (
-                "x.vel",
-                "y.vel",
-                "theta.vel",
-                "neck_pitch.pos",
-                "head_pitch.pos",
-                "head_yaw.pos",
-                "head_roll.pos",
-            ),
-            float,
-        )
+        return {}
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -71,14 +76,32 @@ class MicroDuckGamepad(Teleoperator):
         pass
 
     @check_if_not_connected
-    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
-        if observation is None:
+    def get_action(self) -> RobotAction:
+        return {}
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        pass
+
+    @check_if_not_connected
+    def disconnect(self) -> None:
+        self._connected = False
+
+
+@BaseActionProcessorStep.register_subclass("microduck_gamepad")
+@ProcessorStepRegistry.register("microduck_gamepad_action")
+@dataclass
+class MicroDuckGamepadActionProcessorStep(BaseActionProcessorStep):
+    """Read the Duck's paired-controller commands from the current robot observation."""
+
+    def action(self, action: RobotAction) -> RobotAction:
+        observation = self.transition.get(TransitionKey.OBSERVATION)
+        if not observation:
             raise RuntimeError("Read a fresh Microduck observation before each gamepad action")
         sample = observation.get("microduck.gamepad")
         if not isinstance(sample, dict) or not isinstance(sample.get("action"), dict):
             raise ValueError("microduck_gamepad requires --robot.control_mode=gamepad")
         action = sample["action"]
-        if action.keys() != self.action_features.keys():
+        if action.keys() != GAMEPAD_ACTIONS.keys():
             raise ValueError("The Microduck gamepad action has missing or unexpected fields")
         values = {key: float(value) for key, value in action.items()}
         received_at = float(sample["received_at"])
@@ -88,9 +111,13 @@ class MicroDuckGamepad(Teleoperator):
             raise RuntimeError("Read a fresh Microduck observation before each gamepad action")
         return values
 
-    def send_feedback(self, feedback: dict[str, Any]) -> None:
-        pass
-
-    @check_if_not_connected
-    def disconnect(self) -> None:
-        self._connected = False
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return {
+            **features,
+            PipelineFeatureType.ACTION: {
+                **features.get(PipelineFeatureType.ACTION, {}),
+                **{key: PolicyFeature(type=FeatureType.ACTION, shape=(1,)) for key in GAMEPAD_ACTIONS},
+            },
+        }

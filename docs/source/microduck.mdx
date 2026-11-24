@@ -73,7 +73,7 @@ ssh "microduck@$DUCK_IP" sudo systemctl start padd
 export DUCK_DATASET_ROOT="$PWD/outputs/microduck-gamepad-$(date +%Y%m%d-%H%M%S)"
 uv run --no-sync lerobot-record \
     --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
-    --robot.control_mode=gamepad --teleop.type=microduck_gamepad \
+    --robot.control_mode=gamepad --base_teleop.type=microduck_gamepad \
     --dataset.repo_id=local/microduck-gamepad --dataset.root="$DUCK_DATASET_ROOT" \
     --dataset.no_stamp=true --dataset.push_to_hub=false \
     --dataset.single_task="Walk and move the head with the gamepad" \
