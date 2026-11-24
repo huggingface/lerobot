@@ -109,6 +109,46 @@ def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> d
     return episode_row.to_dict()
 
 
+def _write_episode_subset(
+    dataset: LeRobotDataset,
+    episodes_to_keep: list[int],
+    output_dir: str | Path | None,
+    repo_id: str,
+) -> LeRobotDataset:
+    """Materialize a new LeRobotDataset containing only ``episodes_to_keep``, reindexed from 0."""
+    resolved_output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
+
+    new_meta = LeRobotDatasetMetadata.create(
+        repo_id=repo_id,
+        fps=dataset.meta.fps,
+        features=dataset.meta.features,
+        robot_type=dataset.meta.robot_type,
+        root=resolved_output_dir,
+        use_videos=len(dataset.meta.video_keys) > 0,
+        chunks_size=dataset.meta.chunks_size,
+        data_files_size_in_mb=dataset.meta.data_files_size_in_mb,
+        video_files_size_in_mb=dataset.meta.video_files_size_in_mb,
+    )
+
+    episode_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(episodes_to_keep)}
+
+    video_metadata = None
+    if dataset.meta.video_keys:
+        video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
+
+    data_metadata = _copy_and_reindex_data(dataset, new_meta, episode_mapping)
+
+    _copy_and_reindex_episodes_metadata(dataset, new_meta, episode_mapping, data_metadata, video_metadata)
+
+    return LeRobotDataset(
+        repo_id=repo_id,
+        root=resolved_output_dir,
+        image_transforms=dataset.image_transforms,
+        delta_timestamps=dataset.delta_timestamps,
+        tolerance_s=dataset.tolerance_s,
+    )
+
+
 def delete_episodes(
     dataset: LeRobotDataset,
     episode_indices: list[int],
@@ -140,40 +180,162 @@ def delete_episodes(
 
     if repo_id is None:
         repo_id = f"{dataset.repo_id}_modified"
-    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
 
     episodes_to_keep = [i for i in range(dataset.meta.total_episodes) if i not in episode_indices]
     if not episodes_to_keep:
         raise ValueError("Cannot delete all episodes from dataset")
 
-    new_meta = LeRobotDatasetMetadata.create(
+    new_dataset = _write_episode_subset(
+        dataset=dataset,
+        episodes_to_keep=episodes_to_keep,
+        output_dir=output_dir,
         repo_id=repo_id,
-        fps=dataset.meta.fps,
-        features=dataset.meta.features,
-        robot_type=dataset.meta.robot_type,
-        root=output_dir,
-        use_videos=len(dataset.meta.video_keys) > 0,
-    )
-
-    episode_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(episodes_to_keep)}
-
-    video_metadata = None
-    if dataset.meta.video_keys:
-        video_metadata = _copy_and_reindex_videos(dataset, new_meta, episode_mapping)
-
-    data_metadata = _copy_and_reindex_data(dataset, new_meta, episode_mapping)
-
-    _copy_and_reindex_episodes_metadata(dataset, new_meta, episode_mapping, data_metadata, video_metadata)
-
-    new_dataset = LeRobotDataset(
-        repo_id=repo_id,
-        root=output_dir,
-        image_transforms=dataset.image_transforms,
-        delta_timestamps=dataset.delta_timestamps,
-        tolerance_s=dataset.tolerance_s,
     )
 
     logger.info(f"Created new dataset with {len(episodes_to_keep)} episodes")
+    return new_dataset
+
+
+def _build_episode_filter_predicate(
+    *,
+    fps: int,
+    tasks: list[str] | None = None,
+    exclude_tasks: list[str] | None = None,
+    min_frames: int | None = None,
+    max_frames: int | None = None,
+    min_duration_s: float | None = None,
+    max_duration_s: float | None = None,
+    predicate: Callable[[dict], bool] | None = None,
+) -> Callable[[dict], bool]:
+    """Validate filter criteria and build a combined metadata predicate for ``meta.filter_episodes``."""
+    if all(
+        criterion is None
+        for criterion in (
+            tasks,
+            exclude_tasks,
+            min_frames,
+            max_frames,
+            min_duration_s,
+            max_duration_s,
+            predicate,
+        )
+    ):
+        raise ValueError(
+            "Must specify at least one filter criterion: tasks, exclude_tasks, "
+            "min_frames, max_frames, min_duration_s, max_duration_s, or predicate."
+        )
+
+    if tasks is not None and len(tasks) == 0:
+        raise ValueError("tasks must not be empty when specified")
+    if min_frames is not None and min_frames < 0:
+        raise ValueError(f"min_frames must be >= 0, got {min_frames}")
+    if max_frames is not None and max_frames < 0:
+        raise ValueError(f"max_frames must be >= 0, got {max_frames}")
+    if min_frames is not None and max_frames is not None and min_frames > max_frames:
+        raise ValueError(f"min_frames ({min_frames}) must be <= max_frames ({max_frames})")
+
+    if min_duration_s is not None and (not math.isfinite(min_duration_s) or min_duration_s < 0.0):
+        raise ValueError(f"min_duration_s must be finite and >= 0, got {min_duration_s}")
+    if max_duration_s is not None and (not math.isfinite(max_duration_s) or max_duration_s < 0.0):
+        raise ValueError(f"max_duration_s must be finite and >= 0, got {max_duration_s}")
+    if min_duration_s is not None and max_duration_s is not None and min_duration_s > max_duration_s:
+        raise ValueError(f"min_duration_s ({min_duration_s}) must be <= max_duration_s ({max_duration_s})")
+
+    tasks_set = set(tasks) if tasks is not None else None
+    exclude_tasks_set = set(exclude_tasks) if exclude_tasks is not None else None
+
+    def _matches(ep: dict) -> bool:
+        ep_length = int(ep["length"])
+        ep_duration_s = ep_length / fps
+        raw_tasks = ep.get("tasks")
+        ep_tasks = list(raw_tasks) if raw_tasks is not None else []
+
+        if tasks_set is not None and not any(t in tasks_set for t in ep_tasks):
+            return False
+        if exclude_tasks_set is not None and any(t in exclude_tasks_set for t in ep_tasks):
+            return False
+        if min_frames is not None and ep_length < min_frames:
+            return False
+        if max_frames is not None and ep_length > max_frames:
+            return False
+        if min_duration_s is not None and ep_duration_s < min_duration_s:
+            return False
+        if max_duration_s is not None and ep_duration_s > max_duration_s:
+            return False
+        return not (predicate is not None and not bool(predicate(dict(ep))))
+
+    return _matches
+
+
+def filter_episodes(
+    dataset: LeRobotDataset,
+    *,
+    tasks: list[str] | None = None,
+    exclude_tasks: list[str] | None = None,
+    min_frames: int | None = None,
+    max_frames: int | None = None,
+    min_duration_s: float | None = None,
+    max_duration_s: float | None = None,
+    predicate: Callable[[dict], bool] | None = None,
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+) -> LeRobotDataset:
+    """Create a new LeRobotDataset keeping only episodes matching all filter criteria.
+
+    Delegates episode selection to :meth:`LeRobotDatasetMetadata.filter_episodes` and
+    writes the matching subset using the shared reindexing pipeline.
+
+    Args:
+        dataset: The source :class:`LeRobotDataset`.
+        tasks: Keep only episodes whose task list intersects with these task strings.
+        exclude_tasks: Drop episodes whose task list intersects with these task strings.
+        min_frames: Minimum episode length in frames (inclusive).
+        max_frames: Maximum episode length in frames (inclusive).
+        min_duration_s: Minimum episode duration in seconds (inclusive).
+        max_duration_s: Maximum episode duration in seconds (inclusive).
+        predicate: Optional callable receiving a copy of each episode's metadata dict
+            and returning ``True`` to keep the episode.
+        output_dir: Root directory where the filtered dataset will be stored. If not
+            specified, defaults to ``$HF_LEROBOT_HOME/repo_id``.
+        repo_id: Filtered dataset identifier. Defaults to ``f"{dataset.repo_id}_filtered"``.
+
+    Returns:
+        A new :class:`LeRobotDataset` containing only the matching episodes, reindexed
+        from ``0`` with updated metadata and aggregated statistics.
+
+    Raises:
+        ValueError: If no filter criterion is provided, any bound is invalid, or no
+            episodes match the filter criteria.
+    """
+    combined_predicate = _build_episode_filter_predicate(
+        fps=dataset.meta.fps,
+        tasks=tasks,
+        exclude_tasks=exclude_tasks,
+        min_frames=min_frames,
+        max_frames=max_frames,
+        min_duration_s=min_duration_s,
+        max_duration_s=max_duration_s,
+        predicate=predicate,
+    )
+    episodes_to_keep = dataset.meta.filter_episodes(combined_predicate)
+    if not episodes_to_keep:
+        raise ValueError("No episodes matched the filter criteria")
+
+    logger.info(
+        f"Filtering dataset: keeping {len(episodes_to_keep)} of {dataset.meta.total_episodes} episodes"
+    )
+
+    if repo_id is None:
+        repo_id = f"{dataset.repo_id}_filtered"
+
+    new_dataset = _write_episode_subset(
+        dataset=dataset,
+        episodes_to_keep=episodes_to_keep,
+        output_dir=output_dir,
+        repo_id=repo_id,
+    )
+
+    logger.info(f"Created filtered dataset with {len(episodes_to_keep)} episodes")
     return new_dataset
 
 

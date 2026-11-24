@@ -243,8 +243,10 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import draccus
 
@@ -259,6 +261,7 @@ from lerobot.datasets import (
     LeRobotDataset,
     convert_image_to_video_dataset,
     delete_episodes,
+    filter_episodes,
     merge_datasets,
     modify_tasks,
     recompute_stats,
@@ -266,6 +269,7 @@ from lerobot.datasets import (
     remove_feature,
     split_dataset,
 )
+from lerobot.datasets.dataset_tools import _build_episode_filter_predicate
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 
@@ -281,6 +285,18 @@ class OperationConfig(draccus.ChoiceRegistry, abc.ABC):
 @dataclass
 class DeleteEpisodesConfig(OperationConfig):
     episode_indices: list[int] | None = None
+
+
+@OperationConfig.register_subclass("filter_episodes")
+@dataclass
+class FilterEpisodesConfig(OperationConfig):
+    tasks: list[str] | None = None
+    exclude_tasks: list[str] | None = None
+    min_frames: int | None = None
+    max_frames: int | None = None
+    min_duration_s: float | None = None
+    max_duration_s: float | None = None
+    dry_run: bool = False
 
 
 @OperationConfig.register_subclass("split")
@@ -461,6 +477,61 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
     )
 
     logging.info(f"Dataset saved to {output_dir}")
+    logging.info(f"Episodes: {new_dataset.meta.total_episodes}, Frames: {new_dataset.meta.total_frames}")
+
+    if cfg.push_to_hub:
+        logging.info(f"Pushing to hub as {output_repo_id}")
+        LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
+def handle_filter_episodes(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, FilterEpisodesConfig):
+        raise ValueError("Operation config must be FilterEpisodesConfig")
+
+    repo_id = _require_repo_id(cfg)
+    dataset = LeRobotDataset(repo_id, root=cfg.root)
+
+    if cfg.operation.dry_run:
+        predicate = _build_episode_filter_predicate(
+            fps=dataset.meta.fps,
+            tasks=cfg.operation.tasks,
+            exclude_tasks=cfg.operation.exclude_tasks,
+            min_frames=cfg.operation.min_frames,
+            max_frames=cfg.operation.max_frames,
+            min_duration_s=cfg.operation.min_duration_s,
+            max_duration_s=cfg.operation.max_duration_s,
+        )
+        matched = dataset.meta.filter_episodes(predicate)
+        dropped = dataset.meta.total_episodes - len(matched)
+        logging.info(
+            f"[dry_run] Matched {len(matched)} / {dataset.meta.total_episodes} episodes "
+            f"(would drop {dropped}): {matched}"
+        )
+        return
+
+    output_repo_id, output_dir, backup_path = get_output_path(
+        repo_id,
+        new_repo_id=cfg.new_repo_id,
+        root=cfg.root,
+        new_root=cfg.new_root,
+    )
+    if backup_path is not None:
+        dataset.root = backup_path
+
+    logging.info(f"Filtering episodes from {cfg.repo_id}")
+    new_dataset = filter_episodes(
+        dataset,
+        tasks=cfg.operation.tasks,
+        exclude_tasks=cfg.operation.exclude_tasks,
+        min_frames=cfg.operation.min_frames,
+        max_frames=cfg.operation.max_frames,
+        min_duration_s=cfg.operation.min_duration_s,
+        max_duration_s=cfg.operation.max_duration_s,
+        output_dir=output_dir,
+        repo_id=output_repo_id,
+    )
+
+    logging.info(f"Filtered dataset saved to {output_dir}")
     logging.info(f"Episodes: {new_dataset.meta.total_episodes}, Frames: {new_dataset.meta.total_frames}")
 
     if cfg.push_to_hub:
@@ -870,6 +941,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
 
     if operation_type == "delete_episodes":
         handle_delete_episodes(cfg)
+    elif operation_type == "filter_episodes":
+        handle_filter_episodes(cfg)
     elif operation_type == "split":
         handle_split(cfg)
     elif operation_type == "merge":
@@ -893,7 +966,7 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
 
 def main() -> None:
     init_logging()
-    edit_dataset()  # type: ignore[call-arg]
+    cast(Callable[[], None], edit_dataset)()
 
 
 if __name__ == "__main__":
