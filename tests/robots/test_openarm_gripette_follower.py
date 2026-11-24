@@ -64,7 +64,6 @@ def _robot(**config_kwargs):
     controller.add_damiao_motor.side_effect = lambda *a: MagicMock(get_state=MagicMock(return_value=state))
     with (
         patch(f"{_FOLLOWER}.require_package", lambda *a, **kw: None),
-        patch(f"{_FOLLOWER}.platform.system", return_value="Darwin"),
         patch(f"{_ADAPTER}.require_package", lambda *a, **kw: None),
         patch(f"{_ADAPTER}._is_macos", return_value=False),
         patch(f"{_ADAPTER}.MotorBridgeController") as controller_cls,
