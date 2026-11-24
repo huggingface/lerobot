@@ -55,6 +55,7 @@ from .factory import (
     make_default_teleop_action_processor,
     make_policy_processor_pipelines,
 )
+from .gamepad_base_processor import GamepadToBaseActionProcessorStep
 from .gym_action_processor import (
     Numpy2TorchActionProcessorStep,
     Torch2NumpyActionProcessorStep,
@@ -111,6 +112,7 @@ from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcesso
 
 __all__ = [
     "BaseActionProcessorStep",
+    "GamepadToBaseActionProcessorStep",
     "HoldUncommandedJointsProcessorStep",
     "KeyboardToBaseActionProcessorStep",
     "ActionProcessorStep",

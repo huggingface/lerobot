@@ -71,19 +71,11 @@ class GamepadTeleop(Teleoperator):
             )
 
     @property
-    def action_features(self) -> dict:
+    def action_features(self) -> dict[str, type]:
+        features: dict[str, type] = dict.fromkeys(("delta_x", "delta_y", "delta_z"), float)
         if self.config.use_gripper:
-            return {
-                "dtype": "float32",
-                "shape": (4,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
-            }
-        else:
-            return {
-                "dtype": "float32",
-                "shape": (3,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
-            }
+            features["gripper"] = int
+        return features
 
     @property
     def feedback_features(self) -> dict:
@@ -99,6 +91,9 @@ class GamepadTeleop(Teleoperator):
 
             self.gamepad = GamepadController()
         self.gamepad.start()
+        if not self.gamepad.running:
+            self.disconnect()
+            raise DeviceNotConnectedError("No gamepad connected. Check the controller connection.")
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
