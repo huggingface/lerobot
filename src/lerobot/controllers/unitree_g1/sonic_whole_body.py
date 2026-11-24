@@ -114,11 +114,12 @@ class SonicWholeBodyController(RobotController):
         )
         self.decoder_input = self.decoder.get_inputs()[0].name
 
-        # The decoder consumes MuJoCo joint order: q/dq are reordered via MUJOCO_TO_ISAACLAB and its
-        # residual back via ISAACLAB_TO_MUJOCO (validated against the ONNX; don't flip).
+        # The decoder consumes MuJoCo joint order: q is centered on the default pose (`q - default`),
+        # q/dq are reordered via MUJOCO_TO_ISAACLAB, and the residual comes back via ISAACLAB_TO_MUJOCO
+        # as `action_scale * a + default` (validated against the ONNX; don't flip the orders).
         self.preprocessor, self.postprocessor = make_controller_processors(
-            observation_stats={"observation.joint_pos": (self.default_angles, np.ones(NUM_MOTORS))},
-            action_stats=(self.default_angles, self.action_scale),
+            observation_affine={"observation.joint_pos": (1.0, -self.default_angles)},
+            action_affine=(self.action_scale, self.default_angles),
             observation_order={
                 "observation.joint_pos": MUJOCO_TO_ISAACLAB,
                 "observation.joint_vel": MUJOCO_TO_ISAACLAB,

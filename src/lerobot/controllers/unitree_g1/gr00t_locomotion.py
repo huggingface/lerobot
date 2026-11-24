@@ -89,15 +89,15 @@ class GrootLocomotionController(RobotController):
         self.groot_height_cmd = 0.74  # Default base height
         self.groot_orientation_cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 
-        # Scaled proprioception and command in, residual joint targets for the 15 leg and waist joints out.
+        # `scale * x + offset` in, and `ACTION_SCALE * a + default` for the 15 leg and waist joints out.
         self.preprocessor, self.postprocessor = make_controller_processors(
-            observation_stats={
-                "observation.joint_pos": (GROOT_DEFAULT_ANGLES, np.full(29, 1 / DOF_POS_SCALE)),
-                "observation.joint_vel": (np.zeros(29), np.full(29, 1 / DOF_VEL_SCALE)),
-                "observation.ang_vel": (np.zeros(3), np.full(3, 1 / ANG_VEL_SCALE)),
-                "observation.command": (np.zeros(3), 1 / np.array(CMD_SCALE)),
+            observation_affine={
+                "observation.joint_pos": (DOF_POS_SCALE, -GROOT_DEFAULT_ANGLES * DOF_POS_SCALE),
+                "observation.joint_vel": (np.full(29, DOF_VEL_SCALE), 0.0),
+                "observation.ang_vel": (np.full(3, ANG_VEL_SCALE), 0.0),
+                "observation.command": (CMD_SCALE, 0.0),
             },
-            action_stats=(GROOT_DEFAULT_ANGLES[:15], np.full(15, ACTION_SCALE)),
+            action_affine=(ACTION_SCALE, GROOT_DEFAULT_ANGLES[:15]),
         )
 
         logger.info("GrootLocomotionController initialized")

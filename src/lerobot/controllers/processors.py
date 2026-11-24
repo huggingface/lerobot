@@ -14,32 +14,28 @@
 
 """Processor pipelines between a robot's state and a controller's network.
 
-A controller's preprocessor normalizes the robot state it reads (joint positions around the default pose,
-scaled velocities, ...) and reorders joints from robot order to the order its network was trained in. Its
-postprocessor maps the network's action back: reorder to robot order, then unnormalize into absolute joint
-targets. Statistics are always given in robot joint order.
+A controller's preprocessor applies ``scales * x + offsets`` to the robot state it reads (joint positions
+around the default pose, scaled velocities, ...) and reorders joints from robot order into the order its
+network was trained in. Its postprocessor maps the network's action back: reorder into robot order, then
+``scales * a + offsets`` into absolute joint targets. Coefficients are always given in robot joint order.
 
-Normalization is the policies' ``NormalizerProcessorStep`` / ``UnnormalizerProcessorStep`` in ``MEAN_STD``
-mode: a residual ``default + scale * a`` is ``mean=default, std=scale``, and an observation scaled as
-``(x - offset) * scale`` is ``mean=offset, std=1 / scale``.
+The map is :class:`~lerobot.processor.JointAffineProcessorStep`, which writes ``observation.state`` and the
+action. Each observation feature is renamed onto ``observation.state`` for its own step and renamed back, so
+a feature keeps its key and its own coefficients.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 import torch
 
-from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
-    NormalizerProcessorStep,
-    ProcessorStep,
-    ProcessorStepRegistry,
-    UnnormalizerProcessorStep,
+    JointAffineProcessorStep,
+    JointReorderProcessorStep,
+    RenameObservationsProcessorStep,
 )
 from lerobot.processor.converters import (
     observation_to_transition,
@@ -47,61 +43,41 @@ from lerobot.processor.converters import (
     transition_to_observation,
     transition_to_policy_action,
 )
-from lerobot.processor.pipeline import DataProcessorPipeline
-from lerobot.utils.constants import ACTION
+from lerobot.processor.pipeline import DataProcessorPipeline, ProcessorStep
+from lerobot.utils.constants import OBS_STATE
 
 ArrayLike = Sequence[float] | np.ndarray
 
 
-@dataclass
-@ProcessorStepRegistry.register(name="joint_reorder_processor")
-class JointReorderProcessorStep(ProcessorStep):
-    """Index the joint axis of observation features and of the action: ``x[..., indices]``.
+def _affine_lists(scales: ArrayLike, offsets: ArrayLike) -> tuple[list[float], list[float]]:
+    """Broadcast a scalar coefficient onto the other and return JSON-safe lists of the same length."""
+    scale = np.atleast_1d(np.asarray(scales, dtype=np.float64)).reshape(-1)
+    offset = np.atleast_1d(np.asarray(offsets, dtype=np.float64)).reshape(-1)
+    if scale.size == 1 and offset.size != 1:
+        scale = np.broadcast_to(scale, offset.shape)
+    elif offset.size == 1 and scale.size != 1:
+        offset = np.broadcast_to(offset, scale.shape)
+    if scale.shape != offset.shape:
+        raise ValueError(f"scales and offsets must have the same length, got {scale.size} and {offset.size}.")
+    return scale.tolist(), offset.tolist()
 
-    Reorders joints between the robot's order and a network's, or selects the ones a network reads or drives.
 
-    Args:
-        observation_indices: For each observation key to reorder, the robot index of each output entry.
-        action_indices: For the action, the input index of each output entry.
-    """
-
-    observation_indices: dict[str, list[int]] = field(default_factory=dict)
-    action_indices: list[int] | None = None
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        new_transition = transition.copy()
-        observation = new_transition.get(TransitionKey.OBSERVATION)
-        if observation is not None and self.observation_indices:
-            observation = dict(observation)
-            for key, indices in self.observation_indices.items():
-                if key in observation:
-                    observation[key] = observation[key][..., indices]
-            new_transition[TransitionKey.OBSERVATION] = observation
-        action = new_transition.get(TransitionKey.ACTION)
-        if isinstance(action, torch.Tensor | np.ndarray) and self.action_indices is not None:
-            new_transition[TransitionKey.ACTION] = action[..., self.action_indices]
-        return new_transition
-
-    def get_config(self) -> dict[str, Any]:
-        return {"observation_indices": self.observation_indices, "action_indices": self.action_indices}
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        features = {feature_type: dict(group) for feature_type, group in features.items()}
-        observation = features.get(PipelineFeatureType.OBSERVATION, {})
-        for key, indices in self.observation_indices.items():
-            if key in observation:
-                observation[key] = PolicyFeature(type=observation[key].type, shape=(len(indices),))
-        action = features.get(PipelineFeatureType.ACTION, {})
-        if self.action_indices is not None and ACTION in action:
-            action[ACTION] = PolicyFeature(type=action[ACTION].type, shape=(len(self.action_indices),))
-        return features
+def _observation_affine(key: str, scales: ArrayLike, offsets: ArrayLike) -> list[ProcessorStep]:
+    """One feature's ``scales * x + offsets``, parked on ``observation.state`` while the step runs."""
+    scale, offset = _affine_lists(scales, offsets)
+    affine: ProcessorStep = JointAffineProcessorStep(scales=scale, offsets=offset)
+    if key == OBS_STATE:
+        return [affine]
+    return [
+        RenameObservationsProcessorStep(rename_map={key: OBS_STATE}),
+        affine,
+        RenameObservationsProcessorStep(rename_map={OBS_STATE: key}),
+    ]
 
 
 def make_controller_processors(
-    observation_stats: Mapping[str, tuple[ArrayLike, ArrayLike]],
-    action_stats: tuple[ArrayLike, ArrayLike],
+    observation_affine: Mapping[str, tuple[ArrayLike, ArrayLike]],
+    action_affine: tuple[ArrayLike, ArrayLike],
     observation_order: Mapping[str, ArrayLike] | None = None,
     action_order: ArrayLike | None = None,
 ) -> tuple[
@@ -110,32 +86,27 @@ def make_controller_processors(
     """Build a controller's preprocessor and postprocessor.
 
     Args:
-        observation_stats: For each observation key to normalize, its ``(mean, std)`` in robot joint order.
-        action_stats: The action's ``(mean, std)`` in robot joint order: the default pose and the action scale.
-        observation_order: For each observation key to reorder after normalization, the robot index of
-            each entry the network reads.
+        observation_affine: For each observation key to map, its ``(scales, offsets)`` in robot joint order.
+            A scalar coefficient broadcasts to the other's length. The result is ``scales * x + offsets``.
+        action_affine: The action's ``(scales, offsets)`` in robot joint order, applied after reordering:
+            ``scales * a + offsets``, the default pose plus the scaled residual.
+        observation_order: For each observation key to reorder after the affine map, the robot index of each
+            entry the network reads.
         action_order: The network-action index of each robot joint the postprocessor returns.
 
     Returns:
-        The preprocessor, from a dict of robot-state arrays to normalized tensors in network order, and the
+        The preprocessor, from a dict of robot-state arrays to tensors in network order, and the
         postprocessor, from a network action tensor to absolute joint targets in robot order.
     """
-
-    def stats(mean: ArrayLike, std: ArrayLike) -> dict[str, np.ndarray]:
-        return {"mean": np.asarray(mean, np.float32), "std": np.asarray(std, np.float32)}
-
-    def feature(feature_type: FeatureType, mean: ArrayLike) -> PolicyFeature:
-        return PolicyFeature(type=feature_type, shape=(len(np.atleast_1d(mean)),))
+    if OBS_STATE in observation_affine and len(observation_affine) > 1:
+        raise ValueError(
+            "observation_affine cannot map observation.state together with other keys. "
+            "JointAffineProcessorStep maps one state vector, and the other keys borrow that name."
+        )
 
     preprocessor: DataProcessorPipeline[dict[str, Any], dict[str, Any]] = DataProcessorPipeline(
         steps=[
-            NormalizerProcessorStep(
-                features={
-                    key: feature(FeatureType.STATE, mean) for key, (mean, _) in observation_stats.items()
-                },
-                norm_map={FeatureType.STATE: NormalizationMode.MEAN_STD},
-                stats={key: stats(*value) for key, value in observation_stats.items()},
-            ),
+            *_observation_steps(observation_affine),
             JointReorderProcessorStep(
                 observation_indices={
                     key: [int(i) for i in order] for key, order in (observation_order or {}).items()
@@ -146,19 +117,23 @@ def make_controller_processors(
         to_transition=observation_to_transition,
         to_output=transition_to_observation,
     )
+    action_scales, action_offsets = _affine_lists(*action_affine)
     postprocessor: DataProcessorPipeline[torch.Tensor, torch.Tensor] = DataProcessorPipeline(
         steps=[
             JointReorderProcessorStep(
                 action_indices=None if action_order is None else [int(i) for i in action_order]
             ),
-            UnnormalizerProcessorStep(
-                features={ACTION: feature(FeatureType.ACTION, action_stats[0])},
-                norm_map={FeatureType.ACTION: NormalizationMode.MEAN_STD},
-                stats={ACTION: stats(*action_stats)},
-            ),
+            JointAffineProcessorStep(scales=action_scales, offsets=action_offsets),
         ],
         name="controller_postprocessor",
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
     )
     return preprocessor, postprocessor
+
+
+def _observation_steps(observation_affine: Mapping[str, tuple[ArrayLike, ArrayLike]]) -> list[ProcessorStep]:
+    steps: list[ProcessorStep] = []
+    for key, (scales, offsets) in observation_affine.items():
+        steps.extend(_observation_affine(key, scales, offsets))
+    return steps

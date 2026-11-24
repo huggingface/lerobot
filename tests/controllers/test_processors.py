@@ -19,53 +19,27 @@
 import numpy as np
 import torch
 
-from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.controllers.history import FrameHistory
-from lerobot.controllers.processors import JointReorderProcessorStep, make_controller_processors
-from lerobot.lerobot_types import TransitionKey
+from lerobot.controllers.processors import make_controller_processors
 from lerobot.processor.converters import (
-    create_transition,
     observation_to_transition,
     policy_action_to_transition,
     transition_to_observation,
     transition_to_policy_action,
 )
 from lerobot.processor.pipeline import DataProcessorPipeline
-from lerobot.utils.constants import ACTION
 
 DEFAULT = np.array([0.1, -0.2, 0.3, 0.4], np.float32)
 ORDER = [2, 0, 3, 1]
 
 
-class TestJointReorder:
-    def test_indexes_observation_keys_and_the_action(self):
-        step = JointReorderProcessorStep(observation_indices={"q": ORDER}, action_indices=[1, 0])
-        observation = {"q": torch.arange(4.0), "other": torch.arange(4.0)}
-        out = step(create_transition(observation=observation, action=torch.tensor([5.0, 6.0])))
-
-        torch.testing.assert_close(out[TransitionKey.OBSERVATION]["q"], torch.tensor([2.0, 0.0, 3.0, 1.0]))
-        torch.testing.assert_close(out[TransitionKey.OBSERVATION]["other"], torch.arange(4.0))
-        torch.testing.assert_close(out[TransitionKey.ACTION], torch.tensor([6.0, 5.0]))
-
-    def test_selection_shrinks_feature_shapes(self):
-        step = JointReorderProcessorStep(observation_indices={"q": [0, 1]}, action_indices=[0, 1, 2])
-        features = {
-            PipelineFeatureType.OBSERVATION: {"q": PolicyFeature(type=FeatureType.STATE, shape=(4,))},
-            PipelineFeatureType.ACTION: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(29,))},
-        }
-
-        out = step.transform_features(features)
-
-        assert out[PipelineFeatureType.OBSERVATION]["q"].shape == (2,)
-        assert out[PipelineFeatureType.ACTION][ACTION].shape == (3,)
-        assert features[PipelineFeatureType.ACTION][ACTION].shape == (29,), "input features were mutated"
-
-
 class TestControllerProcessors:
-    def test_observation_is_normalized_in_robot_order_then_reordered(self):
+    def test_observation_is_scaled_in_robot_order_then_reordered(self):
+        scales = np.full(4, 0.5)
+        offsets = -DEFAULT * 0.5
         pre, _ = make_controller_processors(
-            observation_stats={"q": (DEFAULT, np.full(4, 2.0))},
-            action_stats=(DEFAULT, np.ones(4)),
+            observation_affine={"q": (scales, offsets)},
+            action_affine=(np.ones(4), np.zeros(4)),
             observation_order={"q": ORDER, "dq": ORDER},
         )
         q = np.array([1.0, 2.0, 3.0, 4.0], np.float32)
@@ -73,32 +47,39 @@ class TestControllerProcessors:
 
         obs = pre({"q": q, "dq": dq})
 
-        np.testing.assert_allclose(np.asarray(obs["q"]), ((q - DEFAULT) / 2.0)[ORDER], rtol=1e-6)
+        np.testing.assert_allclose(np.asarray(obs["q"]), (scales * q + offsets)[ORDER], rtol=1e-6)
         np.testing.assert_array_equal(np.asarray(obs["dq"]), dq[ORDER])
 
-    def test_action_is_reordered_to_robot_order_then_unnormalized(self):
-        """A residual network action becomes `default + scale * a`, in robot joint order."""
+    def test_action_is_reordered_to_robot_order_then_scaled(self):
+        """A residual network action becomes `scales * a + default`, in robot joint order."""
         scale = np.array([0.25, 0.5, 1.0, 2.0], np.float32)
         _, post = make_controller_processors(
-            observation_stats={}, action_stats=(DEFAULT, scale), action_order=ORDER
+            observation_affine={}, action_affine=(scale, DEFAULT), action_order=ORDER
         )
         action = np.array([1.0, 2.0, 3.0, 4.0], np.float32)
 
         target = post(torch.from_numpy(action)).numpy()
 
-        np.testing.assert_allclose(target, DEFAULT + action[ORDER] * scale, rtol=1e-6)
+        np.testing.assert_allclose(target, scale * action[ORDER] + DEFAULT, rtol=1e-6)
+
+    def test_scalar_scale_applies_to_every_joint(self):
+        _, post = make_controller_processors(observation_affine={}, action_affine=(0.25, DEFAULT))
+
+        target = post(torch.ones(4)).numpy()
+
+        np.testing.assert_allclose(target, 0.25 + DEFAULT, rtol=1e-6)
 
     def test_selected_action_joints(self):
         _, post = make_controller_processors(
-            observation_stats={}, action_stats=(DEFAULT[:2], np.ones(2)), action_order=range(2)
+            observation_affine={}, action_affine=(1.0, DEFAULT[:2]), action_order=range(2)
         )
         assert post(torch.ones(4)).shape == (2,)
 
     def test_pipelines_round_trip_through_save_pretrained(self, tmp_path):
-        """The constants and orders live in the saved processor, not in the controller's code."""
+        """The coefficients and orders live in the saved processor, not in the controller's code."""
         pre, post = make_controller_processors(
-            observation_stats={"q": (DEFAULT, np.full(4, 2.0))},
-            action_stats=(DEFAULT, np.full(4, 0.25)),
+            observation_affine={"q": (np.full(4, 0.5), -DEFAULT * 0.5)},
+            action_affine=(0.25, DEFAULT),
             observation_order={"q": ORDER},
             action_order=ORDER,
         )

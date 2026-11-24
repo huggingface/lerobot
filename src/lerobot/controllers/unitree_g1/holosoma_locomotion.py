@@ -105,14 +105,15 @@ class HolosomaLocomotionController(RobotController):
         self.phase_dt = 2 * np.pi / ((1.0 / CONTROL_DT) * GAIT_PERIOD)
         self.is_standing = True
 
-        # Scaled proprioception in; the policy acts on all 29 joints, the leg and waist targets (0-14) go out.
+        # `scale * x + offset` in. The policy acts on all 29 joints; the leg and waist targets (0-14)
+        # come back as `ACTION_SCALE * a + default`.
         self.preprocessor, self.postprocessor = make_controller_processors(
-            observation_stats={
-                "observation.joint_pos": (DEFAULT_ANGLES, np.full(29, 1 / DOF_POS_SCALE)),
-                "observation.joint_vel": (np.zeros(29), np.full(29, 1 / DOF_VEL_SCALE)),
-                "observation.ang_vel": (np.zeros(3), np.full(3, 1 / ANG_VEL_SCALE)),
+            observation_affine={
+                "observation.joint_pos": (DOF_POS_SCALE, -DEFAULT_ANGLES * DOF_POS_SCALE),
+                "observation.joint_vel": (np.full(29, DOF_VEL_SCALE), 0.0),
+                "observation.ang_vel": (np.full(3, ANG_VEL_SCALE), 0.0),
             },
-            action_stats=(DEFAULT_ANGLES[:15], np.full(15, ACTION_SCALE)),
+            action_affine=(ACTION_SCALE, DEFAULT_ANGLES[:15]),
             action_order=range(15),
         )
 
